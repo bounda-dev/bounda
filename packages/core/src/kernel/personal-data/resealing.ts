@@ -1,5 +1,8 @@
 import type { StorageTransaction } from "../../adapter/adapter.ts";
-import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
+import {
+  DEFAULT_PERSONAL_CATEGORY,
+  type SealedValue,
+} from "../../adapter/storage/personal-key-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import {
   BOUNDA_AGGREGATE,
@@ -11,7 +14,14 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import { digest } from "../read-model/fingerprint.ts";
 import { isRecord } from "../shared/merge-fields.ts";
-import { createDisposableKey, isSealed, type PersonalKey, seal } from "./crypto.ts";
+import {
+  categoryOf,
+  createDisposableKey,
+  isSealed,
+  type PersonalKey,
+  seal,
+  unseal,
+} from "./crypto.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf, sealState, statePersonOf } from "./process-state.ts";
 import { type CategoryKey, inSealingOrder, type PersonalKeys } from "./wrapped-keys.ts";
@@ -101,6 +111,10 @@ export interface ResealKeys {
    * seals it.
    */
   errorText(person: string, at: string): Promise<ChosenKeys>;
+  /**
+   * Opens a value sealed under a key the person still holds, in force or kept, to seal it anew.
+   */
+  open: OpenSealed;
 }
 
 export interface CreateResealKeysArgs {
@@ -224,6 +238,10 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
   };
 
   return {
+    open: async (sealed) => {
+      const key = await keys.opened(sealed.$personal.person, sealed.$personal.key);
+      return key === null ? null : { value: await unseal({ key, sealed }) };
+    },
     event: async (person, category, position) => {
       const last = await lastCovering(person, category);
       if (last === null || last.forgetting.position < position) return kept(person, category);
@@ -270,8 +288,18 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
 export interface ResealPlan<Value> {
   readonly person: string;
   readonly categories: readonly string[];
-  seal(keyOf: (category: string) => PersonalKey): Promise<Value>;
+  /**
+   * The fingerprints of the keys values are moved from, sealed under a category their field is no
+   * longer in.
+   */
+  readonly movedFrom: readonly string[];
+  seal(keyOf: (category: string) => PersonalKey, open: OpenSealed): Promise<Value>;
 }
+
+/**
+ * Opens a sealed value, `null` when no key the person holds opens it any more.
+ */
+export type OpenSealed = (sealed: SealedValue) => Promise<{ readonly value: unknown } | null>;
 
 /**
  * `null` for a record with nothing to reseal; `unsealable` for one holding personal values in the
@@ -283,6 +311,7 @@ export type ResealPlanOf<Value> = ResealPlan<Value> | "unsealable" | null;
 const personIn = (value: unknown): string | null =>
   (typeof value === "string" && value !== "") || typeof value === "number" ? String(value) : null;
 
+// What is still sealed after the moved values were opened stays as it is: its key is gone.
 const sealFields = async (
   payload: Readonly<Record<string, unknown>>,
   marks: PersonalMarks,
@@ -292,6 +321,7 @@ const sealFields = async (
 ): Promise<Record<string, unknown>> => {
   const sealed: Record<string, unknown> = { ...payload };
   for (const field of fields) {
+    if (isSealed(payload[field])) continue;
     const category = fieldCategory(marks, field);
     sealed[field] = await seal({ key: keyOf(category), person, category, value: payload[field] });
   }
@@ -301,6 +331,44 @@ const sealFields = async (
 const categoriesOf = (marks: PersonalMarks, fields: readonly string[]): readonly string[] => [
   ...new Set(fields.map((field) => fieldCategory(marks, field))),
 ];
+
+// The fields that hold a value sealed for the person under another category than the field's, as
+// one marked again in another category since: they are opened and sealed anew under their own.
+const movedFields = (
+  marks: PersonalMarks,
+  fields: Readonly<Record<string, unknown>>,
+  person: string | null,
+): readonly string[] =>
+  person === null
+    ? []
+    : marks.fields.filter((field) => {
+        const value = fields[field];
+        return (
+          isSealed(value) &&
+          value.$personal.person === person &&
+          categoryOf(value) !== fieldCategory(marks, field)
+        );
+      });
+
+const movedFrom = (
+  fields: Readonly<Record<string, unknown>>,
+  moved: readonly string[],
+): readonly string[] => [
+  ...new Set(moved.map((field) => (fields[field] as SealedValue).$personal.key)),
+];
+
+const openMoved = async (
+  fields: Readonly<Record<string, unknown>>,
+  moved: readonly string[],
+  open: OpenSealed,
+): Promise<Record<string, unknown>> => {
+  const opened: Record<string, unknown> = { ...fields };
+  for (const field of moved) {
+    const value = await open(fields[field] as SealedValue);
+    if (value !== null) opened[field] = value.value;
+  }
+  return opened;
+};
 
 export interface PlanPayloadResealArgs {
   readonly marks: PersonalMarks | null;
@@ -317,20 +385,25 @@ export interface PlanPayloadResealFunction {
 
 /**
  * For a command's payload, as a scheduled command or a dead letter holds it: its marked fields
- * that hold a value in the clear, sealed as `sealCommandPayload` seals them.
+ * that hold a value in the clear, sealed as `sealCommandPayload` seals them, and those sealed under
+ * another category than the field's, sealed anew under their own.
  */
 export const planPayloadReseal: PlanPayloadResealFunction = ({ marks, payload, aggregateId }) => {
   if (marks === null || !isRecord(payload)) return null;
   const clear = marks.fields.filter(
     (field) => payload[field] !== undefined && !isSealed(payload[field]),
   );
-  if (clear.length === 0) return null;
   const person = marks.person === null ? aggregateId : personIn(payload[marks.person]);
+  const moved = movedFields(marks, payload, person);
+  if (clear.length === 0 && moved.length === 0) return null;
   if (person === null) return "unsealable";
+  const pending = [...clear, ...moved];
   return {
     person,
-    categories: categoriesOf(marks, clear),
-    seal: (keyOf) => sealFields(payload, marks, clear, person, keyOf),
+    categories: categoriesOf(marks, pending),
+    movedFrom: movedFrom(payload, moved),
+    seal: async (keyOf, open) =>
+      sealFields(await openMoved(payload, moved, open), marks, pending, person, keyOf),
   };
 };
 
@@ -347,19 +420,33 @@ export interface PlanEventResealFunction {
 const holdsValue = (value: unknown): boolean => value !== undefined && value !== null;
 
 // Clear values with nobody to seal them under, or under another person than the event names, are
-// left as they are; an event with none is left alone whatever it names.
+// left as they are; an event with none, and nothing moved, is left alone whatever it names.
 const planned = <Value>(
   event: StoredEvent,
   marks: PersonalMarks,
+  fields: Readonly<Record<string, unknown>>,
   clear: readonly string[],
   person: string | null,
-  seal: (person: string, keyOf: (category: string) => PersonalKey) => Promise<Value>,
+  seal: (
+    person: string,
+    fields: Readonly<Record<string, unknown>>,
+    pending: readonly string[],
+    keyOf: (category: string) => PersonalKey,
+  ) => Promise<Value>,
 ): ResealPlanOf<Value> => {
-  if (clear.length === 0 && event.person !== null) return null;
+  const moved =
+    event.person === null || event.person === person ? movedFields(marks, fields, person) : [];
+  if (clear.length === 0 && moved.length === 0 && event.person !== null) return null;
   if (person === null || (event.person !== null && event.person !== person)) {
     return clear.length === 0 ? null : "unsealable";
   }
-  return { person, categories: categoriesOf(marks, clear), seal: (keyOf) => seal(person, keyOf) };
+  const pending = [...clear, ...moved];
+  return {
+    person,
+    categories: categoriesOf(marks, pending),
+    movedFrom: movedFrom(fields, moved),
+    seal: async (keyOf, open) => seal(person, await openMoved(fields, moved, open), pending, keyOf),
+  };
 };
 
 /**
@@ -378,11 +465,11 @@ export const planEventReseal: PlanEventResealFunction = ({ event, aggregates, pr
       (field) => holdsValue(state[field]) && !isSealed(state[field]),
     );
     const person = statePersonOf({ marks, state, instanceId: event.aggregateId });
-    return planned(event, marks, clear, person, async (named, keyOf) => ({
+    return planned(event, marks, state, clear, person, async (named, opened, _pending, keyOf) => ({
       ...(event.payload as object),
       state: await sealState({
         marks,
-        state,
+        state: opened,
         person: named,
         key: async (_person, category) => keyOf(category),
       }),
@@ -395,7 +482,7 @@ export const planEventReseal: PlanEventResealFunction = ({ event, aggregates, pr
     (field) => payload[field] !== undefined && !isSealed(payload[field]),
   );
   const person = marks.person === null ? event.aggregateId : personIn(payload[marks.person]);
-  return planned(event, marks, clear, person, (named, keyOf) =>
-    sealFields(payload, marks, clear, named, keyOf),
+  return planned(event, marks, payload, clear, person, (named, opened, pending, keyOf) =>
+    sealFields(opened, marks, pending, named, keyOf),
   );
 };

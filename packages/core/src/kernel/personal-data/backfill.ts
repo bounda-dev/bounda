@@ -249,6 +249,17 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     }
   };
 
+  // Marks walked since these were: what they sealed follows them, as a field moved to another
+  // category, so these walk again from the first event, as when a deploy goes back to them.
+  const walkedSince = async (started: number): Promise<boolean> => {
+    for (const { subscriber, position } of await checkpointStore.list()) {
+      if (!subscriber.startsWith(BACKFILL_PREFIX)) continue;
+      const [owner = "", name] = subscriber.slice(BACKFILL_PREFIX.length).split(":");
+      if (owner !== marks && name === "started" && position > started) return true;
+    }
+    return false;
+  };
+
   const report = (): void => {
     logger.info("personal data written before its marks is sealed", { marks, ...tally });
     tally = { events: 0, discarded: 0, unsealable: 0, scheduledCommands: 0, deadLetters: 0 };
@@ -361,6 +372,13 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     }
     if (!(await takeLease(at))) return 0;
     let started = await checkpointStore.get(rows.started);
+    if (started !== 0 && (await walkedSince(started))) {
+      for (const row of [rows.position, rows.stores, rows.started]) {
+        await checkpointStore.remove(row);
+      }
+      caughtUp = false;
+      started = 0;
+    }
     if (started === 0) {
       await checkpointStore.compareAndSet(rows.started, 0, at);
       started = await checkpointStore.get(rows.started);

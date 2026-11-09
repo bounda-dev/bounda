@@ -9,7 +9,7 @@ import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/b
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { newStoredKey, openedKey } from "../test-support.ts";
-import { isSealed, unseal } from "./crypto.ts";
+import { isSealed, seal, unseal } from "./crypto.ts";
 import { createResealBatches } from "./reseal-batches.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
@@ -238,6 +238,46 @@ describe("resealing a batch of events by category", () => {
     expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
       "default",
     ]);
+  });
+});
+
+describe("resealing a field moved to another category", () => {
+  it("seals it anew under its category's key, and drops what remembers it under the old key", async () => {
+    const { storage, reseal, append, opened } = await setup();
+    const stored = await storage.personalKeys.add("c-1", "default", await newStoredKey());
+    const old = await openedKey(stored);
+    const nickname = await seal({ key: old, person: "c-1", category: "default", value: "Ada" });
+    await append(
+      event("customer", "c-1", 1, "CustomerProfiled", { email: "ada@example.com", nickname }),
+    );
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    await storage.idempotencyStore.put({
+      key: "k-1",
+      fingerprint: "fp",
+      outcome: { rejected: "Taken", message: "Ada is taken", code: "TAKEN" } as never,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      persons: [{ person: "c-1", fingerprint: stored.fingerprint }],
+      now,
+    });
+    expect((await reseal.events(await all(storage))).resealed).toBe(1);
+    const [profiled] = await all(storage);
+    expect(fieldOf(profiled?.payload, "nickname")).toMatchObject({
+      $personal: { category: "profile" },
+    });
+    expect(await opened(fieldOf(profiled?.payload, "nickname"))).toBe("Ada");
+    expect(await storage.idempotencyStore.get({ key: "k-1", now })).toBeNull();
+  });
+
+  it("leaves a value no key opens any more as it is", async () => {
+    const { storage, reseal, append } = await setup();
+    const gone = await openedKey(await newStoredKey());
+    const nickname = await seal({ key: gone, person: "c-1", category: "default", value: "Ada" });
+    await append(
+      event("customer", "c-1", 1, "CustomerProfiled", { email: "ada@example.com", nickname }),
+    );
+    await reseal.events(await all(storage));
+    const [profiled] = await all(storage);
+    expect(fieldOf(profiled?.payload, "nickname")).toEqual(nickname);
   });
 });
 

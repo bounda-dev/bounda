@@ -71,7 +71,10 @@ const sealedWith = async <Value>(plan: ResealPlanOf<Value>) => {
     person: plan.person,
     categories: plan.categories,
     key,
-    value: await plan.seal(() => key),
+    value: await plan.seal(
+      () => key,
+      async () => null,
+    ),
   };
 };
 
@@ -185,10 +188,10 @@ describe("planEventReseal", () => {
       default: await openedKey(await newStoredKey()),
       profile: await openedKey(await newStoredKey()),
     };
-    const value = (await planned.seal((category) => keys[category as keyof typeof keys])) as Record<
-      string,
-      { $personal: { category?: string; key: string } }
-    >;
+    const value = (await planned.seal(
+      (category) => keys[category as keyof typeof keys],
+      async () => null,
+    )) as Record<string, { $personal: { category?: string; key: string } }>;
     expect(value.email?.$personal).not.toHaveProperty("category");
     expect(value.email?.$personal.key).toBe(keys.default.fingerprint);
     expect(value.phone?.$personal).toMatchObject({
