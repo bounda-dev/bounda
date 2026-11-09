@@ -256,6 +256,51 @@ describe("createWorker", () => {
     },
   );
 
+  it("still answers its 500 and logs it as the configuration says under a BOUNDA_ERROR_TEXT it does not know", async () => {
+    const errors: unknown[][] = [];
+    const worker = createWorker({
+      config: {
+        storage: cloudflare({ binding: "SPY" }),
+        runtime: { telemetry: { errorText: "include" } },
+      },
+      tenantOf: () => {
+        throw new Error("no session for ana@example.com");
+      },
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: (...entry) => void errors.push(entry),
+      },
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/queries/getOrder", {
+        method: "POST",
+        body: JSON.stringify({ orderId: "o-1" }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      {
+        BOUNDA_ERROR_TEXT: "loud",
+        SPY: { idFromName: () => "id", get: () => recordingStub().stub },
+      } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(500);
+    expect(await response?.json()).toEqual({
+      error: { code: "INTERNAL", message: "Internal error" },
+    });
+    expect(errors).toEqual([
+      [
+        "bounda worker request failed",
+        {
+          path: "/queries/getOrder",
+          errorName: "Error",
+          errorMessage: "no session for ana@example.com",
+          errorStack: expect.any(String),
+        },
+      ],
+    ]);
+  });
+
   it("answers a 500 and logs it, without the value, when actorOf names no valid actor", async () => {
     const errors: unknown[][] = [];
     const logger: Logger = {

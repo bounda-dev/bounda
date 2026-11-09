@@ -348,6 +348,15 @@ describe("bounda() Vite plugin", () => {
     },
   );
 
+  it("warns that the entry server is missing in a project without an app directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-vite-"));
+    temporary.push(root);
+    const { configure, start, recorded } = harness(root);
+    configure("serve");
+    await start().catch(() => undefined);
+    expect(recorded.warnings[0]).toMatch(/^\[bounda\] app\/entry\.server\.tsx is missing, /);
+  });
+
   it("does nothing at build start before the config is resolved", async () => {
     const root = await project();
     const { start } = harness(root);

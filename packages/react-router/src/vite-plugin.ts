@@ -101,10 +101,14 @@ const regenerate = async ({ root, logger, failOnConvention }: Regeneration): Pro
 // Without its own `handleError`, React Router logs every message and stack, in production too.
 const checkEntryServer = async ({ root, logger }: Pick<Generation, "root" | "logger">) => {
   const directory = join(root, APP_DIRECTORY);
-  const files = await readdir(directory).catch((): string[] => []);
-  const name = files.find((file) => ENTRY_SERVER.test(file));
-  const source = name === undefined ? "" : await readFile(join(directory, name), "utf8");
-  if (EXPORTS_HANDLE_ERROR.test(source)) return;
+  const files = await readdir(directory).catch(() => undefined);
+  const name = files?.find((file) => ENTRY_SERVER.test(file));
+  if (
+    name !== undefined &&
+    EXPORTS_HANDLE_ERROR.test(String(await readFile(join(directory, name))))
+  ) {
+    return;
+  }
   logger.warn(
     `[bounda] ${name === undefined ? `${APP_DIRECTORY}/entry.server.tsx is missing` : `${APP_DIRECTORY}/${name} does not export handleError`}, so React Router logs the message and the stack of whatever a loader, an action or the render throws, and a message may quote personal data. Export Bounda's from it: export { handleError } from "${APP_MODULE_ID}"; see ${LOGGING_ERRORS}`,
   );
@@ -155,11 +159,11 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
       const run = () => regenerate({ ...current, failOnConvention: current.command === "build" });
       // A watching build starts again after every change, and each start has to see it.
       generated = this.meta.watchMode ? run() : (generated ?? run());
+      await generated;
       if (!entryChecked) {
         entryChecked = true;
         await checkEntryServer(current);
       }
-      await generated;
     },
     configureServer(server) {
       const schedule = (file: string): void => {

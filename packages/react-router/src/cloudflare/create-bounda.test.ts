@@ -166,10 +166,11 @@ describe("createBounda on Cloudflare: handleError", () => {
 
   it.each([
     [undefined, undefined, false],
+    [undefined, "unset", false],
     [undefined, "include", true],
     ["include", "omit", true],
     ["omit", "include", false],
-    ["loud", "include", false],
+    ["loud", "include", true],
   ] as const)(
     "logs the text as BOUNDA_ERROR_TEXT %s says, over the configuration's %s",
     async (variable, configured, included) => {
@@ -181,7 +182,12 @@ describe("createBounda on Cloudflare: handleError", () => {
           storage: cloudflare(),
           ...(configured === undefined
             ? {}
-            : { runtime: { telemetry: { errorText: configured } } }),
+            : {
+                runtime:
+                  configured === "unset"
+                    ? { role: "web" as const }
+                    : { telemetry: { errorText: configured } },
+              }),
         },
         tenant: () => "default",
         logger,

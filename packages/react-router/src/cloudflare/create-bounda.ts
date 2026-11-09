@@ -1,18 +1,16 @@
 import { env } from "cloudflare:workers";
-import { workersLogger } from "@bounda-dev/cloudflare";
 import {
   type AppRegistry,
   type Consistency,
   checkConsistency,
-  errorTextFromEnv,
   type Logger,
   type Registry,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import type { ActorFunction } from "../actor.ts";
 import type { Bounda } from "../create-bounda.ts";
-import { createHandleError } from "../handle-error.ts";
 import { cloudflareClients, type TenantFunction } from "./clients.ts";
+import { cloudflareHandleError } from "./handle-error.ts";
 import { serve } from "./serve.ts";
 
 export interface CreateBoundaArgs {
@@ -66,14 +64,10 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   tenant,
   consistency = "read-your-writes",
   actor,
-  logger = workersLogger,
+  logger,
 }: CreateBoundaArgs): Bounda<R> => {
   checkConsistency(consistency);
   const clientOf = cloudflareClients<R>({ env, config, tenant, consistency });
-  const handleError = createHandleError({
-    message: "bounda request failed",
-    errorText: () => errorTextFromEnv(env) ?? config.runtime?.telemetry?.errorText ?? "omit",
-    logger: () => logger,
-  });
+  const handleError = cloudflareHandleError({ config: async () => config, logger });
   return serve(() => clientOf, handleError, actor);
 };

@@ -1,18 +1,16 @@
 import { env } from "cloudflare:workers";
-import { workersLogger } from "@bounda-dev/cloudflare";
 import {
   type AppRegistry,
   ConfigurationError,
   checkConsistency,
-  errorTextFromEnv,
   type Registry,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import { actorOfModule } from "../actor.ts";
 import { cloudflareClients, type TenantFunction } from "../cloudflare/clients.ts";
+import { cloudflareHandleError } from "../cloudflare/handle-error.ts";
 import { serve } from "../cloudflare/serve.ts";
 import type { Bounda } from "../create-bounda.ts";
-import { createHandleError } from "../handle-error.ts";
 import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 export { failure } from "../failure.ts";
@@ -59,13 +57,8 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
         consistency,
       });
     },
-    createHandleError({
-      message: "bounda request failed",
-      errorText: async () =>
-        errorTextFromEnv(env) ??
-        ((await importConfig()).default as Config | undefined)?.runtime?.telemetry?.errorText ??
-        "omit",
-      logger: () => workersLogger,
+    cloudflareHandleError({
+      config: async () => (await importConfig()).default as Config | undefined,
     }),
     importActor === undefined ? undefined : actorOfModule(importActor),
   );

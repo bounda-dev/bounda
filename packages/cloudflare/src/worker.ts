@@ -7,7 +7,7 @@ import {
   errorTextFromEnv,
   type Logger,
 } from "@bounda-dev/core";
-import type { Config } from "@bounda-dev/core/config";
+import type { Config, ErrorText } from "@bounda-dev/core/config";
 import type { BoundaStub } from "./client.ts";
 import { cloudflareStorageOf } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
@@ -168,6 +168,16 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
+// The Durable Object refuses a value it does not know when it starts, and the request fails with
+// that; logging the failure must not throw instead.
+const errorTextOfEnv = (env: object): ErrorText | undefined => {
+  try {
+    return errorTextFromEnv(env);
+  } catch {
+    return undefined;
+  }
+};
+
 export const createWorker: CreateWorkerFunction = ({
   config,
   tenantOf,
@@ -231,7 +241,7 @@ export const createWorker: CreateWorkerFunction = ({
           path: url.pathname,
           ...errorFields({
             error,
-            errorText: errorTextFromEnv(env) ?? config.runtime?.telemetry?.errorText,
+            errorText: errorTextOfEnv(env) ?? config.runtime?.telemetry?.errorText,
           }),
         });
         return failure("INTERNAL", "Internal error", 500);

@@ -11,6 +11,7 @@ const app = {
   start: () => undefined,
   stop: async () => undefined,
   as: (actor: string) => ({ actedAs: actor }),
+  config: { runtime: { telemetry: { errorText: "omit" } } },
 } as unknown as BoundaApp;
 const booted: BootArgs[] = [];
 const logged: unknown[][] = [];

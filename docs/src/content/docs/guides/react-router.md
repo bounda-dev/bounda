@@ -145,8 +145,8 @@ as the Durable Object does, and follows `BOUNDA_ERROR_TEXT` in the Worker's `env
 configuration.
 
 `create-bounda` writes the whole file, React Router's default entry for the runtime with these two
-changes: `react-router reveal entry.server` prints the default to start from in an existing
-project. Without the file, or when it does not export `handleError`, the `bounda()` plugin warns
+changes: in an existing project, `react-router reveal entry.server` writes the default into `app/`
+to start from. Without the file, or when it does not export `handleError`, the `bounda()` plugin warns
 when the dev server or the build starts.
 
 ## When the client goes away

@@ -1,4 +1,4 @@
-import { errorFields, type Logger } from "@bounda-dev/core";
+import { errorFields, errorTextFromEnv, type Logger } from "@bounda-dev/core";
 import type { ErrorText } from "@bounda-dev/core/config";
 import { isRouteErrorResponse } from "react-router";
 
@@ -16,12 +16,23 @@ export interface HandleBoundaErrorFunction {
 
 export interface CreateHandleErrorArgs {
   readonly message: string;
-  /**
-   * `"omit"` stands in when it throws, as before an app has booted with a configuration.
-   */
   readonly errorText: () => ErrorText | Promise<ErrorText>;
   readonly logger: () => Logger | Promise<Logger>;
 }
+
+export interface ErrorTextOfEnvFunction {
+  (env: () => object): ErrorText | undefined;
+}
+
+// `BOUNDA_ERROR_TEXT` as the runtime reads it; a value it refuses is left to the runtime to report,
+// since the error being logged is likely that refusal.
+export const errorTextOfEnv: ErrorTextOfEnvFunction = (env) => {
+  try {
+    return errorTextFromEnv(env());
+  } catch {
+    return undefined;
+  }
+};
 
 export interface CreateHandleErrorFunction {
   (args: CreateHandleErrorArgs): HandleBoundaErrorFunction;
@@ -37,16 +48,14 @@ export const createHandleError: CreateHandleErrorFunction =
   ({ message, errorText, logger }) =>
   async (error, { request }) => {
     if (request.signal.aborted) return;
-    const text = await Promise.resolve()
-      .then(errorText)
-      .catch((): ErrorText => "omit");
     try {
+      const text = await errorText();
       (await logger()).error(message, {
         method: request.method,
         ...(text === "include" ? { path: new URL(request.url).pathname } : {}),
         ...errorFields({ error: unwrapped(error), errorText: text }),
       });
     } catch {
-      // A logger that fails has nowhere left to report it, and React Router must not see it throw.
+      // A failure here has nowhere left to be reported, and React Router must not see it throw.
     }
   };

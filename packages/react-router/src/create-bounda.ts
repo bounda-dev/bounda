@@ -11,7 +11,11 @@ import {
 import type { ErrorText } from "@bounda-dev/core/config";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 import { type ActorFunction, actAs } from "./actor.ts";
-import { createHandleError, type HandleBoundaErrorFunction } from "./handle-error.ts";
+import {
+  createHandleError,
+  errorTextOfEnv,
+  type HandleBoundaErrorFunction,
+} from "./handle-error.ts";
 import { withIdempotencyKey } from "./idempotency-key.ts";
 
 /**
@@ -52,10 +56,10 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
   readonly logger?: Logger;
   /**
    * How `handleError` logs an error thrown while no app has booted, such as the boot's own
-   * failure. Defaults to `"omit"`; once an app has booted, `handleError` follows its
-   * `runtime.telemetry.errorText`.
+   * failure, unless `BOUNDA_ERROR_TEXT` says otherwise. Defaults to `"omit"`; once an app has
+   * booted, `handleError` follows its `runtime.telemetry.errorText`.
    */
-  readonly errorText?: ErrorText;
+  readonly errorText?: ErrorText | undefined;
 }
 
 /**
@@ -94,6 +98,10 @@ export interface CreateBoundaFunction {
 interface Slot<R extends Registry> {
   app?: Promise<BoundaApp<R>> | undefined;
   retired?: Promise<void> | undefined;
+  /**
+   * The rule of the app `app` resolved to, read without waiting for a boot in flight.
+   */
+  errorText?: ErrorText | undefined;
 }
 
 const DEFAULT_KEY = "bounda.app";
@@ -116,6 +124,7 @@ const started = <R extends Registry>(app: BoundaApp<R>): BoundaApp<R> => {
 const retire = <R extends Registry>(slot: Slot<R>): Promise<void> => {
   const running = slot.app;
   slot.app = undefined;
+  slot.errorText = undefined;
   if (running === undefined && slot.retired === undefined) return Promise.resolve();
   const stopping = (slot.retired ?? Promise.resolve()).then(async () => {
     const app = await running?.catch(() => undefined);
@@ -138,7 +147,10 @@ const load = <R extends Registry>(
   if (slot.app !== undefined) return slot.app;
   const starting = (slot.retired === undefined ? bootApp() : slot.retired.then(() => bootApp()))
     .then(started)
-    .then((app) => (consistency === "read-your-writes" ? readYourWrites(app) : app));
+    .then((app) => {
+      if (slot.app === starting) slot.errorText = app.config.runtime.telemetry.errorText;
+      return consistency === "read-your-writes" ? readYourWrites(app) : app;
+    });
   slot.app = starting;
   starting.catch(() => {
     if (slot.app === starting) slot.app = undefined;
@@ -196,8 +208,7 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
 
   const handleError = createHandleError({
     message: "request failed",
-    errorText: async () =>
-      (await slot.app?.catch(() => undefined))?.config.runtime.telemetry.errorText ?? errorText,
+    errorText: () => slot.errorText ?? errorTextOfEnv(() => process.env) ?? errorText,
     logger: () => {
       if (logger !== undefined) return logger;
       consoleLogger ??= import("@bounda-dev/core/node").then((node) => node.createConsoleLogger());

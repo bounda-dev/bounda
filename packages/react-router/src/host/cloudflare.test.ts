@@ -199,6 +199,27 @@ describe("createHost under the workerd condition: handleError", () => {
     },
   );
 
+  it.each([
+    ["has no default export", {}],
+    ["sets no telemetry", { default: { storage: cloudflare(), runtime: { role: "web" } } }],
+  ])("omits the text when the configuration %s", async (_, module) => {
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => void written.push(args));
+    try {
+      const { handleError } = createHost({
+        registry,
+        importConfig: async () => module,
+        consistency: "eventual",
+      });
+      await handleError(new Error("ana@example.com"), { request: new Request("http://w/a") });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written).toEqual([
+      ['{"level":"error","message":"bounda request failed","method":"GET","errorName":"Error"}'],
+    ]);
+  });
+
   it("omits the text when the configuration cannot be imported", async () => {
     const written: unknown[][] = [];
     const spy = vi.spyOn(console, "error").mockImplementation((...args) => void written.push(args));

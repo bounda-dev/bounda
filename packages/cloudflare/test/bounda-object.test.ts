@@ -842,11 +842,16 @@ describe("configForObject", () => {
 
 describe("BOUNDA_ERROR_TEXT", () => {
   // An object built in the context of an empty one, so it reads the environment the test hands it.
-  const failingAlarmWith = async (variables: Readonly<Record<string, string>>) =>
+  const failingAlarmWith = async (
+    variables: Readonly<Record<string, string>>,
+    runtime: { readonly telemetry?: { readonly errorText: "omit" } } = {
+      telemetry: { errorText: "omit" },
+    },
+  ) =>
     runInDurableObject(env.BARE.get(env.BARE.newUniqueId()), async (_bare, state) => {
       const Store = createBoundaObject({
         registry: quietRegistry,
-        config: { storage: cloudflare(), runtime: { telemetry: { errorText: "omit" } } },
+        config: { storage: cloudflare(), runtime },
         clock,
         logger: recordingLogger,
       });
@@ -873,6 +878,10 @@ describe("BOUNDA_ERROR_TEXT", () => {
     expect(await failingAlarmWith({})).toEqual([
       "bounda rebuilds could not be listed",
       { errorName: "Error" },
+    ]);
+    expect(await failingAlarmWith({ BOUNDA_ERROR_TEXT: "include" }, {})).toMatchObject([
+      "bounda rebuilds could not be listed",
+      { errorMessage: expect.stringContaining("no such table") },
     ]);
   });
 });

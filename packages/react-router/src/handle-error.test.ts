@@ -9,7 +9,11 @@ import {
 } from "react-router";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createBounda } from "./create-bounda.ts";
-import { createHandleError, type HandleBoundaErrorFunction } from "./handle-error.ts";
+import {
+  createHandleError,
+  errorTextOfEnv,
+  type HandleBoundaErrorFunction,
+} from "./handle-error.ts";
 
 const recording = () => {
   const lines: unknown[][] = [];
@@ -109,16 +113,18 @@ describe("createHandleError", () => {
     expect(lines).toEqual([]);
   });
 
-  it("omits the text when the rule cannot be read, and never rejects", async () => {
+  it("never rejects, whatever fails on the way", async () => {
     const { lines, logger } = recording();
-    await createHandleError({
-      message: "request failed",
-      errorText: () => {
-        throw new Error("no configuration");
-      },
-      logger: () => logger,
-    })(quoting(), { request: request() });
-    expect(lines).toEqual([["request failed", { method: "GET", errorName: "Error" }]]);
+    await expect(
+      createHandleError({
+        message: "request failed",
+        errorText: () => {
+          throw new Error("no configuration");
+        },
+        logger: () => logger,
+      })(quoting(), { request: request() }),
+    ).resolves.toBeUndefined();
+    expect(lines).toEqual([]);
     await expect(
       createHandleError({
         message: "request failed",
@@ -138,6 +144,17 @@ describe("createHandleError", () => {
         logger: () => Promise.reject(new Error("no logger")),
       })(quoting(), { request: request() }),
     ).resolves.toBeUndefined();
+  });
+
+  it("reads BOUNDA_ERROR_TEXT, leaving a value it refuses to the runtime", () => {
+    expect(errorTextOfEnv(() => ({ BOUNDA_ERROR_TEXT: "include" }))).toBe("include");
+    expect(errorTextOfEnv(() => ({}))).toBeUndefined();
+    expect(errorTextOfEnv(() => ({ BOUNDA_ERROR_TEXT: "loud" }))).toBeUndefined();
+    expect(
+      errorTextOfEnv(() => {
+        throw new ReferenceError("process is not defined");
+      }),
+    ).toBeUndefined();
   });
 
   it("is a handleError React Router accepts", () => {
