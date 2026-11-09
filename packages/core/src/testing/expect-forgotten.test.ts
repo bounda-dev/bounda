@@ -615,6 +615,38 @@ describe("expectForgotten", () => {
     );
   });
 
+  it("keeps searching what is not an error's text, and every error text given an adapter", async () => {
+    const telemetry = recordTelemetry();
+    try {
+      const { app } = await createTestApp({ registry });
+      await app.commands.registerCustomer(ana);
+      await app.forget("c-1");
+      await app.runUntilIdle();
+      const span = trace
+        .getTracer("test")
+        .startSpan("mail", { attributes: { message: "ana@example.com" } });
+      span.setStatus({ code: 2, message: "no mailbox for bo@example.com" });
+      span.end();
+      const found = (
+        (await rejection(expectForgotten(app, "c-1", { telemetry }))) as NotForgottenError
+      ).found;
+      expect(found.map(({ field }) => field)).toEqual(["attributes.message"]);
+      const adapter = {
+        ...memory(),
+        inspect: async (): Promise<readonly InspectedTable[]> => [
+          { name: "t", store: null, key: [], opaque: [], rows: [] },
+        ],
+      };
+      const given = (await rejection(
+        expectForgotten(adapter, "c-1", { values: ["bo@example.com"], telemetry }),
+      )) as NotForgottenError;
+      expect(given.found.map(({ field }) => field)).toEqual(["status.message"]);
+      await app.stop();
+    } finally {
+      telemetry.stop();
+    }
+  });
+
   it("refuses anything that is neither a test app nor an adapter", async () => {
     const error = await rejection(expectForgotten({ forget: async () => ({}) } as never, "c-1"));
     expect(error).toBeInstanceOf(TypeError);
