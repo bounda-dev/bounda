@@ -494,6 +494,64 @@ describe("createResealKeys", () => {
     });
   });
 
+  it("reads what a forgetting retained under the latest key it kept of that category, and discards once none is kept", async () => {
+    const { storage } = await setup();
+    const kept = async (category: string, since: string) => {
+      const key = await storage.personalKeys.add("bo", category, await newStoredKey());
+      await storage.personalKeys.retain("bo", key.fingerprint, {
+        since,
+        lastActiveAt: "2025-12-01T00:00:00.000Z",
+      });
+      return key;
+    };
+    await kept("invoices", "2025-12-15T00:00:00.000Z");
+    const latest = await kept("invoices", "2026-01-01T00:00:00.000Z");
+    await kept("invoices", "2026-02-01T00:00:00.000Z");
+    await kept("profile", "2026-01-01T12:00:00.000Z");
+    const retained = { whole: true, categories: ["default"], retained: ["invoices"], expired: [] };
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "bo",
+      expectedVersion: 0,
+      events: [forgotten("bo", 1, retained)],
+    });
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
+    expect(await keys.event("bo", "invoices", 3)).toMatchObject({
+      discarded: false,
+      key: { fingerprint: latest.fingerprint, retained: true },
+    });
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "cy",
+      expectedVersion: 0,
+      events: [forgotten("cy", 1, retained)],
+    });
+    expect(await keys.event("cy", "invoices", 3)).toMatchObject({ discarded: true });
+  });
+
+  it("goes by the last forgetting that covered the category", async () => {
+    const { storage } = await setup();
+    const held = await storage.personalKeys.add("di", "invoices", await newStoredKey());
+    await storage.personalKeys.retain("di", held.fingerprint, {
+      since: "2026-01-02T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "di",
+      expectedVersion: 0,
+      events: [
+        forgotten("di", 1, { whole: false, categories: ["invoices"], retained: [], expired: [] }),
+        forgotten("di", 2, { whole: false, categories: [], retained: ["invoices"], expired: [] }),
+      ],
+    });
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
+    expect(await keys.event("di", "invoices", 3)).toMatchObject({
+      discarded: false,
+      key: { fingerprint: held.fingerprint },
+    });
+  });
+
   it("discards a key for what an event held of a category declared after the person was forgotten as a whole", async () => {
     const { storage } = await setup();
     await storage.eventStore.append({

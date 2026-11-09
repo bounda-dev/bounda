@@ -4,7 +4,7 @@ import { type ErrorIdentity, errorDetails, errorIdentity } from "../shared/retry
 import type { KeyOfFunction } from "./commands.ts";
 import { createDisposableKey, isSealed, seal, unseal } from "./crypto.ts";
 import { readUnder } from "./reads.ts";
-import type { CategoryKey, PersonalKeys } from "./wrapped-keys.ts";
+import { type CategoryKey, inSealingOrder, type PersonalKeys } from "./wrapped-keys.ts";
 
 export interface SealErrorArgs {
   readonly error: unknown;
@@ -46,15 +46,7 @@ const keysToSealWith = async (
   const holds = ({ fingerprint, retained }: KeyedPerson): boolean =>
     held.some(({ key }) => key.fingerprint === fingerprint && (!key.retained || retained === true));
   return held.length > 0 && readUnder.every(holds)
-    ? [...held].sort((a, b) =>
-        a.category === b.category
-          ? a.key.fingerprint < b.key.fingerprint
-            ? -1
-            : 1
-          : a.category < b.category
-            ? -1
-            : 1,
-      )
+    ? inSealingOrder(held)
     : [{ category: DEFAULT_PERSONAL_CATEGORY, key: await createDisposableKey() }];
 };
 

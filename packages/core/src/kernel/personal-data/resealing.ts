@@ -14,7 +14,7 @@ import { isRecord } from "../shared/merge-fields.ts";
 import { createDisposableKey, isSealed, type PersonalKey, seal } from "./crypto.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf, sealState, statePersonOf } from "./process-state.ts";
-import type { CategoryKey, PersonalKeys } from "./wrapped-keys.ts";
+import { type CategoryKey, inSealingOrder, type PersonalKeys } from "./wrapped-keys.ts";
 
 export interface MarksFingerprintArgs {
   readonly aggregates: AggregatesRuntime;
@@ -252,15 +252,7 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
       );
       if (every.length > 0 && !since) {
         return {
-          keys: [...every].sort((a, b) =>
-            a.category === b.category
-              ? a.key.fingerprint < b.key.fingerprint
-                ? -1
-                : 1
-              : a.category < b.category
-                ? -1
-                : 1,
-          ),
+          keys: inSealingOrder(every),
           discarded: false,
         };
       }

@@ -290,12 +290,46 @@ describe("forgetPersonalData", () => {
         { path: ["categories"], message: "Expected a non-empty array of categories" },
       ]),
     );
-    await expect(
-      forget("c-1", {
-        categories: ["profile", "orders"] as unknown as ["default"],
-      }),
-    ).rejects.toThrow('forget names categories the app does not have: "orders"');
+    const refusal = await forget("c-1", {
+      categories: ["profile", "orders", 3, "bills"] as unknown as ["default"],
+    }).catch((error: unknown) => error);
+    expect(refusal).toEqual(
+      new ValidationError('forget names categories the app does not have: "orders", 3, "bills"', [
+        {
+          path: ["categories"],
+          message: 'Expected categories app/personal-data.ts declares, or "default"',
+        },
+      ]),
+    );
+    expect(refusal).toMatchObject({
+      issues: [
+        {
+          path: ["categories"],
+          message: 'Expected categories app/personal-data.ts declares, or "default"',
+        },
+      ],
+    });
     expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("destroys a key under a legal obligation whose retention ends at the forgetting itself", async () => {
+    const { storage, forget, clock } = await setup(undefined, declared);
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("2"));
+    await storage.persons.record({
+      person: "c-1",
+      position: 1,
+      lastActiveAt: new Date(clock.now().getTime() - 30 * DAY_MS).toISOString(),
+      forgottenAt: null,
+    });
+    await forget("c-1");
+    expect(await storage.personalKeys.list("c-1")).toEqual([]);
+  });
+
+  it("destroys the key of a category the app no longer declares", async () => {
+    const { storage, forget } = await setup(undefined, declared);
+    await storage.personalKeys.add("c-1", "retired", testPersonalKey("9"));
+    await forget("c-1");
+    expect(await storage.personalKeys.list("c-1")).toEqual([]);
   });
 
   it("refuses an empty id", async () => {

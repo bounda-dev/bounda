@@ -12,6 +12,7 @@ import { cryptoKeyWrapperOver, defineKeyWrapper, type KeyWrapper } from "./key-w
 import {
   buildPersonalKeyWrapping,
   createPersonalKeyWrapping,
+  inSealingOrder,
   UNWRAPPED_KEY_TTL_MS,
   UNWRAPPED_KEYS_KEPT,
 } from "./wrapped-keys.ts";
@@ -665,5 +666,23 @@ describe("buildPersonalKeyWrapping", () => {
     expect(
       (await buildPersonalKeyWrapping({ definition: null, env: {}, clock })).wrapper,
     ).toBeNull();
+  });
+});
+
+describe("inSealingOrder", () => {
+  it("orders keys by category, then by fingerprint, whatever order they came in", () => {
+    const key = (category: string, fingerprint: string) => ({
+      category,
+      key: { fingerprint, cryptoKey: {} as CryptoKey, retained: false },
+    });
+    const ordered = inSealingOrder([
+      key("profile", "b"),
+      key("default", "z"),
+      key("profile", "a"),
+      key("invoices", "m"),
+    ]);
+    expect(
+      ordered.map(({ category, key: { fingerprint } }) => `${category}:${fingerprint}`),
+    ).toEqual(["default:z", "invoices:m", "profile:a", "profile:b"]);
   });
 });

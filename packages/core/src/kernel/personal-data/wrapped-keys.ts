@@ -74,6 +74,25 @@ export interface CategoryKey {
   readonly key: PersonalKey;
 }
 
+export interface InSealingOrderFunction {
+  (keys: readonly CategoryKey[]): readonly CategoryKey[];
+}
+
+/**
+ * Keys in the order text is sealed under all of them, by category, then by fingerprint: the same
+ * keys always nest alike.
+ */
+export const inSealingOrder: InSealingOrderFunction = (keys) =>
+  [...keys].sort((a, b) =>
+    a.category === b.category
+      ? a.key.fingerprint < b.key.fingerprint
+        ? -1
+        : 1
+      : a.category < b.category
+        ? -1
+        : 1,
+  );
+
 export interface PersonalKeyWrapping {
   /**
    * `null` without a key wrapper: keys are kept as they are.

@@ -128,13 +128,11 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
     if (await transaction.personalKeys.remove(personId, key.fingerprint)) destroyed += 1;
     (retainedSince === null ? gone : expired).add(category);
   }
+  // A forgetting as a whole leaves no key in force, so it keeps nothing.
   const after = await transaction.personalKeys.list(personId);
-  const keep =
-    scope.kind === "whole"
-      ? []
-      : after
-          .filter(({ retainedSince }) => retainedSince === null)
-          .map(({ key }) => key.fingerprint);
+  const keep = after
+    .filter(({ retainedSince }) => retainedSince === null)
+    .map(({ key }) => key.fingerprint);
   const retainedAfter = new Set(
     after.filter(({ retainedSince }) => retainedSince !== null).map(({ category }) => category),
   );
