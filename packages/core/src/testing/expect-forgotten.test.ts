@@ -955,7 +955,7 @@ describe("expectForgotten by categories", () => {
 
   const billed = async () => {
     const { app } = await createTestApp({ registry: categorized });
-    await app.commands.billCustomer({
+    await app.commands.billCustomer?.({
       customerId: "c-1",
       newsletter: "ana@example.com",
       invoice: "INV-2026-0001",

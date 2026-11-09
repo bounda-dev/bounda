@@ -326,7 +326,8 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
       "expectForgotten found no table to search: the adapter's database holds none of Bounda's, so it may be another one, or closed",
     );
   }
-  const { categories } = options;
+  // Names, whatever the project registers, so any category read from the store compares.
+  const categories: readonly string[] | undefined = options.categories;
   const held = heldKeys(tables, personId);
   const stillHeld = [...held.inForce].filter(
     (category) => categories === undefined || categories.includes(category),

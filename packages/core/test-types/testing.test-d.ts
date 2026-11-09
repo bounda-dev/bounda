@@ -100,7 +100,11 @@ describe("expectForgotten", () => {
       readonly before?: PersonalDataExport;
       readonly telemetry?: TelemetryRecording;
       readonly places?: Readonly<Record<string, unknown>>;
+      readonly categories?: readonly ("default" | "delivery" | "invoices")[];
     }>();
+    // @ts-expect-error a category app/personal-data.ts does not declare
+    const misspelled: ExpectForgottenOptions = { categories: ["deliveries"] };
+    void misspelled;
     // @ts-expect-error before is an export, not a list of values
     const wrong: ExpectForgottenOptions = { before: ["ana@example.com"] };
     void wrong;
