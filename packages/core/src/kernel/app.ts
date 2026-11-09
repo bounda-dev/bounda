@@ -816,7 +816,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // A copy restored while the app was stopped holds less than the forget ledger's mark: the
     // holds it brought back are cleared before anything runs, and the reconciliation below forgets
     // again whom it brought back.
-    const cold = await restores.start(clock.now());
+    const cold = await restores.start();
     if (cold !== null) await worker.restored(cold.first);
     // An instance that runs no worker still watches for a restore, and reconciles the ledger at
     // once when it finds one, since no pass of its own would.

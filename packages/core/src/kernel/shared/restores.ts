@@ -41,7 +41,7 @@ export interface RestoreWatch {
    * ledger's mark: `null` while it holds at least that. Never rejects: a ledger that cannot be
    * read is logged and asked again by `check`.
    */
-  start(now: Date): Promise<Restored | null>;
+  start(): Promise<Restored | null>;
   /**
    * Reads the rows and resolves to what this instance learnt: `null` while the database holds at
    * least what it read last. Moves the generation after activity, a write to the stream since the
@@ -209,7 +209,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     };
 
   return {
-    start: async (now) => {
+    start: async () => {
       try {
         const stored = await read();
         head = await events.lastPosition();

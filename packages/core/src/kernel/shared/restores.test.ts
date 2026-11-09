@@ -65,7 +65,7 @@ describe("createRestoreWatch", () => {
     });
     const watch = watchOver();
     expect(await watch.check(at(0))).toBeNull();
-    expect(await watch.start(at(0))).toBeNull();
+    expect(await watch.start()).toBeNull();
     expect(entries).toEqual([
       {
         level: "error",
@@ -83,7 +83,7 @@ describe("createRestoreWatch", () => {
   it("finds at start a copy restored while the app was stopped, from the ledger's mark", async () => {
     const { checkpointStore, ledger, watchOver } = await setUp();
     const running = watchOver();
-    expect(await running.start(at(0))).toBeNull();
+    expect(await running.start()).toBeNull();
     const copy = await checkpointStore.get(RESTORE_GENERATION);
     await running.check(at(0), { active: true });
     await running.check(at(GENERATION_INTERVAL_MS), { active: true });
@@ -91,17 +91,17 @@ describe("createRestoreWatch", () => {
     expect(await ledger.readMark(RESTORE_MARK)).toBe(2);
     await checkpointStore.set(RESTORE_GENERATION, copy);
     const restarted = watchOver();
-    expect(await restarted.start(at(GENERATION_INTERVAL_MS + 1))).toEqual({ first: true });
+    expect(await restarted.start()).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(3);
     expect(await ledger.readMark(RESTORE_MARK)).toBe(3);
-    expect(await watchOver().start(at(GENERATION_INTERVAL_MS + 2))).toBeNull();
+    expect(await watchOver().start()).toBeNull();
   });
 
   it("raises the mark with every move of the generation, and moves it on a stop after recent writes", async () => {
     const { ledger, stream, watchOver } = await setUp();
     const watch = watchOver();
-    await watch.start(at(0));
+    await watch.start();
     await watch.check(at(1), { active: true });
     expect(await ledger.readMark(RESTORE_MARK)).toBe(1);
     await watch.check(at(2), { active: true });
@@ -125,7 +125,7 @@ describe("createRestoreWatch", () => {
     });
     await ledger.raiseMark(RESTORE_MARK, 5);
     const watch = watchOver();
-    expect(await watch.start(at(0))).toBeNull();
+    expect(await watch.start()).toBeNull();
     expect(await watch.check(at(1), { active: true })).toBeNull();
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(0);
     await watch.flush();
@@ -143,7 +143,7 @@ describe("createRestoreWatch", () => {
       }),
     });
     const watch = watchOver();
-    expect(await watch.start(at(0))).toBeNull();
+    expect(await watch.start()).toBeNull();
     await watch.flush();
     expect(entries.map(({ message }) => message)).toEqual([
       "the forget ledger's mark could not be raised",
@@ -154,7 +154,7 @@ describe("createRestoreWatch", () => {
   it("declares a restore, the first, and raises the mark past it", async () => {
     const { checkpointStore, ledger, watchOver } = await setUp();
     const watch = watchOver();
-    await watch.start(at(0));
+    await watch.start();
     expect(await watch.declare()).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
@@ -164,7 +164,7 @@ describe("createRestoreWatch", () => {
   it("touches no ledger and logs nothing without one", async () => {
     const { entries, watchOver } = await setUp({ marks: false });
     const watch = watchOver();
-    expect(await watch.start(at(0))).toBeNull();
+    expect(await watch.start()).toBeNull();
     await watch.check(at(1), { active: true });
     await watch.flush();
     expect(entries).toEqual([]);
@@ -181,7 +181,7 @@ describe("createRestoreWatch", () => {
       }),
     });
     const watch = watchOver();
-    await watch.start(at(0));
+    await watch.start();
     await watch.flush();
     expect(raises).toBe(0);
   });
