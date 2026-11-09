@@ -41,8 +41,9 @@ error: ValidationError (VALIDATION_FAILED); its message may quote personal data:
 ```
 
 `--error-text`, on every command that loads the project, prints the message and lets the log lines
-carry the text of errors for that run; a configuration that sets `errorText: "include"` does the
-same without it. What fails before any handler runs is printed in full: a configuration or a
+carry the text of errors for that run; `BOUNDA_ERROR_TEXT=include` in the environment or in `.env`,
+or a configuration that sets `errorText: "include"`, does the same without it, and
+`BOUNDA_ERROR_TEXT=omit` keeps the text out whatever the configuration says. What fails before any handler runs is printed in full: a configuration or a
 registry that cannot be loaded, a read model that is not in the registry, a list `forget` cannot
 read, and errors whose message Bounda writes from names and ids alone, such as a dead letter that is
 not found or was already settled. To read what a reaction failed on, read its letter:
@@ -287,8 +288,9 @@ dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
   [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
   letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
 
-`--error-text` also prints, under each failure, the text it keeps, encrypted under the person the
-event names: it is read through `app.subscriberFailures.list()`, which records it in the
+Under the rule of [error text](#error-text) set to `"include"`, by `--error-text`,
+`BOUNDA_ERROR_TEXT=include` or the configuration, it also prints, under each failure, the text it
+keeps, encrypted under the person the event names: it is read through `app.subscriberFailures.list()`, which records it in the
 [access log](/guides/personal-data/#who-opened-what) with the persons and `--actor`. A failure whose
 person was forgotten says its text went with them.
 
@@ -418,9 +420,10 @@ gave 1204 entries the expiration keepFor sets; removed 37 already past it
 | `--local` | The local state of `wrangler dev` instead of the deployed namespace |
 | `--env <name>`, `--wrangler-config <path>`, `--persist-to <dir>` | As wrangler takes `--env`, `--config` and `--persist-to` |
 | `--root <dir>` | The project's root, where wrangler is installed |
+| `--error-text` | Print the message of the error it fails on, as [error text](#error-text) says |
 
 Exit codes: `0` done, `1` bad arguments, `2` wrangler failed, is not installed, or
-`@bounda-dev/cloudflare` is not; what wrangler printed of its failure is shown.
+`@bounda-dev/cloudflare` is not; the failure is printed as [error text](#error-text) says.
 
 ## Programmatic use
 

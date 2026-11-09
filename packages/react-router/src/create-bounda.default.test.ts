@@ -12,6 +12,7 @@ const app = {
   stop: async () => {
     started.push("stop");
   },
+  config: { runtime: { telemetry: { errorText: "omit" } } },
 } as unknown as BoundaApp;
 
 vi.mock("@bounda-dev/core/node", () => ({ boot: vi.fn(async () => app) }));

@@ -23,8 +23,10 @@ app/domain/order/           the order aggregate
 app/read/orders/            a read model
 app/routes/home.tsx         a loader that queries and an action that dispatches
 app/root.tsx                mounts boundaMiddleware
+app/entry.server.tsx        React Router's entry, with Bounda's handleError
 app/tenant.ts               names the Durable Object each request reaches
 bounda.config.ts            storage: cloudflare()
+.dev.vars                   the master key, and the text of errors in the logs, for development
 workers/app.ts              the Worker: React Router, and the Durable Object class
 vite.config.ts              plugins: [cloudflare(), bounda(), reactRouter()]
 wrangler.jsonc              the binding and the SQLite migration for the object
@@ -36,5 +38,10 @@ Every request reaches the store `app/tenant.ts` names: `default`, for all of the
 everyone is a choice; to keep each customer's data apart, name theirs there, from the URL or the
 signed-in user. The [React Router guide](https://docs.bounda.dev/guides/react-router/#on-cloudflare)
 has the details.
+
+`app/entry.server.tsx` exports Bounda's `handleError`, so what a loader or an action throws is
+logged without its message, which may quote personal data, unless `BOUNDA_ERROR_TEXT=include`
+says otherwise, as `.dev.vars` does in development for the Worker and the Durable Object alike.
+See [logging errors](https://docs.bounda.dev/guides/react-router/#logging-errors).
 
 `.bounda/`, `+types/` and `.react-router/` are generated; they stay out of git.

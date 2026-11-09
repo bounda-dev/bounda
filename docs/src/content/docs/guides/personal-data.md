@@ -256,8 +256,12 @@ and never its text, and so does the last error the inbox and the scheduler keep 
 The runtime's own log lines and spans carry no error's text: an error is logged and traced by its
 class, its code and the ids of what failed, and the line that files a dead letter names the letter,
 whose text `app.deadLetters` opens for as long as the person is not forgotten. Only
-[`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text) puts the message
-and the stack there, in the clear, out of `forget`'s reach: keep it to development.
+[`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text), or
+`BOUNDA_ERROR_TEXT=include`, puts the message and the stack there, in the clear, out of `forget`'s
+reach: keep it to development. A React Router app logs what its requests throw by the same rule
+once `app/entry.server.tsx` exports Bounda's `handleError`
+([logging errors](/guides/react-router/#logging-errors)); without it, React Router logs every
+message and stack.
 
 What `forget` does not reach is text your code writes elsewhere and data left unmarked: your logs
 keep whatever you wrote to them, an event's payload written in the clear, with the data in a field

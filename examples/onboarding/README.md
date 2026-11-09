@@ -35,7 +35,9 @@ export default defineConfig({ plugins: [bounda(), reactRouter()] });
 
 The plugin runs `bounda generate` when the dev server or the build starts and after every change
 under `app/domain` and `app/read`, and serves `@bounda-dev/react-router/app`: the `bounda`
-context, the `boundaMiddleware` that `root.tsx` mounts, and `dispose`. Loaders and actions read
+context, the `boundaMiddleware` that `root.tsx` mounts, `dispose`, and the `handleError` that
+`entry.server.tsx` exports, so what a request throws is logged without its message, which may
+quote personal data, except under the dev server. Loaders and actions read
 the app with `context.get(bounda)`. The served module imports the generated registry by value, so
 editing a domain module re-evaluates it and the next request boots an app from the new code.
 `register.d.ts`, also generated, types `bounda` for this project.

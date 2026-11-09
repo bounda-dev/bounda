@@ -1,9 +1,12 @@
 import type { PersonalDataForgottenReason } from "@bounda-dev/core";
 import {
   type DurationInput,
+  ERROR_TEXT_VARIABLE,
   type ErrorFields,
   errorFields,
+  resolveErrorText,
   type SubscriberFailing,
+  withErrorText,
 } from "@bounda-dev/core";
 import type {
   Adapter,
@@ -53,6 +56,30 @@ describe("errorFields", () => {
     errorFields({ error: null, errorText: "all" });
     expectTypeOf<SubscriberFailing["errorName"]>().toEqualTypeOf<string>();
     expectTypeOf<SubscriberFailing>().not.toHaveProperty("message");
+  });
+
+  it("resolves one rule from a host's override, any environment, the configuration and a fallback", () => {
+    expectTypeOf(ERROR_TEXT_VARIABLE).toEqualTypeOf<"BOUNDA_ERROR_TEXT">();
+    const processEnv: Readonly<Record<string, string | undefined>> = {};
+    expectTypeOf(resolveErrorText({})).toEqualTypeOf<ErrorText>();
+    expectTypeOf(
+      resolveErrorText({
+        forced: undefined,
+        env: processEnv,
+        config: { storage: sqlite, ports },
+        fallback: "include",
+        ignoreInvalidEnv: true,
+      }),
+    ).toEqualTypeOf<ErrorText>();
+    expectTypeOf(
+      withErrorText({ config: { storage: sqlite, ports }, env: processEnv }),
+    ).toEqualTypeOf<Config>();
+    // @ts-expect-error an environment is an object
+    resolveErrorText({ env: "include" });
+    // @ts-expect-error a fallback is "omit" or "include"
+    resolveErrorText({ fallback: "all" });
+    // @ts-expect-error withErrorText needs the configuration it sets the rule in
+    withErrorText({ forced: "include" });
   });
 });
 

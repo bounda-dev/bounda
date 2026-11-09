@@ -178,7 +178,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   as `ConcurrencyError` or a dead letter not found, keep it. `"include"` adds the message and the
   stack of every error, for development; `createTestApp` and the dev server of
   `@bounda-dev/react-router` default to it, and `bounda --error-text` turns it on for one command.
-  See [error text](/reference/observability/#error-text).
+  The environment variable `BOUNDA_ERROR_TEXT` overrides it, as `.dev.vars` does in development on
+  Cloudflare. See [error text](/reference/observability/#error-text).
 
 ### Per aggregate
 

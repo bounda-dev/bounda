@@ -8,6 +8,7 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { Logger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
+import { withErrorText } from "../kernel/shared/error-text.ts";
 import { guardedLogger } from "../kernel/shared/guarded-logger.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppRegistry } from "../register/index.ts";
@@ -59,7 +60,8 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    */
   readonly logger?: Logger;
   /**
-   * Overrides `runtime.telemetry.errorText` for this app, as `bounda --error-text` does.
+   * Overrides `runtime.telemetry.errorText` for this app, as `bounda --error-text` does. Without
+   * it, `BOUNDA_ERROR_TEXT` does, when set.
    */
   readonly errorText?: ErrorText;
   /**
@@ -190,7 +192,8 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
  * Boots a Bounda app in Node: loads `.env`, imports the configuration and the generated registry,
  * creates the app with `process.env` as the environment implementations' `create` receives, and
  * stops it on `SIGINT` or `SIGTERM`; stopping the app removes those listeners again. Throws
- * `ConfigurationError` when a module is missing or lacks its export.
+ * `ConfigurationError` when a module is missing or lacks its export, or for a `BOUNDA_ERROR_TEXT`
+ * other than `"omit"` or `"include"`.
  */
 export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   root = process.cwd(),
@@ -221,16 +224,8 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
 
   const app = await createApp<R>({
     registry: project.registry,
-    config:
-      errorText === undefined
-        ? project.config
-        : {
-            ...project.config,
-            runtime: {
-              ...project.config.runtime,
-              telemetry: { ...project.config.runtime?.telemetry, errorText },
-            },
-          },
+    // `process.env` is read once `.env` is loaded, which may set `BOUNDA_ERROR_TEXT`.
+    config: withErrorText({ config: project.config, forced: errorText, env: process.env }),
     logger: rawLogger,
     env: process.env,
     ...(ids === undefined ? {} : { ids }),

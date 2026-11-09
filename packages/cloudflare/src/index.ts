@@ -34,6 +34,7 @@ export {
   kvForgetLedger,
   planKvForgetLedgerExpiry,
 } from "./forget-ledger.ts";
+export { workersLogger } from "./logger.ts";
 export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
 export type { DurableSqlStorage } from "./sql-database.ts";
 export type {
