@@ -19,6 +19,7 @@ import {
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
+  inspectionContract,
   pendingEvent,
   personalKeyStoreContract,
   readModelRebuildContract,
@@ -61,6 +62,7 @@ describe("sqlite adapter in memory", () => {
       ).table,
   });
   viewContract({ create: async () => sqlite({ memory: true }) });
+  inspectionContract({ create: async () => sqlite({ memory: true }) });
 });
 
 describe("sqlite adapter in memory, under concurrent use", () => {

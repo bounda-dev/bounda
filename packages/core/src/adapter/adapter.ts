@@ -8,6 +8,7 @@ import type { EventStore } from "./storage/event-store.ts";
 import type { CreateForgetLedgerArgs, ForgetLedger } from "./storage/forget-ledger.ts";
 import type { IdempotencyStore } from "./storage/idempotency-store.ts";
 import type { InboxLedger } from "./storage/inbox-ledger.ts";
+import type { InspectedTable } from "./storage/inspection.ts";
 import type { PersonStore } from "./storage/person-store.ts";
 import type { PersonalKeyStore } from "./storage/personal-key-store.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
@@ -204,6 +205,12 @@ export interface Adapter<Name extends string = string, Options = unknown>
    * down when the app starts fails the ledger's calls, never the start.
    */
   createForgetLedger(args: CreateForgetLedgerArgs): Promise<ForgetLedger>;
+  /**
+   * Every table this adapter's database holds under its table prefix, storage, read models and
+   * forget ledger alike, each row as stored, without opening anything: what `expectForgotten`
+   * searches. It reads the whole database, so it is for tests.
+   */
+  inspect(): Promise<readonly InspectedTable[]>;
 }
 
 export interface IsAdapterFunction {

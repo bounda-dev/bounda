@@ -9,6 +9,7 @@ import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import { createSqlForgetLedger } from "../sql/forget-ledger.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
+import { inspectSqlTable, quoteName } from "../sql/inspection.ts";
 import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
@@ -202,6 +203,37 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           progress,
         }),
       ),
+    inspect: async () => {
+      const { db } = acquire();
+      try {
+        const names = await db.all(
+          `SELECT "name" FROM sqlite_master WHERE "type" = 'table' ORDER BY "name"`,
+          [],
+        );
+        const inspected = [];
+        for (const { name } of names) {
+          const table = String(name);
+          if (!table.startsWith(tablePrefix)) continue;
+          const columns = await db.all(`PRAGMA table_info(${quoteName(table)})`, []);
+          const key = columns
+            .filter(({ pk }) => Number(pk) > 0)
+            .sort((a, b) => Number(a.pk) - Number(b.pk))
+            .map(({ name: column }) => String(column));
+          inspected.push(
+            await inspectSqlTable({
+              db,
+              prefix: tablePrefix,
+              name: table,
+              from: quoteName(table),
+              key,
+            }),
+          );
+        }
+        return inspected;
+      } finally {
+        await release();
+      }
+    },
     createForgetLedger: async ({ tenant }) => {
       const table = quoteIdentifier(
         storageTableNameFor({ prefix: tablePrefix, table: "forgetLedger" }),

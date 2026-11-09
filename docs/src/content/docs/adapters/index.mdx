@@ -102,6 +102,10 @@ Its columns come from the `fields` of the view, also in snake_case. While a read
 rebuilt there is also `bounda_rm_order_summary__rebuild`, and for an instant during the swap
 `bounda_rm_order_summary__retired`.
 
+Every adapter reads all of them back with `inspect()`, each row as stored, for
+[`expectForgotten`](/guides/personal-data/#in-tests) to search; an adapter of your own proves it
+with `inspectionContract` from `@bounda-dev/core/adapter/testing`.
+
 ## Evolving a read model
 
 Adding a field to a view adds a nullable column the next time the app starts; existing rows keep

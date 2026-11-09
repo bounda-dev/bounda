@@ -254,6 +254,28 @@ adapter with `createTestApp`, as in any Bounda project; `tests/api.test.ts` send
 the Worker with `SELF.fetch` and reaches the real Durable Object and its SQLite. The adapter's own
 suite runs every storage contract inside `workerd` too.
 
+`expectForgotten` searches the object's own SQLite through `durableObjectAdapter`, called inside
+the object with `runInDurableObject`, for the values of the person's export taken before
+`forget`:
+
+```ts
+import { env, runInDurableObject } from "cloudflare:test";
+import { connect, durableObjectAdapter } from "@bounda-dev/cloudflare";
+import { expectForgotten } from "@bounda-dev/core/testing";
+
+const stub = env.STORE.get(env.STORE.idFromName("forgets"));
+const store = connect(stub);
+// ...
+const before = await store.exportPersonalData("ada");
+await store.forget("ada");
+await runInDurableObject(stub, (_object, state) =>
+  expectForgotten(durableObjectAdapter({ storage: state.storage }), "ada", { before }),
+);
+```
+
+Pass `durableObjectAdapter` the options the configuration gives `cloudflare()`, `tablePrefix`
+among them.
+
 Types for the bindings come from `wrangler types`, which writes `worker-configuration.d.ts` from
 `wrangler.jsonc`; `dev`, `typecheck` and `check` run it, and `tsconfig.json` lists that file
 instead of `@cloudflare/workers-types`. There is no `prepare` script: every script runs

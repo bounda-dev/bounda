@@ -4,7 +4,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { createTestApp } from "../../testing/index.ts";
+import { createTestApp, expectForgotten } from "../../testing/index.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { SCHEDULED_COMMAND_FAILED_EVENT } from "../system-events.ts";
 import { isSealed } from "./crypto.ts";
@@ -242,7 +242,7 @@ describe("dead letters of work that names a person", () => {
   });
 
   it("reads the text as null once the person is forgotten, keeps the letters, and still retries the process", async () => {
-    const { app, storage } = await setup();
+    const { app } = await setup();
     await app.commands.registerCustomer(ana);
     await app.runUntilIdle();
     const before = await app.deadLetters.list();
@@ -268,7 +268,7 @@ describe("dead letters of work that names a person", () => {
       after.map((letter) => [letter.id, letter.status, letter.errorMessage, letter.errorStack]),
     ).toEqual(before.map((letter) => [letter.id, "failed", null, null]));
     expect(after.map((letter) => letter.errorName)).toEqual(["ValidationError", "ValidationError"]);
-    expect(JSON.stringify(await storage.deadLetterStore.list())).not.toContain("ana@example.com");
+    await expectForgotten(app, "c-1");
 
     mailerDown = false;
     const process = after.find((letter) => letter.kind === "process");

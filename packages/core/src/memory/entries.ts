@@ -5,6 +5,10 @@ export interface StoreEntries<Key> {
    * it became `after`.
    */
   putBack(key: Key, before: unknown, after: unknown): void;
+  /**
+   * Every entry, under the key the store files it by.
+   */
+  list(): readonly (readonly [string, unknown])[];
 }
 
 /**
@@ -30,4 +34,5 @@ export const createStoreEntries: CreateStoreEntriesFunction = <Key, Value>(
     if (before === undefined) map.delete(at);
     else map.set(at, before as Value);
   },
+  list: () => [...map.entries()],
 });

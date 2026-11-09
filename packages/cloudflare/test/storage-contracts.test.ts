@@ -11,6 +11,7 @@ import {
   forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
+  inspectionContract,
   personalKeyStoreContract,
   personStoreContract,
   readModelRebuildContract,
@@ -62,6 +63,7 @@ describe("the Durable Object adapter", () => {
   storageTransactionContract({ create: freshStorage });
   personalKeyStoreContract({ create: async () => (await freshStorage()).personalKeys });
   personStoreContract({ create: async () => (await freshStorage()).persons });
+  inspectionContract({ create: freshAdapter });
   forgetLedgerContract({
     create: async () => {
       const adapter = await freshAdapter();

@@ -16,6 +16,10 @@ import {
   trace,
 } from "@opentelemetry/api";
 
+/**
+ * A span as it stands: its attributes, status, the messages of the exceptions recorded on it, and
+ * whether it ended.
+ */
 export interface RecordedSpan {
   readonly name: string;
   readonly attributes: Attributes;
@@ -49,6 +53,10 @@ export interface RecordedInstrument {
 }
 
 export interface FakeTelemetry {
+  /**
+   * Whether its providers took the place of the global ones: not when another was registered.
+   */
+  readonly registered: boolean;
   readonly spans: readonly RecordedSpan[];
   readonly spanEvents: readonly RecordedSpanEvent[];
   readonly counts: readonly RecordedCount[];
@@ -204,10 +212,12 @@ export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
   } as unknown as Meter;
   const meterProvider: MeterProvider = { getMeter: () => meter };
 
-  trace.setGlobalTracerProvider(tracerProvider);
-  metrics.setGlobalMeterProvider(meterProvider);
+  // OpenTelemetry keeps the first provider registered; the meter's only goes in with the tracer's.
+  const registered = trace.setGlobalTracerProvider(tracerProvider);
+  if (registered) metrics.setGlobalMeterProvider(meterProvider);
 
   return {
+    registered,
     spans,
     spanEvents,
     counts,

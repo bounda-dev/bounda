@@ -86,6 +86,8 @@ you get a project with one aggregate, one read model and a test:
       - projections/
         - order/
           - order-placed.ts projects the order's OrderPlaced
+        - bounda/
+          - personal-data-forgotten.ts clears what a forgotten customer wrote
       - queries/
         - list-orders.ts
 - tests/
@@ -112,8 +114,13 @@ Every file exports the functions its concept needs and gets its argument types f
 // app/domain/order/commands/place-order.ts
 import type { Command } from "./+types/place-order";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ orderId: z.uuid(), customerId: z.string().min(1), total: z.number().positive() });
+export const payload = ({ z, person, personal }: Command.PayloadArgs) =>
+  z.object({
+    orderId: z.uuid(),
+    customerId: person(z.string().min(1)),
+    total: z.number().positive(),
+    deliveryNote: personal(z.string().min(1)).optional(),
+  });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({
   AlreadyPlaced: `Order ${command.aggregateId} was already placed`,
@@ -121,13 +128,17 @@ export const rejections = ({ command }: Command.RejectionsArgs) => ({
 
 export const handler = ({ command, state, events, reject }: Command.HandlerArgs) => {
   if (state.status !== undefined) return reject("AlreadyPlaced");
-  return [events.orderPlaced({ customerId: command.payload.customerId, total: command.payload.total })];
+  const { customerId, total, deliveryNote } = command.payload;
+  return [events.orderPlaced({ customerId, total, deliveryNote })];
 };
 ```
 
 `command.payload` is typed from the Zod schema above it, `state` from what the order's events
 return, and `events` only offers the events of this aggregate. `rejections` declares how the
-command may say no, and `reject` only takes those codes. `order-placed.ts` opens the order
+command may say no, and `reject` only takes those codes. `person` and `personal` mark the
+customer's id and the note they wrote as [personal data](/guides/personal-data/): stored
+encrypted, gone for good with `app.forget(customerId)`, which `tests/orders.test.ts` checks with
+`expectForgotten`. `order-placed.ts` opens the order
 with `begin`, so before it every field of `state` is `undefined`, and after it `status` and the
 rest are always set. Nothing here is registered anywhere: the file's place
 and name are the declaration. The [project layout](/guides/project-layout/) guide has the whole

@@ -24,6 +24,7 @@ import {
   forgetLedgerContract,
   idempotencyStoreContract,
   inboxLedgerContract,
+  inspectionContract,
   pendingEvent,
   personalKeyStoreContract,
   personStoreContract,
@@ -131,6 +132,7 @@ describe("the SQLite stores on node:sqlite", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
   personStoreContract({ create: async () => (await storage()).persons });
+  inspectionContract({ create: async () => nodeSqlite().adapter });
   forgetLedgerContract({
     create: async () => {
       const { adapter } = nodeSqlite();

@@ -16,7 +16,7 @@ import type { RejectFunction } from "../../modules/command.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
-import { createTestApp } from "../../testing/index.ts";
+import { createTestApp, expectForgotten } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
 import { rebuildReadModel } from "../read-model/rebuild.ts";
 import { isSealed } from "./crypto.ts";
@@ -299,6 +299,7 @@ describe("personal data in an app", () => {
 
     expect((await app.runUntilIdle()).idle).toBe(true);
     expect(erased).toEqual(["c-1"]);
+    await expectForgotten(app, "c-1");
     await app.stop();
   });
 

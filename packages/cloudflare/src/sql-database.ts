@@ -1,5 +1,8 @@
 import type { SqlDatabase, SqlExecutor } from "@bounda-dev/core/adapter/sql";
 
+/**
+ * What Bounda needs of a Durable Object's storage: its SQL and its transactions.
+ */
 export interface DurableSqlStorage {
   readonly sql: SqlStorage;
   transaction<T>(closure: () => Promise<T>): Promise<T>;

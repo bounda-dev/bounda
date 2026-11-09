@@ -1,4 +1,6 @@
-import { SELF } from "cloudflare:test";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { connect, durableObjectAdapter } from "@bounda-dev/cloudflare";
+import { expectForgotten } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 
 const post = (path: string, body: unknown, tenant: string) =>
@@ -55,5 +57,22 @@ describe("the orders API, on the Durable Object", () => {
   it("names what it does not know", async () => {
     expect((await post("/commands/shipOrder", {}, "unknown")).status).toBe(404);
     expect((await post("/queries/nope", {}, "unknown")).status).toBe(404);
+  });
+
+  it("forgets a customer in their Durable Object, leaving nothing of theirs readable", async () => {
+    const stub = env.STORE.get(env.STORE.idFromName("forgets"));
+    const store = connect(stub);
+    await store.commands.placeOrder({
+      orderId: crypto.randomUUID(),
+      customerId: "ada",
+      total: 42,
+      deliveryNote: "Leave it with the porter",
+    });
+    const before = await store.exportPersonalData("ada");
+    await store.forget("ada");
+    expect(await listOrders("forgets", "ada")).toMatchObject({ total: 42 });
+    await runInDurableObject(stub, (_object, state) =>
+      expectForgotten(durableObjectAdapter({ storage: state.storage }), "ada", { before }),
+    );
   });
 });

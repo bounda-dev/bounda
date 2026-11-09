@@ -6,6 +6,10 @@ import {
 
 export interface MemoryForgetLedgers {
   ledgerOf(tenant: string | undefined): ForgetLedger;
+  /**
+   * Every tenant's entries, each with its tenant, `""` for none.
+   */
+  rows(): readonly Readonly<Record<string, unknown>>[];
 }
 
 export interface CreateMemoryForgetLedgersFunction {
@@ -18,6 +22,10 @@ export interface CreateMemoryForgetLedgersFunction {
 export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () => {
   const byTenant = new Map<string, Map<string, ForgetLedgerEntry>>();
   return {
+    rows: () =>
+      [...byTenant.entries()].flatMap(([tenant, entries]) =>
+        [...entries.values()].map((entry) => ({ tenant, ...entry })),
+      ),
     ledgerOf: (tenant) => {
       const key = tenant ?? "";
       const entries = byTenant.get(key) ?? new Map<string, ForgetLedgerEntry>();

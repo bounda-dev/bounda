@@ -10,13 +10,18 @@ export interface CreateMemorySnapshotStoreArgs {
   readonly holds: (held: KeyedPerson) => boolean;
 }
 
+export interface MemorySnapshotStore extends SnapshotStore {
+  rows(): readonly Snapshot[];
+}
+
 export interface CreateMemorySnapshotStoreFunction {
-  (args: CreateMemorySnapshotStoreArgs): SnapshotStore;
+  (args: CreateMemorySnapshotStoreArgs): MemorySnapshotStore;
 }
 
 export const createMemorySnapshotStore: CreateMemorySnapshotStoreFunction = ({ holds }) => {
   const snapshots = new Map<string, Snapshot>();
   return {
+    rows: () => [...snapshots.values()],
     get: async (stream) => snapshots.get(streamId(stream)) ?? null,
     put: async (snapshot) => {
       const current = snapshots.get(streamId(snapshot));

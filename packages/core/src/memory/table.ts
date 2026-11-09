@@ -19,6 +19,14 @@ export interface CreateMemoryTableArgs {
 export interface MemoryTable<Row> extends Table<Row> {
   // Returns what puts the rows back the way they were.
   snapshot(): () => void;
+  /**
+   * Every row as kept, encoded as the SQLite table would hold it.
+   */
+  rows(): readonly Readonly<Record<string, unknown>>[];
+  /**
+   * The field of its primary key.
+   */
+  readonly key: string;
 }
 
 export interface CreateMemoryTableFunction {
@@ -27,8 +35,12 @@ export interface CreateMemoryTableFunction {
 
 type Stored = Readonly<Record<string, unknown>>;
 
+export interface CompareStoredFunction {
+  (a: unknown, b: unknown): number;
+}
+
 // SQLite's order: no value first, text by code point.
-const compare = (a: unknown, b: unknown): number => {
+export const compareStored: CompareStoredFunction = (a, b) => {
   if (a === b) return 0;
   if (a === null) return -1;
   if (b === null) return 1;
@@ -85,7 +97,7 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
             return (stored) => stored[field] !== value;
           default: {
             const holds = RANGES[condition.operator];
-            return (stored) => stored[field] !== null && holds(compare(stored[field], value));
+            return (stored) => stored[field] !== null && holds(compareStored(stored[field], value));
           }
         }
       },
@@ -122,7 +134,7 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
       const { field, direction } = args.orderBy;
       const column = columnFor({ field, columns });
       selected.sort(
-        (a, b) => compare(a[column.field], b[column.field]) * (direction === "asc" ? 1 : -1),
+        (a, b) => compareStored(a[column.field], b[column.field]) * (direction === "asc" ? 1 : -1),
       );
     }
     const offset = args.offset ?? 0;
@@ -176,6 +188,8 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
     findOne: async (where) => select({ where, limit: 1 })[0] ?? null,
     findMany: async (args) => select(args),
     count: async (where) => [...rows.values()].filter(matcher(where)).length,
+    rows: () => [...rows.values()],
+    key: primaryKey.field,
     snapshot: () => {
       const saved = new Map(rows);
       return () => {

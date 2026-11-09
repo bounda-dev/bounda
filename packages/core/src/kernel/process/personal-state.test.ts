@@ -10,7 +10,7 @@ import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { createTestApp } from "../../testing/index.ts";
+import { createTestApp, expectForgotten } from "../../testing/index.ts";
 import { isSealed } from "../personal-data/crypto.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
 
@@ -223,6 +223,7 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
     ]);
     const last = events.at(-2)?.payload as { state: Record<string, unknown> };
     expect(last.state).toEqual({ customerId: "c-1", email: null, nudges: 1, reminder: null });
+    await expectForgotten(app, "c-1");
     await app.stop();
   });
 

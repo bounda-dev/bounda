@@ -39,6 +39,10 @@ export interface MemoryEventStore extends EventStore {
    * rolled-back sequence leaves on PostgreSQL.
    */
   release(positions: readonly number[]): void;
+  /**
+   * Every event as kept, payload and metadata as JSON text, in position order.
+   */
+  rows(): readonly object[];
 }
 
 export interface CreateMemoryEventStoreFunction {
@@ -139,6 +143,7 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
 
   return {
     appendAll,
+    rows: () => [...log.values()].sort((a, b) => a.position - b.position),
     append: async (args) => (await appendAll([args]))[0] as AppendResult,
     reserve,
     release: (positions) => {

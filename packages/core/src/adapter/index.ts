@@ -71,6 +71,7 @@ export type {
   RenewClaimArgs,
   SettleClaimArgs,
 } from "./storage/inbox-ledger.ts";
+export type { InspectedStore, InspectedTable } from "./storage/inspection.ts";
 export type {
   ListIdleArgs,
   PersonActivity,

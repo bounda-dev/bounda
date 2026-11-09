@@ -1,7 +1,9 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
+import { expectForgotten } from "@bounda-dev/core/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { durableObjectAdapter } from "../src/adapter.ts";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
@@ -106,6 +108,7 @@ describe("a Bounda Durable Object", () => {
     );
     expect(sealed).toEqual([{ person: "ada" }]);
 
+    const before = await store.exportPersonalData("ada");
     const forgotten = await store.forget("ada");
     expect(forgotten).toMatchObject({
       aggregateType: "bounda",
@@ -122,6 +125,21 @@ describe("a Bounda Durable Object", () => {
       orderId: "o-1",
       status: "placed",
       total: 7,
+    });
+    const search = (values: readonly unknown[] = []) =>
+      runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+        expectForgotten(durableObjectAdapter({ storage: state.storage }), "ada", {
+          before,
+          values,
+          places: { logs: logs.info, errors: logs.error },
+        }).catch((error: unknown) => error),
+      );
+    expect(await search()).toBeUndefined();
+    expect(await search(["7"])).toMatchObject({
+      name: "NotForgottenError",
+      found: expect.arrayContaining([
+        { value: "7", store: "bounda_events", row: "position=1", field: "payload.total" },
+      ]),
     });
   });
 

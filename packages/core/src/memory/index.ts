@@ -7,7 +7,10 @@ import type {
   Storage,
 } from "../adapter/adapter.ts";
 import { rebuildFencing } from "../adapter/rebuild-fencing.ts";
+import { DEFAULT_TABLE_PREFIX, tableNameFor } from "../adapter/sql/identifiers.ts";
+import { rebuildTablesFor } from "../adapter/sql/read-model-schema.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
+import type { InspectedTable } from "../adapter/storage/inspection.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import { RebuildSupersededError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
@@ -18,6 +21,7 @@ import { createMemoryEventStore } from "./event-store.ts";
 import { createMemoryForgetLedgers } from "./forget-ledger.ts";
 import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
+import { byKey, entriesRows, storageTable } from "./inspection.ts";
 import { createKeptPersonStore } from "./person-store.ts";
 import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
 import { createKeptScheduler } from "./scheduler.ts";
@@ -47,6 +51,21 @@ interface LiveTable {
   current: MemoryTable<Record<string, unknown>>;
 }
 
+const readModelTable = (
+  name: string,
+  table: MemoryTable<Record<string, unknown>>,
+  shadow = false,
+): InspectedTable => {
+  const live = tableNameFor({ prefix: DEFAULT_TABLE_PREFIX, readModel: name });
+  return {
+    name: shadow ? rebuildTablesFor(live).shadow : live,
+    store: "readModel",
+    key: [table.key],
+    opaque: [],
+    rows: byKey(table.rows(), [table.key]),
+  };
+};
+
 const through = <Row extends object>(live: LiveTable): Table<Row> => {
   const table = (): Table<Row> => live.current as unknown as Table<Row>;
   return {
@@ -73,6 +92,8 @@ export const memory: MemoryFunction = (options = {}) => {
   const tables = new Map<string, LiveTable>();
   const shadows = new Map<string, MemoryTable<Record<string, unknown>>>();
   const forgetLedgers = createMemoryForgetLedgers();
+  // What `createStorage` opened, read by `inspect`.
+  let storageTables: () => readonly InspectedTable[] = () => [];
 
   const inTransaction = async <T>(
     target: MemoryTable<Record<string, unknown>>,
@@ -123,6 +144,42 @@ export const memory: MemoryFunction = (options = {}) => {
         persons: persons.store,
         snapshotStore,
       };
+      if (storage === null) {
+        storageTables = () => [
+          storageTable({ table: "events", key: ["position"], rows: stores.eventStore.rows() }),
+          storageTable({
+            table: "snapshots",
+            key: ["aggregateType", "aggregateId"],
+            rows: snapshotStore.rows(),
+          }),
+          storageTable({
+            table: "inbox",
+            key: ["handler", "eventId"],
+            rows: entriesRows(inboxLedger.entries),
+          }),
+          storageTable({
+            table: "deadLetters",
+            key: ["id"],
+            rows: entriesRows(deadLetterStore.entries),
+          }),
+          storageTable({
+            table: "scheduledCommands",
+            key: ["dedupeKey"],
+            rows: entriesRows(scheduler.entries),
+          }),
+          storageTable({
+            table: "idempotencyKeys",
+            key: ["key"],
+            rows: entriesRows(idempotencyStore.entries),
+          }),
+          storageTable({
+            table: "personalKeys",
+            key: ["person"],
+            rows: entriesRows(personalKeys.entries, "person"),
+          }),
+          storageTable({ table: "persons", key: ["person"], rows: entriesRows(persons.entries) }),
+        ];
+      }
       storage ??= {
         ...stores,
         notifier,
@@ -237,5 +294,16 @@ export const memory: MemoryFunction = (options = {}) => {
       };
     },
     createForgetLedger: async ({ tenant }) => forgetLedgers.ledgerOf(tenant),
+    inspect: async () => [
+      ...storageTables(),
+      storageTable({ table: "checkpoints", key: ["subscriber"], rows: checkpointStore.rows() }),
+      storageTable({
+        table: "forgetLedger",
+        key: ["tenant", "eventId"],
+        rows: forgetLedgers.rows(),
+      }),
+      ...[...tables.entries()].map(([name, { current }]) => readModelTable(name, current)),
+      ...[...shadows.entries()].map(([name, shadow]) => readModelTable(name, shadow, true)),
+    ],
   };
 };

@@ -1,6 +1,17 @@
-import type { BoundaClient, CreateAppArgs } from "@bounda-dev/core";
+import type { BoundaClient, CreateAppArgs, PersonalDataExport } from "@bounda-dev/core";
+import type { Adapter } from "@bounda-dev/core/adapter";
 import type { AppTestPorts } from "@bounda-dev/core/register";
-import type { CreateTestAppArgs, createTestApp } from "@bounda-dev/core/testing";
+import {
+  type CreateTestAppArgs,
+  type createTestApp,
+  type ExpectForgottenOptions,
+  type ExpectForgottenTarget,
+  expectForgotten,
+  type ForgottenValueFound,
+  type NotForgottenError,
+  recordTelemetry,
+  type TelemetryRecording,
+} from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type { TestPorts } from "./fixtures/order-app/.bounda/types.ts";
@@ -64,5 +75,50 @@ describe("createTestApp's app", () => {
     type App = Awaited<ReturnType<typeof createTestApp<typeof registry>>>["app"];
     expectTypeOf<ReturnType<App["as"]>>().toEqualTypeOf<BoundaClient<typeof registry>>();
     expectTypeOf<ReturnType<App["as"]>["commands"]>().toEqualTypeOf<App["commands"]>();
+  });
+});
+
+describe("expectForgotten", () => {
+  it("takes the app createTestApp returns, or an adapter, and a person's id", () => {
+    type Created = Awaited<ReturnType<typeof createTestApp<typeof registry>>>;
+    expectTypeOf<Created["app"]>().toExtend<ExpectForgottenTarget>();
+    expectTypeOf<Adapter>().toExtend<ExpectForgottenTarget>();
+    expectTypeOf(expectForgotten).parameter(1).toEqualTypeOf<string>();
+    expectTypeOf(expectForgotten).returns.toEqualTypeOf<Promise<void>>();
+  });
+
+  it("refuses what is neither", () => {
+    // @ts-expect-error a string is no app
+    void expectForgotten("app", "c-1");
+    // @ts-expect-error an object without forget is no app
+    void expectForgotten({ commands: {} }, "c-1");
+  });
+
+  it("looks for more values, an export taken before, the telemetry and more places", () => {
+    expectTypeOf<ExpectForgottenOptions>().toEqualTypeOf<{
+      readonly values?: readonly unknown[];
+      readonly before?: PersonalDataExport;
+      readonly telemetry?: TelemetryRecording;
+      readonly places?: Readonly<Record<string, unknown>>;
+    }>();
+    // @ts-expect-error before is an export, not a list of values
+    const wrong: ExpectForgottenOptions = { before: ["ana@example.com"] };
+    void wrong;
+  });
+
+  it("rejects with what it found, place by place", () => {
+    expectTypeOf<NotForgottenError["found"]>().toEqualTypeOf<readonly ForgottenValueFound[]>();
+    expectTypeOf<ForgottenValueFound>().toEqualTypeOf<{
+      readonly value: string;
+      readonly store: string;
+      readonly row: string;
+      readonly field: string;
+    }>();
+    expectTypeOf<NotForgottenError>().toExtend<Error>();
+  });
+
+  it("records the telemetry until stopped", () => {
+    expectTypeOf(recordTelemetry).returns.toEqualTypeOf<TelemetryRecording>();
+    expectTypeOf<TelemetryRecording["stop"]>().toEqualTypeOf<() => void>();
   });
 });

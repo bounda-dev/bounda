@@ -6,7 +6,7 @@ import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts"
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import { person, personal } from "../../modules/personal.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { createTestApp } from "../../testing/index.ts";
+import { createTestApp, expectForgotten } from "../../testing/index.ts";
 import { createRecordingLogger, keysOver, newStoredKey } from "../test-support.ts";
 import { openCommandPayload, sealCommandPayload } from "./commands.ts";
 import { isSealed } from "./crypto.ts";
@@ -385,6 +385,7 @@ describe("personal data in delayed commands", () => {
     await runDue();
     await runDue();
     expect(received).toEqual([{ customerId: "c-2", email: "bo@example.com" }]);
+    await expectForgotten(app, "c-1", { places: { received } });
     await app.stop();
   });
 
@@ -419,6 +420,7 @@ describe("personal data in delayed commands", () => {
       cancelledCommands: [],
       removedDeadLetters: [{ id: stored?.id, commandType: "RemindCustomer" }],
     });
+    await expectForgotten(app, "c-1");
     await app.stop();
   });
 
