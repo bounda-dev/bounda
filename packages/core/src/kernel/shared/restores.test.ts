@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import {
@@ -27,7 +28,7 @@ const setUp = async (
   const watchOver = () =>
     createRestoreWatch({
       checkpoints: options.wrap?.(checkpointStore) ?? checkpointStore,
-      events: { lastPosition: async () => stream.head },
+      events: { lastPosition: async () => stream.head, readAll: async () => [] },
       marks: options.marks === false ? null : (options.ledger?.(ledger) ?? ledger),
       logger,
     });
@@ -208,6 +209,7 @@ describe("createRestoreWatch", () => {
           if (down) throw new Error("down");
           return 0;
         },
+        readAll: async () => [],
       },
       marks: ledger,
       logger,
@@ -221,5 +223,183 @@ describe("createRestoreWatch", () => {
     expect(entries.map(({ message }) => message)).toEqual([
       "the database could not be checked for a restore",
     ]);
+  });
+});
+
+// A stream whose history a test rewrites, as a restore does: positions come back with other ids.
+const rewritable = () => {
+  let events: { id: string; position: number }[] = [];
+  let reads = 0;
+  return {
+    events: {
+      lastPosition: async () => events.at(-1)?.position ?? 0,
+      readAll: async ({ afterPosition, limit }: { afterPosition: number; limit: number }) => {
+        reads += 1;
+        return events
+          .filter(({ position }) => position > afterPosition)
+          .slice(0, limit) as unknown as StoredEvent[];
+      },
+    },
+    append: (...ids: string[]) => {
+      for (const id of ids) events.push({ id, position: (events.at(-1)?.position ?? 0) + 1 });
+    },
+    // Positions may skip, as a sequence does after a rollback.
+    skip: (count: number) => {
+      const last = events.at(-1)?.position ?? 0;
+      events.push({ id: `skipped-${last}`, position: last + count + 1 });
+    },
+    restore: (count: number) => {
+      events = events.slice(0, count);
+    },
+    reads: () => reads,
+  };
+};
+
+const watchingEvents = async () => {
+  const { checkpointStore } = await memory().createStorage();
+  const stream = rewritable();
+  const { logger } = createRecordingLogger("omit");
+  const watch = createRestoreWatch({
+    checkpoints: checkpointStore,
+    events: stream.events,
+    marks: null,
+    logger,
+  });
+  return { checkpointStore, stream, watch };
+};
+
+describe("createRestoreWatch, watching the newest event", () => {
+  it("finds nothing while events are only appended, whatever positions they skip", async () => {
+    const { stream, watch } = await watchingEvents();
+    await watch.start();
+    stream.append("e-1", "e-2");
+    expect(await watch.check(at(0))).toBeNull();
+    stream.skip(4);
+    expect(await watch.check(at(1))).toBeNull();
+    expect(await watch.check(at(2))).toBeNull();
+  });
+
+  it("finds a restore that took the stream back past the newest event it saw, before the generation moved", async () => {
+    const { checkpointStore, stream, watch } = await watchingEvents();
+    stream.append("e-1");
+    await watch.start();
+    stream.append("e-2");
+    await watch.check(at(0));
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
+    stream.append("e-3");
+    // Within the interval: the generation does not move, the event does.
+    await watch.check(at(1));
+    stream.restore(2);
+    expect(await watch.check(at(2))).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    expect(await watch.check(at(3))).toBeNull();
+  });
+
+  it("finds a restore however much was written after it, as positions come back under other ids", async () => {
+    const { stream, watch } = await watchingEvents();
+    stream.append("e-1", "e-2");
+    await watch.start();
+    stream.restore(1);
+    stream.append("e-2b", "e-3b");
+    expect(await watch.check(at(0))).toEqual({ first: true });
+    expect(await watch.check(at(1))).toBeNull();
+    stream.restore(1);
+    stream.append("e-2c");
+    expect(await watch.check(at(2))).toEqual({ first: true });
+    // Another event at the position it watched last: the restore is counted once.
+    expect(await watch.check(at(3))).toBeNull();
+  });
+
+  it("watches the event at its position again after a restore that put another one there", async () => {
+    const { stream, watch } = await watchingEvents();
+    stream.append("e-1", "e-2");
+    await watch.start();
+    stream.restore(1);
+    stream.append("e-2b");
+    expect(await watch.check(at(0))).toEqual({ first: true });
+    expect(await watch.check(at(1))).toBeNull();
+  });
+
+  it("finds a restore to an empty stream, and watches the stream again once events come", async () => {
+    const { stream, watch } = await watchingEvents();
+    stream.append("e-1");
+    await watch.start();
+    stream.restore(0);
+    expect(await watch.check(at(0))).toEqual({ first: true });
+    expect(await watch.check(at(1))).toBeNull();
+    stream.append("e-1b");
+    expect(await watch.check(at(2))).toBeNull();
+    stream.restore(0);
+    expect(await watch.check(at(3))).toEqual({ first: true });
+  });
+
+  it("watches an event it committed once it is newer than the one it read, and nothing older", async () => {
+    const { stream, watch } = await watchingEvents();
+    stream.append("e-1", "e-2");
+    await watch.start();
+    watch.saw({ id: "e-1", position: 1 });
+    watch.saw({ id: "elsewhere", position: 2 });
+    expect(await watch.check(at(0))).toBeNull();
+    stream.append("forgotten");
+    watch.saw({ id: "forgotten", position: 3 });
+    stream.restore(2);
+    expect(await watch.check(at(1))).toEqual({ first: true });
+  });
+
+  it("watches an event it committed before its first reading", async () => {
+    const { stream, watch } = await watchingEvents();
+    stream.append("e-1");
+    watch.saw({ id: "e-1", position: 1 });
+    stream.restore(0);
+    await watch.check(at(0));
+    expect(await watch.found()).toBe(0);
+    stream.append("e-1b");
+    watch.saw({ id: "e-1b", position: 1 });
+    stream.restore(0);
+    expect(await watch.check(at(1))).toEqual({ first: true });
+  });
+
+  it("watches the stream as it is after a restore was declared, so it is counted once", async () => {
+    const { stream, watch } = await watchingEvents();
+    stream.append("e-1", "e-2");
+    await watch.start();
+    stream.restore(1);
+    expect(await watch.declare()).toEqual({ first: true });
+    expect(await watch.check(at(0))).toBeNull();
+    expect(await watch.found()).toBe(1);
+  });
+
+  it("reads the stream once a check while nothing is appended", async () => {
+    const { stream, watch } = await watchingEvents();
+    stream.append("e-1");
+    await watch.start();
+    const before = stream.reads();
+    await watch.check(at(0));
+    expect(stream.reads() - before).toBe(1);
+    stream.append("e-2");
+    await watch.check(at(1));
+    expect(stream.reads() - before).toBe(3);
+  });
+
+  it("moves the generation at the next check for an active caller that joined one under way", async () => {
+    const { checkpointStore, stream, watch } = await watchingEvents();
+    stream.append("e-1");
+    await watch.start();
+    await Promise.all([watch.check(at(0)), watch.check(at(0), { active: true })]);
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(0);
+    await watch.check(at(1));
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
+  });
+
+  it("shares one check between callers that overlap, and checks again after", async () => {
+    const { checkpointStore, stream, watch } = await watchingEvents();
+    stream.append("e-1", "e-2");
+    await watch.start();
+    stream.restore(1);
+    const found = await Promise.all([watch.check(at(0)), watch.check(at(0), { active: true })]);
+    expect(found[0]).toEqual({ first: true });
+    expect(found[1]).toBe(found[0]);
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    expect(await watch.check(at(1))).toBeNull();
   });
 });

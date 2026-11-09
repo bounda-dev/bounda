@@ -64,6 +64,17 @@ export interface RestoreWatch {
    * How many restores the instances found, as the database counts them.
    */
   found(): Promise<number>;
+  /**
+   * An event this instance committed, such as a forgetting: watched from now on when it is newer
+   * than the one watched, so a copy taken before it is found even when the generation had not
+   * moved yet.
+   */
+  saw(event: WatchedEvent): void;
+}
+
+export interface WatchedEvent {
+  readonly id: string;
+  readonly position: number;
 }
 
 export interface CheckRestoreOptions {
@@ -76,7 +87,7 @@ export interface CheckRestoreOptions {
 
 export interface CreateRestoreWatchArgs {
   readonly checkpoints: CheckpointStore;
-  readonly events: Pick<EventStore, "lastPosition">;
+  readonly events: Pick<EventStore, "lastPosition" | "readAll">;
   /**
    * The forget ledger, outside the database; `null` without one, and a copy restored while the
    * app was stopped is then found only when declared.
@@ -95,10 +106,14 @@ interface Seen {
 }
 
 /**
- * A generation that went back, or a count of restores that changed, means a restore. The first
- * instance to see the generation go back moves the count past every value an instance can have
- * read, so each other instance finds it changed, whether its own reading of the generation shows
- * the restore or not. A copy taken after the last move goes unseen: nothing was written since.
+ * A generation that went back, a count of restores that changed, or the newest event this
+ * instance saw gone from its position, means a restore. The first instance to see the generation
+ * go back, or its event gone, moves the count past every value an instance can have read, so each
+ * other instance finds it changed, whether its own reading shows the restore or not. Events are
+ * only ever appended, so the newest one seen stays at its position until a restore takes the
+ * stream back past it: that finds a copy taken after the generation's last move, as one taken a
+ * moment before a forgetting. Positions are reused after a restore, hence the id. Concurrent checks
+ * share one reading.
  */
 export const createRestoreWatch: CreateRestoreWatchFunction = ({
   checkpoints,
@@ -113,6 +128,27 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // While the ledger's mark could not be read, the generation stays where it is: moving it could
   // carry a copy restored while the app was stopped past the mark before it is compared.
   let unmarked = marks !== null;
+  let witness: WatchedEvent | null = null;
+  let checking: Promise<Restored | null> | null = null;
+  // Activity of a caller that joined a check under way, for the next one.
+  let joinedActive = false;
+
+  const eventAt = async (position: number): Promise<WatchedEvent | null> => {
+    if (position === 0) return null;
+    const [event] = await events.readAll({ afterPosition: position - 1, limit: 1 });
+    return event === undefined ? null : { id: event.id, position: event.position };
+  };
+
+  // The event this instance watches stays where it was, or another took its place.
+  const witnessGone = async (): Promise<boolean> => {
+    if (witness === null) return false;
+    return (await eventAt(witness.position))?.id !== witness.id;
+  };
+
+  const watchHead = async (last: number): Promise<void> => {
+    if (witness?.position === last) return;
+    witness = await eventAt(last);
+  };
 
   const read = async (): Promise<Seen> => {
     const [generation, restores] = await Promise.all([
@@ -174,8 +210,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
 
   const check = async (now: Date, active: boolean): Promise<Restored | null> => {
     const at = now.getTime();
-    const [stored, last] = await Promise.all([read(), events.lastPosition()]);
-    pending ||= active || (head !== null && last !== head);
+    const joined = joinedActive;
+    joinedActive = false;
+    const [stored, last, gone] = await Promise.all([read(), events.lastPosition(), witnessGone()]);
+    pending ||= active || joined || (head !== null && last !== head);
     head = last;
     if (unmarked) {
       const restored = await compareWithMark(stored);
@@ -185,7 +223,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     let current = stored;
     if (
       seen !== null &&
-      (stored.generation < seen.generation || stored.restores !== seen.restores)
+      (stored.generation < seen.generation || stored.restores !== seen.restores || gone)
     ) {
       // A count past what this instance read was moved by the instance that found it first.
       if (stored.restores > seen.restores) {
@@ -197,6 +235,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       pending = true;
     }
     seen = current;
+    if (restored !== null) witness = null;
+    await watchHead(last);
     if (pending && !unmarked && at - movedAt >= GENERATION_INTERVAL_MS) await move(current, at);
     return restored;
   };
@@ -213,6 +253,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       try {
         const stored = await read();
         head = await events.lastPosition();
+        await watchHead(head);
         seen = stored;
         const restored = await compareWithMark(stored);
         // A mark only goes up: past a restore it is already higher.
@@ -222,11 +263,23 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         return logged("the database could not be compared with the forget ledger's mark")(error);
       }
     },
-    check: (now, { active = false } = {}) =>
-      check(now, active).catch(logged("the database could not be checked for a restore")),
+    check: (now, { active = false } = {}) => {
+      if (checking !== null) {
+        joinedActive ||= active;
+        return checking;
+      }
+      checking = check(now, active)
+        .catch(logged("the database could not be checked for a restore"))
+        .finally(() => {
+          checking = null;
+        });
+      return checking;
+    },
     declare: async () => {
       const stored = await read();
       const restored = await count(stored, Math.max(stored.restores, seen?.restores ?? 0), 0);
+      witness = null;
+      await watchHead(await events.lastPosition());
       if (marks !== null && seen !== null) await marks.raiseMark(RESTORE_MARK, seen.generation);
       return restored;
     },
@@ -242,5 +295,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       }
     },
     found: () => checkpoints.get(RESTORES_FOUND),
+    saw: (event) => {
+      if (witness === null || event.position > witness.position) {
+        witness = { id: event.id, position: event.position };
+      }
+    },
   };
 };

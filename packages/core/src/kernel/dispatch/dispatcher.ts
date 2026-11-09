@@ -138,6 +138,11 @@ export interface CreateDispatcherArgs {
    * Where each subscriber's last failure is kept, its text sealed; without it, nowhere.
    */
   readonly lastFailures?: LastFailures;
+  /**
+   * Runs at the start of every pass, before anything is delivered, such as checking whether the
+   * store was restored under the app.
+   */
+  readonly beforePass?: () => Promise<unknown>;
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
@@ -177,6 +182,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
   idleIntervalMs = pollIntervalMs,
   notifier,
   lastFailures,
+  beforePass,
   clock,
   logger,
   errorText,
@@ -274,6 +280,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
   };
 
   const pass = async (wait: boolean, patient: boolean, only?: SubscriberKind): Promise<boolean> => {
+    await beforePass?.();
     let advanced = false;
     for (const subscriber of delivering) {
       if (only !== undefined && subscriber.kind !== only) continue;

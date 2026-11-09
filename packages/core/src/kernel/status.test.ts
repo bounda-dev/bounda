@@ -85,6 +85,7 @@ describe("readAppStatus", () => {
         declare: async () => ({ first: true }),
         flush: async () => undefined,
         found: async () => 0,
+        saw: () => undefined,
       },
     });
     expect(

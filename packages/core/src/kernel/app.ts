@@ -73,7 +73,7 @@ import {
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
-import { createRestoreWatch, GENERATION_INTERVAL_MS } from "./shared/restores.ts";
+import { createRestoreWatch, GENERATION_INTERVAL_MS, type Restored } from "./shared/restores.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
 import { type AppStatus, readAppStatus } from "./status.ts";
 import { ATTRIBUTES, METRICS, meter, tracedOperation } from "./telemetry.ts";
@@ -492,10 +492,25 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       const close = ledger.close.bind(ledger);
       opened.unshift(close);
     }
+    const restores = createRestoreWatch({
+      checkpoints: adapted.checkpointStore,
+      events: adapted.eventStore,
+      marks: ledger,
+      logger,
+    });
     const written =
       ledger === null
         ? adapted
-        : withLedgerAppend({ storage: adapted, ledger, keepForMs, clock, logger });
+        : withLedgerAppend({
+            storage: adapted,
+            ledger,
+            keepForMs,
+            clock,
+            logger,
+            committed: (forgettings) => {
+              for (const event of forgettings) restores.saw(event);
+            },
+          });
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const storage = appStorage({
@@ -668,12 +683,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             errorText,
           });
-    const restores = createRestoreWatch({
-      checkpoints: written.checkpointStore,
-      events: written.eventStore,
-      marks: ledger,
-      logger,
-    });
+    // A restore found outside a worker's pass: the jobs start over and the ledger is reconciled
+    // at once, unless this instance's worker handled it already. Resolves how many it forgot. It
+    // reads the worker, built after the dispatcher, only when called: no pass runs before.
+    const restartFound = async (found: Restored): Promise<number> => {
+      if (!(await worker.restored(found))) return 0;
+      const forgotten = await reconciliation?.reconcile(clock.now());
+      return typeof forgotten === "number" ? forgotten : 0;
+    };
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -716,6 +733,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         keys: storage.personalKeys,
         logger,
       }),
+      // Nothing is delivered on a restored database before whom it brought back is forgotten again:
+      // the pass then delivers that forgetting to the read models.
+      beforePass: async () => {
+        const found = await restores.check(clock.now());
+        if (found !== null) await restartFound(found);
+      },
       clock,
       logger,
       errorText,
@@ -817,7 +840,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // holds it brought back are cleared before anything runs, and the reconciliation below forgets
     // again whom it brought back.
     const cold = await restores.start();
-    if (cold !== null) await worker.restored(cold.first);
+    if (cold !== null) await worker.restored(cold);
     // An instance that runs no worker still watches for a restore, and reconciles the ledger at
     // once when it finds one, since no pass of its own would.
     const watchForRestores = (): (() => void) => {
@@ -825,9 +848,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       const next = (): void => {
         cancel = clock.after(GENERATION_INTERVAL_MS, async () => {
           const found = await restores.check(clock.now());
-          if (found !== null) {
-            await worker.restored(found.first);
-            await reconciliation?.reconcile(clock.now());
+          if (found !== null && (await restartFound(found)) > 0) {
+            await dispatcher.catchUp("projection");
           }
           next();
         });
@@ -855,7 +877,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       } else if (forgotten > 0) {
         // The ledger held a forgetting the database does not: a restore, whatever the mark said.
         if (cold === null) {
-          await worker.restored((await restores.declare()).first, { reconciled: true });
+          await worker.restored(await restores.declare(), { reconciled: true });
         }
         await dispatcher.catchUp("projection");
       }
@@ -1082,9 +1104,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         return forgotten;
       },
       restored: async () => {
-        const { first } = await restores.declare();
-        await worker.restored(first);
-        await reconciliation?.reconcile(clock.now());
+        await restartFound(await restores.declare());
       },
       pendingRebuilds: async () => {
         const paused = await Promise.all(

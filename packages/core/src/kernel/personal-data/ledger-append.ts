@@ -48,6 +48,11 @@ export interface WithLedgerAppendArgs {
   readonly keepForMs: number | null;
   readonly clock: Clock;
   readonly logger: Logger;
+  /**
+   * Called with the forgettings of each transaction once it committed, before they go to the
+   * ledger.
+   */
+  readonly committed?: (forgettings: readonly StoredEvent[]) => void;
 }
 
 export interface WithLedgerAppendFunction {
@@ -68,6 +73,7 @@ export const withLedgerAppend: WithLedgerAppendFunction = ({
   keepForMs,
   clock,
   logger,
+  committed,
 }) => {
   let stalled = false;
   return {
@@ -95,7 +101,9 @@ export const withLedgerAppend: WithLedgerAppendFunction = ({
           },
         });
       });
-      const entries = ledgerEntries({ events: appended, keepForMs, now: clock.now() });
+      const forgettings = appended.filter(isForgetting);
+      if (forgettings.length > 0) committed?.(forgettings);
+      const entries = ledgerEntries({ events: forgettings, keepForMs, now: clock.now() });
       if (entries.length > 0 && !stalled) {
         const appending = ledger.append(entries);
         const outcome = await waitForLedger(clock, appending).catch((error: unknown) => ({

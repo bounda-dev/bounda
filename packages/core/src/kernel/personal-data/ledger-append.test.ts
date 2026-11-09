@@ -29,6 +29,7 @@ const setUp = async ({
   readonly logger?: Logger;
 } = {}) => {
   const appended: (readonly ForgetLedgerEntry[])[] = [];
+  const committed: string[][] = [];
   const inner = await memory().createStorage();
   const storage: Storage = withLedgerAppend({
     storage: inner,
@@ -44,13 +45,16 @@ const setUp = async ({
     keepForMs,
     clock: createFixedClock(NOW),
     logger,
+    committed: (forgettings) => {
+      committed.push(forgettings.map(({ id }) => id));
+    },
   });
-  return { storage, appended };
+  return { storage, appended, committed };
 };
 
 describe("the append to the forget ledger as a transaction commits", () => {
   it("appends the forgettings a transaction committed, in one call, and nothing else", async () => {
-    const { storage, appended } = await setUp();
+    const { storage, appended, committed } = await setUp();
     const result = await storage.transact(async (transaction) => {
       await transaction.eventStore.append({
         aggregateType: "order",
@@ -75,8 +79,10 @@ describe("the append to the forget ledger as a transaction commits", () => {
         { personId: "c-2", eventId: "f-c-2-1", forgottenAt: "2026-01-01T00:00:00.000Z" },
       ],
     ]);
+    expect(committed).toEqual([["f-c-1-1", "f-c-2-1"]]);
     await storage.transact(async () => undefined);
     expect(appended).toHaveLength(1);
+    expect(committed).toHaveLength(1);
     await storage.transact((transaction) =>
       transaction.eventStore.reseal([{ position: 1, payload: { total: 9 }, person: "c-9" }]),
     );
@@ -87,7 +93,7 @@ describe("the append to the forget ledger as a transaction commits", () => {
   });
 
   it("appends nothing for a transaction that rolls back, nor for an earlier run of the work", async () => {
-    const { storage, appended } = await setUp();
+    const { storage, appended, committed } = await setUp();
     await expect(
       storage.transact(async (transaction) => {
         await transaction.eventStore.append({
@@ -100,6 +106,7 @@ describe("the append to the forget ledger as a transaction commits", () => {
       }),
     ).rejects.toThrow("rolled back");
     expect(appended).toEqual([]);
+    expect(committed).toEqual([]);
     const inner = await memory().createStorage();
     let runs = 0;
     const retrying = withLedgerAppend({
@@ -138,7 +145,7 @@ describe("the append to the forget ledger as a transaction commits", () => {
   });
 
   it("leaves out a forgetting older than keepFor", async () => {
-    const { storage, appended } = await setUp({ keepForMs: 60_000 });
+    const { storage, appended, committed } = await setUp({ keepForMs: 60_000 });
     await storage.transact((transaction) =>
       transaction.eventStore.append({
         aggregateType: "bounda",
@@ -148,6 +155,8 @@ describe("the append to the forget ledger as a transaction commits", () => {
       }),
     );
     expect(appended).toEqual([]);
+    // Watched for a restore all the same.
+    expect(committed).toEqual([["f-c-1-1"]]);
     const { storage: fresh, appended: kept } = await setUp({ keepForMs: 60_001 });
     await fresh.transact((transaction) =>
       transaction.eventStore.append({
