@@ -357,6 +357,7 @@ describe("sqlite adapter on a file", () => {
     expect(rows.map((row) => [row.scope, Number(row.version)])).toEqual([
       ["checkpoints", 1],
       ["storage", 1],
+      ["storage", 2],
     ]);
   });
 

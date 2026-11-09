@@ -605,6 +605,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "rm_order_summary",
       "scheduled_commands",
       "snapshots",
+      "subscriber_failures",
     ]);
   });
 
