@@ -331,6 +331,47 @@ describe("createUnitOfWork", () => {
     expect(transactions).toBe(1);
   });
 
+  it("runs the steps before the commit's transaction, in order, on the store, and writes nothing when one throws", async () => {
+    const storage = await memory().createStorage();
+    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f-1", kid: null });
+    const transact = storage.transact.bind(storage);
+    const ran: string[] = [];
+    storage.transact = (work) => {
+      ran.push("transaction");
+      return transact(work);
+    };
+    const unit = createUnitOfWork({ storage });
+    unit.beforeCommit(async ({ personalKeys }) => {
+      ran.push(`first ${(await personalKeys.get("c-1"))?.fingerprint}`);
+    });
+    unit.beforeCommit(async () => {
+      ran.push("second");
+    });
+    unit.atCommit(async () => {
+      ran.push("at commit");
+    });
+    expect(ran).toEqual([]);
+    await unit.commit();
+    expect(ran).toEqual(["first f-1", "second", "transaction", "at commit"]);
+
+    const refused = createUnitOfWork({ storage });
+    await refused.scheduler.schedule(entry("command:refused"));
+    refused.beforeCommit(async () => {
+      throw new Error("ledger is down");
+    });
+    refused.afterCommit(() => ran.push("after"));
+    await expect(refused.commit()).rejects.toThrow("ledger is down");
+    expect(await storage.scheduler.list()).toEqual([]);
+    expect(ran).toEqual(["first f-1", "second", "transaction", "at commit"]);
+
+    const idle = createUnitOfWork({ storage });
+    idle.beforeCommit(async () => {
+      ran.push("idle");
+    });
+    await idle.commit();
+    expect(ran).not.toContain("idle");
+  });
+
   it("commits nothing when a stream moved since the unit loaded it", async () => {
     const storage = await memory().createStorage();
     const unit = createUnitOfWork({ storage });

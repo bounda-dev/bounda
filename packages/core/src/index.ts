@@ -51,6 +51,7 @@ export type {
   PersonalDataExport,
 } from "./kernel/personal-data/export.ts";
 export type { ForgetAgainEntry } from "./kernel/personal-data/reconciliation.ts";
+export { FORGET_LEDGER_GRACE_MS } from "./kernel/personal-data/reconciliation.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export type {
   RebuildReadModelArgs,

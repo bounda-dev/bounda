@@ -1,4 +1,4 @@
-import type { Storage } from "../../adapter/adapter.ts";
+import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type {
   ForgetLedger,
   ForgetLedgerEntry,
@@ -8,10 +8,11 @@ import { type Hold, isReleasedBy } from "../../adapter/storage/hold.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
+import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { startedBy } from "../shared/causation.ts";
-import { type Forgotten, forgetWithin, logForgotten } from "./forget.ts";
+import { type Forgotten, forgetWithin, logForgotten, STALE_INTENTION } from "./forget.ts";
 import { holdAfter } from "./hold.ts";
+import type { ForgetIntention, ForgetIntentions } from "./intention.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 /**
@@ -45,21 +46,61 @@ export const FORGET_LEDGER_LAST_RUN = "forget-ledger:last-run";
 // KV does, lists again for every page.
 export const FORGET_LEDGER_PAGE = 1_000;
 
+/**
+ * How old a forget ledger's entry must be before a reconciliation commits it again: a younger one
+ * may be the intention of a forgetting still committing. A reconciliation that leaves one is due
+ * again once it is that old.
+ */
+export const FORGET_LEDGER_GRACE_MS: number = 60_000;
+
+/**
+ * A forgetting to commit again: a ledger's entry, or a line of `bounda forgotten`, or a bare
+ * person's id.
+ */
 export interface ForgetAgainEntry {
   readonly personId: string;
   /**
    * The `PersonalDataForgotten` the person was forgotten by: a store that holds it has applied the
-   * forgetting already, and a key the person holds now was given to them after.
+   * forgetting already. With `forgottenAt` and `reason`, it is committed again under the same id,
+   * time and reason.
    */
   readonly eventId?: string;
+  readonly forgottenAt?: string;
+  readonly reason?: PersonalDataForgottenReason;
+  /**
+   * The keys the forgetting named: a key the person holds that is not here was given to them
+   * after, and is kept. Any key counts when absent.
+   */
+  readonly fingerprints?: readonly string[];
 }
 
+/**
+ * Whether the retention would forget the person now, read on the stores given: a forgetting the
+ * retention made is committed again only then.
+ */
+export interface RetentionDueFunction {
+  (
+    stores: Pick<StorageTransaction, "persons" | "eventStore">,
+    personId: string,
+    now: Date,
+  ): Promise<boolean>;
+}
+
+export const NEVER_DUE: RetentionDueFunction = async () => false;
+
 export interface ForgetAgainArgs {
-  readonly storage: Pick<Storage, "transact" | "eventStore" | "personalKeys">;
+  readonly storage: Pick<Storage, "transact" | "eventStore" | "personalKeys" | "persons">;
+  readonly intentions: ForgetIntentions;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly concurrencyRetries: number;
   readonly entry: ForgetAgainEntry;
+  readonly retentionDue: RetentionDueFunction;
+  /**
+   * Whether the entry is written to the ledger first, as it is when it comes from elsewhere than
+   * the ledger.
+   */
+  readonly record: boolean;
   readonly actor?: string | undefined;
 }
 
@@ -67,23 +108,31 @@ export interface ForgetAgainFunction {
   (args: ForgetAgainArgs): Promise<Forgotten | null>;
 }
 
+type DueStores = Pick<StorageTransaction, "eventStore" | "personalKeys" | "persons">;
+
 /**
- * Forgets the person again, with `reason: "restored"`, when the store does not hold the event the
- * entry names and the person still holds a key, deciding both again in the transaction that
- * forgets them, so of two instances doing it at once, the one whose append conflicts finds the key
- * gone on its retry; an entry that reads as applied takes no transaction. Resolves `null` when it
- * forgot nobody. `storage` is the store as written: nothing here reads a personal field.
+ * Commits the forgetting again when the store does not hold the event the entry names, the person
+ * still holds a key it names, and, for one the retention made, the retention would forget them
+ * now; deciding all of it again in the transaction that forgets them, so of two instances doing
+ * it at once, the one whose append conflicts finds it done on its retry. An entry that reads as
+ * applied takes no transaction. A whole entry is committed under its own id, time and reason; any
+ * other takes an intention of its own, as a request. Resolves `null` when it forgot nobody.
+ * `storage` is the store as written: nothing here reads a personal field.
  */
 export const forgetAgain: ForgetAgainFunction = async ({
   storage,
+  intentions,
   ids,
   clock,
   concurrencyRetries,
-  entry: { personId, eventId },
+  entry,
+  retentionDue,
+  record,
   actor,
 }) => {
+  const { personId, eventId, forgottenAt, reason, fingerprints } = entry;
   checkPersonId(personId, "forgetting again");
-  const isDue = async (stores: Pick<Storage, "eventStore" | "personalKeys">): Promise<boolean> => {
+  const isDue = async (stores: DueStores, named: readonly string[] | undefined) => {
     if (eventId !== undefined) {
       const applied = await stores.eventStore.readOne({
         aggregateType: BOUNDA_AGGREGATE,
@@ -92,23 +141,42 @@ export const forgetAgain: ForgetAgainFunction = async ({
       });
       if (applied !== null) return false;
     }
-    return (await stores.personalKeys.get(personId)) !== null;
+    const key = await stores.personalKeys.get(personId);
+    if (key === null || (named !== undefined && !named.includes(key.fingerprint))) return false;
+    return reason !== "retention" || retentionDue(stores, personId, clock.now());
   };
-  if (!(await isDue(storage))) return null;
+  if (!(await isDue(storage, fingerprints))) return null;
+  let intention: ForgetIntention;
+  if (eventId !== undefined && forgottenAt !== undefined && reason !== undefined) {
+    const recorded = { personId, eventId, forgottenAt, reason };
+    if (record) {
+      await intentions.record(
+        fingerprints === undefined ? recorded : { ...recorded, fingerprints },
+      );
+    }
+    intention = { eventId, forgottenAt, reason, fingerprints };
+  } else {
+    intention = await intentions.intend({
+      personId,
+      reason: reason ?? "requested",
+      keys: storage.personalKeys,
+    });
+  }
   const correlationId = ids.next();
   return transactRetrying({
     storage,
     concurrencyRetries,
     work: async (transaction) => {
-      if (!(await isDue(transaction))) return null;
-      return forgetWithin({
+      if (!(await isDue(transaction, intention.fingerprints ?? fingerprints))) return null;
+      const outcome = await forgetWithin({
         transaction,
         ids,
         clock,
         personId,
-        reason: "restored",
+        intention,
         context: startedBy(correlationId, actor),
       });
+      return outcome === STALE_INTENTION || "held" in outcome ? null : outcome;
     },
   });
 };
@@ -119,9 +187,10 @@ export interface ReconciliationFailed {
 
 export interface ForgetLedgerReconciliation {
   /**
-   * Reads the ledger past the database's cursor and forgets again whom `forgetAgain` finds; then
-   * moves the cursor. Resolves to how many persons it forgot, or to why it could not read the
-   * ledger through; never rejects: a failure is logged and the worker tries again later.
+   * Reads the ledger past the database's cursor and commits again what `forgetAgain` finds due,
+   * leaving entries younger than `FORGET_LEDGER_GRACE_MS` to a reconciliation due once they are
+   * not; then moves the cursor. Resolves to how many persons it forgot, or to why it could not read
+   * the ledger through; never rejects: a failure is logged and the worker tries again later.
    */
   reconcile(now: Date): Promise<number | ReconciliationFailed>;
   /**
@@ -132,8 +201,9 @@ export interface ForgetLedgerReconciliation {
    */
   sweep(now: Date): Promise<number>;
   /**
-   * When the next reconciliation after a failure, or for a ledger's delay, is due; `null` when
-   * none is. The periodic one is left out: a host that only wakes for it would never sleep.
+   * When the next reconciliation after a failure, for a ledger's delay or for an entry left for
+   * being young, is due; `null` when none is. The periodic one is left out: a host that only wakes
+   * for it would never sleep.
    */
   nextDueAt(): Date | null;
   /**
@@ -145,10 +215,12 @@ export interface ForgetLedgerReconciliation {
 
 export interface CreateForgetLedgerReconciliationArgs {
   readonly ledger: ForgetLedger;
+  readonly intentions: ForgetIntentions;
+  readonly retentionDue: RetentionDueFunction;
   /**
    * The store as written.
    */
-  readonly storage: Pick<Storage, "transact" | "checkpointStore" | "eventStore" | "personalKeys">;
+  readonly storage: ForgetAgainArgs["storage"] & Pick<Storage, "checkpointStore">;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -184,6 +256,8 @@ export interface CreateForgetLedgerReconciliationFunction {
  */
 export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationFunction = ({
   ledger,
+  intentions,
+  retentionDue,
   storage,
   ids,
   clock,
@@ -210,30 +284,52 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     }
   };
 
-  const run = async (): Promise<number> => {
+  // Resolves how many it forgot, and when the youngest entry it left comes of age; the cursor
+  // moves past that entry, which the next read takes again, since the grace is shorter than the
+  // stretch read again.
+  const run = async (at: number): Promise<{ forgotten: number; young: number | null }> => {
     const cursor = await checkpointStore.get(FORGET_LEDGER_CURSOR);
     let after: ForgetLedgerPosition | undefined =
       cursor === 0
         ? undefined
         : { forgottenAt: new Date(cursor - FORGET_LEDGER_REREAD_MS).toISOString(), eventId: "" };
     let forgotten = 0;
+    let youngest: number | null = null;
+    const ended = () => ({
+      forgotten,
+      young: youngest === null ? null : youngest + FORGET_LEDGER_GRACE_MS,
+    });
     for (;;) {
       const page: readonly ForgetLedgerEntry[] = await ledger.read({
         ...(after === undefined ? {} : { after }),
         limit: pageSize,
       });
       for (const entry of page) {
-        const again = await forgetAgain({ storage, ids, clock, concurrencyRetries, entry });
+        const time = Date.parse(entry.forgottenAt);
+        if (time + FORGET_LEDGER_GRACE_MS > at) {
+          youngest = Math.max(youngest ?? time, time);
+          continue;
+        }
+        const again = await forgetAgain({
+          storage,
+          intentions,
+          ids,
+          clock,
+          concurrencyRetries,
+          entry,
+          retentionDue,
+          record: false,
+        });
         if (again === null) continue;
         logForgotten(logger, again);
         onForgotten?.(entry.personId);
         forgotten += 1;
       }
       const last = page.at(-1);
-      if (last === undefined) return forgotten;
+      if (last === undefined) return ended();
       const time = Date.parse(last.forgottenAt);
       if (Number.isFinite(time)) await advance(FORGET_LEDGER_CURSOR, time);
-      if (page.length < pageSize) return forgotten;
+      if (page.length < pageSize) return ended();
       after = last;
     }
   };
@@ -275,8 +371,9 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   const reconcile = async (now: Date): Promise<number | ReconciliationFailed> => {
     const at = now.getTime();
     let forgotten: number;
+    let young: number | null;
     try {
-      forgotten = await run();
+      ({ forgotten, young } = await run(at));
     } catch (error) {
       done = false;
       logger.error(
@@ -288,10 +385,12 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       );
       return { failed: error };
     }
-    if (forgotten > 0)
-      logger.warn("forgot again persons a restored backup brought back", { forgotten });
+    if (forgotten > 0) {
+      logger.warn("committed again forgettings the database did not hold", { forgotten });
+    }
     done = true;
-    dueAt = settled ? null : at + (ledger.visibilityDelayMs ?? 0);
+    const delayed = settled ? null : at + (ledger.visibilityDelayMs ?? 0);
+    dueAt = delayed === null || young === null ? (delayed ?? young) : Math.min(delayed, young);
     settled = true;
     periodicAt = at + reconcileEveryMs;
     await release().catch((error: unknown) =>

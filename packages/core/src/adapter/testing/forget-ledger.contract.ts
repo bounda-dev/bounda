@@ -16,6 +16,8 @@ const entry = (personId: string, eventId: string, minute: number): ForgetLedgerE
   personId,
   eventId,
   forgottenAt: new Date(Date.UTC(2026, 10, 7, 12, minute)).toISOString(),
+  reason: "requested",
+  fingerprints: [`k-${personId}`],
 });
 
 const readAll = async (ledger: ForgetLedger, limit = 2): Promise<ForgetLedgerEntry[]> => {
@@ -87,6 +89,20 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
         entry("c-1", "e-1", 1),
         entry("c-2", "e-2", 2),
       ]);
+    });
+
+    it("keeps each entry's reason and the keys it names, none, or none recorded", async () => {
+      const retained: ForgetLedgerEntry = {
+        ...entry("c-1", "e-1", 1),
+        reason: "retention",
+        fingerprints: ["k-1", "k-2"],
+      };
+      const keyless: ForgetLedgerEntry = { ...entry("c-2", "e-2", 2), fingerprints: [] };
+      const { fingerprints: _, ...unrecorded } = entry("c-3", "e-3", 3);
+      await ledger.append([retained, keyless, unrecorded]);
+      const read = await ledger.read({ limit: 10 });
+      expect(read).toEqual([retained, keyless, unrecorded]);
+      expect(read[2]).not.toHaveProperty("fingerprints");
     });
 
     it("keeps one person's forgettings apart, each under its event", async () => {

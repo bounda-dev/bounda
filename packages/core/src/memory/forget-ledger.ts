@@ -33,7 +33,13 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
       return {
         append: async (appended) => {
           for (const entry of appended) {
-            if (!entries.has(entry.eventId)) entries.set(entry.eventId, { ...entry });
+            if (entries.has(entry.eventId)) continue;
+            entries.set(
+              entry.eventId,
+              entry.fingerprints === undefined
+                ? { ...entry }
+                : { ...entry, fingerprints: [...entry.fingerprints] },
+            );
           }
         },
         read: async ({ after, limit }) =>
@@ -41,7 +47,11 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
             .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
             .sort(byForgetLedgerOrder)
             .slice(0, limit)
-            .map((entry) => ({ ...entry })),
+            .map((entry) =>
+              entry.fingerprints === undefined
+                ? { ...entry }
+                : { ...entry, fingerprints: [...entry.fingerprints] },
+            ),
         prune: async ({ before }) => {
           for (const [eventId, entry] of entries) {
             if (entry.forgottenAt < before) entries.delete(eventId);

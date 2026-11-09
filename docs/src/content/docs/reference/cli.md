@@ -245,8 +245,9 @@ process letter it also says when one of the parked events failed the process aga
 ## `bounda forgotten` and `bounda forget`
 
 Apply again, by hand, the forgettings a restored backup undid, for an app without a
-[forget ledger](/guides/personal-data/#backups). Both boot the project as `bounda dead-letters`
-does.
+[forget ledger](/guides/personal-data/#backups). `bounda forget` boots the project as
+`bounda dead-letters` does; `bounda forgotten` only opens the project's storage and reads its
+event store, without starting the app, so a strict forget ledger that is down does not stop it.
 
 ```bash
 bounda forgotten --since 2026-11-01T03:00:00Z > forgotten.jsonl
@@ -257,18 +258,20 @@ bounda forget --from forgotten.jsonl
 `bounda forgotten` reads the stream and prints, one line of JSON each, the `PersonalDataForgotten`
 of every person forgotten since `--since`: a date, compared with each event's time, which reads the
 whole stream, or a position of the stream to read after. Each line is
-`{"personId":…,"eventId":…,"forgottenAt":…}`, the entry a ledger would hold; the count goes to
+`{"personId":…,"eventId":…,"forgottenAt":…,"reason":…,"fingerprints":[…]}`, the entry a ledger
+would hold, without `fingerprints` for a forgetting recorded before Bounda 0.4.0; the count goes to
 standard error, so standard output is the list alone. Run it against the database before it is
 restored, or regularly next to the backups.
 
-`bounda forget --from <file>` forgets again, with `reason: "restored"`, each person listed who
-still holds a key, unless the database holds the forgetting the line names by `eventId`. A line
-may also be a bare person's id, forgotten whenever they hold a key; blank lines are skipped. It
-prints each person it forgot and how many of those listed:
+`bounda forget --from <file>` commits again each forgetting listed, under its own id, time and
+reason, unless the database holds it, and only while the person holds a key the line names, as a
+reconciliation would; with a forget ledger configured, it records each in the ledger first. A
+line may also be a bare person's id, forgotten as a request whenever they hold a key; blank lines
+are skipped. It prints each person it forgot and how many of those listed:
 
 ```
 forgot again c-42
-forgot again 1 of 3 listed; the rest hold no key, or this store holds their forgetting
+forgot again 1 of 3 listed; the rest hold no key the line names, or this store holds their forgetting
 ```
 
 | Option | Applies to | Meaning |
@@ -280,6 +283,37 @@ forgot again 1 of 3 listed; the rest hold no key, or this store holds their forg
 
 Exit codes: `0` done, `1` bad arguments, `2` the project could not be loaded, or the file could not
 be read or has a line that is neither a person's id nor an entry, in which case nobody is forgotten.
+
+## `bounda forget-ledger expire`
+
+Gives every entry of a Workers KV [forget ledger](/guides/personal-data/#keeping-the-ledger-short)
+the expiration `keepFor` sets: KV expires a key only as it was written, so the keys written before
+`keepFor` was set, or while it was longer, keep the expiration they had, none at first. Run it once
+after setting or shortening `keepFor`, from the project's root.
+
+```bash
+bounda forget-ledger expire --binding FORGET_LEDGER --keep-for 35d
+```
+
+It runs the project's own wrangler, logged in to the account: it lists every object's keys under
+the ledger, writes again with their expiration those that expire later than `keepFor` after their
+forgetting or never, and removes those already past it, through `wrangler kv bulk`. A key that is
+not an entry of the ledger is never touched. It prints what it changed:
+
+```
+gave 1204 entries the expiration keepFor sets; removed 37 already past it
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--binding <name>` | The KV namespace's binding in `wrangler.jsonc`, as `kvForgetLedger({ binding })` names it |
+| `--keep-for <duration>` | The configuration's `keepFor`, such as `35d` |
+| `--local` | The local state of `wrangler dev` instead of the deployed namespace |
+| `--env <name>`, `--wrangler-config <path>`, `--persist-to <dir>` | As wrangler takes `--env`, `--config` and `--persist-to` |
+| `--root <dir>` | The project's root, where wrangler is installed |
+
+Exit codes: `0` done, `1` bad arguments, `2` wrangler failed, is not installed, or
+`@bounda-dev/cloudflare` is not; what wrangler printed of its failure is shown.
 
 ## Programmatic use
 

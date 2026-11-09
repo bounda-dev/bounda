@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { ForgetLedgerEntry } from "../storage/forget-ledger.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
-import { createSqlForgetLedger, forgetLedgerStatements } from "./forget-ledger.ts";
+import {
+  createSqlForgetLedger,
+  forgetLedgerReasonStatements,
+  forgetLedgerStatements,
+} from "./forget-ledger.ts";
 
 const recording = () => {
   const statements: (readonly [string, readonly unknown[]])[] = [];
@@ -16,10 +21,12 @@ const recording = () => {
   return { db, statements };
 };
 
-const entry = (index: number) => ({
+const entry = (index: number): ForgetLedgerEntry => ({
   personId: `c-${index}`,
   eventId: `e-${index}`,
   forgottenAt: "2026-01-01T00:00:00.000Z",
+  reason: "requested",
+  fingerprints: [`k-${index}`],
 });
 
 describe("the SQL forget ledger", () => {
@@ -34,7 +41,14 @@ describe("the SQL forget ledger", () => {
     );
   });
 
-  it("inserts at most 25 entries a statement, each bound to its own numbered parameters", async () => {
+  it("adds the reason, a request for the entries before it, and the keys, none recorded", () => {
+    expect(forgetLedgerReasonStatements(`"t"`)).toEqual([
+      `ALTER TABLE "t" ADD COLUMN "reason" TEXT NOT NULL DEFAULT 'requested'`,
+      `ALTER TABLE "t" ADD COLUMN "fingerprints" TEXT`,
+    ]);
+  });
+
+  it("inserts at most 16 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -44,15 +58,35 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    await ledger.append(Array.from({ length: 26 }, (_, index) => entry(index)));
+    const { fingerprints: _, ...unrecorded } = entry(16);
+    await ledger.append([
+      ...Array.from({ length: 16 }, (_, index) => entry(index)),
+      { ...unrecorded, reason: "retention" },
+    ]);
     expect(statements).toHaveLength(2);
     const [first, second] = statements;
-    expect(first?.[0]).toContain("($1, $2, $3, $4), ($5, $6, $7, $8)");
-    expect(first?.[0]).toContain("($97, $98, $99, $100) ON CONFLICT");
-    expect(first?.[1]).toHaveLength(100);
-    expect(first?.[1].slice(0, 4)).toEqual(["", "e-0", "c-0", "2026-01-01T00:00:00.000Z"]);
-    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4) ON CONFLICT`);
-    expect(second?.[1]).toEqual(["", "e-25", "c-25", "2026-01-01T00:00:00.000Z"]);
+    expect(first?.[0]).toContain(
+      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints") VALUES ($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12)`,
+    );
+    expect(first?.[0]).toContain("($91, $92, $93, $94, $95, $96) ON CONFLICT");
+    expect(first?.[1]).toHaveLength(96);
+    expect(first?.[1].slice(0, 6)).toEqual([
+      "",
+      "e-0",
+      "c-0",
+      "2026-01-01T00:00:00.000Z",
+      "requested",
+      `["k-0"]`,
+    ]);
+    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT`);
+    expect(second?.[1]).toEqual([
+      "",
+      "e-16",
+      "c-16",
+      "2026-01-01T00:00:00.000Z",
+      "retention",
+      null,
+    ]);
   });
 
   it("creates its table before the first statement, and again after that failed", async () => {

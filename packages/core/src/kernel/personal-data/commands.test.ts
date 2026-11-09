@@ -373,6 +373,7 @@ describe("personal data in delayed commands", () => {
     expect(await forgottenPayload()).toEqual({
       personId: "c-1",
       reason: "requested",
+      fingerprints: [expect.any(String)],
       cancelledCommands: named.map((entry) => ({
         commandId: entry.dedupeKey.replace(/^command:/, ""),
         type: entry.command.type,
@@ -417,6 +418,7 @@ describe("personal data in delayed commands", () => {
     expect(await forgottenPayload()).toEqual({
       personId: "c-1",
       reason: "requested",
+      fingerprints: [key?.fingerprint],
       cancelledCommands: [],
       removedDeadLetters: [{ id: stored?.id, commandType: "RemindCustomer" }],
     });

@@ -462,6 +462,9 @@ importers:
         specifier: 'catalog:'
         version: 15.0.0
     devDependencies:
+      '@bounda-dev/cloudflare':
+        specifier: workspace:*
+        version: link:../cloudflare
       '@bounda-dev/core':
         specifier: workspace:*
         version: link:../core
@@ -483,6 +486,9 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1))
+      wrangler:
+        specifier: 'catalog:'
+        version: 4.157.0(@cloudflare/workers-types@5.20261103.1)(@types/node@26.6.6)
 
   packages/cloudflare:
     devDependencies:

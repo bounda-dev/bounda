@@ -123,29 +123,41 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   warns at start when the registry marks personal fields. It is app-wide. See
   [where the keys live](/guides/personal-data/#where-the-keys-live).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
-  database, by person's id, event id and time, and how the app reconciles with it. Without it, a
+  database, before it commits, by person's id, event id, time, reason and the fingerprints of the
+  keys it destroys, and how the app reconciles with it. Without it, a
   restored backup brings back everyone forgotten after it was taken. See
   [backups](/guides/personal-data/#backups). It holds:
   - **`store`**, required. The ledger: an adapter pointed at another database than `storage`, such
     as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`, which creates its
     `bounda_forget_ledger` table there on first use; `kvForgetLedger({ binding })` from
     `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`.
-    The runtime appends each forgetting to it as the forgetting commits, and copies every
+    Every forgetting writes its intention to it before it commits, and the runtime copies every
     `PersonalDataForgotten` to it again from the stream in the background. An adapter pointing at
     the storage's own database fails the start.
   - **`reconcileEvery`**, `5m` by default (`DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS` in
     `@bounda-dev/core/config`). The app reads the ledger when it starts and, while it runs, again
-    this often, one instance a round, and forgets again, with `reason: "restored"`, whoever a
-    restored backup brought back. A Durable Object only runs a round on the passes it wakes for
-    anyway; it reconciles on every start.
-  - **`strict`**, `false` by default. When `false`, a ledger that cannot be read at start, or does
-    not answer within ten seconds, does not fail it: the app logs an error and reconciles in the
-    background, and `getLag()` reports `forgetLedger: { reconciled: false }` meanwhile. When
-    `true`, the start waits for the reconciliation however long it takes, and a ledger it cannot
-    read fails it with [`FORGET_LEDGER_UNRECONCILED`](/reference/errors/#codes).
+    this often, one instance a round, and commits again, under its own id, time and reason, each
+    forgetting the database does not hold whose person still holds a key it names: one a restored
+    backup rolled back, or one whose commit never happened. A Durable Object only runs a round on
+    the passes it wakes for anyway; it reconciles on every start.
+  - **`strict`**, `false` by default. When `false`, a forgetting whose intention the ledger does
+    not take is logged and commits all the same, for the stream to copy later, and a ledger that
+    cannot be read at start, or a reconciliation longer than `timeout`, does not fail it: the app
+    logs an error and reconciles in the background, and `getLag()` reports
+    `forgetLedger: { reconciled: false }` meanwhile. When `true`, nothing is forgotten that the
+    ledger has not recorded: a forgetting whose intention it does not take fails with
+    [`FORGET_LEDGER_UNAVAILABLE`](/reference/errors/#codes) and forgets nobody, so trying again is
+    safe; and the start waits for the reconciliation however long it takes, and a ledger it cannot
+    read fails it with [`FORGET_LEDGER_UNRECONCILED`](/reference/errors/#codes). `bounda forgotten`
+    needs neither, since it reads the event store alone.
   - **`keepFor`**, none by default. How long an entry is kept after the forgetting; set it longer
     than the oldest backup you can restore. The instance that runs a periodic round prunes the
-    older entries after it; KV expires each key on its own. Without it entries are kept for good.
+    older entries after it; KV expires each key on its own, and `bounda forget-ledger expire` gives
+    the keys written before `keepFor` was set theirs. Without it entries are kept for good.
+  - **`timeout`**, `10s` by default (`DEFAULT_FORGET_LEDGER_TIMEOUT_MS` in
+    `@bounda-dev/core/config`). How long each call to the ledger may take before it is given up
+    with [`FORGET_LEDGER_TIMEOUT`](/reference/errors/#codes), and how long a start that is not
+    strict waits for the reconciliation.
 
 ### Dead letters
 

@@ -11,7 +11,14 @@ import { asError } from "../shared/retry.ts";
  */
 export type UnitStores = Pick<
   UnitOfWork,
-  "eventStore" | "scheduler" | "idempotencyStore" | "persons" | "atCommit" | "afterCommit" | "read"
+  | "eventStore"
+  | "scheduler"
+  | "idempotencyStore"
+  | "persons"
+  | "beforeCommit"
+  | "atCommit"
+  | "afterCommit"
+  | "read"
 >;
 
 /**
@@ -26,6 +33,12 @@ export type UnitStores = Pick<
  */
 export interface UnitOfWork extends Omit<StorageTransaction, "personalKeys" | "snapshotStore"> {
   commit(): Promise<void>;
+  /**
+   * Runs `step` before the commit's transaction opens, in the order given, for what has to happen
+   * outside the store first, as recording a forgetting's intention does: what it throws fails the
+   * commit, and nothing is written. Never for a unit that does not commit.
+   */
+  beforeCommit(step: (storage: Pick<Storage, "personalKeys">) => Promise<void>): void;
   /**
    * Runs `write` on the commit's transaction, after the unit's events and other writes, in the
    * order given: for a write that needs what the transaction's stores answer, as forgetting a
@@ -59,6 +72,7 @@ export interface CreateUnitOfWorkFunction {
 export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
   const staged = createStagedEventStore(storage.eventStore);
   const { stores, flush, pending } = deferWrites(storage);
+  const beforeCommit: ((storage: Pick<Storage, "personalKeys">) => Promise<void>)[] = [];
   const atCommit: ((transaction: StorageTransaction) => Promise<void>)[] = [];
   const committed: (() => void)[] = [];
   const read: KeyedPerson[] = [];
@@ -72,6 +86,7 @@ export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
       const batches = staged.batches();
       const reseals = staged.reseals();
       if (batches.length > 0 || reseals.length > 0 || pending() || atCommit.length > 0) {
+        for (const step of beforeCommit) await step(storage);
         await storage.transact(async (transaction) => {
           for (const batch of batches) await transaction.eventStore.append(batch);
           if (reseals.length > 0) await transaction.eventStore.reseal(reseals);
@@ -80,6 +95,9 @@ export const createUnitOfWork: CreateUnitOfWorkFunction = ({ storage }) => {
         });
       }
       for (const callback of committed.splice(0)) callback();
+    },
+    beforeCommit: (step) => {
+      beforeCommit.push(step);
     },
     atCommit: (write) => {
       atCommit.push(write);

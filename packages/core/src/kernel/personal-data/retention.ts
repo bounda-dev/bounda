@@ -1,4 +1,5 @@
 import type { Storage } from "../../adapter/adapter.ts";
+import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import { isReleasedBy } from "../../adapter/storage/hold.ts";
 import type {
@@ -12,8 +13,10 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { Subscriber } from "../dispatch/delivery.ts";
-import { forgetWithin, logForgotten } from "./forget.ts";
+import { forgetWithin, logForgotten, STALE_INTENTION } from "./forget.ts";
 import { createPause, holdAfter } from "./hold.ts";
+import type { ForgetIntentions } from "./intention.ts";
+import type { RetentionDueFunction } from "./reconciliation.ts";
 import { transactRetrying } from "./transact.ts";
 
 export const RETENTION_SUBSCRIBER: "retention" = "retention";
@@ -32,6 +35,55 @@ const forgettingOf = (event: StoredEvent & { readonly person: string }): PersonA
   position: event.position,
   forgottenAt: event.timestamp,
 });
+
+const rowIsCurrent = async (
+  eventStore: EventStore,
+  person: string,
+  through: number,
+  batchSize: number,
+): Promise<boolean> => {
+  for (let after = through; ; ) {
+    const events = await eventStore.readByPerson({
+      person,
+      afterPosition: after,
+      limit: batchSize,
+    });
+    if (events.some((event) => isActivity(event) || isForget(event))) return false;
+    const last = events[batchSize - 1];
+    if (last === undefined) return true;
+    after = last.position;
+  }
+};
+
+const isIdle = (row: StoredPerson | null): row is StoredPerson =>
+  row !== null && row.restrictedSince === null && row.forgottenAt === null;
+
+export interface RetentionDueArgs {
+  readonly retentionMs: number;
+  readonly batchSize: number;
+  /**
+   * Where the retention subscriber keeps how far its rows reach.
+   */
+  readonly checkpoints: CheckpointStore;
+}
+
+export interface RetentionDueOfFunction {
+  (args: RetentionDueArgs): RetentionDueFunction;
+}
+
+/**
+ * Whether the retention would forget the person at `now`, as a sweep decides it in the transaction
+ * that forgets them.
+ */
+export const retentionDueOf: RetentionDueOfFunction =
+  ({ retentionMs, batchSize, checkpoints }) =>
+  async (stores, personId, now) => {
+    const row = await stores.persons.get(personId);
+    if (!isIdle(row) || row.lastActiveAt === null) return false;
+    if (Date.parse(row.lastActiveAt) + retentionMs > now.getTime()) return false;
+    const through = await checkpoints.get(RETENTION_SUBSCRIBER);
+    return rowIsCurrent(stores.eventStore, personId, through, batchSize);
+  };
 
 export interface CreateRetentionSubscriberArgs {
   readonly persons: PersonStore;
@@ -90,6 +142,7 @@ export interface RetentionSweep {
 
 export interface CreateRetentionSweepArgs {
   readonly storage: Storage;
+  readonly intentions: ForgetIntentions;
   readonly retentionMs: number;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -116,6 +169,7 @@ export interface CreateRetentionSweepFunction {
  */
 export const createRetentionSweep: CreateRetentionSweepFunction = ({
   storage,
+  intentions,
   retentionMs,
   ids,
   clock,
@@ -124,53 +178,45 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   batchSize,
   forgotten: onForgotten,
 }) => {
-  const rowIsCurrent = async (
-    eventStore: EventStore,
-    person: string,
-    through: number,
-  ): Promise<boolean> => {
-    for (let after = through; ; ) {
-      const events = await eventStore.readByPerson({
-        person,
-        afterPosition: after,
-        limit: batchSize,
-      });
-      if (events.some((event) => isActivity(event) || isForget(event))) return false;
-      const last = events[batchSize - 1];
-      if (last === undefined) return true;
-      after = last.position;
-    }
-  };
-
-  // Resolves `undone` for a person whose row is behind, who is then left for a later pass, and
-  // `skipped` for one restricted, or forgotten by another instance, since the list was read.
+  // Resolves `undone` for a person whose row is behind, or who was given a key since the
+  // intention, who is then left for a later pass, and `skipped` for one restricted, or forgotten by
+  // another instance, since the list was read. The row is read once before the intention, so a
+  // person plainly skipped leaves none; an intention left by a transaction that skips is committed
+  // again only if the retention would still forget the person.
   const forget = async (
     personId: string,
     through: number,
   ): Promise<"forgotten" | "skipped" | "undone"> => {
+    if (!isIdle(await storage.persons.get(personId))) return "skipped";
+    const intention = await intentions.intend({
+      personId,
+      reason: "retention",
+      keys: storage.personalKeys,
+    });
     const correlationId = ids.next();
     const forgotten = await transactRetrying({
       storage,
       concurrencyRetries,
       work: async (transaction) => {
-        const row = await transaction.persons.get(personId);
-        if (row === null || row.restrictedSince !== null || row.forgottenAt !== null) {
-          return "skipped";
+        if (!isIdle(await transaction.persons.get(personId))) return "skipped";
+        if (!(await rowIsCurrent(transaction.eventStore, personId, through, batchSize))) {
+          return "undone";
         }
-        if (!(await rowIsCurrent(transaction.eventStore, personId, through))) return "undone";
-        const forgotten = await forgetWithin({
+        const outcome = await forgetWithin({
           transaction,
           ids,
           clock,
           personId,
-          reason: "retention",
+          intention,
           context: { correlationId, causationId: correlationId, depth: 0 },
         });
+        if (outcome === STALE_INTENTION) return "undone";
+        if ("held" in outcome) return "skipped";
         // Recorded here as the subscriber will record it, so the row leaves the idle list, its
         // hold with it, before any pass can take the person again; the subscriber's record of the
         // same event then changes nothing.
-        await transaction.persons.record(forgettingOf({ ...forgotten.event, person: personId }));
-        return forgotten;
+        await transaction.persons.record(forgettingOf({ ...outcome.event, person: personId }));
+        return outcome;
       },
     });
     if (typeof forgotten === "string") return forgotten;

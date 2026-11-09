@@ -19,8 +19,9 @@ export type {
   DurationString,
   DurationUnit,
   LooseDurationInput,
+  ParseDurationFunction,
 } from "./duration.ts";
-export { asDuration } from "./duration.ts";
+export { asDuration, parseDuration } from "./duration.ts";
 export {
   BoundaError,
   ChainDepthExceededError,
@@ -33,6 +34,8 @@ export {
   DeadLetterSettledError,
   type DeadLetterSettledErrorArgs,
   DomainError,
+  ForgetLedgerTimeoutError,
+  ForgetLedgerUnavailableError,
   ForgetLedgerUnreconciledError,
   IdempotencyKeyConflictError,
   type IdempotencyKeyConflictErrorArgs,

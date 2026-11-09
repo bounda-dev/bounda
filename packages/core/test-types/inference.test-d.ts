@@ -707,15 +707,14 @@ describe("personal data", () => {
     expectTypeOf<PersonalDataForgottenPayload>().toEqualTypeOf<{
       readonly personId: string;
       readonly reason: PersonalDataForgottenReason;
+      readonly fingerprints?: readonly string[];
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
     }>();
-    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<
-      "requested" | "retention" | "restored"
-    >();
+    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
     expectTypeOf<
       AuditOnPersonalDataForgotten.HandlerArgs["event"]["payload"]["reason"]
-    >().toEqualTypeOf<"requested" | "retention" | "restored">();
+    >().toEqualTypeOf<"requested" | "retention">();
     expectTypeOf<CancelledCommand>().toEqualTypeOf<{
       readonly commandId: string;
       readonly type: string;

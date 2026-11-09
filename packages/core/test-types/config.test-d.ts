@@ -1,3 +1,4 @@
+import type { PersonalDataForgottenReason } from "@bounda-dev/core";
 import {
   type DurationInput,
   type ErrorFields,
@@ -371,7 +372,13 @@ describe("defineConfig", () => {
       ports,
       runtime: {
         personalData: {
-          forgetLedger: { store: own, reconcileEvery: "1m", strict: true, keepFor: "35d" },
+          forgetLedger: {
+            store: own,
+            reconcileEvery: "1m",
+            strict: true,
+            keepFor: "35d",
+            timeout: "5s",
+          },
         },
       },
     });
@@ -380,11 +387,14 @@ describe("defineConfig", () => {
       readonly reconcileEvery?: DurationInput;
       readonly strict?: boolean;
       readonly keepFor?: DurationInput;
+      readonly timeout?: DurationInput;
     }>();
     expectTypeOf<ForgetLedgerEntry>().toEqualTypeOf<{
       readonly personId: string;
       readonly eventId: string;
       readonly forgottenAt: string;
+      readonly reason: PersonalDataForgottenReason;
+      readonly fingerprints?: readonly string[];
     }>();
     expectTypeOf<PruneForgetLedgerArgs>().toEqualTypeOf<{ readonly before: string }>();
     expectTypeOf<ForgetLedger["visibilityDelayMs"]>().toEqualTypeOf<number | undefined>();

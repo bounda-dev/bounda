@@ -7,20 +7,25 @@ import type {
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { ForgetLedgerUnavailableError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { withoutLedger } from "../test-support.ts";
+import { boundForgetLedger } from "./forget-ledger.ts";
 import { HOLD_MS } from "./hold.ts";
+import { createForgetIntentions } from "./intention.ts";
 import {
   createForgetLedgerReconciliation,
   FORGET_LEDGER_ATTEMPTS,
   FORGET_LEDGER_CURSOR,
+  FORGET_LEDGER_GRACE_MS,
   FORGET_LEDGER_HELD_UNTIL,
   FORGET_LEDGER_LAST_RUN,
   FORGET_LEDGER_REREAD_MS,
   type ForgetAgainEntry,
   forgetAgain,
+  NEVER_DUE,
 } from "./reconciliation.ts";
 
 // Each error line as its message, marked when it carries no error.
@@ -79,6 +84,8 @@ const setUp = async ({
   await keyed(storage, persons);
   const { ledger, reads } = recordingLedger(entries, visibilityDelayMs);
   const reconciliation = createForgetLedgerReconciliation({
+    intentions: withoutLedger({ ids: createSequentialIdGenerator(), clock: createFixedClock(NOW) }),
+    retentionDue: NEVER_DUE,
     ledger,
     storage,
     ids: createSequentialIdGenerator(),
@@ -96,9 +103,12 @@ const entry = (personId: string, eventId: string, forgottenAt: string): ForgetLe
   personId,
   eventId,
   forgottenAt,
+  reason: "requested",
 });
 
-const at = (minute: number): string => new Date(NOW.getTime() + minute * 60_000).toISOString();
+// Minutes into the hour before `NOW`: every entry is past the grace a reconciliation gives.
+const at = (minute: number): string =>
+  new Date(NOW.getTime() - 60 * 60_000 + minute * 60_000).toISOString();
 
 describe("the forget ledger's reconciliation", () => {
   it("reads every page of the ledger, and stops at the first short one", async () => {
@@ -137,7 +147,7 @@ describe("the forget ledger's reconciliation", () => {
     });
     await storage.checkpointStore.set(
       FORGET_LEDGER_CURSOR,
-      NOW.getTime() + FORGET_LEDGER_REREAD_MS,
+      Date.parse(at(0)) + FORGET_LEDGER_REREAD_MS,
     );
     expect(await reconciliation.reconcile(NOW)).toBe(1);
   });
@@ -198,6 +208,11 @@ describe("the forget ledger's reconciliation", () => {
     const inner = await memory().createForgetLedger({});
     await inner.append([entry("c-1", "e-1", at(0))]);
     const reconciliation = createForgetLedgerReconciliation({
+      intentions: withoutLedger({
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+      }),
+      retentionDue: NEVER_DUE,
       ledger: {
         append: async () => {},
         read: async (args) => {
@@ -242,6 +257,11 @@ describe("the forget ledger's reconciliation", () => {
     const errors: unknown[] = [];
     let reads = 0;
     const reconciliation = createForgetLedgerReconciliation({
+      intentions: withoutLedger({
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+      }),
+      retentionDue: NEVER_DUE,
       ledger: {
         append: async () => {},
         read: async () => {
@@ -290,6 +310,11 @@ describe("the forget ledger's reconciliation", () => {
     const errors: unknown[] = [];
     const create = () =>
       createForgetLedgerReconciliation({
+        intentions: withoutLedger({
+          ids: createSequentialIdGenerator(),
+          clock: createFixedClock(NOW),
+        }),
+        retentionDue: NEVER_DUE,
         ledger: recordingLedger([]).ledger,
         storage: { ...storage, checkpointStore: checkpoints },
         ids: createSequentialIdGenerator(),
@@ -316,6 +341,11 @@ describe("the forget ledger's reconciliation", () => {
     const storage = await memory().createStorage();
     const asked: string[] = [];
     const reconciliation = createForgetLedgerReconciliation({
+      intentions: withoutLedger({
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+      }),
+      retentionDue: NEVER_DUE,
       ledger: recordingLedger([], 1).ledger,
       storage: {
         ...storage,
@@ -349,6 +379,11 @@ describe("the forget ledger's reconciliation", () => {
     await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
     const told: string[] = [];
     const reconciliation = createForgetLedgerReconciliation({
+      intentions: withoutLedger({
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+      }),
+      retentionDue: NEVER_DUE,
       ledger: recordingLedger([entry("c-1", "e-1", at(0))]).ledger,
       storage,
       ids: createSequentialIdGenerator(),
@@ -395,6 +430,11 @@ describe("the forget ledger's periodic reconciliation", () => {
     const { ledger, reads } = recordingLedger([]);
     let left = failures;
     const reconciliation = createForgetLedgerReconciliation({
+      intentions: withoutLedger({
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+      }),
+      retentionDue: NEVER_DUE,
       ledger: {
         ...ledger,
         read: async (args) => {
@@ -568,15 +608,131 @@ describe("the forget ledger's periodic reconciliation", () => {
   });
 });
 
+describe("what the reconciliation commits again", () => {
+  const named = (fingerprints: readonly string[] | undefined, minute = 0): ForgetLedgerEntry => ({
+    ...entry("c-1", `e-${String(fingerprints)}`, at(minute)),
+    ...(fingerprints === undefined ? {} : { fingerprints }),
+  });
+
+  it("commits a forgetting while the person holds a key it names, or any key when it names none recorded", async () => {
+    for (const [fingerprints, forgotten] of [
+      [["f-c-1"], 1],
+      [["f-other", "f-c-1"], 1],
+      [undefined, 1],
+      [["f-other"], 0],
+      [[], 0],
+    ] as const) {
+      const { reconciliation, storage } = await setUp({
+        entries: [named(fingerprints)],
+        persons: ["c-1"],
+      });
+      expect(await reconciliation.reconcile(NOW)).toBe(forgotten);
+      expect((await storage.personalKeys.get("c-1")) === null).toBe(forgotten === 1);
+    }
+  });
+
+  it("commits it under its own id, time and reason, naming the key it destroyed", async () => {
+    const retained = named(["f-c-1"], 7);
+    const { reconciliation, storage } = await setUp({ entries: [retained], persons: ["c-1"] });
+    await reconciliation.reconcile(NOW);
+    expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toMatchObject([
+      {
+        id: retained.eventId,
+        timestamp: retained.forgottenAt,
+        aggregateType: "bounda",
+        aggregateId: "c-1",
+        person: "c-1",
+        payload: { personId: "c-1", reason: "requested", fingerprints: ["f-c-1"] },
+      },
+    ]);
+  });
+
+  it("commits a forgetting the retention made only while the retention would forget the person now", async () => {
+    const due: string[] = [];
+    for (const [answer, forgotten] of [
+      [false, 0],
+      [true, 1],
+    ] as const) {
+      const storage = await memory().createStorage();
+      await keyed(storage, ["c-1"]);
+      const clock = createFixedClock(NOW);
+      const reconciliation = createForgetLedgerReconciliation({
+        ledger: recordingLedger([{ ...named(["f-c-1"]), reason: "retention" }]).ledger,
+        intentions: withoutLedger({ ids: createSequentialIdGenerator(), clock }),
+        retentionDue: async (_, personId, now) => {
+          due.push(`${personId} ${now.toISOString()}`);
+          return answer;
+        },
+        storage,
+        ids: createSequentialIdGenerator(),
+        clock,
+        logger: silentLogger,
+        concurrencyRetries: 3,
+        reconcileEveryMs: EVERY,
+        keepForMs: null,
+      });
+      expect(await reconciliation.reconcile(NOW)).toBe(forgotten);
+    }
+    // Once before the transaction, and once more in it for the one it forgot.
+    expect(due).toEqual([
+      `c-1 ${NOW.toISOString()}`,
+      `c-1 ${NOW.toISOString()}`,
+      `c-1 ${NOW.toISOString()}`,
+    ]);
+  });
+
+  it("leaves an entry younger than its grace for a reconciliation due once the youngest comes of age", async () => {
+    const young = new Date(NOW.getTime() - FORGET_LEDGER_GRACE_MS + 1).toISOString();
+    const younger = new Date(NOW.getTime() - FORGET_LEDGER_GRACE_MS + 2).toISOString();
+    const { reconciliation, storage } = await setUp({
+      entries: [
+        entry("c-1", "e-1", at(0)),
+        entry("c-2", "e-2", young),
+        entry("c-3", "e-3", younger),
+      ],
+      persons: ["c-1", "c-2", "c-3"],
+    });
+    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    expect(await storage.personalKeys.get("c-2")).not.toBeNull();
+    expect(reconciliation.nextDueAt()).toEqual(
+      new Date(Date.parse(younger) + FORGET_LEDGER_GRACE_MS),
+    );
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR)).toBe(Date.parse(younger));
+    const due = new Date(Date.parse(younger) + FORGET_LEDGER_GRACE_MS);
+    expect(await reconciliation.sweep(due)).toBe(2);
+    expect(reconciliation.nextDueAt()).toBeNull();
+  });
+
+  it("is due at the sooner of a ledger's delay and an entry's grace", async () => {
+    const young = new Date(NOW.getTime() - 1).toISOString();
+    const late = await setUp({ entries: [entry("c-1", "e-1", young)], visibilityDelayMs: 1_000 });
+    await late.reconciliation.reconcile(NOW);
+    expect(late.reconciliation.nextDueAt()).toEqual(new Date(NOW.getTime() + 1_000));
+    const slow = await setUp({
+      entries: [entry("c-1", "e-1", young)],
+      visibilityDelayMs: 10 * FORGET_LEDGER_GRACE_MS,
+    });
+    await slow.reconciliation.reconcile(NOW);
+    expect(slow.reconciliation.nextDueAt()).toEqual(
+      new Date(Date.parse(young) + FORGET_LEDGER_GRACE_MS),
+    );
+  });
+});
+
 describe("forgetAgain", () => {
   it("refuses an entry without a person's id", async () => {
     const storage = await memory().createStorage();
+    const ids = createSequentialIdGenerator();
+    const clock = createFixedClock(NOW);
     const refused = forgetAgain({
       storage,
-      ids: createSequentialIdGenerator(),
-      clock: createFixedClock(NOW),
+      intentions: withoutLedger({ ids, clock }),
+      ids,
+      clock,
       concurrencyRetries: 3,
       entry: { personId: "" },
+      retentionDue: NEVER_DUE,
+      record: true,
     });
     await expect(refused).rejects.toBeInstanceOf(ValidationError);
     await expect(refused).rejects.toThrow("forgetting again needs the id of the person");
@@ -592,18 +748,118 @@ describe("forgetAgain", () => {
         return storage.transact(work);
       },
     };
+    const ids = createSequentialIdGenerator();
+    const clock = createFixedClock(NOW);
     const run = (entry: ForgetAgainEntry) =>
       forgetAgain({
         storage: counted,
-        ids: createSequentialIdGenerator(),
-        clock: createFixedClock(NOW),
+        intentions: withoutLedger({ ids, clock }),
+        ids,
+        clock,
         concurrencyRetries: 3,
         entry,
+        retentionDue: NEVER_DUE,
+        record: true,
       });
     expect(await run({ personId: "c-1", eventId: "e-1" })).toBeNull();
     expect(transactions).toBe(0);
     await keyed(storage, ["c-1"]);
     expect(await run({ personId: "c-1", eventId: "e-1" })).not.toBeNull();
     expect(transactions).toBe(1);
+  });
+
+  const ledgered = async () => {
+    const storage = await memory().createStorage();
+    const recorded: ForgetLedgerEntry[] = [];
+    const ids = createSequentialIdGenerator();
+    const clock = createFixedClock(NOW);
+    let down = false;
+    const intentions = createForgetIntentions({
+      ledger: boundForgetLedger({
+        ledger: {
+          append: async (entries) => {
+            if (down) throw new Error("ledger is down");
+            recorded.push(...entries);
+          },
+          read: async () => [],
+        },
+        timeoutMs: 1_000,
+        clock,
+      }),
+      strict: true,
+      ids,
+      clock,
+      logger: silentLogger,
+    });
+    const run = (entry: ForgetAgainEntry) =>
+      forgetAgain({
+        storage,
+        intentions,
+        ids,
+        clock,
+        concurrencyRetries: 3,
+        entry,
+        retentionDue: NEVER_DUE,
+        record: true,
+      });
+    return {
+      storage,
+      recorded,
+      run,
+      fail: () => {
+        down = true;
+      },
+    };
+  };
+
+  it("records a whole entry from elsewhere in the ledger as it is, then commits it under its id", async () => {
+    const { storage, recorded, run } = await ledgered();
+    await keyed(storage, ["c-1", "c-2"]);
+    const whole: ForgetLedgerEntry = { ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] };
+    const unrecorded = entry("c-2", "e-2", at(4));
+    expect(await run(whole)).toMatchObject({ event: { id: "e-1", timestamp: at(3) } });
+    expect(await run(unrecorded)).toMatchObject({ event: { id: "e-2" } });
+    expect(recorded).toEqual([whole, unrecorded]);
+    expect(recorded[1]).not.toHaveProperty("fingerprints");
+  });
+
+  it("takes an intention of its own for a bare id, naming the key the person holds, and none for one who holds none", async () => {
+    const { storage, recorded, run } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    expect(await run({ personId: "c-2" })).toBeNull();
+    expect(await run({ personId: "c-1", eventId: "elsewhere" })).toMatchObject({
+      event: { id: "id-1", payload: { reason: "requested", fingerprints: ["f-c-1"] } },
+    });
+    expect(recorded).toEqual([
+      {
+        personId: "c-1",
+        eventId: "id-1",
+        forgottenAt: NOW.toISOString(),
+        reason: "requested",
+        fingerprints: ["f-c-1"],
+      },
+    ]);
+  });
+
+  it("forgets nobody, when strict, while the ledger does not take the entry", async () => {
+    const { storage, run, fail } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    fail();
+    await expect(run({ ...entry("c-1", "e-1", at(3)) })).rejects.toBeInstanceOf(
+      ForgetLedgerUnavailableError,
+    );
+    await expect(run({ personId: "c-1" })).rejects.toBeInstanceOf(ForgetLedgerUnavailableError);
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("leaves a key the entry does not name, and a person a store holds the forgetting of", async () => {
+    const { storage, run } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-other"] })).toBeNull();
+    expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).not.toBeNull();
+    await keyed(storage, ["c-1"]);
+    expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).toBeNull();
+    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
   });
 });

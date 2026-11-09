@@ -75,6 +75,16 @@ dead letter with `errorType: "retriable_exhausted"`.
   is malformed: an unknown key, a port with no implementation chosen, a module missing an export.
   Thrown at boot, or when a handler reads a port a test left out. Also thrown at start by a
   database whose Bounda tables a version before 0.2.0 created.
+- **`FORGET_LEDGER_UNAVAILABLE`** (`ForgetLedgerUnavailableError`; a forgetting's answer). Thrown
+  by `forget`, `forgetAgain`, `bounda forget` and a policy's or process's `forget` when
+  `runtime.personalData.forgetLedger.strict` is set and the
+  [forget ledger](/guides/personal-data/#what-the-runtime-does-with-it) did not take the
+  forgetting's intention: nothing was forgotten, so trying again is safe. `cause` is the ledger's
+  error, a `ForgetLedgerTimeoutError` when it did not answer in time.
+- **`FORGET_LEDGER_TIMEOUT`** (`ForgetLedgerTimeoutError`, with `operation` and `timeoutMs`). A call
+  to the forget ledger did not settle within `runtime.personalData.forgetLedger.timeout`: the
+  `cause` of `FORGET_LEDGER_UNAVAILABLE` and `FORGET_LEDGER_UNRECONCILED`, and what an app that is
+  not strict logs. The call may still land after it.
 - **`FORGET_LEDGER_UNRECONCILED`** (`ForgetLedgerUnreconciledError`; a start's answer). Thrown
   by `createApp`, and so by `boot` and the CLI, when `runtime.personalData.forgetLedger.strict` is
   set and the [forget ledger](/guides/personal-data/#the-forget-ledger) could not be read through:

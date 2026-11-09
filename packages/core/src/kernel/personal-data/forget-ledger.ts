@@ -2,7 +2,7 @@ import type { Adapter } from "../../adapter/adapter.ts";
 import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, ForgetLedgerTimeoutError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
 
 export interface CreateForgetLedgerFromEnvArgs {
@@ -104,21 +104,74 @@ export const openForgetLedger: OpenForgetLedgerFunction = async ({
     : source.createForgetLedger({ tenant, keepForMs });
 };
 
-// How long the app waits for the ledger, at start or after a forgetting, before it goes on and
-// lets the ledger finish behind.
-export const FORGET_LEDGER_WAIT_MS = 10_000;
+export interface BoundedForgetLedger extends ForgetLedger {
+  /**
+   * Whether a call given up for its timeout has not settled yet.
+   */
+  late(): boolean;
+}
 
-export interface WaitForLedgerFunction {
-  <T>(clock: Clock, work: Promise<T>): Promise<T | "late">;
+export interface BoundForgetLedgerArgs {
+  readonly ledger: ForgetLedger;
+  readonly timeoutMs: number;
+  readonly clock: Clock;
+}
+
+export interface BoundForgetLedgerFunction {
+  (args: BoundForgetLedgerArgs): BoundedForgetLedger;
 }
 
 /**
- * `work`, or `"late"` once `FORGET_LEDGER_WAIT_MS` has passed without it settling.
+ * The ledger whose calls reject with `ForgetLedgerTimeoutError` once `timeoutMs` passes without
+ * them settling. A call given up that way goes on behind, and may still land.
  */
-export const waitForLedger: WaitForLedgerFunction = async (clock, work) => {
+export const boundForgetLedger: BoundForgetLedgerFunction = ({ ledger, timeoutMs, clock }) => {
+  let late = 0;
+  const bound = async <T>(operation: string, call: () => Promise<T>): Promise<T> => {
+    const work = call();
+    let cancel: () => void = () => undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      cancel = clock.after(timeoutMs, () => {
+        late += 1;
+        const settle = (): void => {
+          late -= 1;
+        };
+        work.then(settle, settle);
+        reject(new ForgetLedgerTimeoutError(operation, timeoutMs));
+      });
+    });
+    try {
+      return await Promise.race([work, timeout]);
+    } finally {
+      cancel();
+    }
+  };
+  const { prune, close } = ledger;
+  return {
+    append: (entries) => bound("append", () => ledger.append(entries)),
+    read: (args) => bound("read", () => ledger.read(args)),
+    ...(ledger.visibilityDelayMs === undefined
+      ? {}
+      : { visibilityDelayMs: ledger.visibilityDelayMs }),
+    ...(prune === undefined
+      ? {}
+      : { prune: (args) => bound("prune", () => prune.call(ledger, args)) }),
+    ...(close === undefined ? {} : { close: () => close.call(ledger) }),
+    late: () => late > 0,
+  };
+};
+
+export interface WaitForLedgerFunction {
+  <T>(clock: Clock, timeoutMs: number, work: Promise<T>): Promise<T | "late">;
+}
+
+/**
+ * `work`, or `"late"` once `timeoutMs` has passed without it settling.
+ */
+export const waitForLedger: WaitForLedgerFunction = async (clock, timeoutMs, work) => {
   let cancel: () => void = () => undefined;
   const late = new Promise<"late">((resolve) => {
-    cancel = clock.after(FORGET_LEDGER_WAIT_MS, () => resolve("late"));
+    cancel = clock.after(timeoutMs, () => resolve("late"));
   });
   try {
     return await Promise.race([work, late]);

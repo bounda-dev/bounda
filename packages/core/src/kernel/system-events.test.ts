@@ -68,6 +68,23 @@ describe("appendSystemEvent", () => {
     ).toEqual([appended]);
   });
 
+  it("takes the id and timestamp set before it, when given", async () => {
+    const storage = await memory().createStorage();
+    const appended = await appendSystemEvent({
+      eventStore: storage.eventStore,
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(),
+      aggregateType: "bounda",
+      aggregateId: "c-1",
+      type: "PersonalDataForgotten",
+      payload: {},
+      context,
+      identity: { id: "intended", timestamp: "2026-01-02T03:04:05.000Z" },
+    });
+    expect(appended.id).toBe("intended");
+    expect(appended.timestamp).toBe("2026-01-02T03:04:05.000Z");
+  });
+
   it("lets a stream that moved fail, for the unit of work to run again", async () => {
     const { storage, append } = await setup();
     let appends = 0;

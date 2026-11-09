@@ -1,21 +1,27 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { StoredPerson } from "../../adapter/storage/person-store.ts";
-import { createFixedClock } from "../../contracts/clock.ts";
+import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
+import { createFixedClock, type FixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { createSequentialIdGenerator } from "../../contracts/ids.ts";
+import { createSequentialIdGenerator, type IdGenerator } from "../../contracts/ids.ts";
+import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { createKeptPersonStore } from "../../memory/person-store.ts";
 import { tracer } from "../telemetry.ts";
-import { createRecordingLogger } from "../test-support.ts";
+import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { forgetPersonalData } from "./forget.ts";
+import { boundForgetLedger } from "./forget-ledger.ts";
 import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
+import { createForgetIntentions } from "./intention.ts";
 import { restrictProcessing } from "./restriction.ts";
 import {
   createRetentionSubscriber,
   createRetentionSweep,
   RETENTION_SUBSCRIBER,
   RETENTION_SWEEP_LIMIT,
+  retentionDueOf,
 } from "./retention.ts";
 
 const DAY = 86_400_000;
@@ -124,6 +130,7 @@ const setUp = async (storage?: Storage) => {
   const sweepOver = (storage: Storage) =>
     createRetentionSweep({
       storage,
+      intentions: withoutLedger({ ids, clock }),
       retentionMs: 30 * DAY,
       ids,
       clock,
@@ -249,6 +256,7 @@ describe("createRetentionSweep", () => {
     await touch("c-1");
     await forgetPersonalData({
       storage,
+      intentions: withoutLedger({ ids, clock }),
       ids,
       clock,
       logger,
@@ -281,6 +289,7 @@ describe("createRetentionSweep", () => {
       await setUp();
     const other = createRetentionSweep({
       storage,
+      intentions: withoutLedger({ ids, clock }),
       retentionMs: 30 * DAY,
       ids,
       clock,
@@ -680,6 +689,7 @@ describe("createRetentionSweep", () => {
     let lists = 0;
     const { touch, record, advance, clock, sweepOver } = await setUp(live);
     const told: string[] = [];
+    const toldIds = createSequentialIdGenerator();
     const sweep = createRetentionSweep({
       storage: {
         ...live,
@@ -691,8 +701,9 @@ describe("createRetentionSweep", () => {
           },
         },
       },
+      intentions: withoutLedger({ ids: toldIds, clock }),
       retentionMs: 30 * DAY,
-      ids: createSequentialIdGenerator(),
+      ids: toldIds,
       clock,
       logger: createRecordingLogger().logger,
       concurrencyRetries: 1,
@@ -723,10 +734,12 @@ describe("createRetentionSweep", () => {
     const { storage, record, touch, clock, sweepOver } = await setUp();
     await touch("c-1");
     await record();
+    const longerIds = createSequentialIdGenerator();
     const longer = createRetentionSweep({
       storage,
+      intentions: withoutLedger({ ids: longerIds, clock }),
       retentionMs: 60 * DAY,
-      ids: createSequentialIdGenerator(),
+      ids: longerIds,
       clock,
       logger: createRecordingLogger().logger,
       concurrencyRetries: 0,
@@ -758,5 +771,84 @@ describe("createRetentionSweep", () => {
     expect(await sweep.nextDueAt()).toBeNull();
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(asked).toEqual([]);
+  });
+});
+
+describe("the retention and the forget ledger", () => {
+  const recordingIntentions = (ids: IdGenerator, clock: FixedClock) => {
+    const recorded: ForgetLedgerEntry[] = [];
+    const intentions = createForgetIntentions({
+      ledger: boundForgetLedger({
+        ledger: {
+          append: async (entries) => {
+            recorded.push(...entries);
+          },
+          read: async () => [],
+        },
+        timeoutMs: 1_000,
+        clock,
+      }),
+      strict: true,
+      ids,
+      clock,
+      logger: silentLogger,
+    });
+    return { intentions, recorded };
+  };
+
+  it("records the intention of each forgetting before it commits, and none for a person it skips", async () => {
+    const { record, touch, advance, clock, storage, ids, logger } = await setUp();
+    const { intentions, recorded } = recordingIntentions(ids, clock);
+    const sweep = createRetentionSweep({
+      storage,
+      intentions,
+      retentionMs: 30 * DAY,
+      ids,
+      clock,
+      logger,
+      concurrencyRetries: 1,
+      batchSize: 2,
+    });
+    await storage.personalKeys.add("c-1", testPersonalKey("1"));
+    await touch("c-1");
+    await touch("c-2");
+    await record();
+    await storage.persons.restrict("c-2", new Date(day(0)));
+    advance(31);
+    expect(await sweep.sweep(clock.now())).toBe(1);
+    const [forgetting] = (
+      await storage.eventStore.readAll({ afterPosition: 0, limit: 100 })
+    ).filter((event) => event.type === "PersonalDataForgotten");
+    expect(recorded).toEqual([
+      {
+        personId: "c-1",
+        eventId: forgetting?.id,
+        forgottenAt: forgetting?.timestamp,
+        reason: "retention",
+        fingerprints: ["f-1"],
+      },
+    ]);
+  });
+
+  it("says a person is due as a sweep would forget them now, by their row and what it has not recorded", async () => {
+    const { record, touch, advance, clock, storage } = await setUp();
+    const due = retentionDueOf({
+      retentionMs: 30 * DAY,
+      batchSize: 2,
+      checkpoints: storage.checkpointStore,
+    });
+    const isDue = (person: string) => due(storage, person, clock.now());
+    for (const person of ["c-1", "c-2", "c-3", "c-4"]) await touch(person);
+    await record();
+    expect(await isDue("c-1")).toBe(false);
+    advance(30);
+    expect(await isDue("c-1")).toBe(true);
+    expect(await isDue("c-9")).toBe(false);
+    await storage.persons.restrict("c-2", new Date(day(30)));
+    expect(await isDue("c-2")).toBe(false);
+    await touch("c-3");
+    expect(await isDue("c-3")).toBe(false);
+    await storage.persons.record({ person: "c-4", position: 99, forgottenAt: day(30) });
+    expect(await isDue("c-4")).toBe(false);
   });
 });

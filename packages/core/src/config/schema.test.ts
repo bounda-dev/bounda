@@ -4,7 +4,10 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
 import { memory } from "../memory/index.ts";
-import { DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS } from "./defaults.ts";
+import {
+  DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
+  DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
+} from "./defaults.ts";
 import { resolveConfig } from "./schema.ts";
 
 const sqlite: AdapterDefinition<"sqlite", { path: string }> = {
@@ -86,7 +89,13 @@ describe("resolveConfig", () => {
         personalData: {
           retention: "30d",
           keyWrapper,
-          forgetLedger: { store: forgetLedger, reconcileEvery: "1m", strict: true, keepFor: "90d" },
+          forgetLedger: {
+            store: forgetLedger,
+            reconcileEvery: "1m",
+            strict: true,
+            keepFor: "90d",
+            timeout: "3s",
+          },
         },
         deadLetters: { retention: "7d" },
       },
@@ -123,6 +132,7 @@ describe("resolveConfig", () => {
         reconcileEveryMs: 60_000,
         strict: true,
         keepForMs: 7_776_000_000,
+        timeoutMs: 3_000,
       },
     });
     expect(resolved.runtime.deadLetters).toEqual({ retentionMs: 604_800_000 });
@@ -136,6 +146,7 @@ describe("resolveConfig", () => {
       reconcileEveryMs: DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
       strict: false,
       keepForMs: null,
+      timeoutMs: DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
     });
     expect(defaulted?.store).toBe(ledgerDatabase);
     expect(resolved.readModels["users-directory"]).toBe(sqlite);
@@ -279,6 +290,7 @@ describe("resolveConfig", () => {
     for (const [option, value] of [
       ["reconcileEvery", 0],
       ["keepFor", "0s"],
+      ["timeout", 0],
     ] as const) {
       expect(
         message({

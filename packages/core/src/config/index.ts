@@ -17,6 +17,7 @@ export type { MasterKeyFunction, MasterKeyOptions } from "../kernel/personal-dat
 export { masterKey } from "../kernel/personal-data/master-key.ts";
 export {
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
+  DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
   DEFAULT_SNAPSHOT_VERIFY,
   DEFAULT_SNAPSHOT_VERSION,
 } from "./defaults.ts";

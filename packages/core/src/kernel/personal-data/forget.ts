@@ -14,6 +14,7 @@ import {
 import { scheduledCommandId } from "../command/pipeline.ts";
 import { actedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
+import type { ForgetIntention, ForgetIntentions } from "./intention.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 export interface ForgetWithinArgs {
@@ -21,7 +22,7 @@ export interface ForgetWithinArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly personId: string;
-  readonly reason: PersonalDataForgottenReason;
+  readonly intention: ForgetIntention;
   readonly context: CausationContext;
 }
 
@@ -31,25 +32,53 @@ export interface Forgotten {
   readonly event: StoredEvent;
 }
 
-export interface ForgetWithinFunction {
-  (args: ForgetWithinArgs): Promise<Forgotten>;
+/**
+ * The forgetting the intention names is in the store already, committed by a reconciliation
+ * meanwhile.
+ */
+export interface HeldForgetting {
+  readonly held: StoredEvent;
 }
 
 /**
- * Removes the person's key and appends `PersonalDataForgotten` to their stream, on the
- * transaction given: whoever reads the event finds the fields gone already. The scheduled
- * commands and dead letters that hold the person's data go in the same transaction, and the event
- * names them. A person without a key is forgotten all the same, since read models may hold what
- * their events carried in the clear.
+ * The person holds a key the intention does not name: given to them after it was written.
+ */
+export const STALE_INTENTION: "stale" = "stale";
+
+export type ForgetOutcome = Forgotten | HeldForgetting | typeof STALE_INTENTION;
+
+export interface ForgetWithinFunction {
+  (args: ForgetWithinArgs): Promise<ForgetOutcome>;
+}
+
+/**
+ * Removes the person's key and appends `PersonalDataForgotten` to their stream, with the id, time
+ * and reason of the intention, on the transaction given: whoever reads the event finds the fields
+ * gone already. The scheduled commands and dead letters that hold the person's data go in the same
+ * transaction, and the event names them. A person without a key is forgotten all the same, since
+ * read models may hold what their events carried in the clear.
  */
 export const forgetWithin: ForgetWithinFunction = async ({
   transaction,
   ids,
   clock,
   personId,
-  reason,
+  intention,
   context,
 }) => {
+  const { fingerprints } = intention;
+  if (fingerprints !== undefined) {
+    const held = await transaction.eventStore.readOne({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: personId,
+      eventId: intention.eventId,
+    });
+    if (held !== null) return { held };
+  }
+  const key = await transaction.personalKeys.get(personId);
+  if (key !== null && fingerprints !== undefined && !fingerprints.includes(key.fingerprint)) {
+    return STALE_INTENTION;
+  }
   // The key goes first: a snapshot written beside the transaction then either waits for it and
   // is forgotten with the rest, or finds no key and is never written. The scheduled commands go
   // before the dead letters: a worker giving one up writes its letter and settles its claim
@@ -62,7 +91,8 @@ export const forgetWithin: ForgetWithinFunction = async ({
   const letters = await transaction.deadLetterStore.forget(personId);
   const payload: PersonalDataForgottenPayload = {
     personId,
-    reason,
+    reason: intention.reason,
+    fingerprints: key === null ? [] : [key.fingerprint],
     cancelledCommands: cancelled.map(({ dedupeKey, command }) => ({
       commandId: scheduledCommandId(dedupeKey) ?? dedupeKey,
       type: command.type,
@@ -79,8 +109,51 @@ export const forgetWithin: ForgetWithinFunction = async ({
     payload,
     context,
     person: personId,
+    identity: { id: intention.eventId, timestamp: intention.forgottenAt },
   });
   return { hadKey, payload, event };
+};
+
+export interface ForgetIntendedArgs {
+  readonly storage: Pick<Storage, "transact" | "personalKeys">;
+  readonly intentions: ForgetIntentions;
+  readonly ids: IdGenerator;
+  readonly clock: Clock;
+  readonly concurrencyRetries: number;
+  readonly personId: string;
+  readonly reason: PersonalDataForgottenReason;
+  readonly context: CausationContext;
+}
+
+export interface ForgetIntendedFunction {
+  (args: ForgetIntendedArgs): Promise<Forgotten | HeldForgetting>;
+}
+
+/**
+ * Records the intention, then forgets in a transaction of its own. A key given to the person
+ * between the two takes a new intention that names it: each round needs a forgetting of the same
+ * person to commit in between, so the rounds end when those do.
+ */
+export const forgetIntended: ForgetIntendedFunction = async ({
+  storage,
+  intentions,
+  ids,
+  clock,
+  concurrencyRetries,
+  personId,
+  reason,
+  context,
+}) => {
+  for (;;) {
+    const intention = await intentions.intend({ personId, reason, keys: storage.personalKeys });
+    const outcome = await transactRetrying({
+      storage,
+      concurrencyRetries,
+      work: (transaction) =>
+        forgetWithin({ transaction, ids, clock, personId, intention, context }),
+    });
+    if (outcome !== STALE_INTENTION) return outcome;
+  }
 };
 
 export interface LogForgottenFunction {
@@ -114,6 +187,7 @@ export const forgottenDispatch: ForgottenDispatchFunction = (event) => ({
 
 export interface ForgetPersonalDataArgs {
   readonly storage: Storage;
+  readonly intentions: ForgetIntentions;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -127,10 +201,11 @@ export interface ForgetPersonalDataFunction {
 }
 
 /**
- * `forget` of a client: `forgetWithin` in a transaction of its own, as a request of the person.
+ * `forget` of a client: `forgetIntended`, as a request of the person.
  */
 export const forgetPersonalData: ForgetPersonalDataFunction = async ({
   storage,
+  intentions,
   ids,
   clock,
   logger,
@@ -140,19 +215,17 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
 }) => {
   checkPersonId(personId, "forget");
   const correlationId = ids.next();
-  const forgotten = await transactRetrying({
+  const forgotten = await forgetIntended({
     storage,
+    intentions,
+    ids,
+    clock,
     concurrencyRetries,
-    work: (transaction) =>
-      forgetWithin({
-        transaction,
-        ids,
-        clock,
-        personId,
-        reason: "requested",
-        context: startedBy(correlationId, actor),
-      }),
+    personId,
+    reason: "requested",
+    context: startedBy(correlationId, actor),
   });
+  if ("held" in forgotten) return forgottenDispatch(forgotten.held);
   logForgotten(logger, forgotten);
   return forgottenDispatch(forgotten.event);
 };

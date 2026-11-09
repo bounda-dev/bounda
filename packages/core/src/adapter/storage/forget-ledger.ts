@@ -1,7 +1,10 @@
+import type { PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
+
 /**
- * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` said so, and when.
- * Ids and a time, nothing else: the ledger is a suppression list, the one thing about a forgotten
- * person that has to outlive their data.
+ * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` says so, when, why,
+ * and which keys it destroys. Ids, a time and fingerprints, nothing else: the ledger is a
+ * suppression list, the one thing about a forgotten person that has to outlive their data. The
+ * runtime writes it before the forgetting commits, so an entry may name an event no store holds.
  */
 export interface ForgetLedgerEntry {
   readonly personId: string;
@@ -14,6 +17,14 @@ export interface ForgetLedgerEntry {
    * The event's timestamp, as `Date.prototype.toISOString` writes it.
    */
   readonly forgottenAt: string;
+  readonly reason: PersonalDataForgottenReason;
+  /**
+   * The fingerprints of the keys the person held when the forgetting was asked: the reconciliation
+   * commits it again only while the person holds one of them, since any other key was given to
+   * them after. Absent from an entry written by a Bounda that did not record them, which any key
+   * matches.
+   */
+  readonly fingerprints?: readonly string[];
 }
 
 /**
@@ -44,14 +55,14 @@ export interface PruneForgetLedgerArgs {
 /**
  * The record of every person forgotten, kept outside the database, so restoring a copy of the
  * database taken before someone was forgotten can forget them again. The runtime appends each
- * forgetting to it as soon as it commits, and again from the stream, and reads it when the app
- * starts and every `reconcileEvery` while it runs. One ledger holds one store: a ledger built for
- * a tenant sees only that tenant's entries.
+ * forgetting to it before the forgetting commits, and again from the stream once it has, and
+ * reads it when the app starts and every `reconcileEvery` while it runs. One ledger holds one
+ * store: a ledger built for a tenant sees only that tenant's entries.
  */
 export interface ForgetLedger {
   /**
-   * Adds the entries, one per `eventId`: an event names one person at one time, so appending the
-   * same entries again leaves the ledger as it was.
+   * Adds the entries, one per `eventId`, each with every field it has: an event names one person
+   * at one time, so appending the same entries again leaves the ledger as it was.
    */
   append(entries: readonly ForgetLedgerEntry[]): Promise<void>;
   /**

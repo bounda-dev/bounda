@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
+import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { boundForgetLedger } from "../personal-data/forget-ledger.ts";
+import { createForgetIntentions } from "../personal-data/intention.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import {
   createKernelHarness,
@@ -10,6 +14,7 @@ import {
   drained,
   orderRegistry,
   slowJob,
+  withoutLedger,
 } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { scheduledCommandKey } from "./pipeline.ts";
@@ -25,6 +30,7 @@ const setUp = async (registry: Registry = orderRegistry) => {
   const harness = await createKernelHarness({ registry });
   const unit = createUnitOfWork({ storage: harness.storage });
   const { logger, entries } = createRecordingLogger();
+  const ids = createSequentialIdGenerator();
   const reaction = createReactionCommands({
     aggregates: harness.aggregates,
     pipeline: harness.pipeline,
@@ -32,8 +38,9 @@ const setUp = async (registry: Registry = orderRegistry) => {
     idempotencyKey: "key-1",
     within: unit,
     logger,
-    ids: createSequentialIdGenerator(),
+    ids,
     clock: harness.clock,
+    intentions: withoutLedger({ ids, clock: harness.clock }),
     maxChainDepth: 5,
   });
   return { ...harness, reaction, unit, entries };
@@ -43,6 +50,44 @@ const forgottenEvents = async (storage: Storage) =>
   (await storage.eventStore.readAll({ afterPosition: 0, limit: 50 })).filter(
     (event) => event.type === "PersonalDataForgotten",
   );
+
+const withLedger = async () => {
+  const harness = await createKernelHarness({ registry: orderRegistry });
+  const unit = createUnitOfWork({ storage: harness.storage });
+  const recorded: ForgetLedgerEntry[] = [];
+  const keysAtRecord: unknown[] = [];
+  const ids = createSequentialIdGenerator();
+  const { logger, entries } = createRecordingLogger();
+  const reaction = createReactionCommands({
+    aggregates: harness.aggregates,
+    pipeline: harness.pipeline,
+    context,
+    idempotencyKey: "key-1",
+    within: unit,
+    logger,
+    ids,
+    clock: harness.clock,
+    intentions: createForgetIntentions({
+      ledger: boundForgetLedger({
+        ledger: {
+          append: async (appended) => {
+            recorded.push(...appended);
+            keysAtRecord.push(await harness.storage.personalKeys.get("c-1"));
+          },
+          read: async () => [],
+        },
+        timeoutMs: 1_000,
+        clock: harness.clock,
+      }),
+      strict: true,
+      ids,
+      clock: harness.clock,
+      logger,
+    }),
+    maxChainDepth: 5,
+  });
+  return { harness, unit, reaction, recorded, keysAtRecord, entries };
+};
 
 describe("createReactionCommands", () => {
   it("dispatches one causal hop deeper, with ids derived from the idempotency key", async () => {
@@ -360,6 +405,62 @@ describe("createReactionCommands", () => {
     });
   });
 
+  it("records the forgetting's intention in the ledger just before the commit's transaction", async () => {
+    const { harness, unit, reaction, recorded, keysAtRecord } = await withLedger();
+    await harness.storage.personalKeys.add("c-1", { key: "k", fingerprint: "f-1", kid: null });
+    await reaction.forget("c-1");
+    expect(recorded).toEqual([]);
+    await unit.commit();
+    expect(keysAtRecord).toEqual([{ key: "k", fingerprint: "f-1", kid: null }]);
+    const [forgotten] = await forgottenEvents(harness.storage);
+    expect(recorded).toEqual([
+      {
+        personId: "c-1",
+        eventId: forgotten?.id,
+        forgottenAt: forgotten?.timestamp,
+        reason: "requested",
+        fingerprints: ["f-1"],
+      },
+    ]);
+  });
+
+  it("forgets a key given to the person after the intention too, in the same commit", async () => {
+    const { harness, unit, reaction, recorded } = await withLedger();
+    await reaction.forget("c-1");
+    unit.beforeCommit(async () => {
+      await harness.storage.personalKeys.add("c-1", { key: "k", fingerprint: "f-2", kid: null });
+    });
+    await unit.commit();
+    expect(recorded.map(({ fingerprints }) => fingerprints)).toEqual([[]]);
+    expect(await harness.storage.personalKeys.get("c-1")).toBeNull();
+    const [forgotten] = await forgottenEvents(harness.storage);
+    expect(forgotten?.payload).toMatchObject({ fingerprints: ["f-2"] });
+  });
+
+  it("answers nothing more for a forgetting a reconciliation committed under the intention's id", async () => {
+    const { harness, unit, reaction, entries } = await withLedger();
+    await reaction.forget("c-1");
+    unit.beforeCommit(async () => {
+      await harness.storage.eventStore.append({
+        aggregateType: "bounda",
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateType: "bounda",
+            aggregateId: "c-1",
+            version: 1,
+            type: "PersonalDataForgotten",
+            id: "id-1",
+          }),
+        ],
+      });
+    });
+    await unit.commit();
+    expect((await forgottenEvents(harness.storage)).map(({ id }) => id)).toEqual(["id-1"]);
+    expect(entries.map(({ message }) => message)).not.toContain("personal data forgotten");
+  });
+
   it("forgets nobody for a unit that never commits", async () => {
     const { reaction, storage } = await setUp();
     await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
@@ -383,6 +484,7 @@ describe("createReactionCommands", () => {
     });
 
     const harness = await setUp();
+    const deepIds = createSequentialIdGenerator();
     const deep = createReactionCommands({
       aggregates: harness.aggregates,
       pipeline: harness.pipeline,
@@ -390,8 +492,9 @@ describe("createReactionCommands", () => {
       idempotencyKey: "key-2",
       within: harness.unit,
       logger: createRecordingLogger().logger,
-      ids: createSequentialIdGenerator(),
+      ids: deepIds,
       clock: harness.clock,
+      intentions: withoutLedger({ ids: deepIds, clock: harness.clock }),
       maxChainDepth: 5,
     });
     await expect(deep.forget("c-1")).rejects.toMatchObject({
