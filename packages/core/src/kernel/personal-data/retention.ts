@@ -12,6 +12,7 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { Subscriber } from "../dispatch/delivery.ts";
+import { createLease } from "../shared/lease.ts";
 import { forgetWithin, logForgotten } from "./forget.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import { transactRetrying } from "./transact.ts";
@@ -20,6 +21,21 @@ export const RETENTION_SUBSCRIBER: "retention" = "retention";
 
 // How many persons a pass of the worker forgets at most.
 export const RETENTION_SWEEP_LIMIT = 50;
+
+/**
+ * The checkpoint row of the lease the sweep runs under: one instance forgets at a time.
+ */
+export const RETENTION_LEASE = "personal-data:retention:lease";
+
+/**
+ * Where the retention stands: how many persons are idle past it now, held ones included, and when
+ * the next one comes due.
+ */
+export interface RetentionStatus {
+  readonly retentionMs: number;
+  readonly due: number;
+  readonly nextDueAt: string | null;
+}
 
 const isActivity = (event: StoredEvent): boolean => event.aggregateType !== BOUNDA_AGGREGATE;
 
@@ -86,6 +102,16 @@ export interface RetentionSweep {
    * ends; `null` when there is none.
    */
   nextDueAt(): Promise<Date | null>;
+  status(): Promise<RetentionStatus>;
+  /**
+   * Gives the lease back when this instance holds it. Never rejects.
+   */
+  release(): Promise<void>;
+  /**
+   * After the database went back to a copy: forgets what this instance knew of the sweep, and,
+   * when `first`, clears the holds of the persons the copy brought back. Never rejects.
+   */
+  restored(first: boolean): Promise<void>;
 }
 
 export interface CreateRetentionSweepArgs {
@@ -182,6 +208,12 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   // When the store itself fails a pass, so no row can keep the wait, the sweep stops in this
   // instance for a while.
   const pause = createPause();
+  const lease = createLease({
+    checkpoints: storage.checkpointStore,
+    row: RETENTION_LEASE,
+    clock,
+    logger,
+  });
 
   // A person left undone waits on their own row, so one whose forget keeps failing never holds
   // the others back, every instance skips them, and a host that wakes for `nextDueAt` never wakes
@@ -237,6 +269,8 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     let forgotten = 0;
     let kept = true;
     for (const person of due) {
+      // A lease that lapsed while this instance stalled was taken by another, which goes on.
+      if (!(await lease.take(clock.now().getTime()))) break;
       const outcome = await attempt(person, at, through);
       if (outcome.forgotten) forgotten += 1;
       kept &&= outcome.kept;
@@ -278,7 +312,31 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
         ]);
         next = Math.min(deadlineOf(free), heldUntil?.getTime() ?? Number.POSITIVE_INFINITY);
       }
-      return next === Number.POSITIVE_INFINITY ? null : new Date(pause.notBefore(next));
+      return next === Number.POSITIVE_INFINITY
+        ? null
+        : new Date(pause.notBefore(Math.max(next, lease.heldElsewhereUntil())));
+    },
+    status: async () => {
+      const now = clock.now();
+      const [due, next] = await Promise.all([
+        storage.persons.countIdle({ activeBefore: new Date(now.getTime() - retentionMs) }),
+        storage.persons.listIdle({ limit: 1 }),
+      ]);
+      const deadline = deadlineOf(next[0]);
+      return {
+        retentionMs,
+        due,
+        nextDueAt: deadline === Number.POSITIVE_INFINITY ? null : new Date(deadline).toISOString(),
+      };
+    },
+    release: lease.release,
+    restored: async (first) => {
+      pause.resume();
+      lease.reset();
+      if (!first) return;
+      await storage.persons.releaseHolds().catch((error: unknown) => {
+        logger.error("the holds of persons past the retention could not be cleared", { error });
+      });
     },
   };
 };

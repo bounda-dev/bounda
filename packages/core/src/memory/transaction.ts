@@ -142,6 +142,9 @@ const trackedPersonalKeys = (
     hold: (person, from, hold) =>
       tracked(entries, person, () => personalKeys.hold(person, from, hold)),
     nextHoldEnd: (args) => personalKeys.nextHoldEnd(args),
+    countWrappedUnder: (args) => personalKeys.countWrappedUnder(args),
+    // Only after a restore, never inside a transaction.
+    releaseHolds: () => personalKeys.releaseHolds(),
   };
 };
 
@@ -172,6 +175,9 @@ const trackedPersons = (
     hold: (person, lastActiveAt, hold) =>
       tracked(entries, person, () => persons.hold(person, lastActiveAt, hold)),
     nextHoldEnd: (after) => persons.nextHoldEnd(after),
+    countIdle: (args) => persons.countIdle(args),
+    // Only after a restore, never inside a transaction.
+    releaseHolds: () => persons.releaseHolds(),
   };
 };
 

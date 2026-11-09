@@ -289,6 +289,8 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       rewrap: (person, from, to) => keys.rewrap(person, from, to),
       hold: (person, from, hold) => keys.hold(person, from, hold),
       nextHoldEnd: (args) => keys.nextHoldEnd(args),
+      countWrappedUnder: (args) => keys.countWrappedUnder(args),
+      releaseHolds: () => keys.releaseHolds(),
     }),
     close: () => {
       cancelExpiry?.();

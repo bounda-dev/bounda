@@ -117,6 +117,26 @@ export interface ReconciliationFailed {
   readonly failed: unknown;
 }
 
+/**
+ * Where the reconciliation stands, as the database's rows say, beside whether this instance's
+ * last one read the ledger through.
+ */
+export interface ForgetLedgerReconciliationStatus {
+  readonly reconciled: boolean;
+  /**
+   * The time of the last ledger entry the database has applied, `null` before the first.
+   */
+  readonly appliedThrough: string | null;
+  /**
+   * When an instance last took the periodic reconciliation, or finished one at start.
+   */
+  readonly lastRunAt: string | null;
+  /**
+   * The hold after reconciliations that failed in a row, `null` without one.
+   */
+  readonly held: { readonly until: string; readonly attempts: number } | null;
+}
+
 export interface ForgetLedgerReconciliation {
   /**
    * Reads the ledger past the database's cursor and forgets again whom `forgetAgain` finds; then
@@ -141,6 +161,13 @@ export interface ForgetLedgerReconciliation {
    * and after one that failed.
    */
   reconciled(): boolean;
+  status(): Promise<ForgetLedgerReconciliationStatus>;
+  /**
+   * After the database went back to a copy: due at once, since the copy may hold persons
+   * forgotten after it was taken; when `first`, clears the hold the copy brought back. Never
+   * rejects.
+   */
+  restored(first: boolean): Promise<void>;
 }
 
 export interface CreateForgetLedgerReconciliationArgs {
@@ -369,5 +396,29 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     },
     nextDueAt: () => (dueAt === null ? null : new Date(dueAt)),
     reconciled: () => done,
+    status: async () => {
+      const [cursor, lastRun, held] = await Promise.all([
+        checkpointStore.get(FORGET_LEDGER_CURSOR),
+        checkpointStore.get(FORGET_LEDGER_LAST_RUN),
+        storedHold(),
+      ]);
+      const timeOf = (at: number): string | null => (at === 0 ? null : new Date(at).toISOString());
+      return {
+        reconciled: done,
+        appliedThrough: timeOf(cursor),
+        lastRunAt: timeOf(lastRun),
+        held: held.attempts === 0 && Date.parse(held.until) === 0 ? null : held,
+      };
+    },
+    restored: async (first) => {
+      done = false;
+      dueAt = clock.now().getTime();
+      // A hold the copy brought back is not waited for: what it held was failing before the copy.
+      local = null;
+      if (!first) return;
+      await release().catch((error: unknown) =>
+        logger.error("forget ledger's reconciliation hold could not be cleared", { error }),
+      );
+    },
   };
 };

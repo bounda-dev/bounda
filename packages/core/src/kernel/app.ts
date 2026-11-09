@@ -68,6 +68,7 @@ import {
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
+import { createRestoreWatch } from "./shared/restores.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
 import { ATTRIBUTES, METRICS, meter, tracedOperation } from "./telemetry.ts";
 
@@ -593,7 +594,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ? undefined
         : createDeadLetterRetention({
             store: written.deadLetterStore,
+            checkpoints: written.checkpointStore,
             retentionMs: letterRetentionMs,
+            clock,
             logger,
           });
     const { concurrencyRetries } = config.runtime.commands;
@@ -638,6 +641,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             errorText,
           });
+    const restores = createRestoreWatch({ checkpoints: written.checkpointStore, logger });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -695,6 +699,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       rotation,
       reconciliation,
       backfill,
+      restores,
+      onRestored: dispatcher.restored,
       reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,

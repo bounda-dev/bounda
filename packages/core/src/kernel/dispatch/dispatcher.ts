@@ -106,6 +106,11 @@ export interface Dispatcher {
    */
   catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
+  /**
+   * Forgets the failures this instance met, as after the database went back to an earlier copy:
+   * every subscriber is tried again at once, its attempts counted from the first.
+   */
+  restored(): void;
 }
 
 interface FailingState {
@@ -343,6 +348,9 @@ export const createDispatcher: CreateDispatcherFunction = ({
         timeoutMs: catchUp.timeoutMs,
       });
       return false;
+    },
+    restored: () => {
+      failing.clear();
     },
     getLag: async () => {
       const lastPosition = await eventStore.lastPosition();

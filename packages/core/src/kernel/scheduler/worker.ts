@@ -32,6 +32,7 @@ import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../proces
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
+import type { RestoreWatch } from "../shared/restores.ts";
 import { classifyFailure, errorIdentity, errorLabel, retryDelayMs } from "../shared/retry.ts";
 import {
   appendSystemEvent,
@@ -90,6 +91,15 @@ export interface CreateScheduledCommandWorkerArgs {
    * Swept on every pass; absent when no schema marks personal data.
    */
   readonly backfill?: PersonalDataBackfill | undefined;
+  /**
+   * Checked on every pass: a database found gone back to an earlier copy has every background
+   * job start over from what it holds, the attempts the jobs counted with it.
+   */
+  readonly restores?: RestoreWatch | undefined;
+  /**
+   * Called once a pass finds a restore, for what else counted attempts in this instance.
+   */
+  readonly onRestored?: (() => void) | undefined;
   /**
    * The reactive subscribers the dispatcher runs, by name: what a deadline and a restricted
    * retry wait for before they run.
@@ -165,6 +175,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   rotation,
   reconciliation,
   backfill,
+  restores,
+  onRestored,
   reactive,
   config,
   ids,
@@ -540,8 +552,28 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     return storage.scheduler.claimDue({ now, limit: CLAIM_LIMIT, leaseMs });
   };
 
+  // The jobs' holds the copy brought back count failures it undid: the instance that found the
+  // restore first clears them, and every one forgets what it knew of the jobs. Each never rejects.
+  const restart = async (first: boolean): Promise<void> => {
+    logger.warn("the database went back to an earlier copy; background jobs start over", {
+      first,
+    });
+    purgedAt = Number.NEGATIVE_INFINITY;
+    waits.clear();
+    onRestored?.();
+    letterRetention?.restored();
+    await Promise.all([
+      retention?.restored(first),
+      rotation?.restored(first),
+      reconciliation?.restored(first),
+      backfill?.restored(first),
+    ]);
+  };
+
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
+      const restored = await restores?.check(clock.now());
+      if (restored !== undefined && restored !== null) await restart(restored.first);
       const claimedAt = clock.now();
       const due = await claimDue(claimedAt);
       // The batch is claimed already: an error escaping here would leave every entry to lapse, and
@@ -605,7 +637,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       running = false;
       cancelWait?.();
       await mutex.drain();
-      await backfill?.release();
+      await Promise.all([
+        backfill?.release(),
+        retention?.release(),
+        rotation?.release(),
+        letterRetention?.release(),
+      ]);
     },
     runOnce,
     leaseMs,

@@ -72,6 +72,8 @@ const setup = async () => {
     rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
     hold: (person, from, hold) => storage.personalKeys.hold(person, from, hold),
     nextHoldEnd: (args) => storage.personalKeys.nextHoldEnd(args),
+    countWrappedUnder: (args) => storage.personalKeys.countWrappedUnder(args),
+    releaseHolds: () => storage.personalKeys.releaseHolds(),
   };
   const store = withPersonalData({
     eventStore: storage.eventStore,
@@ -474,6 +476,8 @@ describe("withPersonalData", () => {
       rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
       hold: (person, from, hold) => storage.personalKeys.hold(person, from, hold),
       nextHoldEnd: (args) => storage.personalKeys.nextHoldEnd(args),
+      countWrappedUnder: (args) => storage.personalKeys.countWrappedUnder(args),
+      releaseHolds: () => storage.personalKeys.releaseHolds(),
     };
     await expect(
       withPersonalData({

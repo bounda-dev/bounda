@@ -575,8 +575,11 @@ describe("the backfill's walk", () => {
     await backfill.release();
     expect(logs).toContainEqual([
       "error",
-      "personal data backfill could not give its lease back",
-      expect.objectContaining({ error: expect.objectContaining({ message: "cannot write" }) }),
+      "background job could not give its lease back",
+      expect.objectContaining({
+        lease: `${BACKFILL_PREFIX}m1:lease`,
+        error: expect.objectContaining({ message: "cannot write" }),
+      }),
     ]);
   });
 
