@@ -15,6 +15,7 @@ export const KV_LIST_DELAY_MS = 60_000;
 // entry lists first. Any time from 1970 on leaves sixteen digits, which sort as numbers do.
 const LATEST_MS = 8_640_000_000_000_000;
 const LIST_LIMIT = 1_000;
+const MARKS_PREFIX = "bounda/forget-ledger-marks/";
 // The soonest KV lets a key expire, in seconds from now.
 const KV_MIN_TTL_S = 60;
 
@@ -53,59 +54,71 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
   namespace,
   prefix,
   keepForMs,
-}) => ({
-  visibilityDelayMs: KV_LIST_DELAY_MS,
-  append: async (entries) => {
-    const now = Date.now();
-    await Promise.all(
-      entries.flatMap(({ personId, eventId, forgottenAt }) => {
-        const metadata: EntryMetadata = { personId, forgottenAt };
-        const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
-        if (keepForMs === undefined) return [namespace.put(key, "", { metadata })];
-        const expiresAt = Date.parse(forgottenAt) + keepForMs;
-        if (!(expiresAt > now)) return [];
-        const expiration = Math.max(
-          Math.ceil(expiresAt / 1000),
-          Math.floor(now / 1000) + KV_MIN_TTL_S,
-        );
-        return [namespace.put(key, "", { metadata, expiration })];
-      }),
-    );
-  },
-  read: async ({ after, limit }) => {
-    const oldest = after === undefined ? null : timeKey(after.forgottenAt);
-    const found: ForgetLedgerEntry[] = [];
-    let cursor: string | undefined;
-    for (;;) {
-      const page = await namespace.list<EntryMetadata>({
-        prefix,
-        limit: LIST_LIMIT,
-        ...(cursor === undefined ? {} : { cursor }),
-      });
-      let past = false;
-      for (const { name, metadata } of page.keys) {
-        const rest = name.slice(prefix.length);
-        const separator = rest.indexOf(":");
-        if (oldest !== null && rest.slice(0, separator) > oldest) {
-          past = true;
-          break;
-        }
-        if (metadata === null || metadata === undefined) continue;
-        found.push({
-          personId: metadata.personId,
-          eventId: rest.slice(separator + 1),
-          forgottenAt: metadata.forgottenAt,
+}) => {
+  // Apart from the entries' keys, so no list of entries meets one.
+  const markKey = (name: string): string => `${MARKS_PREFIX}${prefix}${name}`;
+  return {
+    visibilityDelayMs: KV_LIST_DELAY_MS,
+    append: async (entries) => {
+      const now = Date.now();
+      await Promise.all(
+        entries.flatMap(({ personId, eventId, forgottenAt }) => {
+          const metadata: EntryMetadata = { personId, forgottenAt };
+          const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
+          if (keepForMs === undefined) return [namespace.put(key, "", { metadata })];
+          const expiresAt = Date.parse(forgottenAt) + keepForMs;
+          if (!(expiresAt > now)) return [];
+          const expiration = Math.max(
+            Math.ceil(expiresAt / 1000),
+            Math.floor(now / 1000) + KV_MIN_TTL_S,
+          );
+          return [namespace.put(key, "", { metadata, expiration })];
+        }),
+      );
+    },
+    read: async ({ after, limit }) => {
+      const oldest = after === undefined ? null : timeKey(after.forgottenAt);
+      const found: ForgetLedgerEntry[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await namespace.list<EntryMetadata>({
+          prefix,
+          limit: LIST_LIMIT,
+          ...(cursor === undefined ? {} : { cursor }),
         });
+        let past = false;
+        for (const { name, metadata } of page.keys) {
+          const rest = name.slice(prefix.length);
+          const separator = rest.indexOf(":");
+          if (oldest !== null && rest.slice(0, separator) > oldest) {
+            past = true;
+            break;
+          }
+          if (metadata === null || metadata === undefined) continue;
+          found.push({
+            personId: metadata.personId,
+            eventId: rest.slice(separator + 1),
+            forgottenAt: metadata.forgottenAt,
+          });
+        }
+        if (past || page.list_complete) break;
+        cursor = page.cursor;
       }
-      if (past || page.list_complete) break;
-      cursor = page.cursor;
-    }
-    return found
-      .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
-      .sort(byForgetLedgerOrder)
-      .slice(0, limit);
-  },
-});
+      return found
+        .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
+        .sort(byForgetLedgerOrder)
+        .slice(0, limit);
+    },
+    readMark: async (name) => Number((await namespace.get(markKey(name))) ?? 0),
+    // KV has no compare: of two instances raising at once the lower may win, which the next raise,
+    // of a mark that only grows, puts right.
+    raiseMark: async (name, value) => {
+      const current = Number((await namespace.get(markKey(name))) ?? 0);
+      if (current >= value) return;
+      await namespace.put(markKey(name), String(value));
+    },
+  };
+};
 
 export interface KvForgetLedgerOptions {
   /**

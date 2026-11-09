@@ -681,6 +681,10 @@ describe("the SQLite forget ledger", () => {
     const ledger = await adapter.createForgetLedger({ tenant: "t-1" });
     expect(tableNames(db, "app_")).toEqual([]);
     await ledger.read({ limit: 1 });
-    expect(tableNames(db, "app_")).toEqual(["app_forget_ledger", "app_migrations"]);
+    expect(tableNames(db, "app_")).toEqual([
+      "app_forget_ledger",
+      "app_forget_ledger_marks",
+      "app_migrations",
+    ]);
   });
 });

@@ -16,6 +16,7 @@ import { type BoundaApp, createApp } from "../app.ts";
 import { HOLD_MAX_MS } from "../personal-data/hold.ts";
 import { masterKey } from "../personal-data/master-key.ts";
 import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
+import { advanceUntilWaiting } from "../test-support.ts";
 import { GENERATION_INTERVAL_MS } from "./restores.ts";
 
 const START = new Date("2026-04-01T00:00:00.000Z");
@@ -239,6 +240,8 @@ describe("a database restored while the app runs", () => {
     await first.app.runUntilIdle();
     await second.app.runUntilIdle();
     const copy = copyOf(one.db);
+    // What the copy undoes: activity after it, which moves the generation.
+    await register(first.app, "c-1");
     first.clock.advance(GENERATION_INTERVAL_MS);
     second.clock.advance(GENERATION_INTERVAL_MS);
     await first.app.runUntilIdle();
@@ -254,5 +257,131 @@ describe("a database restored while the app runs", () => {
     expect(restarts(firstLogger).map(({ fields }) => fields)).toEqual([{ first: true }]);
     expect(restarts(otherLogger).map(({ fields }) => fields)).toEqual([{ first: false }]);
     expect((await second.app.status()).restoresFound).toBe(1);
+  });
+});
+
+describe("a database restored while the app was stopped", () => {
+  const files = () => {
+    const directory = mkdtempSync(join(tmpdir(), "bounda-cold-"));
+    return {
+      storage: join(directory, "store.db"),
+      ledger: join(directory, "ledger.db"),
+    };
+  };
+
+  const restarts = (logger: { readonly logged: Logged[] }) =>
+    logger.logged.filter(
+      ({ message }) =>
+        message === "the database went back to an earlier copy; background jobs start over",
+    );
+
+  it("is found at start from the forget ledger's mark, which clears the copy's holds and forgets again", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledger = createNodeSqliteAdapter(paths.ledger).adapter;
+    const runtime: RuntimeConfig = {
+      personalData: { forgetLedger: { store: ledger }, retention: "3650d" },
+    };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    await before.app.runUntilIdle();
+    // The copy: c-1 registered, and a person held for long after failures.
+    store.db
+      .prepare(
+        `INSERT INTO "bounda_persons" ("person", "position", "last_active_at", "held_until", "attempts") VALUES ('c-9', 1, ?, ?, 7)`,
+      )
+      .run(START.toISOString(), new Date(START.getTime() + HOLD_MAX_MS).toISOString());
+    const copy = copyOf(store.db);
+    await before.app.forget("c-1");
+    before.clock.advance(GENERATION_INTERVAL_MS);
+    await before.app.runUntilIdle();
+    await before.app.stop();
+    restore(store.db, copy);
+
+    const logger = recordingLogger();
+    const after = await start({ adapter: store.adapter, runtime, logger });
+    expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect(
+      store.db
+        .prepare(`SELECT "held_until", "attempts" FROM "bounda_persons" WHERE "person" = 'c-9'`)
+        .get(),
+    ).toEqual({ held_until: null, attempts: 0 });
+    const reasons = (await after.app.events.read({ limit: 100 }))
+      .filter((event) => event.type === "PersonalDataForgotten")
+      .map((event) => (event.payload as PersonalDataForgottenPayload).reason);
+    expect(reasons).toEqual(["restored"]);
+    expect((await after.app.status()).restoresFound).toBe(1);
+    await after.app.stop();
+    const again = recordingLogger();
+    await start({ adapter: store.adapter, runtime, logger: again });
+    expect(restarts(again)).toEqual([]);
+  });
+
+  it("is declared without a ledger by bounda restored, which every running instance learns", async () => {
+    const path = files().storage;
+    const one = createNodeSqliteAdapter(path);
+    const runningLogger = recordingLogger();
+    const runtime: RuntimeConfig = { personalData: { retention: "3650d" } };
+    const running = await start({
+      adapter: createNodeSqliteAdapter(path).adapter,
+      runtime,
+      logger: runningLogger,
+    });
+    await running.app.runUntilIdle();
+    one.db
+      .prepare(
+        `INSERT INTO "bounda_persons" ("person", "position", "last_active_at", "held_until", "attempts") VALUES ('c-9', 1, ?, ?, 7)`,
+      )
+      .run(START.toISOString(), new Date(START.getTime() + HOLD_MAX_MS).toISOString());
+    const operatorLogger = recordingLogger();
+    const operator = await start({ adapter: one.adapter, runtime, logger: operatorLogger });
+    await operator.app.restored();
+    expect(restarts(operatorLogger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect(
+      one.db
+        .prepare(`SELECT "held_until", "attempts" FROM "bounda_persons" WHERE "person" = 'c-9'`)
+        .get(),
+    ).toEqual({ held_until: null, attempts: 0 });
+    await running.app.runUntilIdle();
+    expect(restarts(runningLogger).map(({ fields }) => fields)).toEqual([{ first: false }]);
+    expect((await running.app.status()).restoresFound).toBe(1);
+  });
+});
+
+describe("an instance in the web role", () => {
+  it("watches for a restore and forgets again at once whom the copy brings back", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "bounda-web-"));
+    const store = createNodeSqliteAdapter(join(directory, "store.db"));
+    const ledger = memory();
+    const runtime: RuntimeConfig = {
+      role: "web",
+      personalData: { forgetLedger: { store: ledger } },
+    };
+    const logger = recordingLogger();
+    const { app, clock } = await start({ adapter: store.adapter, runtime, logger });
+    app.start();
+    await register(app, "c-1");
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    const copy = copyOf(store.db);
+    await app.forget("c-1");
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    restore(store.db, copy);
+    expect(store.db.prepare(`SELECT count(*) AS "keys" FROM "bounda_personal_keys"`).get()).toEqual(
+      {
+        keys: 1,
+      },
+    );
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    expect(store.db.prepare(`SELECT count(*) AS "keys" FROM "bounda_personal_keys"`).get()).toEqual(
+      {
+        keys: 0,
+      },
+    );
+    expect(
+      logger.logged.filter(
+        ({ message }) =>
+          message === "the database went back to an earlier copy; background jobs start over",
+      ),
+    ).toHaveLength(1);
   });
 });

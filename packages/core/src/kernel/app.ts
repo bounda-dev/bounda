@@ -73,7 +73,7 @@ import {
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
-import { createRestoreWatch } from "./shared/restores.ts";
+import { createRestoreWatch, GENERATION_INTERVAL_MS } from "./shared/restores.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
 import { type AppStatus, readAppStatus } from "./status.ts";
 import { ATTRIBUTES, METRICS, meter, tracedOperation } from "./telemetry.ts";
@@ -190,8 +190,9 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
   readonly config: ResolvedConfig;
   readonly role: RuntimeRole;
   /**
-   * Starts background work: the dispatcher and the scheduled command worker. Does nothing for
-   * `role: "web"`.
+   * Starts background work: the dispatcher and the scheduled command worker. For `role: "web"`,
+   * only the watch for a database restored under the app, which forgets again at once whom the
+   * copy brought back.
    */
   start(): void;
   /**
@@ -262,6 +263,14 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
     entries: readonly ForgetAgainEntry[],
     options?: ForgetAgainOptions,
   ): Promise<readonly string[]>;
+  /**
+   * Says the database was restored from a copy: what `bounda restored` runs after restoring while
+   * the app was stopped, without a forget ledger that tells it. Counts the restore, so every
+   * running instance starts its background jobs over, clears the holds the copy brought back, and
+   * reconciles the forget ledger at once when there is one. A restore made under a running app,
+   * or while it was stopped with a ledger, is found without it.
+   */
+  restored(): Promise<void>;
 }
 
 /**
@@ -659,7 +668,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             errorText,
           });
-    const restores = createRestoreWatch({ checkpoints: written.checkpointStore, logger });
+    const restores = createRestoreWatch({
+      checkpoints: written.checkpointStore,
+      events: written.eventStore,
+      marks: ledger,
+      logger,
+    });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -799,6 +813,29 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         retention,
         letterRetention,
       });
+    // A copy restored while the app was stopped holds less than the forget ledger's mark: the
+    // holds it brought back are cleared before anything runs, and the reconciliation below forgets
+    // again whom it brought back.
+    const cold = await restores.start(clock.now());
+    if (cold !== null) await worker.restored(cold.first);
+    // An instance that runs no worker still watches for a restore, and reconciles the ledger at
+    // once when it finds one, since no pass of its own would.
+    const watchForRestores = (): (() => void) => {
+      let cancel: (() => void) | undefined;
+      const next = (): void => {
+        cancel = clock.after(GENERATION_INTERVAL_MS, async () => {
+          const found = await restores.check(clock.now());
+          if (found !== null) {
+            await worker.restored(found.first);
+            await reconciliation?.reconcile(clock.now());
+          }
+          next();
+        });
+      };
+      next();
+      return () => cancel?.();
+    };
+    let unwatch: (() => void) | undefined;
     // Before the app serves anything: a backup restored brings back persons forgotten since, and
     // the read models that show them hear of it by the time the start resolves. A ledger that
     // does not answer in time is left to finish behind the start, as one that fails is retried,
@@ -964,7 +1001,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       config,
       role,
       start: () => {
-        if (role === "web" || stopping !== undefined) return;
+        if (stopping !== undefined) return;
+        if (role === "web") {
+          unwatch ??= watchForRestores();
+          return;
+        }
         dispatcher.start();
         worker.start();
       },
@@ -972,7 +1013,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         stopping ??= (async () => {
           try {
             lag.removeCallback(observeLag);
+            unwatch?.();
             await Promise.all([dispatcher.stop(), worker.stop()]);
+            await restores.flush();
             try {
               await readModels.close();
             } finally {
@@ -1033,6 +1076,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           forgotten.push(entry.personId);
         }
         return forgotten;
+      },
+      restored: async () => {
+        const { first } = await restores.declare();
+        await worker.restored(first);
+        await reconciliation?.reconcile(clock.now());
       },
       pendingRebuilds: async () => {
         const paused = await Promise.all(

@@ -39,7 +39,7 @@ everything — the right answer until it is not.
 | Role | What `start()` does |
 | --- | --- |
 | `all` (default) | runs the dispatcher and the scheduled command worker |
-| `web` | nothing |
+| `web` | watches for a [restore](/guides/personal-data/#restores) of the database, nothing else |
 | `worker` | runs the dispatcher and the scheduled command worker |
 
 Serving HTTP is your app's business, not Bounda's: the role only decides whether this process also
@@ -359,7 +359,8 @@ as long as the backups. Restoring one taken before someone was forgotten brings 
 the app has a [forget ledger](/guides/personal-data/#backups) in another database, which forgets
 them again when the app starts on the restored copy, or at once when the copy is restored under the
 running app: every running instance finds that the database went back, and its background jobs
-start over (see [restores while running](/guides/personal-data/#restores-while-running)). Set the
+start over (see [restores](/guides/personal-data/#restores)). Restored while the app was stopped,
+the ledger tells it at the next start, and without a ledger run `bounda restored`. Set the
 ledger's `keepFor` longer than the oldest backup you keep.
 
 ## Observability

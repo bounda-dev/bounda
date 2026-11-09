@@ -340,7 +340,7 @@ describe("the status of the app", () => {
       { database: "storage", scope: "storage", version: 2, latest: 2 },
       { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
       { database: "readModels.customers", scope: "checkpoints", version: 1, latest: 1 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 1, latest: 1 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 2, latest: 2 },
     ]);
     expect(status).toMatchObject({
       forgetLedger: { reconciled: true, held: null },

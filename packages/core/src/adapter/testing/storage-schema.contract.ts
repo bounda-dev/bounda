@@ -149,18 +149,18 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: 2 },
         { scope: "checkpoints", version: 0, latest: 1 },
-        { scope: "forget-ledger", version: 0, latest: 1 },
+        { scope: "forget-ledger", version: 0, latest: 2 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: 2 },
         { scope: "checkpoints", version: 1, latest: 1 },
-        { scope: "forget-ledger", version: 0, latest: 1 },
+        { scope: "forget-ledger", version: 0, latest: 2 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger"])).toEqual([
         { scope: "storage", version: 2, latest: 2 },
         { scope: "checkpoints", version: 1, latest: 1 },
-        { scope: "forget-ledger", version: 1, latest: 1 },
+        { scope: "forget-ledger", version: 2, latest: 2 },
       ]);
       const shape = await shapeOf(target, dialect);
       await opened(target.adapter, async () => undefined);
@@ -307,6 +307,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       }
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual([
         { scope: "forget-ledger", version: 1 },
+        { scope: "forget-ledger", version: 2 },
       ]);
     });
 

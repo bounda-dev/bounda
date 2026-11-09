@@ -2,7 +2,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { resolvedAtOfEarlierLetters } from "../sql/dead-letters.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
-import { forgetLedgerStatements } from "../sql/forget-ledger.ts";
+import { forgetLedgerMarksStatement, forgetLedgerStatements } from "../sql/forget-ledger.ts";
 import { quoteIdentifier } from "../sql/identifiers.ts";
 import {
   migrateSchemas,
@@ -152,6 +152,7 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
         }
       },
     },
+    { version: 2, migrate: (tx) => tx.run(forgetLedgerMarksStatement(table), []) },
   ],
 });
 

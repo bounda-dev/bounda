@@ -399,6 +399,21 @@ const runStatus = (
     return EXIT_OK;
   });
 
+const runRestored = (
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    await app.restored();
+    line(
+      stdout,
+      `restore recorded: ${(await app.status()).restoresFound} found so far; the background jobs start over from the copy, without the holds it brought back`,
+    );
+    return EXIT_OK;
+  });
+
 // Only the configuration is read: the tables are migrated before any app of this release starts.
 const NO_REGISTRY: Registry = { aggregates: {}, readModels: {} };
 
@@ -596,6 +611,16 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
       .option("--json", "print the status as JSON", false),
   ).action(async (options: StatusOptions) => {
     exitCode = await runStatus(options, cwd, stdout, stderr);
+  });
+
+  projectOptions(
+    program
+      .command("restored")
+      .description(
+        "say the database was restored from a copy while the app was stopped: every instance starts its background jobs over, without the holds the copy brought back",
+      ),
+  ).action(async (options: ProjectOptions) => {
+    exitCode = await runRestored(options, cwd, stdout, stderr);
   });
 
   program

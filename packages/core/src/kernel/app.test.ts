@@ -446,11 +446,12 @@ describe("createApp", () => {
     await fresh.stop();
   });
 
-  it("does not start background work in the web role but still serves commands and queries", async () => {
+  it("starts no background work in the web role but its watch for a restore, and still serves commands and queries", async () => {
     const { app, clock } = await start("web");
     expect(app.role).toBe("web");
     app.start();
-    expect(clock.pending()).toBe(0);
+    app.start();
+    expect(clock.pending()).toBe(1);
     await app.commands.placeOrder({ orderId: "o-1", total: 10 });
     clock.advance(1_000);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toBeNull();

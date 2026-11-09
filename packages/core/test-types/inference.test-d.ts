@@ -100,6 +100,7 @@ import {
 } from "@bounda-dev/core";
 import type {
   Adapter,
+  ForgetLedger,
   SchemaScopeName,
   SchemaVersion,
   StoredSubscriberFailure,
@@ -1368,6 +1369,14 @@ describe("operations", () => {
     expectTypeOf<SubscriberFailure["errorStack"]>().toEqualTypeOf<string | null | undefined>();
     expectTypeOf<StoredSubscriberFailure["person"]>().toEqualTypeOf<string | null>();
     expectTypeOf<SubscriberFailure["resolvedAt"]>().toEqualTypeOf<string | null>();
+  });
+
+  it("declares a restore on the app, and keeps the ledger's marks outside the database", () => {
+    expectTypeOf<BoundaApp["restored"]>().toEqualTypeOf<() => Promise<void>>();
+    expectTypeOf<ForgetLedger["readMark"]>().toEqualTypeOf<(name: string) => Promise<number>>();
+    expectTypeOf<ForgetLedger["raiseMark"]>().toEqualTypeOf<
+      (name: string, value: number) => Promise<void>
+    >();
   });
 
   it("names a process given up as abandoned", () => {

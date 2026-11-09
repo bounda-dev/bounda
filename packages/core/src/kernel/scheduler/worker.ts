@@ -61,6 +61,11 @@ export interface ScheduledCommandWorker {
    * How many due deadlines and restricted retries wait for the reactive runners to catch up.
    */
   waitingDeadlines(): number;
+  /**
+   * Starts every background job over from what the database holds, as after a restore, between
+   * passes; `first` also clears the holds the copy brought back. Never rejects.
+   */
+  restored(first: boolean): Promise<void>;
 }
 
 export interface CreateScheduledCommandWorkerArgs {
@@ -570,9 +575,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     ]);
   };
 
+  // Whether the last pass did anything, which may have written no event: a key rewrapped, a hold.
+  let worked = false;
+
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
-      const restored = await restores?.check(clock.now());
+      const restored = await restores?.check(clock.now(), { active: worked });
       if (restored !== undefined && restored !== null) await restart(restored.first);
       const claimedAt = clock.now();
       const due = await claimDue(claimedAt);
@@ -614,7 +622,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
-      return due.length + forgotten + rewrapped + forgottenAgain + purged + backfilled;
+      const done = due.length + forgotten + rewrapped + forgottenAgain + purged + backfilled;
+      worked = done > 0;
+      return done;
     });
 
   const schedule = (): void => {
@@ -647,5 +657,6 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     runOnce,
     leaseMs,
     waitingDeadlines: () => waits.size,
+    restored: (first) => mutex.run(() => restart(first)),
   };
 };

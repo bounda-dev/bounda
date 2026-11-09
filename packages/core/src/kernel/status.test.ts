@@ -79,7 +79,13 @@ describe("readAppStatus", () => {
         personalDataBackfill: null,
       }),
       failures: subscriberFailures,
-      restores: { check: async () => null, found: async () => 0 },
+      restores: {
+        start: async () => null,
+        check: async () => null,
+        declare: async () => ({ first: true }),
+        flush: async () => undefined,
+        found: async () => 0,
+      },
     });
     expect(
       Object.fromEntries(status.subscriberFailures.map((each) => [each.subscriber, each.current])),

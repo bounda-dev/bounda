@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status and migrate its tables."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, migrate its tables and declare a restore."
 sidebar:
   order: 0
 ---
@@ -277,7 +277,7 @@ dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
   the database holds of the one this release migrates it to; one behind says
   `(migrations pending: bounda migrate)`. A store without tables, as `memory()`, has none.
 - `restores found while running`: how many times a running instance found the database gone back
-  to an earlier copy ([restores while running](/guides/personal-data/#restores-while-running)).
+  to an earlier copy ([restores](/guides/personal-data/#restores)), or declared by `bounda restored`.
 - each subscriber's checkpoint and lag, and its last failure, by any instance: `failing` while it is
   still stuck on it, `last failed, resolved …` once it got past. Its class and code, the event, how
   many deliveries in a row failed and since when; never its text.
@@ -297,6 +297,27 @@ person was forgotten says its text went with them.
 | `--json` | Print `app.status()` as JSON; with `--error-text`, `subscriberFailures` holds the failures with their text |
 | `--root`, `--config`, `--registry`, `--error-text` | As for `bounda rebuild` |
 | `--actor <id>` | Who reads the failures' text with `--error-text`, named in the access log |
+
+## `bounda restored`
+
+Says the database was restored from a copy while the app was stopped, for an app without a
+[forget ledger](/guides/personal-data/#backups), whose mark tells it on its own. It boots the
+project as `bounda dead-letters` does.
+
+```bash
+bounda restored
+```
+
+```
+restore recorded: 1 found so far; the background jobs start over from the copy, without the holds it brought back
+```
+
+The restore is counted, so every running instance starts its background jobs over; the holds of
+failures the copy brought back are cleared; and with a ledger, it is reconciled at once. Run it
+after `bounda forget --from` when restoring without a ledger (see
+[restores](/guides/personal-data/#restores)). Options: `--root`, `--config`, `--registry`,
+`--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, `2` the project could not be
+loaded.
 
 ## `bounda migrate`
 
@@ -385,7 +406,7 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `actor` for `--actor`; an app exposes the same as `app.rebuildReadModel(name)`, and
 `app.as(actor).rebuildReadModel(name)`. `bounda status` is `app.status()`, and its failures' text
 `app.as(actor).subscriberFailures.list()`; `bounda migrate` is `migrateTables({ config })` from
-`@bounda-dev/core`. `bounda dead-letters` is `app.deadLetters` on a booted app,
+`@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
 or `app.as(actor).deadLetters`, and `bounda forget` is `app.forgetAgain(entries, { actor })`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.

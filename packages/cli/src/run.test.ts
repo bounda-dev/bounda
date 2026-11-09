@@ -924,3 +924,29 @@ export default { storage: adapter };
     }
   });
 });
+
+describe("bounda restored", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+
+  it("records a restore, which the status counts", async () => {
+    const before = JSON.parse((await cli(["status", "--json"], fixture)).stdout).restoresFound;
+    const result = await cli(["restored"], fixture);
+    expect(result.code).toBe(EXIT_OK);
+    expect(besidesLogs(result.stderr)).toBe("");
+    expect(result.stdout).toBe(
+      `restore recorded: ${before + 1} found so far; the background jobs start over from the copy, without the holds it brought back\n`,
+    );
+    expect(result.stderr).toContain(
+      '[bounda] warn the database went back to an earlier copy; background jobs start over {"first":true}',
+    );
+  });
+
+  it("documents itself in its help", async () => {
+    const help = await cli(["restored", "--help"], fixture);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "say the database was restored from a copy while the app was stopped",
+    );
+    expect(help.stdout).toContain("--registry <file>");
+  });
+});

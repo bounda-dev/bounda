@@ -28,10 +28,14 @@ describe("migrateTables", () => {
       { database: "storage", scope: "storage", version: 2, latest: 2 },
       { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
       { database: "readModels.customers", scope: "checkpoints", version: 1, latest: 1 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 1, latest: 1 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 2, latest: 2 },
     ]);
     expect(tablesIn(readModels.db)).toEqual(["bounda_checkpoints", "bounda_migrations"]);
-    expect(tablesIn(ledger.db)).toEqual(["bounda_forget_ledger", "bounda_migrations"]);
+    expect(tablesIn(ledger.db)).toEqual([
+      "bounda_forget_ledger",
+      "bounda_forget_ledger_marks",
+      "bounda_migrations",
+    ]);
     expect(tablesIn(storage.db)).toContain("bounda_subscriber_failures");
     expect(tablesIn(storage.db)).not.toContain("bounda_forget_ledger");
     expect(await migrateTables({ config })).toHaveLength(4);

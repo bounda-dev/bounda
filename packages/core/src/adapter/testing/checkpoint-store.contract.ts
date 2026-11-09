@@ -134,15 +134,21 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
         expect(await leaseOver().take(renewed + 1)).toBe(false);
       });
 
+      // A stream whose head the test moves, as appends do.
+      const stream = { head: 0 };
+      const events = { lastPosition: async () => stream.head };
+      const watchOver = () =>
+        createRestoreWatch({ checkpoints: store, events, marks: null, logger: silentLogger });
+      const at = (ms: number) => new Date(start + ms);
+
       it("tells every instance that the database went back to an earlier copy, and one that it was first", async () => {
-        const one = createRestoreWatch({ checkpoints: store, logger: silentLogger });
-        const other = createRestoreWatch({ checkpoints: store, logger: silentLogger });
-        const at = (ms: number) => new Date(start + ms);
-        expect(await one.check(at(0))).toBeNull();
-        expect(await other.check(at(0))).toBeNull();
+        const one = watchOver();
+        const other = watchOver();
+        expect(await one.check(at(0), { active: true })).toBeNull();
+        expect(await other.check(at(0), { active: true })).toBeNull();
         const copy = await store.get(RESTORE_GENERATION);
-        expect(await one.check(at(GENERATION_INTERVAL_MS))).toBeNull();
-        expect(await other.check(at(GENERATION_INTERVAL_MS))).toBeNull();
+        expect(await one.check(at(GENERATION_INTERVAL_MS), { active: true })).toBeNull();
+        expect(await other.check(at(GENERATION_INTERVAL_MS), { active: true })).toBeNull();
         expect(await store.get(RESTORE_GENERATION)).toBe(copy + 2);
         await store.set(RESTORE_GENERATION, copy);
         expect(await one.check(at(GENERATION_INTERVAL_MS + 1))).toEqual({ first: true });
@@ -154,14 +160,40 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
       });
 
       it("tells a restore that took the count of restores back too", async () => {
-        const one = createRestoreWatch({ checkpoints: store, logger: silentLogger });
+        const one = watchOver();
         await store.set(RESTORES_FOUND, 3);
         await store.set(RESTORE_GENERATION, 10);
-        expect(await one.check(new Date(start))).toBeNull();
+        expect(await one.check(at(0))).toBeNull();
         await store.set(RESTORES_FOUND, 2);
         await store.set(RESTORE_GENERATION, 11);
-        expect(await one.check(new Date(start + 1))).toEqual({ first: true });
+        expect(await one.check(at(1))).toEqual({ first: true });
         expect(await store.get(RESTORES_FOUND)).toBe(4);
+      });
+
+      it("moves the generation only after activity: a write to the stream or work of its own", async () => {
+        const one = watchOver();
+        await one.check(at(0));
+        await one.check(at(GENERATION_INTERVAL_MS));
+        expect(await store.get(RESTORE_GENERATION)).toBe(0);
+        stream.head = 3;
+        await one.check(at(2 * GENERATION_INTERVAL_MS));
+        expect(await store.get(RESTORE_GENERATION)).toBe(1);
+        await one.check(at(3 * GENERATION_INTERVAL_MS));
+        expect(await store.get(RESTORE_GENERATION)).toBe(1);
+        await one.check(at(3 * GENERATION_INTERVAL_MS + 1), { active: true });
+        expect(await store.get(RESTORE_GENERATION)).toBe(2);
+        await one.check(at(3 * GENERATION_INTERVAL_MS + 2), { active: true });
+        expect(await store.get(RESTORE_GENERATION)).toBe(2);
+        await one.check(at(4 * GENERATION_INTERVAL_MS + 1));
+        expect(await store.get(RESTORE_GENERATION)).toBe(3);
+      });
+
+      it("counts a restore an operator declares, which every running instance then learns", async () => {
+        const running = watchOver();
+        await running.check(at(0));
+        expect(await watchOver().declare()).toEqual({ first: true });
+        expect(await running.check(at(1))).toEqual({ first: false });
+        expect(await running.found()).toBe(1);
       });
     });
   });

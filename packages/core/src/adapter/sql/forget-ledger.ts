@@ -28,6 +28,29 @@ export const forgetLedgerStatements: ForgetLedgerStatementsFunction = (table, { 
   ];
 };
 
+export interface ForgetLedgerMarksTableForFunction {
+  (table: string): string;
+}
+
+/**
+ * The table of the ledger's marks, beside the ledger's own `table`, both quoted.
+ */
+export const forgetLedgerMarksTableFor: ForgetLedgerMarksTableForFunction = (table) =>
+  quoteIdentifier(`${table.slice(1, -1)}_marks`);
+
+export interface ForgetLedgerMarksStatementFunction {
+  (table: string): string;
+}
+
+// The second migration of the ledger's scope: its marks, one row per tenant and name.
+export const forgetLedgerMarksStatement: ForgetLedgerMarksStatementFunction = (table) =>
+  `CREATE TABLE IF NOT EXISTS ${forgetLedgerMarksTableFor(table)} (
+    "tenant" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "value" BIGINT NOT NULL,
+    PRIMARY KEY ("tenant", "name")
+  )`;
+
 export interface CreateSqlForgetLedgerArgs {
   readonly db: SqlExecutor;
   /**
@@ -66,6 +89,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
   close,
 }) => {
   const p = dialect.placeholder;
+  const marks = forgetLedgerMarksTableFor(table);
   let ready: Promise<void> | undefined;
   const prepared = (): Promise<void> => {
     ready ??= ensureSchema().catch((error: unknown) => {
@@ -114,6 +138,21 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
         tenant,
         before,
       ]);
+    },
+    readMark: async (name) => {
+      await prepared();
+      const [row] = await db.all(
+        `SELECT "value" FROM ${marks} WHERE "tenant" = ${p(1)} AND "name" = ${p(2)}`,
+        [tenant, name],
+      );
+      return Number(row?.value ?? 0);
+    },
+    raiseMark: async (name, value) => {
+      await prepared();
+      await db.run(
+        `INSERT INTO ${marks} ("tenant", "name", "value") VALUES (${p(1)}, ${p(2)}, ${p(3)}) ON CONFLICT ("tenant", "name") DO UPDATE SET "value" = EXCLUDED."value" WHERE ${marks}."value" < EXCLUDED."value"`,
+        [tenant, name, value],
+      );
     },
     close,
   };

@@ -20,7 +20,12 @@ const postgres: AdapterDefinition<"postgresql", { url: string }> = {
 };
 
 const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
-const forgetLedger = defineForgetLedger(() => ({ append: async () => {}, read: async () => [] }));
+const forgetLedger = defineForgetLedger(() => ({
+  append: async () => {},
+  read: async () => [],
+  readMark: async () => 0,
+  raiseMark: async () => undefined,
+}));
 
 const message = (config: unknown): string => {
   try {

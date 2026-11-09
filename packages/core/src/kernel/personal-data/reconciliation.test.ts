@@ -51,6 +51,8 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
   const inner = memory();
   const ledger: ForgetLedger = {
     ...(visibilityDelayMs === undefined ? {} : { visibilityDelayMs }),
+    readMark: async () => 0,
+    raiseMark: async () => undefined,
     append: async () => {},
     read: async (args) => {
       reads.push(args);
@@ -199,6 +201,8 @@ describe("the forget ledger's reconciliation", () => {
     await inner.append([entry("c-1", "e-1", at(0))]);
     const reconciliation = createForgetLedgerReconciliation({
       ledger: {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async () => {},
         read: async (args) => {
           if (failures > 0) {
@@ -243,6 +247,8 @@ describe("the forget ledger's reconciliation", () => {
     let reads = 0;
     const reconciliation = createForgetLedgerReconciliation({
       ledger: {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async () => {},
         read: async () => {
           reads += 1;

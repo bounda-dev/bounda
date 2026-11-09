@@ -885,7 +885,9 @@ Anything else is a ledger of your own through `defineForgetLedger`, which receiv
 environment, the tenant and `keepForMs` when the app starts: its `read` returns entries in the
 order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
-time; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
+time; its `readMark` and `raiseMark` keep numbers that only go up, which the runtime uses to tell
+a copy [restored while the app was stopped](#restores); `forgetLedgerContract` from
+`@bounda-dev/core/adapter/testing` is the test it has to pass.
 
 ### What the runtime does with it
 
@@ -922,7 +924,7 @@ kept in the database, so a restore takes it back too and cannot hold the next ro
 round runs on the worker's passes, in every instance whose role runs the worker; a Durable Object
 runs it on the passes it wakes for, never waking for it alone, since restoring its storage
 restarts it anyway. A database restored under a running app is reconciled at once, on the next
-pass that [finds the restore](#restores-while-running).
+pass that [finds the restore](#restores).
 
 A ledger that cannot be read when the app starts does not stop it: the app logs an error, starts,
 and its worker tries again after 30 seconds, then twice as long after each failure, up to an hour.
@@ -988,39 +990,53 @@ bounda forget --from forgotten.jsonl
 unless the database holds the forgetting a line names. A line may also be a bare person's id, for
 a list kept some other way, which is forgotten whenever the person holds a key: list only those
 forgotten after the copy was taken. `--actor <id>` names who does it on each `PersonalDataForgotten`
-it appends. `app.forgetAgain(entries, { actor })` is the same in code.
+it appends. `app.forgetAgain(entries, { actor })` is the same in code. Then run `bounda restored`,
+so the jobs start over from the copy ([restores](#restores)).
 
 Without either, a restored backup brings back the data of everyone forgotten after it was taken,
 until they are forgotten again.
 
-### Restores while running
+### Restores
 
-Every instance that runs the worker moves a counter in `bounda_checkpoints` one forward, at most
-every five seconds, and remembers what it read. A copy restored under the running app holds less
-than that, so the next pass of each instance finds the database went back; the first to find it
-counts the restore in another row, which every other instance then sees changed, whatever its own
-reading shows. Each instance then:
+A copy of the database brings back more than forgotten persons: the waits of the jobs that had
+failed, which count failures against data the copy holds as it was. So the runtime finds a
+restore, wherever it happens, and then:
 
-- reconciles the forget ledger at once, without waiting for `reconcileEvery` or for a hold the copy
+- reconciles the forget ledger at once, without waiting for `reconcileEvery` or for a wait the copy
   brought back;
-- forgets what it knew of its background jobs, the backfill caught up, the rotation complete, the
-  waits after a failure, the dispatcher's backoff, and so reads the copy again on that pass;
-- and, on the instance that found it first, clears the holds the copy brought back, on persons,
-  keys, the backfill and the reconciliation: they count failures against data the copy no longer
-  holds as it was.
+- has every instance forget what it knew of its background jobs, the backfill caught up, the
+  rotation complete, the pauses after a failure, the dispatcher's backoff, and read the copy again;
+- and, on the instance that found it first, clears the waits the copy brought back, on persons,
+  keys, the backfill and the reconciliation.
 
 The attempts of handlers, a policy's, a process's or a scheduled command's, stay as the copy has
-them: those runs happened, and what they did through a port is not undone. It logs:
+them: those runs happened, and what they did through a port is not undone. Each find logs
 
 ```
 the database went back to an earlier copy; background jobs start over
 ```
 
-and `bounda status` counts the restores found. A copy taken within five seconds of being restored
-may hold the counter every instance read last, and goes unnoticed: what it undid is that recent.
-A copy restored while the app was stopped is not told apart from a database left alone, since no
-running instance remembers what it held; the start reconciles the ledger whatever its hold says,
-and the holds the copy brought back end on their own, within an hour at most.
+and `bounda status` counts the restores found. How it is found depends on when the copy came back:
+
+| The copy was restored | Found by | What is guaranteed |
+| --- | --- | --- |
+| under the running app | every instance, on its next pass, or within five seconds in the `web` role | Any copy taken before the last write the instances saw. A copy taken after it differs from the database in nothing but waits, which the jobs read again anyway. |
+| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds: raised at most once a minute while the app writes, and when it stops. A copy taken in the last minute before a crash goes unseen, as above. |
+| while the app was stopped, without a ledger | `bounda restored`, which you run after restoring | What you declare: the database alone cannot tell a copy from itself. |
+
+Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
+it wrote, at most every five seconds, and remembers what it read: a copy holds less, and the
+first instance to see it counts the restore in another row, which every other instance then sees
+changed. An idle instance writes nothing, so neither does its watch. With a forget ledger the
+counter is also raised in the ledger, as a mark outside the database, which is how a start tells
+a copy restored while the app was stopped. Without one, run, after restoring:
+
+```bash
+bounda restored
+```
+
+`app.restored()` is the same in code. It counts the restore, so running instances learn of it
+too, clears the waits, and reconciles the ledger at once when there is one.
 
 ### Old backups
 
