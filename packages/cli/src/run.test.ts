@@ -909,8 +909,8 @@ describe("bounda forget-ledger expire", () => {
     expect(one.code).toBe(EXIT_FAILURE);
     expect(one.stderr).toBe("error: wrangler: not authorized\n");
     expect(one.calls.map(({ root, args }) => [root, args.at(-1)])).toEqual([
-      ["/project", "--remote"],
-      ["/project", "--remote"],
+      [resolve("/project"), "--remote"],
+      [resolve("/project"), "--remote"],
     ]);
   });
 
