@@ -941,6 +941,50 @@ describe("createRetentionSweep", () => {
     ]);
   });
 
+  it("destroys at once what a forgetting kept once no legal obligation keeps its category", async () => {
+    const live = await memory().createStorage();
+    const legal = {
+      categories: {
+        invoices: { basis: "legal-obligation", retention: "6y" },
+        orders: { basis: "legal-obligation", retention: "6y" },
+      },
+    } as const;
+    const kept = await setUp(live, { retentionMs: null, module: legal });
+    await live.personalKeys.add("c-1", "invoices", testPersonalKey("1"));
+    await live.personalKeys.add("c-2", "orders", testPersonalKey("2"));
+    await kept.touch("c-1");
+    await kept.touch("c-2");
+    await kept.record();
+    for (const person of ["c-1", "c-2"]) {
+      await forgetPersonalData({
+        storage: live,
+        ids: kept.ids,
+        clock: kept.clock,
+        logger: kept.logger,
+        concurrencyRetries: 0,
+        categories: buildPersonalCategories({ module: legal, retention: null }),
+        batchSize: 2,
+        personId: person,
+      });
+    }
+    expect(await kept.sweep.sweep(kept.clock.now())).toBe(0);
+    expect(await kept.sweep.nextDueAt()).not.toEqual(kept.clock.now());
+
+    const changed = await setUp(live, {
+      retentionMs: null,
+      module: { categories: { invoices: { basis: "contract", retention: "6y" } } },
+    });
+    expect(await changed.sweep.nextDueAt()).toEqual(new Date(day(0)));
+    expect(await changed.sweep.sweep(changed.clock.now())).toBe(2);
+    expect(await live.personalKeys.list("c-1")).toEqual([]);
+    expect(await live.personalKeys.list("c-2")).toEqual([]);
+    expect((await changed.forgettings()).map(({ payload }) => payload).slice(-2)).toEqual([
+      expect.objectContaining({ reason: "retention", whole: false, expired: ["invoices"] }),
+      expect.objectContaining({ reason: "retention", whole: false, expired: ["orders"] }),
+    ]);
+    expect(await changed.sweep.nextDueAt()).toBeNull();
+  });
+
   it("holds a key it could not destroy on the key, so the person's other keys and row stay free", async () => {
     const live = await memory().createStorage();
     let failing = true;

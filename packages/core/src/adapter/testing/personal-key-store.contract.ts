@@ -346,5 +346,50 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       await store.touch("c-1", "2026-01-05T00:00:00.000Z");
       expect(await store.nextDueHoldEnd({ category: "profile", after: before })).toBeNull();
     });
+
+    it("lists the keys a forgetting kept outside the categories given, kept longest first, leaving out the restricted", async () => {
+      const kept = async (person: string, category: string, since: string) => {
+        await store.add(person, category, stored(person.slice(2)));
+        await store.retain(person, `f-${person.slice(2)}`, {
+          since,
+          lastActiveAt: "2026-01-01T00:00:00.000Z",
+        });
+      };
+      await kept("c-1", "invoices", "2026-02-03T00:00:00.000Z");
+      await kept("c-2", "billing", "2026-02-02T00:00:00.000Z");
+      await kept("c-3", "orders", "2026-02-01T00:00:00.000Z");
+      await kept("c-4", "billing", "2026-02-01T00:00:00.000Z");
+      await store.add("c-5", "billing", stored("5"));
+      await persons.restrict("c-4", new Date("2026-02-05T00:00:00.000Z"));
+      const listed = await store.listRetained({ except: ["invoices"], limit: 10 });
+      expect(listed.map(({ person }) => person)).toEqual(["c-3", "c-2"]);
+      expect(listed[0]).toEqual({
+        person: "c-3",
+        category: "orders",
+        fingerprint: "f-3",
+        lastActiveAt: "2026-01-01T00:00:00.000Z",
+        retainedSince: "2026-02-01T00:00:00.000Z",
+        hold: null,
+      });
+      expect(
+        (await store.listRetained({ except: [], limit: 10 })).map(({ person }) => person),
+      ).toEqual(["c-3", "c-2", "c-1"]);
+      expect(await store.listRetained({ except: ["invoices"], limit: 1 })).toHaveLength(1);
+      const hold = { until: "2026-03-01T00:00:00.000Z", attempts: 1 };
+      await store.holdDue("c-3", "f-3", "2026-01-01T00:00:00.000Z", hold);
+      const before = new Date("2026-02-28T00:00:00.000Z");
+      expect(
+        (await store.listRetained({ except: ["invoices"], releasedBy: before, limit: 10 })).map(
+          ({ person }) => person,
+        ),
+      ).toEqual(["c-2"]);
+      expect(await store.nextRetainedHoldEnd({ except: ["invoices"], after: before })).toEqual(
+        new Date(hold.until),
+      );
+      expect(await store.nextRetainedHoldEnd({ except: ["orders"], after: before })).toBeNull();
+      expect(
+        await store.nextRetainedHoldEnd({ except: [], after: new Date(hold.until) }),
+      ).toBeNull();
+    });
   });
 };

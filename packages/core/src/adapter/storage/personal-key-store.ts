@@ -99,6 +99,26 @@ export interface ListDueArgs {
   readonly limit: number;
 }
 
+export interface ListRetainedArgs {
+  /**
+   * Leaves out the keys of these categories: those a legal obligation still keeps.
+   */
+  readonly except: readonly string[];
+  /**
+   * Leaves out the keys held past it; holds are not looked at when omitted.
+   */
+  readonly releasedBy?: Date;
+  readonly limit: number;
+}
+
+export interface NextRetainedHoldEndArgs {
+  readonly except: readonly string[];
+  /**
+   * Only the holds that end after it.
+   */
+  readonly after: Date;
+}
+
 export interface NextDueHoldEndArgs {
   readonly category: string;
   /**
@@ -189,6 +209,11 @@ export const namesPerson: NamesPersonFunction = (row, person, keep = []) =>
  * retention reads, while it still records `lastActiveAt`. `nextDueHoldEnd` answers the earliest
  * end of such a hold past `after`, `null` when none is held past it.
  *
+ * `listRetained` lists, kept longest first, the keys a forgetting retained whose category is not
+ * one of `except`, whose person is not restricted: what no legal obligation keeps any more, as a
+ * category whose basis changed. Their holds are those of `holdDue`, and `nextRetainedHoldEnd`
+ * answers the earliest end of one past `after`.
+ *
  * `listWrappedUnder` lists, by person, keys wrapped under one of `kids`, and `rewrap` replaces
  * the key `from` of a person with the same key wrapped as `to` says, keeping its fingerprint and
  * clearing its hold, only while the person still holds `from`, and reports whether it did: a key
@@ -211,6 +236,8 @@ export interface PersonalKeyStore {
   listDue(args: ListDueArgs): Promise<readonly DueKey[]>;
   holdDue(person: string, fingerprint: string, lastActiveAt: string, hold: Hold): Promise<void>;
   nextDueHoldEnd(args: NextDueHoldEndArgs): Promise<Date | null>;
+  listRetained(args: ListRetainedArgs): Promise<readonly DueKey[]>;
+  nextRetainedHoldEnd(args: NextRetainedHoldEndArgs): Promise<Date | null>;
   listWrappedUnder(args: ListWrappedUnderArgs): Promise<readonly PersonalKeyRow[]>;
   rewrap(person: string, from: StoredPersonalKey, to: RewrappedKey): Promise<boolean>;
   hold(person: string, from: StoredPersonalKey, hold: Hold): Promise<void>;

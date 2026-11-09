@@ -165,6 +165,8 @@ const trackedPersonalKeys = (
         personalKeys.holdDue(person, fingerprint, lastActiveAt, hold),
       ),
     nextDueHoldEnd: (args) => personalKeys.nextDueHoldEnd(args),
+    listRetained: (args) => personalKeys.listRetained(args),
+    nextRetainedHoldEnd: (args) => personalKeys.nextRetainedHoldEnd(args),
     listWrappedUnder: (args) => personalKeys.listWrappedUnder(args),
     rewrap: (person, from, to) =>
       tracked(entries, id(person, from.fingerprint), () => personalKeys.rewrap(person, from, to)),

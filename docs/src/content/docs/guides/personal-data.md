@@ -115,6 +115,25 @@ that names the category in `expired`. Whether a key is kept that way, and since 
 on its row. A category whose retention had already run out at the forgetting is forgotten with the
 rest.
 
+### Changing a category
+
+A category's retention can change at any time: the sweep reads it as it runs, so a longer or a
+shorter one applies at once to every person, what a forgetting kept included. So does a basis, and
+a category removed from the file: a key a forgetting kept under a legal obligation is destroyed by
+the next pass of the worker once its category is no longer a `legal-obligation` one, with a
+`PersonalDataForgotten` that names it in `expired`, since nothing allows keeping it any more.
+
+A field moved to another category, or out of a category into the default one or back, is sealed
+anew under the person's key of its new category by the [backfill](#marking-a-field-later), in every
+event, process state, scheduled command and dead letter that holds it: the marks changed, so the
+worker walks the stream again, opens each value sealed under a category its field is no longer in
+and seals it under the right one, as the forgettings since it was written say, a category kept or
+forgotten included. From then on forgetting the old category no longer reaches the value, and
+forgetting the new one does. A remembered rejection that may quote it under the old key is dropped,
+as is a snapshot of its stream, and decided or folded again. A value no key opens any more, its
+person forgotten in its old category, stays as it is: it was forgotten already. Going back to
+earlier marks walks the stream again too.
+
 ## In a command's payload
 
 A command is stored too when it waits: dispatched with `delay`, retried by the scheduler after a

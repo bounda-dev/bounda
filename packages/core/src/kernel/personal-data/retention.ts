@@ -97,8 +97,9 @@ export const createRetentionSubscriber: CreateRetentionSubscriberFunction = ({
 export interface RetentionSweep {
   /**
    * Forgets, with `reason: "retention"`, up to `RETENTION_SWEEP_LIMIT` persons idle past the app's
-   * retention at `now` and not held, as a whole, and as many keys of each declared category idle
-   * past that category's retention, and resolves to how many forgettings it made. Never rejects:
+   * retention at `now` and not held, as a whole, as many keys of each declared category idle past
+   * that category's retention, and as many keys a forgetting kept that no legal obligation keeps
+   * any more, and resolves to how many forgettings it made. Never rejects:
    * a person or a key it could not forget is logged and held, longer after each failure.
    */
   sweep(now: Date): Promise<number>;
@@ -132,14 +133,16 @@ type Outcome = "forgotten" | "skipped" | "undone";
 // What a list of things to forget is read through: persons idle past the app's retention, or the
 // keys of one category idle past its own.
 interface Sweepable<Due> {
-  readonly retention: Retention;
+  // The latest last activity due at `at`; every one is when omitted.
+  activeBefore(at: number): Date | undefined;
+  // When one listed comes due; `null` for one with no activity recorded.
+  deadlineOf(due: Due): number | null;
   list(args: {
     readonly activeBefore?: Date;
     readonly releasedBy?: Date;
     readonly limit: number;
   }): Promise<readonly Due[]>;
   nextHoldEnd(after: Date): Promise<Date | null>;
-  lastActiveAt(due: Due): string | null;
   holdOf(due: Due): Hold | null;
   // Resolves `undone` for one whose record is behind, left for a later pass, and `skipped` for
   // one restricted, or forgotten by another instance, since the list was read.
@@ -236,10 +239,11 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   };
 
   const persons = (retention: Retention): Sweepable<StoredPerson> => ({
-    retention,
+    activeBefore: (at) => new Date(retentionStart(at, retention)),
+    deadlineOf: ({ lastActiveAt }) =>
+      lastActiveAt === null ? null : retentionEnd(Date.parse(lastActiveAt), retention),
     list: (args) => storage.persons.listIdle(args),
     nextHoldEnd: (after) => storage.persons.nextHoldEnd(after),
-    lastActiveAt: (person) => person.lastActiveAt,
     holdOf: (person) => person.hold,
     forget: (person, through) =>
       forgetting(
@@ -262,11 +266,11 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
 
   const keysOf = (category: PersonalCategory & { readonly retention: Retention }) =>
     ({
-      retention: category.retention,
+      activeBefore: (at) => new Date(retentionStart(at, category.retention)),
+      deadlineOf: ({ lastActiveAt }) => retentionEnd(Date.parse(lastActiveAt), category.retention),
       list: (args) => storage.personalKeys.listDue({ ...args, category: category.name }),
       nextHoldEnd: (after) =>
         storage.personalKeys.nextDueHoldEnd({ category: category.name, after }),
-      lastActiveAt: (due) => due.lastActiveAt,
       holdOf: (due) => due.hold,
       forget: (due, through) =>
         forgetting(
@@ -291,6 +295,45 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
         storage.personalKeys.holdDue(due.person, due.fingerprint, due.lastActiveAt, hold),
       describe: (due) => ({ personId: due.person, category: due.category }),
     }) satisfies Sweepable<DueKey>;
+
+  // What a forgetting kept that no legal obligation keeps any more, as a category whose basis
+  // changed or that the app no longer declares, goes at once.
+  const legal = categories.declared
+    .filter(({ basis }) => basis === "legal-obligation")
+    .map(({ name }) => name);
+  const keptBeyond: Sweepable<DueKey> = {
+    activeBefore: () => undefined,
+    deadlineOf: ({ retainedSince }) => Date.parse(retainedSince ?? ""),
+    list: ({ releasedBy, limit }) =>
+      storage.personalKeys.listRetained({
+        except: legal,
+        ...(releasedBy === undefined ? {} : { releasedBy }),
+        limit,
+      }),
+    nextHoldEnd: (after) => storage.personalKeys.nextRetainedHoldEnd({ except: legal, after }),
+    holdOf: (due) => due.hold,
+    forget: (due) =>
+      forgetting(
+        due.person,
+        { kind: "keys", fingerprints: [due.fingerprint] },
+        async (transaction) => {
+          const [row, key] = await Promise.all([
+            transaction.persons.get(due.person),
+            transaction.personalKeys.find(due.person, due.fingerprint),
+          ]);
+          return (row?.restrictedSince ?? null) !== null ||
+            key?.retainedSince === null ||
+            key === null ||
+            legal.includes(key.category)
+            ? "skipped"
+            : "go";
+        },
+        false,
+      ),
+    hold: (due, hold) =>
+      storage.personalKeys.holdDue(due.person, due.fingerprint, due.lastActiveAt, hold),
+    describe: (due) => ({ personId: due.person, category: due.category }),
+  };
 
   // When the store itself fails a pass, so no record can keep the wait, the sweep stops in this
   // instance for a while.
@@ -343,8 +386,9 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     through: () => Promise<number>,
   ): Promise<{ readonly forgotten: number; readonly kept: boolean }> => {
     const at = now.getTime();
+    const activeBefore = sweepable.activeBefore(at);
     const due = await sweepable.list({
-      activeBefore: new Date(retentionStart(at, sweepable.retention)),
+      ...(activeBefore === undefined ? {} : { activeBefore }),
       releasedBy: now,
       limit: RETENTION_SWEEP_LIMIT,
     });
@@ -364,13 +408,16 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   });
 
   // The default category's retention is the app's, which forgets persons as a whole.
-  const runners: readonly Runner[] = categories.all.flatMap((category) => {
-    const { retention } = category;
-    if (retention === null) return [];
-    return category.basis === null
-      ? [runnerOf(persons(retention))]
-      : [runnerOf(keysOf({ ...category, retention }))];
-  });
+  const runners: readonly Runner[] = [
+    ...categories.all.flatMap((category) => {
+      const { retention } = category;
+      if (retention === null) return [];
+      return category.basis === null
+        ? [runnerOf(persons(retention))]
+        : [runnerOf(keysOf({ ...category, retention }))];
+    }),
+    runnerOf(keptBeyond),
+  ];
 
   const sweep = async (now: Date): Promise<number> => {
     let checkpoint: Promise<number> | undefined;
@@ -394,12 +441,8 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   // the hold's end is named alone, so in the rare case of a retention lengthened since, a host
   // wakes once too early, finds the hold over, and from then on reads the deadline of those free.
   const nextDueOf = async <Due>(sweepable: Sweepable<Due>, now: Date): Promise<number> => {
-    const deadlineOf = (due: Due | undefined): number => {
-      const lastActiveAt = due === undefined ? null : sweepable.lastActiveAt(due);
-      return lastActiveAt === null
-        ? Number.POSITIVE_INFINITY
-        : retentionEnd(Date.parse(lastActiveAt), sweepable.retention);
-    };
+    const deadlineOf = (due: Due | undefined): number =>
+      (due === undefined ? null : sweepable.deadlineOf(due)) ?? Number.POSITIVE_INFINITY;
     const [first] = await sweepable.list({ limit: 1 });
     if (first === undefined || isReleasedBy(sweepable.holdOf(first), now)) {
       return deadlineOf(first);

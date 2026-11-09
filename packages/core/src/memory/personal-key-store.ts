@@ -2,6 +2,7 @@ import type { KeyState } from "../adapter/storage/append-checks.ts";
 import type { Hold } from "../adapter/storage/hold.ts";
 import { isReleasedBy } from "../adapter/storage/hold.ts";
 import {
+  type DueKey,
   type HeldPersonalKey,
   type KeyedPerson,
   keyedPersonId,
@@ -71,6 +72,15 @@ const isHeldBy = (
 const idOf = (person: string, fingerprint: string): string =>
   keyedPersonId({ person, fingerprint });
 
+const dueKeyOf = (kept: KeptPersonalKey): DueKey => ({
+  person: kept.person,
+  category: kept.category,
+  fingerprint: kept.fingerprint,
+  lastActiveAt: kept.lastActiveAt ?? "",
+  retainedSince: kept.retainedSince,
+  hold: kept.dueHold,
+});
+
 // Persons, then fingerprints, are unique together, so no two compare equal.
 const byPerson = (a: KeptPersonalKey, b: KeptPersonalKey): number =>
   a.person === b.person ? (a.fingerprint < b.fingerprint ? -1 : 1) : a.person < b.person ? -1 : 1;
@@ -94,6 +104,11 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
         kept.lastActiveAt !== null &&
         !restricted(kept.person) &&
         isReleasedBy(kept.dueHold, releasedBy),
+    );
+  const retainedOutside = (except: readonly string[]): KeptPersonalKey[] =>
+    [...keys.values()].filter(
+      (kept) =>
+        kept.retainedSince !== null && !except.includes(kept.category) && !restricted(kept.person),
     );
   return {
     holds: ({ person, fingerprint }) =>
@@ -156,14 +171,7 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
                 : 1,
           )
           .slice(0, limit)
-          .map((kept) => ({
-            person: kept.person,
-            category: kept.category,
-            fingerprint: kept.fingerprint,
-            lastActiveAt: kept.lastActiveAt ?? "",
-            retainedSince: kept.retainedSince,
-            hold: kept.dueHold,
-          }));
+          .map(dueKeyOf);
       },
       holdDue: async (person, fingerprint, lastActiveAt, hold) => {
         const kept = keys.get(idOf(person, fingerprint));
@@ -172,6 +180,23 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
       nextDueHoldEnd: async ({ category, after }) =>
         earliestHoldEnd(
           due(category, undefined).map(({ dueHold }) => dueHold),
+          after,
+        ),
+      listRetained: async ({ except, releasedBy, limit }) =>
+        retainedOutside(except)
+          .filter((kept) => isReleasedBy(kept.dueHold, releasedBy))
+          .sort((a, b) =>
+            a.retainedSince === b.retainedSince
+              ? byPerson(a, b)
+              : (a.retainedSince ?? "") < (b.retainedSince ?? "")
+                ? -1
+                : 1,
+          )
+          .slice(0, limit)
+          .map(dueKeyOf),
+      nextRetainedHoldEnd: async ({ except, after }) =>
+        earliestHoldEnd(
+          retainedOutside(except).map(({ dueHold }) => dueHold),
           after,
         ),
       listWrappedUnder: async ({ kids, releasedBy, limit }) =>

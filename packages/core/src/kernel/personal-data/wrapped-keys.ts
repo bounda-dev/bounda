@@ -350,6 +350,8 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       holdDue: (person, fingerprint, lastActiveAt, hold) =>
         keys.holdDue(person, fingerprint, lastActiveAt, hold),
       nextDueHoldEnd: (args) => keys.nextDueHoldEnd(args),
+      listRetained: (args) => keys.listRetained(args),
+      nextRetainedHoldEnd: (args) => keys.nextRetainedHoldEnd(args),
       listWrappedUnder: (args) => keys.listWrappedUnder(args),
       rewrap: (person, from, to) => keys.rewrap(person, from, to),
       hold: (person, from, hold) => keys.hold(person, from, hold),

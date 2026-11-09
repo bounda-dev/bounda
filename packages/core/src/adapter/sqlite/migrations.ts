@@ -154,6 +154,8 @@ const adoptCategories = async (tx: SqlTransaction, tables: StorageTables): Promi
     `CREATE INDEX ${keysIndex(tables, "held")} ON ${keys} ("held_until") WHERE "held_until" IS NOT NULL`,
     // What a category's retention reads, least recently active first.
     `CREATE INDEX ${keysIndex(tables, "due")} ON ${keys} ("category", "last_active_at") WHERE "last_active_at" IS NOT NULL`,
+    // The keys a forgetting kept, which no legal obligation may keep any more.
+    `CREATE INDEX ${keysIndex(tables, "retained")} ON ${keys} ("retained_since") WHERE "retained_since" IS NOT NULL`,
   ];
   for (const statement of rebuilt ? [] : statements) await tx.run(statement, []);
   await tx.run(forgettings, []);

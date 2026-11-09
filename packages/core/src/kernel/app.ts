@@ -593,18 +593,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       checkpointStore: storage.checkpointStore,
       following: following.map((subscriber) => subscriber.name),
     });
-    const retention = retains(personalCategories)
-      ? createRetentionSweep({
-          storage: written,
-          categories: personalCategories,
-          ids,
-          clock,
-          logger,
-          concurrencyRetries: config.runtime.commands.concurrencyRetries,
-          batchSize: config.runtime.dispatcher.batchSize,
-          forgotten: wrapping.drop,
-        })
-      : undefined;
+    // Without a retention the sweep still ends what a forgetting kept that no legal obligation keeps
+    // any more, which only an app that marks personal fields can hold.
+    const recordsActivity = retains(personalCategories);
+    const retention =
+      recordsActivity || marksPersonalFields({ aggregates, processes: processDefinitions })
+        ? createRetentionSweep({
+            storage: written,
+            categories: personalCategories,
+            ids,
+            clock,
+            logger,
+            concurrencyRetries: config.runtime.commands.concurrencyRetries,
+            batchSize: config.runtime.dispatcher.batchSize,
+            forgotten: wrapping.drop,
+          })
+        : undefined;
     const letterRetentionMs = config.runtime.deadLetters.retentionMs;
     const letterRetention =
       letterRetentionMs === null
@@ -653,7 +657,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             wrapping,
             marks,
             batchSize: config.runtime.dispatcher.batchSize,
-            recordsActivity: retention !== undefined,
+            recordsActivity,
             clock,
             logger,
             errorText,
@@ -683,9 +687,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               ...(test === undefined ? {} : { strict: { onError: test.onSnapshotError } }),
             }),
           ),
-        ...(retention === undefined
-          ? []
-          : [createRetentionSubscriber({ persons: storage.persons, keys: storage.personalKeys })]),
+        ...(recordsActivity
+          ? [createRetentionSubscriber({ persons: storage.persons, keys: storage.personalKeys })]
+          : []),
         ...(ledger === null ? [] : [createLedgerOutbox({ ledger, keepForMs, clock })]),
       ],
       batchSize: config.runtime.dispatcher.batchSize,

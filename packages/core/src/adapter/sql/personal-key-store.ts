@@ -1,4 +1,5 @@
 import type {
+  DueKey,
   HeldPersonalKey,
   PersonalKeyStore,
   StoredPersonalKey,
@@ -44,6 +45,20 @@ const IN_FORCE = `"retained_since" IS NULL`;
 
 // The predicate of the index `listDue` reads.
 const ACTIVE = `"last_active_at" IS NOT NULL`;
+
+// The predicate of the index `listRetained` reads.
+const RETAINED = `"retained_since" IS NOT NULL`;
+
+const DUE = `"person", "category", "fingerprint", "last_active_at", "retained_since", "forget_held_until", "forget_attempts"`;
+
+const dueOf = (row: Record<string, unknown>): DueKey => ({
+  person: String(row.person),
+  category: String(row.category),
+  fingerprint: String(row.fingerprint),
+  lastActiveAt: String(row.last_active_at),
+  retainedSince: text(row.retained_since),
+  hold: holdOf({ held_until: row.forget_held_until, attempts: row.forget_attempts }),
+});
 
 /**
  * The personal key store of SQLite and PostgreSQL alike, on the SQL both speak.
@@ -138,17 +153,10 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
       }
       values.push(limit);
       const rows = await db.all(
-        `SELECT "person", "category", "fingerprint", "last_active_at", "retained_since", "forget_held_until", "forget_attempts" FROM ${table} WHERE ${conditions.join(" AND ")} ORDER BY "last_active_at", "person", "fingerprint" LIMIT ${p(values.length)}`,
+        `SELECT ${DUE} FROM ${table} WHERE ${conditions.join(" AND ")} ORDER BY "last_active_at", "person", "fingerprint" LIMIT ${p(values.length)}`,
         values,
       );
-      return rows.map((row) => ({
-        person: String(row.person),
-        category: String(row.category),
-        fingerprint: String(row.fingerprint),
-        lastActiveAt: String(row.last_active_at),
-        retainedSince: text(row.retained_since),
-        hold: holdOf({ held_until: row.forget_held_until, attempts: row.forget_attempts }),
-      }));
+      return rows.map(dueOf);
     },
     holdDue: async (person, fingerprint, lastActiveAt, { until, attempts }) => {
       await db.run(
@@ -163,6 +171,38 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
           [category, after.toISOString()],
         ),
       ),
+    // A key a forgetting retained has its activity frozen, so `last_active_at` is never null.
+    listRetained: async ({ except, releasedBy, limit }) => {
+      const conditions = [RETAINED, unrestricted];
+      const values: unknown[] = [];
+      if (except.length > 0) {
+        conditions.push(`"category" NOT IN (${except.map((_, index) => p(index + 1)).join(", ")})`);
+        values.push(...except);
+      }
+      if (releasedBy !== undefined) {
+        values.push(releasedBy.toISOString());
+        conditions.push(dueReleasedBy(p(values.length)));
+      }
+      values.push(limit);
+      const rows = await db.all(
+        `SELECT ${DUE} FROM ${table} WHERE ${conditions.join(" AND ")} ORDER BY "retained_since", "person", "fingerprint" LIMIT ${p(values.length)}`,
+        values,
+      );
+      return rows.map(dueOf);
+    },
+    nextRetainedHoldEnd: async ({ except, after }) => {
+      const values: unknown[] = [...except, after.toISOString()];
+      const outside =
+        except.length === 0
+          ? ""
+          : ` AND "category" NOT IN (${except.map((_, index) => p(index + 1)).join(", ")})`;
+      return holdEndOf(
+        await db.all(
+          `SELECT MIN("forget_held_until") AS "until" FROM ${table} WHERE ${RETAINED}${outside} AND ${unrestricted} AND "forget_held_until" > ${p(values.length)}`,
+          values,
+        ),
+      );
+    },
     listWrappedUnder: async ({ kids, releasedBy, limit }) => {
       const under = wrappedUnder(kids);
       if (under === null) return [];
