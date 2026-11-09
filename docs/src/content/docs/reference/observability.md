@@ -96,12 +96,24 @@ import { errorFields } from "@bounda-dev/core";
 logger.error("request failed", { path, ...errorFields({ error }) });
 ```
 
+A React Router app exports Bounda's `handleError` from `app/entry.server.tsx`, which logs what a
+loader, an action or the render throws by the same rule: React Router's default logs every message
+and stack, in production too (see [logging errors](/guides/react-router/#logging-errors)).
+
 [`runtime.telemetry.errorText: "include"`](/reference/configuration/#telemetry) adds the message
 and the stack everywhere: `errorMessage` and `errorStack` in log lines, `exception.message` and
 `exception.stacktrace` on spans, the message as a failed span's status and `errorMessage` in the
 lag. It is for development: `createTestApp` and the dev server of `@bounda-dev/react-router`
 default to it unless the configuration says otherwise, `bounda --error-text` turns it on for one
 command, and the logger handed to port implementations follows it too.
+
+The environment variable `BOUNDA_ERROR_TEXT`, `"omit"` or `"include"`, sets it for a deployment
+without touching the configuration, which on Cloudflare is the same bundle everywhere: `boot()`,
+the CLI, and the Durable Object and the Worker of `@bounda-dev/cloudflare` read it, over what the
+configuration says. `bounda --error-text` and `boot({ errorText })` still win over it, and any
+other value fails the boot with `ConfigurationError`. Projects from `create-bounda` on Cloudflare
+set it in `.dev.vars`, which `wrangler dev` and `vite dev` read and a deployment never sees; the
+constant `ERROR_TEXT_VARIABLE` from `@bounda-dev/core` names it.
 
 ## How a command loaded its aggregate
 

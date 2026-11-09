@@ -2,7 +2,7 @@ import { cloudflare } from "@bounda-dev/cloudflare";
 import { ConfigurationError, type Consistency, type Registry } from "@bounda-dev/core";
 import type { ImportModuleFunction } from "@bounda-dev/core/node";
 import { RouterContextProvider } from "react-router";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, type FakeStoreNamespace, storeNamespace } from "../cloudflare/test-support.ts";
 import { failure } from "../failure.ts";
 import * as cloudflareHost from "./cloudflare.ts";
@@ -148,5 +148,74 @@ describe("createHost under the workerd condition", () => {
     });
     await expect(dispose()).resolves.toBeUndefined();
     expect(config.imported.count).toBe(0);
+  });
+});
+
+describe("createHost under the workerd condition: handleError", () => {
+  afterEach(() => {
+    delete env.BOUNDA_ERROR_TEXT;
+  });
+
+  it.each([
+    [undefined, undefined, false],
+    [undefined, "include", true],
+    ["include", "omit", true],
+    ["omit", "include", false],
+  ] as const)(
+    "logs the text as BOUNDA_ERROR_TEXT %s says, over the imported configuration's %s, as one JSON line",
+    async (variable, configured, included) => {
+      if (variable !== undefined) env.BOUNDA_ERROR_TEXT = variable;
+      const written: unknown[][] = [];
+      const spy = vi
+        .spyOn(console, "error")
+        .mockImplementation((...args) => void written.push(args));
+      try {
+        const { handleError } = createHost({
+          registry,
+          importConfig: async () => ({
+            default: {
+              storage: cloudflare(),
+              ...(configured === undefined
+                ? {}
+                : { runtime: { telemetry: { errorText: configured } } }),
+            },
+          }),
+          consistency: "eventual",
+        });
+        await handleError(new Error("ana@example.com"), { request: new Request("http://w/a") });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(written).toHaveLength(1);
+      expect(JSON.parse(String(written[0]?.[0]))).toEqual({
+        level: "error",
+        message: "bounda request failed",
+        method: "GET",
+        errorName: "Error",
+        ...(included
+          ? { path: "/a", errorMessage: "ana@example.com", errorStack: expect.any(String) }
+          : {}),
+      });
+    },
+  );
+
+  it("omits the text when the configuration cannot be imported", async () => {
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => void written.push(args));
+    try {
+      const { handleError } = createHost({
+        registry,
+        importConfig: async () => {
+          throw new Error("no configuration");
+        },
+        consistency: "eventual",
+      });
+      await handleError(new Error("ana@example.com"), { request: new Request("http://w/a") });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written).toEqual([
+      ['{"level":"error","message":"bounda request failed","method":"GET","errorName":"Error"}'],
+    ]);
   });
 });

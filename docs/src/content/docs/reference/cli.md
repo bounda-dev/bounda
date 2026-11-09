@@ -41,8 +41,9 @@ error: ValidationError (VALIDATION_FAILED); its message may quote personal data:
 ```
 
 `--error-text`, on every command that loads the project, prints the message and lets the log lines
-carry the text of errors for that run; a configuration that sets `errorText: "include"` does the
-same without it. What fails before any handler runs is printed in full: a configuration or a
+carry the text of errors for that run; `BOUNDA_ERROR_TEXT=include` in the environment or in `.env`,
+or a configuration that sets `errorText: "include"`, does the same without it, and
+`BOUNDA_ERROR_TEXT=omit` keeps the text out whatever the configuration says. What fails before any handler runs is printed in full: a configuration or a
 registry that cannot be loaded, a read model that is not in the registry, a list `forget` cannot
 read, and errors whose message Bounda writes from names and ids alone, such as a dead letter that is
 not found or was already settled. To read what a reaction failed on, read its letter:

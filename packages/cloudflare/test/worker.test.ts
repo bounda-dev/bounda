@@ -208,6 +208,54 @@ describe("createWorker", () => {
     },
   );
 
+  it.each([
+    ["include", "omit", { errorMessage: "no session for ana@example.com" }],
+    ["omit", "include", {}],
+  ] as const)(
+    "logs the error of a 500 as BOUNDA_ERROR_TEXT %s in the Worker's env says, over the configuration's %s",
+    async (variable, configured, text) => {
+      const errors: unknown[][] = [];
+      const worker = createWorker({
+        config: {
+          storage: cloudflare({ binding: "SPY" }),
+          runtime: { telemetry: { errorText: configured } },
+        },
+        tenantOf: () => {
+          throw new Error("no session for ana@example.com");
+        },
+        logger: {
+          debug: () => undefined,
+          info: () => undefined,
+          warn: () => undefined,
+          error: (...entry) => void errors.push(entry),
+        },
+      });
+      const response = await worker.fetch?.(
+        new Request("https://bounda.test/queries/getOrder", {
+          method: "POST",
+          body: JSON.stringify({ orderId: "o-1" }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        {
+          BOUNDA_ERROR_TEXT: variable,
+          SPY: { idFromName: () => "id", get: () => recordingStub().stub },
+        } as unknown as Cloudflare.Env,
+        createExecutionContext(),
+      );
+      expect(response?.status).toBe(500);
+      expect(errors).toEqual([
+        [
+          "bounda worker request failed",
+          {
+            path: "/queries/getOrder",
+            errorName: "Error",
+            ...text,
+            ...("errorMessage" in text ? { errorStack: expect.any(String) } : {}),
+          },
+        ],
+      ]);
+    },
+  );
+
   it("answers a 500 and logs it, without the value, when actorOf names no valid actor", async () => {
     const errors: unknown[][] = [];
     const logger: Logger = {

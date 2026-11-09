@@ -1,3 +1,4 @@
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Clock, Consistency } from "@bounda-dev/core";
 import { type Logger, normalizePath, type Plugin } from "vite";
@@ -27,6 +28,10 @@ const CONFIG_FILE = "bounda.config.ts";
 const TENANT_FILE = "tenant.ts";
 const ACTOR_FILE = "actor.ts";
 const WATCHED = ["domain", "read"];
+const ENTRY_SERVER = /^entry\.server\.[cm]?[jt]sx?$/;
+const EXPORTS_HANDLE_ERROR =
+  /export\s+(?:async\s+)?(?:function\*?|const|let|var)\s+handleError\b|export\s*\{[^}]*\bhandleError\b[^}]*\}/;
+const LOGGING_ERRORS = "https://docs.bounda.dev/guides/react-router/#logging-errors";
 const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
 
 /**
@@ -43,7 +48,7 @@ const serverModule = ({ root, command }: Generation, consistency: Consistency): 
     `import { createHost } from ${JSON.stringify(HOST_ID)};`,
     `import { registry } from ${JSON.stringify(normalizePath(join(root, ".bounda/registry.ts")))};`,
     "",
-    "export const { bounda, boundaMiddleware, dispose } = createHost({",
+    "export const { bounda, boundaMiddleware, dispose, handleError } = createHost({",
     ...(command === "serve" ? [`  root: ${JSON.stringify(root)},`, '  errorText: "include",'] : []),
     "  registry,",
     `  importConfig: () => import(${JSON.stringify(normalizePath(join(root, CONFIG_FILE)))}),`,
@@ -63,6 +68,7 @@ const clientModule = (): string =>
     "export const bounda = new Proxy({}, { get: serverOnly });",
     "export const boundaMiddleware = serverOnly;",
     "export const dispose = serverOnly;",
+    "export const handleError = serverOnly;",
     "export const failure = serverOnly;",
     "",
   ].join("\n");
@@ -92,6 +98,18 @@ const regenerate = async ({ root, logger, failOnConvention }: Regeneration): Pro
   }
 };
 
+// Without its own `handleError`, React Router logs every message and stack, in production too.
+const checkEntryServer = async ({ root, logger }: Pick<Generation, "root" | "logger">) => {
+  const directory = join(root, APP_DIRECTORY);
+  const files = await readdir(directory).catch((): string[] => []);
+  const name = files.find((file) => ENTRY_SERVER.test(file));
+  const source = name === undefined ? "" : await readFile(join(directory, name), "utf8");
+  if (EXPORTS_HANDLE_ERROR.test(source)) return;
+  logger.warn(
+    `[bounda] ${name === undefined ? `${APP_DIRECTORY}/entry.server.tsx is missing` : `${APP_DIRECTORY}/${name} does not export handleError`}, so React Router logs the message and the stack of whatever a loader, an action or the render throws, and a message may quote personal data. Export Bounda's from it: export { handleError } from "${APP_MODULE_ID}"; see ${LOGGING_ERRORS}`,
+  );
+};
+
 export const createBoundaPlugin: CreateBoundaPluginFunction = ({
   consistency = "read-your-writes",
   debounceMs = 100,
@@ -99,6 +117,7 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
 }) => {
   let generation: Generation | undefined;
   let generated: Promise<void> | undefined;
+  let entryChecked = false;
   let queue: Promise<void> = Promise.resolve();
   let cancelPending: (() => void) | undefined;
   // Both sides in Vite's form, so the watcher's separator, `\` on Windows, does not matter.
@@ -136,6 +155,10 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
       const run = () => regenerate({ ...current, failOnConvention: current.command === "build" });
       // A watching build starts again after every change, and each start has to see it.
       generated = this.meta.watchMode ? run() : (generated ?? run());
+      if (!entryChecked) {
+        entryChecked = true;
+        await checkEntryServer(current);
+      }
       await generated;
     },
     configureServer(server) {

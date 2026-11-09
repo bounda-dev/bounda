@@ -71,4 +71,5 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
       }),
     consistency,
     ...(importActor === undefined ? {} : { actor: actorOfModule(importActor) }),
+    ...(errorText === undefined ? {} : { errorText }),
   });

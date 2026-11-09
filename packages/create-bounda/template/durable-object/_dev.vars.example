@@ -2,3 +2,6 @@
 # `openssl rand -base64 32` prints. Set it as a secret when you deploy:
 #   npx wrangler secret put BOUNDA_MASTER_KEY
 BOUNDA_MASTER_KEY=
+# In .dev.vars only, so the logs carry the message and the stack of errors in development; never
+# set it when you deploy, since a message may quote personal data:
+#   BOUNDA_ERROR_TEXT=include

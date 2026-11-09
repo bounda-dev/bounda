@@ -4,18 +4,18 @@ import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
 import { expectForgotten } from "@bounda-dev/core/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
-import { configForObject } from "../src/bounda-object.ts";
+import { configForObject, createBoundaObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
 import {
   outage,
   type processRegistry,
-  type quietRegistry,
+  quietRegistry,
   type registry,
   type slicedRegistry,
 } from "./app.ts";
 import { clock } from "./clock.ts";
-import { logs } from "./logs.ts";
+import { logs, recordingLogger } from "./logs.ts";
 import { QuietStore } from "./test-worker.ts";
 
 const fresh = () => env.STORE.get(env.STORE.newUniqueId());
@@ -837,5 +837,42 @@ describe("configForObject", () => {
         ),
       ).toThrow('set storage to cloudflare(), not "sqlite"');
     });
+  });
+});
+
+describe("BOUNDA_ERROR_TEXT", () => {
+  // An object built in the context of an empty one, so it reads the environment the test hands it.
+  const failingAlarmWith = async (variables: Readonly<Record<string, string>>) =>
+    runInDurableObject(env.BARE.get(env.BARE.newUniqueId()), async (_bare, state) => {
+      const Store = createBoundaObject({
+        registry: quietRegistry,
+        config: { storage: cloudflare(), runtime: { telemetry: { errorText: "omit" } } },
+        clock,
+        logger: recordingLogger,
+      });
+      const store = new Store(state, { ...env, ...variables } as Cloudflare.Env);
+      await vi.waitFor(async () => expect((await store.lag()).ok).toBe(true));
+      const tables = state.storage.sql
+        .exec(`SELECT "name" FROM sqlite_master WHERE "type" = 'table' AND "name" LIKE 'bounda_%'`)
+        .toArray();
+      for (const { name } of tables) state.storage.sql.exec(`DROP TABLE "${String(name)}"`);
+      logs.error.length = 0;
+      await store.alarm();
+      return objectLogs(logs.error)[0];
+    });
+
+  it("logs the text of the object's errors when its environment includes it, over the configuration", async () => {
+    expect(await failingAlarmWith({ BOUNDA_ERROR_TEXT: "include" })).toEqual([
+      "bounda rebuilds could not be listed",
+      {
+        errorName: "Error",
+        errorMessage: expect.stringContaining("no such table"),
+        errorStack: expect.any(String),
+      },
+    ]);
+    expect(await failingAlarmWith({})).toEqual([
+      "bounda rebuilds could not be listed",
+      { errorName: "Error" },
+    ]);
   });
 });

@@ -12,6 +12,7 @@ import {
   type DispatchOptions,
   type DispatchResult,
   errorFields,
+  errorTextFromEnv,
   type IdGenerator,
   type ListDeadLettersArgs,
   type Logger,
@@ -164,6 +165,18 @@ export interface ConfigForObjectFunction {
   (config: Config, storage: DurableSqlStorage): Config;
 }
 
+// `BOUNDA_ERROR_TEXT` in the object's environment, `.dev.vars` in development, wins over the
+// configuration, which is the same bundle in every environment.
+const withErrorTextOf = (config: Config, env: object): Config => {
+  const errorText = errorTextFromEnv(env);
+  return errorText === undefined
+    ? config
+    : {
+        ...config,
+        runtime: { ...config.runtime, telemetry: { ...config.runtime?.telemetry, errorText } },
+      };
+};
+
 export const configForObject: ConfigForObjectFunction = (config, storage) => {
   const own = (options: { readonly tablePrefix?: string }) =>
     durableObjectAdapter({ storage, options });
@@ -201,7 +214,9 @@ const ownFunction = <F extends (...args: never[]) => unknown>(
  * scheduled commands and retries run in the object's alarm, which it arms itself for whatever
  * comes next. One object is one store: give each tenant its own with `idFromName(tenant)`. Port
  * implementations receive the object's `env` in `create`, once per object, and that name as
- * `tenant`, which an object reached through an id without a name does not have.
+ * `tenant`, which an object reached through an id without a name does not have. `BOUNDA_ERROR_TEXT`
+ * in that `env`, such as `.dev.vars` sets in development, overrides `runtime.telemetry.errorText`;
+ * any value but `"omit"` or `"include"` fails the object's start with `ConfigurationError`.
  */
 export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registry>({
   registry,
@@ -212,7 +227,6 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
   ids,
   clock = systemClock,
 }: CreateBoundaObjectArgs<R>): BoundaObjectClass => {
-  const errorText = config.runtime?.telemetry?.errorText;
   return class BoundaObject extends DurableObject implements BoundaObjectMethods {
     #app: BoundaApp<R> | undefined;
 
@@ -221,7 +235,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       void ctx.blockConcurrencyWhile(async () => {
         this.#app = await createApp<R>({
           registry,
-          config: configForObject(config, ctx.storage),
+          config: configForObject(withErrorTextOf(config, env), ctx.storage),
           env,
           tenant: ctx.id.name,
           logger,
@@ -234,6 +248,10 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
     #ready(): BoundaApp<R> {
       if (this.#app === undefined) throw new ConfigurationError("The Bounda app is not ready");
       return this.#app;
+    }
+
+    #errorFields(error: unknown) {
+      return errorFields({ error, errorText: this.#app?.config.runtime.telemetry.errorText });
     }
 
     // `as` checks the actor, so one that came over RPC malformed is refused like a bad payload.
@@ -287,7 +305,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           failed = true;
           logger.error("bounda rebuild slice failed", {
             readModel: name,
-            ...errorFields({ error, errorText }),
+            ...this.#errorFields(error),
           });
         }
       }
@@ -429,21 +447,21 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       } catch (error) {
         rebuildFailed = true;
         logger.error("bounda rebuilds could not be listed", {
-          ...errorFields({ error, errorText }),
+          ...this.#errorFields(error),
         });
       }
       try {
         ({ idle } = await this.#ready().runUntilIdle({ maxPasses: passesPerAlarm }));
       } catch (error) {
         logger.error("bounda alarm failed; it will be retried", {
-          ...errorFields({ error, errorText }),
+          ...this.#errorFields(error),
         });
       }
       try {
         await this.#rearm(true, idle, rebuildFailed);
       } catch (error) {
         logger.error("bounda alarm could not re-arm", {
-          ...errorFields({ error, errorText }),
+          ...this.#errorFields(error),
         });
       }
     }

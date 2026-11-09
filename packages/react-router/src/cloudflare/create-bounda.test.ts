@@ -7,7 +7,7 @@ import {
   idempotencyKeyFor,
 } from "@bounda-dev/core";
 import { type RouterContext, RouterContextProvider } from "react-router";
-import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createBounda } from "./create-bounda.ts";
 import { env, storeNamespace } from "./test-support.ts";
 
@@ -143,5 +143,82 @@ describe("createBounda on Cloudflare", () => {
         tenant: () => "acme",
       }),
     ).toThrow(ConfigurationError);
+  });
+});
+
+describe("createBounda on Cloudflare: handleError", () => {
+  const recording = () => {
+    const lines: unknown[][] = [];
+    return {
+      lines,
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: (...entry: unknown[]) => void lines.push(entry),
+      },
+    };
+  };
+
+  afterEach(() => {
+    delete env.BOUNDA_ERROR_TEXT;
+  });
+
+  it.each([
+    [undefined, undefined, false],
+    [undefined, "include", true],
+    ["include", "omit", true],
+    ["omit", "include", false],
+    ["loud", "include", false],
+  ] as const)(
+    "logs the text as BOUNDA_ERROR_TEXT %s says, over the configuration's %s",
+    async (variable, configured, included) => {
+      env.STORE = storeNamespace().namespace;
+      if (variable !== undefined) env.BOUNDA_ERROR_TEXT = variable;
+      const { lines, logger } = recording();
+      const { handleError } = createBounda({
+        config: {
+          storage: cloudflare(),
+          ...(configured === undefined
+            ? {}
+            : { runtime: { telemetry: { errorText: configured } } }),
+        },
+        tenant: () => "default",
+        logger,
+      });
+      await handleError(new Error("ana@example.com"), { request: new Request("http://w/a") });
+      expect(lines).toEqual([
+        [
+          "bounda request failed",
+          included
+            ? {
+                method: "GET",
+                path: "/a",
+                errorName: "Error",
+                errorMessage: "ana@example.com",
+                errorStack: expect.any(String),
+              }
+            : { method: "GET", errorName: "Error" },
+        ],
+      ]);
+    },
+  );
+
+  it("logs one JSON line per entry by default, as Workers Logs reads them", async () => {
+    env.STORE = storeNamespace().namespace;
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => void written.push(args));
+    try {
+      const { handleError } = createBounda({
+        config: { storage: cloudflare() },
+        tenant: () => "default",
+      });
+      await handleError(new Error("ana@example.com"), { request: new Request("http://w/a") });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written).toEqual([
+      ['{"level":"error","message":"bounda request failed","method":"GET","errorName":"Error"}'],
+    ]);
   });
 });

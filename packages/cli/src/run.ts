@@ -6,6 +6,7 @@ import {
   type DeadLetterKind,
   type DeadLetterStatus,
   errorFields,
+  errorTextFromEnv,
   type ListDeadLettersArgs,
   type Logger,
   MAX_ACTOR_LENGTH,
@@ -96,25 +97,27 @@ const runGenerate = async (
 
 const logTo = (stderr: Output): Logger => createConsoleLogger({ stream: stderr });
 
-// The flag wins; without it, what the configuration sets.
-const errorTextOf = (options: ProjectOptions, config: Config): ErrorText | undefined =>
-  options.errorText ? "include" : config.runtime?.telemetry?.errorText;
+// The flag wins; then `BOUNDA_ERROR_TEXT`, which `load` has checked once `.env` is loaded.
+const forcedErrorText = (options: ProjectOptions): ErrorText | undefined =>
+  options.errorText ? "include" : errorTextFromEnv(process.env);
 
-const withErrorText = (config: Config, options: ProjectOptions): Config =>
-  options.errorText
-    ? {
+const errorTextOf = (options: ProjectOptions, config: Config): ErrorText | undefined =>
+  forcedErrorText(options) ?? config.runtime?.telemetry?.errorText;
+
+const withErrorText = (config: Config, options: ProjectOptions): Config => {
+  const errorText = forcedErrorText(options);
+  return errorText === undefined
+    ? config
+    : {
         ...config,
-        runtime: {
-          ...config.runtime,
-          telemetry: { ...config.runtime?.telemetry, errorText: "include" },
-        },
-      }
-    : config;
+        runtime: { ...config.runtime, telemetry: { ...config.runtime?.telemetry, errorText } },
+      };
+};
 
 const rootOf = (options: ProjectOptions, cwd: string): string => resolve(cwd, options.root ?? ".");
 
-// What fails while the project's modules load tells of files and exports, never of data a handler
-// read, so it is printed in full.
+// What fails while the project's modules load, or a `BOUNDA_ERROR_TEXT` it does not know, tells of
+// files, exports and settings, never of data a handler read, so it is printed in full.
 const load = async (
   options: ProjectOptions,
   cwd: string,
@@ -122,12 +125,14 @@ const load = async (
   stderr: Output,
 ): Promise<Awaited<ReturnType<typeof loadProject>> | undefined> => {
   try {
-    return await loadProject({
+    const project = await loadProject({
       root: rootOf(options, cwd),
       configPath: options.config,
       registryPath: options.registry,
       logger,
     });
+    errorTextFromEnv(process.env);
+    return project;
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;

@@ -5,7 +5,7 @@ import {
   idempotencyKeyFor,
 } from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createBounda } from "./create-bounda.ts";
 
 interface FakeApp {
@@ -605,5 +605,81 @@ describe("createBounda", () => {
     release(new Error("boom"));
     await expect(pending).rejects.toThrow("boom");
     await expect(disposing).resolves.toBeUndefined();
+  });
+});
+
+describe("createBounda's handleError", () => {
+  const thrown = () => new Error("no account for ana@example.com");
+  const request = () => new Request("http://localhost/accounts");
+  const recording = () => {
+    const lines: unknown[][] = [];
+    return {
+      lines,
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: (...entry: unknown[]) => void lines.push(entry),
+      },
+    };
+  };
+  const withErrorText = (errorText: "omit" | "include"): BoundaApp =>
+    ({
+      ...fakeApp("a").app,
+      config: { runtime: { telemetry: { errorText } } },
+    }) as unknown as BoundaApp;
+
+  it("follows the booted app's errorText, and errorText before any app booted", async () => {
+    const { lines, logger } = recording();
+    let booting: BoundaApp = withErrorText("include");
+    const { boundaMiddleware, dispose, handleError } = createBounda({
+      boot: async () => booting,
+      key: uniqueKey(),
+      logger,
+      errorText: "include",
+    });
+    await handleError(thrown(), { request: request() });
+    expect(lines.at(-1)?.[1]).toMatchObject({ errorMessage: "no account for ana@example.com" });
+
+    booting = withErrorText("omit");
+    await boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await handleError(thrown(), { request: request() });
+    expect(lines.at(-1)).toEqual(["request failed", { method: "GET", errorName: "Error" }]);
+    await dispose();
+  });
+
+  it("omits the text before any app booted by default, also when the boot failed", async () => {
+    const { lines, logger } = recording();
+    const { boundaMiddleware, handleError } = createBounda({
+      boot: async () => {
+        throw thrown();
+      },
+      key: uniqueKey(),
+      logger,
+    });
+    const failed = await boundaMiddleware(middlewareArgs().args, async () => undefined).catch(
+      (error: unknown) => error,
+    );
+    await handleError(failed, { request: request() });
+    expect(lines).toEqual([["request failed", { method: "GET", errorName: "Error" }]]);
+  });
+
+  it("logs a line to the console by default, as boot() does", async () => {
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => void written.push(args));
+    try {
+      const { handleError } = createBounda({
+        boot: async () => fakeApp("a").app,
+        key: uniqueKey(),
+      });
+      await handleError(thrown(), { request: request() });
+      await handleError(thrown(), { request: request() });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written).toEqual([
+      ['[bounda] error request failed {"method":"GET","errorName":"Error"}'],
+      ['[bounda] error request failed {"method":"GET","errorName":"Error"}'],
+    ]);
   });
 });

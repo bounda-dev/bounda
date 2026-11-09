@@ -1,8 +1,10 @@
 import { env } from "cloudflare:workers";
+import { workersLogger } from "@bounda-dev/cloudflare";
 import {
   type AppRegistry,
   ConfigurationError,
   checkConsistency,
+  errorTextFromEnv,
   type Registry,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
@@ -10,6 +12,7 @@ import { actorOfModule } from "../actor.ts";
 import { cloudflareClients, type TenantFunction } from "../cloudflare/clients.ts";
 import { serve } from "../cloudflare/serve.ts";
 import type { Bounda } from "../create-bounda.ts";
+import { createHandleError } from "../handle-error.ts";
 import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 export { failure } from "../failure.ts";
@@ -19,7 +22,8 @@ export type { CreateHostArgs, CreateHostFunction } from "./args.ts";
  * The host the `bounda()` Vite plugin serves the app from under the `workerd` condition: the
  * `createBounda` of `@bounda-dev/react-router/cloudflare`, with the project's configuration and
  * the `tenant` of its `app/tenant.ts`, both imported on the first request, acting as the `actor`
- * of its `app/actor.ts`, when it has one. Not meant to be called
+ * of its `app/actor.ts`, when it has one; its `handleError` follows `BOUNDA_ERROR_TEXT` in the
+ * Worker's `env`, or else the configuration's `runtime.telemetry.errorText`. Not meant to be called
  * by hand. Throws `ConfigurationError` for a `consistency` it does not know; the first request
  * rejects with one without `app/tenant.ts`, or as `createBounda` does.
  */
@@ -55,6 +59,14 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
         consistency,
       });
     },
+    createHandleError({
+      message: "bounda request failed",
+      errorText: async () =>
+        errorTextFromEnv(env) ??
+        ((await importConfig()).default as Config | undefined)?.runtime?.telemetry?.errorText ??
+        "omit",
+      logger: () => workersLogger,
+    }),
     importActor === undefined ? undefined : actorOfModule(importActor),
   );
 };

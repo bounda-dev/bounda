@@ -36,6 +36,7 @@ bounda.config.ts            storage: cloudflare()
 src/worker.ts               the Durable Object class and the HTTP API
 public/index.html           a page that uses the API, served as a static asset
 wrangler.jsonc              the binding and the SQLite migration for the object
+.dev.vars                   the master key, and the text of errors in the logs, for development
 tests/orders.test.ts        the domain, on an in-memory store
 tests/api.test.ts           the API, against the Durable Object in workerd
 ```

@@ -90,6 +90,15 @@ Object has no loop running between requests:
 `createBoundaObject` accepts `passesPerAlarm` (50 by default): how many rounds of work one alarm
 does before it yields and wakes itself again.
 
+The object and the Worker log one JSON line per entry, which Workers Logs parses into fields;
+`workersLogger` is that logger, and a `logger` option takes another. A failure is logged by its
+class and its `code`, without its message, as [error text](/reference/observability/#error-text)
+says by default. The configuration is the same bundle wherever it is deployed, so
+`BOUNDA_ERROR_TEXT` in the Worker's `env` decides instead: `include` there, in `.dev.vars`, puts
+the message and the stack in the logs under `wrangler dev`, for the object and the Worker alike,
+and a deployment, which never reads `.dev.vars`, keeps them out. `create-bounda` writes that line;
+`.dev.vars.example` only mentions it, so Deploy to Cloudflare never asks for it.
+
 ## Ports and `env`
 
 A port implementation that exports `create` receives the object's `env`: the Worker's
@@ -180,7 +189,7 @@ global stream.
 
 Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
 [errors over HTTP](/reference/errors/#over-http); anything else is a 500 whose message goes to the
-logs, not to the caller. A body over `maxPayloadBytes`, `DEFAULT_MAX_PAYLOAD_BYTES` unless
+logs, not to the caller, under the rule of [error text](/reference/observability/#error-text). A body over `maxPayloadBytes`, `DEFAULT_MAX_PAYLOAD_BYTES` unless
 `createWorker({ config, tenantOf, maxPayloadBytes })` says otherwise, is refused with a 413
 before it is read.
 

@@ -1,7 +1,9 @@
 import {
   type DurationInput,
+  ERROR_TEXT_VARIABLE,
   type ErrorFields,
   errorFields,
+  errorTextFromEnv,
   type SubscriberFailing,
 } from "@bounda-dev/core";
 import type {
@@ -52,6 +54,17 @@ describe("errorFields", () => {
     errorFields({ error: null, errorText: "all" });
     expectTypeOf<SubscriberFailing["errorName"]>().toEqualTypeOf<string>();
     expectTypeOf<SubscriberFailing>().not.toHaveProperty("message");
+  });
+
+  it("reads the rule of BOUNDA_ERROR_TEXT from any environment", () => {
+    expectTypeOf(ERROR_TEXT_VARIABLE).toEqualTypeOf<"BOUNDA_ERROR_TEXT">();
+    expectTypeOf(errorTextFromEnv({ BOUNDA_ERROR_TEXT: "include" })).toEqualTypeOf<
+      ErrorText | undefined
+    >();
+    const processEnv: Readonly<Record<string, string | undefined>> = {};
+    expectTypeOf(errorTextFromEnv(processEnv)).toEqualTypeOf<ErrorText | undefined>();
+    // @ts-expect-error an environment is an object
+    errorTextFromEnv("include");
   });
 });
 
