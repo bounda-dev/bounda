@@ -22,6 +22,10 @@ get today. Each item says why, so nobody discovers it the hard way:
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
 - **Every read of personal data in the access log.** See [The access log](#the-access-log).
+- **A restore made while the app was stopped, told apart.** No running instance remembers what the
+  database held, so the jobs start from the copy as from any start, and the holds of failures it
+  brought back end on their own, within an hour. See
+  [Restores while running](/guides/personal-data/#restores-while-running).
 
 ## The access log
 
@@ -54,8 +58,10 @@ What a production app does get, and where it is explained:
 reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
 ends, their keys [wrapped under a master key](/guides/personal-data/#a-master-key) kept out of
 the database and out of JavaScript memory, their forgetting [applied again](/guides/personal-data/#backups) when a backup is
-restored, what was written before a field was marked [sealed in
-place](/guides/personal-data/#marking-a-field-later),
+restored, and found when restored [under the running app](/guides/personal-data/#restores-while-running),
+what was written before a field was marked [sealed in
+place](/guides/personal-data/#marking-a-field-later), [the status of the background
+work](/reference/cli/#bounda-status) and [migrations run before a deploy](/reference/cli/#bounda-migrate),
 [dead letters with a way out](/guides/dead-letters/), [upcasters](/guides/changing-events/) for
 events whose payload changed, [snapshots](/concepts/long-streams/#snapshots) whose validity the
 runtime checks itself, [observability](/reference/observability/) through OpenTelemetry, and a

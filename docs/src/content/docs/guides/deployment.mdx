@@ -92,6 +92,12 @@ instances coordinate through the database.
   read model.
 - Appends take one lock per store, which bounds writes to what one connection can commit
   ([the ceiling](/concepts/how-it-runs/#the-ceiling-with-numbers)).
+- The background jobs on personal data and dead letters, the backfill of what was written before
+  its fields were marked, the rotation of the master key, the retention and the purge of resolved
+  letters, each run in one instance at a time, under a lease in `bounda_checkpoints` that the others
+  leave alone until it lapses, two minutes after the holder last renewed it, and that an instance
+  stopping gives back. An instance that stalls past its lease stops at its next item, and the one
+  that took the lease over goes on from what the store holds.
 
 [At least once, and exactly once per batch](/concepts/delivery-guarantees/) says what each
 promise covers, and [How Bounda runs](/concepts/how-it-runs/) why, and what the ceiling of one
@@ -173,7 +179,10 @@ which may quote what the projection read, is in `errorMessage` only with
 process saw: another instance that never tried that read model reports no
 failure while its lag still grows. Alert on the lag, which every instance reads from the
 database; read `failing`, and the `subscriber failed` log line that names the event, to find out
-why. The event itself, payload included, is one read of the global stream away:
+why. The last failure of each subscriber, by any instance, is also kept in the database, with its
+text encrypted under the person the event names: `bounda status` shows it without the text, and
+`app.subscriberFailures.get("projection:orderSummary")` opens it, a read the
+[access log](/guides/personal-data/#who-opened-what) records. The event itself, payload included, is one read of the global stream away:
 `app.events.read({ after: 41, limit: 1 })` ([Reading the global stream](/guides/reading-the-stream/)).
 
 `waitingDeadlines`, next to `subscribers`, counts the process deadlines this instance's worker
@@ -185,9 +194,10 @@ while a runner is behind, and each runs anyway after ten rounds.
 
 ## Schema
 
-There are no migration files to write or run, and no migration step in your deploy. Bounda
-versions its own tables ([what an adapter creates](/adapters/#what-an-adapter-creates)) and brings
-them forward when the app starts, before it serves anything:
+There are no migration files to write or run. Bounda versions its own tables
+([what an adapter creates](/adapters/#what-an-adapter-creates)) and brings them forward when the
+app starts, before it serves anything, or before the deploy with
+[`bounda migrate`](/reference/cli/#bounda-migrate):
 
 - A database at the version the installed Bounda expects costs one read, and no lock.
 - One that is behind is migrated in place, one migration at a time, each in a transaction that
@@ -207,7 +217,18 @@ them forward when the app starts, before it serves anything:
 Stop every instance of the previous version before the first one of the new version starts:
 instances already running never read the version again, and their code was written for the tables
 before the migration, so a rolling deploy across a release that migrates would have them write rows
-the new code misreads. One of them that starts after the migration is refused. Each table prefix
+the new code misreads. One of them that starts after the migration is refused. `bounda status`
+says, by database, at which version each scope of the tables is and which version this release
+migrates it to; `bounda migrate` runs the migrations of every database the configuration names, as
+a step of its own, so a large migration happens while nothing waits on it, and the new instances
+start on tables already migrated:
+
+```sh
+bounda status            # "storage  storage  1 of 2  (migrations pending: bounda migrate)"
+# stop the previous version
+bounda migrate
+# start the new one
+``` Each table prefix
 keeps its own versions, and each Durable Object, so each tenant, migrates its tables the first time
 it starts on the new code. A [forget ledger](/guides/personal-data/#backups) in another database is
 migrated there the first time the app uses it.
@@ -336,9 +357,10 @@ Back up the database as the engine recommends: a copy of the SQLite file taken o
 key, wrapped under the [master key](/guides/personal-data/#a-master-key): keep the master key for
 as long as the backups. Restoring one taken before someone was forgotten brings them back, unless
 the app has a [forget ledger](/guides/personal-data/#backups) in another database, which forgets
-them again when the app starts on the restored copy, or within `reconcileEvery` when the copy is
-restored under the running app; restart it after restoring to reconcile at once. Set the ledger's
-`keepFor` longer than the oldest backup you keep.
+them again when the app starts on the restored copy, or at once when the copy is restored under the
+running app: every running instance finds that the database went back, and its background jobs
+start over (see [restores while running](/guides/personal-data/#restores-while-running)). Set the
+ledger's `keepFor` longer than the oldest backup you keep.
 
 ## Observability
 

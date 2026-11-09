@@ -81,7 +81,7 @@ dead letter with `errorType: "retriable_exhausted"`.
   the app does not start, since a person a restored backup brought back could be read. `cause` is
   the ledger's error. Starting again tries again.
 - **`STORAGE_SCHEMA_TOO_NEW`** (`StorageSchemaTooNewError`; a start's answer). Thrown by
-  `createApp`, and so by `boot` and the CLI, when a newer version of Bounda has
+  `createApp`, and so by `boot` and the CLI, and by `migrateTables` and `bounda migrate`, when a newer version of Bounda has
   [migrated the database's Bounda tables](/guides/deployment/#schema) past what this version
   knows: `scope` (`storage`, `checkpoints` or `forget-ledger`), its `version`, and `supported`,
   the newest this version knows. The app does not start and nothing is written: Bounda never takes

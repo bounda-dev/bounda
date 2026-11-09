@@ -76,8 +76,10 @@ export default defineConfig({
 ```
 
 A host without a polling worker, such as a Durable Object, is woken for it through `nextDueAt()`.
-A process instance whose letter was discarded stays given up once the letter is gone: the events
-that reach it are still dropped.
+One instance purges at a time, under a lease the others leave alone until it lapses. A process
+instance whose letter was discarded stays given up once the letter is gone: discarding wrote
+`ProcessAbandoned` in its stream, so the events that reach it afterwards are dropped whatever
+became of the letter.
 
 ## What a letter holds
 
@@ -139,8 +141,11 @@ process completes it, and what is parked after it is dropped, as for any complet
 
 `bounda dead-letters list` says how many events wait behind a failure (`3 events are parked behind
 it`), and so does `parked` on the letters of `app.deadLetters`. Discarding the letter gives the
-instance up: it stays failed, its parked events never run, though they stay in its history, and
-the events that reach it afterwards are dropped, as for an instance that has ended.
+instance up: in the same transaction as the discard, `ProcessAbandoned` (with the `letterId`, acted
+by whoever discards) ends it with the status `abandoned`. Its parked events never run, though they
+stay in its history, and the events that reach it afterwards are dropped, as for an instance that
+has ended. Only a discard does that: an instance whose letter is gone for any other reason keeps
+parking until its failure is retried.
 
 The failure is state as well: `ProcessFailed` names its dead letter (`letterId`), and the two are
 written in the same transaction, with the claim of the event that failed. A failure that could
