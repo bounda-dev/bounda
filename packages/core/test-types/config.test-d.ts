@@ -383,6 +383,7 @@ describe("defineConfig", () => {
     }>();
     expectTypeOf<ForgetLedgerEntry>().toEqualTypeOf<{
       readonly personId: string;
+      readonly categories: readonly string[] | null;
       readonly eventId: string;
       readonly forgottenAt: string;
     }>();

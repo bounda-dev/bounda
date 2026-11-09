@@ -16,7 +16,7 @@ export interface CreateSqlPersonStoreFunction {
   (args: CreateSqlPersonStoreArgs): PersonStore;
 }
 
-const COLUMNS = `"person", "restricted_since", "last_active_at", "forgotten_at", "held_until", "attempts"`;
+const COLUMNS = `"person", "restricted_since", "last_active_at", "position", "forgotten_at", "held_until", "attempts"`;
 
 // The predicate of the index the schemas create for `listIdle`, which a query must repeat for the
 // index to serve it.
@@ -31,6 +31,7 @@ const storedPerson = (row: Record<string, unknown>): StoredPerson => ({
   person: String(row.person),
   restrictedSince: text(row.restricted_since),
   lastActiveAt: text(row.last_active_at),
+  position: Number(row.position),
   forgottenAt: text(row.forgotten_at),
   hold: holdOf(row),
 });

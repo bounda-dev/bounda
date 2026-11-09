@@ -47,7 +47,9 @@ client, and nothing it does not see:
 
 What a production app does get, and where it is explained:
 [rebuilding a read model](/guides/deployment/#rebuilding-a-read-model) without taking it offline,
-[forgetting a person](/guides/personal-data/) without deleting an event,
+[forgetting a person](/guides/personal-data/) without deleting an event, each
+[category](/guides/personal-data/#categories) of their data with its basis and retention, what a
+legal obligation keeps kept,
 [exporting their data](/guides/personal-data/#exporting-a-persons-data), read models included,
 [recording who opened it](/guides/personal-data/#who-opened-what) and
 [restricting their processing](/guides/personal-data/#restricting-processing) without losing a

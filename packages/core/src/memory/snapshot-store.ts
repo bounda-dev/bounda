@@ -1,4 +1,4 @@
-import type { KeyedPerson } from "../adapter/storage/personal-key-store.ts";
+import { type KeyedPerson, namesPerson } from "../adapter/storage/personal-key-store.ts";
 import type { Snapshot, SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import { streamId } from "../contracts/event.ts";
 
@@ -34,9 +34,9 @@ export const createMemorySnapshotStore: CreateMemorySnapshotStoreFunction = ({ h
     remove: async (stream) => {
       snapshots.delete(streamId(stream));
     },
-    forget: async (person) => {
+    forget: async (person, keep) => {
       for (const [key, snapshot] of snapshots) {
-        if (snapshot.persons.some((held) => held.person === person)) snapshots.delete(key);
+        if (namesPerson(snapshot, person, keep)) snapshots.delete(key);
       }
     },
   };

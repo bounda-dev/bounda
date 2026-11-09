@@ -1,6 +1,7 @@
 import {
   ConfigurationError,
   createApp,
+  DEFAULT_PERSONAL_CATEGORY,
   type EventPayloadArgs,
   type FieldsArgs,
   fieldBuilder as f,
@@ -122,7 +123,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   idempotencyStoreContract({ create: () => openStorage() });
   snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });
-  personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
+  personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
   inspectionContract({
     create: async () => {
@@ -488,7 +489,11 @@ describe.skipIf(container === null)("postgresql adapter", () => {
 
   it("holds off a writer of the rows an append checked, that takes no append lock, until the append commits", async () => {
     const storage = await openStorage();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, {
+      key: "k",
+      fingerprint: "f",
+      kid: null,
+    });
     await storage.persons.restrict("c-2", new Date());
     await storage.persons.unrestrict("c-2");
     const steps: string[] = [];
@@ -515,7 +520,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     });
     await checking;
     const writes = [
-      storage.personalKeys.remove("c-1").then(() => steps.push("key removed")),
+      storage.personalKeys.remove("c-1", "f").then(() => steps.push("key removed")),
       storage.persons.restrict("c-2", new Date()).then(() => steps.push("restricted")),
     ];
     // A writer waits on a row lock the append holds (the pool may queue the other), and nothing

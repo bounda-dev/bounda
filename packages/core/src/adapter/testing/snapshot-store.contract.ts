@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Storage } from "../adapter.ts";
 import type { KeyedPerson, PersonalKeyStore } from "../storage/personal-key-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY as D } from "../storage/personal-key-store.ts";
 import type { Snapshot, SnapshotStore } from "../storage/snapshot-store.ts";
 import { testKeyedPerson as held, testPersonalKey as stored } from "./fixtures.ts";
 
@@ -82,13 +83,13 @@ export const snapshotStoreContract: SnapshotStoreContractFunction = ({ create })
       const ada: Snapshot = { ...order42, persons: [held("c-1", "1"), held("c-2", "2")] };
       await store.put(ada);
       expect(await store.get(order42)).toBeNull();
-      await keys.add("c-1", stored("1"));
+      await keys.add("c-1", D, stored("1"));
       await store.put(ada);
       expect(await store.get(order42)).toBeNull();
-      await keys.add("c-2", stored("2"));
+      await keys.add("c-2", D, stored("2"));
       await store.put(ada);
       expect(await store.get(order42)).toEqual(ada);
-      await keys.remove("c-2");
+      await keys.remove("c-2", "f-2");
       await store.put({ ...ada, version: 300 });
       expect(await store.get(order42)).toEqual(ada);
     });
@@ -104,29 +105,29 @@ export const snapshotStoreContract: SnapshotStoreContractFunction = ({ create })
       };
       await store.put(mixed);
       expect(await store.get(order42)).toEqual(clear);
-      await keys.add("c-2", stored("2"));
+      await keys.add("c-2", D, stored("2"));
       await store.put(mixed);
       expect(await store.get(order42)).toEqual(mixed);
     });
 
     it("writes nothing for a person named with a key other than the one they hold", async () => {
       const named = (...persons: KeyedPerson[]): Snapshot => ({ ...order42, persons });
-      await keys.add("c-1", stored("new"));
+      await keys.add("c-1", D, stored("new"));
       await store.put(named(held("c-1", "old")));
       expect(await store.get(order42)).toBeNull();
       await store.put(named(held("c-1", "old"), held("c-1", "new")));
       expect(await store.get(order42)).toBeNull();
       await store.put(named(held("c-1", "new"), held("c-1", null)));
       expect(await store.get(order42)).toEqual(named(held("c-1", "new"), held("c-1", null)));
-      await keys.remove("c-1");
-      await keys.add("c-1", stored("newer"));
+      await keys.remove("c-1", "f-new");
+      await keys.add("c-1", D, stored("newer"));
       await store.put({ ...named(held("c-1", "new")), version: 300 });
       expect((await store.get(order42))?.version).toBe(order42.version);
     });
 
     it("forgets every snapshot that names a person, and no other", async () => {
-      await keys.add("c-1", stored("1"));
-      await keys.add("c-2", stored("2"));
+      await keys.add("c-1", D, stored("1"));
+      await keys.add("c-2", D, stored("2"));
       const c1 = held("c-1", "1");
       const c2 = held("c-2", "2");
       const named = (aggregateId: string, persons: readonly KeyedPerson[]): Snapshot => ({
@@ -148,6 +149,37 @@ export const snapshotStoreContract: SnapshotStoreContractFunction = ({ create })
       );
       expect(left.map((snapshot) => snapshot?.persons ?? null)).toEqual([null, null, [c2], []]);
       expect(await store.get({ aggregateType: "customer", aggregateId: "1" })).toBeNull();
+    });
+
+    it("forgets the snapshots that name a person under a key outside those kept, or in the clear", async () => {
+      const named = (aggregateId: string, persons: readonly KeyedPerson[]): Snapshot => ({
+        ...order42,
+        aggregateId,
+        persons,
+      });
+      await keys.add("c-1", D, stored("1"));
+      await keys.add("c-1", "invoices", stored("2"));
+      await store.put(named("1", [held("c-1", "1")]));
+      await store.put(named("2", [held("c-1", "2")]));
+      await store.put(named("3", [held("c-1", "1"), held("c-1", "2")]));
+      await store.put(named("4", [held("c-1", null)]));
+      await store.forget("c-1", ["f-2"]);
+      const left = await Promise.all(
+        ["1", "2", "3", "4"].map(async (aggregateId) =>
+          (await store.get({ aggregateType: "order", aggregateId })) === null ? null : aggregateId,
+        ),
+      );
+      expect(left).toEqual([null, "2", null, null]);
+    });
+
+    it("writes nothing for a person whose key was kept past a forgetting", async () => {
+      await keys.add("c-1", "invoices", stored("1"));
+      await keys.retain("c-1", "f-1", {
+        since: "2026-02-01T00:00:00.000Z",
+        lastActiveAt: "2026-01-01T00:00:00.000Z",
+      });
+      await store.put({ ...order42, persons: [held("c-1", "1")] });
+      expect(await store.get(order42)).toBeNull();
     });
 
     it("forgets the snapshot of the stream it is asked to remove, and only that one", async () => {

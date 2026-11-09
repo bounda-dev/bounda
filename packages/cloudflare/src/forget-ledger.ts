@@ -18,9 +18,12 @@ const LIST_LIMIT = 1_000;
 // The soonest KV lets a key expire, in seconds from now.
 const KV_MIN_TTL_S = 60;
 
+// `categories` is left out for a forgetting of the person as a whole, as every entry written
+// before categories was.
 interface EntryMetadata {
   readonly personId: string;
   readonly forgottenAt: string;
+  readonly categories?: readonly string[];
 }
 
 const timeKey = (forgottenAt: string): string => String(LATEST_MS - Date.parse(forgottenAt));
@@ -58,8 +61,12 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
   append: async (entries) => {
     const now = Date.now();
     await Promise.all(
-      entries.flatMap(({ personId, eventId, forgottenAt }) => {
-        const metadata: EntryMetadata = { personId, forgottenAt };
+      entries.flatMap(({ personId, eventId, forgottenAt, categories }) => {
+        const metadata: EntryMetadata = {
+          personId,
+          forgottenAt,
+          ...(categories === null ? {} : { categories }),
+        };
         const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
         if (keepForMs === undefined) return [namespace.put(key, "", { metadata })];
         const expiresAt = Date.parse(forgottenAt) + keepForMs;
@@ -95,6 +102,7 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
           personId: metadata.personId,
           eventId: rest.slice(separator + 1),
           forgottenAt: metadata.forgottenAt,
+          categories: metadata.categories ?? null,
         });
       }
       if (past || page.list_complete) break;

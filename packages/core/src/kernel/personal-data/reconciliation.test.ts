@@ -6,11 +6,13 @@ import type {
   ForgetLedgerEntry,
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
+import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { buildPersonalCategories } from "./categories.ts";
 import { HOLD_MS } from "./hold.ts";
 import {
   createForgetLedgerReconciliation,
@@ -32,12 +34,13 @@ const loggingErrors = (errors: unknown[]): Logger => ({
 });
 
 const NOW = new Date("2026-03-01T00:00:00.000Z");
+const NO_CATEGORIES = buildPersonalCategories({ module: undefined, retentionMs: null });
 const EVERY = 5 * 60_000;
 
 const keyed = async (storage: Storage, persons: readonly string[]): Promise<void> => {
   for (const person of persons) {
     await storage.transact((transaction) =>
-      transaction.personalKeys.add(person, {
+      transaction.personalKeys.add(person, "default", {
         key: `key-${person}`,
         fingerprint: `f-${person}`,
         kid: null,
@@ -85,6 +88,8 @@ const setUp = async ({
     clock: createFixedClock(NOW),
     logger,
     concurrencyRetries: 3,
+    categories: NO_CATEGORIES,
+    batchSize: 10,
     reconcileEveryMs: EVERY,
     keepForMs: null,
     pageSize,
@@ -96,6 +101,7 @@ const entry = (personId: string, eventId: string, forgottenAt: string): ForgetLe
   personId,
   eventId,
   forgottenAt,
+  categories: null,
 });
 
 const at = (minute: number): string => new Date(NOW.getTime() + minute * 60_000).toISOString();
@@ -213,6 +219,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
       pageSize: 10,
@@ -254,6 +262,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: loggingErrors(errors),
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
     });
@@ -296,6 +306,8 @@ describe("the forget ledger's reconciliation", () => {
         clock: createFixedClock(NOW),
         logger: loggingErrors(errors),
         concurrencyRetries: 3,
+        categories: NO_CATEGORIES,
+        batchSize: 10,
         reconcileEveryMs: EVERY,
         keepForMs: null,
       });
@@ -331,6 +343,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
     });
@@ -355,6 +369,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
       forgotten: (personId) => told.push(personId),
@@ -412,6 +428,8 @@ describe("the forget ledger's periodic reconciliation", () => {
       clock: createFixedClock(NOW),
       logger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs,
     });
@@ -576,6 +594,8 @@ describe("forgetAgain", () => {
       ids: createSequentialIdGenerator(),
       clock: createFixedClock(NOW),
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       entry: { personId: "" },
     });
     await expect(refused).rejects.toBeInstanceOf(ValidationError);
@@ -598,6 +618,8 @@ describe("forgetAgain", () => {
         ids: createSequentialIdGenerator(),
         clock: createFixedClock(NOW),
         concurrencyRetries: 3,
+        categories: NO_CATEGORIES,
+        batchSize: 10,
         entry,
       });
     expect(await run({ personId: "c-1", eventId: "e-1" })).toBeNull();
@@ -605,5 +627,54 @@ describe("forgetAgain", () => {
     await keyed(storage, ["c-1"]);
     expect(await run({ personId: "c-1", eventId: "e-1" })).not.toBeNull();
     expect(transactions).toBe(1);
+  });
+
+  it("forgets again only the categories the entry asked for, while one of them still has a key in force", async () => {
+    const storage = await memory().createStorage();
+    const categories = buildPersonalCategories({
+      module: {
+        categories: {
+          profile: { basis: "consent", retention: "30d" },
+          invoices: { basis: "legal-obligation", retention: "30d" },
+        },
+      },
+      retentionMs: null,
+    });
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "profile", testPersonalKey("2"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("3"));
+    await storage.personalKeys.retain("c-1", "f-3", { since: at(0), lastActiveAt: at(0) });
+    const run = (asked: readonly string[] | null) =>
+      forgetAgain({
+        storage,
+        ids: createSequentialIdGenerator(),
+        clock: createFixedClock(NOW),
+        concurrencyRetries: 3,
+        categories,
+        batchSize: 10,
+        entry: { personId: "c-1", eventId: "e-1", categories: asked },
+      });
+    expect(await run([])).toBeNull();
+    expect(await run(["orders"])).toBeNull();
+    expect(await run(["invoices"])).toBeNull();
+    expect((await run(["profile", "orders"]))?.payload).toMatchObject({
+      reason: "restored",
+      whole: false,
+      categories: ["profile"],
+      retained: [],
+    });
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "default",
+      "invoices",
+    ]);
+    expect(await run(["profile"])).toBeNull();
+    expect((await run(null))?.payload).toMatchObject({
+      whole: true,
+      categories: ["default", "profile"],
+    });
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "invoices",
+    ]);
+    expect(await run(null)).toBeNull();
   });
 });

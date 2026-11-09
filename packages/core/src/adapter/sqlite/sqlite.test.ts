@@ -6,7 +6,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
-import type { KeyedPerson } from "../storage/personal-key-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY, type KeyedPerson } from "../storage/personal-key-store.ts";
 import {
   testKeyedPerson as held,
   testPersonalKey as key,
@@ -130,7 +130,7 @@ describe("the SQLite stores on node:sqlite", () => {
   idempotencyStoreContract({ create: storage });
   snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
-  personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
+  personalKeyStoreContract({ create: async () => storage() });
   personStoreContract({ create: async () => (await storage()).persons });
   inspectionContract({ create: async () => nodeSqlite().adapter });
   forgetLedgerContract({
@@ -178,8 +178,8 @@ describe("the person index of the SQLite stores", () => {
   it("keeps who each row names as its persons say, from its first write to its removal", async () => {
     const { adapter, db } = nodeSqlite();
     const storage = await adapter.createStorage();
-    await storage.personalKeys.add("c-1", key("1"));
-    await storage.personalKeys.add("c-2", key("2"));
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, key("1"));
+    await storage.personalKeys.add("c-2", DEFAULT_PERSONAL_CATEGORY, key("2"));
     await storage.snapshotStore.put({
       aggregateType: "customer",
       aggregateId: "c-1",
@@ -272,8 +272,10 @@ describe("the person index of the SQLite stores", () => {
     ]);
   };
 
+  // A row's own `persons`, or the fingerprints a forget keeps, are read through `json_each`, a scan
+  // of the one value it is given, never of a store.
   const scans = (plan: readonly string[]): readonly string[] =>
-    plan.filter((step) => step.startsWith("SCAN"));
+    plan.filter((step) => step.startsWith("SCAN") && !step.includes("VIRTUAL TABLE"));
 
   it("finds the rows that name a person by index, never reading every row of a store", async () => {
     const { adapter, db } = nodeSqlite();

@@ -9,15 +9,18 @@ export interface KeptPersonStore extends WithEntries<PersonStore, string> {
    * store checks it in the same step as it writes.
    */
   restricted(person: string): boolean;
+  /**
+   * The person's last activity recorded since their last forgetting as a whole, answered at once;
+   * `null` without one.
+   */
+  lastActiveAt(person: string): string | null;
 }
 
 export interface CreateKeptPersonStoreFunction {
   (): KeptPersonStore;
 }
 
-export interface KeptPerson extends StoredPerson {
-  readonly position: number;
-}
+export type KeptPerson = StoredPerson;
 
 export interface BlankPersonFunction {
   (person: string): KeptPerson;
@@ -33,7 +36,7 @@ export const blankPerson: BlankPersonFunction = (person) => ({
   position: 0,
 });
 
-const stored = ({ position: _position, ...person }: KeptPerson): StoredPerson => person;
+const stored = (person: KeptPerson): StoredPerson => ({ ...person });
 
 // As SQL orders text, by code unit rather than by locale.
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -49,6 +52,10 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
   const existing = (person: string): KeptPerson => persons.get(person) ?? blankPerson(person);
   return {
     restricted: (person) => (persons.get(person)?.restrictedSince ?? null) !== null,
+    lastActiveAt: (person) => {
+      const kept = persons.get(person);
+      return kept === undefined || kept.forgottenAt !== null ? null : kept.lastActiveAt;
+    },
     store: {
       get: async (person) => {
         const kept = persons.get(person);

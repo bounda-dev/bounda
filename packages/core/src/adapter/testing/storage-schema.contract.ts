@@ -34,6 +34,7 @@ export interface StorageSchemaContractFunction {
 const LATEST = [
   { scope: "checkpoints", version: 1 },
   { scope: "storage", version: 1 },
+  { scope: "storage", version: 2 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -169,7 +170,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 1,
+        supported: 2,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -255,13 +256,19 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
       try {
         await ledger.append([
-          { personId: "p-1", eventId: "e-1", forgottenAt: "2026-01-01T00:00:00.000Z" },
+          {
+            personId: "p-1",
+            eventId: "e-1",
+            forgottenAt: "2026-01-01T00:00:00.000Z",
+            categories: null,
+          },
         ]);
       } finally {
         await ledger.close?.();
       }
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual([
         { scope: "forget-ledger", version: 1 },
+        { scope: "forget-ledger", version: 2 },
       ]);
     });
 

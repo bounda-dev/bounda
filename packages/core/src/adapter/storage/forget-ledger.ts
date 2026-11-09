@@ -1,10 +1,15 @@
 /**
- * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` said so, and when.
- * Ids and a time, nothing else: the ledger is a suppression list, the one thing about a forgotten
- * person that has to outlive their data.
+ * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` said so, when, and
+ * which of their categories it was asked for. Ids, names and a time, nothing else: the ledger is
+ * a suppression list, the one thing about a forgotten person that has to outlive their data.
  */
 export interface ForgetLedgerEntry {
   readonly personId: string;
+  /**
+   * The categories the forgetting was asked for, `null` for the person as a whole: forgetting
+   * them again forgets those again, as the request did.
+   */
+  readonly categories: readonly string[] | null;
   /**
    * The id of the `PersonalDataForgotten` event, which no other copy of the store gives to another
    * event, unlike its position.

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
-import { createSqlForgetLedger, forgetLedgerStatements } from "./forget-ledger.ts";
+import {
+  createSqlForgetLedger,
+  forgetLedgerCategoriesStatement,
+  forgetLedgerStatements,
+} from "./forget-ledger.ts";
 
-const recording = () => {
+const recording = (rows: readonly Record<string, unknown>[] = []) => {
   const statements: (readonly [string, readonly unknown[]])[] = [];
   const db = {
     run: async (sql: string, params: readonly unknown[]) => {
@@ -10,7 +14,7 @@ const recording = () => {
     },
     all: async (sql: string, params: readonly unknown[]) => {
       statements.push([sql, params]);
-      return [];
+      return rows;
     },
   };
   return { db, statements };
@@ -20,6 +24,7 @@ const entry = (index: number) => ({
   personId: `c-${index}`,
   eventId: `e-${index}`,
   forgottenAt: "2026-01-01T00:00:00.000Z",
+  categories: index % 2 === 0 ? null : ["profile"],
 });
 
 describe("the SQL forget ledger", () => {
@@ -34,7 +39,16 @@ describe("the SQL forget ledger", () => {
     );
   });
 
-  it("inserts at most 25 entries a statement, each bound to its own numbered parameters", async () => {
+  it("adds the categories in a migration of their own, again harmlessly on PostgreSQL", () => {
+    expect(forgetLedgerCategoriesStatement(`"t_forget_ledger"`, postgresqlDialect)).toBe(
+      `ALTER TABLE "t_forget_ledger" ADD COLUMN IF NOT EXISTS "categories" TEXT`,
+    );
+    expect(forgetLedgerCategoriesStatement(`"t_forget_ledger"`, sqliteDialect)).toBe(
+      `ALTER TABLE "t_forget_ledger" ADD COLUMN "categories" TEXT`,
+    );
+  });
+
+  it("inserts at most 20 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -44,15 +58,52 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    await ledger.append(Array.from({ length: 26 }, (_, index) => entry(index)));
+    await ledger.append(Array.from({ length: 21 }, (_, index) => entry(index)));
     expect(statements).toHaveLength(2);
     const [first, second] = statements;
-    expect(first?.[0]).toContain("($1, $2, $3, $4), ($5, $6, $7, $8)");
-    expect(first?.[0]).toContain("($97, $98, $99, $100) ON CONFLICT");
+    expect(first?.[0]).toContain("($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)");
+    expect(first?.[0]).toContain("($96, $97, $98, $99, $100) ON CONFLICT");
     expect(first?.[1]).toHaveLength(100);
-    expect(first?.[1].slice(0, 4)).toEqual(["", "e-0", "c-0", "2026-01-01T00:00:00.000Z"]);
-    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4) ON CONFLICT`);
-    expect(second?.[1]).toEqual(["", "e-25", "c-25", "2026-01-01T00:00:00.000Z"]);
+    expect(first?.[1].slice(0, 10)).toEqual([
+      "",
+      "e-0",
+      "c-0",
+      "2026-01-01T00:00:00.000Z",
+      null,
+      "",
+      "e-1",
+      "c-1",
+      "2026-01-01T00:00:00.000Z",
+      `["profile"]`,
+    ]);
+    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5) ON CONFLICT`);
+    expect(second?.[1]).toEqual(["", "e-20", "c-20", "2026-01-01T00:00:00.000Z", null]);
+  });
+
+  it("reads the categories of an entry back, null for a forgetting of the person as a whole", async () => {
+    const { db } = recording([
+      {
+        event_id: "e-0",
+        person: "c-0",
+        forgotten_at: "2026-01-01T00:00:00.000Z",
+        categories: null,
+      },
+      {
+        event_id: "e-1",
+        person: "c-1",
+        forgotten_at: "2026-01-01T00:00:00.000Z",
+        categories: `["profile"]`,
+      },
+    ]);
+    const ledger = createSqlForgetLedger({
+      db,
+      table: `"t"`,
+      dialect: sqliteDialect,
+      tenant: undefined,
+      ensureSchema: async () => {},
+      close: async () => {},
+    });
+    expect(await ledger.read({ limit: 2 })).toEqual([entry(0), entry(1)]);
   });
 
   it("creates its table before the first statement, and again after that failed", async () => {

@@ -9,13 +9,14 @@ const event = (
   aggregateId: string,
   type: string,
   timestamp = "2026-11-01T00:00:00.000Z",
+  payload: unknown = { whole: true, categories: ["default"], retained: [] },
 ): StoredEvent => ({
   id: `e-${position}`,
   aggregateType,
   aggregateId,
   version: 1,
   type,
-  payload: {},
+  payload,
   timestamp,
   metadata: { correlationId: "c", causationId: "c", depth: 0, schemaVersion: 1, system: false },
   person: null,
@@ -60,15 +61,29 @@ describe("readForgotten", () => {
       event(1_004, "bounda", "c-1", "ProcessingRestricted"),
       event(1_005, "order", "o-x", "PersonalDataForgotten"),
       event(1_006, "bounda", "c-1", "PersonalDataForgotten", "2026-11-02T00:00:00.000Z"),
-      event(1_007, "bounda", "c-2", "PersonalDataForgotten", "1970-01-01T00:00:00.001Z"),
+      event(1_007, "bounda", "c-2", "PersonalDataForgotten", "1970-01-01T00:00:00.001Z", {
+        whole: false,
+        categories: ["marketing"],
+        retained: ["invoices"],
+      }),
     );
     const { stream, reads } = streamOf([
       event(0, "bounda", "c-0", "PersonalDataForgotten"),
       ...events,
     ]);
     expect(await readForgotten({ events: stream, since: { kind: "position", value: 2 } })).toEqual([
-      { personId: "c-1", eventId: "e-1006", forgottenAt: "2026-11-02T00:00:00.000Z" },
-      { personId: "c-2", eventId: "e-1007", forgottenAt: "1970-01-01T00:00:00.001Z" },
+      {
+        personId: "c-1",
+        eventId: "e-1006",
+        forgottenAt: "2026-11-02T00:00:00.000Z",
+        categories: null,
+      },
+      {
+        personId: "c-2",
+        eventId: "e-1007",
+        forgottenAt: "1970-01-01T00:00:00.001Z",
+        categories: ["marketing", "invoices"],
+      },
     ]);
     expect(reads).toEqual([
       { after: 2, limit: 1_000 },
@@ -94,12 +109,23 @@ describe("parseForgetList", () => {
   it("reads entries, bare ids and blank lines", () => {
     expect(
       parseForgetList(
-        '{"personId":"c-1","eventId":"e-1","forgottenAt":"x"}\r\n\n  c-2  \n{"personId":"c-3"}\n',
+        '{"personId":"c-1","eventId":"e-1","forgottenAt":"x"}\r\n\n  c-2  \n{"personId":"c-3"}\n{"personId":"c-4","categories":null}\n{"personId":"c-5","categories":["marketing"]}\n',
       ),
     ).toStrictEqual([
       { personId: "c-1", eventId: "e-1" },
       { personId: "c-2" },
       { personId: "c-3" },
+      { personId: "c-4", categories: null },
+      { personId: "c-5", categories: ["marketing"] },
     ]);
+  });
+
+  it("refuses categories that are not a list of names", () => {
+    expect(() => parseForgetList('{"personId":"c-1","categories":"marketing"}')).toThrow(
+      /line 1 has "categories"/,
+    );
+    expect(() => parseForgetList('{"personId":"c-1","categories":[1]}')).toThrow(
+      /line 1 has "categories"/,
+    );
   });
 });

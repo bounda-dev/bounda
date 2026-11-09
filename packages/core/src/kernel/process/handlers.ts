@@ -9,6 +9,7 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
+import type { PersonalCategories } from "../personal-data/categories.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
 import { checkStatePerson } from "../personal-data/process-state.ts";
 import { refuseRestricted } from "../personal-data/refusal.ts";
@@ -86,6 +87,7 @@ export interface CreateProcessHandlersArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
+  readonly personalCategories: PersonalCategories;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -96,6 +98,7 @@ export interface CreateProcessHandlersFunction {
 }
 
 export const createProcessHandlers: CreateProcessHandlersFunction = ({
+  personalCategories,
   aggregates,
   pipeline,
   config,
@@ -118,6 +121,8 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       logger,
       ids,
       clock,
+      personalCategories,
+      batchSize: config.runtime.dispatcher.batchSize,
       maxChainDepth: config.forAggregate(process.aggregate).policies.maxChainDepth,
     });
 

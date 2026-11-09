@@ -304,6 +304,22 @@ const runDiscardDeadLetter = (
     return EXIT_OK;
   });
 
+// Printed whole: it is what the person asked for, and goes where the operator sends stdout.
+const runExport = (
+  personId: string,
+  options: ActingOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    line(
+      stdout,
+      JSON.stringify(await actingAs(app, options).exportPersonalData(personId), null, 2),
+    );
+    return EXIT_OK;
+  });
+
 interface ForgottenOptions extends ProjectOptions {
   readonly since: Since;
 }
@@ -322,24 +338,60 @@ const runForgotten = (
   });
 
 interface ForgetOptions extends ActingOptions {
-  readonly from: string;
+  readonly from?: string;
+  readonly category?: readonly string[];
 }
 
+const collect = (value: string, previous: readonly string[] = []): readonly string[] => [
+  ...previous,
+  value,
+];
+
+const runForgetPerson = (
+  personId: string,
+  options: ForgetOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    const categories = options.category;
+    await actingAs(app, options).forget(
+      personId,
+      categories === undefined ? undefined : { categories },
+    );
+    line(
+      stdout,
+      categories === undefined
+        ? `forgot ${personId}`
+        : `forgot ${categories.join(", ")} of ${personId}`,
+    );
+    return EXIT_OK;
+  });
+
 const runForget = async (
+  personId: string | undefined,
   options: ForgetOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> => {
+  if ((personId === undefined) === (options.from === undefined)) {
+    line(stderr, "error: name one person, or a list with --from, not both");
+    return EXIT_CONVENTION;
+  }
+  if (personId !== undefined) return runForgetPerson(personId, options, cwd, stdout, stderr);
+  if (options.category !== undefined) {
+    line(stderr, "error: --category forgets one person; a list says what each line asked for");
+    return EXIT_CONVENTION;
+  }
+  const from = options.from as string;
   let entries: ReturnType<typeof parseForgetList>;
   try {
-    entries = parseForgetList(await readFile(resolve(cwd, options.from), "utf8"));
+    entries = parseForgetList(await readFile(resolve(cwd, from), "utf8"));
   } catch (error) {
     // Its own file, read and parsed here: what fails names the path or the line, never a value.
-    line(
-      stderr,
-      `error: ${options.from}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    line(stderr, `error: ${from}: ${error instanceof Error ? error.message : String(error)}`);
     return EXIT_FAILURE;
   }
   return withApp(options, cwd, stderr, async (app) => {
@@ -507,11 +559,28 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
     program
       .command("forget")
       .description(
-        "forget again, after restoring a backup, each person listed who still holds a key and whose forgetting the store does not hold",
+        "forget a person, or some categories of theirs; with --from, forget again, after restoring a backup, each person listed who still holds a key and whose forgetting the store does not hold",
       )
-      .requiredOption("--from <file>", "what bounda forgotten printed, or one person's id a line"),
-  ).action(async (options: ForgetOptions) => {
-    exitCode = await runForget(options, cwd, stdout, stderr);
+      .argument("[person]", "the id of the person to forget")
+      .option(
+        "--category <name>",
+        "forget only this category of the person, as when a consent is withdrawn; repeat it for several",
+        collect,
+      )
+      .option("--from <file>", "what bounda forgotten printed, or one person's id a line"),
+  ).action(async (personId: string | undefined, options: ForgetOptions) => {
+    exitCode = await runForget(personId, options, cwd, stdout, stderr);
+  });
+
+  actingOptions(
+    program
+      .command("export")
+      .description(
+        "print, as JSON, everything the store holds that names a person, with each field's category, basis and retention; recorded in the access log",
+      )
+      .argument("<person>", "the id of the person to export"),
+  ).action(async (personId: string, options: ActingOptions) => {
+    exitCode = await runExport(personId, options, cwd, stdout, stderr);
   });
 
   try {

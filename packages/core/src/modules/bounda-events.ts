@@ -1,4 +1,5 @@
 import type { StoredEvent } from "../contracts/event.ts";
+import type { PersonalCategoryName } from "./personal-data.ts";
 
 /**
  * The aggregate the runtime's own events belong to, one stream per subject: a read model
@@ -43,6 +44,27 @@ export type PersonalDataForgottenReason = "requested" | "retention" | "restored"
 export interface PersonalDataForgottenPayload {
   readonly personId: string;
   readonly reason: PersonalDataForgottenReason;
+  /**
+   * Whether the person was forgotten as a whole, by `forget(person)`, the app's retention or a
+   * restore of either; `false` when only some categories were, by `forget(person, { categories })`
+   * or a category's retention.
+   */
+  readonly whole: boolean;
+  /**
+   * The categories forgotten: their fields read as `null` from then on. As a whole, every
+   * category but those `retained`.
+   */
+  readonly categories: readonly PersonalCategoryName[];
+  /**
+   * The categories kept under a legal obligation instead, restricted until their retention ends,
+   * when another `PersonalDataForgotten` names them in `expired`.
+   */
+  readonly retained: readonly PersonalCategoryName[];
+  /**
+   * The categories kept at an earlier forgetting whose retention ended: what was kept of them is
+   * forgotten now.
+   */
+  readonly expired: readonly PersonalCategoryName[];
   readonly cancelledCommands: readonly CancelledCommand[];
   readonly removedDeadLetters: readonly RemovedDeadLetter[];
 }

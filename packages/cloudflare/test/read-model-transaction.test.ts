@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { fieldBuilder as f, silentLogger } from "@bounda-dev/core";
+import { DEFAULT_PERSONAL_CATEGORY, fieldBuilder as f, silentLogger } from "@bounda-dev/core";
 import type { AppendArgs, Storage, StorageTransaction } from "@bounda-dev/core/adapter";
 import { contractFields, pendingEvent } from "@bounda-dev/core/adapter/testing";
 import { describe, expect, it } from "vitest";
@@ -252,7 +252,7 @@ describe("appends in a Durable Object", () => {
         storage: state.storage,
         options: {},
       }).createStorage();
-      await storage.personalKeys.add("c-1", key);
+      await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, key);
       let release = (): void => {};
       const held = new Promise<void>((resolve) => {
         release = resolve;
@@ -277,9 +277,12 @@ describe("appends in a Durable Object", () => {
   });
 
   it("refuses an append that a transaction forgetting its person held up", async () => {
-    const { refusal, position } = await heldUp((tx) => tx.personalKeys.remove("c-1"), {
-      persons: [{ person: "c-1", fingerprint: key.fingerprint }],
-    });
+    const { refusal, position } = await heldUp(
+      (tx) => tx.personalKeys.remove("c-1", key.fingerprint),
+      {
+        persons: [{ person: "c-1", fingerprint: key.fingerprint }],
+      },
+    );
     expect(refusal).toMatchObject({ code: "CONCURRENCY_CONFLICT", personId: "c-1" });
     expect(position).toBe(0);
   });

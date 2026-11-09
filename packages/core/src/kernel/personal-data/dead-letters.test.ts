@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
@@ -311,7 +312,7 @@ describe("dead letters of work that names a person", () => {
     const stored = await storage.deadLetterStore.list();
     expect(stored).toHaveLength(2);
     expect(JSON.stringify(stored)).not.toContain("ana@example.com");
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
     // The handler that failed first read the email; the other read the event after the forget.
     const listed = await app.deadLetters.list();
     for (const [index, letter] of stored.entries()) {
@@ -334,7 +335,7 @@ describe("dead letters of work that names a person", () => {
     };
     await app.commands.registerCustomer(ana);
     await app.runUntilIdle();
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).not.toBeNull();
     const listed = await app.deadLetters.list();
     expect(JSON.stringify(listed)).not.toContain("ana@example.com");
     // The policy read the first registration under the key the forget removed, and the second
@@ -386,7 +387,7 @@ describe("dead letters of work that names a person", () => {
     expect(delayed).toMatchObject({ person: "c-1" });
     expect(isSealed(delayed?.errorMessage)).toBe(true);
     expect(JSON.stringify(delayed)).not.toContain("ana@example.com");
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
     await app.stop();
   });
 });

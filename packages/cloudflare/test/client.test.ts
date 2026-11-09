@@ -31,6 +31,7 @@ describe("connect", () => {
     const eventual = recordingStub();
     const soon = connect<typeof registry>(eventual.stub, { consistency: "eventual" });
     await soon.forget("c-1");
+    await soon.forget("c-1", { categories: ["default"] });
     await soon.restrict("c-1");
     await soon.unrestrict("c-1");
     const byDefault = recordingStub();
@@ -40,12 +41,13 @@ describe("connect", () => {
     await store.unrestrict("c-2");
     expect([eventual.forgets, byDefault.forgets]).toEqual([
       [
-        ["c-1", "eventual", undefined],
+        ["c-1", "eventual", undefined, undefined],
+        ["c-1", "eventual", undefined, { categories: ["default"] }],
         ["restrict", "c-1", "eventual", undefined],
         ["unrestrict", "c-1", "eventual", undefined],
       ],
       [
-        ["c-2", "read-your-writes", undefined],
+        ["c-2", "read-your-writes", undefined, undefined],
         ["restrict", "c-2", "read-your-writes", undefined],
         ["unrestrict", "c-2", "read-your-writes", undefined],
       ],
@@ -79,7 +81,7 @@ describe("connect", () => {
         ["getOrder", { orderId: "o-1" }, undefined],
       ],
       forgets: [
-        ["c-1", "eventual", "user-1"],
+        ["c-1", "eventual", "user-1", undefined],
         ["restrict", "c-1", "eventual", "user-1"],
         ["unrestrict", "c-1", "eventual", "user-1"],
       ],

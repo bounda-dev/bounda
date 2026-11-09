@@ -6,6 +6,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
+import type { PersonalCategories } from "../personal-data/categories.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
@@ -48,6 +49,7 @@ export interface CreatePolicyExecutorArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
+  readonly personalCategories: PersonalCategories;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -58,6 +60,7 @@ export interface CreatePolicyExecutorFunction {
 }
 
 export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
+  personalCategories,
   aggregates,
   pipeline,
   config,
@@ -83,6 +86,8 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       logger,
       ids,
       clock,
+      personalCategories,
+      batchSize: config.runtime.dispatcher.batchSize,
       maxChainDepth: config.forAggregate(policy.aggregate).policies.maxChainDepth,
     });
     const handled = traced({

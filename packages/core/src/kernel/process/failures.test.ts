@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
@@ -199,7 +200,7 @@ describe("letterOf", () => {
 
   it("seals the message and the stack under the key the subject's person holds", async () => {
     const { failures, storage } = await setup();
-    await storage.personalKeys.add("c-1", await newStoredKey());
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
     const error = new Error("cannot mail ana@example.com");
     const letter = await failures.letterOf(
       orderPayment,
@@ -212,7 +213,7 @@ describe("letterOf", () => {
     expect(isSealed(letter.errorMessage)).toBe(true);
     expect(isSealed(letter.errorStack)).toBe(true);
     expect(JSON.stringify(letter)).not.toContain("ana@example.com");
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
     expect(key).not.toBeNull();
     expect(letter.errorMessage).toMatchObject({
       $personal: { person: "c-1", key: key?.fingerprint },
@@ -222,7 +223,7 @@ describe("letterOf", () => {
   it("seals the text unreadable when the person no longer holds the key the subject was read under", async () => {
     const { failures, storage } = await setup();
     const read = await newStoredKey();
-    await storage.personalKeys.add("c-1", await newStoredKey());
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
     const letter = await failures.letterOf(
       orderPayment,
       { ...subject, person: "c-1", read: [{ person: "c-1", fingerprint: read.fingerprint }] },
@@ -232,7 +233,9 @@ describe("letterOf", () => {
     );
     expect(isSealed(letter.errorMessage)).toBe(true);
     expect(letter.errorMessage).not.toMatchObject({
-      $personal: { key: (await storage.personalKeys.get("c-1"))?.fingerprint },
+      $personal: {
+        key: (await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.fingerprint,
+      },
     });
     expect(letter.errorMessage).not.toMatchObject({ $personal: { key: read.fingerprint } });
   });
@@ -247,7 +250,7 @@ describe("letterOf", () => {
       "terminal",
     );
     expect(isSealed(letter.errorMessage)).toBe(true);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
   });
 });
 
@@ -286,7 +289,11 @@ describe("filed", () => {
 describe("subjectOf an event on a loaded instance", () => {
   const onboarding: ProcessRuntime = {
     ...orderPayment,
-    personal: { person: "customerId", fields: ["email"] },
+    personal: {
+      person: "customerId",
+      fields: ["email"],
+      categories: { email: DEFAULT_PERSONAL_CATEGORY },
+    },
   };
   const held = { person: "c-2", fingerprint: "f-2" };
   const loaded = instance({ state: { customerId: "c-2", email: "a@b.c" }, persons: [held] });

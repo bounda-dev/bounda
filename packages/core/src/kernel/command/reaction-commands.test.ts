@@ -3,6 +3,7 @@ import type { Storage } from "../../adapter/adapter.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { buildPersonalCategories } from "../personal-data/categories.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import {
   createKernelHarness,
@@ -21,6 +22,8 @@ import {
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
+const personalCategories = buildPersonalCategories({ module: undefined, retentionMs: null });
+
 const setUp = async (registry: Registry = orderRegistry) => {
   const harness = await createKernelHarness({ registry });
   const unit = createUnitOfWork({ storage: harness.storage });
@@ -35,6 +38,8 @@ const setUp = async (registry: Registry = orderRegistry) => {
     ids: createSequentialIdGenerator(),
     clock: harness.clock,
     maxChainDepth: 5,
+    personalCategories,
+    batchSize: 10,
   });
   return { ...harness, reaction, unit, entries };
 };
@@ -325,14 +330,14 @@ describe("createReactionCommands", () => {
 
   it("forgets a person when the unit commits, once however often the run names them", async () => {
     const { reaction, storage, unit, entries } = await setUp();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", "default", { key: "k", fingerprint: "f", kid: null });
     await reaction.forget("c-1");
     await reaction.forget("c-1");
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
     expect(await forgottenEvents(storage)).toEqual([]);
     await unit.commit();
 
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
     const [forgotten, ...more] = await forgottenEvents(storage);
     expect(more).toEqual([]);
     expect(forgotten).toMatchObject({
@@ -342,6 +347,10 @@ describe("createReactionCommands", () => {
       payload: {
         personId: "c-1",
         reason: "requested",
+        whole: true,
+        categories: ["default"],
+        retained: [],
+        expired: [],
         cancelledCommands: [],
         removedDeadLetters: [],
       },
@@ -353,7 +362,11 @@ describe("createReactionCommands", () => {
       fields: {
         personId: "c-1",
         reason: "requested",
-        hadKey: true,
+        whole: true,
+        categories: ["default"],
+        retained: [],
+        expired: [],
+        destroyedKeys: 1,
         cancelledCommands: 0,
         removedDeadLetters: 0,
       },
@@ -362,10 +375,29 @@ describe("createReactionCommands", () => {
 
   it("forgets nobody for a unit that never commits", async () => {
     const { reaction, storage } = await setUp();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", "default", { key: "k", fingerprint: "f", kid: null });
     await reaction.forget("c-1");
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
     expect(await forgottenEvents(storage)).toEqual([]);
+  });
+
+  it("forgets the categories asked for apart from the person as a whole, once each", async () => {
+    const { reaction, storage, unit } = await setUp();
+    await reaction.forget("c-1", { categories: ["default"] });
+    await reaction.forget("c-1", { categories: ["default"] });
+    await reaction.forget("c-1");
+    await unit.commit();
+    expect((await forgottenEvents(storage)).map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({ whole: false, categories: ["default"] }),
+      expect.objectContaining({ whole: true, categories: ["default"] }),
+    ]);
+  });
+
+  it("refuses a category the app does not have before the unit commits", async () => {
+    const { reaction } = await setUp();
+    await expect(
+      reaction.forget("c-1", { categories: ["profile"] as unknown as ["default"] }),
+    ).rejects.toThrow('forget names categories the app does not have: "profile"');
   });
 
   it("refuses to forget an empty id, and once the run is abandoned or has finished", async () => {
@@ -393,6 +425,8 @@ describe("createReactionCommands", () => {
       ids: createSequentialIdGenerator(),
       clock: harness.clock,
       maxChainDepth: 5,
+      personalCategories,
+      batchSize: 10,
     });
     await expect(deep.forget("c-1")).rejects.toMatchObject({
       code: "CHAIN_DEPTH_EXCEEDED",

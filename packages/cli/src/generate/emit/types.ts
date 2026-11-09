@@ -91,6 +91,10 @@ const QUERIES_TYPE_NAME = "Queries";
 
 export const TEST_PORTS_TYPE_NAME = "TestPorts";
 
+export const PERSONAL_CATEGORY_TYPE_NAME = "PersonalCategory";
+
+const PERSONAL_DATA_CHECK_TYPE_NAME = "PersonalDataDeclaration";
+
 /**
  * The types `.bounda/types.ts` declares once for the whole app, next to those of each aggregate
  * and read model.
@@ -102,6 +106,8 @@ export const APP_TYPE_NAMES: readonly string[] = [
   QUERIES_TYPE_NAME,
   PORTS_CONFIG_TYPE_NAME,
   TEST_PORTS_TYPE_NAME,
+  PERSONAL_CATEGORY_TYPE_NAME,
+  PERSONAL_DATA_CHECK_TYPE_NAME,
 ];
 
 const typeofImport = (from: string, to: string): string =>
@@ -264,6 +270,18 @@ const emitForgetting = (model: ProjectModel, readModel: ReadModelModel, path: st
   ].join("\n");
 };
 
+/**
+ * The categories `app/personal-data.ts` declares, `never` without it, and a type that fails to
+ * compile while it declares `default` or a category that is not one.
+ */
+const emitPersonalData = (model: ProjectModel, path: string): string =>
+  model.personalData === undefined
+    ? `export type ${PERSONAL_CATEGORY_TYPE_NAME} = never;`
+    : [
+        `export type ${PERSONAL_CATEGORY_TYPE_NAME} = core.PersonalCategoriesOf<${typeofImport(path, model.personalData.path)}>;`,
+        `export type ${PERSONAL_DATA_CHECK_TYPE_NAME} = ${EXPECT_TYPE_NAME}<core.DeclaresPersonalData<${typeofImport(path, model.personalData.path)}>>;`,
+      ].join("\n");
+
 const emitMap = (
   name: string,
   wrapper: string,
@@ -312,9 +330,10 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   );
   sections.push(emitMap(COMMANDS_TYPE_NAME, "CommandsFacadeOf", commandModules));
   sections.push(emitMap(REACTION_COMMANDS_TYPE_NAME, "ReactionCommandsFacadeOf", commandModules));
-  if (model.readModels.length > 0) {
+  if (model.readModels.length > 0 || model.personalData !== undefined) {
     sections.push(`type ${EXPECT_TYPE_NAME}<Check extends true> = Check;`);
   }
+  sections.push(emitPersonalData(model, path));
   for (const readModel of model.readModels) {
     sections.push(
       [

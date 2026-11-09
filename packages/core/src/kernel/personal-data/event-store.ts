@@ -16,7 +16,7 @@ import {
   seal,
   unseal,
 } from "./crypto.ts";
-import type { PersonalMarks } from "./marks.ts";
+import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf, sealLifecycleEvent } from "./process-state.ts";
 import type { PersonalKeys } from "./wrapped-keys.ts";
 
@@ -78,14 +78,24 @@ export const carryOpening: CarryOpeningFunction = (from, to) => {
  */
 const keyCache = <Key>() => {
   const keys = new Map<string, Promise<Key>>();
-  return (person: string, open: () => Promise<Key>): Promise<Key> => {
-    const cached = keys.get(person);
+  return (person: string, under: string, open: () => Promise<Key>): Promise<Key> => {
+    const id = JSON.stringify([person, under]);
+    const cached = keys.get(id);
     if (cached !== undefined) return cached;
     const opened = open();
-    keys.set(person, opened);
+    keys.set(id, opened);
     return opened;
   };
 };
+
+// What a field is sealed or opened with: the person's key of a category, or of a fingerprint.
+type SealingKey = (person: string, category: string) => Promise<PersonalKey>;
+type OpeningKey = (person: string, fingerprint: string) => Promise<PersonalKey | null>;
+
+const keyedOf = (person: string, key: PersonalKey): KeyedPerson =>
+  key.retained
+    ? { person, fingerprint: key.fingerprint, retained: true }
+    : { person, fingerprint: key.fingerprint };
 
 /**
  * The event store handlers write to and read from: personal fields go in encrypted with the key
@@ -102,25 +112,30 @@ export const withPersonalData: WithPersonalDataFunction = ({
   const marksOf = (event: Pick<StoredEvent, "aggregateType" | "type">): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
 
-  // A person the state held under a key is sealed under that key alone: without it now, they were
-  // forgotten after the load, and any other key would make their old data readable again.
-  const keyInForce = async (args: AppendArgs, person: string): Promise<PersonalKey> => {
-    const stored = await keys.get(person);
-    const readUnder = (args.persons ?? []).filter(
-      (held) => held.person === person && held.fingerprint !== null,
-    );
-    if (readUnder.some((held) => held.fingerprint !== stored?.fingerprint)) {
-      throw new ForgottenSinceLoadError(args, person);
+  // A person the state held under a key that is gone, or kept since where it was read in force,
+  // was forgotten after the load: no key is created for what was decided on their old data, which
+  // an append outside a transaction would leave behind.
+  const checkReads = async (args: AppendArgs, person: string): Promise<void> => {
+    for (const { fingerprint, retained } of (args.persons ?? []).filter(
+      (held) => held.person === person,
+    )) {
+      if (fingerprint === null) continue;
+      const found = await keys.find(person, fingerprint);
+      if (found === null || (found.retainedSince !== null && retained !== true)) {
+        throw new ForgottenSinceLoadError(args, person);
+      }
     }
-    return stored === null ? keys.create(person) : keys.open(person, stored);
   };
+
+  const keyInForce = async (person: string, category: string): Promise<PersonalKey> =>
+    (await keys.held(person, category)) ?? keys.create(person, category);
 
   // A lifecycle event names the person its state names, as a domain event does: the append is
   // refused while they are restricted, and their export finds it.
   const sealedState = async (
     event: PendingEvent,
     process: string,
-    key: (person: string) => Promise<PersonalKey>,
+    key: SealingKey,
     touched: Set<string>,
   ): Promise<PendingEvent> => {
     const state = lifecycleStateOf(event.payload);
@@ -141,7 +156,7 @@ export const withPersonalData: WithPersonalDataFunction = ({
   // `person`, and the append is refused while they are restricted.
   const sealed = async (
     event: PendingEvent,
-    key: (person: string) => Promise<PersonalKey>,
+    key: SealingKey,
     touched: Set<string>,
   ): Promise<PendingEvent> => {
     const process = processOfStream(event.aggregateType);
@@ -161,7 +176,8 @@ export const withPersonalData: WithPersonalDataFunction = ({
     for (const field of marks.fields) {
       const value = payload[field];
       if (value === undefined) continue;
-      payload[field] = await seal({ key: await key(person), person, value });
+      const category = fieldCategory(marks, field);
+      payload[field] = await seal({ key: await key(person, category), person, category, value });
     }
     return { ...event, payload, person };
   };
@@ -169,17 +185,20 @@ export const withPersonalData: WithPersonalDataFunction = ({
   // `read` gets each person whose fields opened, with the key that opened them.
   const openFields = async (
     fields: Readonly<Record<string, unknown>>,
-    key: (person: string) => Promise<PersonalKey | null>,
-    read: Map<string, string>,
+    key: OpeningKey,
+    read: Map<string, KeyedPerson>,
   ): Promise<Record<string, unknown>> => {
     const unsealed: Record<string, unknown> = { ...fields };
     for (const field in fields) {
       const value = fields[field];
       if (!isSealed(value)) continue;
       const { person, key: sealedUnder } = (value as SealedValue).$personal;
-      const personal = await key(person);
+      const personal = await key(person, sealedUnder);
       unsealed[field] = await unseal({ key: personal, sealed: value as SealedValue });
-      if (personal?.fingerprint === sealedUnder) read.set(person, sealedUnder);
+      if (personal !== null) {
+        const held = keyedOf(person, personal);
+        read.set(keyedPersonId(held), held);
+      }
     }
     return unsealed;
   };
@@ -198,20 +217,17 @@ export const withPersonalData: WithPersonalDataFunction = ({
     event: StoredEvent,
     payload: Record<string, unknown>,
     where: "payload" | "state",
-    key: (person: string) => Promise<PersonalKey | null>,
-    opened: Map<string, string>,
+    key: OpeningKey,
+    opened: Map<string, KeyedPerson>,
   ): Promise<StoredEvent> => {
-    const read = new Map<string, string>();
+    const read = new Map<string, KeyedPerson>();
     const unsealed =
       where === "state"
         ? { ...payload, state: await openFields(lifecycleStateOf(payload) ?? {}, key, read) }
         : await openFields(payload, key, read);
-    for (const [person, fingerprint] of read) opened.set(person, fingerprint);
+    for (const [id, held] of read) opened.set(id, held);
     const result = { ...event, payload: unsealed };
-    openings.set(
-      result,
-      [...read].map(([person, fingerprint]) => ({ person, fingerprint })),
-    );
+    openings.set(result, [...read.values()]);
     return result;
   };
 
@@ -219,8 +235,8 @@ export const withPersonalData: WithPersonalDataFunction = ({
   // event comes back as it is, with no promise and no copy.
   const unsealed = (
     event: StoredEvent,
-    key: (person: string) => Promise<PersonalKey | null>,
-    opened: Map<string, string>,
+    key: OpeningKey,
+    opened: Map<string, KeyedPerson>,
   ): StoredEvent | Promise<StoredEvent> => {
     const where = sealedIn(event);
     return where === null
@@ -233,12 +249,10 @@ export const withPersonalData: WithPersonalDataFunction = ({
       ? Promise.all(events)
       : Promise.resolve(events as StoredEvent[]);
 
-  const opening = (): ((person: string) => Promise<PersonalKey | null>) => {
+  const opening = (): OpeningKey => {
     const cache = keyCache<PersonalKey | null>();
-    return (person) =>
-      cache(person, async () => {
-        return keys.held(person);
-      });
+    return (person, fingerprint) =>
+      cache(person, fingerprint, () => keys.opened(person, fingerprint));
   };
 
   return {
@@ -250,8 +264,11 @@ export const withPersonalData: WithPersonalDataFunction = ({
       const persons = new Map<string, KeyedPerson>();
       for (const held of args.persons ?? []) persons.set(keyedPersonId(held), held);
       const touched = new Set(args.touches);
-      const key = async (person: string): Promise<PersonalKey> => {
-        const personal = await cache(person, () => keyInForce(args, person));
+      const checked = new Map<string, Promise<void>>();
+      const key: SealingKey = async (person, category) => {
+        if (!checked.has(person)) checked.set(person, checkReads(args, person));
+        await checked.get(person);
+        const personal = await cache(person, category, () => keyInForce(person, category));
         const held = { person, fingerprint: personal.fingerprint };
         persons.set(keyedPersonId(held), held);
         return personal;
@@ -274,9 +291,9 @@ export const withPersonalData: WithPersonalDataFunction = ({
     load: async (args) => {
       const loaded = await eventStore.load(args);
       const key = opening();
-      const fingerprints = new Map<string, string>();
-      const events = await settled(loaded.events.map((e) => unsealed(e, key, fingerprints)));
-      return { ...loaded, events, fingerprints };
+      const opened = new Map<string, KeyedPerson>();
+      const events = await settled(loaded.events.map((e) => unsealed(e, key, opened)));
+      return { ...loaded, events, opened: [...opened.values()] };
     },
     readOne: async (args) => {
       const event = await eventStore.readOne(args);
@@ -284,12 +301,12 @@ export const withPersonalData: WithPersonalDataFunction = ({
     },
     readAll: async (args) => {
       const key = opening();
-      const ignored = new Map<string, string>();
+      const ignored = new Map<string, KeyedPerson>();
       return settled((await eventStore.readAll(args)).map((e) => unsealed(e, key, ignored)));
     },
     readByPerson: async (args) => {
       const key = opening();
-      const ignored = new Map<string, string>();
+      const ignored = new Map<string, KeyedPerson>();
       return settled((await eventStore.readByPerson(args)).map((e) => unsealed(e, key, ignored)));
     },
     lastPosition: () => eventStore.lastPosition(),

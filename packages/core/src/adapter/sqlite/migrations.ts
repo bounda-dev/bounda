@@ -2,7 +2,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { resolvedAtOfEarlierLetters } from "../sql/dead-letters.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
-import { forgetLedgerStatements } from "../sql/forget-ledger.ts";
+import { forgetLedgerCategoriesStatement, forgetLedgerStatements } from "../sql/forget-ledger.ts";
 import { quoteIdentifier } from "../sql/identifiers.ts";
 import {
   migrateSchemas,
@@ -112,13 +112,63 @@ const adoptStorageTables = async (tx: SqlTransaction, tables: StorageTables): Pr
   for (const statement of personRowsBackfillStatements(tables)) await tx.run(statement, []);
 };
 
+const keysIndex = (tables: StorageTables, suffix: string): string =>
+  quoteIdentifier(`${tables.personalKeys.slice(1, -1)}_${suffix}_idx`);
+
+/**
+ * The second migration: a key per person and category instead of one per person, each named by
+ * its fingerprint, with the person's last activity on it and whether a forgetting kept it under a
+ * legal obligation. Every key there was is the person's key in the default category, last active
+ * when the person was, unless they were forgotten after that, when the key came later. Every
+ * forgetting recorded before forgot the person as a whole, in the default category.
+ */
+const adoptCategories = async (tx: SqlTransaction, tables: StorageTables): Promise<void> => {
+  const keys = tables.personalKeys;
+  const next = quoteIdentifier(`${keys.slice(1, -1)}_next`);
+  const forgettings = `UPDATE ${tables.events} SET "payload" = json_set("payload", '$.categories', json('["default"]'), '$.retained', json('[]'), '$.whole', json('true')) WHERE "aggregate_type" = 'bounda' AND "type" = 'PersonalDataForgotten' AND json_type("payload", '$.categories') IS NULL`;
+  // A database migrated before, whose versions were lost, has the keys as this leaves them.
+  const rebuilt = (await columnsOf(tx, keys)).has("category");
+  const statements = [
+    `CREATE TABLE ${next} (
+    "person" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "fingerprint" TEXT NOT NULL,
+    "key" TEXT NOT NULL,
+    "kid" TEXT,
+    "held_until" TEXT,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "last_active_at" TEXT,
+    "retained_since" TEXT,
+    "forget_held_until" TEXT,
+    "forget_attempts" INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY ("person", "fingerprint")
+  )`,
+    `INSERT INTO ${next} ("person", "category", "fingerprint", "key", "kid", "held_until", "attempts", "last_active_at") SELECT "k"."person", 'default', "k"."fingerprint", "k"."key", "k"."kid", "k"."held_until", "k"."attempts", (SELECT "p"."last_active_at" FROM ${tables.persons} AS "p" WHERE "p"."person" = "k"."person" AND "p"."forgotten_at" IS NULL) FROM ${keys} AS "k"`,
+    `DROP TABLE ${keys}`,
+    `ALTER TABLE ${next} RENAME TO ${keys}`,
+    // One key in force per person and category, which `add` resolves its race on.
+    `CREATE UNIQUE INDEX ${keysIndex(tables, "in_force")} ON ${keys} ("person", "category") WHERE "retained_since" IS NULL`,
+    // What the rotation of the wrapping key reads: the keys still under an old one.
+    `CREATE INDEX ${keysIndex(tables, "kid")} ON ${keys} ("kid", "person")`,
+    // When the rotation is next due while every key it has left is held.
+    `CREATE INDEX ${keysIndex(tables, "held")} ON ${keys} ("held_until") WHERE "held_until" IS NOT NULL`,
+    // What a category's retention reads, least recently active first.
+    `CREATE INDEX ${keysIndex(tables, "due")} ON ${keys} ("category", "last_active_at") WHERE "last_active_at" IS NOT NULL`,
+  ];
+  for (const statement of rebuilt ? [] : statements) await tx.run(statement, []);
+  await tx.run(forgettings, []);
+};
+
 export interface SqliteStorageScopeFunction {
   (tables: StorageTables): SchemaScope;
 }
 
 export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.storage,
-  migrations: [{ version: 1, migrate: (tx) => adoptStorageTables(tx, tables) }],
+  migrations: [
+    { version: 1, migrate: (tx) => adoptStorageTables(tx, tables) },
+    { version: 2, migrate: (tx) => adoptCategories(tx, tables) },
+  ],
 });
 
 export interface SqliteCheckpointsScopeFunction {
@@ -143,6 +193,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
         for (const statement of forgetLedgerStatements(table, sqliteDialect)) {
           await tx.run(statement, []);
         }
+      },
+    },
+    {
+      version: 2,
+      migrate: async (tx) => {
+        if ((await columnsOf(tx, table)).has("categories")) return;
+        await tx.run(forgetLedgerCategoriesStatement(table, sqliteDialect), []);
       },
     },
   ],

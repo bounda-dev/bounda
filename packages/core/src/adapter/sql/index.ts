@@ -20,7 +20,11 @@ export type {
   CreateSqlForgetLedgerFunction,
   ForgetLedgerStatementsFunction,
 } from "./forget-ledger.ts";
-export { createSqlForgetLedger, forgetLedgerStatements } from "./forget-ledger.ts";
+export {
+  createSqlForgetLedger,
+  forgetLedgerCategoriesStatement,
+  forgetLedgerStatements,
+} from "./forget-ledger.ts";
 export {
   DEFAULT_TABLE_PREFIX,
   quoteIdentifier,

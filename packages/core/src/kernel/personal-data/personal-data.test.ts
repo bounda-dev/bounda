@@ -390,7 +390,7 @@ describe("personal data in an app", () => {
     await app.commands.registerCustomer(ana);
     await app.runUntilIdle();
     const stream = { aggregateType: "customer", aggregateId: "c-1" };
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", "default");
     expect(await storage.snapshotStore.get(stream)).toMatchObject({
       version: 1,
       persons: [{ person: "c-1", fingerprint: key?.fingerprint }],
@@ -434,7 +434,7 @@ describe("personal data in an app", () => {
     await app.commands.greetCustomer({ customerId: "c-9" });
     await app.runUntilIdle();
     const stream = { aggregateType: "customer", aggregateId: "c-9" };
-    const key = await storage.personalKeys.get("c-9");
+    const key = await storage.personalKeys.get("c-9", "default");
     const [registered] = await storage.eventStore.readAll({ afterPosition: 0, limit: 1 });
     expect(registered).toMatchObject({
       person: "c-9",
@@ -469,7 +469,7 @@ describe("personal data in an app", () => {
       rejected: "NotYet",
       message: "ana@example.com cannot be confirmed yet",
     });
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", "default");
     expect(
       await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() }),
     ).toMatchObject({
@@ -501,7 +501,7 @@ describe("personal data in an app", () => {
     expect(reminded.eventTypes).toEqual(["CustomerReminded"]);
     const [reminder] = await app.events.read({ after: reminded.position - 1 });
     expect(reminder?.payload).toEqual({});
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
     expect(JSON.stringify(await app.events.read())).not.toContain("ana@example.com");
     await app.stop();
   });
@@ -517,7 +517,7 @@ describe("personal data in an app", () => {
       const { app } = await createTestApp({ registry, ...setup, adapter });
       await app.commands.registerCustomer(ana);
       await app.runUntilIdle();
-      const before = await storage.personalKeys.get("c-1");
+      const before = await storage.personalKeys.get("c-1", "default");
       whileDeciding = async () => {
         await app.forget("c-1");
         await app.commands.subscribe({
@@ -531,7 +531,7 @@ describe("personal data in an app", () => {
       const [reminder] = await app.events.read({ after: reminded.position - 1 });
       expect(reminder?.type).toBe("CustomerReminded");
       expect(reminder?.payload).toEqual({});
-      const after = await storage.personalKeys.get("c-1");
+      const after = await storage.personalKeys.get("c-1", "default");
       expect(after).not.toBeNull();
       expect(after?.fingerprint).not.toBe(before?.fingerprint);
       await app.stop();

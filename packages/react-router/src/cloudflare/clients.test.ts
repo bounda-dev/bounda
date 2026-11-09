@@ -73,6 +73,7 @@ describe("cloudflareClients", () => {
     await client.deadLetters.discard("d-2");
     await client.rebuildReadModel("orders");
     await client.forget("c-1");
+    await client.forget("c-1", { categories: ["default"] });
     await client.exportPersonalData("c-1");
     await client.restrict("c-2");
     await client.unrestrict("c-2");
@@ -83,7 +84,8 @@ describe("cloudflareClients", () => {
       ["acme", "retryDeadLetter", "d-1", undefined],
       ["acme", "discardDeadLetter", "d-2", undefined],
       ["acme", "rebuildReadModel", "orders"],
-      ["acme", "forget", "c-1", "read-your-writes", undefined],
+      ["acme", "forget", "c-1", "read-your-writes", undefined, undefined],
+      ["acme", "forget", "c-1", "read-your-writes", undefined, { categories: ["default"] }],
       ["acme", "exportPersonalData", "c-1", undefined],
       ["acme", "restrict", "c-2", "read-your-writes", undefined],
       ["acme", "unrestrict", "c-2", "read-your-writes", undefined],

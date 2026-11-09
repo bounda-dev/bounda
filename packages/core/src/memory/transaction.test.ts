@@ -29,11 +29,11 @@ describe("createMemoryStorageTransaction", () => {
 
   it("checks at commit a key it gave a person after removing their old one", async () => {
     const storage = await memory().createStorage();
-    await storage.personalKeys.add("c-1", testPersonalKey("one"));
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("one"));
     await expect(
       storage.transact(async (tx) => {
-        await tx.personalKeys.remove("c-1");
-        await tx.personalKeys.add("c-1", testPersonalKey("two"));
+        await tx.personalKeys.remove("c-1", "f-one");
+        await tx.personalKeys.add("c-1", "default", testPersonalKey("two"));
         await tx.eventStore.append({
           aggregateType: "order",
           aggregateId: "1",
@@ -42,10 +42,48 @@ describe("createMemoryStorageTransaction", () => {
           persons: [testKeyedPerson("c-1", "one"), testKeyedPerson("c-1", "two")],
         });
         // Another writer removes the key this transaction gave, before it commits.
-        await storage.personalKeys.remove("c-1");
+        await storage.personalKeys.remove("c-1", "f-two");
       }),
     ).rejects.toBeInstanceOf(ForgottenSinceLoadError);
     expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("checks at commit a read made under a key in force that someone retained since", async () => {
+    const stores = await storage();
+    await stores.personalKeys.add("c-1", "invoices", testPersonalKey("two"));
+    await expect(
+      stores.transact(async (tx) => {
+        await tx.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1 })],
+          persons: [testKeyedPerson("c-1", "two")],
+        });
+        await stores.personalKeys.retain("c-1", "f-two", {
+          since: at(2).toISOString(),
+          lastActiveAt: at(1).toISOString(),
+        });
+      }),
+    ).rejects.toBeInstanceOf(ForgottenSinceLoadError);
+    expect(await stores.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("puts back the keys it retained or touched when it fails", async () => {
+    const stores = await storage();
+    const day = (n: number) => at(n).toISOString();
+    await stores.personalKeys.add("c-1", "default", testPersonalKey("one"));
+    await stores.personalKeys.add("c-1", "invoices", testPersonalKey("two"));
+    await stores.personalKeys.touch("c-1", day(1));
+    const before = await stores.personalKeys.list("c-1");
+    await expect(
+      stores.transact(async (tx) => {
+        await tx.personalKeys.retain("c-1", "f-two", { since: day(2), lastActiveAt: day(1) });
+        await tx.personalKeys.touch("c-1", day(3));
+        await refused(tx);
+      }),
+    ).rejects.toBeInstanceOf(ScheduledClaimLostError);
+    expect(await stores.personalKeys.list("c-1")).toEqual(before);
   });
 
   it("puts back every entry it changed, newest first, when a later write fails", async () => {
@@ -90,6 +128,7 @@ describe("createMemoryStorageTransaction", () => {
       person: "c-1",
       restrictedSince: null,
       lastActiveAt: day(3),
+      position: 2,
       forgottenAt: null,
       hold: null,
     });
@@ -125,6 +164,7 @@ describe("createMemoryStorageTransaction", () => {
       person: "c-1",
       restrictedSince: null,
       lastActiveAt: day(1),
+      position: 1,
       forgottenAt: null,
       hold: null,
     });

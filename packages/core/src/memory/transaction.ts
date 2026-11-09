@@ -120,7 +120,8 @@ const undoAll = (undos: Undos): void => {
 };
 
 // The keys are written at once, since `add` answers with the key in force, and put back when the
-// transaction fails. Each key it removes goes in `removed`, as `keyedPersonId` names it.
+// transaction fails. Each key it removes or retains goes in `removed`, as `keyedPersonId` names it:
+// a read made while it was in force no longer holds.
 const trackedPersonalKeys = (
   personalKeys: PersonalKeyStore,
   entries: StoreEntries<string>,
@@ -128,19 +129,47 @@ const trackedPersonalKeys = (
   removed: Set<string>,
 ): PersonalKeyStore => {
   const tracked = trackedBy(undos);
+  const id = (person: string, fingerprint: string): string =>
+    keyedPersonId({ person, fingerprint });
   return {
-    get: (person) => personalKeys.get(person),
-    add: (person, key) => tracked(entries, person, () => personalKeys.add(person, key)),
-    remove: async (person) => {
-      const held = await personalKeys.get(person);
-      if (held !== null) removed.add(keyedPersonId({ person, fingerprint: held.fingerprint }));
-      return tracked(entries, person, () => personalKeys.remove(person));
+    get: (person, category) => personalKeys.get(person, category),
+    find: (person, fingerprint) => personalKeys.find(person, fingerprint),
+    list: (person) => personalKeys.list(person),
+    add: (person, category, key) =>
+      tracked(entries, id(person, key.fingerprint), () => personalKeys.add(person, category, key)),
+    remove: async (person, fingerprint) => {
+      removed.add(id(person, fingerprint));
+      return tracked(entries, id(person, fingerprint), () =>
+        personalKeys.remove(person, fingerprint),
+      );
     },
+    retain: async (person, fingerprint, args) => {
+      removed.add(id(person, fingerprint));
+      return tracked(entries, id(person, fingerprint), () =>
+        personalKeys.retain(person, fingerprint, args),
+      );
+    },
+    // Several entries at once, each put back as `tracked` puts one back.
+    touch: async (person, lastActiveAt) => {
+      const ids = (await personalKeys.list(person)).map(({ key }) => id(person, key.fingerprint));
+      const before = ids.map((at) => entries.read(at));
+      await personalKeys.touch(person, lastActiveAt);
+      ids.forEach((at, index) => {
+        const after = entries.read(at);
+        undos.push(() => entries.putBack(at, before[index], after));
+      });
+    },
+    listDue: (args) => personalKeys.listDue(args),
+    holdDue: (person, fingerprint, lastActiveAt, hold) =>
+      tracked(entries, id(person, fingerprint), () =>
+        personalKeys.holdDue(person, fingerprint, lastActiveAt, hold),
+      ),
+    nextDueHoldEnd: (args) => personalKeys.nextDueHoldEnd(args),
     listWrappedUnder: (args) => personalKeys.listWrappedUnder(args),
     rewrap: (person, from, to) =>
-      tracked(entries, person, () => personalKeys.rewrap(person, from, to)),
+      tracked(entries, id(person, from.fingerprint), () => personalKeys.rewrap(person, from, to)),
     hold: (person, from, hold) =>
-      tracked(entries, person, () => personalKeys.hold(person, from, hold)),
+      tracked(entries, id(person, from.fingerprint), () => personalKeys.hold(person, from, hold)),
     nextHoldEnd: (args) => personalKeys.nextHoldEnd(args),
   };
 };
@@ -189,28 +218,28 @@ const trackedForgets = (
   return {
     scheduler: {
       ...stores.scheduler,
-      forget: async (person) => {
-        const named = (await scheduler.list()).filter((entry) => namesPerson(entry, person));
+      forget: async (person, keep) => {
+        const named = (await scheduler.list()).filter((entry) => namesPerson(entry, person, keep));
         for (const { dedupeKey } of named) {
           await tracked(entries.scheduler, dedupeKey, () => scheduler.cancel(dedupeKey));
         }
-        const staged = withdrawScheduled(person);
+        const staged = withdrawScheduled(person, keep);
         const keys = new Set(staged.map(({ dedupeKey }) => dedupeKey));
         return [...named.filter(({ dedupeKey }) => !keys.has(dedupeKey)), ...staged];
       },
     },
     deadLetterStore: {
       ...stores.deadLetterStore,
-      forget: async (person) => {
+      forget: async (person, keep) => {
         const named = (await deadLetterStore.list()).filter((letter) =>
-          namesPerson(letter, person),
+          namesPerson(letter, person, keep),
         );
         for (const { id } of named) {
           await tracked(entries.deadLetterStore, id, () => deadLetterStore.remove(id));
         }
         // A letter added under an id the store holds already changes nothing, so it stays as stored.
         const ids = new Set(named.map(({ id }) => id));
-        return [...named, ...withdrawLetters(person).filter(({ id }) => !ids.has(id))];
+        return [...named, ...withdrawLetters(person, keep).filter(({ id }) => !ids.has(id))];
       },
     },
   };
@@ -257,7 +286,7 @@ const createUndoLog = ({
         put: (args) =>
           tracked(entries.idempotencyStore, args.key, () => idempotencyStore.put(args)),
         // Not put back: a rejection forgotten is decided again, which is all it costs.
-        forget: (person) => idempotencyStore.forget(person),
+        forget: (person, keep) => idempotencyStore.forget(person, keep),
       },
     },
     undo: () => undoAll(undos),

@@ -7,6 +7,7 @@ import {
 } from "../../contracts/errors.ts";
 import type { Storage, StorageTransaction } from "../adapter.ts";
 import type { KeyedPerson } from "../storage/personal-key-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY as D } from "../storage/personal-key-store.ts";
 import {
   testKeyedPerson as held,
   pendingEvent,
@@ -143,7 +144,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await expect(
         storage.transact(async (tx) => {
           await tx.inboxLedger.complete(key);
-          await tx.personalKeys.add("c-9", stored("9"));
+          await tx.personalKeys.add("c-9", D, stored("9"));
           await tx.scheduler.schedule({
             dedupeKey: "command:c1",
             command: testCommand("1"),
@@ -159,7 +160,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         }),
       ).rejects.toBeInstanceOf(ConcurrencyError);
       await nothingWritten();
-      expect(await storage.personalKeys.get("c-9")).toBeNull();
+      expect(await storage.personalKeys.get("c-9", D)).toBeNull();
     });
 
     it("writes nothing when the scheduler entry it settles was claimed again", async () => {
@@ -274,11 +275,11 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
     });
 
     it("adds and removes personal keys with the rest, or not at all", async () => {
-      await storage.personalKeys.add("c-1", stored("1"));
+      await storage.personalKeys.add("c-1", D, stored("1"));
       const work = async (tx: StorageTransaction) => {
-        expect(await tx.personalKeys.remove("c-1")).toBe(true);
-        expect(await tx.personalKeys.add("c-2", stored("2"))).toEqual(stored("2"));
-        expect(await tx.personalKeys.get("c-2")).toEqual(stored("2"));
+        expect(await tx.personalKeys.remove("c-1", "f-1")).toBe(true);
+        expect(await tx.personalKeys.add("c-2", D, stored("2"))).toEqual(stored("2"));
+        expect(await tx.personalKeys.get("c-2", D)).toEqual(stored("2"));
         await tx.eventStore.append({
           aggregateType: "order",
           aggregateId: "1",
@@ -292,12 +293,12 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           throw new Error("boom");
         }),
       ).rejects.toThrow("boom");
-      expect(await storage.personalKeys.get("c-1")).toEqual(stored("1"));
-      expect(await storage.personalKeys.get("c-2")).toBeNull();
+      expect(await storage.personalKeys.get("c-1", D)).toEqual(stored("1"));
+      expect(await storage.personalKeys.get("c-2", D)).toBeNull();
       expect(await storage.eventStore.lastPosition()).toBe(0);
       await storage.transact(work);
-      expect(await storage.personalKeys.get("c-1")).toBeNull();
-      expect(await storage.personalKeys.get("c-2")).toEqual(stored("2"));
+      expect(await storage.personalKeys.get("c-1", D)).toBeNull();
+      expect(await storage.personalKeys.get("c-2", D)).toEqual(stored("2"));
       expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toHaveLength(1);
     });
 
@@ -363,6 +364,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           person: "c-1",
           restrictedSince: null,
           lastActiveAt: now.toISOString(),
+          position: 3,
           forgottenAt: null,
           hold: null,
         },
@@ -371,7 +373,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
 
     it("holds a person and a key with the rest, or not at all", async () => {
       const key = stored("1");
-      await storage.personalKeys.add("c-1", key);
+      await storage.personalKeys.add("c-1", D, key);
       await storage.persons.record({
         person: "c-1",
         position: 1,
@@ -388,7 +390,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       ).rejects.toThrow("boom");
       expect((await storage.persons.get("c-1"))?.hold).toBeNull();
       expect(await storage.personalKeys.listWrappedUnder({ kids: [null], limit: 10 })).toEqual([
-        { person: "c-1", key, hold: null },
+        { person: "c-1", category: D, key, hold: null },
       ]);
       await storage.transact(async (tx) => {
         await tx.persons.hold("c-1", now.toISOString(), hold);
@@ -404,13 +406,13 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       });
       expect((await storage.persons.get("c-1"))?.hold).toEqual(hold);
       expect(await storage.personalKeys.listWrappedUnder({ kids: [null], limit: 10 })).toEqual([
-        { person: "c-1", key, hold },
+        { person: "c-1", category: D, key, hold },
       ]);
     });
 
     it("forgets a person's snapshots and remembered rejections with their key", async () => {
-      await storage.personalKeys.add("c-1", stored("1"));
-      await storage.personalKeys.add("c-2", stored("2"));
+      await storage.personalKeys.add("c-1", D, stored("1"));
+      await storage.personalKeys.add("c-2", D, stored("2"));
       const snapshot = (aggregateId: string, persons: readonly KeyedPerson[]) => ({
         aggregateType: "customer",
         aggregateId,
@@ -436,12 +438,12 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       };
       await storage.idempotencyStore.put(remembered);
       await storage.transact(async (tx) => {
-        await tx.personalKeys.remove("c-1");
+        await tx.personalKeys.remove("c-1", "f-1");
         await tx.snapshotStore.forget("c-1");
         await tx.idempotencyStore.forget("c-1");
       });
       expect(await storage.idempotencyStore.get({ key: "req-1", now })).toBeNull();
-      expect(await storage.personalKeys.get("c-1")).toBeNull();
+      expect(await storage.personalKeys.get("c-1", D)).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-1", []))).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-2", []))).toEqual(
         snapshot("c-2", [held("c-2", "2")]),
@@ -481,7 +483,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
     });
 
     it("commits events naming a person the same transaction forgets or restricts after appending them", async () => {
-      await storage.personalKeys.add("c-1", stored("one"));
+      await storage.personalKeys.add("c-1", D, stored("one"));
       await storage.transact(async (tx) => {
         await tx.eventStore.append({
           aggregateType: "order",
@@ -491,11 +493,11 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           persons: [held("c-1", "one")],
           touches: ["c-1"],
         });
-        await tx.personalKeys.remove("c-1");
+        await tx.personalKeys.remove("c-1", "f-one");
         await tx.persons.restrict("c-1", now);
       });
       expect(await storage.eventStore.lastPosition()).toBe(1);
-      expect(await storage.personalKeys.get("c-1")).toBeNull();
+      expect(await storage.personalKeys.get("c-1", D)).toBeNull();
       expect((await storage.persons.get("c-1"))?.restrictedSince).not.toBeNull();
     });
 
@@ -612,7 +614,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.deadLetterStore.add(testDeadLetter("d1"));
       const sealed = { $personal: { person: "c-1", key: "f-1", iv: "iv", data: "data" } };
       const reseal = async (tx: StorageTransaction) => {
-        await tx.personalKeys.add("c-1", stored("1"));
+        await tx.personalKeys.add("c-1", D, stored("1"));
         await tx.eventStore.reseal([{ position: 1, payload: { email: sealed }, person: "c-1" }]);
         await tx.scheduler.reseal({
           dedupeKey: "command:c1",
@@ -628,7 +630,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           throw new Error("boom");
         }),
       ).rejects.toThrow("boom");
-      expect(await storage.personalKeys.get("c-1")).toBeNull();
+      expect(await storage.personalKeys.get("c-1", D)).toBeNull();
       expect(
         await storage.eventStore.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 }),
       ).toEqual([]);
@@ -639,7 +641,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       });
 
       await storage.transact(reseal);
-      expect(await storage.personalKeys.get("c-1")).toEqual(stored("1"));
+      expect(await storage.personalKeys.get("c-1", D)).toEqual(stored("1"));
       const [event] = await storage.eventStore.readByPerson({
         person: "c-1",
         afterPosition: 0,

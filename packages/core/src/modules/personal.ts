@@ -1,4 +1,6 @@
 import type { z } from "zod";
+import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
+import type { AppPersonalCategory } from "../register/index.ts";
 
 declare const personalBrand: unique symbol;
 declare const personBrand: unique symbol;
@@ -32,24 +34,40 @@ export interface CommandPersonalSchema<Schema extends z.ZodType>
 }
 
 /**
+ * What `personal` takes besides the schema.
+ */
+export interface PersonalOptions {
+  /**
+   * One of the categories `app/personal-data.ts` declares: the field is sealed under the person's
+   * key of that category, kept for that category's retention and forgotten with it. Without it,
+   * the field is in the default category, `DEFAULT_PERSONAL_CATEGORY`.
+   */
+  readonly category?: AppPersonalCategory;
+}
+
+/**
  * Marks a field of an event's payload, or of a process's state, as personal data: it is stored
- * encrypted with the key of the person the event or the state names, and reads as `null` once
- * that person is forgotten. Any schema works, an object or an array included, at the top level of
- * the payload or the state. A query payload cannot use it; a command's has its own,
- * `CommandPersonalFunction`.
+ * encrypted with the key of the person the event or the state names in the field's category, and
+ * reads as `null` once that category of that person is forgotten. Any schema works, an object or
+ * an array included, at the top level of the payload or the state. A query payload cannot use it;
+ * a command's has its own, `CommandPersonalFunction`.
  */
 export interface PersonalFunction {
-  <Schema extends z.ZodType>(schema: Schema): PersonalSchema<Schema>;
+  <Schema extends z.ZodType>(schema: Schema, options?: PersonalOptions): PersonalSchema<Schema>;
 }
 
 /**
  * Marks a field of a command's payload as personal data: wherever the command is stored, scheduled
  * with `delay` or dead-lettered, the field is encrypted with the key of the person the command
- * names, and `forget` cancels the command or removes its dead letter. A command dispatched at
- * once stores nothing, so the mark changes nothing for it. Same placement rules as an event's.
+ * names in the field's category, and forgetting that category cancels the command or removes its
+ * dead letter. A command dispatched at once stores nothing, so the mark changes nothing for it.
+ * Same placement rules and options as an event's.
  */
 export interface CommandPersonalFunction {
-  <Schema extends z.ZodType>(schema: Schema): CommandPersonalSchema<Schema>;
+  <Schema extends z.ZodType>(
+    schema: Schema,
+    options?: PersonalOptions,
+  ): CommandPersonalSchema<Schema>;
 }
 
 /**
@@ -62,12 +80,16 @@ export interface PersonFunction {
   <Schema extends z.ZodType>(schema: Schema): PersonSchema<Schema>;
 }
 
-const PERSONAL = new WeakSet<z.ZodType>();
+// Each schema `personal` returned, with the category it was given.
+const PERSONAL = new WeakMap<z.ZodType, string>();
 const PERSON = new WeakSet<z.ZodType>();
 
-export const personal: PersonalFunction = <Schema extends z.ZodType>(schema: Schema) => {
+export const personal: PersonalFunction = <Schema extends z.ZodType>(
+  schema: Schema,
+  options?: PersonalOptions,
+) => {
   const marked = schema.transform((value): z.output<Schema> | null => value);
-  PERSONAL.add(marked);
+  PERSONAL.set(marked, options?.category ?? DEFAULT_PERSONAL_CATEGORY);
   return marked as PersonalSchema<Schema>;
 };
 
@@ -77,7 +99,12 @@ export const person: PersonFunction = <Schema extends z.ZodType>(schema: Schema)
   return marked as PersonSchema<Schema>;
 };
 
-export type PersonalMark = "personal" | "person";
+/**
+ * How a field is marked: `personal` with the category it is sealed under, or `person`.
+ */
+export type PersonalMark =
+  | { readonly mark: "personal"; readonly category: string }
+  | { readonly mark: "person" };
 
 export interface PersonalMarkOfFunction {
   (schema: z.ZodType): PersonalMark | null;
@@ -94,8 +121,9 @@ interface Wrapper {
 export const personalMarkOf: PersonalMarkOfFunction = (schema) => {
   let current: z.ZodType | undefined = schema;
   while (current !== undefined) {
-    if (PERSONAL.has(current)) return "personal";
-    if (PERSON.has(current)) return "person";
+    const category = PERSONAL.get(current);
+    if (category !== undefined) return { mark: "personal", category };
+    if (PERSON.has(current)) return { mark: "person" };
     const def = current._zod.def as Wrapper;
     current = def.innerType ?? def.in;
   }

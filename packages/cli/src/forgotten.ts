@@ -3,6 +3,7 @@ import {
   type ForgetAgainEntry,
   type GlobalStream,
   PERSONAL_DATA_FORGOTTEN_EVENT,
+  type PersonalDataForgottenPayload,
 } from "@bounda-dev/core";
 import { InvalidArgumentError } from "commander";
 
@@ -46,6 +47,10 @@ export interface ForgottenLine {
   readonly personId: string;
   readonly eventId: string;
   readonly forgottenAt: string;
+  /**
+   * The categories the forgetting asked for, `null` for the person as a whole.
+   */
+  readonly categories: readonly string[] | null;
 }
 
 export interface ReadForgottenArgs {
@@ -69,10 +74,12 @@ export const readForgotten: ReadForgottenFunction = async ({ events, since }) =>
       if (event.aggregateType !== BOUNDA_AGGREGATE) continue;
       if (event.type !== PERSONAL_DATA_FORGOTTEN_EVENT) continue;
       if (since.kind === "date" && Date.parse(event.timestamp) < since.value) continue;
+      const payload = event.payload as PersonalDataForgottenPayload;
       lines.push({
         personId: event.aggregateId,
         eventId: event.id,
         forgottenAt: event.timestamp,
+        categories: payload.whole === false ? [...payload.categories, ...payload.retained] : null,
       });
     }
     const last = page.at(-1);
@@ -91,10 +98,22 @@ const entryOf = (line: string, number: number): ForgetAgainEntry => {
   }
   const personId: unknown = Reflect.get(parsed as object, "personId");
   const eventId: unknown = Reflect.get(parsed as object, "eventId");
+  const categories: unknown = Reflect.get(parsed as object, "categories");
   if (typeof personId !== "string" || (eventId !== undefined && typeof eventId !== "string")) {
     throw new Error(`line ${number} needs a "personId" string, and "eventId" only as a string`);
   }
-  return eventId === undefined ? { personId } : { personId, eventId };
+  if (
+    categories !== undefined &&
+    categories !== null &&
+    !(Array.isArray(categories) && categories.every((category) => typeof category === "string"))
+  ) {
+    throw new Error(`line ${number} has "categories" that is neither null nor a list of names`);
+  }
+  return {
+    personId,
+    ...(eventId === undefined ? {} : { eventId }),
+    ...(categories === undefined ? {} : { categories: categories as readonly string[] | null }),
+  };
 };
 
 export interface ParseForgetListFunction {

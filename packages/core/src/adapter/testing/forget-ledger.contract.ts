@@ -12,10 +12,16 @@ export interface ForgetLedgerContractFunction {
   (args: ForgetLedgerContractArgs): void;
 }
 
-const entry = (personId: string, eventId: string, minute: number): ForgetLedgerEntry => ({
+const entry = (
+  personId: string,
+  eventId: string,
+  minute: number,
+  categories: readonly string[] | null = null,
+): ForgetLedgerEntry => ({
   personId,
   eventId,
   forgottenAt: new Date(Date.UTC(2026, 10, 7, 12, minute)).toISOString(),
+  categories,
 });
 
 const readAll = async (ledger: ForgetLedger, limit = 2): Promise<ForgetLedgerEntry[]> => {
@@ -40,6 +46,17 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
     beforeEach(async () => {
       ledgerFor = await create();
       ledger = await ledgerFor();
+    });
+
+    it("keeps the categories each forgetting asked for, none for a person forgotten as a whole", async () => {
+      const entries = [
+        entry("p-1", "e-1", 1),
+        entry("p-2", "e-2", 2, ["marketing"]),
+        entry("p-3", "e-3", 3, ["marketing", "invoices"]),
+        entry("p-4", "e-4", 4, []),
+      ];
+      await ledger.append(entries);
+      expect(await readAll(ledger, 10)).toEqual(entries);
     });
 
     it("reads nothing from an empty ledger", async () => {

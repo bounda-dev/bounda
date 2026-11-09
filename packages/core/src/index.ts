@@ -43,6 +43,8 @@ export type {
 } from "./kernel/dispatch/dispatcher.ts";
 export type { GlobalStream, ReadEventsArgs } from "./kernel/events/global-stream.ts";
 export type {
+  ExportedCategories,
+  ExportedCategory,
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,

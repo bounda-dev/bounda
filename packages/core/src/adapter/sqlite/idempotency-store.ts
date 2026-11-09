@@ -6,7 +6,7 @@ import type {
   KeyedPerson,
 } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
-import { heldKeys, naming } from "./held-keys.ts";
+import { heldKeys, naming, outsideKept } from "./held-keys.ts";
 import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteIdempotencyStoreArgs {
@@ -81,10 +81,10 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
       ]);
       return rows.length;
     },
-    forget: (person) =>
+    forget: (person, keep = []) =>
       db.run(
-        `DELETE FROM ${table} WHERE ${naming({ personRows, indexed: PERSON_INDEXED.idempotencyKeys })}`,
-        [person],
+        `DELETE FROM ${table} WHERE ${naming({ personRows, indexed: PERSON_INDEXED.idempotencyKeys })} AND ${outsideKept(table)}`,
+        [person, person, JSON.stringify(keep)],
       ),
   };
 };

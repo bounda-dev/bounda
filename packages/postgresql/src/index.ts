@@ -137,6 +137,7 @@ export const postgresql: PostgresqlFunction = (options) => {
             dialect: postgresqlDialect,
             db: database,
             table: tables.personalKeys,
+            persons: tables.persons,
           }),
           persons: createSqlPersonStore({
             dialect: postgresqlDialect,

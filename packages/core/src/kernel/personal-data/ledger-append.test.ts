@@ -10,13 +10,17 @@ import { withLedgerAppend } from "./ledger-append.ts";
 
 const NOW = new Date("2026-01-01T00:01:00.000Z");
 
-const forgetting = (personId: string, version = 1) =>
+const forgetting = (personId: string, version = 1, categories?: readonly string[]) =>
   pendingEvent({
     aggregateType: "bounda",
     aggregateId: personId,
     version,
     type: "PersonalDataForgotten",
     id: `f-${personId}-${version}`,
+    payload:
+      categories === undefined
+        ? { personId, whole: true, categories: ["default"], retained: [], expired: [] }
+        : { personId, whole: false, categories, retained: [], expired: [] },
   });
 
 const setUp = async ({
@@ -56,12 +60,12 @@ describe("the append to the forget ledger as a transaction commits", () => {
         expectedVersion: 0,
         events: [pendingEvent({ aggregateId: "o-1", version: 1 })],
       });
-      for (const person of ["c-1", "c-2"]) {
+      for (const [person, categories] of [["c-1"], ["c-2", ["profile"]]] as const) {
         await transaction.eventStore.append({
           aggregateType: "bounda",
           aggregateId: person,
           expectedVersion: 0,
-          events: [forgetting(person)],
+          events: [forgetting(person, 1, categories)],
         });
       }
       return "done";
@@ -69,8 +73,18 @@ describe("the append to the forget ledger as a transaction commits", () => {
     expect(result).toBe("done");
     expect(appended).toEqual([
       [
-        { personId: "c-1", eventId: "f-c-1-1", forgottenAt: "2026-01-01T00:00:00.000Z" },
-        { personId: "c-2", eventId: "f-c-2-1", forgottenAt: "2026-01-01T00:00:00.000Z" },
+        {
+          personId: "c-1",
+          categories: null,
+          eventId: "f-c-1-1",
+          forgottenAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          personId: "c-2",
+          categories: ["profile"],
+          eventId: "f-c-2-1",
+          forgottenAt: "2026-01-01T00:00:00.000Z",
+        },
       ],
     ]);
     await storage.transact(async () => undefined);

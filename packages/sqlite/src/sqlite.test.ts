@@ -48,7 +48,7 @@ describe("sqlite adapter in memory", () => {
   schedulerContract({ create: async () => (await openStorage()).scheduler });
   snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });
-  personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
+  personalKeyStoreContract({ create: async () => openStorage() });
   tableContract({
     create: async () =>
       (
@@ -353,6 +353,7 @@ describe("sqlite adapter on a file", () => {
     expect(rows.map((row) => [row.scope, Number(row.version)])).toEqual([
       ["checkpoints", 1],
       ["storage", 1],
+      ["storage", 2],
     ]);
   });
 

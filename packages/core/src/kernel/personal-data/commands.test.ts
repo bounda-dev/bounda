@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import {
+  DEFAULT_PERSONAL_CATEGORY,
+  type SealedValue,
+} from "../../adapter/storage/personal-key-store.ts";
 import { DeadLetterNotRetriableError, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
@@ -7,7 +11,7 @@ import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload
 import { person, personal } from "../../modules/personal.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp, expectForgotten } from "../../testing/index.ts";
-import { createRecordingLogger, keysOver, newStoredKey } from "../test-support.ts";
+import { createRecordingLogger, keysOver, newStoredKey, removeKeys } from "../test-support.ts";
 import { openCommandPayload, sealCommandPayload } from "./commands.ts";
 import { isSealed } from "./crypto.ts";
 import { personalMarksOf } from "./marks.ts";
@@ -143,7 +147,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
       marks: marks({ customerId: z.string(), email: personal(z.email()) }),
       keys: keysOver(storage.personalKeys),
     });
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
     expect(sealed.persons).toEqual([{ person: "c-1", fingerprint: key?.fingerprint }]);
     const payload = sealed.payload as { customerId: unknown; email: unknown };
     expect(payload.customerId).toBe("c-1");
@@ -154,9 +158,50 @@ describe("sealCommandPayload and openCommandPayload", () => {
     });
   });
 
+  it("seals the fields of each category under the person's key of that category", async () => {
+    const storage = await memory().createStorage();
+    const sealed = await sealCommandPayload({
+      type: "RemindCustomer",
+      aggregateId: "c-1",
+      payload: { email: "ana@example.com", iban: "ES00", name: "Ana" },
+      marks: marks({
+        email: personal(z.email(), { category: "profile" }),
+        iban: personal(z.string(), { category: "invoices" }),
+        name: personal(z.string(), { category: "profile" }),
+      }),
+      keys: keysOver(storage.personalKeys),
+    });
+    const profile = await storage.personalKeys.get("c-1", "profile");
+    const invoices = await storage.personalKeys.get("c-1", "invoices");
+    expect(profile?.fingerprint).not.toBe(invoices?.fingerprint);
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
+    expect(sealed.persons).toEqual([
+      { person: "c-1", fingerprint: profile?.fingerprint },
+      { person: "c-1", fingerprint: invoices?.fingerprint },
+    ]);
+    const payload = sealed.payload as Record<string, SealedValue>;
+    expect(payload.email?.$personal).toMatchObject({
+      category: "profile",
+      key: profile?.fingerprint,
+    });
+    expect(payload.iban?.$personal).toMatchObject({
+      category: "invoices",
+      key: invoices?.fingerprint,
+    });
+    await storage.personalKeys.remove("c-1", invoices?.fingerprint ?? "");
+    expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual({
+      payload: { email: "ana@example.com", iban: null, name: "Ana" },
+      forgotten: true,
+    });
+  });
+
   it("seals under the person a field names, and keeps the key in force", async () => {
     const storage = await memory().createStorage();
-    const kept = await storage.personalKeys.add("f-1", await newStoredKey());
+    const kept = await storage.personalKeys.add(
+      "f-1",
+      DEFAULT_PERSONAL_CATEGORY,
+      await newStoredKey(),
+    );
     const sealed = await sealCommandPayload({
       type: "IntroduceFriend",
       aggregateId: "c-1",
@@ -165,7 +210,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
       keys: keysOver(storage.personalKeys),
     });
     expect(sealed.persons).toEqual([{ person: "f-1", fingerprint: kept.fingerprint }]);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
   });
 
   it("leaves a payload with nothing to seal as it is, naming no one and keying no one", async () => {
@@ -186,7 +231,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
         }),
       ).toEqual({ payload, persons: [] });
     }
-    expect(await storage.personalKeys.get("f-1")).toBeNull();
+    expect(await storage.personalKeys.get("f-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
   });
 
   it.each([undefined, "", 42n])(
@@ -234,7 +279,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
         ),
       );
     }
-    expect(await storage.personalKeys.get("f-1")).toBeNull();
+    expect(await storage.personalKeys.get("f-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
   });
 
   it("opens to null, telling it forgotten, a field whose key is gone or was replaced", async () => {
@@ -246,12 +291,12 @@ describe("sealCommandPayload and openCommandPayload", () => {
       marks: marks({ email: personal(z.email()), plan: z.string() }),
       keys: keysOver(storage.personalKeys),
     });
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     const forgotten = { payload: { email: null, plan: "pro" }, forgotten: true };
     expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual(
       forgotten,
     );
-    await storage.personalKeys.add("c-1", await newStoredKey());
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
     expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual(
       forgotten,
     );
@@ -291,9 +336,9 @@ describe("sealCommandPayload and openCommandPayload", () => {
     const reads: string[] = [];
     const keys = keysOver({
       ...storage.personalKeys,
-      get: (person: string) => {
+      find: (person: string, fingerprint: string) => {
         reads.push(person);
-        return storage.personalKeys.get(person);
+        return storage.personalKeys.find(person, fingerprint);
       },
     });
     expect(await openCommandPayload({ payload: ana, keys })).toEqual({
@@ -323,7 +368,7 @@ describe("personal data in delayed commands", () => {
     const { app, storage, runDue } = await setup();
     await app.commands.remindCustomer(ana, { delay: "1m" });
     const [entry] = await storage.scheduler.list();
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
     expect(entry?.persons).toEqual([{ person: "c-1", fingerprint: key?.fingerprint }]);
     expect(isSealed((entry?.command.payload as { email?: unknown } | undefined)?.email)).toBe(true);
     expect(JSON.stringify(entry)).not.toContain("ana@example.com");
@@ -373,6 +418,10 @@ describe("personal data in delayed commands", () => {
     expect(await forgottenPayload()).toEqual({
       personId: "c-1",
       reason: "requested",
+      whole: true,
+      categories: [DEFAULT_PERSONAL_CATEGORY],
+      retained: [],
+      expired: [],
       cancelledCommands: named.map((entry) => ({
         commandId: entry.dedupeKey.replace(/^command:/, ""),
         type: entry.command.type,
@@ -395,7 +444,7 @@ describe("personal data in delayed commands", () => {
     await app.commands.remindCustomer(ana, { delay: "1m" });
     await runDue();
     const [stored] = await storage.deadLetterStore.list();
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
     expect(stored?.persons).toEqual([{ person: "c-1", fingerprint: key?.fingerprint }]);
     expect(JSON.stringify(stored)).not.toContain("ana@example.com");
     const opened = {
@@ -417,6 +466,10 @@ describe("personal data in delayed commands", () => {
     expect(await forgottenPayload()).toEqual({
       personId: "c-1",
       reason: "requested",
+      whole: true,
+      categories: [DEFAULT_PERSONAL_CATEGORY],
+      retained: [],
+      expired: [],
       cancelledCommands: [],
       removedDeadLetters: [{ id: stored?.id, commandType: "RemindCustomer" }],
     });
@@ -465,8 +518,8 @@ describe("personal data in delayed commands", () => {
   it("drops, never running it, a delayed command sealed under a key its person no longer holds", async () => {
     const { app, storage, logs, runDue } = await setup();
     await app.commands.remindCustomer(ana, { delay: "1m" });
-    await storage.personalKeys.remove("c-1");
-    await storage.personalKeys.add("c-1", await newStoredKey());
+    await removeKeys(storage.personalKeys, "c-1");
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
     await runDue();
     expect(received).toEqual([]);
     expect(await storage.scheduler.list()).toEqual([]);
@@ -485,7 +538,7 @@ describe("personal data in delayed commands", () => {
     await app.commands.remindCustomer(ana, { delay: "1m" });
     await runDue();
     failing = false;
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     const [letter] = await app.deadLetters.list();
     expect(letter?.payload).toEqual({ customerId: "c-1", email: null });
     await expect(app.deadLetters.retry(letter?.id ?? "")).rejects.toThrow(

@@ -8,7 +8,7 @@ import type {
 } from "@bounda-dev/core/adapter";
 import { byExecuteAt, earliestDue, postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
-import { naming } from "./held-keys.ts";
+import { naming, outsideKept } from "./held-keys.ts";
 
 export interface CreatePostgresqlSchedulerArgs {
   readonly db: PostgresqlDatabase;
@@ -193,8 +193,13 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           [person],
         )
       ).map(toScheduled),
-    forget: async (person) =>
-      (await db.all(`DELETE FROM ${table} WHERE ${naming("$1")} RETURNING ${COLUMNS}`, [person]))
+    forget: async (person, keep = []) =>
+      (
+        await db.all(
+          `DELETE FROM ${table} WHERE ${naming("$1")} AND ${outsideKept({ person: "$1", keep: "$2" })} RETURNING ${COLUMNS}`,
+          [person, postgresqlDialect.encode("json", keep)],
+        )
+      )
         .map(toScheduled)
         .sort(byExecuteAt),
   };

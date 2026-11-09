@@ -19,6 +19,11 @@ export interface StoredPerson {
    */
   readonly lastActiveAt: string | null;
   /**
+   * The position of the last event recorded on the row, `0` before any: what names them past it
+   * is not recorded yet.
+   */
+  readonly position: number;
+  /**
    * The timestamp of the `PersonalDataForgotten` recorded after their last activity; `null` when
    * an event of theirs came after it, or none was recorded.
    */

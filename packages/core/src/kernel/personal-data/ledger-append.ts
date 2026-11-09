@@ -3,7 +3,12 @@ import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forg
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
+import {
+  BOUNDA_AGGREGATE,
+  PERSONAL_DATA_FORGOTTEN_EVENT,
+  type PersonalDataForgottenPayload,
+} from "../../modules/bounda-events.ts";
+import { requestedCategories } from "./forget.ts";
 import { FORGET_LEDGER_WAIT_MS, waitForLedger } from "./forget-ledger.ts";
 
 export interface IsForgettingFunction {
@@ -38,6 +43,7 @@ export const ledgerEntries: LedgerEntriesFunction = ({ events, keepForMs, now })
     )
     .map((event) => ({
       personId: event.aggregateId,
+      categories: requestedCategories(event.payload as PersonalDataForgottenPayload),
       eventId: event.id,
       forgottenAt: event.timestamp,
     }));

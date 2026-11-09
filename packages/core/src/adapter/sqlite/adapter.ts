@@ -133,6 +133,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           personalKeys: createSqlPersonalKeyStore({
             db: database,
             table: tables.personalKeys,
+            persons: tables.persons,
             dialect: sqliteDialect,
           }),
           persons: createSqlPersonStore({

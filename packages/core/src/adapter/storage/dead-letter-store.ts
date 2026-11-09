@@ -164,10 +164,12 @@ export interface DeadLetterStore {
    */
   listByPerson(person: string): Promise<readonly StoredDeadLetter[]>;
   /**
-   * Removes every letter whose `persons` names `person`, whatever its status, and resolves to them
-   * in the order of `list`. A letter that names the person only in `person` stays.
+   * Removes every letter whose `persons` names `person` under a key outside `keep`, or read in
+   * the clear, whatever its status, and resolves to them in the order of `list`. Without `keep`,
+   * every letter whose `persons` names them. A letter that names the person only in `person`
+   * stays.
    */
-  forget(person: string): Promise<readonly StoredDeadLetter[]>;
+  forget(person: string, keep?: readonly string[]): Promise<readonly StoredDeadLetter[]>;
   /**
    * The earliest `resolvedAt` of the letters held, `null` when none is resolved.
    */

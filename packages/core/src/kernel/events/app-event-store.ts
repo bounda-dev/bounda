@@ -54,9 +54,9 @@ export const appStorage: AppStorageFunction = ({ storage, aggregates, processes,
         const over = wrapping.over(transaction.personalKeys);
         const keys = {
           ...over,
-          remove: (person: string) => {
+          remove: (person: string, fingerprint: string) => {
             removed.push(person);
-            return over.remove(person);
+            return over.remove(person, fingerprint);
           },
         };
         return work({

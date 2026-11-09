@@ -98,13 +98,45 @@ const registry = {
   readModels: {},
 } as unknown as Registry;
 
+const categorized = {
+  aggregates: {
+    customer: {
+      state: { initialState: {} },
+      events: {
+        customerTouched: {
+          payload: ({ z, personal }: EventPayloadArgs) =>
+            z.object({
+              note: personal(z.string()),
+              nickname: personal(z.string(), { category: "profile" as never }),
+            }),
+          evolve: () => ({}),
+        },
+      },
+      commands: {
+        touchCustomer: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
+              events.customerTouched?.({ note: "kept", nickname: "Al" }),
+            ],
+          },
+        },
+      },
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {},
+  personalData: { categories: { profile: { basis: "consent", retention: "10d" } } },
+} as unknown as Registry;
+
 const retention: Omit<Config, "storage" | "ports"> = {
   runtime: { personalData: { retention: "30d" } },
 };
 
-const setUp = async (config = retention) => {
+const setUp = async (config = retention, booted = registry) => {
   const adapter = memory();
-  const { app, clock } = await createTestApp({ registry, config, adapter });
+  const { app, clock } = await createTestApp({ registry: booted, config, adapter });
   const storage = await adapter.createStorage();
   const commands = app.commands as unknown as Record<
     string,
@@ -146,8 +178,8 @@ describe("retention", () => {
     expect(await reasons()).toEqual([]);
     await advance(2);
     expect(await reasons()).toEqual([["c-1", "retention"]]);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
-    expect(await storage.personalKeys.get("c-2")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
+    expect(await storage.personalKeys.get("c-2", "default")).not.toBeNull();
     await advance(20);
     expect(await reasons()).toEqual([
       ["c-1", "retention"],
@@ -259,7 +291,27 @@ describe("retention", () => {
     expect(await rows()).toEqual(recorded);
   });
 
-  it("runs no retention without the setting: nothing is recorded, due or forgotten", async () => {
+  it("forgets a declared category idle past its own retention, leaving the person's other data", async () => {
+    const { app, run, advance, forgotten, storage, clock } = await setUp({}, categorized);
+    const start = clock.now().getTime();
+    await run("touchCustomer", "c-1");
+    expect(await app.nextDueAt()).toEqual(new Date(start + 10 * DAY));
+    await advance(11);
+    expect(await forgotten()).toEqual([
+      expect.objectContaining({
+        personId: "c-1",
+        reason: "retention",
+        whole: false,
+        categories: ["profile"],
+      }),
+    ]);
+    expect(await storage.personalKeys.get("c-1", "profile")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
+    expect((await storage.persons.get("c-1"))?.forgottenAt).toBeNull();
+    expect(await app.nextDueAt()).toBeNull();
+  });
+
+  it("runs no retention without the setting or a declared category: nothing is recorded, due or forgotten", async () => {
     const { app, run, advance, reasons, storage } = await setUp({});
     await run("touchCustomer", "c-1");
     expect(await app.nextDueAt()).toBeNull();
@@ -282,10 +334,19 @@ describe("forget in a reaction", () => {
     expect(await forgotten()).toEqual([]);
     await advance(2);
     expect(await forgotten()).toEqual([
-      { personId: "c-1", reason: "requested", cancelledCommands: [], removedDeadLetters: [] },
+      {
+        personId: "c-1",
+        reason: "requested",
+        whole: true,
+        categories: ["default"],
+        retained: [],
+        expired: [],
+        cancelledCommands: [],
+        removedDeadLetters: [],
+      },
     ]);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
-    expect(await storage.personalKeys.get("c-2")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
+    expect(await storage.personalKeys.get("c-2", "default")).not.toBeNull();
   });
 
   it("forgets once from a policy whose first attempt failed after forgetting", async () => {
@@ -296,7 +357,7 @@ describe("forget in a reaction", () => {
     await run("requestErasure", "c-1");
     expect(policyFailures).toBe(0);
     expect(await reasons()).toEqual([["c-1", "requested"]]);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
     expect(await app.deadLetters.list()).toEqual([]);
     const [event] = (await app.events.read({ limit: 1000 })).filter(
       (stored) => stored.type === "PersonalDataForgotten",

@@ -1,5 +1,6 @@
 import { ConfigurationError } from "@bounda-dev/core";
 import {
+  forgetLedgerCategoriesStatement,
   forgetLedgerStatements,
   migrateSchemas,
   postgresqlDialect,
@@ -132,6 +133,51 @@ const adoptStorageTables = async (
   for (const statement of storageSchemaStatements(tables)) await tx.run(statement, []);
 };
 
+const keysIndex = (tables: StorageTables, suffix: string): string =>
+  quoteIdentifier(`${tables.personalKeys.slice(1, -1)}_${suffix}_idx`);
+
+/**
+ * The second migration: a key per person and category instead of one per person, each named by
+ * its fingerprint, with the person's last activity on it and whether a forgetting kept it under a
+ * legal obligation. Every key there was is the person's key in the default category, last active
+ * when the person was, unless they were forgotten after that, when the key came later. Every
+ * forgetting recorded before forgot the person as a whole, in the default category.
+ */
+const adoptCategories = async (
+  tx: SqlTransaction,
+  schema: string,
+  tables: StorageTables,
+): Promise<void> => {
+  const keys = tables.personalKeys;
+  const forgettings = `UPDATE ${tables.events} SET "payload" = "payload" || '{"categories":["default"],"retained":[],"whole":true}'::jsonb WHERE "aggregate_type" = 'bounda' AND "type" = 'PersonalDataForgotten' AND "payload"->'categories' IS NULL`;
+  // A schema migrated before, whose versions were lost, has the keys as this leaves them.
+  if ((await columnsOf(tx, schema, keys)).has("category")) {
+    await tx.run(forgettings, []);
+    return;
+  }
+  const [primary] = await tx.all(
+    `SELECT "constraint_name" FROM information_schema.table_constraints WHERE "table_schema" = $1 AND "table_name" = $2 AND "constraint_type" = 'PRIMARY KEY'`,
+    [schema, keys.slice(1, -1)],
+  );
+  const statements = [
+    `ALTER TABLE ${keys} ADD COLUMN "category" text NOT NULL DEFAULT 'default', ADD COLUMN "last_active_at" text, ADD COLUMN "retained_since" text, ADD COLUMN "forget_held_until" text, ADD COLUMN "forget_attempts" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE ${keys} ALTER COLUMN "category" DROP DEFAULT`,
+    ...(primary === undefined
+      ? []
+      : [
+          `ALTER TABLE ${keys} DROP CONSTRAINT ${quoteIdentifier(String(primary.constraint_name))}`,
+        ]),
+    `ALTER TABLE ${keys} ADD PRIMARY KEY ("person", "fingerprint")`,
+    `UPDATE ${keys} AS "k" SET "last_active_at" = "p"."last_active_at" FROM ${tables.persons} AS "p" WHERE "p"."person" = "k"."person" AND "p"."forgotten_at" IS NULL`,
+    // One key in force per person and category, which `add` resolves its race on.
+    `CREATE UNIQUE INDEX ${keysIndex(tables, "in_force")} ON ${keys} ("person", "category") WHERE "retained_since" IS NULL`,
+    // What a category's retention reads, least recently active first.
+    `CREATE INDEX ${keysIndex(tables, "due")} ON ${keys} ("category", "last_active_at") WHERE "last_active_at" IS NOT NULL`,
+    forgettings,
+  ];
+  for (const statement of statements) await tx.run(statement, []);
+};
+
 export interface PostgresqlStorageScopeArgs {
   readonly schema: string;
   readonly tables: StorageTables;
@@ -143,7 +189,10 @@ export interface PostgresqlStorageScopeFunction {
 
 export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema, tables }) => ({
   scope: SCHEMA_SCOPES.storage,
-  migrations: [{ version: 1, migrate: (tx) => adoptStorageTables(tx, schema, tables) }],
+  migrations: [
+    { version: 1, migrate: (tx) => adoptStorageTables(tx, schema, tables) },
+    { version: 2, migrate: (tx) => adoptCategories(tx, schema, tables) },
+  ],
 });
 
 export interface PostgresqlCheckpointsScopeFunction {
@@ -169,6 +218,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
           await tx.run(statement, []);
         }
       },
+    },
+    {
+      version: 2,
+      migrate: (tx) => tx.run(forgetLedgerCategoriesStatement(table, postgresqlDialect), []),
     },
   ],
 });

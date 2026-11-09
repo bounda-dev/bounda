@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { pendingEvent } from "../testing/fixtures.ts";
-import { appendPersonsOf, checkAppend, ForgottenSinceLoadError } from "./append-checks.ts";
+import {
+  appendPersonsOf,
+  checkAppend,
+  ForgottenSinceLoadError,
+  type KeyState,
+} from "./append-checks.ts";
 import type { AppendArgs } from "./event-store.ts";
+import type { KeyedPerson } from "./personal-key-store.ts";
 
 const append = (names: Pick<AppendArgs, "persons" | "touches">): AppendArgs => ({
   aggregateType: "order",
@@ -35,12 +41,12 @@ describe("appendPersonsOf", () => {
 describe("checkAppend", () => {
   it("checks nothing an append does not name", () => {
     expect(() =>
-      checkAppend({ args: append({}), fingerprintOf: () => null, restricted: () => true }),
+      checkAppend({ args: append({}), keyOf: () => "gone", restricted: () => true }),
     ).not.toThrow();
     expect(() =>
       checkAppend({
         args: append({ persons: [{ person: "c-1", fingerprint: null }] }),
-        fingerprintOf: () => null,
+        keyOf: () => "gone",
         restricted: () => true,
       }),
     ).not.toThrow();
@@ -51,7 +57,7 @@ describe("checkAppend", () => {
       try {
         checkAppend({
           args: append({ persons: [{ person: "c-1", fingerprint: "f-1" }] }),
-          fingerprintOf: () => "f-2",
+          keyOf: () => "gone",
           restricted: () => false,
         });
       } catch (error) {
@@ -67,5 +73,23 @@ describe("checkAppend", () => {
       actualVersion: 3,
       message: "Person c-1 was forgotten since order:1 was loaded at version 3",
     });
+  });
+
+  it("lets a key read in force through while it is in force, and one read retained while it is kept at all", () => {
+    const check = (read: KeyedPerson, state: KeyState) => () =>
+      checkAppend({
+        args: append({ persons: [read] }),
+        keyOf: (person, fingerprint) =>
+          person === "c-1" && fingerprint === "f-1" ? state : "gone",
+        restricted: () => false,
+      });
+    const inForce = { person: "c-1", fingerprint: "f-1" };
+    const retained = { ...inForce, retained: true as const };
+    expect(check(inForce, "held")).not.toThrow();
+    expect(check(inForce, "retained")).toThrow(ForgottenSinceLoadError);
+    expect(check(inForce, "gone")).toThrow(ForgottenSinceLoadError);
+    expect(check(retained, "held")).not.toThrow();
+    expect(check(retained, "retained")).not.toThrow();
+    expect(check(retained, "gone")).toThrow(ForgottenSinceLoadError);
   });
 });

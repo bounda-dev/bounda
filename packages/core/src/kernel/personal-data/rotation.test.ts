@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
-import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import {
+  DEFAULT_PERSONAL_CATEGORY,
+  type PersonalKeyStore,
+} from "../../adapter/storage/personal-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { removeKeys } from "../test-support.ts";
 import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
 import { type CryptoKeyWrapper, cryptoKeyWrapperOver } from "./key-wrapper.ts";
 import {
@@ -123,14 +127,18 @@ const countedMarks = (checkpoints: CheckpointStore) => {
 // The key as the store keeps it.
 const addUnder = async (store: PersonalKeyStore, kid: string | null, person: string) => {
   const wrapper = kid === null ? null : fakeWrapper(kid);
-  await createPersonalKeyWrapping({ wrapper, clock }).over(store).create(person);
-  const stored = await store.get(person);
+  await createPersonalKeyWrapping({ wrapper, clock })
+    .over(store)
+    .create(person, DEFAULT_PERSONAL_CATEGORY);
+  const stored = await store.get(person, DEFAULT_PERSONAL_CATEGORY);
   if (stored === null) throw new Error(`no key stored for ${person}`);
   return stored;
 };
 
 const kidsOf = async (store: PersonalKeyStore, persons: readonly string[]) =>
-  Promise.all(persons.map(async (person) => (await store.get(person))?.kid));
+  Promise.all(
+    persons.map(async (person) => (await store.get(person, DEFAULT_PERSONAL_CATEGORY))?.kid),
+  );
 
 describe("createKeyRotation", () => {
   it("rewraps under the current key what a previous key wrapped and what was kept unwrapped", async () => {
@@ -147,11 +155,17 @@ describe("createKeyRotation", () => {
       "unknown",
     ]);
     const keys = wrapping.over(store);
-    expect((await keys.held("c-1"))?.fingerprint).toBe(old.fingerprint);
-    expect((await keys.held("c-2"))?.fingerprint).toBe(plain.fingerprint);
-    expect((await keys.held("c-3"))?.fingerprint).toBe(current.fingerprint);
-    expect((await store.get("c-3"))?.key).toBe(current.key);
-    expect((await store.get("c-4"))?.fingerprint).toBe(other.fingerprint);
+    expect((await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY))?.fingerprint).toBe(old.fingerprint);
+    expect((await keys.held("c-2", DEFAULT_PERSONAL_CATEGORY))?.fingerprint).toBe(
+      plain.fingerprint,
+    );
+    expect((await keys.held("c-3", DEFAULT_PERSONAL_CATEGORY))?.fingerprint).toBe(
+      current.fingerprint,
+    );
+    expect((await store.get("c-3", DEFAULT_PERSONAL_CATEGORY))?.key).toBe(current.key);
+    expect((await store.get("c-4", DEFAULT_PERSONAL_CATEGORY))?.fingerprint).toBe(
+      other.fingerprint,
+    );
   });
 
   it("rewraps at most ROTATION_BATCH keys a pass", async () => {
@@ -202,7 +216,7 @@ describe("createKeyRotation", () => {
     const gone = await setUp({
       ...plain,
       wrap: async (key) => {
-        await gone.store.remove("c-1");
+        await removeKeys(gone.store, "c-1");
         return plain.wrap(key);
       },
     });
@@ -228,13 +242,13 @@ describe("createKeyRotation", () => {
     const { store, clock, rotation } = await setUp({
       ...wrapper,
       wrap: async (key) => {
-        await store.remove("c-1");
+        await removeKeys(store, "c-1");
         return wrapper.wrap(key);
       },
     });
     await addUnder(store, "old", "c-1");
     expect(await rotation.sweep(clock.now())).toBe(0);
-    expect(await store.get("c-1")).toBeNull();
+    expect(await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
   });
 
   it("holds a key that failed to rewrap, longer after each failure, while the others go on", async () => {
@@ -246,7 +260,7 @@ describe("createKeyRotation", () => {
         if (
           failing &&
           args.wrapped.length > 0 &&
-          (await store.get("c-1"))?.key === toText(args.wrapped)
+          (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.key === toText(args.wrapped)
         ) {
           throw new Error("unwrap failed");
         }
@@ -334,7 +348,8 @@ describe("createKeyRotation", () => {
     const { store, clock, rotation } = await setUp({
       ...wrapper,
       wrap: async (key) => {
-        if ((await store.get("a-held"))?.kid === "old" && failing) throw new Error("wrap failed");
+        if ((await store.get("a-held", DEFAULT_PERSONAL_CATEGORY))?.kid === "old" && failing)
+          throw new Error("wrap failed");
         return wrapper.wrap(key);
       },
     });

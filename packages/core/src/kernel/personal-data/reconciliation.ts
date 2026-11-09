@@ -10,7 +10,8 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
 import { startedBy } from "../shared/causation.ts";
-import { type Forgotten, forgetWithin, logForgotten } from "./forget.ts";
+import type { PersonalCategories } from "./categories.ts";
+import { type ForgetScope, type Forgotten, forgetWithin, logForgotten } from "./forget.ts";
 import { holdAfter } from "./hold.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
@@ -52,6 +53,12 @@ export interface ForgetAgainEntry {
    * forgetting already, and a key the person holds now was given to them after.
    */
   readonly eventId?: string;
+  /**
+   * The categories the forgetting asked for, as the ledger keeps them: `null`, or left out, for
+   * the person as a whole, and none for a forgetting of what an earlier one retained, which the
+   * retention ends again on its own.
+   */
+  readonly categories?: readonly string[] | null;
 }
 
 export interface ForgetAgainArgs {
@@ -59,6 +66,8 @@ export interface ForgetAgainArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly concurrencyRetries: number;
+  readonly categories: PersonalCategories;
+  readonly batchSize: number;
   readonly entry: ForgetAgainEntry;
   readonly actor?: string | undefined;
 }
@@ -68,9 +77,9 @@ export interface ForgetAgainFunction {
 }
 
 /**
- * Forgets the person again, with `reason: "restored"`, when the store does not hold the event the
- * entry names and the person still holds a key, deciding both again in the transaction that
- * forgets them, so of two instances doing it at once, the one whose append conflicts finds the key
+ * Forgets the person again, as the entry asked, with `reason: "restored"`, when the store does not
+ * hold the event the entry names and the person still holds a key in force the entry covers,
+ * deciding both again in the transaction that forgets them, so of two instances doing it at once, the one whose append conflicts finds the key
  * gone on its retry; an entry that reads as applied takes no transaction. Resolves `null` when it
  * forgot nobody. `storage` is the store as written: nothing here reads a personal field.
  */
@@ -79,10 +88,21 @@ export const forgetAgain: ForgetAgainFunction = async ({
   ids,
   clock,
   concurrencyRetries,
-  entry: { personId, eventId },
+  categories,
+  batchSize,
+  entry: { personId, eventId, categories: asked = null },
   actor,
 }) => {
   checkPersonId(personId, "forgetting again");
+  // A category this app no longer has has no key to forget.
+  const scope: ForgetScope =
+    asked === null
+      ? { kind: "whole" }
+      : {
+          kind: "categories",
+          categories: asked.filter((category) => categories.of(category) !== undefined),
+        };
+  if (scope.kind === "categories" && scope.categories.length === 0) return null;
   const isDue = async (stores: Pick<Storage, "eventStore" | "personalKeys">): Promise<boolean> => {
     if (eventId !== undefined) {
       const applied = await stores.eventStore.readOne({
@@ -92,7 +112,11 @@ export const forgetAgain: ForgetAgainFunction = async ({
       });
       if (applied !== null) return false;
     }
-    return (await stores.personalKeys.get(personId)) !== null;
+    return (await stores.personalKeys.list(personId)).some(
+      ({ category, retainedSince }) =>
+        retainedSince === null &&
+        (scope.kind !== "categories" || scope.categories.includes(category)),
+    );
   };
   if (!(await isDue(storage))) return null;
   const correlationId = ids.next();
@@ -108,6 +132,9 @@ export const forgetAgain: ForgetAgainFunction = async ({
         personId,
         reason: "restored",
         context: startedBy(correlationId, actor),
+        categories,
+        scope,
+        batchSize,
       });
     },
   });
@@ -153,6 +180,8 @@ export interface CreateForgetLedgerReconciliationArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly concurrencyRetries: number;
+  readonly categories: PersonalCategories;
+  readonly batchSize: number;
   readonly reconcileEveryMs: number;
   /**
    * `null` keeps every entry.
@@ -189,6 +218,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   clock,
   logger,
   concurrencyRetries,
+  categories,
+  batchSize,
   reconcileEveryMs,
   keepForMs,
   pageSize = FORGET_LEDGER_PAGE,
@@ -223,7 +254,15 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         limit: pageSize,
       });
       for (const entry of page) {
-        const again = await forgetAgain({ storage, ids, clock, concurrencyRetries, entry });
+        const again = await forgetAgain({
+          storage,
+          ids,
+          clock,
+          concurrencyRetries,
+          categories,
+          batchSize,
+          entry,
+        });
         if (again === null) continue;
         logForgotten(logger, again);
         onForgotten?.(entry.personId);

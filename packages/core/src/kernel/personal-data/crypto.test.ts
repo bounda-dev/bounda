@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import {
+  categoryOf,
   createDisposableKey,
   fingerprintOf,
   generateWrappableKey,
@@ -18,7 +20,7 @@ describe("personal data crypto", () => {
   it("seals a value under a person and opens it with the same key, whatever its type", async () => {
     const key = await createDisposableKey();
     for (const value of ["ana@example.com", 42, true, null, { street: "Main 1" }, ["a", "b"]]) {
-      const sealed = await seal({ key, person: "c-1", value });
+      const sealed = await seal({ key, person: "c-1", category: DEFAULT_PERSONAL_CATEGORY, value });
       expect(isSealed(sealed)).toBe(true);
       expect(sealed.$personal.person).toBe("c-1");
       expect(sealed.$personal.key).toBe(key.fingerprint);
@@ -26,11 +28,22 @@ describe("personal data crypto", () => {
     }
   });
 
+  it("names the category in the envelope only when it is not the default one", async () => {
+    const key = await createDisposableKey();
+    const plain = await seal({ key, person: "c-1", category: DEFAULT_PERSONAL_CATEGORY, value: 1 });
+    expect(plain.$personal).not.toHaveProperty("category");
+    expect(categoryOf(plain)).toBe(DEFAULT_PERSONAL_CATEGORY);
+    const invoices = await seal({ key, person: "c-1", category: "invoices", value: 1 });
+    expect(invoices.$personal.category).toBe("invoices");
+    expect(categoryOf(invoices)).toBe("invoices");
+    expect(await unseal({ key, sealed: invoices })).toBe(1);
+  });
+
   it("leaves no trace of the value in the sealed text", async () => {
     const key = await createDisposableKey();
     // Long enough that random base64 cannot spell them by chance, as it can `42` or `null`.
     for (const value of ["ana@example.com", { street: "Main Street 1" }]) {
-      const sealed = await seal({ key, person: "c-1", value });
+      const sealed = await seal({ key, person: "c-1", category: DEFAULT_PERSONAL_CATEGORY, value });
       expect(sealed.$personal.data).not.toContain(JSON.stringify(value));
     }
   });
@@ -40,8 +53,8 @@ describe("personal data crypto", () => {
     expect(one.fingerprint).not.toBe(other.fingerprint);
     expect(one.fingerprint).toHaveLength(24);
     const [first, second] = await Promise.all([
-      seal({ key: one, person: "c-1", value: "same" }),
-      seal({ key: one, person: "c-1", value: "same" }),
+      seal({ key: one, person: "c-1", category: DEFAULT_PERSONAL_CATEGORY, value: "same" }),
+      seal({ key: one, person: "c-1", category: DEFAULT_PERSONAL_CATEGORY, value: "same" }),
     ]);
     expect(first.$personal.iv).not.toBe(second.$personal.iv);
     expect(first.$personal.data).not.toBe(second.$personal.data);
@@ -68,7 +81,12 @@ describe("personal data crypto", () => {
     const key = await createDisposableKey();
     const firsts = new Set<number>();
     for (let sealing = 0; sealing < 64; sealing += 1) {
-      const { $personal } = await seal({ key, person: "c-1", value: sealing });
+      const { $personal } = await seal({
+        key,
+        person: "c-1",
+        category: DEFAULT_PERSONAL_CATEGORY,
+        value: sealing,
+      });
       const first = atob($personal.iv).charCodeAt(0);
       expect(first).toBeGreaterThanOrEqual(0x80);
       firsts.add(first);
@@ -135,7 +153,12 @@ describe("personal data crypto", () => {
 
   it("opens nothing without a key or with another one, and refuses a value its key should open", async () => {
     const [key, other] = await Promise.all([createDisposableKey(), createDisposableKey()]);
-    const sealed = await seal({ key, person: "c-1", value: "ana@example.com" });
+    const sealed = await seal({
+      key,
+      person: "c-1",
+      category: DEFAULT_PERSONAL_CATEGORY,
+      value: "ana@example.com",
+    });
     expect(await unseal({ key: null, sealed })).toBeNull();
     expect(await unseal({ key: other, sealed })).toBeNull();
     const forged = { $personal: { ...sealed.$personal, data: sealed.$personal.iv } };
@@ -145,6 +168,9 @@ describe("personal data crypto", () => {
   it("takes for sealed only an object holding nothing but a complete envelope", () => {
     const envelope = { person: "c-1", key: "k", iv: "aQ==", data: "ZA==" };
     expect(isSealed({ $personal: envelope })).toBe(true);
+    expect(isSealed({ $personal: { ...envelope, category: "invoices" } })).toBe(true);
+    expect(isSealed({ $personal: { ...envelope, category: 1 } })).toBe(false);
+    expect(isSealed({ $personal: { ...envelope, category: null } })).toBe(false);
     expect(isSealed({ $personal: envelope, more: 1 })).toBe(false);
     expect(isSealed({ $personal: { ...envelope, data: 1 } })).toBe(false);
     expect(isSealed({ $personal: { person: "c-1", iv: "aQ==" } })).toBe(false);

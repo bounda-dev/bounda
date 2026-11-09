@@ -31,6 +31,7 @@ import * as orderPayment from "../app/domain/order/processes/order-payment/index
 import * as orderPaymentOnOrderPaid from "../app/domain/order/processes/order-payment/on-order-paid.ts";
 import type * as orderReminders from "../app/domain/order/reminders.ts";
 import * as orderState from "../app/domain/order/state.ts";
+import * as personalData from "../app/personal-data.ts";
 import * as customerDirectoryOnBoundaPersonalDataForgotten from "../app/read/customer-directory/projections/bounda/personal-data-forgotten.ts";
 import * as customerDirectoryOnCustomerCustomerRegistered from "../app/read/customer-directory/projections/customer/customer-registered.ts";
 import * as getCustomer from "../app/read/customer-directory/queries/get-customer.ts";
@@ -58,7 +59,7 @@ export const registry = {
     },
     order: {
       state: orderState,
-      stateFingerprint: "6c9864790b9c4e6d",
+      stateFingerprint: "f82ec98c65f75680",
       events: { orderCancelled, orderPaid, orderPlaced },
       upcasts: { orderPlaced: orderPlacedUpcasts },
       ports: {
@@ -106,4 +107,5 @@ export const registry = {
     },
   },
   audit,
+  personalData,
 } as const satisfies Registry;

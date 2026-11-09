@@ -237,7 +237,7 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     failing.remind = false;
     const storage = await adapter.createStorage();
     expect(await storage.deadLetterStore.count()).toBe(2);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
 
     const { logger, logs } = recording();
     const after = await start({
@@ -251,7 +251,7 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     });
     await after.app.runUntilIdle();
 
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", "default");
     // Without a retention, nobody's activity is recorded.
     expect(await storage.persons.get("c-1")).toBeNull();
     const events = await raw(adapter);
@@ -336,8 +336,8 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     await after.app.runUntilIdle();
 
     const storage = await adapter.createStorage();
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
-    const key = await storage.personalKeys.get("c-2");
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
+    const key = await storage.personalKeys.get("c-2", "default");
     const sealedUnder = registered(await raw(adapter)).map(
       (event) => (event.payload as { email: { $personal: { key: string } } }).email.$personal.key,
     );

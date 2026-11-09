@@ -14,6 +14,7 @@ import { createRestrictedRetries } from "./dead-letters/restricted.ts";
 import { createDeadLetterRetry, type DeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
 import type { AppStorage } from "./events/app-event-store.ts";
+import { buildPersonalCategories } from "./personal-data/categories.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
@@ -104,10 +105,15 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
   });
   const policies = buildPolicies({ registry, aggregates });
+  const personalCategories = buildPersonalCategories({
+    module: registry.personalData,
+    retentionMs: config.runtime.personalData.retentionMs,
+  });
   const policyExecutor = createPolicyExecutor({
     aggregates,
     pipeline,
     config,
+    personalCategories,
     ids,
     clock,
     logger,
@@ -118,6 +124,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     pipeline,
     storage,
     config,
+    personalCategories,
     ids,
     clock,
     pendingRetries: ignoredRetries,

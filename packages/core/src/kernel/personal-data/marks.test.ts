@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { person, personal } from "../../modules/personal.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { marksPersonalFields, type PersonalMarks, personalMarksOf } from "./marks.ts";
+import {
+  fieldCategory,
+  marksPersonalFields,
+  type PersonalMarks,
+  personalMarksOf,
+} from "./marks.ts";
 
 const path = "aggregates.order.events.orderPlaced";
 
@@ -26,6 +32,12 @@ describe("personalMarksOf", () => {
     expect(personalMarksOf({ schema, path })).toEqual({
       person: null,
       fields: ["email", "address", "phone", "name"],
+      categories: {
+        email: DEFAULT_PERSONAL_CATEGORY,
+        address: DEFAULT_PERSONAL_CATEGORY,
+        phone: DEFAULT_PERSONAL_CATEGORY,
+        name: DEFAULT_PERSONAL_CATEGORY,
+      },
     });
   });
 
@@ -34,7 +46,29 @@ describe("personalMarksOf", () => {
       customerId: person(z.uuid()).readonly(),
       note: personal(z.string()),
     });
-    expect(personalMarksOf({ schema, path })).toEqual({ person: "customerId", fields: ["note"] });
+    expect(personalMarksOf({ schema, path })).toEqual({
+      person: "customerId",
+      fields: ["note"],
+      categories: { note: DEFAULT_PERSONAL_CATEGORY },
+    });
+  });
+
+  it("tells the category each personal field is sealed under", () => {
+    const schema = z.object({
+      email: personal(z.email(), { category: "profile" }),
+      iban: personal(z.string(), { category: "invoices" }).optional(),
+      note: personal(z.string()),
+    });
+    const marks = personalMarksOf({ schema, path });
+    expect(marks?.categories).toEqual({
+      email: "profile",
+      iban: "invoices",
+      note: DEFAULT_PERSONAL_CATEGORY,
+    });
+    if (marks === null) throw new Error("expected marks");
+    expect(fieldCategory(marks, "iban")).toBe("invoices");
+    expect(fieldCategory(marks, "note")).toBe(DEFAULT_PERSONAL_CATEGORY);
+    expect(fieldCategory({ ...marks, categories: {} }, "email")).toBe(DEFAULT_PERSONAL_CATEGORY);
   });
 
   it("finds no mark deeper than the top level of the payload", () => {
@@ -44,7 +78,11 @@ describe("personalMarksOf", () => {
 
   it("names the person of a payload without personal fields, which nothing encrypts", () => {
     const schema = z.object({ customerId: person(z.string()), total: z.number() });
-    expect(personalMarksOf({ schema, path })).toEqual({ person: "customerId", fields: [] });
+    expect(personalMarksOf({ schema, path })).toEqual({
+      person: "customerId",
+      fields: [],
+      categories: {},
+    });
   });
 
   it("refuses two person fields", () => {
@@ -82,8 +120,12 @@ describe("marksPersonalFields", () => {
     }) as unknown as AggregatesRuntime;
   const processes = (states: readonly (PersonalMarks | null)[]): ProcessesRuntime =>
     ({ all: states.map((personal) => ({ personal })) }) as unknown as ProcessesRuntime;
-  const fields = { person: null, fields: ["email"] };
-  const personOnly = { person: "customerId", fields: [] };
+  const fields = {
+    person: null,
+    fields: ["email"],
+    categories: { email: DEFAULT_PERSONAL_CATEGORY },
+  };
+  const personOnly = { person: "customerId", fields: [], categories: {} };
   const marks = (
     events: readonly (PersonalMarks | null)[],
     commands: readonly (PersonalMarks | null)[],

@@ -1,12 +1,13 @@
 ---
 title: Personal data
-description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, seal what was written before a field was marked, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person is left readable.
+description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, sort them in categories with their legal basis and retention, seal what was written before a field was marked, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person is left readable.
 sidebar:
   order: 11
 ---
 
 Events are never deleted, so personal data in one is forgotten by making it unreadable: each
-person has a key, their fields are stored encrypted with it, and `forget` throws the key away.
+person has a key for each [category](#categories) of their data, their fields are stored encrypted
+with the key of the field's category, and `forget` throws the keys away.
 [Forgetting in an immutable log](/concepts/forgetting-in-an-immutable-log/) says when to do this
 and when to keep the data behind a port instead. This page is the how.
 
@@ -46,6 +47,70 @@ export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
 ```
 
 An event names at most one person.
+
+## Categories
+
+Not all of a person's data goes at the same time. A profile is kept while they are a customer; an
+invoice, for the years the law asks, even if they ask to be forgotten; a newsletter address, until
+they withdraw their consent. Each kind is a category, declared in `app/personal-data.ts` with its
+legal basis, as article 6 of the GDPR names it, and its retention:
+
+```ts
+// app/personal-data.ts
+import type { PersonalData } from "./+types/personal-data";
+
+export const categories = {
+  profile: { basis: "contract", retention: "30d" },
+  marketing: { basis: "consent", retention: "730d" },
+  invoices: { basis: "legal-obligation", retention: "2192d" },
+} satisfies PersonalData.Categories;
+```
+
+The basis is one of `consent`, `contract`, `legal-obligation`, `vital-interests`, `public-task` and
+`legitimate-interests`. The retention is how long the category is kept after the person's last
+activity, a duration as the configuration writes them, in days for years: six years with their
+leap days are `"2192d"`. A field takes a category with `personal`'s second argument, and a read
+model's field with `.personal`'s:
+
+```ts
+export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
+  z.object({
+    customerId: person(z.string()),
+    total: z.number(),
+    billingAddress: personal(z.string(), { category: "invoices" }),
+    deliveryNote: personal(z.string(), { category: "profile" }).optional(),
+  });
+```
+
+The generator registers the names, so a category the file does not declare, in `personal`,
+`.personal` or `forget`, does not compile, and `.bounda/types.ts` fails to compile while the file
+declares a category `default` or one without a basis Bounda knows or a retention; the app refuses
+to start on the same, for a project that skipped the type check. A field marked without a
+category is in the default category, `default`, whose retention is
+[`runtime.personalData.retention`](#inactivity) and which declares no basis: an app without
+`app/personal-data.ts` has that category alone, and behaves as if categories did not exist.
+
+Each person has a key per category, created when a field of that category is first sealed for
+them, so an event or a command that holds fields of several categories seals each under its own
+key, and each category is forgotten on its own:
+
+- `forget(person)` forgets every category, as below.
+- `forget(person, { categories: ["marketing"] })` forgets those alone, as when a consent is
+  withdrawn: their fields read as `null`, the rest stays readable, and the person is not forgotten
+  as a whole.
+- Each category is forgotten after its own [retention](#each-category-for-its-own-time).
+
+A category whose basis is `legal-obligation` outlives a `forget` while its retention, counted from
+the person's last activity, has not run out: the law that requires the data outweighs the request
+to erase it (article 17(3)(b)). Its key is kept, restricted, and no longer in force: what it sealed
+still opens, for the export and for the reads the law needs, but nothing new is sealed under it,
+no snapshot or remembered rejection holds its data, and the scheduled commands and dead letters
+that held it go with the rest. The key's last activity is fixed at the forgetting, so a person who
+comes back extends nothing kept from before: what they write afterwards gets a new key in force,
+and the kept one goes on its own once its retention has passed, with a `PersonalDataForgotten`
+that names the category in `expired`. Whether a key is kept that way, and since when, is recorded
+on its row. A category whose retention had already run out at the forgetting is forgotten with the
+rest.
 
 ## In a command's payload
 
@@ -198,21 +263,35 @@ await app.catchUpReadModels({ through: forgotten });
 
 `forget` is on every `BoundaClient`: the app, the Durable Object through `connect`, the `bounda`
 context of React Router. A client bound with `as` records who asked on `PersonalDataForgotten`, in
-`metadata.actor`, and so on `ProcessingRestricted` and `ProcessingRestrictionLifted`. In one transaction it deletes the person's key, cancels the scheduled
-commands that hold their data, removes the dead letters of those that gave up, and appends
-`PersonalDataForgotten` to the stream `bounda:<personId>`: the runtime's own aggregate, `bounda`,
-has one stream per person it forgot. Its payload is `{ personId, reason, cancelledCommands,
-removedDeadLetters }`: `reason` is `"requested"` for `forget`, `"retention"` when the
-[retention](#retention) forgot them and `"restored"` when they were forgotten again after a
-[backup was restored](#backups), and the rest are the ids and types of what went, the only
-record of commands that never became events. It resolves like a command, with the event's
+`metadata.actor`, and so on `ProcessingRestricted` and `ProcessingRestrictionLifted`. In one transaction it deletes the person's keys, but those a
+[legal obligation keeps](#categories), cancels the scheduled commands that hold their data, removes
+the dead letters of those that gave up, and appends `PersonalDataForgotten` to the stream
+`bounda:<personId>`: the runtime's own aggregate, `bounda`, has one stream per person it forgot.
+Its payload is `{ personId, reason, whole, categories, retained, expired, cancelledCommands,
+removedDeadLetters }`:
+
+- `reason` is `"requested"` for `forget`, `"retention"` when the [retention](#retention) forgot
+  them and `"restored"` when they were forgotten again after a [backup was restored](#backups).
+- `whole` is `true` when the person was forgotten as a whole, and `false` for
+  `forget(person, { categories })` or a category's retention.
+- `categories` are the categories forgotten, every one but those `retained` when `whole`;
+  `retained`, those a legal obligation kept; `expired`, those kept at an earlier forgetting whose
+  retention ended now.
+- The rest are the ids and types of what went, the only record of commands that never became
+  events.
+
+`forget(person, { categories })` forgets those categories alone: their keys go, and so do the
+scheduled commands, dead letters, snapshots and remembered rejections that hold data sealed under
+them; the rest of the person's data, and what holds it, stays. Naming a category the app does not
+have, or none, is refused with `ValidationError`. It resolves like a command, with the event's
 position, so `catchUpReadModels({ through })` waits for the read models that handle it, and the Durable Object's `forget` and the one in React
 Router's `bounda` context wait for them themselves unless `consistency` is `"eventual"`. A person
 without a key is forgotten all the same, since a read model may hold what their events carried in
 the clear, and forgetting twice appends twice. An empty id is refused with `ValidationError`.
 
-From then on every personal field of theirs reads as `null`, in every event, however old. A
-person registered again gets a fresh key; their old events stay unreadable. A command running
+From then on every personal field of theirs reads as `null`, in every event, however old, but
+those of a category kept under a legal obligation. A person registered again gets fresh keys;
+their old events stay unreadable. A command running
 when `forget` commits stores nothing it decided on their data, nor anything sealed under the key
 `forget` removed: the state it loaded remembers the key each person's data was read under, its
 events name the key they seal each person's fields under, and the store appends them only while
@@ -230,9 +309,9 @@ dropped: its person was forgotten`. The [dead letters](/guides/dead-letters/) li
 scheduled command's payload with its fields opened.
 
 A [snapshot](/concepts/long-streams/#snapshots) holds the state in the clear, so the same
-transaction removes every snapshot whose state carried a field of theirs; each one names the
-people it holds and the key it read each one under, and none is written for a person who no
-longer holds that key. The next command on such an
+transaction removes every snapshot whose state carried a field of theirs under a key that goes or is
+kept; each one names the people it holds and the key it read each one under, and none is written
+for a person who no longer holds that key in force. The next command on such an
 aggregate folds it from its first event, with the fields forgotten, and the snapshot after it
 holds them as `null`.
 
@@ -244,10 +323,10 @@ them. What it cannot see is personal
 data that came in the command's payload, marked or not: keep that out of a rejection's
 message and say what went wrong with its code and the ids involved.
 
-The message of an error a handler throws may quote a personal field it read, so a [dead
-letter](/guides/dead-letters/#what-a-letter-holds) keeps the message and the stack encrypted with
-the key of the person its work names, and `forget` leaves the letter in place with them reading as
-`null`. The key is the one the work read their data under: a person forgotten while the handler
+The message of an error a handler throws may quote a personal field it read, of any category, so a
+[dead letter](/guides/dead-letters/#what-a-letter-holds) keeps the message and the stack encrypted
+under every key the person its work names holds, one inside the other, and forgetting any category
+of theirs leaves the letter in place with them reading as `null`. The keys are those the work read their data under: a person forgotten while the handler
 was failing, and given a fresh key before it gave up, has the text encrypted under a key nobody
 keeps, so it reads as `null` too instead of opening under the fresh key; the stream's `ScheduledCommandFailed` and `ProcessFailed` name the error's class and code
 and never its text, and so does the last error the inbox and the scheduler keep of a claim.
@@ -285,23 +364,41 @@ person, for them to take away, as the right of access and the right to portabili
 {
   personId: "c-42",
   exportedAt: "2026-03-01T10:00:00.000Z",
+  categories: {
+    default: { basis: null, retention: "730d", restrictedUntil: null },
+    profile: { basis: "contract", retention: "30d", restrictedUntil: null },
+    invoices: { basis: "legal-obligation", retention: "2192d", restrictedUntil: null },
+  },
   events: [
     { id, type: "CustomerRegistered", aggregateType: "customer", aggregateId: "c-42",
-      version: 1, position: 17, timestamp, data: { email: "ana@example.com" } },
+      version: 1, position: 17, timestamp, data: { email: "ana@example.com" },
+      categories: { email: "default" } },
     { id, type: "OrderPlaced", aggregateType: "order", aggregateId: "o-9",
-      version: 1, position: 40, timestamp, data: { deliveryNote: "ring twice" } },
+      version: 1, position: 40, timestamp,
+      data: { billingAddress: "1 Main St", deliveryNote: "ring twice" },
+      categories: { billingAddress: "invoices", deliveryNote: "profile" } },
   ],
-  scheduledCommands: [{ commandId, type: "RemindCustomer", executeAt, data: { email } }],
+  scheduledCommands: [
+    { commandId, type: "RemindCustomer", executeAt, data: { email }, categories: { email: "default" } },
+  ],
   deadLetters: [
     { id, kind: "policy", handler: "customer.welcomeOnCustomerRegistered",
-      errorMessage: "no mailbox for ana@example.com", errorStack, data: {} },
+      errorMessage: "no mailbox for ana@example.com", errorStack, data: {}, categories: {} },
   ],
   readModels: {
-    customerDirectory: [{ key: "c-42", data: { email: "ana@example.com" } }],
-    orderSummary: [{ key: "o-9", data: {} }],
+    customerDirectory: [
+      { key: "c-42", data: { email: "ana@example.com" }, categories: { email: "default" } },
+    ],
+    orderSummary: [{ key: "o-9", data: {}, categories: {} }],
   },
 }
 ```
+
+`categories` describes every category of the app, as article 15(1) of the GDPR asks: why it is
+processed, its `basis`, `null` for the default category, which declares none; how long it is kept
+after their last activity, its `retention`, `null` when nothing forgets it for inactivity; and,
+for a category a legal obligation kept past a forgetting, when what was kept goes,
+`restrictedUntil`. Every record lists the category of each field of its `data` in `categories`.
 
 `events` are every event that names the person, by its field marked `person` or its aggregate's
 id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
@@ -311,7 +408,7 @@ names](#in-a-processs-state), and its `data` holds the personal fields of that s
 whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
 for one the runtime scheduled itself, the scheduler's key, each with the same `data`.
 `deadLetters` are the handler runs that gave up and name the person: work about them, whose
-`errorMessage` and `errorStack` are encrypted with their key and come out opened, and the
+`errorMessage` and `errorStack` are encrypted with their keys and come out opened, and the
 scheduled commands whose payload holds their fields, with its `data`. After `forget`, the
 person's events and letters are still theirs, and every field and error text reads as `null`, as
 a handler reads it. `readModels` has an entry for every read model with a field marked
@@ -357,8 +454,9 @@ id of the person the row is about, a `string` column, at most one per read model
 methods of the field, next to `.index()`, because a read model's columns are declared there; a
 person who appears in many rows, such as a customer in an order summary, is marked on that
 foreign column (`customerId: f.string().index().person()`), with its own index if the export of
-a person with many rows must be fast. The marks change nothing about how the adapter stores the
-column. They do three things: the person's [export](#exporting-a-persons-data) includes the rows
+a person with many rows must be fast. `.personal({ category: "invoices" })` puts the column in a
+[category](#categories), which the export names; without it the column is in the default one. The
+marks change nothing about how the adapter stores the column. They do three things: the person's [export](#exporting-a-persons-data) includes the rows
 that name them, a [query](#who-opened-what) of a read model with personal fields is recorded in
 the access log, and the generator checks forgetting by them.
 
@@ -375,60 +473,20 @@ export const project = async ({ event, table }: Projection.Args) => {
 ```
 
 What it does is the read model's business: delete the row, as here, keep it without the personal
-columns by upserting it again without them, or keep a count. The generator checks it:
-`.bounda/types.ts` declares one type per read model, `CustomerDirectoryForgetting`, that fails to
-compile, naming the read model and what to add, while the read model marks more than one field
-with `.person()`, marks fields with `.personal()` and none with `.person()`, or has fields marked
-`.personal()` or projects an event with personal fields and has no projection of
-`PersonalDataForgotten`. The app refuses to start on the same marks with `ConfigurationError`,
-for a project that skipped the type check. A read model that projects personal events and marks
-nothing is still checked for forgetting, and nothing more: Bounda cannot tell whether it kept a
-copy, and one that keeps only the order's total must not be made to mark anything. A person field
-alone holds an id, as events do, and needs no forgetting.
+columns by upserting it again without them, or keep a count. Its payload says which
+[categories](#categories) went: `categories`, every one but those a legal obligation kept when the
+person was forgotten as a whole, and only those named when a consent was withdrawn (`whole:
+false`). A read model clears what it holds of those categories alone, so a newsletter's subscribers,
+all of them `marketing`, go when that category does, and stay when only an invoice is at stake:
 
-A projection of a personal event handles `null` as well, since a rebuild replays every event, the
-forgotten ones included: a `string` column that is `NOT NULL` takes a `null` email badly, so make
-the column optional and leave it out, as the directory above does.
+```ts
+// app/read/newsletter/projections/bounda/personal-data-forgotten.ts
+import type { Projection } from "./+types/personal-data-forgotten";
 
-## Who opened what
-
-Accountability asks to know who opened whose personal data. Every operation that hands out a
-person's data in the clear records it, once per call:
-
-| Operation | `persons` | `detail` |
-| --- | --- | --- |
-| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, readModelRows }`, how many of each; `null` when it failed |
-| `deadLetters.list` | those the letters name | `{ letters }`, how many |
-| `deadLetters.get`, `retry`, `discard` | those the letter names | `{ letter }`, its id |
-| a query of a read model with fields marked `.personal()` | those the `person` field names in the rows the query read | `{ query, readModel }` |
-
-Each record is `{ operation, actor, persons, personCount, at, outcome, detail }`, and a query's
-adds `unattributed`: `actor` is the client's, from
-[`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names
-nobody; `persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of
-them, with `personCount` saying how many there were in all, so a query that lists every customer
-gives a bounded record; `at` is the app's clock; `outcome` is `ok` when the call handed its result
-out and `failed` when it rejected after reading, since its error may quote what it read, as a
-handler's `cannot reach ana@example.com` does.
-
-A query is matched to its read model by the module's place, and to its persons by the rows it
-read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a
-handler that reshapes the rows into another object still handed their data out. So a query that
-reads rows and answers only a count is recorded too, with those persons, and one that only calls
-`table.count()` is recorded with none. A query whose `repository` or `handler` throws is
-recorded as `failed`, with the persons of the rows it read until then. A query that takes
-`client.raw`, the driver itself, reads rows Bounda cannot see: it is recorded with
-`unattributed: true`, which says that `persons` names only those of the rows read through `table`
-and `client`, and whose rows it read through the driver is unknown. A query that composes another
-records nothing of its own unless its read model has personal fields; the one it calls records
-itself, as the same actor. A query receives that actor too, in its `repository` and its `handler`,
-so it can read only what whoever asks may see: see [Queries](/guides/read-models/#queries). What
-the log does not see is in [Limitations](/reference/limitations/#the-access-log).
-
-Without anything more, each record goes to the app's logger at `info`, with the message
-`personal data accessed` and the record as its fields. Where it should go instead, a log pipeline
-kept apart, a SIEM, a table in another database, is `app/audit.ts`:
-
+export const project = async ({ event, table }: Projection.Args) => {
+  const { personId, categories } = event.payload;
+  if (categories.includes("marketing")) await table.delete({ subscriberId: personId });
+};
 ```ts
 // app/audit.ts
 import type { OnPersonalDataAccess } from "@bounda-dev/core";
@@ -618,35 +676,51 @@ export const handler = async ({ aggregateId, forget }: Process.DeadlineArgs) => 
 };
 ```
 
-Policies and processes receive `forget(personId)` in their arguments, next to `commands`. It
+Policies and processes receive `forget(personId, options)` in their arguments, next to `commands`,
+with the same `categories` a client's `forget` takes. It
 forgets as `forget` on the app does, with `reason: "requested"`, inside the run's own unit of work:
 the forgetting commits with the run's commands and its step, in the same transaction, or not at
 all, so a run that fails and is retried forgets once. It resolves at once, before the commit, and
 rejects an empty id with `ValidationError`. The `PersonalDataForgotten` it appends is caused by the
 event the handler reacted to, one hop deeper, as its commands are.
 
-### One key per person
+### Each category for its own time
 
-Each person has one key, so their marked fields are forgotten together. "Keep the invoices six
-years, the profile thirty days" does not fit one key: put the profile in marked events, which the
-retention or a process forgets, and keep what the law makes you hold longer, such as an invoice,
-behind a [port](/guides/calling-the-outside-world/) with a retention of its own, or in events whose
-fields you do not mark.
+"Keep the invoices six years, the profile thirty days" is two [categories](#categories), each with
+its retention. A declared category is forgotten on its own once the person has been inactive for
+its retention, as `forget(person, { categories })` does, with `reason: "retention"` and `whole:
+false`: the profile goes thirty days after their last activity, the invoices six years after it,
+whatever the other categories do. A category whose basis is `legal-obligation` is forgotten that way
+too when its retention ends, even when the app's retention forgot the person as a whole earlier:
+that forgetting kept it, and its time runs from the activity it kept.
+
+Activity is the person's, as for the app's retention: any event of the app's aggregates that names
+them, whatever category it carries, so a customer who keeps ordering keeps their profile. The sweep
+reads each category's keys by their last activity, recorded on every key the person holds in force
+by the same subscriber, `retention`, which runs whenever the app has a retention or declares a
+category; a person whose processing is restricted is left alone, and a key the sweep could not
+forget waits on its own row, as a person does. `runtime.personalData.retention` is the default
+category's retention, and forgets the person as a whole: every category but those a legal
+obligation keeps, after which each declared category has nothing left to forget but what was
+kept.
 
 ## Where the keys live
 
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
-person with the key, the id of the key it is wrapped under and its fingerprint: the memory adapter
+key with the person, the category, the key, the id of the key it is wrapped under, its
+fingerprint, the person's last activity and, for one a legal obligation kept past a forgetting,
+since when: at most one key in force per person and category. Each key is named by the person and
+its fingerprint: the memory adapter
 in memory, SQLite and the Durable Object in their database, PostgreSQL in its schema. The
 fingerprint is the key's AES-GCM tag of nothing under a nonce no value is ever sealed under, a key
 check value: it names the key without revealing anything of it, and the runtime computes it from
 the key itself, so it checks every key it reads against it, even one it can never export. Whether a person's processing is restricted, and since when, lives apart, in
 `bounda_persons`, since a person without a key is restricted all the same, and so does, with a
-retention, when they were last active and last forgotten. A key is created when the first event
-with a personal field of that person is stored, by the transaction that stores it, and deleted by
-`forget`. Encryption is AES-256-GCM through WebCrypto, with a nonce per value, on Node and in
+retention, when they were last active and last forgotten as a whole. A key is created when the
+first event with a personal field of that person in its category is stored, by the transaction
+that stores it, and deleted by `forget`. Encryption is AES-256-GCM through WebCrypto, with a nonce per value, on Node and in
 `workerd` alike; what the store holds for a personal field is an envelope with the ciphertext, the
-person's id and the key's fingerprint, which the [global stream](/guides/reading-the-stream/)
+person's id, the category unless it is the default one, and the key's fingerprint, which the [global stream](/guides/reading-the-stream/)
 shows as it is; a value sealed under a key the person no longer has, because they were forgotten
 and registered again, reads as `null` next to what their new key opens. What is read is opened by
 that shape, whatever the schema marks, so an event or a delayed command whose handler or caller
@@ -815,9 +889,12 @@ is restored, to apply the erasures again. A forget ledger is how Bounda does the
 ### The forget ledger
 
 The ledger is a record of every forgetting kept outside the database: for each `PersonalDataForgotten`,
-the person's id, the event's id and its time, and nothing else. It is a suppression list, the one
-thing about a forgotten person that has to outlive their data, so it holds no field of theirs and
-no reason. Give it a store a restore of the database does not touch:
+the person's id, the event's id, its time and the categories it asked for, `null` for the person
+as a whole, and nothing else. It is a suppression list, the one thing about a forgotten person that
+has to outlive their data, so it holds no field of theirs and no reason. Forgetting someone again
+forgets what that forgetting asked for: a withdrawn consent again, never the invoices a legal
+obligation keeps, and those kept again while their retention runs; a forgetting that only ended
+what an earlier one kept asks for nothing, since the retention ends it again on its own. Give it a store a restore of the database does not touch:
 
 ```ts
 import { defineConfig, masterKey } from "@bounda-dev/core/config";
@@ -972,11 +1049,15 @@ bounda forget --from forgotten.jsonl
 ```
 
 `bounda forgotten` prints one line of JSON per forgetting, the entry a ledger would hold;
-`bounda forget` forgets again, with `reason: "restored"`, each person listed who still holds a key,
-unless the database holds the forgetting a line names. A line may also be a bare person's id, for
-a list kept some other way, which is forgotten whenever the person holds a key: list only those
+`bounda forget --from` forgets again, with `reason: "restored"`, each person listed who still holds
+a key the line's `categories` cover, those categories or the person as a whole, unless the database
+holds the forgetting a line names. A line may also be a bare person's id, for a list kept some other
+way, which is forgotten as a whole whenever the person holds a key: list only those
 forgotten after the copy was taken. `--actor <id>` names who does it on each `PersonalDataForgotten`
-it appends. `app.forgetAgain(entries, { actor })` is the same in code.
+it appends. `app.forgetAgain(entries, { actor })` is the same in code, each entry with its
+`categories`. Without a backup in play, `bounda forget <person>` forgets a person from the command
+line, `--category` naming the categories alone, and `bounda export <person>` prints their data: see
+the [CLI](/reference/cli/#bounda-export-and-bounda-forget-person).
 
 Without either, a restored backup brings back the data of everyone forgotten after it was taken,
 until they are forgotten again.

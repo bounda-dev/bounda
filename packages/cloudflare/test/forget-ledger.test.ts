@@ -30,7 +30,12 @@ describe("the forget ledger in Workers KV", () => {
       kvForgetLedger({ binding: "FORGET_LEDGER" }).create({ env, tenant });
     const ada = await ledgerOf("named-ada");
     const bob = await ledgerOf("named-bob");
-    const entry = { personId: "c-1", eventId: "e-1", forgottenAt: "2026-11-07T12:00:00.000Z" };
+    const entry = {
+      personId: "c-1",
+      eventId: "e-1",
+      forgottenAt: "2026-11-07T12:00:00.000Z",
+      categories: ["marketing"],
+    };
     await ada.append([entry]);
     expect(await ada.read({ limit: 10 })).toEqual([entry]);
     expect(await bob.read({ limit: 10 })).toEqual([]);
@@ -97,6 +102,7 @@ describe("the KV forget ledger's listing", () => {
       personId: `c-${index}`,
       eventId: `e-${String(index).padStart(4, "0")}`,
       forgottenAt: minute(index),
+      categories: null,
     }));
     await ledger.append(entries);
     expect(await ledger.read({ limit: 2_000 })).toEqual(entries);
@@ -110,6 +116,7 @@ describe("the KV forget ledger's listing", () => {
       personId: `c-${index}`,
       eventId: `e-${String(index).padStart(4, "0")}`,
       forgottenAt: minute(index),
+      categories: null,
     }));
     await ledger.append(entries);
     const after = entries[1_002] as (typeof entries)[number];
@@ -128,9 +135,9 @@ describe("the KV forget ledger's listing", () => {
     const now = Date.now();
     const at = (milliseconds: number): string => new Date(now + milliseconds).toISOString();
     await ledger.append([
-      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs - 1_000) },
-      { personId: "c-2", eventId: "e-2", forgottenAt: at(-keepForMs + 30_000) },
-      { personId: "c-3", eventId: "e-3", forgottenAt: at(0) },
+      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs - 1_000), categories: null },
+      { personId: "c-2", eventId: "e-2", forgottenAt: at(-keepForMs + 30_000), categories: null },
+      { personId: "c-3", eventId: "e-3", forgottenAt: at(0), categories: null },
     ]);
     expect(
       [...keys.values()].map((metadata) => (metadata as { personId: string }).personId),
@@ -142,7 +149,7 @@ describe("the KV forget ledger's listing", () => {
     expect(later).toBe(Math.ceil((Date.parse(at(0)) + keepForMs) / 1000));
     const forever = countingNamespace();
     await createKvForgetLedger({ namespace: forever.namespace, prefix: "p/" }).append([
-      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs * 1_000) },
+      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs * 1_000), categories: null },
     ]);
     expect([...forever.expirations.values()]).toEqual([undefined]);
   });
@@ -173,7 +180,9 @@ describe("the KV forget ledger's listing", () => {
       env: { ...env, LEDGER: namespace } as typeof env,
       tenant: "acme/eu",
     });
-    await ledger.append([{ personId: "c-1", eventId: "e-1", forgottenAt: minute(0) }]);
+    await ledger.append([
+      { personId: "c-1", eventId: "e-1", forgottenAt: minute(0), categories: null },
+    ]);
     expect([...keys.keys()]).toEqual([
       `bounda/forget-ledger/acme%2Feu/${8_640_000_000_000_000 - Date.parse(minute(0))}:e-1`,
     ]);

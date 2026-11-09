@@ -447,6 +447,8 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<Record<never, never
 
 type Expect<Check extends true> = Check;
 
+export type PersonalCategory = never;
+
 export type ShipmentsRow = core.RowOf<typeof import("../app/read/shipments/view.ts")>;
 export type ShipmentsFieldTypes = core.FieldTypesOf<typeof import("../app/read/shipments/view.ts")>;
 export type ShipmentsPorts = core.EmptyPayload;

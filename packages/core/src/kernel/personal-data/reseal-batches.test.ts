@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { PendingEvent } from "../../adapter/storage/event-store.ts";
+import type { SealedValue } from "../../adapter/storage/personal-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
@@ -29,24 +30,35 @@ const aggregates = {
     customer: {
       ...customer,
       eventsByType: {
-        CustomerRegistered: { personal: { person: null, fields: ["email"] } },
+        CustomerRegistered: { personal: { person: null, fields: ["email"], categories: {} } },
+        CustomerProfiled: {
+          personal: {
+            person: null,
+            fields: ["email", "nickname"],
+            categories: { nickname: "profile" },
+          },
+        },
       },
     },
     order: {
       ...order,
       eventsByType: {
-        OrderPlaced: { personal: { person: "customerId", fields: ["address"] } },
+        OrderPlaced: { personal: { person: "customerId", fields: ["address"], categories: {} } },
       },
     },
   },
   commandsByType: {
-    RemindCustomer: { command: { personal: { person: null, fields: ["email"] } } },
-    ShipOrder: { command: { personal: { person: "customerId", fields: ["address"] } } },
+    RemindCustomer: { command: { personal: { person: null, fields: ["email"], categories: {} } } },
+    ShipOrder: {
+      command: { personal: { person: "customerId", fields: ["address"], categories: {} } },
+    },
   },
 } as unknown as AggregatesRuntime;
 
 const processes = {
-  byName: { "signup.onboarding": { personal: { person: "customerId", fields: ["email"] } } },
+  byName: {
+    "signup.onboarding": { personal: { person: "customerId", fields: ["email"], categories: {} } },
+  },
 } as unknown as Pick<ProcessesRuntime, "byName">;
 
 const event = (
@@ -67,8 +79,11 @@ const event = (
   person: null,
 });
 
-const forgotten = (person: string, version = 1): PendingEvent => ({
-  ...event(BOUNDA_AGGREGATE, person, version, PERSONAL_DATA_FORGOTTEN_EVENT, { personId: person }),
+const forgotten = (person: string, version = 1, payload: object = {}): PendingEvent => ({
+  ...event(BOUNDA_AGGREGATE, person, version, PERSONAL_DATA_FORGOTTEN_EVENT, {
+    personId: person,
+    ...payload,
+  }),
   timestamp: "2026-01-05T00:00:00.000Z",
   metadata: { ...metadata, system: true },
   person,
@@ -98,10 +113,16 @@ const setup = async (recordsActivity = true) => {
       });
     }
   };
-  const opened = async (person: string, value: unknown) => {
-    const stored = await storage.personalKeys.get(person);
-    const key = stored === null ? null : await openedKey(stored);
-    return unseal({ key, sealed: value as never });
+  // Opens a value sealed under one key or several, one inside the other.
+  const opened = async (value: unknown): Promise<unknown> => {
+    let current = value;
+    while (isSealed(current)) {
+      const { person, key: fingerprint } = (current as SealedValue).$personal;
+      const found = await storage.personalKeys.find(person, fingerprint);
+      const key = found === null ? null : await openedKey(found.key);
+      current = await unseal({ key, sealed: current as SealedValue });
+    }
+    return current;
   };
   return { storage, reseal, append, opened };
 };
@@ -145,10 +166,10 @@ describe("resealing a batch of events", () => {
       "c-1",
       null,
     ]);
-    expect(await opened("c-1", fieldOf(ada?.payload, "email"))).toBe("ada@example.com");
-    expect(await opened("c-1", fieldOf(placed?.payload, "address"))).toBe("Bilbao");
+    expect(await opened(fieldOf(ada?.payload, "email"))).toBe("ada@example.com");
+    expect(await opened(fieldOf(placed?.payload, "address"))).toBe("Bilbao");
     expect(isSealed(fieldOf(bob?.payload, "email"))).toBe(true);
-    expect(await storage.personalKeys.get("c-2")).toBeNull();
+    expect(await storage.personalKeys.get("c-2", "default")).toBeNull();
     expect(nameless?.payload).toEqual({ customerId: "", address: "Getxo" });
     expect(
       await storage.snapshotStore.get({ aggregateType: "customer", aggregateId: "c-1" }),
@@ -191,6 +212,35 @@ describe("resealing a batch of events", () => {
   });
 });
 
+describe("resealing a batch of events by category", () => {
+  it("seals each field under its category's key, discarding only the key of a category forgotten after it", async () => {
+    const { storage, reseal, append, opened } = await setup();
+    await append(
+      event("customer", "c-1", 1, "CustomerProfiled", {
+        email: "ada@example.com",
+        nickname: "Ada",
+      }),
+      forgotten("c-1", 1, { whole: false, categories: ["profile"], retained: [], expired: [] }),
+    );
+    expect(await reseal.events(await all(storage))).toEqual({
+      resealed: 1,
+      discarded: 1,
+      unsealable: 0,
+      discardedTypes: new Set(["customer.CustomerProfiled"]),
+      unsealableTypes: new Set(),
+    });
+    const [profiled] = await all(storage);
+    expect(await opened(fieldOf(profiled?.payload, "email"))).toBe("ada@example.com");
+    expect(fieldOf(profiled?.payload, "nickname")).toMatchObject({
+      $personal: { category: "profile" },
+    });
+    expect(await opened(fieldOf(profiled?.payload, "nickname"))).toBeNull();
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "default",
+    ]);
+  });
+});
+
 describe("resealing a process's lifecycle events", () => {
   it("seals their state under whom it names, with no snapshot to drop", async () => {
     const { storage, reseal, append, opened } = await setup();
@@ -203,7 +253,7 @@ describe("resealing a process's lifecycle events", () => {
     expect(await reseal.events(await all(storage))).toMatchObject({ resealed: 1 });
     const [handled] = await all(storage);
     expect(handled?.person).toBe("c-1");
-    expect(await opened("c-1", fieldOf(fieldOf(handled?.payload, "state"), "email"))).toBe(
+    expect(await opened(fieldOf(fieldOf(handled?.payload, "state"), "email"))).toBe(
       "ada@example.com",
     );
   });
@@ -237,15 +287,15 @@ describe("resealing scheduled commands", () => {
       unsealableTypes: new Set(["ShipOrder"]),
     });
     const [a, b, c, d] = await storage.scheduler.list();
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", "default");
     expect(a?.persons).toEqual([
       { person: "c-1", fingerprint: old.fingerprint },
       { person: "c-1", fingerprint: key?.fingerprint },
     ]);
-    expect(await opened("c-1", fieldOf(a?.command.payload, "email"))).toBe("ada@example.com");
+    expect(await opened(fieldOf(a?.command.payload, "email"))).toBe("ada@example.com");
     expect(b?.command.payload).toEqual({ customerId: "", address: "Bilbao" });
     expect(c?.persons).toHaveLength(1);
-    expect(await storage.personalKeys.get("c-9")).toBeNull();
+    expect(await storage.personalKeys.get("c-9", "default")).toBeNull();
     expect(d?.command.payload).toEqual({ email: "x@example.com" });
   });
 });
@@ -278,7 +328,7 @@ describe("resealing dead letters", () => {
       event("customer", "c-1", 1, "CustomerRegistered", { email: "ada@example.com" }),
       event("customer", "c-3", 1, "CustomerRegistered", {}),
     );
-    await storage.personalKeys.add("c-1", await newStoredKey());
+    await storage.personalKeys.add("c-1", "default", await newStoredKey());
     await storage.deadLetterStore.add(letter("policy"));
     await storage.deadLetterStore.add(
       letter("scheduled", {
@@ -314,18 +364,18 @@ describe("resealing dead letters", () => {
     });
     const policy = await storage.deadLetterStore.get("policy");
     expect(policy?.person).toBe("c-1");
-    expect(await opened("c-1", policy?.errorMessage)).toBe("cannot greet ada@example.com");
-    expect(await opened("c-1", policy?.errorStack)).toContain("at greet");
+    expect(await opened(policy?.errorMessage)).toBe("cannot greet ada@example.com");
+    expect(await opened(policy?.errorStack)).toContain("at greet");
     expect(policy).not.toHaveProperty("payload");
     expect(policy).not.toHaveProperty("persons");
     const scheduled = await storage.deadLetterStore.get("scheduled");
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", "default");
     expect(scheduled).toMatchObject({
       person: "c-1",
       persons: [{ person: "c-1", fingerprint: key?.fingerprint }],
     });
-    expect(await opened("c-1", fieldOf(scheduled?.payload, "email"))).toBe("ada@example.com");
-    expect(await opened("c-1", scheduled?.errorMessage)).toBe("cannot greet ada@example.com");
+    expect(await opened(fieldOf(scheduled?.payload, "email"))).toBe("ada@example.com");
+    expect(await opened(scheduled?.errorMessage)).toBe("cannot greet ada@example.com");
     for (const id of ["since", "nobody", "missing", "named", "nameless"]) {
       expect(await storage.deadLetterStore.get(id)).toMatchObject({
         errorMessage: "cannot greet ada@example.com",
@@ -357,15 +407,31 @@ describe("resealing dead letters", () => {
       resealed: 2,
       discarded: 2,
     });
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
     const policy = await storage.deadLetterStore.get("policy");
     expect(isSealed(policy?.errorMessage)).toBe(true);
     expect(policy).not.toHaveProperty("errorStack");
   });
 
+  it("seals the text of a letter under every key the person holds, one inside the other", async () => {
+    const { storage, reseal, append, opened } = await setup();
+    await append(event("customer", "c-1", 1, "CustomerRegistered", { email: "ada@example.com" }));
+    await storage.personalKeys.add("c-1", "default", await newStoredKey());
+    const profile = await storage.personalKeys.add("c-1", "profile", await newStoredKey());
+    await storage.deadLetterStore.add(letter("policy"));
+    await reseal.letters(await storage.deadLetterStore.list(), started);
+    const policy = await storage.deadLetterStore.get("policy");
+    expect(policy?.errorMessage).toMatchObject({
+      $personal: { person: "c-1", category: "profile", key: profile.fingerprint },
+    });
+    expect(await opened(policy?.errorMessage)).toBe("cannot greet ada@example.com");
+    await storage.personalKeys.remove("c-1", profile.fingerprint);
+    expect(await opened(policy?.errorMessage)).toBeNull();
+  });
+
   it("seals the payload of a letter that names its person already, leaving its text as it is", async () => {
     const { storage, reseal, opened } = await setup();
-    const key = await storage.personalKeys.add("c-1", await newStoredKey());
+    const key = await storage.personalKeys.add("c-1", "default", await newStoredKey());
     const sealedText = { $personal: { person: "c-1", key: key.fingerprint, iv: "iv", data: "d" } };
     await storage.deadLetterStore.add(
       letter("scheduled", {
@@ -395,7 +461,7 @@ describe("resealing dead letters", () => {
       errorMessage: sealedText,
       errorStack: sealedText,
     });
-    expect(await opened("c-1", fieldOf(resealed?.payload, "email"))).toBe("ada@example.com");
+    expect(await opened(fieldOf(resealed?.payload, "email"))).toBe("ada@example.com");
     expect((await storage.deadLetterStore.get("unmarked"))?.payload).toEqual({
       email: "ada@example.com",
     });
@@ -404,7 +470,7 @@ describe("resealing dead letters", () => {
   it("counts a letter discarded when its payload is, though its text opens under the key the person holds again", async () => {
     const { storage, reseal, append, opened } = await setup();
     await append(forgotten("c-1"));
-    await storage.personalKeys.add("c-1", await newStoredKey());
+    await storage.personalKeys.add("c-1", "default", await newStoredKey());
     await storage.deadLetterStore.add(
       letter("scheduled", {
         kind: "scheduled",
@@ -420,7 +486,7 @@ describe("resealing dead letters", () => {
       discarded: 1,
     });
     const resealed = await storage.deadLetterStore.get("scheduled");
-    expect(await opened("c-1", fieldOf(resealed?.payload, "email"))).toBeNull();
-    expect(await opened("c-1", resealed?.errorMessage)).toBe("cannot greet ada@example.com");
+    expect(await opened(fieldOf(resealed?.payload, "email"))).toBeNull();
+    expect(await opened(resealed?.errorMessage)).toBe("cannot greet ada@example.com");
   });
 });

@@ -1,4 +1,6 @@
 import {
+  type BoundaClient,
+  type DeclaresPersonalData,
   DomainError,
   type EventPayloadArgs,
   type FieldsArgs,
@@ -241,6 +243,42 @@ describe("what does not compile", () => {
     const marks = ({ z, personal, person }: EventPayloadArgs) =>
       z.object({ customerId: person(z.string()), email: personal(z.email()) });
     void marks;
+  });
+
+  it("a category app/personal-data.ts does not declare, or a declaration Bounda cannot read", () => {
+    const marks = ({ z, personal }: EventPayloadArgs) =>
+      z.object({
+        note: personal(z.string(), { category: "delivery" }),
+        // @ts-expect-error a misspelled category does not compile
+        invoice: personal(z.string(), { category: "invoice" }),
+      });
+    void marks;
+    const fields = ({ f }: FieldsArgs) => ({
+      // @ts-expect-error nor in a read model's view
+      note: f.string().personal({ category: "deliveries" }),
+    });
+    void fields;
+    const forget = (app: BoundaClient) => [
+      app.forget("c-1", { categories: ["default", "invoices"] }),
+      // @ts-expect-error nor in forget
+      app.forget("c-1", { categories: ["profile"] }),
+    ];
+    void forget;
+    type Expect<Check extends true> = Check;
+    type DeclaresDefault = {
+      readonly categories: { readonly default: { basis: "consent"; retention: "1d" } };
+    };
+    type UnknownBasis = {
+      readonly categories: { readonly profile: { basis: "whim"; retention: "1d" } };
+    };
+    // @ts-expect-error "default" is the category of fields marked without one
+    type Default = Expect<DeclaresPersonalData<DeclaresDefault>>;
+    // @ts-expect-error a basis article 6 does not name
+    type Basis = Expect<DeclaresPersonalData<UnknownBasis>>;
+    // @ts-expect-error a module without categories
+    type Nothing = Expect<DeclaresPersonalData<{ readonly other: true }>>;
+    const checks: [Default?, Basis?, Nothing?] = [];
+    void checks;
   });
 
   it("a read model that projects personal fields without handling forgetting", () => {

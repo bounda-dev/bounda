@@ -18,7 +18,9 @@ import type { Registry } from "../modules/registry.ts";
  *
  * After that `BoundaApp`, `boot()` and the integrations are typed for the project without a type
  * argument, and `defineConfig` and `createTestApp` check their `ports` against the
- * project's ports.
+ * project's ports. It also registers `personalCategories`, the names of the categories
+ * `app/personal-data.ts` declares, `never` without it, which `personal({ category })` and
+ * `forget(person, { categories })` take.
  * A host adapter may register `env`, the type of the environment implementations receive in
  * `create`: `@bounda-dev/cloudflare` registers `Cloudflare.Env`.
  */
@@ -31,6 +33,17 @@ export interface Register {}
 export type AppRegistry = Register extends { readonly registry: infer R extends Registry }
   ? R
   : Registry;
+
+/**
+ * The categories of personal data the current project declares in `app/personal-data.ts`, as
+ * registered through {@link Register}: none without that file, and any name when no project is
+ * registered.
+ */
+export type AppPersonalCategory = Register extends {
+  readonly personalCategories: infer C extends string;
+}
+  ? C
+  : string;
 
 /**
  * The type of the `ports` section of the current project's configuration: the one
