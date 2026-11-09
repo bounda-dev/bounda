@@ -67,7 +67,7 @@ describe("errorFields", () => {
         env: processEnv,
         config: { storage: sqlite, ports },
         fallback: "include",
-        invalidEnv: "ignore",
+        ignoreInvalidEnv: true,
       }),
     ).toEqualTypeOf<ErrorText>();
     expectTypeOf(

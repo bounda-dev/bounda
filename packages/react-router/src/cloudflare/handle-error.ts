@@ -24,6 +24,6 @@ export const cloudflareHandleError: CloudflareHandleErrorFunction = ({
 }) =>
   createHandleError({
     message: "bounda request failed",
-    errorText: () => resolveErrorText({ env, config: config(), invalidEnv: "ignore" }),
+    errorText: () => resolveErrorText({ env, config: config(), ignoreInvalidEnv: true }),
     logger: () => logger,
   });

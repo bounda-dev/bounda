@@ -55,7 +55,7 @@ describe("resolveErrorText", () => {
     expect(() => resolveErrorText({ env: { BOUNDA_ERROR_TEXT: true } })).toThrow(
       ConfigurationError,
     );
-    expect(resolveErrorText({ env, config: configured("include"), invalidEnv: "ignore" })).toBe(
+    expect(resolveErrorText({ env, config: configured("include"), ignoreInvalidEnv: true })).toBe(
       "include",
     );
     expect(resolveErrorText({ env, forced: "include" })).toBe("include");

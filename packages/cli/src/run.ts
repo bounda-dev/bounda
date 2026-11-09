@@ -636,6 +636,6 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
     if (error instanceof CommanderError) {
       return error.exitCode === 0 ? EXIT_OK : EXIT_CONVENTION;
     }
-    return failed(stderr, error, resolveErrorText({ env: process.env, invalidEnv: "ignore" }));
+    return failed(stderr, error, resolveErrorText({ env: process.env, ignoreInvalidEnv: true }));
   }
 };

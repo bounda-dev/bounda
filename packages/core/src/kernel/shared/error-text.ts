@@ -22,21 +22,21 @@ export interface ResolveErrorTextArgs {
    */
   readonly fallback?: ErrorText | undefined;
   /**
-   * What a `BOUNDA_ERROR_TEXT` other than `"omit"` or `"include"` does: `"throw"` by default, as
-   * whatever starts the app should; `"ignore"` for code that logs the failure of an app, which is
-   * likely that refusal.
+   * Passes over a `BOUNDA_ERROR_TEXT` other than `"omit"` or `"include"` instead of throwing, for
+   * code that logs the failure of an app, which is likely that refusal; whatever starts the app
+   * should throw.
    */
-  readonly invalidEnv?: "throw" | "ignore";
+  readonly ignoreInvalidEnv?: boolean;
 }
 
 export interface ResolveErrorTextFunction {
   (args: ResolveErrorTextArgs): ErrorText;
 }
 
-const fromEnv = (env: object, invalidEnv: "throw" | "ignore"): ErrorText | undefined => {
+const fromEnv = (env: object, ignoreInvalid: boolean | undefined): ErrorText | undefined => {
   const value: unknown = Reflect.get(env, ERROR_TEXT_VARIABLE);
   if (value === "omit" || value === "include") return value;
-  if (value === undefined || value === "" || invalidEnv === "ignore") return undefined;
+  if (value === undefined || value === "" || ignoreInvalid) return undefined;
   throw new ConfigurationError(
     `${ERROR_TEXT_VARIABLE} must be "omit" or "include", not ${JSON.stringify(value)}`,
   );
@@ -48,17 +48,17 @@ const fromEnv = (env: object, invalidEnv: "throw" | "ignore"): ErrorText | undef
  * the host's `fallback`, then `"omit"`. `boot()`, the CLI, the Durable Object and the Worker of
  * `@bounda-dev/cloudflare` and the `handleError` of `@bounda-dev/react-router` all resolve it
  * here. Throws `ConfigurationError` for a `BOUNDA_ERROR_TEXT` other than `"omit"` or `"include"`
- * unless `invalidEnv` is `"ignore"`.
+ * unless `ignoreInvalidEnv` is set.
  */
 export const resolveErrorText: ResolveErrorTextFunction = ({
   forced,
   env,
   config,
   fallback,
-  invalidEnv = "throw",
+  ignoreInvalidEnv,
 }) =>
   forced ??
-  (env === undefined ? undefined : fromEnv(env, invalidEnv)) ??
+  (env === undefined ? undefined : fromEnv(env, ignoreInvalidEnv)) ??
   config?.runtime?.telemetry?.errorText ??
   fallback ??
   "omit";

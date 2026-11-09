@@ -233,7 +233,7 @@ export const createWorker: CreateWorkerFunction = ({
           // that: logging the failure must not throw instead.
           ...errorFields({
             error,
-            errorText: resolveErrorText({ env, config, invalidEnv: "ignore" }),
+            errorText: resolveErrorText({ env, config, ignoreInvalidEnv: true }),
           }),
         });
         return failure("INTERNAL", "Internal error", 500);
