@@ -8,6 +8,7 @@ import {
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import { actedBy } from "../shared/causation.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import type { ProcessesRuntime, ProcessRuntime } from "./build-processes.ts";
 import type { DeadlineStep } from "./deadline-step.ts";
@@ -15,7 +16,7 @@ import { PROCESS_DEADLINE_COMMAND, reachedKey } from "./deadlines.ts";
 import type { DeadlineTarget } from "./deliver-deadline.ts";
 import { blockedOn } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
-import { lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
+import { instanceContext, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
 import type { ResumeParked } from "./resume.ts";
 import { completesOn, handledEntries, handlerOf, letThrough, pendingFollowUp } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
@@ -78,6 +79,18 @@ export interface ProcessDeadLetters {
    * once it resumed.
    */
   stillParked(letter: StoredDeadLetter): Promise<number>;
+  /**
+   * Discards a process dead letter: marks it `discarded` at `at` and, while its instance is failed
+   * on it, ends the instance with `ProcessAbandoned`, acted by `actor`, in one unit. Rejects with
+   * `DeadLetterSettledError` a letter no longer `failed`, writing nothing.
+   */
+  abandon(args: AbandonProcessArgs): Promise<void>;
+}
+
+export interface AbandonProcessArgs {
+  readonly letter: StoredDeadLetter;
+  readonly at: Date;
+  readonly actor?: string | undefined;
 }
 
 export interface CreateProcessRetryArgs {
@@ -251,7 +264,11 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
     await resume.resumeParked(process, payload.aggregateId, letter, context.actor);
   };
 
-  const instanceOfLetter = async (letter: StoredDeadLetter): Promise<ProcessInstance | null> => {
+  // The process and instance a letter is about; `null` once the process left the registry or its
+  // event can no longer be read.
+  const subjectOfLetter = async (
+    letter: StoredDeadLetter,
+  ): Promise<{ readonly process: ProcessRuntime; readonly instanceId: string } | null> => {
     const process = processes.byName[letter.handler];
     if (letter.kind !== "process" || process === undefined) return null;
     const instanceId =
@@ -266,7 +283,12 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
             })
             .then((event) => process.instanceOf(event))
             .catch(() => null);
-    return instanceId === null ? null : load(process, instanceId);
+    return instanceId === null ? null : { process, instanceId };
+  };
+
+  const instanceOfLetter = async (letter: StoredDeadLetter): Promise<ProcessInstance | null> => {
+    const subject = await subjectOfLetter(letter);
+    return subject === null ? null : load(subject.process, subject.instanceId);
   };
 
   return {
@@ -278,6 +300,26 @@ export const createProcessRetry: CreateProcessRetryFunction = ({
       return instance?.status === "failed" && failure?.letterId === letter.id
         ? instance.parked.filter((parked) => parked.eventId !== failure.eventId).length
         : 0;
+    },
+    abandon: async ({ letter, at, actor }) => {
+      const subject = await subjectOfLetter(letter);
+      await units.commit(async (unit, within) => {
+        const stored = await unit.deadLetterStore.get(letter.id);
+        if (stored?.status !== "failed") throw new DeadLetterSettledError({ id: letter.id });
+        await unit.deadLetterStore.updateStatus(letter.id, "discarded", at);
+        if (subject === null) return;
+        const { process, instanceId } = subject;
+        const current = await within.load(process, instanceId);
+        if (current.status !== "failed" || !blockedOn(current, letter.id)) return;
+        await within.append(process, instanceId, current, [
+          lifecycleEntries.abandoned(letter.id, {
+            ...instanceContext(process, instanceId, current),
+            ...actedBy(actor),
+          }),
+        ]);
+        await schedule.stage(unit, process, instanceId);
+      });
+      logger.info("process abandoned", { process: letter.handler, letterId: letter.id });
     },
     stillParked: async (letter) => {
       const instance = await instanceOfLetter(letter);

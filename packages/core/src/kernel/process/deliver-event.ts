@@ -65,28 +65,12 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   const leaseMs = (process: ProcessRuntime): number => process.handlerTimeoutMs * 2;
 
   // Whether `event` waits behind the instance's failure: not the event that failed, delivered
-  // again, and nothing once the failure's letter was discarded, since the instance is given up.
-  // A letter is written with the failure, so one that is gone was purged once resolved: an
-  // instance still failed on it was given up.
-  const parks = async (
-    unit: UnitOfWork,
-    process: ProcessRuntime,
-    event: StoredEvent,
-    instance: ProcessInstance,
-  ): Promise<boolean> => {
-    if (
-      !actsOn(process, event) ||
-      event.id === instance.failure?.eventId ||
-      instance.handledEventIds.has(event.id) ||
-      instance.parked.some((parked) => parked.eventId === event.id)
-    ) {
-      return false;
-    }
-    const letterId = instance.failure?.letterId;
-    if (letterId === undefined) return true;
-    const letter = await unit.deadLetterStore.get(letterId);
-    return letter !== null && letter.status !== "discarded";
-  };
+  // again. An instance given up is `abandoned` and parks nothing, whatever became of its letter.
+  const parks = (process: ProcessRuntime, event: StoredEvent, instance: ProcessInstance): boolean =>
+    actsOn(process, event) &&
+    event.id !== instance.failure?.eventId &&
+    !instance.handledEventIds.has(event.id) &&
+    !instance.parked.some((parked) => parked.eventId === event.id);
 
   // The instance with its start staged in `entries` when `event` starts it; as it is otherwise.
   const started = (
@@ -115,7 +99,7 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     if (!instance.exists) return false;
     let parked = false;
     if (instance.status === "failed") {
-      if (await parks(unit, process, event, instance)) {
+      if (parks(process, event, instance)) {
         entries.push(lifecycleEntries.parked(event));
         parked = true;
       }
@@ -264,7 +248,9 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     const instance = await units.live.load(process, instanceId);
     if (followsUp(process, instance, event)) return handle(process, event, instanceId);
     const ended = instance.exists
-      ? instance.status === "completed" || instance.status === "timed_out"
+      ? instance.status === "completed" ||
+        instance.status === "timed_out" ||
+        instance.status === "abandoned"
       : !startsOn(process, event);
     if (ended) return "done";
     if (
