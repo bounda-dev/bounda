@@ -379,6 +379,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       const tables = await holder`SELECT tablename FROM pg_tables WHERE schemaname = ${schema}`;
       expect(tables.map(({ tablename }) => tablename).sort()).toEqual([
         `t${run}_${prefixes}_forget_ledger`,
+        `t${run}_${prefixes}_forget_ledger_marks`,
         `t${run}_${prefixes}_migrations`,
       ]);
       await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
