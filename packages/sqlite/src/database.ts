@@ -17,8 +17,16 @@ export interface CreateSqliteDatabaseOptions {
   readonly wal: boolean;
 }
 
+export interface LibsqlConnection extends SqliteConnection<Client> {
+  /**
+   * Resolves once no statement or transaction it started is still running: closing the client
+   * under one frees what libSQL's native code is still using.
+   */
+  settled(): Promise<void>;
+}
+
 export interface CreateSqliteDatabaseFunction {
-  (client: Client, options: CreateSqliteDatabaseOptions): SqliteConnection<Client>;
+  (client: Client, options: CreateSqliteDatabaseOptions): LibsqlConnection;
 }
 
 const toRows = (result: ResultSet): readonly Record<string, unknown>[] =>
@@ -52,6 +60,15 @@ const QUEUED_METHODS: ReadonlySet<PropertyKey> = new Set(["execute", "batch", "e
 
 export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { local, wal }) => {
   const serially = createSerialQueue();
+  const running = new Set<Promise<unknown>>();
+  const tracked = <T>(work: Promise<T>): Promise<T> => {
+    running.add(work);
+    const done = (): void => {
+      running.delete(work);
+    };
+    work.then(done, done);
+    return work;
+  };
   let ready: Promise<void> | undefined;
   const prepared = <T>(task: () => Promise<T>): Promise<T> => {
     if (ready === undefined && wal) {
@@ -66,7 +83,7 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
     return ready === undefined ? task() : ready.then(task);
   };
   const outside = <T>(task: () => Promise<T>): Promise<T> =>
-    prepared(() => (local ? serially(task) : task()));
+    tracked(prepared(() => (local ? serially(task) : task())));
   const direct = executorOf(client);
   const raw = local
     ? new Proxy(client, {
@@ -83,24 +100,29 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
   return {
     raw,
     isBusy,
+    settled: async () => {
+      while (running.size > 0) await Promise.allSettled([...running]);
+    },
     db: {
       run: (sql, params) => outside(() => direct.run(sql, params)),
       all: (sql, params) => outside(() => direct.all(sql, params)),
       // One write transaction at a time within the process, so it never waits on the engine's busy
       // handler for another transaction of its own.
       write: (work) =>
-        prepared(() =>
-          serially(async () => {
-            const transaction = await client.transaction("write");
-            try {
-              const result = await work({ ...executorOf(transaction), raw: transaction });
-              await transaction.commit();
-              return result;
-            } catch (error) {
-              await transaction.rollback();
-              throw error;
-            }
-          }),
+        tracked(
+          prepared(() =>
+            serially(async () => {
+              const transaction = await client.transaction("write");
+              try {
+                const result = await work({ ...executorOf(transaction), raw: transaction });
+                await transaction.commit();
+                return result;
+              } catch (error) {
+                await transaction.rollback();
+                throw error;
+              }
+            }),
+          ),
         ),
     },
   };
