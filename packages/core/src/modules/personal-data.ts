@@ -1,5 +1,5 @@
 import type { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
-import type { DurationInput } from "../contracts/duration.ts";
+import type { RetentionInput } from "../contracts/duration.ts";
 import type { AppPersonalCategory } from "../register/index.ts";
 
 /**
@@ -30,12 +30,14 @@ export const LEGAL_BASES: readonly LegalBasis[] = [
 /**
  * A category of personal data as `app/personal-data.ts` declares it: why it is processed, and for
  * how long after the person's last activity it is kept, after which the runtime forgets it, as
- * `forget(person, { categories })` does, with `reason: "retention"`. A duration string or
- * milliseconds, as the configuration's durations.
+ * `forget(person, { categories })` does, with `reason: "retention"`: a duration string or
+ * milliseconds, as the configuration's durations, or whole calendar months or years, `"6y"`,
+ * which end on the same day of the month, or at the end of the month's last day when it has no
+ * such day.
  */
 export interface PersonalDataCategory {
   readonly basis: LegalBasis;
-  readonly retention: DurationInput;
+  readonly retention: RetentionInput;
 }
 
 /**

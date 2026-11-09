@@ -22,7 +22,7 @@ import {
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
-const personalCategories = buildPersonalCategories({ module: undefined, retentionMs: null });
+const personalCategories = buildPersonalCategories({ module: undefined, retention: null });
 
 const setUp = async (registry: Registry = orderRegistry) => {
   const harness = await createKernelHarness({ registry });

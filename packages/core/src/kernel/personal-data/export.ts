@@ -2,6 +2,7 @@ import type { ReadModelStorage } from "../../adapter/adapter.ts";
 import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { LegalBasis } from "../../modules/personal-data.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
@@ -12,7 +13,7 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import type { ReadModelPersonalData, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { isRecord } from "../shared/merge-fields.ts";
-import { formatDuration, type PersonalCategories } from "./categories.ts";
+import { formatRetention, type PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
@@ -211,22 +212,22 @@ const categoriesOf = async (
 ): Promise<Readonly<Record<string, ExportedCategory>>> => {
   const held = await storage.personalKeys.list(personId);
   return Object.fromEntries(
-    categories.all.map(({ name, basis, retentionMs }) => {
-      const kept = held
-        .filter(
-          ({ category, retainedSince, lastActiveAt }) =>
-            category === name && retainedSince !== null && lastActiveAt !== null,
-        )
-        .map(({ lastActiveAt }) => Date.parse(lastActiveAt ?? "") + (retentionMs ?? 0));
+    categories.all.map(({ name, basis, retention }) => {
+      const kept =
+        retention === null
+          ? []
+          : held
+              .filter(
+                ({ category, retainedSince, lastActiveAt }) =>
+                  category === name && retainedSince !== null && lastActiveAt !== null,
+              )
+              .map(({ lastActiveAt }) => retentionEnd(Date.parse(lastActiveAt ?? ""), retention));
       return [
         name,
         {
           basis,
-          retention: retentionMs === null ? null : formatDuration(retentionMs),
-          restrictedUntil:
-            kept.length === 0 || retentionMs === null
-              ? null
-              : new Date(Math.max(...kept)).toISOString(),
+          retention: retention === null ? null : formatRetention(retention),
+          restrictedUntil: kept.length === 0 ? null : new Date(Math.max(...kept)).toISOString(),
         },
       ];
     }),

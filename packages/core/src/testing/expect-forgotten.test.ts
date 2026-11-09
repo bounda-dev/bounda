@@ -948,7 +948,7 @@ describe("expectForgotten by categories", () => {
     personalData: {
       categories: {
         marketing: { basis: "consent", retention: "730d" },
-        invoices: { basis: "legal-obligation", retention: "2192d" },
+        invoices: { basis: "legal-obligation", retention: "6y" },
       },
     },
   } as unknown as Registry;

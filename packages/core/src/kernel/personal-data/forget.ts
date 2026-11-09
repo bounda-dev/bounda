@@ -1,6 +1,7 @@
 import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredDispatch } from "../../contracts/command.ts";
+import { type Retention, retentionEnd } from "../../contracts/duration.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -62,11 +63,11 @@ export interface ForgetWithinFunction {
 // short; a person never seen active is taken as active now.
 const keptUntil = async (
   args: ForgetWithinArgs,
-  retentionMs: number,
+  retention: Retention,
   activity: () => Promise<string | null>,
 ): Promise<{ readonly lastActiveAt: string; readonly until: number }> => {
   const lastActiveAt = (await activity()) ?? args.clock.now().toISOString();
-  return { lastActiveAt, until: Date.parse(lastActiveAt) + retentionMs };
+  return { lastActiveAt, until: retentionEnd(Date.parse(lastActiveAt), retention) };
 };
 
 /**
@@ -111,12 +112,8 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
   let destroyed = 0;
   for (const { category, key, retainedSince } of asked) {
     const basis = categories.of(category);
-    if (
-      scope.kind !== "keys" &&
-      basis?.basis === "legal-obligation" &&
-      basis.retentionMs !== null
-    ) {
-      const kept = await keptUntil(args, basis.retentionMs, lastActive);
+    if (scope.kind !== "keys" && basis?.basis === "legal-obligation" && basis.retention !== null) {
+      const kept = await keptUntil(args, basis.retention, lastActive);
       if (kept.until > now.getTime()) {
         await transaction.personalKeys.retain(personId, key.fingerprint, {
           since: now.toISOString(),

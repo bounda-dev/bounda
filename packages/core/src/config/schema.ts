@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isAdapterDefinition } from "../adapter/adapter-definition.ts";
-import { parseDuration } from "../contracts/duration.ts";
+import { parseDuration, parseRetention } from "../contracts/duration.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import {
   type ForgetLedgerSource,
@@ -51,6 +51,17 @@ const duration = z.union([z.number(), z.string()]).transform((value, context) =>
 
 const timeout = duration.refine((milliseconds) => milliseconds > 0, {
   message: "Expected a duration longer than 0",
+});
+
+const retention = z.union([z.number(), z.string()]).transform((value, context) => {
+  try {
+    const parsed = parseRetention(value);
+    if (parsed.months > 0 || parsed.ms > 0) return parsed;
+    context.addIssue({ code: "custom", message: "Expected a retention longer than 0" });
+  } catch (error) {
+    context.addIssue({ code: "custom", message: (error as Error).message });
+  }
+  return z.NEVER;
 });
 
 const adapter = z.custom<Config["storage"]>(isAdapterDefinition, {
@@ -139,7 +150,7 @@ const runtime = z.strictObject({
     .optional(),
   personalData: z
     .strictObject({
-      retention: timeout.optional(),
+      retention: retention.optional(),
       keyWrapper: z
         .custom<KeyWrapperDefinition>(isKeyWrapperDefinition, {
           message: 'Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
@@ -294,7 +305,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
         },
       },
       personalData: {
-        retentionMs: parsed.runtime?.personalData?.retention ?? null,
+        retention: parsed.runtime?.personalData?.retention ?? null,
         keyWrapper: parsed.runtime?.personalData?.keyWrapper ?? null,
         forgetLedger: resolveForgetLedger(parsed.runtime?.personalData?.forgetLedger),
       },

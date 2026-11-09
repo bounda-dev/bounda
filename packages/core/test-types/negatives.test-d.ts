@@ -7,6 +7,7 @@ import {
   type ForgetsPersonalData,
   type ImplementationModule,
   type Instant,
+  type PersonalDataCategory,
   type PolicyModule,
   type ProcessDeadlineField,
   type ProcessHandlerReturnCheck,
@@ -265,6 +266,10 @@ describe("what does not compile", () => {
     ];
     void forget;
     type Expect<Check extends true> = Check;
+    const year: PersonalDataCategory = { basis: "legal-obligation", retention: "6y" };
+    // @ts-expect-error a retention takes days, months or years, never weeks
+    const weeks: PersonalDataCategory = { basis: "consent", retention: "2w" };
+    void [year, weeks];
     type DeclaresDefault = {
       readonly categories: { readonly default: { basis: "consent"; retention: "1d" } };
     };

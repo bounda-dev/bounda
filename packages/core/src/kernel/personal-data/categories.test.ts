@@ -5,14 +5,14 @@ import {
   buildPersonalCategories,
   checkCategory,
   checkMarkedCategories,
-  formatDuration,
+  formatRetention,
 } from "./categories.ts";
 
 const module = (categories: unknown): PersonalDataModule => ({ categories }) as PersonalDataModule;
 
 const refusal = (categories: unknown): string => {
   try {
-    buildPersonalCategories({ module: module(categories), retentionMs: null });
+    buildPersonalCategories({ module: module(categories), retention: null });
   } catch (error) {
     expect(error).toBeInstanceOf(ConfigurationError);
     return (error as Error).message;
@@ -26,25 +26,25 @@ describe("buildPersonalCategories", () => {
       module: {
         categories: {
           profile: { basis: "contract", retention: "30d" },
-          invoices: { basis: "legal-obligation", retention: 1_000 },
+          invoices: { basis: "legal-obligation", retention: "6y" },
         },
       },
-      retentionMs: 5_000,
+      retention: { months: 0, ms: 5_000 },
     });
     expect(categories.all).toEqual([
-      { name: "default", basis: null, retentionMs: 5_000 },
-      { name: "profile", basis: "contract", retentionMs: 2_592_000_000 },
-      { name: "invoices", basis: "legal-obligation", retentionMs: 1_000 },
+      { name: "default", basis: null, retention: { months: 0, ms: 5_000 } },
+      { name: "profile", basis: "contract", retention: { months: 0, ms: 2_592_000_000 } },
+      { name: "invoices", basis: "legal-obligation", retention: { months: 72, ms: 0 } },
     ]);
     expect(categories.declared.map(({ name }) => name)).toEqual(["profile", "invoices"]);
     expect(categories.of("invoices")?.basis).toBe("legal-obligation");
-    expect(categories.of("default")?.retentionMs).toBe(5_000);
+    expect(categories.of("default")?.retention).toEqual({ months: 0, ms: 5_000 });
     expect(categories.of("nope")).toBeUndefined();
   });
 
   it("has the default category alone without app/personal-data.ts", () => {
-    const categories = buildPersonalCategories({ module: undefined, retentionMs: null });
-    expect(categories.all).toEqual([{ name: "default", basis: null, retentionMs: null }]);
+    const categories = buildPersonalCategories({ module: undefined, retention: null });
+    expect(categories.all).toEqual([{ name: "default", basis: null, retention: null }]);
     expect(categories.declared).toEqual([]);
   });
 
@@ -65,7 +65,7 @@ describe("buildPersonalCategories", () => {
     );
     expect(refusal({ "a-1": null })).toContain("must name its basis");
     expect(refusal({ profile: { basis: "consent", retention: "a month" } })).toBe(
-      'app/personal-data.ts: category "profile" must give its retention as a duration, such as "30d", or milliseconds',
+      'app/personal-data.ts: category "profile" must give its retention as a duration, such as "30d", milliseconds, or whole months or years, such as "6y"',
     );
     expect(refusal({ profile: { basis: "consent", retention: 0 } })).toBe(
       'app/personal-data.ts: category "profile" must keep its data for more than no time',
@@ -73,16 +73,16 @@ describe("buildPersonalCategories", () => {
     expect(
       buildPersonalCategories({
         module: module({ p: { basis: "consent", retention: 1 } }),
-        retentionMs: null,
-      }).of("p")?.retentionMs,
-    ).toBe(1);
+        retention: null,
+      }).of("p")?.retention,
+    ).toEqual({ months: 0, ms: 1 });
   });
 });
 
 describe("checkMarkedCategories", () => {
   const categories = buildPersonalCategories({
     module: { categories: { profile: { basis: "consent", retention: "1d" } } },
-    retentionMs: null,
+    retention: null,
   });
   const marked = (fields: Record<string, string>) => ({ personal: { categories: fields } });
   const check = (
@@ -162,13 +162,17 @@ describe("checkMarkedCategories", () => {
   });
 });
 
-describe("formatDuration", () => {
-  it("writes a duration in the largest unit that divides it", () => {
-    expect(formatDuration(2 * 86_400_000)).toBe("2d");
-    expect(formatDuration(3 * 3_600_000)).toBe("3h");
-    expect(formatDuration(90 * 60_000)).toBe("90m");
-    expect(formatDuration(5_000)).toBe("5s");
-    expect(formatDuration(1_500)).toBe("1500ms");
-    expect(formatDuration(0)).toBe("0d");
+describe("formatRetention", () => {
+  it("writes a retention in the largest unit that divides it", () => {
+    const ms = (value: number) => formatRetention({ months: 0, ms: value });
+    expect(ms(2 * 86_400_000)).toBe("2d");
+    expect(ms(3 * 3_600_000)).toBe("3h");
+    expect(ms(90 * 60_000)).toBe("90m");
+    expect(ms(5_000)).toBe("5s");
+    expect(ms(1_500)).toBe("1500ms");
+    expect(ms(0)).toBe("0d");
+    expect(formatRetention({ months: 72, ms: 0 })).toBe("6y");
+    expect(formatRetention({ months: 18, ms: 0 })).toBe("18mo");
+    expect(formatRetention({ months: 1, ms: 0 })).toBe("1mo");
   });
 });

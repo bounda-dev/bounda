@@ -9,6 +9,7 @@ import type {
 } from "../../adapter/storage/person-store.ts";
 import type { DueKey, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import { type Retention, retentionEnd, retentionStart } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -131,7 +132,7 @@ type Outcome = "forgotten" | "skipped" | "undone";
 // What a list of things to forget is read through: persons idle past the app's retention, or the
 // keys of one category idle past its own.
 interface Sweepable<Due> {
-  readonly retentionMs: number;
+  readonly retention: Retention;
   list(args: {
     readonly activeBefore?: Date;
     readonly releasedBy?: Date;
@@ -234,8 +235,8 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     return "forgotten";
   };
 
-  const persons = (retentionMs: number): Sweepable<StoredPerson> => ({
-    retentionMs,
+  const persons = (retention: Retention): Sweepable<StoredPerson> => ({
+    retention,
     list: (args) => storage.persons.listIdle(args),
     nextHoldEnd: (after) => storage.persons.nextHoldEnd(after),
     lastActiveAt: (person) => person.lastActiveAt,
@@ -259,9 +260,9 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
     describe: (person) => ({ personId: person.person }),
   });
 
-  const keysOf = (category: PersonalCategory & { readonly retentionMs: number }) =>
+  const keysOf = (category: PersonalCategory & { readonly retention: Retention }) =>
     ({
-      retentionMs: category.retentionMs,
+      retention: category.retention,
       list: (args) => storage.personalKeys.listDue({ ...args, category: category.name }),
       nextHoldEnd: (after) =>
         storage.personalKeys.nextDueHoldEnd({ category: category.name, after }),
@@ -343,7 +344,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   ): Promise<{ readonly forgotten: number; readonly kept: boolean }> => {
     const at = now.getTime();
     const due = await sweepable.list({
-      activeBefore: new Date(at - sweepable.retentionMs),
+      activeBefore: new Date(retentionStart(at, sweepable.retention)),
       releasedBy: now,
       limit: RETENTION_SWEEP_LIMIT,
     });
@@ -364,11 +365,11 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
 
   // The default category's retention is the app's, which forgets persons as a whole.
   const runners: readonly Runner[] = categories.all.flatMap((category) => {
-    const { retentionMs } = category;
-    if (retentionMs === null) return [];
+    const { retention } = category;
+    if (retention === null) return [];
     return category.basis === null
-      ? [runnerOf(persons(retentionMs))]
-      : [runnerOf(keysOf({ ...category, retentionMs }))];
+      ? [runnerOf(persons(retention))]
+      : [runnerOf(keysOf({ ...category, retention }))];
   });
 
   const sweep = async (now: Date): Promise<number> => {
@@ -397,7 +398,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
       const lastActiveAt = due === undefined ? null : sweepable.lastActiveAt(due);
       return lastActiveAt === null
         ? Number.POSITIVE_INFINITY
-        : Date.parse(lastActiveAt) + sweepable.retentionMs;
+        : retentionEnd(Date.parse(lastActiveAt), sweepable.retention);
     };
     const [first] = await sweepable.list({ limit: 1 });
     if (first === undefined || isReleasedBy(sweepable.holdOf(first), now)) {
@@ -439,4 +440,4 @@ export interface RetainsFunction {
  * declared, since every declared category has a retention.
  */
 export const retains: RetainsFunction = (categories) =>
-  categories.all.some(({ retentionMs }) => retentionMs !== null);
+  categories.all.some(({ retention }) => retention !== null);

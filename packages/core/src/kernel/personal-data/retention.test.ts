@@ -3,6 +3,7 @@ import type { Storage } from "../../adapter/adapter.ts";
 import type { StoredPerson } from "../../adapter/storage/person-store.ts";
 import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
+import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
@@ -60,7 +61,11 @@ const day = (position: number): string =>
 const categoriesOf = (
   retentionMs: number | null,
   module?: PersonalDataModule,
-): PersonalCategories => buildPersonalCategories({ module, retentionMs });
+): PersonalCategories =>
+  buildPersonalCategories({
+    module,
+    retention: retentionMs === null ? null : { months: 0, ms: retentionMs },
+  });
 
 const noKeys = { touch: async () => undefined };
 
@@ -868,6 +873,24 @@ describe("createRetentionSweep", () => {
     expect((await storage.persons.get("c-1"))?.forgottenAt).toBeNull();
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(await sweep.nextDueAt()).toBeNull();
+  });
+
+  it("counts a retention in calendar months to the very moment it ends, never a day early", async () => {
+    const { storage, sweep, record, touch, clock } = await setUp(undefined, {
+      retentionMs: null,
+      module: { categories: { profile: { basis: "consent", retention: "1mo" } } },
+    });
+    await storage.personalKeys.add("c-1", "profile", testPersonalKey("2"));
+    await touch("c-1");
+    await record();
+    const lastActiveAt = (await storage.personalKeys.find("c-1", testPersonalKey("2").fingerprint))
+      ?.lastActiveAt;
+    const ends = retentionEnd(Date.parse(lastActiveAt ?? ""), { months: 1, ms: 0 });
+    expect(await sweep.nextDueAt()).toEqual(new Date(ends));
+    clock.set(new Date(ends - 1));
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    clock.set(new Date(ends));
+    expect(await sweep.sweep(clock.now())).toBe(1);
   });
 
   it("destroys a key retained under a legal obligation once its retention runs out from the activity it froze", async () => {

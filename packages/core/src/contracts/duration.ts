@@ -66,3 +66,110 @@ export const asDuration: AsDurationFunction = (input) => {
   parseDuration(input);
   return input as DurationInput;
 };
+
+/**
+ * The units a retention takes besides a duration's: months and years of the calendar.
+ */
+export type CalendarUnit = "mo" | "y";
+
+/**
+ * A retention as users write it: milliseconds, a duration string, or a whole number of calendar
+ * months or years, `"6mo"`, `"6y"`, which a legal period is usually given in and which days
+ * cannot say, leap years and months of unequal length being what they are.
+ */
+export type RetentionInput = DurationInput | `${number}${CalendarUnit}`;
+
+/**
+ * A retention as the runtime counts it: calendar months, or milliseconds, one of them `0`.
+ */
+export interface Retention {
+  readonly months: number;
+  readonly ms: number;
+}
+
+const CALENDAR_PATTERN = /^(\d+)(mo|y)$/;
+
+export interface ParseRetentionFunction {
+  (input: LooseDurationInput): Retention;
+}
+
+/**
+ * Throws `ValidationError` for anything but a duration or a whole number of months or years.
+ */
+export const parseRetention: ParseRetentionFunction = (input) => {
+  const match = typeof input === "string" ? CALENDAR_PATTERN.exec(input) : null;
+  if (match === null) {
+    if (typeof input === "string" && /^\d+(?:\.\d+)?(mo|y)$/.test(input)) {
+      throw new ValidationError(`Invalid retention: "${input}"`, [
+        { path: [], message: "Expected a whole number of months or years" },
+      ]);
+    }
+    return { months: 0, ms: parseDuration(input) };
+  }
+  const [, amount, unit] = match;
+  return { months: Number(amount) * (unit === "y" ? 12 : 1), ms: 0 };
+};
+
+const lastDayOf = (year: number, month: number): number =>
+  new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+
+const endOfMonth = (year: number, month: number): number =>
+  Date.UTC(year, month, lastDayOf(year, month), 23, 59, 59, 999);
+
+// The same day and time `months` later; a day the month lacks, as the 29th of February six years
+// on, becomes the very end of the month's last day, so a period is never cut short and a later
+// start never ends earlier.
+const addMonths = (time: number, months: number): number => {
+  const at = new Date(time);
+  const year = at.getUTCFullYear();
+  const month = at.getUTCMonth() + months;
+  const day = at.getUTCDate();
+  if (day > lastDayOf(year, month)) return endOfMonth(year, month);
+  return Date.UTC(
+    year,
+    month,
+    day,
+    at.getUTCHours(),
+    at.getUTCMinutes(),
+    at.getUTCSeconds(),
+    at.getUTCMilliseconds(),
+  );
+};
+
+export interface RetentionEndFunction {
+  (start: number, retention: Retention): number;
+}
+
+/**
+ * When a retention that starts at `start` ends, in milliseconds.
+ */
+export const retentionEnd: RetentionEndFunction = (start, { months, ms }) =>
+  addMonths(start, months) + ms;
+
+export interface RetentionStartFunction {
+  (end: number, retention: Retention): number;
+}
+
+/**
+ * The latest start whose retention has ended by `end`: every start at or before it has ended,
+ * every later one has not.
+ */
+export const retentionStart: RetentionStartFunction = (end, { months, ms }) => {
+  const by = end - ms;
+  if (months === 0) return by;
+  const at = new Date(by);
+  const year = at.getUTCFullYear();
+  const month = at.getUTCMonth() - months;
+  // Starts on days the end's month lacks end at the very end of its last day.
+  const endsTheMonth = by === endOfMonth(year, at.getUTCMonth());
+  if (endsTheMonth || at.getUTCDate() > lastDayOf(year, month)) return endOfMonth(year, month);
+  return Date.UTC(
+    year,
+    month,
+    at.getUTCDate(),
+    at.getUTCHours(),
+    at.getUTCMinutes(),
+    at.getUTCSeconds(),
+    at.getUTCMilliseconds(),
+  );
+};

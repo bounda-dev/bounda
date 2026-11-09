@@ -81,6 +81,7 @@ import type {
   RejectFunction,
   RejectionCodeOf,
   RemovedDeadLetter,
+  RetentionInput,
   ScheduledDispatch,
   SetFilter,
   StoredDispatch,
@@ -765,8 +766,9 @@ describe("personal data", () => {
     expectTypeOf<PersonalData.Categories>().toEqualTypeOf<PersonalDataCategories>();
     expectTypeOf<PersonalDataCategory>().toEqualTypeOf<{
       readonly basis: LegalBasis;
-      readonly retention: DurationInput;
+      readonly retention: RetentionInput;
     }>();
+    expectTypeOf<RetentionInput>().toEqualTypeOf<DurationInput | `${number}mo` | `${number}y`>();
     expectTypeOf<LegalBasis>().toEqualTypeOf<
       | "consent"
       | "contract"

@@ -15,10 +15,13 @@ export type {
 export { MAX_IDEMPOTENCY_KEY_LENGTH } from "./command.ts";
 export type {
   AsDurationFunction,
+  CalendarUnit,
   DurationInput,
   DurationString,
   DurationUnit,
   LooseDurationInput,
+  Retention,
+  RetentionInput,
 } from "./duration.ts";
 export { asDuration } from "./duration.ts";
 export {

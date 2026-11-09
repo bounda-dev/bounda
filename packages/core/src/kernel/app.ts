@@ -502,7 +502,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     opened.unshift(() => readModels.close());
     const personalCategories = buildPersonalCategories({
       module: registry.personalData,
-      retentionMs: config.runtime.personalData.retentionMs,
+      retention: config.runtime.personalData.retention,
     });
     checkMarkedCategories({
       categories: personalCategories,

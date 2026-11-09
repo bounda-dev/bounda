@@ -34,7 +34,7 @@ const loggingErrors = (errors: unknown[]): Logger => ({
 });
 
 const NOW = new Date("2026-03-01T00:00:00.000Z");
-const NO_CATEGORIES = buildPersonalCategories({ module: undefined, retentionMs: null });
+const NO_CATEGORIES = buildPersonalCategories({ module: undefined, retention: null });
 const EVERY = 5 * 60_000;
 
 const keyed = async (storage: Storage, persons: readonly string[]): Promise<void> => {
@@ -638,7 +638,7 @@ describe("forgetAgain", () => {
           invoices: { basis: "legal-obligation", retention: "30d" },
         },
       },
-      retentionMs: null,
+      retention: null,
     });
     await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
     await storage.personalKeys.add("c-1", "profile", testPersonalKey("2"));

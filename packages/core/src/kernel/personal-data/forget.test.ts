@@ -37,7 +37,7 @@ const setup = async (storage?: Storage, module?: PersonalDataModule) => {
       clock,
       logger,
       concurrencyRetries: 2,
-      categories: buildPersonalCategories({ module, retentionMs: null }),
+      categories: buildPersonalCategories({ module, retention: null }),
       batchSize: 10,
       personId,
       options,

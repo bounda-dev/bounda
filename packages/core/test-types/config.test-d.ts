@@ -220,6 +220,8 @@ describe("defineConfig", () => {
     });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: "30d" } } });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: 86_400_000 } } });
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: "6y" } } });
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: "18mo" } } });
     defineConfig({
       storage: sqlite,
       ports,

@@ -1,5 +1,5 @@
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
-import { parseDuration } from "../../contracts/duration.ts";
+import { parseRetention, type Retention } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import {
   LEGAL_BASES,
@@ -9,13 +9,13 @@ import {
 
 /**
  * A category as the runtime uses it: its basis, `null` for the default category, which declares
- * none, and its retention in milliseconds, `null` when nothing forgets it for inactivity, as the
- * default category without `runtime.personalData.retention`.
+ * none, and its retention, `null` when nothing forgets it for inactivity, as the default category
+ * without `runtime.personalData.retention`.
  */
 export interface PersonalCategory {
   readonly name: string;
   readonly basis: LegalBasis | null;
-  readonly retentionMs: number | null;
+  readonly retention: Retention | null;
 }
 
 /**
@@ -36,7 +36,7 @@ export interface BuildPersonalCategoriesArgs {
   /**
    * `runtime.personalData.retention`, the default category's.
    */
-  readonly retentionMs: number | null;
+  readonly retention: Retention | null;
 }
 
 export interface BuildPersonalCategoriesFunction {
@@ -68,18 +68,18 @@ const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] 
         `${at} must name its basis, one of ${LEGAL_BASES.map((basis) => `"${basis}"`).join(", ")}`,
       );
     }
-    let retentionMs: number;
+    let retention: Retention;
     try {
-      retentionMs = parseDuration(category.retention);
+      retention = parseRetention(category.retention);
     } catch {
       throw new ConfigurationError(
-        `${at} must give its retention as a duration, such as "30d", or milliseconds`,
+        `${at} must give its retention as a duration, such as "30d", milliseconds, or whole months or years, such as "6y"`,
       );
     }
-    if (retentionMs <= 0) {
+    if (retention.months === 0 && retention.ms <= 0) {
       throw new ConfigurationError(`${at} must keep its data for more than no time`);
     }
-    return { name, basis: category.basis, retentionMs };
+    return { name, basis: category.basis, retention };
   });
 };
 
@@ -87,13 +87,10 @@ const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] 
  * Throws `ConfigurationError` for a declaration the types would have refused, for a project that
  * skipped the type check.
  */
-export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({
-  module,
-  retentionMs,
-}) => {
+export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ module, retention }) => {
   const declared = declaredIn(module);
   const all: PersonalCategory[] = [
-    { name: DEFAULT_PERSONAL_CATEGORY, basis: null, retentionMs },
+    { name: DEFAULT_PERSONAL_CATEGORY, basis: null, retention },
     ...declared,
   ];
   const byName = new Map(all.map((category) => [category.name, category]));
@@ -120,8 +117,8 @@ export const checkCategory: CheckCategoryFunction = ({ categories, category, at 
   );
 };
 
-export interface FormatDurationFunction {
-  (ms: number): string;
+export interface FormatRetentionFunction {
+  (retention: Retention): string;
 }
 
 const UNITS: readonly (readonly [string, number])[] = [
@@ -132,9 +129,10 @@ const UNITS: readonly (readonly [string, number])[] = [
 ];
 
 /**
- * A duration as configuration writes it, in the largest unit that divides it.
+ * A retention as configuration writes it, in the largest unit that divides it.
  */
-export const formatDuration: FormatDurationFunction = (ms) => {
+export const formatRetention: FormatRetentionFunction = ({ months, ms }) => {
+  if (months > 0) return months % 12 === 0 ? `${months / 12}y` : `${months}mo`;
   for (const [unit, size] of UNITS) {
     if (ms % size === 0) return `${ms / size}${unit}`;
   }

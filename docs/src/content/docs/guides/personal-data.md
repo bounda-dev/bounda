@@ -62,14 +62,17 @@ import type { PersonalData } from "./+types/personal-data";
 export const categories = {
   profile: { basis: "contract", retention: "30d" },
   marketing: { basis: "consent", retention: "730d" },
-  invoices: { basis: "legal-obligation", retention: "2192d" },
+  invoices: { basis: "legal-obligation", retention: "6y" },
 } satisfies PersonalData.Categories;
 ```
 
 The basis is one of `consent`, `contract`, `legal-obligation`, `vital-interests`, `public-task` and
 `legitimate-interests`. The retention is how long the category is kept after the person's last
-activity, a duration as the configuration writes them, in days for years: six years with their
-leap days are `"2192d"`. A field takes a category with `personal`'s second argument, and a read
+activity: a duration as the configuration writes them, `"30d"`, or whole calendar months or
+years, `"18mo"`, `"6y"`, which a legal period is given in. A calendar period ends on the same day of
+the month and at the same time, leap years and months of unequal length counted as they fall; a day
+the end's month lacks, as the 29th of February six years on, ends at the very end of that month's
+last day, so a period is never cut short. `runtime.personalData.retention` takes the same. A field takes a category with `personal`'s second argument, and a read
 model's field with `.personal`'s:
 
 ```ts
@@ -367,7 +370,7 @@ person, for them to take away, as the right of access and the right to portabili
   categories: {
     default: { basis: null, retention: "730d", restrictedUntil: null },
     profile: { basis: "contract", retention: "30d", restrictedUntil: null },
-    invoices: { basis: "legal-obligation", retention: "2192d", restrictedUntil: null },
+    invoices: { basis: "legal-obligation", retention: "6y", restrictedUntil: null },
   },
   events: [
     { id, type: "CustomerRegistered", aggregateType: "customer", aggregateId: "c-42",

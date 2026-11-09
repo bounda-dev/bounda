@@ -104,7 +104,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
 
 ### Personal data
 
-- **`personalData.retention`**, none by default. How long a person may go without an event of the
+- **`personalData.retention`**, none by default. How long, a duration or whole calendar months or
+  years such as `"6y"`, a person may go without an event of the
   app's aggregates naming them before the runtime forgets them, as `forget` does, with `reason:
   "retention"`, every category but those a legal obligation keeps: the retention of the default
   category. Each category `app/personal-data.ts` declares has its own retention besides, see

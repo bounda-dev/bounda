@@ -107,7 +107,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   const policies = buildPolicies({ registry, aggregates });
   const personalCategories = buildPersonalCategories({
     module: registry.personalData,
-    retentionMs: config.runtime.personalData.retentionMs,
+    retention: config.runtime.personalData.retention,
   });
   const policyExecutor = createPolicyExecutor({
     aggregates,

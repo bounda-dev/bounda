@@ -117,7 +117,7 @@ const registry: Registry = {
 
 const categories = buildPersonalCategories({
   module: registry.personalData,
-  retentionMs: 30 * DAY,
+  retention: { months: 0, ms: 30 * DAY },
 });
 
 const exportedCategories = {
@@ -657,7 +657,7 @@ describe("exportPersonalData", () => {
       processes: { byName: {} },
       clock: createFixedClock(),
       batchSize: 2,
-      categories: buildPersonalCategories({ module: undefined, retentionMs: null }),
+      categories: buildPersonalCategories({ module: undefined, retention: null }),
       personId: "c-1",
     });
     expect(exported.categories).toEqual({
