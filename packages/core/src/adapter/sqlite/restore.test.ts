@@ -9,7 +9,10 @@ import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { Adapter } from "../adapter.ts";
 import { restoreContract } from "../testing/restore.contract.ts";
-import { createNodeSqliteAdapter } from "./node-sqlite.ts";
+import {
+  type NodeSqliteAdapter,
+  createNodeSqliteAdapter as openNodeSqlite,
+} from "./node-sqlite.ts";
 
 let directory: string;
 let files = 0;
@@ -18,7 +21,18 @@ beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "bounda-restore-"));
 });
 
+// The adapter leaves its connection to whoever opened it, as a test helper: each is closed here,
+// before the directory goes, since Windows cannot delete a file still open.
+const opened: NodeSqliteAdapter[] = [];
+
+const createNodeSqliteAdapter = (path: string): NodeSqliteAdapter => {
+  const sqlite = openNodeSqlite(path);
+  opened.push(sqlite);
+  return sqlite;
+};
+
 afterAll(async () => {
+  for (const { db } of opened.splice(0)) db.close();
   await rm(directory, { recursive: true, force: true });
 });
 
