@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
-import type { RecordAccessArgs } from "../personal-data/access.ts";
 import { createPersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
 import { createSubscriberFailures } from "./subscriber-failures.ts";
 
@@ -18,15 +17,15 @@ describe("createSubscriberFailures", () => {
       errorMessage: "x is not a function",
       failedAt: "2026-01-01T00:00:00.000Z",
     });
-    const records: RecordAccessArgs<"subscriberFailures.list" | "subscriberFailures.get">[] = [];
+    const records: { readonly operation: string; readonly persons: Iterable<string> }[] = [];
     const failures = createSubscriberFailures({
       store: storage.subscriberFailures,
       keys: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }).over(
         storage.personalKeys,
       ),
       actor: "ops-1",
-      recordAccess: async (args) => {
-        records.push(args as (typeof records)[number]);
+      recordAccess: async ({ operation, persons }) => {
+        records.push({ operation, persons });
       },
       errorText: "omit",
     });
