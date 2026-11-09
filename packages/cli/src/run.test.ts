@@ -972,6 +972,28 @@ export default { storage: adapter };
     }
   });
 
+  it("prints the text a migration fails on under BOUNDA_ERROR_TEXT, and refuses a value it does not know before migrating", async () => {
+    const root = await migrating();
+    process.env.REFUSE_MIGRATION = "1";
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      const told = await cli(["migrate", "--root", root], repoRoot);
+      expect(told.code).toBe(EXIT_FAILURE);
+      expect(told.stderr).toContain("ana@example.com");
+      Reflect.deleteProperty(globalThis, "migratedScopes");
+      process.env.BOUNDA_ERROR_TEXT = "loud";
+      const refused = await cli(["migrate", "--root", root], repoRoot);
+      expect(refused.code).toBe(EXIT_FAILURE);
+      expect(refused.stderr).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+      expect(Reflect.get(globalThis, "migratedScopes")).toBeUndefined();
+    } finally {
+      delete process.env.REFUSE_MIGRATION;
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+  });
+
   it("exits 2 with the reason when the configuration is not there", async () => {
     const root = await mkdtemp(join(tmpdir(), "bounda-cli-migrate-"));
     temporary.push(root);
