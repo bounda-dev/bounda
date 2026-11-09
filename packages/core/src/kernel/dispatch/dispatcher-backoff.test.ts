@@ -98,6 +98,22 @@ describe("the dispatcher's backoff", () => {
     expect(attemptsAt).toEqual([100, 1_100, 3_100, 7_100, 11_100]);
   });
 
+  it("forgets every failure it met after a restore, so each is tried again at once", async () => {
+    const poisoned = scripted("projection:poisoned", [failed, failed, failed]);
+    const { clock, dispatcher } = await setUp([poisoned]);
+    await dispatcher.processOnce();
+    await dispatcher.processOnce();
+    expect(await failingOf(dispatcher, "projection:poisoned")).toMatchObject({ attempts: 2 });
+    dispatcher.restored();
+    expect(await failingOf(dispatcher, "projection:poisoned")).toBeUndefined();
+    await dispatcher.catchUp("projection");
+    expect(poisoned.deliveries).toBe(3);
+    expect(await failingOf(dispatcher, "projection:poisoned")).toMatchObject({
+      attempts: 1,
+      since: clock.now().toISOString(),
+    });
+  });
+
   it("says what a subscriber is stuck on, since when and when it is tried again, until it recovers", async () => {
     const poisoned = scripted("projection:poisoned", [failed, failed, { outcome: "advanced" }]);
     const { clock, dispatcher } = await setUp([poisoned]);

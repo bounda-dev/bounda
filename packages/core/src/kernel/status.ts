@@ -87,14 +87,18 @@ export interface ReadAppStatusFunction {
   (args: ReadAppStatusArgs): Promise<AppStatus>;
 }
 
-interface Database {
+export interface Database {
   readonly database: string;
   readonly adapter: Adapter;
   readonly scopes: readonly SchemaScopeName[];
 }
 
+export interface DatabasesOfFunction {
+  (config: ResolvedConfig): readonly Database[];
+}
+
 // Each database the configuration names, once, with the scopes it keeps there.
-const databasesOf = (config: ResolvedConfig): readonly Database[] => {
+export const databasesOf: DatabasesOfFunction = (config) => {
   const databases: Database[] = [];
   if (isAdapter(config.storage)) {
     databases.push({
@@ -114,8 +118,13 @@ const databasesOf = (config: ResolvedConfig): readonly Database[] => {
   return databases;
 };
 
-const schemaOf = async ({ database, adapter, scopes }: Database): Promise<SchemaStatus[]> =>
-  (await adapter.schemaVersions())
+export interface SchemaOfFunction {
+  (database: Database, versions: readonly SchemaVersion[]): SchemaStatus[];
+}
+
+// The versions of the scopes the database keeps, named after it.
+export const schemaOf: SchemaOfFunction = ({ database, scopes }, versions) =>
+  versions
     .filter(({ scope }) => (scopes as readonly string[]).includes(scope))
     .map((version) => ({ database, ...version }));
 
@@ -132,7 +141,11 @@ export const readAppStatus: ReadAppStatusFunction = async ({
 }) => {
   const [schema, restoresFound, current, stored, forgetLedger, keyRotation, retained, purged] =
     await Promise.all([
-      Promise.all(databasesOf(config).map(schemaOf)).then((all) => all.flat()),
+      Promise.all(
+        databasesOf(config).map(async (database) =>
+          schemaOf(database, await database.adapter.schemaVersions()),
+        ),
+      ).then((all) => all.flat()),
       restores.found(),
       lag(),
       failures.list(),

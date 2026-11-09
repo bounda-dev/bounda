@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
@@ -223,5 +226,33 @@ describe("a database restored while the app runs", () => {
       .filter((event) => event.type === "PersonalDataForgotten")
       .map((event) => (event.payload as PersonalDataForgottenPayload).reason);
     expect(reasons).toEqual(["restored"]);
+  });
+
+  it("tells every running instance, the first that found it once", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "bounda-restore-")), "store.db");
+    const one = createNodeSqliteAdapter(file);
+    const other = createNodeSqliteAdapter(file);
+    const firstLogger = recordingLogger();
+    const otherLogger = recordingLogger();
+    const first = await start({ adapter: one.adapter, logger: firstLogger });
+    const second = await start({ adapter: other.adapter, logger: otherLogger });
+    await first.app.runUntilIdle();
+    await second.app.runUntilIdle();
+    const copy = copyOf(one.db);
+    first.clock.advance(GENERATION_INTERVAL_MS);
+    second.clock.advance(GENERATION_INTERVAL_MS);
+    await first.app.runUntilIdle();
+    await second.app.runUntilIdle();
+    restore(one.db, copy);
+    await first.app.runUntilIdle();
+    await second.app.runUntilIdle();
+    const restarts = (logger: { readonly logged: Logged[] }) =>
+      logger.logged.filter(
+        ({ message }) =>
+          message === "the database went back to an earlier copy; background jobs start over",
+      );
+    expect(restarts(firstLogger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect(restarts(otherLogger).map(({ fields }) => fields)).toEqual([{ first: false }]);
+    expect((await second.app.status()).restoresFound).toBe(1);
   });
 });
