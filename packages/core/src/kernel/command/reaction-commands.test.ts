@@ -5,6 +5,7 @@ import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { buildPersonalCategories } from "../personal-data/categories.ts";
 import { boundForgetLedger } from "../personal-data/forget-ledger.ts";
 import { createForgetIntentions } from "../personal-data/intention.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
@@ -26,6 +27,8 @@ import {
 
 const context = { correlationId: "req-1", causationId: "evt-1", depth: 4 };
 
+const personalCategories = buildPersonalCategories({ module: undefined, retention: null });
+
 const setUp = async (registry: Registry = orderRegistry) => {
   const harness = await createKernelHarness({ registry });
   const unit = createUnitOfWork({ storage: harness.storage });
@@ -42,6 +45,8 @@ const setUp = async (registry: Registry = orderRegistry) => {
     clock: harness.clock,
     intentions: withoutLedger({ ids, clock: harness.clock }),
     maxChainDepth: 5,
+    personalCategories,
+    batchSize: 10,
   });
   return { ...harness, reaction, unit, entries };
 };
@@ -67,6 +72,8 @@ const withLedger = async () => {
     logger,
     ids,
     clock: harness.clock,
+    personalCategories,
+    batchSize: 10,
     intentions: createForgetIntentions({
       ledger: {
         store: boundForgetLedger({
@@ -75,7 +82,7 @@ const withLedger = async () => {
             raiseMark: async () => undefined,
             append: async (appended) => {
               recorded.push(...appended);
-              keysAtRecord.push(await harness.storage.personalKeys.get("c-1"));
+              keysAtRecord.push(await harness.storage.personalKeys.get("c-1", "default"));
             },
             read: async () => [],
           },
@@ -374,14 +381,14 @@ describe("createReactionCommands", () => {
 
   it("forgets a person when the unit commits, once however often the run names them", async () => {
     const { reaction, storage, unit, entries } = await setUp();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", "default", { key: "k", fingerprint: "f", kid: null });
     await reaction.forget("c-1");
     await reaction.forget("c-1");
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
     expect(await forgottenEvents(storage)).toEqual([]);
     await unit.commit();
 
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
     const [forgotten, ...more] = await forgottenEvents(storage);
     expect(more).toEqual([]);
     expect(forgotten).toMatchObject({
@@ -391,6 +398,10 @@ describe("createReactionCommands", () => {
       payload: {
         personId: "c-1",
         reason: "requested",
+        whole: true,
+        categories: ["default"],
+        retained: [],
+        expired: [],
         cancelledCommands: [],
         removedDeadLetters: [],
       },
@@ -402,7 +413,11 @@ describe("createReactionCommands", () => {
       fields: {
         personId: "c-1",
         reason: "requested",
-        hadKey: true,
+        whole: true,
+        categories: ["default"],
+        retained: [],
+        expired: [],
+        destroyedKeys: 1,
         cancelledCommands: 0,
         removedDeadLetters: 0,
       },
@@ -411,7 +426,11 @@ describe("createReactionCommands", () => {
 
   it("records the forgetting's intention in the ledger just before the commit's transaction", async () => {
     const { harness, unit, reaction, recorded, keysAtRecord } = await withLedger();
-    await harness.storage.personalKeys.add("c-1", { key: "k", fingerprint: "f-1", kid: null });
+    await harness.storage.personalKeys.add("c-1", "default", {
+      key: "k",
+      fingerprint: "f-1",
+      kid: null,
+    });
     await reaction.forget("c-1");
     expect(recorded).toEqual([]);
     await unit.commit();
@@ -420,6 +439,7 @@ describe("createReactionCommands", () => {
     expect(recorded).toEqual([
       {
         personId: "c-1",
+        categories: null,
         eventId: forgotten?.id,
         forgottenAt: forgotten?.timestamp,
         reason: "requested",
@@ -432,11 +452,15 @@ describe("createReactionCommands", () => {
     const { harness, unit, reaction, recorded } = await withLedger();
     await reaction.forget("c-1");
     unit.beforeCommit(async () => {
-      await harness.storage.personalKeys.add("c-1", { key: "k", fingerprint: "f-2", kid: null });
+      await harness.storage.personalKeys.add("c-1", "default", {
+        key: "k",
+        fingerprint: "f-2",
+        kid: null,
+      });
     });
     await unit.commit();
     expect(recorded.map(({ fingerprints }) => fingerprints)).toEqual([[]]);
-    expect(await harness.storage.personalKeys.get("c-1")).toBeNull();
+    expect(await harness.storage.personalKeys.get("c-1", "default")).toBeNull();
     const [forgotten] = await forgottenEvents(harness.storage);
     expect(forgotten).toMatchObject({
       id: recorded[0]?.eventId,
@@ -471,10 +495,29 @@ describe("createReactionCommands", () => {
 
   it("forgets nobody for a unit that never commits", async () => {
     const { reaction, storage } = await setUp();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", "default", { key: "k", fingerprint: "f", kid: null });
     await reaction.forget("c-1");
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
     expect(await forgottenEvents(storage)).toEqual([]);
+  });
+
+  it("forgets the categories asked for apart from the person as a whole, once each", async () => {
+    const { reaction, storage, unit } = await setUp();
+    await reaction.forget("c-1", { categories: ["default"] });
+    await reaction.forget("c-1", { categories: ["default"] });
+    await reaction.forget("c-1");
+    await unit.commit();
+    expect((await forgottenEvents(storage)).map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({ whole: false, categories: ["default"] }),
+      expect.objectContaining({ whole: true, categories: ["default"] }),
+    ]);
+  });
+
+  it("refuses a category the app does not have before the unit commits", async () => {
+    const { reaction } = await setUp();
+    await expect(
+      reaction.forget("c-1", { categories: ["profile"] as unknown as ["default"] }),
+    ).rejects.toThrow('forget names categories the app does not have: "profile"');
   });
 
   it("refuses to forget an empty id, and once the run is abandoned or has finished", async () => {
@@ -504,6 +547,8 @@ describe("createReactionCommands", () => {
       clock: harness.clock,
       intentions: withoutLedger({ ids: deepIds, clock: harness.clock }),
       maxChainDepth: 5,
+      personalCategories,
+      batchSize: 10,
     });
     await expect(deep.forget("c-1")).rejects.toMatchObject({
       code: "CHAIN_DEPTH_EXCEEDED",

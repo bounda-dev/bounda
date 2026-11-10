@@ -45,8 +45,8 @@ describe("checkSqlAppend", () => {
   it("reads the key rows of the persons named with a key and the rows of those touched, each once, locked when asked", async () => {
     const { tx, statements } = recording({
       keys: [
-        { person: "c-1", fingerprint: "f-1" },
-        { person: "c-2", fingerprint: "f-2" },
+        { person: "c-1", fingerprint: "f-1", retained_since: null },
+        { person: "c-2", fingerprint: "f-2", retained_since: null },
       ],
       persons: [{ person: "c-3", restricted_since: null }],
     });
@@ -67,7 +67,7 @@ describe("checkSqlAppend", () => {
     });
     expect(statements).toEqual([
       [
-        `SELECT "person", "fingerprint" FROM keys WHERE "person" IN ($1, $2) FOR SHARE`,
+        `SELECT "person", "fingerprint", "retained_since" FROM keys WHERE "person" IN ($1, $2) FOR SHARE`,
         ["c-1", "c-2"],
       ],
       [
@@ -79,7 +79,7 @@ describe("checkSqlAppend", () => {
 
   it("refuses on what it read: a restricted person, or a key no longer held", async () => {
     const { tx, statements } = recording({
-      keys: [{ person: "c-1", fingerprint: "f-new" }],
+      keys: [{ person: "c-1", fingerprint: "f-new", retained_since: null }],
       persons: [{ person: "c-2", restricted_since: "2026-01-01T00:00:00.000Z" }],
     });
     await expect(
@@ -109,5 +109,26 @@ describe("checkSqlAppend", () => {
     expect(statements[0]?.[0]).toBe(
       `SELECT "person", "restricted_since" FROM persons WHERE "person" IN ($1)`,
     );
+  });
+
+  it("refuses a key kept past a forgetting where it was read in force, and lets it through where it was read retained", async () => {
+    const { tx } = recording({
+      keys: [{ person: "c-1", fingerprint: "f-1", retained_since: "2026-01-01T00:00:00.000Z" }],
+    });
+    const check = (retained: boolean) =>
+      checkSqlAppend({
+        tx,
+        dialect: postgresqlDialect,
+        tables,
+        args: append({
+          persons: [
+            retained
+              ? { person: "c-1", fingerprint: "f-1", retained: true }
+              : { person: "c-1", fingerprint: "f-1" },
+          ],
+        }),
+      });
+    await expect(check(false)).rejects.toBeInstanceOf(ForgottenSinceLoadError);
+    await expect(check(true)).resolves.toBeUndefined();
   });
 });

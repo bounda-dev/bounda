@@ -67,7 +67,7 @@ describe("resolveConfig", () => {
         backoff: { baseDelayMs: 1_000, maxDelayMs: 30_000 },
         catchUp: { timeoutMs: 2_000, pollIntervalMs: 15 },
       },
-      personalData: { retentionMs: null, keyWrapper: null, forgetLedger: null },
+      personalData: { retention: null, keyWrapper: null, forgetLedger: null },
       deadLetters: { retentionMs: null },
       telemetry: { errorText: "omit" },
       overrides: {},
@@ -130,7 +130,7 @@ describe("resolveConfig", () => {
       catchUp: { timeoutMs: 5_000, pollIntervalMs: 50 },
     });
     expect(resolved.runtime.personalData).toEqual({
-      retentionMs: 2_592_000_000,
+      retention: { months: 0, ms: 2_592_000_000 },
       keyWrapper,
       forgetLedger: {
         store: forgetLedger,
@@ -272,8 +272,18 @@ describe("resolveConfig", () => {
       message({ storage: sqlite, runtime: { processes: { handlerTimeout: "0s" } } }),
     ).toContain("runtime.processes.handlerTimeout: Expected a duration longer than 0");
     expect(message({ storage: sqlite, runtime: { personalData: { retention: 0 } } })).toContain(
-      "runtime.personalData.retention: Expected a duration longer than 0",
+      "runtime.personalData.retention: Expected a retention longer than 0",
     );
+    expect(
+      message({ storage: sqlite, runtime: { personalData: { retention: "1.5y" as "1y" } } }),
+    ).toContain("runtime.personalData.retention: Invalid retention");
+    expect(message({ storage: sqlite, runtime: { personalData: { retention: "0mo" } } })).toContain(
+      "runtime.personalData.retention: Expected a retention longer than 0",
+    );
+    expect(
+      resolveConfig({ storage: sqlite, runtime: { personalData: { retention: "1mo" } } }).runtime
+        .personalData.retention,
+    ).toEqual({ months: 1, ms: 0 });
     expect(message({ storage: sqlite, runtime: { deadLetters: { retention: 0 } } })).toContain(
       "runtime.deadLetters.retention: Expected a duration longer than 0",
     );

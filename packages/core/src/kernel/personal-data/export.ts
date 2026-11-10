@@ -1,7 +1,11 @@
 import type { ReadModelStorage } from "../../adapter/adapter.ts";
 import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { LegalBasis } from "../../modules/personal-data.ts";
+import type { FieldsRecord } from "../../modules/view.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
@@ -9,9 +13,10 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import type { ReadModelPersonalData, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { isRecord } from "../shared/merge-fields.ts";
+import { formatRetention, type PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
-import type { PersonalMarks } from "./marks.ts";
+import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
 import { checkPersonId } from "./transact.ts";
 
@@ -20,6 +25,23 @@ import { checkPersonId } from "./transact.ts";
  * one the payload never had is left out.
  */
 export type ExportedData = Readonly<Record<string, unknown>>;
+
+/**
+ * The category of each field of `data`, by field, which the export's `categories` describes.
+ */
+export type ExportedCategories = Readonly<Record<string, string>>;
+
+/**
+ * A category of the app as the export tells the person of it (article 15(1) of the GDPR): why it
+ * is processed, `null` for the default category, which declares no basis, and for how long after
+ * their last activity it is kept, `null` when nothing forgets it for inactivity. `restrictedUntil`
+ * is when what a forgetting kept of it under a legal obligation goes, `null` when it kept nothing.
+ */
+export interface ExportedCategory {
+  readonly basis: LegalBasis | null;
+  readonly retention: string | null;
+  readonly restrictedUntil: string | null;
+}
 
 /**
  * An event that names the person, with the personal fields it holds of them and nothing else of
@@ -34,6 +56,7 @@ export interface ExportedEvent {
   readonly position: number;
   readonly timestamp: string;
   readonly data: ExportedData;
+  readonly categories: ExportedCategories;
 }
 
 /**
@@ -44,6 +67,7 @@ export interface ExportedScheduledCommand {
   readonly type: string;
   readonly executeAt: string;
   readonly data: ExportedData;
+  readonly categories: ExportedCategories;
 }
 
 /**
@@ -68,6 +92,7 @@ export interface ExportedDeadLetter {
    */
   readonly errorStack?: string | null;
   readonly data: ExportedData;
+  readonly categories: ExportedCategories;
 }
 
 /**
@@ -89,6 +114,7 @@ export interface ExportedSubscriberFailure {
 export interface ExportedRow {
   readonly key: unknown;
   readonly data: ExportedData;
+  readonly categories: ExportedCategories;
 }
 
 /**
@@ -103,6 +129,10 @@ export interface PersonalDataExport {
    * When the export was taken, on the app's clock.
    */
   readonly exportedAt: string;
+  /**
+   * Every category of the app, the default one included, by name.
+   */
+  readonly categories: Readonly<Record<string, ExportedCategory>>;
   readonly events: readonly ExportedEvent[];
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
@@ -126,6 +156,7 @@ export interface ExportPersonalDataArgs {
   readonly readModels: ReadModelsRuntime;
   readonly clock: Clock;
   readonly batchSize: number;
+  readonly categories: PersonalCategories;
   readonly personId: string;
 }
 
@@ -133,13 +164,18 @@ export interface ExportPersonalDataFunction {
   (args: ExportPersonalDataArgs): Promise<PersonalDataExport>;
 }
 
-const markedFields = (marks: PersonalMarks | null, payload: unknown): ExportedData => {
-  if (marks === null || !isRecord(payload)) return {};
-  return Object.fromEntries(
-    marks.fields
-      .filter((field) => payload[field] !== undefined)
-      .map((field) => [field, payload[field]]),
-  );
+interface Marked {
+  readonly data: ExportedData;
+  readonly categories: ExportedCategories;
+}
+
+const markedFields = (marks: PersonalMarks | null, payload: unknown): Marked => {
+  if (marks === null || !isRecord(payload)) return { data: {}, categories: {} };
+  const fields = marks.fields.filter((field) => payload[field] !== undefined);
+  return {
+    data: Object.fromEntries(fields.map((field) => [field, payload[field]])),
+    categories: Object.fromEntries(fields.map((field) => [field, fieldCategory(marks, field)])),
+  };
 };
 
 // Each read model through its own storage, which may be another adapter's. Paged by primary key
@@ -148,6 +184,7 @@ const markedFields = (marks: PersonalMarks | null, payload: unknown): ExportedDa
 const exportedRows = async (
   storage: ReadModelStorage,
   { person, personal, primaryKey }: ReadModelPersonalData,
+  fields: FieldsRecord,
   personId: string,
   batchSize: number,
 ): Promise<readonly ExportedRow[]> => {
@@ -164,10 +201,12 @@ const exportedRows = async (
       limit: batchSize,
     });
     for (const row of page) {
+      const held = personal.filter((field) => row[field] !== undefined);
       rows.push({
         key: row[primaryKey],
-        data: Object.fromEntries(
-          personal.filter((field) => row[field] !== undefined).map((field) => [field, row[field]]),
+        data: Object.fromEntries(held.map((field) => [field, row[field]])),
+        categories: Object.fromEntries(
+          held.map((field) => [field, fields[field]?.category ?? DEFAULT_PERSONAL_CATEGORY]),
         ),
       });
     }
@@ -178,6 +217,36 @@ const exportedRows = async (
   return rows;
 };
 
+// What a forgetting kept of a category goes once its retention has run from the activity it kept.
+const categoriesOf = async (
+  storage: AppStorage,
+  categories: PersonalCategories,
+  personId: string,
+): Promise<Readonly<Record<string, ExportedCategory>>> => {
+  const held = await storage.personalKeys.list(personId);
+  return Object.fromEntries(
+    categories.all.map(({ name, basis, retention }) => {
+      const kept =
+        retention === null
+          ? []
+          : held
+              .filter(
+                ({ category, retainedSince, lastActiveAt }) =>
+                  category === name && retainedSince !== null && lastActiveAt !== null,
+              )
+              .map(({ lastActiveAt }) => retentionEnd(Date.parse(lastActiveAt ?? ""), retention));
+      return [
+        name,
+        {
+          basis,
+          retention: retention === null ? null : formatRetention(retention),
+          restrictedUntil: kept.length === 0 ? null : new Date(Math.max(...kept)).toISOString(),
+        },
+      ];
+    }),
+  );
+};
+
 // Nothing is locked: the export holds what each store held as it was read.
 export const exportPersonalData: ExportPersonalDataFunction = async ({
   storage,
@@ -186,6 +255,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   readModels,
   clock,
   batchSize,
+  categories,
   personId,
 }) => {
   checkPersonId(personId, "exportPersonalData");
@@ -193,19 +263,20 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   // Independent of the store's records, and often on another adapter, so read meanwhile; a
   // failure of the store's reads first leaves this one handled, the export rejecting with that.
   const rows = Promise.all(
-    Object.values(readModels.byName).flatMap(({ name, storage: rowsStorage, personalData }) =>
-      personalData === null
-        ? []
-        : [
-            exportedRows(rowsStorage, personalData, personId, batchSize).then(
-              (exported) => [name, exported] as const,
-            ),
-          ],
+    Object.values(readModels.byName).flatMap(
+      ({ name, storage: rowsStorage, personalData, fields }) =>
+        personalData === null
+          ? []
+          : [
+              exportedRows(rowsStorage, personalData, fields, personId, batchSize).then(
+                (exported) => [name, exported] as const,
+              ),
+            ],
     ),
   );
   rows.catch(() => undefined);
   // A process's lifecycle event holds the fields its state marks, in that state.
-  const eventData = (event: StoredEvent): ExportedData => {
+  const eventData = (event: StoredEvent): Marked => {
     const process = processOfStream(event.aggregateType);
     if (process === null) {
       const marks = aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal;
@@ -221,7 +292,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   // Each person's key read once for the whole export.
   const keyOf = sealedKeys(storage.personalKeys);
   const openText = openTextWith(keyOf);
-  const openedData = async (type: string, payload: unknown): Promise<ExportedData> => {
+  const openedData = async (type: string, payload: unknown): Promise<Marked> => {
     const opened = await openCommandPayload({ payload, keys: storage.personalKeys, keyOf });
     return markedFields(commandMarks(type), opened.payload);
   };
@@ -237,7 +308,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
       ...(theirs && letter.errorStack !== undefined
         ? { errorStack: await openText(letter.errorStack) }
         : {}),
-      data: await openedData(letter.eventType, letter.payload),
+      ...(await openedData(letter.eventType, letter.payload)),
     };
   };
 
@@ -259,7 +330,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         version: event.version,
         position: event.position,
         timestamp: event.timestamp,
-        data: eventData(event),
+        ...eventData(event),
       });
       afterPosition = event.position;
     }
@@ -270,7 +341,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
       commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
       type: entry.command.type,
       executeAt: entry.executeAt,
-      data: await openedData(entry.command.type, entry.command.payload),
+      ...(await openedData(entry.command.type, entry.command.payload)),
     })),
   );
   const deadLetters = await Promise.all(
@@ -293,6 +364,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   return {
     personId,
     exportedAt,
+    categories: await categoriesOf(storage, categories, personId),
     events,
     scheduledCommands,
     deadLetters,

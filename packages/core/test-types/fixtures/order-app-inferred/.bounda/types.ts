@@ -36,4 +36,6 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<{
   readonly placeOrder: typeof import("../app/domain/order/commands/place-order.ts");
 }>;
 
+export type PersonalCategory = never;
+
 export type Queries = core.QueriesFacadeOf<Record<never, never>>;

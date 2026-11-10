@@ -61,20 +61,38 @@ describe("the forget ledger's outbox", () => {
         version: 1,
         type: "PersonalDataForgotten",
         id: "f-2",
+        payload: { whole: false, categories: ["profile"], retained: ["invoices"], expired: [] },
+      }),
+      stored(6, {
+        aggregateType: "bounda",
+        aggregateId: "c-3",
+        version: 1,
+        type: "PersonalDataForgotten",
+        id: "f-3",
+        payload: { whole: false, categories: [], retained: [], expired: ["invoices"] },
       }),
     ];
-    expect(await outbox.process(events, span)).toBe(5);
+    expect(await outbox.process(events, span)).toBe(6);
     expect(appended).toEqual([
       [
         {
           personId: "c-1",
+          categories: null,
           eventId: "f-1",
           forgottenAt: "2026-01-01T00:00:00.000Z",
           reason: "requested",
         },
         {
           personId: "c-2",
+          categories: ["profile", "invoices"],
           eventId: "f-2",
+          forgottenAt: "2026-01-01T00:00:00.000Z",
+          reason: "requested",
+        },
+        {
+          personId: "c-3",
+          categories: [],
+          eventId: "f-3",
           forgottenAt: "2026-01-01T00:00:00.000Z",
           reason: "requested",
         },
@@ -118,6 +136,7 @@ describe("the forget ledger's outbox", () => {
       [
         {
           personId: "c-3",
+          categories: null,
           eventId: "f-3",
           forgottenAt: "2026-01-01T00:01:00.001Z",
           reason: "requested",
@@ -146,6 +165,7 @@ describe("a forgetting's entry", () => {
       forgettingEntry(forgetting({ personId: "c-1", reason: "retention", fingerprints: ["k-1"] })),
     ).toEqual({
       personId: "c-1",
+      categories: null,
       eventId: "f-1",
       forgottenAt: "2026-01-01T00:00:00.000Z",
       reason: "retention",
@@ -217,6 +237,7 @@ describe("a forget ledger's source", () => {
     await ledger?.append([
       {
         personId: "c-1",
+        categories: null,
         eventId: "e-1",
         forgottenAt: "2026-01-01T00:00:00.000Z",
         reason: "requested",
@@ -281,6 +302,7 @@ describe("the wait for the forget ledger", () => {
 describe("the forget ledger bound by its timeout", () => {
   const entry = {
     personId: "c-1",
+    categories: null,
     eventId: "e-1",
     forgottenAt: "2026-01-01T00:00:00.000Z",
     reason: "requested" as const,

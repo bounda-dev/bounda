@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ForgottenSinceLoadError } from "../../adapter/storage/append-checks.ts";
 import type { AppendArgs } from "../../adapter/storage/event-store.ts";
-import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import {
+  DEFAULT_PERSONAL_CATEGORY,
+  type KeyedPerson,
+  type PersonalKeyStore,
+  type SealedValue,
+} from "../../adapter/storage/personal-key-store.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import {
   ConcurrencyError,
@@ -15,7 +20,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { keysOver, newStoredKey } from "../test-support.ts";
+import { keysOver, newStoredKey, removeKeys } from "../test-support.ts";
 import { isSealed } from "./crypto.ts";
 import { openedUnder, withPersonalData } from "./event-store.ts";
 
@@ -29,6 +34,15 @@ const registry: Registry = {
           evolve: () => ({}),
         },
         customerRenamed: { evolve: () => ({}) },
+        customerBilled: {
+          payload: ({ z, personal }: EventPayloadArgs) =>
+            z.object({
+              name: personal(z.string(), { category: "profile" }),
+              iban: personal(z.string(), { category: "invoices" }),
+              email: personal(z.email()).optional(),
+            }),
+          evolve: () => ({}),
+        },
       },
       commands: {},
       policies: {},
@@ -59,21 +73,19 @@ const setup = async () => {
   const storage = await memory().createStorage();
   const calls: string[] = [];
   const keys: PersonalKeyStore = {
-    get: async (person) => {
+    ...storage.personalKeys,
+    get: async (person, category) => {
       calls.push(`get:${person}`);
-      return storage.personalKeys.get(person);
+      return storage.personalKeys.get(person, category);
     },
-    add: async (person, key) => {
+    find: async (person, fingerprint) => {
+      calls.push(`find:${person}`);
+      return storage.personalKeys.find(person, fingerprint);
+    },
+    add: async (person, category, key) => {
       calls.push(`add:${person}`);
-      return storage.personalKeys.add(person, key);
+      return storage.personalKeys.add(person, category, key);
     },
-    remove: (person) => storage.personalKeys.remove(person),
-    listWrappedUnder: (args) => storage.personalKeys.listWrappedUnder(args),
-    rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
-    hold: (person, from, hold) => storage.personalKeys.hold(person, from, hold),
-    nextHoldEnd: (args) => storage.personalKeys.nextHoldEnd(args),
-    countWrappedUnder: (args) => storage.personalKeys.countWrappedUnder(args),
-    releaseHolds: () => storage.personalKeys.releaseHolds(),
   };
   const store = withPersonalData({
     eventStore: storage.eventStore,
@@ -110,7 +122,9 @@ describe("withPersonalData", () => {
     expect(isSealed(payload.email)).toBe(true);
     expect(JSON.stringify(stored)).not.toContain("ana@example.com");
     expect((payload.email as { $personal: { person: string } }).$personal.person).toBe("c-1");
-    expect((await storage.personalKeys.get("c-1"))?.fingerprint).toHaveLength(24);
+    expect(
+      (await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.fingerprint,
+    ).toHaveLength(24);
     const loaded = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
     expect(loaded.events[0]?.payload).toEqual({ email: "ana@example.com", plan: "pro" });
     expect((await store.readAll({ afterPosition: 0, limit: 10 }))[0]?.payload).toEqual({
@@ -139,8 +153,10 @@ describe("withPersonalData", () => {
     expect(payload.customerId).toBe("c-7");
     expect(isSealed(payload.address)).toBe(true);
     expect((payload.address as { $personal: { person: string } }).$personal.person).toBe("c-7");
-    expect((await storage.personalKeys.get("c-7"))?.fingerprint).toHaveLength(24);
-    expect(await storage.personalKeys.get("o-1")).toBeNull();
+    expect(
+      (await storage.personalKeys.get("c-7", DEFAULT_PERSONAL_CATEGORY))?.fingerprint,
+    ).toHaveLength(24);
+    expect(await storage.personalKeys.get("o-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
     const loaded = await store.load({ aggregateType: "order", aggregateId: "o-1" });
     expect(loaded.events[0]?.payload).toEqual({
       customerId: "c-7",
@@ -165,14 +181,14 @@ describe("withPersonalData", () => {
         placed({ customerId: "c-1", note: "ring twice", address: { street: "x" }, total: 1 }),
       ],
     });
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     const all = await store.readAll({ afterPosition: 0, limit: 10 });
     expect(all.map((event) => event.payload)).toEqual([
       { email: null, plan: "pro" },
       { customerId: "c-1", note: null, address: null, total: 1 },
     ]);
     const loaded = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
-    expect(loaded.fingerprints).toEqual(new Map());
+    expect(loaded.opened).toEqual([]);
   });
 
   it("reads what was sealed under a key the person no longer has as null, next to what their new key opens", async () => {
@@ -183,7 +199,7 @@ describe("withPersonalData", () => {
       expectedVersion: 0,
       events: [registered(1, "ana@example.com")],
     });
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     await store.append({
       aggregateType: "customer",
       aggregateId: "c-1",
@@ -195,8 +211,8 @@ describe("withPersonalData", () => {
       null,
       "ana@again.example",
     ]);
-    const again = await storage.personalKeys.get("c-1");
-    expect(loaded.fingerprints).toEqual(new Map([["c-1", again?.fingerprint]]));
+    const again = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(loaded.opened).toEqual([{ person: "c-1", fingerprint: again?.fingerprint }]);
   });
 
   it("seals a person the events were decided on only under the key they were read under", async () => {
@@ -207,13 +223,10 @@ describe("withPersonalData", () => {
       expectedVersion: 0,
       events: [registered(1, "ana@example.com")],
     });
-    const { fingerprints } = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
+    const { opened = [] } = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
     const other = await newStoredKey();
-    await storage.personalKeys.add("c-2", other);
-    const read = [
-      { person: "c-2", fingerprint: other.fingerprint },
-      { person: "c-1", fingerprint: fingerprints?.get("c-1") ?? "" },
-    ];
+    await storage.personalKeys.add("c-2", DEFAULT_PERSONAL_CATEGORY, other);
+    const read = [{ person: "c-2", fingerprint: other.fingerprint }, ...opened];
     const append = (version: number, persons: readonly KeyedPerson[]) =>
       store.append({
         aggregateType: "customer",
@@ -223,10 +236,10 @@ describe("withPersonalData", () => {
         persons,
       });
     await append(2, read);
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     calls.length = 0;
     const refused = await append(3, read).catch((error: unknown) => error);
-    expect(refused).toBeInstanceOf(ConcurrencyError);
+    expect(refused).toBeInstanceOf(ForgottenSinceLoadError);
     expect(refused).toMatchObject({
       code: "CONCURRENCY_CONFLICT",
       streamId: "customer:c-1",
@@ -234,26 +247,21 @@ describe("withPersonalData", () => {
       actualVersion: 2,
       message: "Person c-1 was forgotten since customer:c-1 was loaded at version 2",
     });
-    expect(calls).toEqual(["get:c-1"]);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
-
-    const fresh = await newStoredKey();
-    await storage.personalKeys.add("c-1", fresh);
-    await expect(append(3, read)).rejects.toBeInstanceOf(ConcurrencyError);
-    await expect(
-      append(3, [...read, { person: "c-1", fingerprint: fresh.fingerprint }]),
-    ).rejects.toBeInstanceOf(ConcurrencyError);
-    expect(await storage.personalKeys.get("c-1")).toEqual(fresh);
-    expect(
-      (await storage.eventStore.load({ aggregateType: "customer", aggregateId: "c-1" })).version,
-    ).toBe(2);
-
-    await append(3, [{ person: "c-1", fingerprint: fresh.fingerprint }, ...read.slice(0, 1)]);
-    await append(4, [{ person: "c-1", fingerprint: null }]);
-    await storage.personalKeys.remove("c-1");
+    expect(calls).toEqual(["find:c-1"]);
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
+    await append(3, [{ person: "c-1", fingerprint: null }]);
+    const fresh = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(fresh).not.toBeNull();
+    expect(read.map(({ fingerprint }) => fingerprint)).not.toContain(fresh?.fingerprint);
+    await expect(append(4, read)).rejects.toBeInstanceOf(ConcurrencyError);
+    await append(4, [
+      { person: "c-1", fingerprint: fresh?.fingerprint ?? null },
+      ...read.slice(0, 1),
+    ]);
+    await removeKeys(storage.personalKeys, "c-1");
     await append(5, [{ person: "c-1", fingerprint: null }]);
-    const created = await storage.personalKeys.get("c-1");
-    expect(created?.fingerprint).not.toBe(fresh.fingerprint);
+    const renewed = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(renewed?.fingerprint).not.toBe(fresh?.fingerprint);
     const loaded = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
     expect(loaded.events.map((event) => (event.payload as { email: unknown }).email)).toEqual([
       null,
@@ -287,7 +295,7 @@ describe("withPersonalData", () => {
       "ana@other.example",
       "ana@third.example",
     ]);
-    expect(calls).toEqual(["get:c-1"]);
+    expect(calls).toEqual(["find:c-1"]);
     const persons = new Set(
       (await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).map(
         (event) =>
@@ -299,12 +307,12 @@ describe("withPersonalData", () => {
 
   it("fails as a conflict when the key it sealed under is removed before the store writes", async () => {
     const { storage, registered } = await setup();
-    await storage.personalKeys.add("c-1", await newStoredKey());
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
     const forgetting: PersonalKeyStore = {
       ...storage.personalKeys,
-      get: async (person) => {
-        const read = await storage.personalKeys.get(person);
-        await storage.personalKeys.remove(person);
+      get: async (person, category) => {
+        const read = await storage.personalKeys.get(person, category);
+        if (read !== null) await storage.personalKeys.remove(person, read.fingerprint);
         return read;
       },
     };
@@ -330,9 +338,9 @@ describe("withPersonalData", () => {
     const { storage, store, registered, placed } = await setup();
     const restricting: PersonalKeyStore = {
       ...storage.personalKeys,
-      get: async (person) => {
+      get: async (person, category) => {
         await storage.persons.restrict(person, new Date());
-        return storage.personalKeys.get(person);
+        return storage.personalKeys.get(person, category);
       },
     };
     const refused = await withPersonalData({
@@ -387,7 +395,7 @@ describe("withPersonalData", () => {
       persons: [read],
       touches: ["c-4"],
     });
-    const key = await storage.personalKeys.get("c-2");
+    const key = await storage.personalKeys.get("c-2", DEFAULT_PERSONAL_CATEGORY);
     expect(appended[0]?.persons).toEqual([read, { person: "c-2", fingerprint: key?.fingerprint }]);
     expect(appended[0]?.touches).toEqual(["c-4", "c-2"]);
     await recording.append({
@@ -447,7 +455,7 @@ describe("withPersonalData", () => {
         }),
       ],
     });
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
     const read = [{ person: "c-1", fingerprint: key?.fingerprint }];
     const [registered, renamed] = await store.readAll({ afterPosition: 0, limit: 10 });
     expect(registered?.payload).toEqual({ email: "ana@example.com", plan: "free" });
@@ -459,7 +467,7 @@ describe("withPersonalData", () => {
       eventId: registered?.id ?? "",
     });
     expect(openedUnder(one as StoredEvent)).toEqual(read);
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     const [forgotten] = await store.readAll({ afterPosition: 0, limit: 1 });
     expect(openedUnder(forgotten as StoredEvent)).toEqual([]);
   });
@@ -467,18 +475,8 @@ describe("withPersonalData", () => {
   it("keeps the key another writer added first", async () => {
     const { storage, store, registered } = await setup();
     const first = { key: "Zmlyc3Q=", fingerprint: "first", kid: null };
-    await storage.personalKeys.add("c-1", first);
-    const concurrentKeys: PersonalKeyStore = {
-      get: async () => null,
-      add: (person, key) => storage.personalKeys.add(person, key),
-      remove: (person) => storage.personalKeys.remove(person),
-      listWrappedUnder: (args) => storage.personalKeys.listWrappedUnder(args),
-      rewrap: (person, from, to) => storage.personalKeys.rewrap(person, from, to),
-      hold: (person, from, hold) => storage.personalKeys.hold(person, from, hold),
-      nextHoldEnd: (args) => storage.personalKeys.nextHoldEnd(args),
-      countWrappedUnder: (args) => storage.personalKeys.countWrappedUnder(args),
-      releaseHolds: () => storage.personalKeys.releaseHolds(),
-    };
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, first);
+    const concurrentKeys: PersonalKeyStore = { ...storage.personalKeys, get: async () => null };
     await expect(
       withPersonalData({
         eventStore: storage.eventStore,
@@ -492,7 +490,7 @@ describe("withPersonalData", () => {
         events: [registered(1, "ana@example.com")],
       }),
     ).rejects.toThrow();
-    expect(await storage.personalKeys.get("c-1")).toEqual(first);
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toEqual(first);
     void store;
   });
 
@@ -582,7 +580,7 @@ describe("withPersonalData", () => {
       [1, { email: "ana@example.com", plan: "pro" }],
       [2, { customerId: "c-1", address: { street: "x" }, total: 1 }],
     ]);
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     const after = await store.readByPerson({ person: "c-1", afterPosition: 1, limit: 10 });
     expect(after.map((event) => event.payload)).toEqual([
       { customerId: "c-1", address: null, total: 1 },
@@ -665,14 +663,103 @@ describe("withPersonalData", () => {
       expectedVersion: 0,
       events: [placed({ customerId: 42, address: { street: "x" }, total: 1 })],
     });
-    expect((await storage.personalKeys.get("42"))?.fingerprint).toHaveLength(24);
+    expect(
+      (await storage.personalKeys.get("42", DEFAULT_PERSONAL_CATEGORY))?.fingerprint,
+    ).toHaveLength(24);
+  });
+
+  it("seals the fields of each category under the person's key of that category, and forgets one category alone", async () => {
+    const { storage, store } = await setup();
+    const billed = { name: "Ana", iban: "ES00", email: "ana@example.com" };
+    await store.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [
+        pendingEvent({
+          aggregateType: "customer",
+          aggregateId: "c-1",
+          version: 1,
+          type: "CustomerBilled",
+          payload: billed,
+        }),
+      ],
+    });
+    const [stored] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    const sealed = stored?.payload as Record<string, SealedValue>;
+    const keyOf = async (category: string) =>
+      (await storage.personalKeys.get("c-1", category))?.fingerprint;
+    const [profile, invoices, plain] = await Promise.all(
+      ["profile", "invoices", DEFAULT_PERSONAL_CATEGORY].map(keyOf),
+    );
+    expect(new Set([profile, invoices, plain]).size).toBe(3);
+    expect(sealed.name?.$personal).toMatchObject({ category: "profile", key: profile });
+    expect(sealed.iban?.$personal).toMatchObject({ category: "invoices", key: invoices });
+    expect(sealed.email?.$personal).toMatchObject({ key: plain });
+    expect(sealed.email?.$personal).not.toHaveProperty("category");
+
+    const loaded = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
+    expect(loaded.events[0]?.payload).toEqual(billed);
+    expect(loaded.opened).toHaveLength(3);
+    expect(openedUnder(loaded.events[0] as StoredEvent)).toEqual(
+      expect.arrayContaining([{ person: "c-1", fingerprint: invoices }]),
+    );
+
+    await storage.personalKeys.remove("c-1", invoices ?? "");
+    const after = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
+    expect(after.events[0]?.payload).toEqual({ ...billed, iban: null });
+    expect(after.opened?.map(({ fingerprint }) => fingerprint)).not.toContain(invoices);
+  });
+
+  it("opens what a key kept past a forgetting sealed, naming it retained, which the store checks as such", async () => {
+    const { storage, store, registered } = await setup();
+    await store.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [registered(1, "ana@example.com")],
+    });
+    const fingerprint =
+      (await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.fingerprint ?? "";
+    await storage.personalKeys.retain("c-1", fingerprint, {
+      since: "2026-01-01T00:00:00.000Z",
+      lastActiveAt: "2025-12-01T00:00:00.000Z",
+    });
+    const loaded = await store.load({ aggregateType: "customer", aggregateId: "c-1" });
+    expect(loaded.events[0]?.payload).toEqual({ email: "ana@example.com", plan: "pro" });
+    expect(loaded.opened).toEqual([{ person: "c-1", fingerprint, retained: true }]);
+    const append = (persons: readonly KeyedPerson[]) =>
+      store.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 1,
+        events: [registered(2, "ana@again.example")],
+        persons,
+      });
+    await expect(append([{ person: "c-1", fingerprint }])).rejects.toBeInstanceOf(
+      ForgottenSinceLoadError,
+    );
+    await append(loaded.opened ?? []);
+    const again = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(again?.fingerprint).not.toBe(fingerprint);
+    expect(
+      (await store.load({ aggregateType: "customer", aggregateId: "c-1" })).events.map(
+        (event) => (event.payload as { email: unknown }).email,
+      ),
+    ).toEqual(["ana@example.com", "ana@again.example"]);
   });
 });
 
 describe("withPersonalData on a process's lifecycle events", () => {
   const processes = {
     byName: {
-      "signup.onboarding": { personal: { person: "customerId", fields: ["email"] } },
+      "signup.onboarding": {
+        personal: {
+          person: "customerId",
+          fields: ["email"],
+          categories: { email: DEFAULT_PERSONAL_CATEGORY },
+        },
+      },
       "signup.plain": { personal: null },
     },
   } as unknown as Pick<ProcessesRuntime, "byName">;
@@ -715,15 +802,16 @@ describe("withPersonalData on a process's lifecycle events", () => {
     expect(stored?.person).toBe("c-1");
     expect(JSON.stringify(stored)).not.toContain("ana@example.com");
 
-    const fingerprint = (await storage.personalKeys.get("c-1"))?.fingerprint;
+    const fingerprint = (await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY))
+      ?.fingerprint;
     const loaded = await store.load(stream);
     expect(loaded.events[0]?.payload).toEqual({ state, eventId: "e-1" });
-    expect(loaded.fingerprints).toEqual(new Map([["c-1", fingerprint]]));
+    expect(loaded.opened).toEqual([{ person: "c-1", fingerprint }]);
     expect(openedUnder(loaded.events[0] as StoredEvent)).toEqual([{ person: "c-1", fingerprint }]);
     const [byPerson] = await store.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
     expect(byPerson?.payload).toEqual({ state, eventId: "e-1" });
 
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     expect((await store.load(stream)).events[0]?.payload).toEqual({
       state: { ...state, email: null },
       eventId: "e-1",
@@ -750,7 +838,7 @@ describe("withPersonalData on a process's lifecycle events", () => {
       [null, { state: { email: "a@b.c" } }],
       [null, { state: { email: "a@b.c" } }],
     ]);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
     expect(await store.readAll({ afterPosition: 0, limit: 10 })).toEqual(stored);
   });
 
@@ -789,8 +877,9 @@ describe("withPersonalData on a process's lifecycle events", () => {
     const { storage, lifecycle, append } = await lifecycleSetup();
     const state = { customerId: "c-1", email: "ana@example.com" };
     await append([lifecycle(1, "ProcessHandled", { state })]);
-    const fingerprint = (await storage.personalKeys.get("c-1"))?.fingerprint ?? null;
-    await storage.personalKeys.remove("c-1");
+    const fingerprint =
+      (await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.fingerprint ?? null;
+    await removeKeys(storage.personalKeys, "c-1");
 
     await expect(
       append([lifecycle(2, "ProcessHandled", { state })], {

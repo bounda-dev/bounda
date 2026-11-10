@@ -3,11 +3,12 @@ import type { ForgetLedgerEntry } from "../storage/forget-ledger.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
 import {
   createSqlForgetLedger,
+  forgetLedgerCategoriesStatement,
   forgetLedgerReasonStatements,
   forgetLedgerStatements,
 } from "./forget-ledger.ts";
 
-const recording = () => {
+const recording = (rows: readonly Record<string, unknown>[] = []) => {
   const statements: (readonly [string, readonly unknown[]])[] = [];
   const db = {
     run: async (sql: string, params: readonly unknown[]) => {
@@ -15,7 +16,7 @@ const recording = () => {
     },
     all: async (sql: string, params: readonly unknown[]) => {
       statements.push([sql, params]);
-      return [];
+      return rows;
     },
   };
   return { db, statements };
@@ -25,6 +26,7 @@ const entry = (index: number): ForgetLedgerEntry => ({
   personId: `c-${index}`,
   eventId: `e-${index}`,
   forgottenAt: "2026-01-01T00:00:00.000Z",
+  categories: index % 2 === 0 ? null : ["profile"],
   reason: "requested",
   fingerprints: [`k-${index}`],
 });
@@ -48,7 +50,16 @@ describe("the SQL forget ledger", () => {
     ]);
   });
 
-  it("inserts at most 16 entries a statement, each bound to its own numbered parameters", async () => {
+  it("adds the categories in a migration of their own, again harmlessly on PostgreSQL", () => {
+    expect(forgetLedgerCategoriesStatement(`"t_forget_ledger"`, postgresqlDialect)).toBe(
+      `ALTER TABLE "t_forget_ledger" ADD COLUMN IF NOT EXISTS "categories" TEXT`,
+    );
+    expect(forgetLedgerCategoriesStatement(`"t_forget_ledger"`, sqliteDialect)).toBe(
+      `ALTER TABLE "t_forget_ledger" ADD COLUMN "categories" TEXT`,
+    );
+  });
+
+  it("inserts at most 14 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -58,35 +69,74 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    const { fingerprints: _, ...unrecorded } = entry(16);
+    const { fingerprints: _, ...unrecorded } = entry(14);
     await ledger.append([
-      ...Array.from({ length: 16 }, (_, index) => entry(index)),
+      ...Array.from({ length: 14 }, (_, index) => entry(index)),
       { ...unrecorded, reason: "retention" },
     ]);
     expect(statements).toHaveLength(2);
     const [first, second] = statements;
     expect(first?.[0]).toContain(
-      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints") VALUES ($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12)`,
+      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories") VALUES ($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)`,
     );
-    expect(first?.[0]).toContain("($91, $92, $93, $94, $95, $96) ON CONFLICT");
-    expect(first?.[1]).toHaveLength(96);
-    expect(first?.[1].slice(0, 6)).toEqual([
+    expect(first?.[0]).toContain("($92, $93, $94, $95, $96, $97, $98) ON CONFLICT");
+    expect(first?.[1]).toHaveLength(98);
+    expect(first?.[1].slice(0, 14)).toEqual([
       "",
       "e-0",
       "c-0",
       "2026-01-01T00:00:00.000Z",
       "requested",
       `["k-0"]`,
+      null,
+      "",
+      "e-1",
+      "c-1",
+      "2026-01-01T00:00:00.000Z",
+      "requested",
+      `["k-1"]`,
+      `["profile"]`,
     ]);
-    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT`);
+    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT`);
     expect(second?.[1]).toEqual([
       "",
-      "e-16",
-      "c-16",
+      "e-14",
+      "c-14",
       "2026-01-01T00:00:00.000Z",
       "retention",
       null,
+      null,
     ]);
+  });
+
+  it("reads the categories of an entry back, null for a forgetting of the person as a whole", async () => {
+    const { db } = recording([
+      {
+        event_id: "e-0",
+        person: "c-0",
+        forgotten_at: "2026-01-01T00:00:00.000Z",
+        reason: "requested",
+        fingerprints: `["k-0"]`,
+        categories: null,
+      },
+      {
+        event_id: "e-1",
+        person: "c-1",
+        forgotten_at: "2026-01-01T00:00:00.000Z",
+        reason: "requested",
+        fingerprints: `["k-1"]`,
+        categories: `["profile"]`,
+      },
+    ]);
+    const ledger = createSqlForgetLedger({
+      db,
+      table: `"t"`,
+      dialect: sqliteDialect,
+      tenant: undefined,
+      ensureSchema: async () => {},
+      close: async () => {},
+    });
+    expect(await ledger.read({ limit: 2 })).toEqual([entry(0), entry(1)]);
   });
 
   it("creates its table before the first statement, and again after that failed", async () => {

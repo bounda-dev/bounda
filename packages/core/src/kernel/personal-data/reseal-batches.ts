@@ -5,9 +5,12 @@ import type { ScheduledCommand } from "../../adapter/storage/scheduler.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { seal } from "./crypto.ts";
+import { isRecord } from "../shared/merge-fields.ts";
+import { isSealed, type PersonalKey } from "./crypto.ts";
+import { sealUnderAll } from "./errors.ts";
 import { personOfEvent } from "./persons.ts";
 import {
+  type ChosenKey,
   createResealKeys,
   planEventReseal,
   planPayloadReseal,
@@ -104,11 +107,81 @@ const qualified = (event: StoredEvent): string => `${event.aggregateType}.${even
 
 const mergedPersons = (
   persons: readonly KeyedPerson[] | undefined,
-  added: KeyedPerson,
+  added: readonly KeyedPerson[],
 ): readonly KeyedPerson[] => {
   const merged = new Map((persons ?? []).map((held) => [keyedPersonId(held), held]));
-  merged.set(keyedPersonId(added), added);
+  for (const held of added) merged.set(keyedPersonId(held), held);
   return [...merged.values()];
+};
+
+interface Chosen {
+  readonly keys: ReadonlyMap<string, PersonalKey>;
+  readonly discarded: boolean;
+}
+
+// The key of each category a plan seals, chosen by `choose`.
+const chosenFor = async (
+  categories: readonly string[],
+  choose: (category: string) => Promise<ChosenKey>,
+): Promise<Chosen> => {
+  const keys = new Map<string, PersonalKey>();
+  let discarded = false;
+  for (const category of categories) {
+    const chosen = await choose(category);
+    keys.set(category, chosen.key);
+    discarded ||= chosen.discarded;
+  }
+  return { keys, discarded };
+};
+
+const keyOfChosen =
+  ({ keys }: Chosen) =>
+  (category: string): PersonalKey => {
+    const key = keys.get(category);
+    if (key === undefined) throw new Error(`No key was chosen for the category "${category}"`);
+    return key;
+  };
+
+// Whom a resealed payload names: who it named before, and the person under the keys its values
+// are sealed under now, but for a key a moved value left that none of its values is under any more.
+const personsAfter = (
+  persons: readonly KeyedPerson[] | undefined,
+  person: string,
+  payload: unknown,
+  movedFrom: readonly string[],
+): readonly KeyedPerson[] => {
+  const sealedUnder = new Set(
+    isRecord(payload)
+      ? Object.values(payload)
+          .filter(isSealed)
+          .filter(({ $personal }) => $personal.person === person)
+          .map(({ $personal }) => $personal.key)
+      : [],
+  );
+  return mergedPersons(
+    (persons ?? []).filter(
+      (held) =>
+        held.person !== person ||
+        held.fingerprint === null ||
+        !movedFrom.includes(held.fingerprint) ||
+        sealedUnder.has(held.fingerprint),
+    ),
+    [...sealedUnder].map((fingerprint) => ({ person, fingerprint })),
+  );
+};
+
+// A remembered rejection may quote a value read under the key it moved from, which forgetting its
+// new category would not reach: it is decided again instead.
+const dropCachedUnder = async (
+  transaction: StorageTransaction,
+  person: string,
+  movedFrom: ReadonlySet<string>,
+): Promise<void> => {
+  if (movedFrom.size === 0) return;
+  const keep = (await transaction.personalKeys.list(person))
+    .map(({ key }) => key.fingerprint)
+    .filter((fingerprint) => !movedFrom.has(fingerprint));
+  await transaction.idempotencyStore.forget(person, keep);
 };
 
 const unsealable = (count: number, types: Iterable<string>): Sealed => ({
@@ -144,7 +217,7 @@ export const createResealBatches: CreateResealBatchesFunction = ({
     }
     let sealed = NOTHING_SEALED;
     for (const [person, items] of byPerson) {
-      await outside.get(person);
+      await outside.list(person);
       sealed = addSealed(
         sealed,
         await storage.transact((transaction) =>
@@ -171,12 +244,18 @@ export const createResealBatches: CreateResealBatchesFunction = ({
       const discardedTypes = new Set<string>();
       const resealed = [];
       const streams = new Map<string, StoredEvent>();
+      const moved = new Set<string>();
       for (const { event, plan } of items) {
-        const chosen = await keys.event(plan.person, event.position);
+        const opened = await plan.opened(keys.open);
+        if (opened === null) continue;
+        for (const fingerprint of opened.movedFrom) moved.add(fingerprint);
+        const chosen = await chosenFor(opened.categories, (category) =>
+          keys.event(plan.person, category, event.position),
+        );
         if (chosen.discarded) discardedTypes.add(qualified(event));
         resealed.push({
           position: event.position,
-          payload: await plan.seal(chosen.key),
+          payload: await opened.seal(keyOfChosen(chosen)),
           person: plan.person,
           discarded: chosen.discarded,
         });
@@ -193,6 +272,8 @@ export const createResealBatches: CreateResealBatchesFunction = ({
       await transaction.eventStore.reseal(
         resealed.map(({ position, payload, person }) => ({ position, payload, person })),
       );
+      const [first] = items;
+      if (first !== undefined) await dropCachedUnder(transaction, first.plan.person, moved);
       // A snapshot folded from what was in the clear names nobody a forget would remove it for.
       for (const { aggregateType, aggregateId } of streams.values()) {
         if ((aggregates.byName[aggregateType]?.snapshot ?? null) === null) continue;
@@ -223,20 +304,24 @@ export const createResealBatches: CreateResealBatchesFunction = ({
     }
     const sealed = await perPerson(owned, async (items, transaction, keys) => {
       let discarded = 0;
+      let resealed = 0;
       for (const { entry, plan } of items) {
-        const chosen = await keys.payload(plan.person, null);
+        const opened = await plan.opened(keys.open);
+        if (opened === null) continue;
+        const chosen = await chosenFor(opened.categories, (category) =>
+          keys.payload(plan.person, category, null),
+        );
         if (chosen.discarded) discarded += 1;
+        const payload = await opened.seal(keyOfChosen(chosen));
         await transaction.scheduler.reseal({
           dedupeKey: entry.dedupeKey,
           from: entry.command.payload,
-          payload: await plan.seal(chosen.key),
-          persons: mergedPersons(entry.persons, {
-            person: plan.person,
-            fingerprint: chosen.key.fingerprint,
-          }),
+          payload,
+          persons: personsAfter(entry.persons, plan.person, payload, opened.movedFrom),
         });
+        resealed += 1;
       }
-      return { ...NOTHING_SEALED, resealed: items.length, discarded };
+      return { ...NOTHING_SEALED, resealed, discarded };
     });
     return addSealed(
       sealed,
@@ -292,23 +377,28 @@ export const createResealBatches: CreateResealBatchesFunction = ({
     let { person, errorMessage, errorStack, payload: stored, persons } = letter;
     let discarded = false;
     if (payload !== null) {
-      const chosen = await keys.payload(payload.person, letter.firstFailedAt);
-      discarded ||= chosen.discarded;
-      stored = await payload.seal(chosen.key);
-      persons = mergedPersons(persons, {
-        person: payload.person,
-        fingerprint: chosen.key.fingerprint,
-      });
+      const opened = await payload.opened(keys.open);
+      if (opened !== null) {
+        const chosen = await chosenFor(opened.categories, (category) =>
+          keys.payload(payload.person, category, letter.firstFailedAt),
+        );
+        discarded ||= chosen.discarded;
+        stored = await opened.seal(keyOfChosen(chosen));
+        persons = personsAfter(persons, payload.person, stored, opened.movedFrom);
+      }
     }
     if (text) {
-      const { key, discarded: thrownAway } = await keys.errorText(named, letter.lastFailedAt);
+      const { keys: under, discarded: thrownAway } = await keys.errorText(
+        named,
+        letter.lastFailedAt,
+      );
       discarded ||= thrownAway;
       person = named;
       if (typeof errorMessage === "string") {
-        errorMessage = await seal({ key, person: named, value: errorMessage });
+        errorMessage = await sealUnderAll(under, named, errorMessage);
       }
       if (typeof errorStack === "string") {
-        errorStack = await seal({ key, person: named, value: errorStack });
+        errorStack = await sealUnderAll(under, named, errorStack);
       }
     }
     await transaction.deadLetterStore.reseal(letter.id, {

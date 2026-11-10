@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { silentLogger } from "../../contracts/logger.ts";
 import type { Adapter } from "../adapter.ts";
 import type { InspectedTable } from "../storage/inspection.ts";
+import { DEFAULT_PERSONAL_CATEGORY } from "../storage/personal-key-store.ts";
 import { pendingEvent, testCommand, testContext, testDeadLetter, testOutcome } from "./fixtures.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
@@ -43,8 +44,16 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         expectedVersion: 0,
         events: [pendingEvent({ aggregateId: "o-1", version: 1, payload: { note: "ring twice" } })],
       });
-      await storage.personalKeys.add("c-2", { key: "a2V5Mg==", fingerprint: "ZnAy", kid: null });
-      await storage.personalKeys.add("c-1", { key: "a2V5", fingerprint: "ZnA=", kid: null });
+      await storage.personalKeys.add("c-2", DEFAULT_PERSONAL_CATEGORY, {
+        key: "a2V5Mg==",
+        fingerprint: "ZnAy",
+        kid: null,
+      });
+      await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, {
+        key: "a2V5",
+        fingerprint: "ZnA=",
+        kid: null,
+      });
       await storage.checkpointStore.set("orders", 1);
       await storage.inboxLedger.tryClaim({ handler: "order.p", eventId: "e1", now, leaseMs: 1 });
       await storage.scheduler.schedule({
@@ -161,6 +170,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
           personId: "c-1",
           eventId: "e-1",
           forgottenAt: "2026-11-07T12:00:00.000Z",
+          categories: null,
           reason: "requested",
           fingerprints: [],
         },

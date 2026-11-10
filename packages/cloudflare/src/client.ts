@@ -10,6 +10,7 @@ import {
   type DeadLetter,
   type DispatchOptions,
   type DispatchResult,
+  type ForgetOptions,
   type ListDeadLettersArgs,
   type PersonalDataExport,
   type QueriesFacade,
@@ -45,7 +46,12 @@ export interface BoundaStub {
   retryDeadLetter(id: string, actor?: string): PromiseLike<unknown>;
   discardDeadLetter(id: string, actor?: string): PromiseLike<unknown>;
   rebuildReadModel(name: string): PromiseLike<unknown>;
-  forget(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
+  forget(
+    personId: string,
+    consistency?: Consistency,
+    actor?: string,
+    options?: ForgetOptions,
+  ): PromiseLike<unknown>;
   exportPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
   restrict(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
   unrestrict(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
@@ -127,7 +133,8 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id, actor)),
     },
     rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
-    forget: (personId) => unwrap<StoredDispatch>(stub.forget(personId, consistency, actor)),
+    forget: (personId, options) =>
+      unwrap<StoredDispatch>(stub.forget(personId, consistency, actor, options)),
     exportPersonalData: (personId) =>
       unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor)),
     restrict: (personId) => unwrap<StoredDispatch>(stub.restrict(personId, consistency, actor)),

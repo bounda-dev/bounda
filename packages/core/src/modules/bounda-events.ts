@@ -1,4 +1,5 @@
 import type { StoredEvent } from "../contracts/event.ts";
+import type { PersonalCategoryName } from "./personal-data.ts";
 
 /**
  * The aggregate the runtime's own events belong to, one stream per subject: a read model
@@ -35,8 +36,8 @@ export interface RemovedDeadLetter {
 
 /**
  * Why a person was forgotten: `requested` by `forget`, from a client or a policy or process, or
- * by `bounda forget --from` for a bare id, or `retention`, past `runtime.personalData.retention`
- * without activity. A forgetting committed again from `runtime.personalData.forgetLedger`, after
+ * by `bounda forget --from` for a bare id, or `retention`, past `runtime.personalData.retention`,
+ * or a category's own, without activity. A forgetting committed again from `runtime.personalData.forgetLedger`, after
  * a restore or a commit that never happened, keeps the reason it was asked with.
  */
 export type PersonalDataForgottenReason = "requested" | "retention";
@@ -45,9 +46,31 @@ export interface PersonalDataForgottenPayload {
   readonly personId: string;
   readonly reason: PersonalDataForgottenReason;
   /**
-   * The fingerprints of the keys the forgetting destroyed, none when the person held none: a key
-   * the person holds whose fingerprint is not here was given to them after. Absent from a
-   * forgetting recorded before Bounda 0.4.0.
+   * Whether the person was forgotten as a whole, by `forget(person)`, the app's retention or a
+   * restore of either, with no key left in force; `false` when only some categories were, by
+   * `forget(person, { categories })` or a category's retention, or when a forgetting committed
+   * again kept a key given to the person after it.
+   */
+  readonly whole: boolean;
+  /**
+   * The categories forgotten: their fields read as `null` from then on. As a whole, every
+   * category but those `retained`.
+   */
+  readonly categories: readonly PersonalCategoryName[];
+  /**
+   * The categories kept under a legal obligation instead, restricted until their retention ends,
+   * when another `PersonalDataForgotten` names them in `expired`.
+   */
+  readonly retained: readonly PersonalCategoryName[];
+  /**
+   * The categories kept at an earlier forgetting whose retention ended: what was kept of them is
+   * forgotten now.
+   */
+  readonly expired: readonly PersonalCategoryName[];
+  /**
+   * The fingerprints of the keys the forgetting covered, destroyed or retained, none when it
+   * covered none: a key in force the person holds whose fingerprint is not here was given to them
+   * after. Absent from a forgetting recorded before Bounda 0.4.0.
    */
   readonly fingerprints?: readonly string[];
   readonly cancelledCommands: readonly CancelledCommand[];

@@ -112,10 +112,7 @@ describe("personsOf", () => {
       personsOf({
         aggregate,
         from: [held("c-0", "0"), held("c-1", "old"), held("c-1", "1")],
-        fingerprints: new Map([
-          ["c-1", "f-1"],
-          ["c-9", "f-9"],
-        ]),
+        opened: [held("c-1", "1"), held("c-9", "9")],
         events: [
           event(1, "OrderPlaced", { customerId: "c-1", note: "ring" }),
           event(2, "OrderSigned", { signature: "x" }),
@@ -131,6 +128,18 @@ describe("personsOf", () => {
       held("o-1", null),
       held("7", null),
     ]);
+  });
+
+  it("names a person once for each key their fields were opened with, a retained one as such", () => {
+    if (aggregate === undefined) throw new Error("no aggregate");
+    const retained = { ...held("c-1", "2"), retained: true as const };
+    expect(
+      personsOf({
+        aggregate,
+        opened: [held("c-1", "1"), retained, held("c-2", "3")],
+        events: [event(1, "OrderPlaced", { customerId: "c-1", note: "ring", email: "a@b.c" })],
+      }),
+    ).toEqual([held("c-1", "1"), retained]);
   });
 
   it("names no one for an event whose personal fields are forgotten or absent", () => {

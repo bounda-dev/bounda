@@ -183,8 +183,14 @@ const start = async ({
   return { app, clock, register, forgotten, customer };
 };
 
-const entry = (personId: string, eventId: string, at: Date): ForgetLedgerEntry => ({
+const entry = (
+  personId: string,
+  eventId: string,
+  at: Date,
+  categories: readonly string[] | null = null,
+): ForgetLedgerEntry => ({
   personId,
+  categories,
   eventId,
   forgottenAt: at.toISOString(),
   reason: "requested",
@@ -242,7 +248,7 @@ describe("the forget ledger", () => {
     expect(logs).toContainEqual([
       "info",
       "personal data forgotten",
-      expect.objectContaining({ personId: "c-1", reason: "requested", hadKey: true }),
+      expect.objectContaining({ personId: "c-1", reason: "requested", destroyedKeys: 1 }),
     ]);
     const exported = await app.exportPersonalData("c-1");
     expect(exported.events.map(({ type, data }) => [type, data])).toEqual([
@@ -668,6 +674,37 @@ describe("the forget ledger", () => {
     expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual(appended);
   });
 
+  it("keeps the categories a forgetting asked for, and forgets those again on a restore", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const { app: before, register } = await start({ storage, forgetLedger: ledgerAdapter });
+    await register("c-1");
+    await before.forget("c-1", { categories: ["default"] });
+    const [forgetting] = (await before.events.read({ limit: 100 })).filter(
+      (event) => event.type === "PersonalDataForgotten",
+    );
+    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual([
+      {
+        ...entry("c-1", forgetting?.id ?? "", START, ["default"]),
+        fingerprints: [expect.any(String)],
+      },
+    ]);
+    await register("c-2");
+    await (await opened(ledgerAdapter)).append([entry("c-2", "lost-forget", LOST, ["default"])]);
+    await before.stop();
+    const { app, forgotten, customer } = await start({ storage, forgetLedger: ledgerAdapter });
+    expect(await forgotten()).toEqual([
+      ["c-1", "requested"],
+      ["c-2", "requested"],
+    ]);
+    expect(await customer("c-2")).toBeNull();
+    const restored = (await app.events.read({ limit: 100 })).at(-1);
+    expect(restored).toMatchObject({
+      id: "lost-forget",
+      payload: { whole: false, categories: ["default"] },
+    });
+  });
+
   it("appends the forgettings of forgetAgain as they commit", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
@@ -1079,6 +1116,7 @@ describe("the intention a forgetting records first", () => {
     const [intention] = await (await opened(ledgerAdapter)).read({ limit: 10 });
     expect(intention).toEqual({
       personId: "c-1",
+      categories: null,
       eventId: expect.any(String),
       forgottenAt: START.toISOString(),
       reason: "requested",
@@ -1275,7 +1313,7 @@ describe("the intention a forgetting records first", () => {
     expect(await forgettings()).toEqual([]);
     expect(logs).toContainEqual([
       "error",
-      "person past the retention could not be forgotten",
+      "personal data past the retention could not be forgotten",
       expect.objectContaining({ personId: "c-1", errorCode: "FORGET_LEDGER_UNAVAILABLE" }),
     ]);
     down = false;

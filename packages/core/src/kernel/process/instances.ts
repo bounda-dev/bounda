@@ -68,14 +68,14 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
 
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
     const stream = { aggregateType: processAggregateType(process.name), aggregateId: instanceId };
-    const { events, fingerprints = new Map<string, string>() } = await eventStore.load(stream);
+    const { events, opened = [] } = await eventStore.load(stream);
     const instance: Viewed = {
       ...foldProcess({
         initialState: process.initialState,
         deadlineFields: process.deadlineFields,
         events,
       }),
-      persons: [...fingerprints].map(([person, fingerprint]) => ({ person, fingerprint })),
+      persons: opened,
       [VIEW]: view,
     };
     return instance;

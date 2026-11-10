@@ -1,5 +1,6 @@
 import { expect } from "vitest";
 import type { Storage } from "../adapter.ts";
+import { DEFAULT_PERSONAL_CATEGORY as D } from "../storage/personal-key-store.ts";
 import type { EarlierTables, EarlierVersion } from "./earlier-schemas.ts";
 import {
   testKeyedPerson as held,
@@ -152,6 +153,9 @@ export const expectEarlierRowsTakenIn: ExpectEarlierRowsTakenInFunction = async 
         reason: "requested",
         cancelledCommands: [],
         removedDeadLetters: [],
+        categories: ["default"],
+        retained: [],
+        whole: true,
       },
       person: "p-1",
     },
@@ -210,7 +214,13 @@ export const expectEarlierRowsTakenIn: ExpectEarlierRowsTakenInFunction = async 
   expect((await storage.scheduler.listByPerson("p-2")).map(({ dedupeKey }) => dedupeKey)).toEqual([
     "s-1",
   ]);
-  expect(await storage.personalKeys.get("p-2")).toEqual(testPersonalKey("1"));
+  expect(await storage.personalKeys.get("p-2", D)).toEqual(testPersonalKey("1"));
+  expect(await storage.personalKeys.find("p-2", testPersonalKey("1").fingerprint)).toEqual({
+    category: D,
+    key: testPersonalKey("1"),
+    retainedSince: null,
+    lastActiveAt: null,
+  });
   expect(
     await storage.snapshotStore.get({ aggregateType: "order", aggregateId: "1" }),
   ).not.toBeNull();

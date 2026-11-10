@@ -23,12 +23,13 @@ const metadata = (daysAgo: number) => ({
 });
 
 // Answers the listing with `listed`, and keeps what each bulk command was handed.
-const fakeWrangler = (listed: unknown) => {
+const fakeWrangler = (listed: unknown, values: Readonly<Record<string, string>> = {}) => {
   const calls: (readonly string[])[] = [];
   const files: unknown[] = [];
   const wrangler: Wrangler = async (args) => {
     calls.push(args);
     if (args[1] === "bulk") files.push(JSON.parse(await readFile(args[3] ?? "", "utf8")));
+    if (args[2] === "get") return values[args[3] ?? ""] ?? "";
     return args[1] === "key" ? JSON.stringify(listed) : "";
   };
   return { wrangler, calls, files };
@@ -87,6 +88,47 @@ describe("expiring a KV forget ledger through wrangler", () => {
         },
       ],
       [`${ROOT}t/2:e-2`],
+    ]);
+  });
+
+  it("writes again with its value a key whose value holds the entry, and leaves alone one gone", async () => {
+    const valued = `${ROOT}t/1:e-1`;
+    const held = JSON.stringify({ categories: null, fingerprints: ["k-1"] });
+    const { wrangler, calls, files } = fakeWrangler(
+      [
+        { name: valued, metadata: { ...metadata(1), inValue: true } },
+        { name: `${ROOT}t/2:e-2`, metadata: { ...metadata(1), inValue: true } },
+        { name: `${ROOT}t/3:e-3`, metadata: { ...metadata(1), inValue: true } },
+      ],
+      { [valued]: held, [`${ROOT}t/2:e-2`]: "Value not found", [`${ROOT}t/3:e-3`]: "[1]" },
+    );
+    await expireKvLedger({
+      wrangler,
+      ledger,
+      binding: "FORGET_LEDGER",
+      keepForMs: 35 * DAY,
+      target: { local: true },
+      now: NOW,
+    });
+    expect(calls[1]).toEqual([
+      "kv",
+      "key",
+      "get",
+      valued,
+      "--binding",
+      "FORGET_LEDGER",
+      "--text",
+      "--local",
+    ]);
+    expect(files).toEqual([
+      [
+        {
+          key: valued,
+          value: held,
+          expiration: (NOW + 34 * DAY) / 1000,
+          metadata: { ...metadata(1), inValue: true },
+        },
+      ],
     ]);
   });
 

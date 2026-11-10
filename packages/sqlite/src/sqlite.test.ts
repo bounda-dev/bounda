@@ -49,7 +49,7 @@ describe("sqlite adapter in memory", () => {
   schedulerContract({ create: async () => (await openStorage()).scheduler });
   snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });
-  personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
+  personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
   subscriberFailureStoreContract({ create: async () => (await openStorage()).subscriberFailures });
   tableContract({
@@ -362,6 +362,7 @@ describe("sqlite adapter on a file", () => {
       ["checkpoints", 1],
       ["storage", 1],
       ["storage", 2],
+      ["storage", 3],
     ]);
   });
 

@@ -7,7 +7,7 @@ import type {
 } from "@bounda-dev/core/adapter";
 import { postgresqlDialect } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
-import { heldKeys, naming } from "./held-keys.ts";
+import { heldKeys, naming, outsideKept } from "./held-keys.ts";
 
 export interface CreatePostgresqlIdempotencyStoreArgs {
   readonly db: PostgresqlDatabase;
@@ -79,6 +79,10 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
       ]);
       return rows.length;
     },
-    forget: (person) => db.run(`DELETE FROM ${table} WHERE ${naming("$1")}`, [person]),
+    forget: (person, keep = []) =>
+      db.run(
+        `DELETE FROM ${table} WHERE ${naming("$1")} AND ${outsideKept({ person: "$1", keep: "$2" })}`,
+        [person, postgresqlDialect.encode("json", keep)],
+      ),
   };
 };

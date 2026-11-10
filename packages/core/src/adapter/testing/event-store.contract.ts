@@ -3,6 +3,7 @@ import { ConcurrencyError, ProcessingRestrictedError } from "../../contracts/err
 import type { Storage } from "../adapter.ts";
 import { ForgottenSinceLoadError } from "../storage/append-checks.ts";
 import type { AppendArgs, EventStore } from "../storage/event-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY as D } from "../storage/personal-key-store.ts";
 import { pendingEvent, testPersonalKey } from "./fixtures.ts";
 
 export interface EventStoreContractArgs {
@@ -60,10 +61,10 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
     };
 
     it("appends only while each person it names with a key still holds that key", async () => {
-      await storage.personalKeys.add("c-1", testPersonalKey("one"));
+      await storage.personalKeys.add("c-1", D, testPersonalKey("one"));
       const first = { person: "c-1", fingerprint: testPersonalKey("one").fingerprint };
       await naming(1, { persons: [first, { person: "c-2", fingerprint: null }] });
-      await storage.personalKeys.remove("c-1");
+      await storage.personalKeys.remove("c-1", "f-one");
       const refused = await naming(2, { persons: [first] }).catch((error: unknown) => error);
       expect(refused).toBeInstanceOf(ForgottenSinceLoadError);
       expect(refused).toBeInstanceOf(ConcurrencyError);
@@ -74,7 +75,7 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
         expectedVersion: 1,
         actualVersion: 1,
       });
-      await storage.personalKeys.add("c-1", testPersonalKey("two"));
+      await storage.personalKeys.add("c-1", D, testPersonalKey("two"));
       await expect(naming(2, { persons: [first] })).rejects.toBeInstanceOf(ForgottenSinceLoadError);
       await expect(
         storage.transact((tx) => naming(2, { persons: [first] }, tx.eventStore)),
@@ -83,6 +84,23 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       await naming(2, {
         persons: [{ person: "c-1", fingerprint: testPersonalKey("two").fingerprint }],
       });
+      expect((await store.load({ aggregateType: "order", aggregateId: "1" })).version).toBe(2);
+    });
+
+    it("appends on a key kept past a forgetting only for what was read from it once kept", async () => {
+      await storage.personalKeys.add("c-1", "invoices", testPersonalKey("one"));
+      const read = { person: "c-1", fingerprint: testPersonalKey("one").fingerprint };
+      await naming(1, { persons: [read] });
+      await storage.personalKeys.retain("c-1", "f-one", {
+        since: "2026-02-01T00:00:00.000Z",
+        lastActiveAt: "2026-01-01T00:00:00.000Z",
+      });
+      await expect(naming(2, { persons: [read] })).rejects.toBeInstanceOf(ForgottenSinceLoadError);
+      await naming(2, { persons: [{ ...read, retained: true }] });
+      await storage.personalKeys.remove("c-1", "f-one");
+      await expect(naming(3, { persons: [{ ...read, retained: true }] })).rejects.toBeInstanceOf(
+        ForgottenSinceLoadError,
+      );
       expect((await store.load({ aggregateType: "order", aggregateId: "1" })).version).toBe(2);
     });
 
@@ -129,14 +147,14 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
     it.skipIf(!concurrent)(
       "refuses an append that a transaction forgetting its person held up",
       async () => {
-        await storage.personalKeys.add("c-1", testPersonalKey("one"));
+        await storage.personalKeys.add("c-1", D, testPersonalKey("one"));
         const { held, release } = holding();
         let removed = (): void => {};
         const removing = new Promise<void>((resolve) => {
           removed = resolve;
         });
         const forget = storage.transact(async (tx) => {
-          await tx.personalKeys.remove("c-1");
+          await tx.personalKeys.remove("c-1", "f-one");
           removed();
           await held;
         });

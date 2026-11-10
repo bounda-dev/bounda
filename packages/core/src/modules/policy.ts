@@ -1,5 +1,6 @@
 import type { DurationInput } from "../contracts/duration.ts";
 import type { EmptyPayload } from "./payload.ts";
+import type { ForgetOptions } from "./personal-data.ts";
 
 /**
  * The shape of a policy module. `on` overrides the event type derived from the file name and may
@@ -48,8 +49,9 @@ export type PolicyHandlerArgs<Event, Commands, Ports extends object = EmptyPaylo
 } & Readonly<Ports>;
 
 /**
- * `forget` in the arguments of a policy or process handler.
+ * `forget` in the arguments of a policy or process handler, which takes the options a client's
+ * `forget` takes.
  */
 export interface ReactionForgetFunction {
-  (personId: string): Promise<void>;
+  (personId: string, options?: ForgetOptions): Promise<void>;
 }

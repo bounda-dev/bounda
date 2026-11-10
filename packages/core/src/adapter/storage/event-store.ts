@@ -19,8 +19,9 @@ export interface AppendArgs {
    * The people whose personal data the events depend on, each with the key it was read or is
    * sealed under: those the state the events were decided on held, and those whose fields the
    * events seal. The store appends only while each one named with a fingerprint still holds that
-   * key, and otherwise throws `ForgottenSinceLoadError`, a `ConcurrencyError`; one named with
-   * `null` needs nothing. Checked with `checkAppend`, in the transaction that writes the events.
+   * key, in force unless it was read `retained`, and otherwise throws `ForgottenSinceLoadError`, a
+   * `ConcurrencyError`; one named with `null` needs nothing. Checked with `checkAppend`, in the
+   * transaction that writes the events.
    */
   readonly persons?: readonly KeyedPerson[];
   /**
@@ -45,10 +46,10 @@ export interface LoadResult {
   readonly events: readonly StoredEvent[];
   readonly version: number;
   /**
-   * The fingerprint of the key that opened each person's sealed fields, set by the kernel, which
-   * opens them; a store leaves it out.
+   * Each person whose sealed fields opened, once per key that opened them, set by the kernel,
+   * which opens them; a store leaves it out.
    */
-  readonly fingerprints?: ReadonlyMap<string, string>;
+  readonly opened?: readonly KeyedPerson[];
 }
 
 export interface ReadAllArgs {

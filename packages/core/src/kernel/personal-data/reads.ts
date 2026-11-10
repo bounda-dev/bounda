@@ -1,4 +1,4 @@
-import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
+import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 
 // What the failed run read, by the error it failed with: the error is what reaches whoever files
 // its dead letter, after the unit of work that read is gone.
@@ -28,17 +28,18 @@ export interface ReadUnderArgs {
 }
 
 export interface ReadUnderFunction {
-  (args: ReadUnderArgs): readonly string[];
+  (args: ReadUnderArgs): readonly KeyedPerson[];
 }
 
 /**
- * The fingerprints of the keys the failed work read the person's data under.
+ * The keys the failed work read the person's data under, each once, as it read them: kept past a
+ * forgetting, `retained`, or in force.
  */
 export const readUnder: ReadUnderFunction = ({ person, error, also = [] }) => {
   const noted = readsByError.get(Object(error)) ?? [];
-  const fingerprints = new Set<string>();
+  const reads = new Map<string, KeyedPerson>();
   for (const read of [...noted, ...also]) {
-    if (read.person === person && read.fingerprint !== null) fingerprints.add(read.fingerprint);
+    if (read.person === person && read.fingerprint !== null) reads.set(keyedPersonId(read), read);
   }
-  return [...fingerprints];
+  return [...reads.values()];
 };

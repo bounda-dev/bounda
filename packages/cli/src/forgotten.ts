@@ -60,6 +60,15 @@ const REASONS: Readonly<Record<PersonalDataForgottenReason, true>> = {
 const isReason = (value: unknown): value is PersonalDataForgottenReason =>
   typeof value === "string" && Object.hasOwn(REASONS, value);
 
+// What the forgetting asked for: `null` for the person as a whole, as one that does not say it
+// forgot only some categories did, else the categories named, those retained included.
+const askedOf = (payload: unknown): readonly string[] | null => {
+  if (fieldOf(payload, "whole") !== false) return null;
+  const forgotten = fieldOf(payload, "categories");
+  const retained = fieldOf(payload, "retained");
+  return [...(isTextList(forgotten) ? forgotten : []), ...(isTextList(retained) ? retained : [])];
+};
+
 export interface ReadForgottenArgs {
   readonly events: GlobalStream;
   readonly since: Since;
@@ -87,6 +96,7 @@ export const readForgotten: ReadForgottenFunction = async ({ events, since }) =>
         personId: event.aggregateId,
         eventId: event.id,
         forgottenAt: event.timestamp,
+        categories: askedOf(event.payload),
         reason: isReason(reason) ? reason : "requested",
         ...(isTextList(fingerprints) ? { fingerprints } : {}),
       });
@@ -110,15 +120,17 @@ const entryOf = (line: string, number: number): ForgetAgainEntry => {
   const forgottenAt = fieldOf(parsed, "forgottenAt");
   const reason = fieldOf(parsed, "reason");
   const fingerprints = fieldOf(parsed, "fingerprints");
+  const categories = fieldOf(parsed, "categories");
   if (
     typeof personId !== "string" ||
     (eventId !== undefined && typeof eventId !== "string") ||
     (forgottenAt !== undefined && typeof forgottenAt !== "string") ||
     (reason !== undefined && !isReason(reason)) ||
-    (fingerprints !== undefined && !isTextList(fingerprints))
+    (fingerprints !== undefined && !isTextList(fingerprints)) ||
+    (categories !== undefined && categories !== null && !isTextList(categories))
   ) {
     throw new Error(
-      `line ${number} needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", and "fingerprints" only as a list of strings`,
+      `line ${number} needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", "fingerprints" only as a list of strings, and "categories" only as null or a list of names`,
     );
   }
   return {
@@ -127,6 +139,7 @@ const entryOf = (line: string, number: number): ForgetAgainEntry => {
     ...(forgottenAt === undefined ? {} : { forgottenAt }),
     ...(reason === undefined ? {} : { reason }),
     ...(fingerprints === undefined ? {} : { fingerprints }),
+    ...(categories === undefined ? {} : { categories }),
   };
 };
 

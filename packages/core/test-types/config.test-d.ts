@@ -248,6 +248,8 @@ describe("defineConfig", () => {
     });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: "30d" } } });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: 86_400_000 } } });
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: "6y" } } });
+    defineConfig({ storage: sqlite, ports, runtime: { personalData: { retention: "18mo" } } });
     defineConfig({
       storage: sqlite,
       ports,
@@ -426,6 +428,7 @@ describe("defineConfig", () => {
     }>();
     expectTypeOf<ForgetLedgerEntry>().toEqualTypeOf<{
       readonly personId: string;
+      readonly categories: readonly string[] | null;
       readonly eventId: string;
       readonly forgottenAt: string;
       readonly reason: PersonalDataForgottenReason;

@@ -10,7 +10,7 @@ import type {
 } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { byFirstFailure, decodeErrorText, encodeErrorText } from "../sql/dead-letters.ts";
-import { naming } from "./held-keys.ts";
+import { naming, outsideKept } from "./held-keys.ts";
 import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteDeadLetterStoreArgs {
@@ -170,8 +170,13 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
           [person, person],
         )
       ).map(toLetter),
-    forget: async (person) =>
-      (await db.all(`DELETE FROM ${table} WHERE ${names} RETURNING ${COLUMNS}`, [person]))
+    forget: async (person, keep = []) =>
+      (
+        await db.all(
+          `DELETE FROM ${table} WHERE ${names} AND ${outsideKept(table)} RETURNING ${COLUMNS}`,
+          [person, person, JSON.stringify(keep)],
+        )
+      )
         .map(toLetter)
         .sort(byFirstFailure),
     firstResolvedAt: async () => {

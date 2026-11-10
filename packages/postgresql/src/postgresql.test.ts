@@ -1,6 +1,7 @@
 import {
   ConfigurationError,
   createApp,
+  DEFAULT_PERSONAL_CATEGORY,
   type EventPayloadArgs,
   type FieldsArgs,
   fieldBuilder as f,
@@ -43,8 +44,13 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { createPostgresqlDatabase } from "./database.ts";
 import { createPostgresqlEventStore } from "./event-store.ts";
 import { type PostgresqlAdapter, type PostgresqlOptions, postgresql } from "./index.ts";
-import { migratePostgresql, postgresqlCheckpointsScope } from "./migrations.ts";
+import {
+  migratePostgresql,
+  postgresqlCheckpointsScope,
+  postgresqlStorageScope,
+} from "./migrations.ts";
 import { resolvePostgresqlOptions } from "./options.ts";
+import { storageTablesFor } from "./schema.ts";
 
 const reuseContainer = process.env.BOUNDA_PG_REUSE === "1";
 
@@ -123,7 +129,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
   idempotencyStoreContract({ create: () => openStorage() });
   snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });
-  personalKeyStoreContract({ create: async () => (await openStorage()).personalKeys });
+  personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
   inspectionContract({
     create: async () => {
@@ -368,6 +374,47 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     ]);
   });
 
+  it("takes in the keys of a schema from before categories, in the default category, last active when their person was", async () => {
+    const adapter = fresh();
+    const { tablePrefix: prefix, schema } = resolvePostgresqlOptions(adapter.options);
+    const client = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    const db = createPostgresqlDatabase(client);
+    const tables = storageTablesFor({ prefix, schema });
+    const current = postgresqlStorageScope({ schema, tables });
+    await migratePostgresql({
+      db,
+      schema,
+      prefix,
+      scopes: [{ ...current, migrations: current.migrations.slice(0, 1) }],
+    });
+    const at = "2026-01-01T00:00:00.000Z";
+    await db.run(
+      `INSERT INTO "${schema}".${tables.persons} ("person", "last_active_at", "forgotten_at") VALUES ('p-1', $1, NULL), ('p-2', $1, $1)`,
+      [at],
+    );
+    await db.run(
+      `INSERT INTO "${schema}".${tables.personalKeys} ("person", "key", "fingerprint") VALUES ('p-1', 'k-1', 'f-1'), ('p-2', 'k-2', 'f-2'), ('p-3', 'k-3', 'f-3')`,
+      [],
+    );
+    const storage = await openStorage(adapter);
+    expect(await storage.personalKeys.find("p-1", "f-1")).toEqual({
+      category: DEFAULT_PERSONAL_CATEGORY,
+      key: { key: "k-1", fingerprint: "f-1", kid: null },
+      retainedSince: null,
+      lastActiveAt: at,
+    });
+    expect((await storage.personalKeys.find("p-2", "f-2"))?.lastActiveAt).toBeNull();
+    expect((await storage.personalKeys.find("p-3", "f-3"))?.lastActiveAt).toBeNull();
+    expect(
+      await storage.personalKeys.add("p-1", "invoices", {
+        key: "k-4",
+        fingerprint: "f-4",
+        kid: null,
+      }),
+    ).toEqual({ key: "k-4", fingerprint: "f-4", kid: null });
+  });
+
   it("creates the forget ledger's table in its schema once, and takes no lock once it is there", async () => {
     const schema = `ledger_${run}`;
     const adapter = fresh({ schema });
@@ -491,7 +538,11 @@ describe.skipIf(container === null)("postgresql adapter", () => {
 
   it("holds off a writer of the rows an append checked, that takes no append lock, until the append commits", async () => {
     const storage = await openStorage();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, {
+      key: "k",
+      fingerprint: "f",
+      kid: null,
+    });
     await storage.persons.restrict("c-2", new Date());
     await storage.persons.unrestrict("c-2");
     const steps: string[] = [];
@@ -518,7 +569,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     });
     await checking;
     const writes = [
-      storage.personalKeys.remove("c-1").then(() => steps.push("key removed")),
+      storage.personalKeys.remove("c-1", "f").then(() => steps.push("key removed")),
       storage.persons.restrict("c-2", new Date()).then(() => steps.push("restricted")),
     ];
     // A writer waits on a row lock the append holds (the pool may queue the other), and nothing

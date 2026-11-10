@@ -48,13 +48,13 @@ describe("createStagedEventStore", () => {
 
   it("reports the keys the base store's load opened, and none it was not given", async () => {
     const { base } = await setUp();
-    const fingerprints = new Map([["c-1", "f-1"]]);
+    const opened = [{ person: "c-1", fingerprint: "f-1" }];
     const opening = createStagedEventStore({
       ...base,
-      load: async (args) => ({ ...(await base.load(args)), fingerprints }),
+      load: async (args) => ({ ...(await base.load(args)), opened }),
     });
-    expect((await opening.load(order)).fingerprints).toBe(fingerprints);
-    expect(await createStagedEventStore(base).load(order)).not.toHaveProperty("fingerprints");
+    expect((await opening.load(order)).opened).toBe(opened);
+    expect(await createStagedEventStore(base).load(order)).not.toHaveProperty("opened");
   });
 
   it("loads one stream: the base store's events plus what was staged for it, at the version both make", async () => {

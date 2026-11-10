@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import type { Snapshot } from "../../adapter/storage/snapshot-store.ts";
 import {
   testKeyedPerson as held,
@@ -180,7 +181,7 @@ describe("createAggregateLoader", () => {
 
   it("names whose personal data the state holds, with the key its load opened it with", async () => {
     const { storage, snapshot, append, load } = await setUp();
-    await storage.personalKeys.add("c-0", testPersonalKey("0"));
+    await storage.personalKeys.add("c-0", DEFAULT_PERSONAL_CATEGORY, testPersonalKey("0"));
     await storage.snapshotStore.put(snapshot({ persons: [held("c-0", "0")] }));
     await append(
       [3, "OrderSigned", { customerId: "c-1", signature: "Ana" }],
@@ -190,7 +191,7 @@ describe("createAggregateLoader", () => {
       ...storage.eventStore,
       load: async (args) => ({
         ...(await storage.eventStore.load(args)),
-        fingerprints: new Map([["c-1", testPersonalKey("1").fingerprint]]),
+        opened: [held("c-1", "1")],
       }),
     };
     expect((await load(opening)).persons).toEqual([

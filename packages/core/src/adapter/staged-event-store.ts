@@ -101,7 +101,7 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
           ...staged.events.filter((event) => event.version >= fromVersion),
         ],
         version: staged.base + staged.events.length,
-        ...(stored.fingerprints === undefined ? {} : { fingerprints: stored.fingerprints }),
+        ...(stored.opened === undefined ? {} : { opened: stored.opened }),
       };
     },
     append: async ({

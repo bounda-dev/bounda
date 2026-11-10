@@ -50,6 +50,8 @@ export type { GlobalStream, ReadEventsArgs } from "./kernel/events/global-stream
 export type { MigrateTablesArgs, MigrateTablesFunction } from "./kernel/migrate.ts";
 export { migrateTables } from "./kernel/migrate.ts";
 export type {
+  ExportedCategories,
+  ExportedCategory,
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
@@ -63,7 +65,10 @@ export type {
   ForgetLedgerReconciliationStatus,
 } from "./kernel/personal-data/reconciliation.ts";
 export { FORGET_LEDGER_GRACE_MS } from "./kernel/personal-data/reconciliation.ts";
-export type { RetentionStatus } from "./kernel/personal-data/retention.ts";
+export type {
+  CategoryRetentionStatus,
+  RetentionStatus,
+} from "./kernel/personal-data/retention.ts";
 export type { KeyRotationStatus } from "./kernel/personal-data/rotation.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export type {

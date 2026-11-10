@@ -44,13 +44,15 @@ export const appendPersonsOf: AppendPersonsOfFunction = ({ persons = [], touches
   touched: [...new Set(touches)],
 });
 
+/**
+ * A key of a person as the append's transaction reads it: `held` unless it is gone, `retained`
+ * when a forgetting kept it past it.
+ */
+export type KeyState = "held" | "retained" | "gone";
+
 export interface CheckAppendArgs {
   readonly args: AppendArgs;
-  /**
-   * The fingerprint of the key the person holds as the append's transaction reads it; `null`
-   * when they hold none.
-   */
-  readonly fingerprintOf: (person: string) => string | null;
+  readonly keyOf: (person: string, fingerprint: string) => KeyState;
   /**
    * Whether the processing of the person's data is restricted, as the same transaction reads it.
    */
@@ -64,16 +66,18 @@ export interface CheckAppendFunction {
 /**
  * Throws `ProcessingRestrictedError` when a person `touches` names is restricted, and else
  * `ForgottenSinceLoadError` when a person `persons` names with a fingerprint no longer holds
- * that key. A store calls it in the transaction that writes the events, on what that transaction
+ * that key, or holds it retained where it was read in force. A store calls it in the transaction that writes the events, on what that transaction
  * reads, so a `restrict` or `forget` committing beside the append is ordered before it or after
  * it, never across.
  */
-export const checkAppend: CheckAppendFunction = ({ args, fingerprintOf, restricted }) => {
+export const checkAppend: CheckAppendFunction = ({ args, keyOf, restricted }) => {
   for (const person of args.touches ?? []) {
     if (restricted(person)) throw new ProcessingRestrictedError(person);
   }
-  for (const { person, fingerprint } of args.persons ?? []) {
-    if (fingerprint !== null && fingerprintOf(person) !== fingerprint) {
+  for (const { person, fingerprint, retained } of args.persons ?? []) {
+    if (fingerprint === null) continue;
+    const state = keyOf(person, fingerprint);
+    if (state === "gone" || (state === "retained" && retained !== true)) {
       throw new ForgottenSinceLoadError(args, person);
     }
   }

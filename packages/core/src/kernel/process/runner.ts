@@ -6,6 +6,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
+import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
@@ -30,6 +31,7 @@ export interface CreateProcessRunnerArgs {
   readonly pipeline: CommandPipeline;
   readonly storage: AppStorage;
   readonly config: ResolvedConfig;
+  readonly personalCategories: PersonalCategories;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly pendingRetries: PendingRetries;
@@ -46,6 +48,7 @@ export interface CreateProcessRunnerFunction {
  * overtakes it.
  */
 export const createProcessRunner: CreateProcessRunnerFunction = ({
+  personalCategories,
   processes,
   aggregates,
   pipeline,
@@ -69,6 +72,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     aggregates,
     pipeline,
     config,
+    personalCategories,
     ids,
     clock,
     logger,

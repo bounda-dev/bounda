@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeadLetterSettledError } from "../../contracts/errors.ts";
 import type { DeadLetterStore, NewDeadLetter } from "../storage/dead-letter-store.ts";
+import type { KeyedPerson } from "../storage/personal-key-store.ts";
 import { testKeyedPerson as held, testSealedValue as sealed } from "./fixtures.ts";
 
 // When a test resolves a letter.
@@ -300,6 +301,23 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect((await store.list()).map((kept) => kept.id)).toEqual(["c", "d", "e"]);
       expect(await store.forget("c-1")).toEqual([]);
       expect(await store.listByPerson("c-1")).toEqual([]);
+    });
+
+    it("forgets the letters that name a person under a key outside those kept, or in the clear", async () => {
+      const scheduled = (id: string, persons: readonly KeyedPerson[]) =>
+        letter(id, {
+          kind: "scheduled",
+          handler: "PlaceOrder",
+          eventType: "PlaceOrder",
+          payload: { orderId: id },
+          persons,
+        });
+      await store.add(scheduled("a", [held("c-1", "1")]));
+      await store.add(scheduled("b", [held("c-1", "2")]));
+      await store.add(scheduled("c", [held("c-1", null)]));
+      const forgotten = await store.forget("c-1", ["f-2"]);
+      expect(forgotten.map((kept) => kept.id).sort()).toEqual(["a", "c"]);
+      expect((await store.list()).map((kept) => kept.id)).toEqual(["b"]);
     });
 
     it("leaves the letters that name a person only as the person of their work", async () => {

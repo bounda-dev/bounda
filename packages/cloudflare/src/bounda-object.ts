@@ -12,6 +12,7 @@ import {
   type DispatchOptions,
   type DispatchResult,
   errorFields,
+  type ForgetOptions,
   type IdGenerator,
   type ListDeadLettersArgs,
   type Logger,
@@ -409,8 +410,9 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       personId: string,
       consistency?: Consistency,
       actor?: string,
+      options?: ForgetOptions,
     ): Promise<RpcOutcome<StoredDispatch>> {
-      return this.#onPerson((client) => client.forget(personId), consistency, actor);
+      return this.#onPerson((client) => client.forget(personId, options), consistency, actor);
     }
 
     restrict(

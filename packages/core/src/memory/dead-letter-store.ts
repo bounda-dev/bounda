@@ -102,8 +102,8 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
       select({})
         .filter((letter) => letter.person === person || namesPerson(letter, person))
         .map(copy),
-    forget: async (person) => {
-      const named = select({}).filter((letter) => namesPerson(letter, person));
+    forget: async (person, keep) => {
+      const named = select({}).filter((letter) => namesPerson(letter, person, keep));
       for (const { id } of named) letters.delete(id);
       return named.map(copy);
     },

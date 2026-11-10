@@ -1,5 +1,6 @@
 import { appendPersonsOf, checkAppend } from "../storage/append-checks.ts";
 import type { AppendArgs } from "../storage/event-store.ts";
+import { keyedPersonId } from "../storage/personal-key-store.ts";
 import type { SqlDialect } from "./dialect.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
@@ -44,15 +45,22 @@ export const checkSqlAppend: CheckSqlAppendFunction = async ({
       persons,
     );
   };
-  const keys = await read(`"person", "fingerprint"`, tables.personalKeys, keyed);
+  const keys = await read(`"person", "fingerprint", "retained_since"`, tables.personalKeys, keyed);
   const rows = await read(`"person", "restricted_since"`, tables.persons, touched);
-  const fingerprints = new Map(keys.map((row) => [String(row.person), String(row.fingerprint)]));
+  const states = new Map(
+    keys.map((row) => [
+      keyedPersonId({ person: String(row.person), fingerprint: String(row.fingerprint) }),
+      row.retained_since === null || row.retained_since === undefined
+        ? ("held" as const)
+        : ("retained" as const),
+    ]),
+  );
   const restricted = new Set(
     rows.filter((row) => row.restricted_since !== null).map((row) => String(row.person)),
   );
   checkAppend({
     args,
-    fingerprintOf: (person) => fingerprints.get(person) ?? null,
+    keyOf: (person, fingerprint) => states.get(keyedPersonId({ person, fingerprint })) ?? "gone",
     restricted: (person) => restricted.has(person),
   });
 };

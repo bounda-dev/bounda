@@ -1,3 +1,4 @@
+export { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 export type {
   AggregateMeta,
   HandlerState,
@@ -75,10 +76,22 @@ export type {
   ForgetsPersonalData,
   HasPersonalFields,
   PersonalFunction,
+  PersonalOptions,
   PersonalSchema,
   PersonFunction,
   PersonSchema,
 } from "./personal.ts";
+export type {
+  DeclaresPersonalData,
+  ForgetOptions,
+  LegalBasis,
+  PersonalCategoriesOf,
+  PersonalCategoryName,
+  PersonalDataCategories,
+  PersonalDataCategory,
+  PersonalDataModule,
+} from "./personal-data.ts";
+export { LEGAL_BASES } from "./personal-data.ts";
 export type { PolicyHandlerArgs, PolicyModule, ReactionForgetFunction } from "./policy.ts";
 export type {
   CreateArgs,

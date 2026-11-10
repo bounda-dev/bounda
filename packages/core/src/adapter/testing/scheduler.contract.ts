@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
+import type { KeyedPerson } from "../storage/personal-key-store.ts";
 import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../storage/scheduler.ts";
 import { testKeyedPerson as held, testCommand, testContext, testSealedValue } from "./fixtures.ts";
 
@@ -592,6 +593,25 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(await scheduler.forget("c-1")).toEqual([]);
       expect(await scheduler.forget("c")).toEqual([]);
       expect(await scheduler.listByPerson("c-1")).toEqual([]);
+    });
+
+    it("forgets the commands that name a person under a key outside those kept, or in the clear", async () => {
+      const schedule = (dedupeKey: string, persons: readonly KeyedPerson[]) =>
+        scheduler.schedule({
+          dedupeKey,
+          command: testCommand(dedupeKey),
+          executeAt: at(1_000),
+          context: testContext,
+          persons,
+        });
+      await schedule("a", [held("c-1", "1")]);
+      await schedule("b", [held("c-1", "2")]);
+      await schedule("c", [held("c-1", "1"), held("c-1", "2")]);
+      await schedule("d", [held("c-1", null)]);
+      await schedule("e", [held("c-2", "3")]);
+      const forgotten = await scheduler.forget("c-1", ["f-2"]);
+      expect(forgotten.map((entry) => entry.dedupeKey)).toEqual(["a", "c", "d"]);
+      expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toEqual(["b", "e"]);
     });
 
     it("replaces whose personal data a command holds when its key is scheduled again", async () => {

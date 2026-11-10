@@ -13,14 +13,22 @@ export interface IsForgettingFunction {
 export const isForgetting: IsForgettingFunction = (event) =>
   event.aggregateType === BOUNDA_AGGREGATE && event.type === PERSONAL_DATA_FORGOTTEN_EVENT;
 
+// As `bounda forgotten` and the KV ledger read a list: whole, or not at all.
+const isTextList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const names = (value: unknown): readonly string[] => (isTextList(value) ? value : []);
+
 export interface ForgettingEntryFunction {
   (event: StoredEvent): ForgetLedgerEntry;
 }
 
 /**
  * The entry of a `PersonalDataForgotten`, as its intention wrote it. An event written before
- * forgettings named their keys leaves `fingerprints` out, and one whose reason is no longer known
- * reads as `requested`.
+ * forgettings named their keys leaves `fingerprints` out, one whose reason is no longer known
+ * reads as `requested`, and one that does not say it forgot only some categories forgot the person
+ * as a whole. One that did asked for the categories it names, those retained included: one of
+ * what an earlier forgetting retained asked for none, as the retention ends that again on its own.
  */
 export const forgettingEntry: ForgettingEntryFunction = (event) => {
   const field = (name: string): unknown =>
@@ -30,13 +38,15 @@ export const forgettingEntry: ForgettingEntryFunction = (event) => {
   const fingerprints = field("fingerprints");
   const entry: ForgetLedgerEntry = {
     personId: event.aggregateId,
+    categories:
+      field("whole") === false
+        ? [...names(field("categories")), ...names(field("retained"))]
+        : null,
     eventId: event.id,
     forgottenAt: event.timestamp,
     reason: field("reason") === "retention" ? "retention" : "requested",
   };
-  return Array.isArray(fingerprints) && fingerprints.every((value) => typeof value === "string")
-    ? { ...entry, fingerprints }
-    : entry;
+  return isTextList(fingerprints) ? { ...entry, fingerprints } : entry;
 };
 
 export interface LedgerEntriesArgs {

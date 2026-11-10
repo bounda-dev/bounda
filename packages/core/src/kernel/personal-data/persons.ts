@@ -6,8 +6,8 @@ import { isRecord } from "../shared/merge-fields.ts";
 export interface PersonsOfArgs {
   readonly aggregate: AggregateRuntime;
   readonly events: readonly StoredEvent[];
-  // The key each person's sealed fields were opened with, as the load that read them reports it.
-  readonly fingerprints?: ReadonlyMap<string, string> | undefined;
+  // The keys each person's sealed fields were opened with, as the load that read them reports them.
+  readonly opened?: readonly KeyedPerson[] | undefined;
   // Persons already known, such as a snapshot's, kept first.
   readonly from?: readonly KeyedPerson[];
 }
@@ -19,15 +19,11 @@ export interface PersonsOfFunction {
 /**
  * The people whose personal data the events carry, once each per key: whoever an event names, by
  * its person field or its aggregate's id, when one of its marked fields still holds a value, with
- * the key it was opened with. A field forgotten reads as `null` and names no one, so a forgotten
+ * each key their fields were opened with, or with `null` when none was, as for events not sealed
+ * yet. A field forgotten reads as `null` and names no one, so a forgotten
  * person's stream can be snapshotted again without them.
  */
-export const personsOf: PersonsOfFunction = ({
-  aggregate,
-  events,
-  fingerprints = new Map(),
-  from = [],
-}) => {
+export const personsOf: PersonsOfFunction = ({ aggregate, events, opened = [], from = [] }) => {
   const persons = new Map<string, KeyedPerson>();
   const add = (held: KeyedPerson): void => {
     persons.set(keyedPersonId(held), held);
@@ -43,7 +39,9 @@ export const personsOf: PersonsOfFunction = ({
     const named = marks.person === null ? event.aggregateId : payload[marks.person];
     if (typeof named !== "string" && typeof named !== "number") continue;
     const person = String(named);
-    add({ person, fingerprint: fingerprints.get(person) ?? null });
+    const keys = opened.filter((held) => held.person === person);
+    if (keys.length === 0) add({ person, fingerprint: null });
+    for (const held of keys) add(held);
   }
   return [...persons.values()];
 };

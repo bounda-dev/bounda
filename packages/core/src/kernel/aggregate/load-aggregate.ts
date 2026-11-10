@@ -131,7 +131,7 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
     return {
       folded: foldState({ aggregate, events }),
       version: Math.min(loaded.version, through),
-      persons: personsOf({ aggregate, events, fingerprints: loaded.fingerprints }),
+      persons: personsOf({ aggregate, events, opened: loaded.opened }),
       snapshot: null,
       foldedEvents: events.length,
     };
@@ -195,7 +195,7 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
     const persons = personsOf({
       aggregate,
       events: loaded.events,
-      fingerprints: loaded.fingerprints,
+      opened: loaded.opened,
       from: snapshot.persons,
     });
     const used: LoadedAggregate = {

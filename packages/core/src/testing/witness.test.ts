@@ -79,7 +79,7 @@ describe("the witness of a test app's storage", () => {
         payload: { email: sealed("c-1", "two", "fp-other") },
       } as never);
     });
-    const key = { fingerprint: "fp-c-1", cryptoKey: {} as CryptoKey };
+    const key = { fingerprint: "fp-c-1", cryptoKey: {} as CryptoKey, retained: false };
     witness.onPersonalKey("c-1", key);
     expect(witness.sealedFor("c-1")).toEqual([
       { envelope: sealed("c-1", "one").$personal, key },

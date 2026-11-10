@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { KvLedgerKey } from "@bounda-dev/cloudflare/forget-ledger";
+import type { KvLedgerKey, KvLedgerPut } from "@bounda-dev/cloudflare/forget-ledger";
 
 const run = promisify(execFile);
 
@@ -94,6 +94,15 @@ const isListedKey = (value: unknown): value is KvLedgerKey =>
   typeof Reflect.get(value, "name") === "string" &&
   ["number", "undefined"].includes(typeof Reflect.get(value, "expiration"));
 
+const holdsEntry = (value: string): boolean => {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+};
+
 export const expireKvLedger: ExpireKvLedgerFunction = async ({
   wrangler,
   ledger,
@@ -123,7 +132,28 @@ export const expireKvLedger: ExpireKvLedgerFunction = async ({
   if (!Array.isArray(listed) || !listed.every(isListedKey)) {
     throw new Error("wrangler kv key list printed something else than a list of keys");
   }
-  const { expire, remove } = ledger.planKvForgetLedgerExpiry({ keys: listed, keepForMs, now });
+  const plan = ledger.planKvForgetLedgerExpiry({ keys: listed, keepForMs, now });
+  const { remove } = plan;
+  // A key whose value holds the entry is written again with that value, one read at a time; a
+  // value that is gone, which wrangler answers with a line of its own, leaves the key alone.
+  const expire: KvLedgerPut[] = [];
+  for (const put of plan.expire) {
+    if (put.value !== null) {
+      expire.push(put);
+      continue;
+    }
+    const value = await wrangler([
+      "kv",
+      "key",
+      "get",
+      put.key,
+      "--binding",
+      binding,
+      "--text",
+      ...where,
+    ]);
+    if (holdsEntry(value)) expire.push({ ...put, value });
+  }
   const directory = await mkdtemp(join(tmpdir(), "bounda-forget-ledger-"));
   try {
     if (expire.length > 0) {

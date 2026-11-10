@@ -311,6 +311,17 @@ const readModelFiles = (
  * core with the maps from `.bounda/types.ts`. The same template always renders the same way:
  * these files are canonical output, not subject to the project's formatter.
  */
+const personalDataFiles = (model: ProjectModel, typesPath: string): GeneratedFile[] =>
+  model.personalData === undefined
+    ? []
+    : [
+        render(plusTypesPath(model.personalData.path), typesPath, {
+          imports: { generated: false, module: null },
+          namespace: "PersonalData",
+          members: [["Categories", "core.PersonalDataCategories"]],
+        }),
+      ];
+
 export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
   ...model.aggregates.flatMap((aggregate) => [
     ...eventFiles(aggregate, typesPath),
@@ -319,4 +330,5 @@ export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
     ...processFiles(model, aggregate, typesPath),
   ]),
   ...model.readModels.flatMap((readModel) => readModelFiles(model, readModel, typesPath)),
+  ...personalDataFiles(model, typesPath),
 ];

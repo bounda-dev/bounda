@@ -24,7 +24,7 @@ const record = (key: string, persons: readonly KeyedPerson[]) => ({
 describe("deferWrites", () => {
   it("forgets the idempotency records it holds back for a person, and forgets them on flush", async () => {
     const storage = await memory().createStorage();
-    await storage.personalKeys.add("c-1", stored("1"));
+    await storage.personalKeys.add("c-1", "default", stored("1"));
     await storage.idempotencyStore.put(record("live", [held("c-1", "1")]));
     const { stores, flush } = deferWrites(storage);
     await stores.idempotencyStore.put(record("held", [held("c-1", "1")]));
@@ -39,6 +39,48 @@ describe("deferWrites", () => {
     expect(await storage.idempotencyStore.get({ key: "live", now })).toBeNull();
     expect(await storage.idempotencyStore.get({ key: "held", now })).toBeNull();
     expect(await storage.idempotencyStore.get({ key: "other", now })).not.toBeNull();
+  });
+
+  it("forgets and withdraws only what names a person under a key outside the ones kept", async () => {
+    const storage = await memory().createStorage();
+    await storage.personalKeys.add("c-1", "default", stored("1"));
+    await storage.personalKeys.add("c-1", "profile", stored("2"));
+    const { stores, flush, withdrawScheduled, withdrawLetters } = deferWrites(storage);
+    for (const [key, fingerprint] of [
+      ["kept", "1"],
+      ["gone", "2"],
+      ["clear", null],
+    ] as const) {
+      await stores.idempotencyStore.put(record(key, [held("c-1", fingerprint)]));
+      await stores.scheduler.schedule({
+        dedupeKey: key,
+        command: testCommand("c-1"),
+        executeAt: now,
+        context: testContext,
+        persons: [held("c-1", fingerprint)],
+      });
+      await stores.deadLetterStore.add({
+        ...testDeadLetter(key),
+        kind: "scheduled",
+        persons: [held("c-1", fingerprint)],
+      });
+    }
+    await stores.idempotencyStore.forget("c-1", ["f-1"]);
+    expect(withdrawScheduled("c-1", ["f-1"]).map(({ dedupeKey }) => dedupeKey)).toEqual([
+      "gone",
+      "clear",
+    ]);
+    expect(withdrawLetters("c-1", ["f-1"]).map(({ id }) => id)).toEqual(["gone", "clear"]);
+    await flush(storage);
+    const kept = async (key: string) =>
+      [
+        (await storage.idempotencyStore.get({ key, now })) !== null,
+        (await storage.scheduler.list()).some(({ dedupeKey }) => dedupeKey === key),
+        (await storage.deadLetterStore.list()).some(({ id }) => id === key),
+      ] as const;
+    expect(await kept("kept")).toEqual([true, true, true]);
+    expect(await kept("gone")).toEqual([false, false, false]);
+    expect(await kept("clear")).toEqual([false, false, false]);
   });
 
   it("lists what names a person from the live stores, not from the writes held back", async () => {

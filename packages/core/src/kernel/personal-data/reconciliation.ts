@@ -5,14 +5,22 @@ import type {
   ForgetLedgerPosition,
 } from "../../adapter/storage/forget-ledger.ts";
 import { type Hold, isReleasedBy } from "../../adapter/storage/hold.ts";
+import type { HeldPersonalKey } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { startedBy } from "../shared/causation.ts";
-import { type Forgotten, forgetWithin, logForgotten, STALE_INTENTION } from "./forget.ts";
+import type { PersonalCategories } from "./categories.ts";
+import {
+  type ForgetScope,
+  type Forgotten,
+  forgetWithin,
+  logForgotten,
+  STALE_INTENTION,
+} from "./forget.ts";
 import { holdAfter } from "./hold.ts";
-import type { ForgetIntention, ForgetIntentions } from "./intention.ts";
+import { coveredBy, type ForgetIntention, type ForgetIntentions } from "./intention.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 /**
@@ -72,17 +80,25 @@ export interface ForgetAgainEntry {
    * after, and is kept. Any key counts when absent.
    */
   readonly fingerprints?: readonly string[];
+  /**
+   * The categories the forgetting asked for: `null`, or left out, for the person as a whole; none
+   * for a forgetting of what an earlier one retained, which the retention ends again on its own.
+   * Only those are forgotten again, never the person as a whole.
+   */
+  readonly categories?: readonly string[] | null;
 }
 
 /**
- * Whether the retention would forget the person now, read on the stores given: a forgetting the
- * retention made is committed again only then.
+ * Whether the retention would forget now, read on the stores given, the person as a whole for
+ * `keys` `null`, else every one of those keys: a forgetting the retention made is committed again
+ * only then.
  */
 export interface RetentionDueFunction {
   (
     stores: Pick<StorageTransaction, "persons" | "eventStore">,
     personId: string,
     now: Date,
+    keys: readonly HeldPersonalKey[] | null,
   ): Promise<boolean>;
 }
 
@@ -94,6 +110,8 @@ export interface ForgetAgainArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly concurrencyRetries: number;
+  readonly categories: PersonalCategories;
+  readonly batchSize: number;
   readonly entry: ForgetAgainEntry;
   readonly retentionDue: RetentionDueFunction;
   /**
@@ -111,13 +129,14 @@ export interface ForgetAgainFunction {
 type DueStores = Pick<StorageTransaction, "eventStore" | "personalKeys" | "persons">;
 
 /**
- * Commits the forgetting again when the store does not hold the event the entry names, the person
- * still holds a key it names, and, for one the retention made, the retention would forget them
- * now; deciding all of it again in the transaction that forgets them, so of two instances doing
- * it at once, the one whose append conflicts finds it done on its retry. An entry that reads as
- * applied takes no transaction. A whole entry is committed under its own id, time and reason; any
- * other takes an intention of its own, as a request. Resolves `null` when it forgot nobody.
- * `storage` is the store as written: nothing here reads a personal field.
+ * Commits the forgetting again, of the categories the entry asked for, when the store does not
+ * hold the event the entry names, the person still holds a key in force it covers and names, and,
+ * for one the retention made, the retention would forget them now; deciding all of it again in the
+ * transaction that forgets them, so of two instances doing it at once, the one whose append
+ * conflicts finds it done on its retry. An entry that reads as applied takes no transaction. A
+ * complete entry is committed under its own id, time and reason; any other takes an intention of
+ * its own, as a request. A category the app no longer has has no key to forget. Resolves `null`
+ * when it forgot nobody. `storage` is the store as written: nothing here reads a personal field.
  */
 export const forgetAgain: ForgetAgainFunction = async ({
   storage,
@@ -125,58 +144,81 @@ export const forgetAgain: ForgetAgainFunction = async ({
   ids,
   clock,
   concurrencyRetries,
+  categories,
+  batchSize,
   entry,
   retentionDue,
   record,
   actor,
 }) => {
-  const { personId, eventId, forgottenAt, reason, fingerprints } = entry;
+  const { personId, eventId, forgottenAt, reason, fingerprints, categories: asked = null } = entry;
   checkPersonId(personId, "forgetting again");
-  const isDue = async (stores: DueStores, named: readonly string[] | undefined) => {
+  const known = asked?.filter((category) => categories.of(category) !== undefined) ?? null;
+  if (known !== null && known.length === 0) return null;
+  const asScope: ForgetScope =
+    known === null ? { kind: "whole" } : { kind: "categories", categories: known };
+  // The keys in force the entry covers and names, `null` when it is not due.
+  const dueKeys = async (stores: DueStores): Promise<readonly HeldPersonalKey[] | null> => {
     if (eventId !== undefined) {
       const applied = await stores.eventStore.readOne({
         aggregateType: BOUNDA_AGGREGATE,
         aggregateId: personId,
         eventId,
       });
-      if (applied !== null) return false;
+      if (applied !== null) return null;
     }
-    const key = await stores.personalKeys.get(personId);
-    if (key === null || (named !== undefined && !named.includes(key.fingerprint))) return false;
-    return reason !== "retention" || retentionDue(stores, personId, clock.now());
+    const covered = coveredBy(asScope, await stores.personalKeys.list(personId)).filter(
+      ({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint),
+    );
+    if (covered.length === 0) return null;
+    if (reason !== "retention") return covered;
+    return (await retentionDue(stores, personId, clock.now(), known === null ? null : covered))
+      ? covered
+      : null;
   };
-  if (!(await isDue(storage, fingerprints))) return null;
-  const whole = eventId !== undefined && forgottenAt !== undefined && reason !== undefined;
-  if (whole && record) {
-    const recorded = { personId, eventId, forgottenAt, reason };
+  // A category's retention destroys the keys it found due, whatever their category's basis.
+  const scopeOf = (covered: readonly HeldPersonalKey[]): ForgetScope =>
+    reason === "retention" && known !== null
+      ? { kind: "keys", fingerprints: covered.map(({ key }) => key.fingerprint) }
+      : asScope;
+  const due = await dueKeys(storage);
+  if (due === null) return null;
+  const complete = eventId !== undefined && forgottenAt !== undefined && reason !== undefined;
+  if (complete && record) {
+    const recorded = { personId, categories: asked, eventId, forgottenAt, reason };
     await intentions.record(fingerprints === undefined ? recorded : { ...recorded, fingerprints });
   }
   const correlationId = ids.next();
-  // A whole entry is due only while the person holds a key it names, so it is never stale; an
+  // A complete entry is due only while the person holds a key it names, so it is never stale; an
   // intention of its own takes another that names a key given meanwhile, as `forget` does.
   for (;;) {
-    const intention: ForgetIntention = whole
+    const intention: ForgetIntention = complete
       ? { eventId, forgottenAt, reason, fingerprints }
       : await intentions.intend({
           personId,
           reason: reason ?? "requested",
+          scope: scopeOf(due),
           keys: storage.personalKeys,
         });
     const outcome = await transactRetrying({
       storage,
       concurrencyRetries,
-      work: async (transaction) =>
-        (await isDue(transaction, fingerprints))
-          ? forgetWithin({
-              transaction,
-              ids,
-              clock,
-              personId,
-              intention,
-              context: startedBy(correlationId, actor),
-              checked: whole,
-            })
-          : null,
+      work: async (transaction) => {
+        const covered = await dueKeys(transaction);
+        if (covered === null) return null;
+        return forgetWithin({
+          transaction,
+          ids,
+          clock,
+          personId,
+          intention,
+          context: startedBy(correlationId, actor),
+          categories,
+          scope: scopeOf(covered),
+          batchSize,
+          checked: complete,
+        });
+      },
     });
     if (outcome !== STALE_INTENTION) return outcome === null || "held" in outcome ? null : outcome;
   }
@@ -245,6 +287,8 @@ export interface CreateForgetLedgerReconciliationArgs {
   readonly ledger: ForgetLedger;
   readonly intentions: ForgetIntentions;
   readonly retentionDue: RetentionDueFunction;
+  readonly categories: PersonalCategories;
+  readonly batchSize: number;
   /**
    * The store as written.
    */
@@ -291,6 +335,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   clock,
   logger,
   concurrencyRetries,
+  categories,
+  batchSize,
   reconcileEveryMs,
   keepForMs,
   pageSize = FORGET_LEDGER_PAGE,
@@ -347,6 +393,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
           ids,
           clock,
           concurrencyRetries,
+          categories,
+          batchSize,
           entry,
           retentionDue,
           record: false,

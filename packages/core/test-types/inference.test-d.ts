@@ -7,6 +7,7 @@ import type {
   BoundaClient,
   CancelledCommand,
   CatchUpReadModelsArgs,
+  CategoryRetentionStatus,
   CausationContext,
   CheckActorFunction,
   Clock,
@@ -32,6 +33,8 @@ import type {
   EnvSection,
   EventMetadata,
   EventPayloadArgs,
+  ExportedCategories,
+  ExportedCategory,
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
@@ -45,23 +48,29 @@ import type {
   FieldTypesOf,
   FieldTypesOfRow,
   ForgetLedgerReconciliationStatus,
+  ForgetOptions,
   ForgetsPersonalData,
   HasPersonalFields,
   ImplementationModule,
   Instant,
   KeyRotationStatus,
+  LegalBasis,
   Logger,
   OnPersonalDataAccess,
   OnPersonalDataAccessArgs,
   PayloadArgs,
   PayloadInputOf,
+  PersonalCategoryName,
   PersonalDataAccess,
   PersonalDataBackfillLag,
+  PersonalDataCategories,
+  PersonalDataCategory,
   PersonalDataExport,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
   PersonalDataForgottenReason,
   PersonalFunction,
+  PersonalOptions,
   PersonFunction,
   ProcessCorrelation,
   ProcessingRestrictedEvent,
@@ -79,6 +88,7 @@ import type {
   RejectFunction,
   RejectionCodeOf,
   RemovedDeadLetter,
+  RetentionInput,
   RetentionStatus,
   ScheduledDispatch,
   SchemaStatus,
@@ -115,8 +125,11 @@ import type {
   OrderSummaryRow as GeneratedOrderSummaryRow,
   OrderSummaryFieldTypes,
   OrderSummaryForgetting,
+  PersonalCategory,
+  PersonalDataDeclaration,
   Queries,
 } from "./fixtures/order-app/.bounda/types.ts";
+import type { PersonalData } from "./fixtures/order-app/app/+types/personal-data.ts";
 import type * as audit from "./fixtures/order-app/app/audit.ts";
 import type { Event as CustomerRegistered } from "./fixtures/order-app/app/domain/customer/+types/customer-registered.ts";
 import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
@@ -427,7 +440,9 @@ describe("idempotency keys", () => {
   });
 
   it("lets policies and processes forget a person with their run, and no command handler", () => {
-    expectTypeOf<ReactionForgetFunction>().toEqualTypeOf<(personId: string) => Promise<void>>();
+    expectTypeOf<ReactionForgetFunction>().toEqualTypeOf<
+      (personId: string, options?: ForgetOptions) => Promise<void>
+    >();
     expectTypeOf<SendReceipt.HandlerArgs["forget"]>().toEqualTypeOf<ReactionForgetFunction>();
     expectTypeOf<
       NotifyOnOrderPlaced.HandlerArgs["forget"]
@@ -734,10 +749,15 @@ describe("personal data", () => {
     expectTypeOf<PersonalDataForgottenPayload>().toEqualTypeOf<{
       readonly personId: string;
       readonly reason: PersonalDataForgottenReason;
+      readonly whole: boolean;
+      readonly categories: readonly PersonalCategoryName[];
+      readonly retained: readonly PersonalCategoryName[];
+      readonly expired: readonly PersonalCategoryName[];
       readonly fingerprints?: readonly string[];
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
     }>();
+    expectTypeOf<PersonalCategoryName>().toEqualTypeOf<"default" | "delivery" | "invoices">();
     expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
     expectTypeOf<
       AuditOnPersonalDataForgotten.HandlerArgs["event"]["payload"]["reason"]
@@ -767,10 +787,41 @@ describe("personal data", () => {
     }>();
   });
 
+  it("names the categories app/personal-data.ts declares, and checks the declaration", () => {
+    expectTypeOf<PersonalCategory>().toEqualTypeOf<"delivery" | "invoices">();
+    expectTypeOf<PersonalDataDeclaration>().toEqualTypeOf<true>();
+    expectTypeOf<PersonalData.Categories>().toEqualTypeOf<PersonalDataCategories>();
+    expectTypeOf<PersonalDataCategory>().toEqualTypeOf<{
+      readonly basis: LegalBasis;
+      readonly retention: RetentionInput;
+    }>();
+    expectTypeOf<RetentionInput>().toEqualTypeOf<DurationInput | `${number}mo` | `${number}y`>();
+    expectTypeOf<LegalBasis>().toEqualTypeOf<
+      | "consent"
+      | "contract"
+      | "legal-obligation"
+      | "vital-interests"
+      | "public-task"
+      | "legitimate-interests"
+    >();
+    expectTypeOf<Parameters<EventPayloadArgs["personal"]>[1]>().toEqualTypeOf<
+      PersonalOptions | undefined
+    >();
+    expectTypeOf<PersonalOptions>().toEqualTypeOf<{
+      readonly category?: "delivery" | "invoices";
+    }>();
+    expectTypeOf<OrderPlaced.EvolveArgs["event"]["payload"]["note"]>().toEqualTypeOf<
+      string | null | undefined
+    >();
+  });
+
   it("lets every client forget a person, answering like a command", () => {
     expectTypeOf<BoundaClient["forget"]>().toEqualTypeOf<
-      (personId: string) => Promise<StoredDispatch>
+      (personId: string, options?: ForgetOptions) => Promise<StoredDispatch>
     >();
+    expectTypeOf<ForgetOptions>().toEqualTypeOf<{
+      readonly categories?: readonly ("default" | "delivery" | "invoices")[];
+    }>();
     expectTypeOf<BoundaApp["forget"]>().toEqualTypeOf<BoundaClient["forget"]>();
   });
 
@@ -784,6 +835,7 @@ describe("personal data", () => {
     expectTypeOf<PersonalDataExport>().toEqualTypeOf<{
       readonly personId: string;
       readonly exportedAt: string;
+      readonly categories: Readonly<Record<string, ExportedCategory>>;
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
@@ -800,6 +852,7 @@ describe("personal data", () => {
     expectTypeOf<ExportedRow>().toEqualTypeOf<{
       readonly key: unknown;
       readonly data: ExportedData;
+      readonly categories: ExportedCategories;
     }>();
     expectTypeOf<ExportedEvent>().toEqualTypeOf<{
       readonly id: string;
@@ -810,12 +863,14 @@ describe("personal data", () => {
       readonly position: number;
       readonly timestamp: string;
       readonly data: ExportedData;
+      readonly categories: ExportedCategories;
     }>();
     expectTypeOf<ExportedScheduledCommand>().toEqualTypeOf<{
       readonly commandId: string;
       readonly type: string;
       readonly executeAt: string;
       readonly data: ExportedData;
+      readonly categories: ExportedCategories;
     }>();
     expectTypeOf<ExportedDeadLetter>().toEqualTypeOf<{
       readonly id: string;
@@ -824,8 +879,15 @@ describe("personal data", () => {
       readonly errorMessage?: string | null;
       readonly errorStack?: string | null;
       readonly data: ExportedData;
+      readonly categories: ExportedCategories;
     }>();
     expectTypeOf<ExportedData>().toEqualTypeOf<Readonly<Record<string, unknown>>>();
+    expectTypeOf<ExportedCategories>().toEqualTypeOf<Readonly<Record<string, string>>>();
+    expectTypeOf<ExportedCategory>().toEqualTypeOf<{
+      readonly basis: LegalBasis | null;
+      readonly retention: string | null;
+      readonly restrictedUntil: string | null;
+    }>();
   });
 
   it("lets every client restrict a person's processing and lift it, answering like a command", () => {
@@ -1350,7 +1412,12 @@ describe("operations", () => {
       readonly completeAt: string | null;
     }>();
     expectTypeOf<RetentionStatus>().toEqualTypeOf<{
-      readonly retentionMs: number;
+      readonly categories: readonly CategoryRetentionStatus[];
+      readonly keptBeyond: number;
+    }>();
+    expectTypeOf<CategoryRetentionStatus>().toEqualTypeOf<{
+      readonly category: string;
+      readonly retention: string;
       readonly due: number;
       readonly nextDueAt: string | null;
     }>();

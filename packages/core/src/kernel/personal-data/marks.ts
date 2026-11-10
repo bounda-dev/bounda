@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { personalMarkOf } from "../../modules/personal.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -6,12 +7,14 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 
 /**
  * What an event's or a command's payload schema, or a process's state schema, marks: the fields to
- * encrypt, and the field naming the person they belong to, or whom the payload touches when it
- * marks no field to encrypt; `null` when the aggregate's or the instance's id names them.
+ * encrypt, the category each is sealed under, and the field naming the person they belong to, or
+ * whom the payload touches when it marks no field to encrypt; `null` when the aggregate's or the
+ * instance's id names them.
  */
 export interface PersonalMarks {
   readonly person: string | null;
   readonly fields: readonly string[];
+  readonly categories: Readonly<Record<string, string>>;
 }
 
 export interface PersonalMarksOfArgs {
@@ -31,11 +34,15 @@ export interface PersonalMarksOfFunction {
 export const personalMarksOf: PersonalMarksOfFunction = ({ schema, path }) => {
   if (!(schema instanceof z.ZodObject)) return null;
   const fields: string[] = [];
+  const categories: Record<string, string> = {};
   const persons: string[] = [];
   for (const [name, field] of Object.entries(schema.shape)) {
-    const mark = personalMarkOf(field as z.ZodType);
-    if (mark === "personal") fields.push(name);
-    if (mark === "person") persons.push(name);
+    const marked = personalMarkOf(field as z.ZodType);
+    if (marked?.mark === "personal") {
+      fields.push(name);
+      categories[name] = marked.category;
+    }
+    if (marked?.mark === "person") persons.push(name);
   }
   if (persons.length > 1) {
     throw new ConfigurationError(
@@ -43,8 +50,15 @@ export const personalMarksOf: PersonalMarksOfFunction = ({ schema, path }) => {
     );
   }
   if (fields.length === 0 && persons.length === 0) return null;
-  return { person: persons[0] ?? null, fields };
+  return { person: persons[0] ?? null, fields, categories };
 };
+
+export interface FieldCategoryFunction {
+  (marks: PersonalMarks, field: string): string;
+}
+
+export const fieldCategory: FieldCategoryFunction = (marks, field) =>
+  marks.categories[field] ?? DEFAULT_PERSONAL_CATEGORY;
 
 export interface MarksPersonalFieldsArgs {
   readonly aggregates: AggregatesRuntime;

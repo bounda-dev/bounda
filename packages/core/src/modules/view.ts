@@ -1,4 +1,6 @@
+import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 import type { Simplify } from "./naming.ts";
+import type { PersonalOptions } from "./personal.ts";
 
 /**
  * Storage types a read-model field can have.
@@ -31,6 +33,11 @@ export interface FieldDefinition<
    * Adapters store a marked column as any other.
    */
   readonly mark: Mark;
+  /**
+   * The category of a field marked `personal`, `DEFAULT_PERSONAL_CATEGORY` unless it was given
+   * one; `null` for any other field.
+   */
+  readonly category: string | null;
   readonly _value?: Value;
 }
 
@@ -48,12 +55,16 @@ export interface Field<
   unique(): Field<Value, Optional, Mark, Type>;
   index(): Field<Value, Optional, Mark, Type>;
   /**
-   * Marks the field as personal data of the person the row's `person` field names: the export of
-   * that person carries it, and a query that reads rows of the read model is recorded in the
-   * access log. A read model with personal fields needs a `person` field and a projection of
-   * `PersonalDataForgotten`, or `.bounda/types.ts` does not compile.
+   * Marks the field as personal data of the person the row's `person` field names, in the
+   * category given, the default one without: the export of that person carries it with its
+   * category, and a query that reads rows of the read model is recorded in the access log. A read
+   * model with personal fields needs a `person` field and a projection of `PersonalDataForgotten`,
+   * or `.bounda/types.ts` does not compile.
    */
-  personal(this: Field<Value, Optional, null, Type>): Field<Value, Optional, "personal", Type>;
+  personal(
+    this: Field<Value, Optional, null, Type>,
+    options?: PersonalOptions,
+  ): Field<Value, Optional, "personal", Type>;
   /**
    * Marks the field that holds the id of the person the row's personal fields belong to. A read
    * model has at most one; its rows are in that person's export.
@@ -133,6 +144,7 @@ interface FieldFlags {
   readonly isUnique: boolean;
   readonly isIndexed: boolean;
   readonly mark: FieldMark | null;
+  readonly category: string | null;
 }
 
 const createField = <
@@ -149,11 +161,17 @@ const createField = <
   isUnique: flags.isUnique,
   isIndexed: flags.isIndexed,
   mark: flags.mark as Mark,
+  category: flags.category,
   optional: () => createField<Value, true, Mark, Type>({ ...flags, isOptional: true }),
   primaryKey: () => createField<Value, Optional, Mark, Type>({ ...flags, isPrimaryKey: true }),
   unique: () => createField<Value, Optional, Mark, Type>({ ...flags, isUnique: true }),
   index: () => createField<Value, Optional, Mark, Type>({ ...flags, isIndexed: true }),
-  personal: () => createField<Value, Optional, "personal", Type>({ ...flags, mark: "personal" }),
+  personal: (options?: PersonalOptions) =>
+    createField<Value, Optional, "personal", Type>({
+      ...flags,
+      mark: "personal",
+      category: options?.category ?? DEFAULT_PERSONAL_CATEGORY,
+    }),
   person: () => createField<Value, Optional, "person", Type>({ ...flags, mark: "person" }),
 });
 
@@ -165,6 +183,7 @@ const field = <Value, Type extends FieldType>(type: Type): Field<Value, false, n
     isUnique: false,
     isIndexed: false,
     mark: null,
+    category: null,
   });
 
 /**

@@ -42,15 +42,15 @@ export interface DeferredWrites {
    */
   pending(): boolean;
   /**
-   * Withdraws the commands scheduled so far, and not flushed, whose `persons` names `person`, and
-   * resolves to them as the scheduler would hold them: what a `forget` that runs before the flush
+   * Withdraws the commands scheduled so far, and not flushed, whose `persons` names `person` as
+   * `namesPerson` tells with `keep`, and resolves to them as the scheduler would hold them: what a `forget` that runs before the flush
    * must find too, as it does in a store whose transaction sees its own writes.
    */
-  withdrawScheduled(person: string): readonly ScheduledCommand[];
+  withdrawScheduled(person: string, keep?: readonly string[]): readonly ScheduledCommand[];
   /**
    * The same for the dead letters added so far.
    */
-  withdrawLetters(person: string): readonly StoredDeadLetter[];
+  withdrawLetters(person: string, keep?: readonly string[]): readonly StoredDeadLetter[];
 }
 
 export interface DeferWritesFunction {
@@ -136,11 +136,11 @@ export const deferWrites: DeferWritesFunction = ({
           recorded.push((target) => target.idempotencyStore.put(args));
         },
         purge: idempotencyStore.purge,
-        forget: async (person) => {
+        forget: async (person, keep) => {
           for (const [key, record] of records) {
-            if (record.persons.some((held) => held.person === person)) records.delete(key);
+            if (namesPerson(record, person, keep)) records.delete(key);
           }
-          recorded.push((target) => target.idempotencyStore.forget(person));
+          recorded.push((target) => target.idempotencyStore.forget(person, keep));
         },
       },
     },
@@ -148,8 +148,8 @@ export const deferWrites: DeferWritesFunction = ({
       for (const write of recorded) await write(target);
     },
     pending: () => recorded.length > 0,
-    withdrawScheduled: (person) => {
-      const named = [...scheduled.values()].filter((args) => namesPerson(args, person));
+    withdrawScheduled: (person, keep) => {
+      const named = [...scheduled.values()].filter((args) => namesPerson(args, person, keep));
       for (const { dedupeKey } of named) {
         scheduled.delete(dedupeKey);
         recorded.push((target) => target.scheduler.cancel(dedupeKey));
@@ -163,8 +163,8 @@ export const deferWrites: DeferWritesFunction = ({
         persons: persons ?? [],
       }));
     },
-    withdrawLetters: (person) => {
-      const named = [...letters.values()].filter((letter) => namesPerson(letter, person));
+    withdrawLetters: (person, keep) => {
+      const named = [...letters.values()].filter((letter) => namesPerson(letter, person, keep));
       for (const { id } of named) {
         letters.delete(id);
         recorded.push((target) => target.deadLetterStore.remove(id));

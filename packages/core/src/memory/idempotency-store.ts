@@ -1,5 +1,5 @@
 import type { IdempotencyRecord, IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
-import type { KeyedPerson } from "../adapter/storage/personal-key-store.ts";
+import { type KeyedPerson, namesPerson } from "../adapter/storage/personal-key-store.ts";
 import { IdempotencyKeyTakenError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";
@@ -48,9 +48,9 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
       }
       return purged;
     },
-    forget: async (person) => {
+    forget: async (person, keep) => {
       for (const [key, record] of records) {
-        if (record.persons.some((held) => held.person === person)) records.delete(key);
+        if (namesPerson(record, person, keep)) records.delete(key);
       }
     },
   };
