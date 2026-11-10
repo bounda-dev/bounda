@@ -33,6 +33,10 @@ export interface ParseDurationFunction {
   (input: LooseDurationInput): number;
 }
 
+/**
+ * The milliseconds of a duration written as the configuration takes it, `"35d"` or a number of
+ * milliseconds. Throws `ValidationError` for anything else, or a negative number.
+ */
 export const parseDuration: ParseDurationFunction = (input) => {
   if (typeof input === "number") {
     if (!Number.isFinite(input) || input < 0) {

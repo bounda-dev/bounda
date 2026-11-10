@@ -4,13 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type BoundaApp,
+  type Clock,
   createApp,
   type EventPayloadArgs,
   type PayloadArgs,
   type PersonalDataForgottenPayload,
   type Registry,
+  systemClock,
 } from "@bounda-dev/core";
-import type { ForgetLedger } from "@bounda-dev/core/adapter";
+import type { Adapter, ForgetLedger } from "@bounda-dev/core/adapter";
 import { forgetLedgerContract } from "@bounda-dev/core/adapter/testing";
 import { createClient } from "@libsql/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -92,13 +94,24 @@ interface Paths {
   readonly ledger: string;
 }
 
-const boot = (paths: Paths): Promise<BoundaApp> =>
+// How far ahead a start after a restore runs: past the grace a reconciliation gives an intention,
+// as a restore takes longer than that.
+const LATER_MS = 2 * 60_000;
+
+// The system's clock, `LATER_MS` ahead.
+const later: Clock = {
+  now: () => new Date(Date.now() + LATER_MS),
+  after: (milliseconds, callback, options) => systemClock.after(milliseconds, callback, options),
+};
+
+const boot = (paths: Paths, clock: Clock = systemClock): Promise<BoundaApp> =>
   createApp({
     registry,
     config: {
       storage: sqlite({ path: paths.store }),
       runtime: { personalData: { forgetLedger: { store: sqlite({ path: paths.ledger }) } } },
     },
+    clock,
   });
 
 const register = async (app: BoundaApp, customerId: string): Promise<void> => {
@@ -129,13 +142,17 @@ const startElsewhere = (paths: Paths): Promise<void> =>
       [
         "--input-type=module",
         "-e",
-        `import { createApp } from "@bounda-dev/core";
+        `import { createApp, systemClock } from "@bounda-dev/core";
         import { sqlite } from "./index.ts";
         const app = await createApp({
           registry: { aggregates: {}, readModels: {} },
           config: {
             storage: sqlite({ path: ${JSON.stringify(paths.store)} }),
             runtime: { personalData: { forgetLedger: { store: sqlite({ path: ${JSON.stringify(paths.ledger)} }) } } },
+          },
+          clock: {
+            now: () => new Date(Date.now() + ${LATER_MS}),
+            after: (milliseconds, callback, options) => systemClock.after(milliseconds, callback, options),
           },
         });
         await app.stop();`,
@@ -180,15 +197,15 @@ describe("restoring a backup with a forget ledger", () => {
     await before.stop();
 
     const restoredPaths = { ...paths, store: await restore(backup) };
-    const restored = await boot(restoredPaths);
-    expect(await forgotten(restored)).toEqual([["c-1", "restored"]]);
+    const restored = await boot(restoredPaths, later);
+    expect(await forgotten(restored)).toEqual([["c-1", "requested"]]);
     expect(await nameOf(restored, "c-1")).toBeNull();
     expect(await nameOf(restored, "c-2")).toBe("name of c-2");
     await restored.runUntilIdle();
     await restored.stop();
 
-    const again = await boot(restoredPaths);
-    expect(await forgotten(again)).toEqual([["c-1", "restored"]]);
+    const again = await boot(restoredPaths, later);
+    expect(await forgotten(again)).toEqual([["c-1", "requested"]]);
     expect(await again.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     await again.stop();
   });
@@ -210,9 +227,63 @@ describe("restoring a backup with a forget ledger", () => {
     await client.execute("PRAGMA journal_mode = WAL");
     client.close();
     await Promise.all([startElsewhere(restoredPaths), startElsewhere(restoredPaths)]);
-    const after = await boot(restoredPaths);
-    expect(await forgotten(after)).toEqual([["c-1", "restored"]]);
+    const after = await boot(restoredPaths, later);
+    expect(await forgotten(after)).toEqual([["c-1", "requested"]]);
     await after.stop();
+  });
+
+  it("commits on the restored copy the forgettings after the backup, a pending intention's included, each under its id", async () => {
+    const paths = fresh();
+    const backup = pathOf(`backup-${databases}`);
+    const before = await boot(paths);
+    await register(before, "c-1");
+    await register(before, "c-2");
+    await register(before, "c-3");
+    await backUp(paths.store, backup);
+    await before.forget("c-1");
+    await before.stop();
+    // The process stops between the intention and the commit of c-2's forgetting.
+    let crashing = true;
+    const store = sqlite({ path: paths.store });
+    const stopped: Adapter = {
+      ...store,
+      createStorage: async () => {
+        const opened = await store.createStorage();
+        return {
+          ...opened,
+          transact: (work) =>
+            crashing ? Promise.reject(new Error("the process stopped")) : opened.transact(work),
+        };
+      },
+    };
+    const stopping = await createApp({
+      registry,
+      config: {
+        storage: stopped,
+        runtime: { personalData: { forgetLedger: { store: sqlite({ path: paths.ledger }) } } },
+      },
+    });
+    await expect(stopping.forget("c-2")).rejects.toThrow("the process stopped");
+    crashing = false;
+    await stopping.stop();
+
+    const ledger = await sqlite({ path: paths.ledger }).createForgetLedger({});
+    opened.push(ledger);
+    const intentions = await ledger.read({ limit: 10 });
+    expect(intentions.map(({ personId, reason }) => [personId, reason])).toEqual([
+      ["c-1", "requested"],
+      ["c-2", "requested"],
+    ]);
+    const restored = await boot({ ...paths, store: await restore(backup) }, later);
+    expect(
+      (await restored.events.read({ limit: 1000 }))
+        .filter((event) => event.type === "PersonalDataForgotten")
+        .map((event) => [event.aggregateId, event.id]),
+    ).toEqual(intentions.map(({ personId, eventId }) => [personId, eventId]));
+    expect(await nameOf(restored, "c-1")).toBeNull();
+    expect(await nameOf(restored, "c-2")).toBeNull();
+    expect(await nameOf(restored, "c-3")).toBe("name of c-3");
+    await restored.stop();
   });
 
   it("brings the person back without a ledger, which bounda forget --from then forgets again", async () => {

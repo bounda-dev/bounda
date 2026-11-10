@@ -5,7 +5,7 @@ import {
   idempotencyKeyFor,
 } from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createBounda } from "./create-bounda.ts";
 
 interface FakeApp {
@@ -34,6 +34,7 @@ const fakeApp = (name: string): FakeApp => {
     stop: async () => {
       calls.push("stop");
     },
+    config: { runtime: { telemetry: { errorText: "omit" } } },
   } as unknown as BoundaApp;
   return { app, calls };
 };
@@ -71,6 +72,7 @@ const actingApp = (): { readonly app: BoundaApp; readonly calls: unknown[][] } =
     },
     start: () => undefined,
     stop: async () => undefined,
+    config: { runtime: { telemetry: { errorText: "omit" } } },
   } as unknown as BoundaApp;
   return { app, calls };
 };
@@ -190,6 +192,7 @@ describe("createBounda", () => {
       },
       start: () => undefined,
       stop: async () => undefined,
+      config: { runtime: { telemetry: { errorText: "omit" } } },
     } as unknown as BoundaApp;
     const { bounda, boundaMiddleware } = createBounda({
       consistency: "eventual",
@@ -227,6 +230,7 @@ describe("createBounda", () => {
       },
       start: () => undefined,
       stop: async () => undefined,
+      config: { runtime: { telemetry: { errorText: "omit" } } },
     } as unknown as BoundaApp;
     const { bounda, boundaMiddleware } = createBounda({
       consistency: "eventual",
@@ -605,5 +609,144 @@ describe("createBounda", () => {
     release(new Error("boom"));
     await expect(pending).rejects.toThrow("boom");
     await expect(disposing).resolves.toBeUndefined();
+  });
+});
+
+describe("createBounda's handleError", () => {
+  const thrown = () => new Error("no account for ana@example.com");
+  const request = () => new Request("http://localhost/accounts");
+  const recording = () => {
+    const lines: unknown[][] = [];
+    return {
+      lines,
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: (...entry: unknown[]) => void lines.push(entry),
+      },
+    };
+  };
+  const withErrorText = (errorText: "omit" | "include"): BoundaApp =>
+    ({
+      ...fakeApp("a").app,
+      config: { runtime: { telemetry: { errorText } } },
+    }) as unknown as BoundaApp;
+
+  it("follows the booted app's errorText, and errorText before any app booted", async () => {
+    const { lines, logger } = recording();
+    let booting: BoundaApp = withErrorText("include");
+    const { boundaMiddleware, dispose, handleError } = createBounda({
+      boot: async () => booting,
+      key: uniqueKey(),
+      logger,
+      errorText: "include",
+    });
+    await handleError(thrown(), { request: request() });
+    expect(lines.at(-1)?.[1]).toMatchObject({ errorMessage: "no account for ana@example.com" });
+
+    booting = withErrorText("omit");
+    await boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await handleError(thrown(), { request: request() });
+    expect(lines.at(-1)).toEqual(["request failed", { method: "GET", errorName: "Error" }]);
+    await dispose();
+  });
+
+  it("omits the text before any app booted by default, also when the boot failed", async () => {
+    const { lines, logger } = recording();
+    const { boundaMiddleware, handleError } = createBounda({
+      boot: async () => {
+        throw thrown();
+      },
+      key: uniqueKey(),
+      logger,
+    });
+    const failed = await boundaMiddleware(middlewareArgs().args, async () => undefined).catch(
+      (error: unknown) => error,
+    );
+    await handleError(failed, { request: request() });
+    expect(lines).toEqual([["request failed", { method: "GET", errorName: "Error" }]]);
+  });
+
+  it("follows BOUNDA_ERROR_TEXT before any app booted, as boot() would, over errorText", async () => {
+    const { lines, logger } = recording();
+    const { handleError } = createBounda({
+      boot: async () => fakeApp("a").app,
+      key: uniqueKey(),
+      logger,
+      errorText: "omit",
+    });
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      await handleError(thrown(), { request: request() });
+      process.env.BOUNDA_ERROR_TEXT = "loud";
+      await handleError(thrown(), { request: request() });
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+    expect(lines.map(([, fields]) => "errorMessage" in (fields as object))).toEqual([true, false]);
+  });
+
+  it("logs without waiting for a boot in flight, and forgets the rule of an app it disposed", async () => {
+    const { lines, logger } = recording();
+    let finish: (app: BoundaApp) => void = () => undefined;
+    const pending = new Promise<BoundaApp>((resolve) => {
+      finish = resolve;
+    });
+    const { boundaMiddleware, dispose, handleError } = createBounda({
+      boot: () => pending,
+      key: uniqueKey(),
+      logger,
+    });
+    const booting = boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await handleError(thrown(), { request: request() });
+    expect(lines).toHaveLength(1);
+    finish(withErrorText("include"));
+    await booting;
+    await handleError(thrown(), { request: request() });
+    expect(lines.at(-1)?.[1]).toMatchObject({ errorMessage: "no account for ana@example.com" });
+    await dispose();
+    await handleError(thrown(), { request: request() });
+    expect(lines.at(-1)).toEqual(["request failed", { method: "GET", errorName: "Error" }]);
+  });
+
+  it("keeps no rule of a boot that finishes after it was disposed", async () => {
+    const { lines, logger } = recording();
+    let finish: (app: BoundaApp) => void = () => undefined;
+    const { boundaMiddleware, dispose, handleError } = createBounda({
+      boot: () =>
+        new Promise<BoundaApp>((resolve) => {
+          finish = resolve;
+        }),
+      key: uniqueKey(),
+      logger,
+    });
+    const booting = boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await Promise.resolve();
+    const disposed = dispose();
+    finish(withErrorText("include"));
+    await disposed;
+    await booting;
+    await handleError(thrown(), { request: request() });
+    expect(lines).toEqual([["request failed", { method: "GET", errorName: "Error" }]]);
+  });
+
+  it("logs a line to the console by default, as boot() does", async () => {
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => void written.push(args));
+    try {
+      const { handleError } = createBounda({
+        boot: async () => fakeApp("a").app,
+        key: uniqueKey(),
+      });
+      await handleError(thrown(), { request: request() });
+      await handleError(thrown(), { request: request() });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written).toEqual([
+      ['[bounda] error request failed {"method":"GET","errorName":"Error"}'],
+      ['[bounda] error request failed {"method":"GET","errorName":"Error"}'],
+    ]);
   });
 });

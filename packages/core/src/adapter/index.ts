@@ -3,6 +3,7 @@ export type {
   CommitReadModelRebuildArgs,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
+  IsAdapterFunction,
   ReadModelRebuild,
   ReadModelStorage,
   ReadModelTransactArgs,
@@ -13,6 +14,7 @@ export type {
   Storage,
   StorageTransaction,
 } from "./adapter.ts";
+export { isAdapter } from "./adapter.ts";
 export type { AdapterDefinition } from "./adapter-definition.ts";
 export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
 export { rebuildFencing } from "./rebuild-fencing.ts";

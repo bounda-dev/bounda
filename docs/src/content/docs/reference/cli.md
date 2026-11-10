@@ -41,8 +41,9 @@ error: ValidationError (VALIDATION_FAILED); its message may quote personal data:
 ```
 
 `--error-text`, on every command that loads the project, prints the message and lets the log lines
-carry the text of errors for that run; a configuration that sets `errorText: "include"` does the
-same without it. What fails before any handler runs is printed in full: a configuration or a
+carry the text of errors for that run; `BOUNDA_ERROR_TEXT=include` in the environment or in `.env`,
+or a configuration that sets `errorText: "include"`, does the same without it, and
+`BOUNDA_ERROR_TEXT=omit` keeps the text out whatever the configuration says. What fails before any handler runs is printed in full: a configuration or a
 registry that cannot be loaded, a read model that is not in the registry, a list `forget` cannot
 read, and errors whose message Bounda writes from names and ids alone, such as a dead letter that is
 not found or was already settled. To read what a reaction failed on, read its letter:
@@ -287,8 +288,9 @@ dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
   [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
   letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
 
-`--error-text` also prints, under each failure, the text it keeps, encrypted under the person the
-event names: it is read through `app.subscriberFailures.list()`, which records it in the
+Under the rule of [error text](#error-text) set to `"include"`, by `--error-text`,
+`BOUNDA_ERROR_TEXT=include` or the configuration, it also prints, under each failure, the text it
+keeps, encrypted under the person the event names: it is read through `app.subscriberFailures.list()`, which records it in the
 [access log](/guides/personal-data/#who-opened-what) with the persons and `--actor`. A failure whose
 person was forgotten says its text went with them.
 
@@ -352,8 +354,9 @@ migration failed.
 ## `bounda forgotten` and `bounda forget`
 
 Apply again, by hand, the forgettings a restored backup undid, for an app without a
-[forget ledger](/guides/personal-data/#backups). Both boot the project as `bounda dead-letters`
-does.
+[forget ledger](/guides/personal-data/#backups). `bounda forget` boots the project as
+`bounda dead-letters` does; `bounda forgotten` only opens the project's storage and reads its
+event store, without starting the app, so a strict forget ledger that is down does not stop it.
 
 ```bash
 bounda forgotten --since 2026-11-01T03:00:00Z > forgotten.jsonl
@@ -364,18 +367,20 @@ bounda forget --from forgotten.jsonl
 `bounda forgotten` reads the stream and prints, one line of JSON each, the `PersonalDataForgotten`
 of every person forgotten since `--since`: a date, compared with each event's time, which reads the
 whole stream, or a position of the stream to read after. Each line is
-`{"personId":…,"eventId":…,"forgottenAt":…}`, the entry a ledger would hold; the count goes to
+`{"personId":…,"eventId":…,"forgottenAt":…,"reason":…,"fingerprints":[…]}`, the entry a ledger
+would hold, without `fingerprints` for a forgetting recorded before Bounda 0.4.0; the count goes to
 standard error, so standard output is the list alone. Run it against the database before it is
 restored, or regularly next to the backups.
 
-`bounda forget --from <file>` forgets again, with `reason: "restored"`, each person listed who
-still holds a key, unless the database holds the forgetting the line names by `eventId`. A line
-may also be a bare person's id, forgotten whenever they hold a key; blank lines are skipped. It
-prints each person it forgot and how many of those listed:
+`bounda forget --from <file>` commits again each forgetting listed, under its own id, time and
+reason, unless the database holds it, and only while the person holds a key the line names, as a
+reconciliation would; with a forget ledger configured, it records each in the ledger first. A
+line may also be a bare person's id, forgotten as a request whenever they hold a key; blank lines
+are skipped. It prints each person it forgot and how many of those listed:
 
 ```
 forgot again c-42
-forgot again 1 of 3 listed; the rest hold no key, or this store holds their forgetting
+forgot again 1 of 3 listed; the rest hold no key the line names, or this store holds their forgetting
 ```
 
 | Option | Applies to | Meaning |
@@ -387,6 +392,38 @@ forgot again 1 of 3 listed; the rest hold no key, or this store holds their forg
 
 Exit codes: `0` done, `1` bad arguments, `2` the project could not be loaded, or the file could not
 be read or has a line that is neither a person's id nor an entry, in which case nobody is forgotten.
+
+## `bounda forget-ledger expire`
+
+Gives every entry of a Workers KV [forget ledger](/guides/personal-data/#keeping-the-ledger-short)
+the expiration `keepFor` sets: KV expires a key only as it was written, so the keys written before
+`keepFor` was set, or while it was longer, keep the expiration they had, none at first. Run it once
+after setting or shortening `keepFor`, from the project's root.
+
+```bash
+bounda forget-ledger expire --binding FORGET_LEDGER --keep-for 35d
+```
+
+It runs the project's own wrangler, logged in to the account: it lists every object's keys under
+the ledger, writes again with their expiration those that expire later than `keepFor` after their
+forgetting or never, and removes those already past it, through `wrangler kv bulk`. A key that is
+not an entry of the ledger is never touched. It prints what it changed:
+
+```
+gave 1204 entries the expiration keepFor sets; removed 37 already past it
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--binding <name>` | The KV namespace's binding in `wrangler.jsonc`, as `kvForgetLedger({ binding })` names it |
+| `--keep-for <duration>` | The configuration's `keepFor`, such as `35d` |
+| `--local` | The local state of `wrangler dev` instead of the deployed namespace |
+| `--env <name>`, `--wrangler-config <path>`, `--persist-to <dir>` | As wrangler takes `--env`, `--config` and `--persist-to` |
+| `--root <dir>` | The project's root, where wrangler is installed |
+| `--error-text` | Print the message of the error it fails on, as [error text](#error-text) says |
+
+Exit codes: `0` done, `1` bad arguments, `2` wrangler failed, is not installed, or
+`@bounda-dev/cloudflare` is not; the failure is printed as [error text](#error-text) says.
 
 ## Programmatic use
 

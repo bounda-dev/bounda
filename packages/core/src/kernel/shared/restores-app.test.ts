@@ -16,6 +16,7 @@ import { type BoundaApp, createApp } from "../app.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
 import { HOLD_MAX_MS } from "../personal-data/hold.ts";
 import { masterKey } from "../personal-data/master-key.ts";
+import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
 import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
 import { advanceUntilWaiting } from "../test-support.ts";
 import { GENERATION_INTERVAL_MS } from "./restores.ts";
@@ -115,9 +116,10 @@ const start = async (args: {
   readonly runtime?: RuntimeConfig;
   readonly env?: Record<string, string>;
   readonly logger?: Logger;
+  readonly now?: Date;
 }): Promise<{ app: BoundaApp<Registry>; clock: ReturnType<typeof createFixedClock> }> => {
   started += 1;
-  const clock = createFixedClock(START);
+  const clock = createFixedClock(args.now ?? START);
   const app = await createApp<Registry>({
     registry,
     config: {
@@ -269,7 +271,7 @@ describe("a database restored while the app runs", () => {
     const reasons = (await app.events.read({ limit: 100 }))
       .filter((event) => event.type === "PersonalDataForgotten")
       .map((event) => (event.payload as PersonalDataForgottenPayload).reason);
-    expect(reasons).toEqual(["restored"]);
+    expect(reasons).toEqual(["requested"]);
     // Found once, though the reconciliation of the same pass forgot someone again.
     expect((await app.status()).restoresFound).toBe(1);
   });
@@ -354,7 +356,7 @@ describe("a database restored while the app was stopped", () => {
     const reasons = (await after.app.events.read({ limit: 100 }))
       .filter((event) => event.type === "PersonalDataForgotten")
       .map((event) => (event.payload as PersonalDataForgottenPayload).reason);
-    expect(reasons).toEqual(["restored"]);
+    expect(reasons).toEqual(["requested"]);
     expect((await after.app.status()).restoresFound).toBe(1);
     await after.app.stop();
     const again = recordingLogger();
@@ -384,7 +386,9 @@ describe("a database restored while the app was stopped", () => {
     await before.app.stop();
     restore(store.db, copy);
     const logger = recordingLogger();
-    const after = await start({ adapter: store.adapter, runtime, logger });
+    // A restore takes longer than the grace a reconciliation gives a forgetting still committing.
+    const now = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const after = await start({ adapter: store.adapter, runtime, logger, now });
     expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
     expect((await after.app.status()).restoresFound).toBe(1);
     expect((await after.app.getLag()).forgetLedger).toEqual({ reconciled: true });

@@ -3,7 +3,9 @@ import {
   type ForgetAgainEntry,
   type GlobalStream,
   PERSONAL_DATA_FORGOTTEN_EVENT,
+  type PersonalDataForgottenReason,
 } from "@bounda-dev/core";
+import type { ForgetLedgerEntry } from "@bounda-dev/core/adapter";
 import { InvalidArgumentError } from "commander";
 
 const PAGE = 1_000;
@@ -42,11 +44,21 @@ export const parseSince: ParseSinceFunction = (value) => {
  * One forgetting, as a line of what `bounda forgotten` prints and `bounda forget --from` reads:
  * the entry a forget ledger keeps.
  */
-export interface ForgottenLine {
-  readonly personId: string;
-  readonly eventId: string;
-  readonly forgottenAt: string;
-}
+export type ForgottenLine = ForgetLedgerEntry;
+
+const fieldOf = (payload: unknown, name: string): unknown =>
+  typeof payload === "object" && payload !== null ? Reflect.get(payload, name) : undefined;
+
+const isTextList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const REASONS: Readonly<Record<PersonalDataForgottenReason, true>> = {
+  requested: true,
+  retention: true,
+};
+
+const isReason = (value: unknown): value is PersonalDataForgottenReason =>
+  typeof value === "string" && Object.hasOwn(REASONS, value);
 
 export interface ReadForgottenArgs {
   readonly events: GlobalStream;
@@ -69,10 +81,14 @@ export const readForgotten: ReadForgottenFunction = async ({ events, since }) =>
       if (event.aggregateType !== BOUNDA_AGGREGATE) continue;
       if (event.type !== PERSONAL_DATA_FORGOTTEN_EVENT) continue;
       if (since.kind === "date" && Date.parse(event.timestamp) < since.value) continue;
+      const reason = fieldOf(event.payload, "reason");
+      const fingerprints = fieldOf(event.payload, "fingerprints");
       lines.push({
         personId: event.aggregateId,
         eventId: event.id,
         forgottenAt: event.timestamp,
+        reason: isReason(reason) ? reason : "requested",
+        ...(isTextList(fingerprints) ? { fingerprints } : {}),
       });
     }
     const last = page.at(-1);
@@ -89,12 +105,29 @@ const entryOf = (line: string, number: number): ForgetAgainEntry => {
   } catch {
     throw new Error(`line ${number} is neither a person's id nor JSON`);
   }
-  const personId: unknown = Reflect.get(parsed as object, "personId");
-  const eventId: unknown = Reflect.get(parsed as object, "eventId");
-  if (typeof personId !== "string" || (eventId !== undefined && typeof eventId !== "string")) {
-    throw new Error(`line ${number} needs a "personId" string, and "eventId" only as a string`);
+  const personId = fieldOf(parsed, "personId");
+  const eventId = fieldOf(parsed, "eventId");
+  const forgottenAt = fieldOf(parsed, "forgottenAt");
+  const reason = fieldOf(parsed, "reason");
+  const fingerprints = fieldOf(parsed, "fingerprints");
+  if (
+    typeof personId !== "string" ||
+    (eventId !== undefined && typeof eventId !== "string") ||
+    (forgottenAt !== undefined && typeof forgottenAt !== "string") ||
+    (reason !== undefined && !isReason(reason)) ||
+    (fingerprints !== undefined && !isTextList(fingerprints))
+  ) {
+    throw new Error(
+      `line ${number} needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", and "fingerprints" only as a list of strings`,
+    );
   }
-  return eventId === undefined ? { personId } : { personId, eventId };
+  return {
+    personId,
+    ...(eventId === undefined ? {} : { eventId }),
+    ...(forgottenAt === undefined ? {} : { forgottenAt }),
+    ...(reason === undefined ? {} : { reason }),
+    ...(fingerprints === undefined ? {} : { fingerprints }),
+  };
 };
 
 export interface ParseForgetListFunction {

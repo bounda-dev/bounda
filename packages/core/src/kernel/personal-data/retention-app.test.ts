@@ -282,7 +282,13 @@ describe("forget in a reaction", () => {
     expect(await forgotten()).toEqual([]);
     await advance(2);
     expect(await forgotten()).toEqual([
-      { personId: "c-1", reason: "requested", cancelledCommands: [], removedDeadLetters: [] },
+      {
+        personId: "c-1",
+        reason: "requested",
+        fingerprints: [expect.any(String)],
+        cancelledCommands: [],
+        removedDeadLetters: [],
+      },
     ]);
     expect(await storage.personalKeys.get("c-1")).toBeNull();
     expect(await storage.personalKeys.get("c-2")).not.toBeNull();

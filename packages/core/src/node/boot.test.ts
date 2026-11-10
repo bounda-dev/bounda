@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ const defaultRoot = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "p
 afterEach(() => {
   delete process.env.BOUNDA_ROLE;
   delete process.env.BOUNDA_TEST_MARKER;
+  delete process.env.BOUNDA_ERROR_TEXT;
 });
 
 describe("loadProject", () => {
@@ -95,14 +96,22 @@ describe("boot", () => {
     await app.stop();
   });
 
+  const omitted = { errorName: "Error" } as const;
+  const included = { errorName: "Error", errorMessage: "ana@example.com" } as const;
+
   it.each([
-    [undefined, undefined, { errorName: "Error" }],
-    ["include", "omit", { errorName: "Error", errorMessage: "ana@example.com" }],
-    ["include", undefined, { errorName: "Error", errorMessage: "ana@example.com" }],
-    [undefined, "include", { errorName: "Error", errorMessage: "ana@example.com" }],
+    [undefined, undefined, undefined, omitted],
+    ["include", undefined, "omit", included],
+    ["include", undefined, undefined, included],
+    [undefined, undefined, "include", included],
+    [undefined, "include", "omit", included],
+    [undefined, "omit", "include", omitted],
+    [undefined, "", "include", included],
+    ["omit", "include", undefined, omitted],
   ] as const)(
-    "logs error text as errorText %s says over the configuration's %s",
-    async (errorText, configured, logged) => {
+    "logs error text as errorText %s, then BOUNDA_ERROR_TEXT %j, says over the configuration's %s",
+    async (errorText, variable, configured, logged) => {
+      if (variable !== undefined) process.env.BOUNDA_ERROR_TEXT = variable;
       const fields: unknown[] = [];
       const withPort = {
         ...registry,
@@ -145,6 +154,37 @@ describe("boot", () => {
       await app.stop();
     },
   );
+
+  it("reads BOUNDA_ERROR_TEXT once .env is loaded", async () => {
+    const project = await mkdtemp(join(tmpdir(), "bounda-boot-"));
+    try {
+      await writeFile(join(project, ".env"), "BOUNDA_ERROR_TEXT=include\n");
+      const app = await boot({
+        root: project,
+        signals: false,
+        registry,
+        config: { storage: memory() },
+        logger: silentLogger,
+      });
+      expect(app.config.runtime.telemetry.errorText).toBe("include");
+      await app.stop();
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a BOUNDA_ERROR_TEXT it does not know", async () => {
+    process.env.BOUNDA_ERROR_TEXT = "verbose";
+    await expect(
+      boot({
+        root,
+        signals: false,
+        registry,
+        config: { storage: memory() },
+        logger: silentLogger,
+      }),
+    ).rejects.toThrow(ConfigurationError);
+  });
 
   it("hands process.env, with .env loaded, to the implementations' create", async () => {
     let marker: string | undefined;

@@ -149,18 +149,18 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: 2 },
         { scope: "checkpoints", version: 0, latest: 1 },
-        { scope: "forget-ledger", version: 0, latest: 2 },
+        { scope: "forget-ledger", version: 0, latest: 3 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: 2 },
         { scope: "checkpoints", version: 1, latest: 1 },
-        { scope: "forget-ledger", version: 0, latest: 2 },
+        { scope: "forget-ledger", version: 0, latest: 3 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger"])).toEqual([
         { scope: "storage", version: 2, latest: 2 },
         { scope: "checkpoints", version: 1, latest: 1 },
-        { scope: "forget-ledger", version: 2, latest: 2 },
+        { scope: "forget-ledger", version: 3, latest: 3 },
       ]);
       const shape = await shapeOf(target, dialect);
       await opened(target.adapter, async () => undefined);
@@ -300,7 +300,12 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
       try {
         await ledger.append([
-          { personId: "p-1", eventId: "e-1", forgottenAt: "2026-01-01T00:00:00.000Z" },
+          {
+            personId: "p-1",
+            eventId: "e-1",
+            forgottenAt: "2026-01-01T00:00:00.000Z",
+            reason: "requested",
+          },
         ]);
       } finally {
         await ledger.close?.();
@@ -308,6 +313,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual([
         { scope: "forget-ledger", version: 1 },
         { scope: "forget-ledger", version: 2 },
+        { scope: "forget-ledger", version: 3 },
       ]);
     });
 

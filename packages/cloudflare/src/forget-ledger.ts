@@ -22,9 +22,36 @@ const KV_MIN_TTL_S = 60;
 interface EntryMetadata {
   readonly personId: string;
   readonly forgottenAt: string;
+  // Absent from a key written before entries kept them.
+  readonly reason?: string;
+  readonly fingerprints?: readonly string[];
 }
 
 const timeKey = (forgottenAt: string): string => String(LATEST_MS - Date.parse(forgottenAt));
+
+/**
+ * Where every object's entries live, each under its own name.
+ */
+export const KV_FORGET_LEDGER_ROOT = "bounda/forget-ledger/";
+
+// When an entry kept `keepForMs` expires, in seconds as KV takes it; `null` once it is past.
+const expirationOf = (forgottenAt: string, keepForMs: number, now: number): number | null => {
+  const expiresAt = Date.parse(forgottenAt) + keepForMs;
+  if (!(expiresAt > now)) return null;
+  return Math.max(Math.ceil(expiresAt / 1000), Math.floor(now / 1000) + KV_MIN_TTL_S);
+};
+
+const entryOf = (metadata: EntryMetadata, eventId: string): ForgetLedgerEntry => {
+  const entry: ForgetLedgerEntry = {
+    personId: metadata.personId,
+    eventId,
+    forgottenAt: metadata.forgottenAt,
+    reason: metadata.reason === "retention" ? "retention" : "requested",
+  };
+  return Array.isArray(metadata.fingerprints)
+    ? { ...entry, fingerprints: [...metadata.fingerprints] }
+    : entry;
+};
 
 export interface CreateKvForgetLedgerArgs {
   readonly namespace: KVNamespace;
@@ -62,17 +89,17 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
     append: async (entries) => {
       const now = Date.now();
       await Promise.all(
-        entries.flatMap(({ personId, eventId, forgottenAt }) => {
-          const metadata: EntryMetadata = { personId, forgottenAt };
+        entries.flatMap(({ personId, eventId, forgottenAt, reason, fingerprints }) => {
+          const metadata: EntryMetadata = {
+            personId,
+            forgottenAt,
+            reason,
+            ...(fingerprints === undefined ? {} : { fingerprints }),
+          };
           const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
           if (keepForMs === undefined) return [namespace.put(key, "", { metadata })];
-          const expiresAt = Date.parse(forgottenAt) + keepForMs;
-          if (!(expiresAt > now)) return [];
-          const expiration = Math.max(
-            Math.ceil(expiresAt / 1000),
-            Math.floor(now / 1000) + KV_MIN_TTL_S,
-          );
-          return [namespace.put(key, "", { metadata, expiration })];
+          const expiration = expirationOf(forgottenAt, keepForMs, now);
+          return expiration === null ? [] : [namespace.put(key, "", { metadata, expiration })];
         }),
       );
     },
@@ -95,11 +122,7 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
             break;
           }
           if (metadata === null || metadata === undefined) continue;
-          found.push({
-            personId: metadata.personId,
-            eventId: rest.slice(separator + 1),
-            forgottenAt: metadata.forgottenAt,
-          });
+          found.push(entryOf(metadata, rest.slice(separator + 1)));
         }
         if (past || page.list_complete) break;
         cursor = page.cursor;
@@ -162,7 +185,119 @@ export const kvForgetLedger: KvForgetLedgerFunction = ({ binding }) =>
     }
     return createKvForgetLedger({
       namespace,
-      prefix: `bounda/forget-ledger/${encodeURIComponent(tenant)}/`,
+      prefix: `${KV_FORGET_LEDGER_ROOT}${encodeURIComponent(tenant)}/`,
       keepForMs,
     });
   });
+
+/**
+ * A key of the ledger's namespace as KV lists it.
+ */
+export interface KvLedgerKey {
+  readonly name: string;
+  /**
+   * When KV expires it, in seconds since 1970; absent for a key kept for good.
+   */
+  readonly expiration?: number | undefined;
+  readonly metadata?: unknown;
+}
+
+/**
+ * A key written again, as it was, to expire at `expiration`.
+ */
+export interface KvLedgerPut {
+  readonly key: string;
+  readonly value: "";
+  readonly expiration: number;
+  readonly metadata: unknown;
+}
+
+export interface KvForgetLedgerExpiry {
+  readonly expire: readonly KvLedgerPut[];
+  /**
+   * The keys already older than `keepFor`, which KV would not take an expiration for.
+   */
+  readonly remove: readonly string[];
+}
+
+export interface PlanKvForgetLedgerExpiryArgs {
+  readonly keys: readonly KvLedgerKey[];
+  readonly keepForMs: number;
+  readonly now: number;
+}
+
+export interface PlanKvForgetLedgerExpiryFunction {
+  (args: PlanKvForgetLedgerExpiryArgs): KvForgetLedgerExpiry;
+}
+
+/**
+ * What gives every entry the expiration `keepFor` sets, for keys written before `keepFor` was set,
+ * or while it was longer: a key that expires no later is left alone, and a key that is not an
+ * entry of the ledger is never touched.
+ */
+export const planKvForgetLedgerExpiry: PlanKvForgetLedgerExpiryFunction = ({
+  keys,
+  keepForMs,
+  now,
+}) => {
+  const expire: KvLedgerPut[] = [];
+  const remove: string[] = [];
+  for (const { name, expiration: current, metadata } of keys) {
+    const forgottenAt: unknown =
+      typeof metadata === "object" && metadata !== null
+        ? Reflect.get(metadata, "forgottenAt")
+        : undefined;
+    if (typeof forgottenAt !== "string" || Number.isNaN(Date.parse(forgottenAt))) continue;
+    const expiration = expirationOf(forgottenAt, keepForMs, now);
+    if (expiration === null) remove.push(name);
+    else if (current === undefined || current > expiration) {
+      expire.push({ key: name, value: "", expiration, metadata });
+    }
+  }
+  return { expire, remove };
+};
+
+export interface ExpireKvForgetLedgerArgs {
+  readonly namespace: KVNamespace;
+  readonly keepForMs: number;
+  /**
+   * Defaults to now.
+   */
+  readonly now?: number;
+}
+
+export interface ExpireKvForgetLedgerFunction {
+  (args: ExpireKvForgetLedgerArgs): Promise<KvForgetLedgerExpiry>;
+}
+
+/**
+ * Gives every object's entries in the namespace the expiration `keepFor` sets, as
+ * `planKvForgetLedgerExpiry` decides, from a Worker, as `bounda forget-ledger expire` does from a
+ * terminal. Resolves to what it changed. Run it once after setting or shortening `keepFor`: the
+ * entries written from then on expire on their own.
+ */
+export const expireKvForgetLedger: ExpireKvForgetLedgerFunction = async ({
+  namespace,
+  keepForMs,
+  now = Date.now(),
+}) => {
+  const keys: KvLedgerKey[] = [];
+  for (let cursor: string | undefined; ; ) {
+    const page = await namespace.list({
+      prefix: KV_FORGET_LEDGER_ROOT,
+      limit: LIST_LIMIT,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    keys.push(...page.keys);
+    if (page.list_complete) break;
+    cursor = page.cursor;
+  }
+  const expiry = planKvForgetLedgerExpiry({ keys, keepForMs, now });
+  await Promise.all([
+    ...expiry.expire.map(({ key, value, expiration, metadata }) =>
+      namespace.put(key, value, { expiration, metadata }),
+    ),
+    ...expiry.remove.map((key) => namespace.delete(key)),
+  ]);
+  return expiry;
+};

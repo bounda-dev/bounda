@@ -9,13 +9,14 @@ const event = (
   aggregateId: string,
   type: string,
   timestamp = "2026-11-01T00:00:00.000Z",
+  payload: unknown = {},
 ): StoredEvent => ({
   id: `e-${position}`,
   aggregateType,
   aggregateId,
   version: 1,
   type,
-  payload: {},
+  payload,
   timestamp,
   metadata: { correlationId: "c", causationId: "c", depth: 0, schemaVersion: 1, system: false },
   person: null,
@@ -59,16 +60,49 @@ describe("readForgotten", () => {
     events.push(
       event(1_004, "bounda", "c-1", "ProcessingRestricted"),
       event(1_005, "order", "o-x", "PersonalDataForgotten"),
-      event(1_006, "bounda", "c-1", "PersonalDataForgotten", "2026-11-02T00:00:00.000Z"),
+      event(1_006, "bounda", "c-1", "PersonalDataForgotten", "2026-11-02T00:00:00.000Z", {
+        reason: "retention",
+        fingerprints: ["k-1"],
+      }),
       event(1_007, "bounda", "c-2", "PersonalDataForgotten", "1970-01-01T00:00:00.001Z"),
+      event(1_008, "bounda", "c-3", "PersonalDataForgotten", undefined, {
+        reason: "restored",
+        fingerprints: [1],
+      }),
+      event(1_009, "bounda", "c-4", "PersonalDataForgotten", undefined, null),
+      event(1_010, "bounda", "c-5", "PersonalDataForgotten", undefined, "text"),
     );
     const { stream, reads } = streamOf([
       event(0, "bounda", "c-0", "PersonalDataForgotten"),
       ...events,
     ]);
-    expect(await readForgotten({ events: stream, since: { kind: "position", value: 2 } })).toEqual([
-      { personId: "c-1", eventId: "e-1006", forgottenAt: "2026-11-02T00:00:00.000Z" },
-      { personId: "c-2", eventId: "e-1007", forgottenAt: "1970-01-01T00:00:00.001Z" },
+    const lines = await readForgotten({ events: stream, since: { kind: "position", value: 2 } });
+    expect(lines).toStrictEqual([
+      {
+        personId: "c-1",
+        eventId: "e-1006",
+        forgottenAt: "2026-11-02T00:00:00.000Z",
+        reason: "retention",
+        fingerprints: ["k-1"],
+      },
+      {
+        personId: "c-2",
+        eventId: "e-1007",
+        forgottenAt: "1970-01-01T00:00:00.001Z",
+        reason: "requested",
+      },
+      {
+        personId: "c-3",
+        eventId: "e-1008",
+        forgottenAt: "2026-11-01T00:00:00.000Z",
+        reason: "requested",
+      },
+      ...["c-4", "c-5"].map((personId, index) => ({
+        personId,
+        eventId: `e-${1_009 + index}`,
+        forgottenAt: "2026-11-01T00:00:00.000Z",
+        reason: "requested",
+      })),
     ]);
     expect(reads).toEqual([
       { after: 2, limit: 1_000 },
@@ -97,9 +131,43 @@ describe("parseForgetList", () => {
         '{"personId":"c-1","eventId":"e-1","forgottenAt":"x"}\r\n\n  c-2  \n{"personId":"c-3"}\n',
       ),
     ).toStrictEqual([
-      { personId: "c-1", eventId: "e-1" },
+      { personId: "c-1", eventId: "e-1", forgottenAt: "x" },
       { personId: "c-2" },
       { personId: "c-3" },
     ]);
+  });
+
+  it("reads back what bounda forgotten prints: the reason and the keys a forgetting names", () => {
+    expect(
+      parseForgetList(
+        '{"personId":"c-1","eventId":"e-1","forgottenAt":"t","reason":"retention","fingerprints":["k-1"]}\n{"personId":"c-2","reason":"requested","fingerprints":[]}',
+      ),
+    ).toStrictEqual([
+      {
+        personId: "c-1",
+        eventId: "e-1",
+        forgottenAt: "t",
+        reason: "retention",
+        fingerprints: ["k-1"],
+      },
+      { personId: "c-2", reason: "requested", fingerprints: [] },
+    ]);
+  });
+
+  it("refuses a line whose fields are not what bounda forgotten prints, naming it", () => {
+    for (const line of [
+      '{"personId":3}',
+      '{"personId":"c-1","eventId":3}',
+      '{"personId":"c-1","forgottenAt":3}',
+      '{"personId":"c-1","reason":"restored"}',
+      '{"personId":"c-1","reason":"toString"}',
+      '{"personId":"c-1","fingerprints":"k-1"}',
+      '{"personId":"c-1","fingerprints":["k-1",2]}',
+    ]) {
+      expect(() => parseForgetList(`c-0\n${line}`)).toThrow(
+        'line 2 needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", and "fingerprints" only as a list of strings',
+      );
+    }
+    expect(() => parseForgetList("{not json")).toThrow("line 1 is neither a person's id nor JSON");
   });
 });

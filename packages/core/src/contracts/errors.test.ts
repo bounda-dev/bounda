@@ -7,6 +7,8 @@ import {
   DeadLetterNotRetriableError,
   DeadLetterSettledError,
   DomainError,
+  ForgetLedgerTimeoutError,
+  ForgetLedgerUnavailableError,
   ForgetLedgerUnreconciledError,
   NotFoundError,
   RebuildSupersededError,
@@ -67,6 +69,24 @@ describe("errors", () => {
     expect(error.name).toBe("ForgetLedgerUnreconciledError");
     expect(error.cause).toBe(cause);
     expect(error.message).toContain("runtime.personalData.forgetLedger.strict");
+  });
+
+  it("say a strict forget ledger refused the forgetting, with why", () => {
+    const cause = new Error("down");
+    const error = new ForgetLedgerUnavailableError(cause);
+    expect(error.code).toBe("FORGET_LEDGER_UNAVAILABLE");
+    expect(error.name).toBe("ForgetLedgerUnavailableError");
+    expect(error.cause).toBe(cause);
+    expect(error.message).toContain("nothing was forgotten");
+  });
+
+  it("name the forget ledger call that ran out of time, and the time", () => {
+    const error = new ForgetLedgerTimeoutError("append", 2500);
+    expect(error.code).toBe("FORGET_LEDGER_TIMEOUT");
+    expect(error.name).toBe("ForgetLedgerTimeoutError");
+    expect(error.operation).toBe("append");
+    expect(error.timeoutMs).toBe(2500);
+    expect(error.message).toBe("The forget ledger did not answer append within 2500 ms");
   });
 
   it("name the read model whose rebuild was taken over", () => {

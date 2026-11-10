@@ -27,3 +27,10 @@ export const boundaMiddleware: Bounda["boundaMiddleware"] = provided.boundaMiddl
  * Stops the running app and forgets it; the next request boots again.
  */
 export const dispose: Bounda["dispose"] = provided.dispose;
+
+/**
+ * React Router's `handleError`: `export { handleError } from "@bounda-dev/react-router/app"` in
+ * `app/entry.server.tsx`, and call it from the render's `onError`. Logs what a request throws as
+ * `runtime.telemetry.errorText` says, where React Router's default logs every message and stack.
+ */
+export const handleError: Bounda["handleError"] = provided.handleError;

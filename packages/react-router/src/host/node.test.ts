@@ -11,13 +11,21 @@ const app = {
   start: () => undefined,
   stop: async () => undefined,
   as: (actor: string) => ({ actedAs: actor }),
+  config: { runtime: { telemetry: { errorText: "omit" } } },
 } as unknown as BoundaApp;
 const booted: BootArgs[] = [];
+const logged: unknown[][] = [];
 
 vi.mock("@bounda-dev/core/node", () => ({
   boot: vi.fn(async (args: BootArgs) => {
     booted.push(args);
     return app;
+  }),
+  createConsoleLogger: () => ({
+    debug: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: (...entry: unknown[]) => void logged.push(entry),
   }),
 }));
 
@@ -38,9 +46,39 @@ let host: ReturnType<typeof createHost> | undefined;
 afterEach(async () => {
   await host?.dispose();
   booted.length = 0;
+  logged.length = 0;
 });
 
 describe("createHost in Node", () => {
+  it.each([
+    ["include", { errorMessage: "ana@example.com", errorStack: expect.any(String) }],
+    [undefined, {}],
+  ] as const)(
+    "logs what a request throws before the app boots as errorText %s says, on the console",
+    async (errorText, text) => {
+      host = createHost({
+        registry,
+        importConfig: async () => ({ default: {} }),
+        consistency: "eventual",
+        ...(errorText === undefined ? {} : { errorText }),
+      });
+      await host.handleError(new Error("ana@example.com"), {
+        request: new Request("http://localhost/a"),
+      });
+      expect(logged).toEqual([
+        [
+          "request failed",
+          {
+            method: "GET",
+            ...(errorText === undefined ? {} : { path: "/a" }),
+            errorName: "Error",
+            ...text,
+          },
+        ],
+      ]);
+    },
+  );
+
   it("boots the project from the root, registry and configuration it is given, with its consistency", async () => {
     const config = { storage: { kind: "bounda-adapter", name: "sqlite", options: {} } };
     host = createHost({

@@ -2,7 +2,7 @@ import { cloudflare } from "@bounda-dev/cloudflare";
 import { ConfigurationError, type Consistency, type Registry } from "@bounda-dev/core";
 import type { ImportModuleFunction } from "@bounda-dev/core/node";
 import { RouterContextProvider } from "react-router";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, type FakeStoreNamespace, storeNamespace } from "../cloudflare/test-support.ts";
 import { failure } from "../failure.ts";
 import * as cloudflareHost from "./cloudflare.ts";
@@ -147,6 +147,93 @@ describe("createHost under the workerd condition", () => {
       consistency: "eventual",
     });
     await expect(dispose()).resolves.toBeUndefined();
+    expect(config.imported.count).toBe(0);
+  });
+});
+
+describe("createHost under the workerd condition: handleError", () => {
+  afterEach(() => {
+    delete env.BOUNDA_ERROR_TEXT;
+  });
+
+  const logged = async (work: () => Promise<void>): Promise<unknown[]> => {
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => void written.push(args));
+    try {
+      await work();
+    } finally {
+      spy.mockRestore();
+    }
+    return written.map(([line]) => JSON.parse(String(line)));
+  };
+
+  const omitted = {
+    level: "error",
+    message: "bounda request failed",
+    method: "GET",
+    errorName: "Error",
+  };
+  const included = {
+    ...omitted,
+    path: "/a",
+    errorMessage: "ana@example.com",
+    errorStack: expect.any(String),
+  };
+
+  it.each([
+    [undefined, undefined, omitted],
+    [undefined, "unset", omitted],
+    [undefined, "include", included],
+    ["include", "omit", included],
+    ["omit", "include", omitted],
+    ["loud", "include", included],
+  ] as const)(
+    "logs the text as BOUNDA_ERROR_TEXT %s says, over the configuration %s a request imported, as one JSON line",
+    async (variable, configured, line) => {
+      if (variable !== undefined) env.BOUNDA_ERROR_TEXT = variable;
+      const host = createHost({
+        registry,
+        importConfig: async () => ({
+          default: {
+            storage: cloudflare(),
+            ...(configured === undefined
+              ? {}
+              : {
+                  runtime:
+                    configured === "unset"
+                      ? { role: "web" as const }
+                      : { telemetry: { errorText: configured } },
+                }),
+          },
+        }),
+        importTenant: async () => ({ tenant: () => "acme" }),
+        consistency: "eventual",
+      });
+      await host.boundaMiddleware(middlewareArgs().args, async () => undefined);
+      expect(
+        await logged(() =>
+          host.handleError(new Error("ana@example.com"), { request: new Request("http://w/a") }),
+        ),
+      ).toEqual([line]);
+    },
+  );
+
+  // A Worker may cancel an import still pending once its response is sent.
+  it("never imports the configuration itself: before the first request only the env decides", async () => {
+    const config = counted({
+      default: { storage: cloudflare(), runtime: { telemetry: { errorText: "include" } } },
+    });
+    const { handleError } = createHost({
+      registry,
+      importConfig: config.load,
+      importTenant: async () => ({ tenant: () => "acme" }),
+      consistency: "eventual",
+    });
+    const error = new Error("ana@example.com");
+    const request = () => new Request("http://w/a");
+    expect(await logged(() => handleError(error, { request: request() }))).toEqual([omitted]);
+    env.BOUNDA_ERROR_TEXT = "include";
+    expect(await logged(() => handleError(error, { request: request() }))).toEqual([included]);
     expect(config.imported.count).toBe(0);
   });
 });

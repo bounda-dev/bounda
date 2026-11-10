@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Worker } from "node:worker_threads";
 import {
   ConfigurationError,
   type FieldsArgs,
@@ -113,6 +112,57 @@ describe("sqlite adapter in memory, under concurrent use", () => {
   });
 });
 
+const OPENING_PROCESSES = 6;
+
+// Opens the file's storage from processes of their own, each loaded first and then let go at
+// once, so the first statements of every connection meet on the file: processes, as instances
+// on several machines are, and as libSQL's native code wants, since a worker thread that ends
+// under it can bring the whole process down. Resolves what each said.
+const openTogether = async (path: string): Promise<readonly string[]> => {
+  const children = Array.from({ length: OPENING_PROCESSES }, () =>
+    spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { sqlite } from "./index.ts";
+        process.stdout.write("loaded\\n");
+        process.stdin.once("data", async () => {
+          try {
+            await (await sqlite({ path: ${JSON.stringify(path)} }).createStorage()).close();
+            process.stdout.write("opened\\n");
+          } catch (error) {
+            process.stdout.write(String(error) + "\\n");
+          }
+          process.stdin.destroy();
+        });`,
+      ],
+      { cwd: import.meta.dirname, stdio: ["pipe", "pipe", "inherit"] },
+    ),
+  );
+  const said = children.map((child) => {
+    const lines: string[] = [];
+    let loaded: () => void = () => undefined;
+    const ready = new Promise<void>((resolve) => {
+      loaded = resolve;
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      for (const line of chunk.split("\n").filter(Boolean)) {
+        if (line === "loaded") loaded();
+        else lines.push(line);
+      }
+    });
+    const exited = new Promise<string>((resolve) => {
+      child.once("exit", (code) => resolve(lines.join(" ") || `exited with ${code}`));
+    });
+    return { ready, exited };
+  });
+  await Promise.all(said.map(({ ready }) => ready));
+  for (const child of children) child.stdin.write("go\n");
+  return Promise.all(said.map(({ exited }) => exited));
+};
+
 describe("sqlite adapter on a file", () => {
   let directory: string;
   let counter = 0;
@@ -169,6 +219,47 @@ describe("sqlite adapter on a file", () => {
   readModelTransactionContract({
     create: async () => sqlite({ path: freshPath() }),
     locking: "single-writer",
+  });
+
+  it("closes the file only once what runs on it has settled, a transaction in flight included", async () => {
+    const path = freshPath();
+    const adapter = sqlite({ path });
+    const storage = await adapter.createStorage();
+    const ledger = await adapter.createForgetLedger({});
+    // Its table made, so its read below is one statement, queued behind the transaction.
+    await ledger.read({ limit: 1 });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const writing = storage.transact(async (tx) => {
+      entered();
+      await held;
+      await tx.eventStore.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "1", version: 1 })],
+      });
+    });
+    await inside;
+    const reading = ledger.read({ limit: 1 });
+    let closed = false;
+    const closing = Promise.all([storage.close(), ledger.close?.()]).then(() => {
+      closed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(closed).toBe(false);
+    release();
+    await writing;
+    expect(await reading).toEqual([]);
+    await closing;
+    const reopened = await openFile(path);
+    expect(await reopened.eventStore.lastPosition()).toBe(1);
   });
 
   it("lets its own statements wait for its own write transaction, without blocking the process", async () => {
@@ -236,22 +327,7 @@ describe("sqlite adapter on a file", () => {
     await readModel.close();
   });
 
-  it("opens a file not in WAL yet, such as one just restored, from several connections at once", async () => {
-    const connections = 6;
-    // Each worker loads the adapter, waits at the gate with the others, then opens its storage:
-    // the first statements of every connection meet on the file at the same moment.
-    const worker = `
-      const { workerData, parentPort } = require("node:worker_threads");
-      import(workerData.module).then(async ({ sqlite }) => {
-        parentPort.postMessage("loaded");
-        Atomics.wait(new Int32Array(workerData.gate), 0, 0);
-        try {
-          await (await sqlite({ path: workerData.path }).createStorage()).close();
-          parentPort.postMessage("opened");
-        } catch (error) {
-          parentPort.postMessage(String(error));
-        }
-      });`;
+  it("opens a file not in WAL yet, such as one just restored, from several processes at once", async () => {
     for (let round = 0; round < 3; round += 1) {
       const sourcePath = freshPath();
       const source = await openFile(sourcePath);
@@ -269,86 +345,14 @@ describe("sqlite adapter on a file", () => {
       expect((await restored.execute("PRAGMA journal_mode")).rows[0]?.[0]).toBe("delete");
       restored.close();
 
-      const gate = new SharedArrayBuffer(4);
-      const workers = Array.from(
-        { length: connections },
-        () =>
-          new Worker(worker, {
-            eval: true,
-            workerData: { module: new URL("./index.ts", import.meta.url).href, path, gate },
-          }),
-      );
-      const loaded = workers.map(
-        (each) =>
-          new Promise<void>((resolve) => {
-            each.once("message", () => resolve());
-            each.once("error", () => resolve());
-          }),
-      );
-      const outcomes = workers.map(
-        (each) =>
-          new Promise<string>((resolve) => {
-            each.on("message", (message: string) => {
-              if (message !== "loaded") resolve(message);
-            });
-            each.on("error", (error) => resolve(String(error)));
-          }),
-      );
-      await Promise.all(loaded);
-      Atomics.store(new Int32Array(gate), 0, 1);
-      Atomics.notify(new Int32Array(gate), 0);
-      expect(await Promise.all(outcomes)).toEqual(Array(connections).fill("opened"));
-      await Promise.all(workers.map((each) => each.terminate()));
+      expect(await openTogether(path)).toEqual(Array(OPENING_PROCESSES).fill("opened"));
       expect(await (await openFile(path)).eventStore.lastPosition()).toBe(1);
     }
   });
 
   it("migrates a new file once when processes open it at the same moment", async () => {
-    const connections = 6;
     const path = freshPath();
-    const worker = `
-      const { workerData, parentPort } = require("node:worker_threads");
-      import(workerData.module).then(async ({ sqlite }) => {
-        parentPort.postMessage("loaded");
-        Atomics.wait(new Int32Array(workerData.gate), 0, 0);
-        try {
-          await (await sqlite({ path: workerData.path }).createStorage()).close();
-          parentPort.postMessage("opened");
-        } catch (error) {
-          parentPort.postMessage(String(error));
-        }
-      });`;
-    const gate = new SharedArrayBuffer(4);
-    const workers = Array.from(
-      { length: connections },
-      () =>
-        new Worker(worker, {
-          eval: true,
-          workerData: { module: new URL("./index.ts", import.meta.url).href, path, gate },
-        }),
-    );
-    const outcomes = workers.map(
-      (each) =>
-        new Promise<string>((resolve) => {
-          each.on("message", (message: string) => {
-            if (message !== "loaded") resolve(message);
-          });
-          each.on("error", (error) => resolve(String(error)));
-        }),
-    );
-    await Promise.all(
-      workers.map(
-        (each) =>
-          new Promise<void>((resolve) => {
-            each.once("message", () => resolve());
-            each.once("error", () => resolve());
-          }),
-      ),
-    );
-    Atomics.store(new Int32Array(gate), 0, 1);
-    Atomics.notify(new Int32Array(gate), 0);
-    expect(await Promise.all(outcomes)).toEqual(Array(connections).fill("opened"));
-    await Promise.all(workers.map((each) => each.terminate()));
+    expect(await openTogether(path)).toEqual(Array(OPENING_PROCESSES).fill("opened"));
     const client = createClient({ url: `file:${path}` });
     const { rows } = await client.execute(
       'SELECT "scope", "version" FROM "bounda_migrations" ORDER BY "scope", "version"',
@@ -558,6 +562,10 @@ describe("sqlite adapter connection sharing", () => {
     const stillOpen = await adapter.createStorage();
     expect(await stillOpen.eventStore.lastPosition()).toBe(1);
     await stillOpen.close();
+    const client = readModel.client.raw as Client;
+    expect(client.closed).toBe(false);
+    await readModel.close();
+    expect(client.closed).toBe(true);
     await readModel.close();
 
     const fresh = await adapter.createStorage();

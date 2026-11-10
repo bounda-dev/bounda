@@ -28,7 +28,7 @@ describe("migrateTables", () => {
       { database: "storage", scope: "storage", version: 2, latest: 2 },
       { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
       { database: "readModels.customers", scope: "checkpoints", version: 1, latest: 1 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 2, latest: 2 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 3, latest: 3 },
     ]);
     expect(tablesIn(readModels.db)).toEqual(["bounda_checkpoints", "bounda_migrations"]);
     expect(tablesIn(ledger.db)).toEqual([

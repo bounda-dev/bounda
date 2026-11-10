@@ -19,6 +19,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./forget-ledger": {
+      "types": "./dist/forget-ledger.d.ts",
+      "default": "./dist/forget-ledger.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

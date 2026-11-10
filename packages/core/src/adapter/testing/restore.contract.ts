@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeRole } from "../../config/types.ts";
 import { type Clock, createFixedClock } from "../../contracts/clock.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { ForgetLedgerUnreconciledError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
 import {
@@ -261,6 +261,11 @@ type Commands = Readonly<
     ) => Promise<unknown>
   >
 >;
+interface StartOptions {
+  readonly role?: RuntimeRole;
+  readonly strict?: boolean;
+}
+
 type Queries = Readonly<Record<string, (payload: unknown) => Promise<unknown>>>;
 
 interface Started {
@@ -274,20 +279,38 @@ interface Started {
  */
 const faultyLedger = (source: ForgetLedgerSource) => {
   const state = { failing: false };
+  // Each ledger the apps opened, as it is, for what a test writes to it directly.
+  const opened: ForgetLedger[] = [];
+  const down = (): void => {
+    if (state.failing) throw new Error("the ledger is down");
+  };
   const definition = defineForgetLedger(async (args) => {
     const inner: ForgetLedger =
       source.kind === "bounda-forget-ledger"
         ? await source.create(args)
         : await source.createForgetLedger({ tenant: args.tenant, keepForMs: args.keepForMs });
+    opened.push(inner);
     return {
       ...inner,
+      append: async (entries) => {
+        down();
+        return inner.append(entries);
+      },
       read: async (readArgs) => {
-        if (state.failing) throw new Error("the ledger is down");
+        down();
         return inner.read(readArgs);
+      },
+      readMark: async (name) => {
+        down();
+        return inner.readMark(name);
+      },
+      raiseMark: async (name, value) => {
+        down();
+        return inner.raiseMark(name, value);
       },
     };
   });
-  return { definition, state };
+  return { definition, state, opened };
 };
 
 /**
@@ -310,7 +333,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       forgetLedger: ForgetLedgerSource | null,
       keyWrapper: KeyWrapperDefinition,
       clock: Clock,
-      role: RuntimeRole = "all",
+      { role = "all", strict = false }: StartOptions = {},
     ): Promise<Started> => {
       const app = await createApp({
         registry,
@@ -322,7 +345,13 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
               keyWrapper,
               ...(forgetLedger === null
                 ? {}
-                : { forgetLedger: { store: forgetLedger, reconcileEvery: RECONCILE_EVERY_MS } }),
+                : {
+                    forgetLedger: {
+                      store: forgetLedger,
+                      reconcileEvery: RECONCILE_EVERY_MS,
+                      strict,
+                    },
+                  }),
             },
             policies: { retry: { strategy: "none" } },
             overrides: { customer: { snapshot: { every: 1 } } },
@@ -354,10 +383,11 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       await app.runUntilIdle();
     };
 
-    const forgottenReasons = async (app: BoundaApp, person: string): Promise<readonly string[]> =>
+    // The ids of the person's `PersonalDataForgotten`, in order.
+    const forgettings = async (app: BoundaApp, person: string): Promise<readonly string[]> =>
       (await app.events.read({ limit: 1_000 }))
         .filter((event) => event.type === "PersonalDataForgotten" && event.aggregateId === person)
-        .map((event) => (event.payload as PersonalDataForgottenPayload).reason);
+        .map((event) => event.id);
 
     // Every table of the storage, and what the app reads back of the person.
     const expectForgottenIn = async (
@@ -392,20 +422,20 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       // Before the copy: ana, bob and dan register, cy registers and is forgotten.
       const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
       for (const person of ["ana", "bob", "cy", "dan"]) await write(first, person);
-      await first.app.forget("cy");
+      const cyForgotten = (await first.app.forget("cy")).eventIds;
       await first.app.runUntilIdle();
       await target.backUp();
 
       // After the copy: ana is forgotten, the master key rotates, then bob and eve, who registered
       // after the copy, are forgotten, and more is written.
-      await first.app.forget("ana");
+      const anaForgotten = (await first.app.forget("ana")).eventIds;
       await first.app.runUntilIdle();
       await first.app.stop();
       clock.advance(60_000);
       const rotated = await start(target.storage, target.forgetLedger, ROTATED, clock);
       await rotated.app.runUntilIdle();
       await write(rotated, "eve");
-      await rotated.app.forget("bob");
+      const bobForgotten = (await rotated.app.forget("bob")).eventIds;
       await rotated.app.forget("eve");
       await rotated.app.runUntilIdle();
       for (const person of ["ana", "bob", "cy", "eve"]) {
@@ -431,12 +461,15 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
 
       // Everyone forgotten after the copy was taken, and still holding a key in it, is forgotten
       // again; cy, forgotten before it, and eve, who is not in it, are not.
+      // The forgettings the copy lost are committed again, as the ledger recorded them before they
+      // committed: under their own ids.
+      expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
+      expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
       for (const person of ["ana", "bob"]) {
-        expect(await forgottenReasons(restored.app, person)).toEqual(["restored"]);
         await expectForgottenIn(storage, restored, person);
       }
-      expect(await forgottenReasons(restored.app, "cy")).toEqual(["requested"]);
-      expect(await forgottenReasons(restored.app, "eve")).toEqual([]);
+      expect(await forgettings(restored.app, "cy")).toEqual(cyForgotten);
+      expect(await forgettings(restored.app, "eve")).toEqual([]);
       await expectForgottenIn(storage, restored, "cy");
       await expectForgottenIn(storage, restored, "eve");
       expect(await restored.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
@@ -467,7 +500,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       const next = await start(storage, target.forgetLedger, AFTER_ROTATION, clock);
       await expectReadable(next, "fay");
       for (const person of ["ana", "bob", "dan"]) {
-        expect((await forgottenReasons(next.app, person)).length).toBe(1);
+        expect((await forgettings(next.app, person)).length).toBe(1);
       }
     };
 
@@ -495,13 +528,13 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       expect(await first.app.getLag()).toMatchObject({ forgetLedger: { reconciled: false } });
       await target.backUp();
       state.failing = false;
-      await first.app.forget("ana");
+      const anaForgotten = (await first.app.forget("ana")).eventIds;
       await first.app.runUntilIdle();
       await first.app.stop();
 
       const storage = await target.restore();
       const restored = await start(storage, definition, BEFORE_ROTATION, clock);
-      expect(await forgottenReasons(restored.app, "ana")).toEqual(["restored"]);
+      expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
       expect(await restored.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
       await expectForgottenIn(storage, restored, "ana");
     });
@@ -511,18 +544,20 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       async () => {
         const target = await create();
         const clock = createFixedClock(START);
-        const web = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock, "web");
+        const web = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock, {
+          role: "web",
+        });
         web.app.start();
         await write(web, "ana");
         await target.backUp();
-        await web.app.forget("ana");
+        const anaForgotten = (await web.app.forget("ana")).eventIds;
         await web.app.catchUpReadModels();
         await expectForgottenIn(target.storage, web, "ana");
         await target.restore();
         clock.advance(GENERATION_INTERVAL_MS);
         // Its watch reconciles and catches the read models up by itself.
         await vi.waitFor(async () => {
-          expect(await forgottenReasons(web.app, "ana")).toEqual(["restored"]);
+          expect(await forgettings(web.app, "ana")).toEqual(anaForgotten);
           await expectForgottenIn(target.storage, web, "ana");
         });
       },
@@ -547,6 +582,60 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       expect(await restored.app.forgetAgain([{ personId: "ana" }])).toEqual(["ana"]);
       await restored.app.runUntilIdle();
       await expectForgottenIn(storage, restored, "ana");
+    });
+
+    it("commits at the restored start a forgetting the ledger recorded before a commit that never happened", async () => {
+      const target = await create();
+      const clock = createFixedClock(START);
+      const { definition, opened } = faultyLedger(target.forgetLedger);
+      const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+      await write(first, "ana");
+      await target.backUp();
+      const written = await target.storage.createStorage();
+      const key = await written.personalKeys.get("ana");
+      await written.close();
+      // What a forget records before it commits, left alone by a process that stopped in between.
+      const intention = {
+        personId: "ana",
+        eventId: "019a6b1e-0000-7000-8000-00000000a7a0",
+        forgottenAt: clock.now().toISOString(),
+        reason: "requested" as const,
+        fingerprints: key === null ? [] : [key.fingerprint],
+      };
+      await opened[0]?.append([intention]);
+      await first.app.stop();
+
+      const storage = await target.restore();
+      const restored = await start(storage, definition, BEFORE_ROTATION, clock);
+      expect(await forgettings(restored.app, "ana")).toEqual([intention.eventId]);
+      await expectForgottenIn(storage, restored, "ana");
+    });
+
+    it("does not start on a restored copy a strict ledger cannot read, and applies the whole restore once it can", async () => {
+      const target = await create();
+      const clock = createFixedClock(START);
+      const { definition, state } = faultyLedger(target.forgetLedger);
+      const strict = { strict: true };
+      const first = await start(target.storage, definition, BEFORE_ROTATION, clock, strict);
+      await write(first, "ana");
+      await write(first, "bob");
+      await target.backUp();
+      const anaForgotten = (await first.app.forget("ana")).eventIds;
+      const bobForgotten = (await first.app.forget("bob")).eventIds;
+      await first.app.runUntilIdle();
+      await first.app.stop();
+
+      const storage = await target.restore();
+      state.failing = true;
+      await expect(start(storage, definition, BEFORE_ROTATION, clock, strict)).rejects.toThrow(
+        ForgetLedgerUnreconciledError,
+      );
+      state.failing = false;
+      const restored = await start(storage, definition, BEFORE_ROTATION, clock, strict);
+      expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
+      expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
+      await expectForgottenIn(storage, restored, "ana");
+      await expectForgottenIn(storage, restored, "bob");
     });
   });
 };

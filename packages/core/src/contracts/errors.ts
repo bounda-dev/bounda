@@ -273,6 +273,41 @@ export class ForgetLedgerUnreconciledError extends BoundaError {
   }
 }
 
+/**
+ * Thrown by `forget`, and by every other forgetting, when `runtime.personalData.forgetLedger.strict`
+ * is set and the forget ledger did not take the forgetting's intention: nothing was forgotten, and
+ * calling again tries again. `cause` is why the ledger failed, a `ForgetLedgerTimeoutError` when
+ * it did not answer in time.
+ */
+export class ForgetLedgerUnavailableError extends BoundaError {
+  constructor(cause: unknown) {
+    super(
+      "FORGET_LEDGER_UNAVAILABLE",
+      "The forget ledger did not take the forgetting, and runtime.personalData.forgetLedger.strict forgets nobody it has not recorded: nothing was forgotten, try again",
+      { cause },
+    );
+  }
+}
+
+/**
+ * A call to the forget ledger did not settle within `runtime.personalData.forgetLedger.timeout`:
+ * the `cause` of `ForgetLedgerUnavailableError` and `ForgetLedgerUnreconciledError`, and what the
+ * app logs when the ledger is not strict. The call may still land after it.
+ */
+export class ForgetLedgerTimeoutError extends BoundaError {
+  readonly operation: string;
+  readonly timeoutMs: number;
+
+  constructor(operation: string, timeoutMs: number) {
+    super(
+      "FORGET_LEDGER_TIMEOUT",
+      `The forget ledger did not answer ${operation} within ${timeoutMs} ms`,
+    );
+    this.operation = operation;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export interface StorageSchemaTooNewErrorArgs {
   readonly scope: string;
   readonly version: number;

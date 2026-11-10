@@ -2,7 +2,12 @@ import type { ObservableResult } from "@opentelemetry/api";
 import { isAdapter } from "../adapter/adapter.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
-import type { Config, ResolvedConfig, RuntimeRole } from "../config/types.ts";
+import type {
+  Config,
+  ResolvedConfig,
+  ResolvedForgetLedgerConfig,
+  RuntimeRole,
+} from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
 import type { CommandRejection, DispatchResult, StoredDispatch } from "../contracts/command.ts";
 import { ConfigurationError, ForgetLedgerUnreconciledError } from "../contracts/errors.ts";
@@ -35,21 +40,27 @@ import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import {
-  FORGET_LEDGER_WAIT_MS,
+  type BoundedForgetLedger,
+  boundForgetLedger,
   openForgetLedger,
   waitForLedger,
 } from "./personal-data/forget-ledger.ts";
-import { withLedgerAppend } from "./personal-data/ledger-append.ts";
+import { createForgetIntentions } from "./personal-data/intention.ts";
 import { createLedgerOutbox } from "./personal-data/ledger-outbox.ts";
 import { marksPersonalFields } from "./personal-data/marks.ts";
 import {
   createForgetLedgerReconciliation,
   type ForgetAgainEntry,
   forgetAgain,
+  NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
 import { marksFingerprint } from "./personal-data/resealing.ts";
 import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
-import { createRetentionSubscriber, createRetentionSweep } from "./personal-data/retention.ts";
+import {
+  createRetentionSubscriber,
+  createRetentionSweep,
+  retentionDueOf,
+} from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
 import { checkPersonId } from "./personal-data/transact.ts";
 import { type PersonalDataWitness, witnessedWrapping } from "./personal-data/witness.ts";
@@ -71,6 +82,7 @@ import {
   rebuildReadModelWith,
 } from "./read-model/rebuild.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
+import { withCommittedEvents } from "./shared/committed-events.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
 import { createRestoreWatch, GENERATION_INTERVAL_MS, type Restored } from "./shared/restores.ts";
@@ -132,7 +144,10 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * the stream `bounda:<personId>`, which every read model that projects personal fields handles.
    * Both happen together or not at all. Resolves like a command, so
    * `catchUpReadModels({ through })` waits for those read models. Rejects with
-   * `ValidationError` an empty id.
+   * `ValidationError` an empty id. With `runtime.personalData.forgetLedger`, the forgetting is in
+   * the ledger before it commits: one that rejects after that still forgets the person at the next
+   * reconciliation, and calling again is safe; a strict ledger that does not take it rejects with
+   * `ForgetLedgerUnavailableError`, forgetting nobody.
    */
   forget(personId: string): Promise<StoredDispatch>;
   /**
@@ -251,13 +266,13 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    */
   readonly deadLetters: DeadLetters;
   /**
-   * Forgets again, as `forget` does with `reason: "restored"`, each person an entry names who
-   * still holds a key, unless the store holds the `PersonalDataForgotten` the entry names by
-   * `eventId`: a store that holds it applied that forgetting, and a key the person holds was given
-   * to them after. What `bounda forget --from` runs, for a backup restored without
-   * `runtime.personalData.forgetLedger`; resolves to the ids of the persons it forgot, in order.
-   * Rejects with `ValidationError` an entry without a person's id, or an `actor` that `as` would
-   * refuse, before forgetting anyone.
+   * Commits again each forgetting an entry names, as a reconciliation does: unless the store holds
+   * the `PersonalDataForgotten` the entry names by `eventId`, and only while the person holds a key
+   * it names, any key when it names none; a whole entry under its own id, time and reason, a bare
+   * person's id as a request. What `bounda forget --from` runs, for a backup restored without
+   * `runtime.personalData.forgetLedger`; with one, each is recorded in it first, as `forget` does.
+   * Resolves to the ids of the persons it forgot, in order. Rejects with `ValidationError` an entry
+   * without a person's id, or an `actor` that `as` would refuse, before forgetting anyone.
    */
   forgetAgain(
     entries: readonly ForgetAgainEntry[],
@@ -480,37 +495,47 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     opened.unshift(() => adapted.close());
     const ledgerConfig = config.runtime.personalData.forgetLedger;
     const keepForMs = ledgerConfig?.keepForMs ?? null;
-    const ledger = await openForgetLedger({
-      source: ledgerConfig?.store ?? null,
-      storage: config.storage,
-      env,
-      tenant,
-      keepForMs: keepForMs ?? undefined,
-    });
-    if (ledger !== null) witness?.onForgetLedger(ledger);
-    if (ledger?.close !== undefined) {
-      const close = ledger.close.bind(ledger);
-      opened.unshift(close);
+    let forgetLedger: {
+      readonly config: ResolvedForgetLedgerConfig;
+      readonly store: BoundedForgetLedger;
+    } | null = null;
+    if (ledgerConfig !== null) {
+      const ledger = await openForgetLedger({
+        source: ledgerConfig.store,
+        storage: config.storage,
+        env,
+        tenant,
+        keepForMs: keepForMs ?? undefined,
+      });
+      witness?.onForgetLedger(ledger);
+      if (ledger.close !== undefined) opened.unshift(ledger.close.bind(ledger));
+      forgetLedger = {
+        config: ledgerConfig,
+        store: boundForgetLedger({ ledger, timeoutMs: ledgerConfig.timeoutMs, clock }),
+      };
     }
+    const intentions = createForgetIntentions({
+      ledger:
+        forgetLedger === null
+          ? null
+          : { store: forgetLedger.store, strict: forgetLedger.config.strict },
+      ids,
+      clock,
+      logger,
+    });
     const restores = createRestoreWatch({
       checkpoints: adapted.checkpointStore,
       events: adapted.eventStore,
-      marks: ledger,
+      marks: forgetLedger?.store ?? null,
       logger,
     });
-    const written =
-      ledger === null
-        ? adapted
-        : withLedgerAppend({
-            storage: adapted,
-            ledger,
-            keepForMs,
-            clock,
-            logger,
-            committed: (forgettings) => {
-              for (const event of forgettings) restores.saw(event);
-            },
-          });
+    // Every event this instance commits is the newest the watch knows of until it reads another.
+    const written = withCommittedEvents({
+      storage: adapted,
+      committed: (events) => {
+        for (const event of events) restores.saw(event);
+      },
+    });
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const storage = appStorage({
@@ -573,6 +598,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       pendingRetries,
       logger,
+      intentions,
     });
     const policies = buildPolicies({ registry, aggregates });
     const policyExecutor = createPolicyExecutor({
@@ -582,6 +608,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ids,
       clock,
       logger,
+      intentions,
     });
     const reactive = [
       {
@@ -622,6 +649,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ? undefined
         : createRetentionSweep({
             storage: written,
+            intentions,
             retentionMs,
             ids,
             clock,
@@ -642,20 +670,34 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
           });
     const { concurrencyRetries } = config.runtime.commands;
-    const reconciliation =
-      ledger === null || ledgerConfig === null
-        ? undefined
-        : createForgetLedgerReconciliation({
-            ledger,
-            storage: written,
-            ids,
-            clock,
-            logger,
-            concurrencyRetries,
-            reconcileEveryMs: ledgerConfig.reconcileEveryMs,
-            keepForMs,
-            forgotten: wrapping.drop,
+    const retentionDue =
+      retentionMs === null
+        ? NEVER_DUE
+        : retentionDueOf({
+            retentionMs,
+            batchSize: config.runtime.dispatcher.batchSize,
+            checkpoints: written.checkpointStore,
           });
+    const reconciling =
+      forgetLedger === null
+        ? null
+        : {
+            config: forgetLedger.config,
+            reconciliation: createForgetLedgerReconciliation({
+              ledger: forgetLedger.store,
+              intentions,
+              retentionDue,
+              storage: written,
+              ids,
+              clock,
+              logger,
+              concurrencyRetries,
+              reconcileEveryMs: forgetLedger.config.reconcileEveryMs,
+              keepForMs,
+              forgotten: wrapping.drop,
+            }),
+          };
+    const reconciliation = reconciling?.reconciliation;
     const rotation =
       wrapping.wrapper === null
         ? undefined
@@ -719,7 +761,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ...(retention === undefined
           ? []
           : [createRetentionSubscriber({ persons: storage.persons })]),
-        ...(ledger === null ? [] : [createLedgerOutbox({ ledger, keepForMs, clock })]),
+        ...(forgetLedger === null
+          ? []
+          : [createLedgerOutbox({ ledger: forgetLedger.store, keepForMs, clock })]),
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
@@ -862,18 +906,17 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // the read models that show them hear of it by the time the start resolves. A ledger that
     // does not answer in time is left to finish behind the start, as one that fails is retried,
     // unless the ledger is strict, whose start waits and fails with it.
-    if (reconciliation !== undefined) {
-      const reconciling = reconciliation.reconcile(clock.now());
-      const forgotten = ledgerConfig?.strict
-        ? await reconciling
-        : await waitForLedger(clock, reconciling);
+    if (reconciling !== null) {
+      const { strict, timeoutMs } = reconciling.config;
+      const started = reconciling.reconciliation.reconcile(clock.now());
+      const forgotten = strict ? await started : await waitForLedger(clock, timeoutMs, started);
       if (forgotten === "late") {
         logger.error(
           "forget ledger did not answer in time; the app starts and reconciles in the background",
-          { timeoutMs: FORGET_LEDGER_WAIT_MS },
+          { timeoutMs },
         );
       } else if (typeof forgotten !== "number") {
-        if (ledgerConfig?.strict) throw new ForgetLedgerUnreconciledError(forgotten.failed);
+        if (strict) throw new ForgetLedgerUnreconciledError(forgotten.failed);
       } else if (forgotten > 0) {
         // The ledger held a forgetting the database does not: a restore, whatever the mark said.
         if (cold === null) {
@@ -968,6 +1011,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             run: () =>
               forgetPersonalData({
                 storage,
+                intentions,
                 ids,
                 clock,
                 logger,
@@ -1049,7 +1093,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 await storage.close();
               } finally {
                 wrapping.close();
-                await ledger?.close?.();
+                await forgetLedger?.store.close?.();
               }
             }
           } finally {
@@ -1090,10 +1134,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         for (const entry of entries) {
           const again = await forgetAgain({
             storage: written,
+            intentions,
             ids,
             clock,
             concurrencyRetries,
             entry,
+            retentionDue,
+            record: true,
             actor,
           });
           if (again === null) continue;

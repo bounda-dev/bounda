@@ -77,12 +77,18 @@ Object, with the app stopped and, where the engine allows it, running: persons w
 a backup is taken, some are forgotten, the master key rotates, more is written, and the copy is
 restored.
 
-- **Whoever was forgotten after the copy is forgotten again,** with `reason: "restored"`: no key,
+- **Whoever was forgotten after the copy is forgotten again,** their `PersonalDataForgotten`
+  committed once more under the id, time and reason the ledger recorded before it first committed:
+  no key,
   snapshot, idempotency record of a rejection or scheduled command of theirs, no row a projection
   of `PersonalDataForgotten` removes, their fields `null` in the export, in every event and dead
   letter and in the state of their processes, and none of their values in any row of the
   database.
 - **Their scheduled commands never run**, even when they fall due as the copy comes back.
+- **A forgetting whose commit never happened**, recorded in the ledger by a process that stopped
+  before committing it, is committed at the restored start too.
+- **A strict ledger that cannot be read** fails the restored start before it serves anything; the
+  next start, once it can, applies the whole restore.
 - **Whoever was forgotten before the copy stays forgotten,** once: the copy holds their forgetting.
   Someone who registered after the copy is gone with it, and their entry in the ledger finds no
   key to remove.
