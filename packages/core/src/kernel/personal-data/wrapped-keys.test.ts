@@ -80,6 +80,41 @@ const expectSameKey = async (one: PersonalKey | null, other: PersonalKey | null)
 };
 
 describe("createPersonalKeyWrapping", () => {
+  it("hands every call it does not wrap straight to the store, with what it answered", async () => {
+    const calls: unknown[][] = [];
+    const store = new Proxy({} as PersonalKeyStore, {
+      get:
+        (_, name) =>
+        (...args: unknown[]) => {
+          calls.push([name, ...args]);
+          return Promise.resolve(`${String(name)} answer`);
+        },
+    });
+    const keys = wrappingOf(null).over(store);
+    const passed: [keyof PersonalKeyStore, unknown[]][] = [
+      ["retain", ["c-1", "f-1", { since: "s", lastActiveAt: "a" }]],
+      ["touch", ["c-1", "a"]],
+      ["listDue", [{ category: "x", limit: 1 }]],
+      ["holdDue", ["c-1", "f-1", "a", { until: "u", attempts: 1 }]],
+      ["nextDueHoldEnd", [{ category: "x", after: new Date(0) }]],
+      ["listRetained", [{ except: [], limit: 1 }]],
+      ["nextRetainedHoldEnd", [{ except: [], after: new Date(0) }]],
+      ["countDue", [{ category: "x" }]],
+      ["countRetained", [{ except: ["y"] }]],
+      ["releaseDueHolds", []],
+      ["listWrappedUnder", [{ kids: [null], limit: 1 }]],
+      ["hold", ["c-1", { key: "k", fingerprint: "f-1", kid: null }, { until: "u", attempts: 1 }]],
+      ["nextHoldEnd", [{ kids: [null], after: new Date(0) }]],
+      ["countWrappedUnder", [{ kids: [null] }]],
+      ["releaseHolds", []],
+    ];
+    for (const [name, args] of passed) {
+      const call = keys[name] as (...args: unknown[]) => Promise<unknown>;
+      expect(await call(...args)).toBe(`${name} answer`);
+      expect(calls.at(-1)).toEqual([name, ...args]);
+    }
+  });
+
   it("stores a new key wrapped under the wrapper's kid, named by its fingerprint, without unwrapping it", async () => {
     const store = await keyStore();
     const wrapper = fakeWrapper("kid-1");

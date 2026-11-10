@@ -204,7 +204,7 @@ describe("the KV forget ledger's listing", () => {
     expect(await ledger.read({ limit: 10 })).toEqual([]);
   });
 
-  it("keeps an entry's keys in its value when they do not fit KV's metadata beside its categories", async () => {
+  it("keeps an entry's categories and keys in its value when they do not fit KV's metadata", async () => {
     const namespace = env.FORGET_LEDGER;
     const ledger = createKvForgetLedger({ namespace, prefix: "overflow/" });
     const entry = (eventId: string, pad: string) => ({
@@ -218,39 +218,67 @@ describe("the KV forget ledger's listing", () => {
     const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
     const { eventId: _, ...unpadded } = entry("e-0", "");
     const pad = "x".repeat(1_024 - bytes(unpadded));
-    await ledger.append([entry("e-1", pad), entry("e-2", `${pad}x`)]);
+    const many = Array.from({ length: 100 }, (_, index) => `category-${index}`);
+    const { fingerprints: __, ...unkeyed } = entry("e-3", "k-2");
+    await ledger.append([
+      entry("e-1", pad),
+      entry("e-2", `${pad}x`),
+      { ...unkeyed, categories: many },
+      { ...entry("e-4", "k-2"), categories: null },
+    ]);
     const { keys } = await namespace.list({ prefix: "overflow/" });
     expect(
-      keys.map(({ metadata }) => [bytes(metadata), Reflect.get(Object(metadata), "keysInValue")]),
+      keys.map(({ metadata }) => [bytes(metadata), Reflect.get(Object(metadata), "inValue")]),
     ).toEqual([
       [1_024, undefined],
       [
-        1_024 - bytes(["k-1", pad]) - `,"fingerprints":`.length + `,"keysInValue":true`.length,
+        bytes({ personId: "c-1", forgottenAt: minute(0), reason: "requested", inValue: true }),
         true,
       ],
+      [
+        bytes({ personId: "c-1", forgottenAt: minute(0), reason: "requested", inValue: true }),
+        true,
+      ],
+      [expect.any(Number), undefined],
     ]);
-    expect(await namespace.get(keys[1]?.name ?? "")).toBe(JSON.stringify(["k-1", `${pad}x`]));
-    expect(await ledger.read({ limit: 10 })).toEqual([entry("e-1", pad), entry("e-2", `${pad}x`)]);
+    expect(JSON.parse((await namespace.get(keys[1]?.name ?? "")) ?? "")).toEqual({
+      categories: ["marketing", "invoices"],
+      fingerprints: ["k-1", `${pad}x`],
+    });
+    expect(await ledger.read({ limit: 10 })).toEqual([
+      entry("e-1", pad),
+      entry("e-2", `${pad}x`),
+      { ...unkeyed, categories: many },
+      { ...entry("e-4", "k-2"), categories: null },
+    ]);
+    expect(await ledger.read({ limit: 2 })).toEqual([entry("e-1", pad), entry("e-2", `${pad}x`)]);
   });
 
-  it("reads an entry whose value lost its keys as one that names none", async () => {
+  it("leaves out an entry whose value no longer holds it, rather than read it as a whole", async () => {
     const { namespace, keys } = countingNamespace();
     const values = new Map([
       ["p/1:e-1", "not json"],
-      ["p/2:e-2", JSON.stringify([1])],
+      ["p/2:e-2", JSON.stringify({ categories: [1] })],
+      ["p/3:e-3", JSON.stringify("text")],
+      ["p/5:e-5", JSON.stringify({ categories: null, fingerprints: [2] })],
     ]);
     const reading = {
       ...namespace,
-      list: namespace.list,
       get: async (name: string) => values.get(name) ?? null,
     } as unknown as KVNamespace;
     const ledger = createKvForgetLedger({ namespace: reading, prefix: "p/" });
-    for (const at of ["1:e-1", "2:e-2", "3:e-3"]) {
-      keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), keysInValue: true });
+    for (const at of ["1:e-1", "2:e-2", "3:e-3", "4:e-4", "5:e-5"]) {
+      keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
     }
-    const read = await ledger.read({ limit: 10 });
-    expect(read).toHaveLength(3);
-    for (const entry of read) expect(entry).not.toHaveProperty("fingerprints");
+    expect(await ledger.read({ limit: 10 })).toEqual([
+      {
+        personId: "c-1",
+        categories: null,
+        eventId: "e-5",
+        forgottenAt: minute(0),
+        reason: "requested",
+      },
+    ]);
   });
 
   it("reads a key written before entries kept their reason and keys as a request naming none", async () => {
@@ -421,7 +449,7 @@ describe("expiring a KV forget ledger", () => {
           { name: "sooner", metadata: at(2), expiration: NOW / 1000 + 86_400 },
           { name: "due", metadata: at(2), expiration: (NOW + 33 * DAY) / 1000 },
           { name: "soonest", metadata: soonest },
-          { name: "valued", metadata: { ...at(1), keysInValue: true } },
+          { name: "valued", metadata: { ...at(1), inValue: true } },
           { name: "stray" },
           { name: "empty", metadata: null },
           { name: "unreadable", metadata: { forgottenAt: "not a time" } },
@@ -445,7 +473,7 @@ describe("expiring a KV forget ledger", () => {
           key: "valued",
           value: null,
           expiration: (NOW + 34 * DAY) / 1000,
-          metadata: { ...at(1), keysInValue: true },
+          metadata: { ...at(1), inValue: true },
         },
       ],
       remove: ["past", "just-past"],
@@ -464,9 +492,10 @@ describe("expiring a KV forget ledger", () => {
     await namespace.put(`${KV_FORGET_LEDGER_ROOT}expire-b/2:e-2`, "", { metadata: written(40) });
     await namespace.put("expire-elsewhere", "kept", { metadata: written(1) });
     const valued = `${KV_FORGET_LEDGER_ROOT}expire-c/3:e-3`;
-    await namespace.put(valued, `["k-1"]`, { metadata: { ...written(1), keysInValue: true } });
+    const held = JSON.stringify({ categories: null, fingerprints: ["k-1"] });
+    await namespace.put(valued, held, { metadata: { ...written(1), inValue: true } });
     const expiry = await expireKvForgetLedger({ namespace, keepForMs: 35 * DAY, now });
-    expect(await namespace.get(valued)).toBe(`["k-1"]`);
+    expect(await namespace.get(valued)).toBe(held);
     expect(expiry.expire.map(({ key }) => key)).toContain(`${KV_FORGET_LEDGER_ROOT}expire-a/1:e-1`);
     expect(expiry.remove).toContain(`${KV_FORGET_LEDGER_ROOT}expire-b/2:e-2`);
     const listed = await namespace.list({ prefix: KV_FORGET_LEDGER_ROOT });
@@ -486,7 +515,7 @@ describe("expiring a KV forget ledger", () => {
   it("leaves alone a key whose value held its keys once it is gone", async () => {
     const { namespace, keys, expirations } = countingNamespace();
     const gone = `${KV_FORGET_LEDGER_ROOT}t/1:e-1`;
-    keys.set(gone, { ...at(1), keysInValue: true });
+    keys.set(gone, { ...at(1), inValue: true });
     const reading = { ...namespace, get: async () => null } as unknown as KVNamespace;
     const expiry = await expireKvForgetLedger({
       namespace: reading,

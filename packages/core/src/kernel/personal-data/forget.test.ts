@@ -559,7 +559,10 @@ describe("forgetIntended", () => {
     // A caller that checked keeps a key the intention does not name: given after it.
     expect(await forget(true, ["f-other"])).toMatchObject({
       destroyed: 0,
-      event: { id: "e-true", payload: { fingerprints: [] } },
+      event: {
+        id: "e-true",
+        payload: { fingerprints: [], whole: false, categories: [], retained: [] },
+      },
     });
     expect(reads).toBe(1);
     expect(await storage.personalKeys.list("c-1")).toHaveLength(1);

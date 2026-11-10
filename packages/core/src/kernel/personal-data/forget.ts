@@ -155,11 +155,12 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
     if (await transaction.personalKeys.remove(personId, key.fingerprint)) destroyed += 1;
     (retainedSince === null ? gone : expired).add(category);
   }
-  // A forgetting as a whole leaves no key in force, so it keeps nothing.
+  // A forgetting as a whole keeps nothing, unless a caller that checked its intention left a key
+  // given after it in force; that key's category is then neither whole nor forgotten.
   const after = await transaction.personalKeys.list(personId);
-  const keep = after
-    .filter(({ retainedSince }) => retainedSince === null)
-    .map(({ key }) => key.fingerprint);
+  const inForce = after.filter(({ retainedSince }) => retainedSince === null);
+  const keep = inForce.map(({ key }) => key.fingerprint);
+  const inForceAfter = new Set(inForce.map(({ category }) => category));
   const retainedAfter = new Set(
     after.filter(({ retainedSince }) => retainedSince !== null).map(({ category }) => category),
   );
@@ -176,9 +177,10 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
   const payload: PersonalDataForgottenPayload = {
     personId,
     reason: intention.reason,
-    whole: scope.kind === "whole",
+    whole: scope.kind === "whole" && keep.length === 0,
     categories: named.filter(
-      (category) => !retainedAfter.has(category) || gone.has(category),
+      (category) =>
+        gone.has(category) || (!retainedAfter.has(category) && !inForceAfter.has(category)),
     ) as PersonalCategoryName[],
     retained: (scope.kind === "keys"
       ? []

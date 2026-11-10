@@ -170,9 +170,9 @@ itself; `bounda forget-ledger expire` gives the keys written before `keepFor` wa
 Every forgetting writes its intention to KV before the object commits it, so one the object did not
 get to commit, because it was evicted or its transaction failed, is committed at its next start;
 with `strict`, a forgetting KV does not take fails and forgets nobody. An entry lives in its key's
-metadata, which KV caps at 1024 bytes; the keys of a person with too many categories to fit there,
-some thirty, go to the key's value, which a reconciliation reads for that entry alone and
-`bounda forget-ledger expire` writes back as it was. See
+metadata, which KV caps at 1024 bytes; the categories and keys of a forgetting with too many to fit
+there, some thirty, go to the key's value, which a read fetches for the entries it hands out alone,
+and `bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile. See
 [backups](/guides/personal-data/#backups).
 
 ## One object per tenant

@@ -91,11 +91,16 @@ describe("expiring a KV forget ledger through wrangler", () => {
     ]);
   });
 
-  it("writes again with its value a key whose value holds the entry's keys", async () => {
+  it("writes again with its value a key whose value holds the entry, and leaves alone one gone", async () => {
     const valued = `${ROOT}t/1:e-1`;
+    const held = JSON.stringify({ categories: null, fingerprints: ["k-1"] });
     const { wrangler, calls, files } = fakeWrangler(
-      [{ name: valued, metadata: { ...metadata(1), keysInValue: true } }],
-      { [valued]: `["k-1"]` },
+      [
+        { name: valued, metadata: { ...metadata(1), inValue: true } },
+        { name: `${ROOT}t/2:e-2`, metadata: { ...metadata(1), inValue: true } },
+        { name: `${ROOT}t/3:e-3`, metadata: { ...metadata(1), inValue: true } },
+      ],
+      { [valued]: held, [`${ROOT}t/2:e-2`]: "Value not found", [`${ROOT}t/3:e-3`]: "[1]" },
     );
     await expireKvLedger({
       wrangler,
@@ -119,9 +124,9 @@ describe("expiring a KV forget ledger through wrangler", () => {
       [
         {
           key: valued,
-          value: `["k-1"]`,
+          value: held,
           expiration: (NOW + 34 * DAY) / 1000,
-          metadata: { ...metadata(1), keysInValue: true },
+          metadata: { ...metadata(1), inValue: true },
         },
       ],
     ]);

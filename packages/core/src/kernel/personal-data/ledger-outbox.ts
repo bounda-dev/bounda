@@ -13,8 +13,11 @@ export interface IsForgettingFunction {
 export const isForgetting: IsForgettingFunction = (event) =>
   event.aggregateType === BOUNDA_AGGREGATE && event.type === PERSONAL_DATA_FORGOTTEN_EVENT;
 
-const names = (value: unknown): readonly string[] =>
-  Array.isArray(value) ? value.filter((name): name is string => typeof name === "string") : [];
+// As `bounda forgotten` and the KV ledger read a list: whole, or not at all.
+const isTextList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const names = (value: unknown): readonly string[] => (isTextList(value) ? value : []);
 
 export interface ForgettingEntryFunction {
   (event: StoredEvent): ForgetLedgerEntry;
@@ -43,9 +46,7 @@ export const forgettingEntry: ForgettingEntryFunction = (event) => {
     forgottenAt: event.timestamp,
     reason: field("reason") === "retention" ? "retention" : "requested",
   };
-  return Array.isArray(fingerprints) && fingerprints.every((value) => typeof value === "string")
-    ? { ...entry, fingerprints }
-    : entry;
+  return isTextList(fingerprints) ? { ...entry, fingerprints } : entry;
 };
 
 export interface LedgerEntriesArgs {

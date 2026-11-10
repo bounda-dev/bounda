@@ -296,7 +296,9 @@ cancelledCommands, removedDeadLetters }`:
   them. A forgetting a [forget ledger](#backups) commits again keeps its id, its time and its
   reason.
 - `whole` is `true` when the person was forgotten as a whole, and `false` for
-  `forget(person, { categories })` or a category's retention.
+  `forget(person, { categories })` or a category's retention, and for a forgetting committed again
+  from the [ledger](#backups) that kept a key given to the person after it: that key's category is
+  then not among `categories` either.
 - `categories` are the categories forgotten, every one but those `retained` when `whole`;
   `retained`, those a legal obligation kept; `expired`, those kept at an earlier forgetting whose
   retention ended now.

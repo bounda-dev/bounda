@@ -30,8 +30,14 @@ interface EntryMetadata {
   // Absent from a key written before entries kept them.
   readonly reason?: string;
   readonly fingerprints?: readonly string[];
-  // The fingerprints are the key's value instead, as JSON: they did not fit beside the rest.
-  readonly keysInValue?: true;
+  // The categories and the fingerprints are the key's value instead, as JSON: they did not fit.
+  readonly inValue?: true;
+}
+
+// What the value of an entry `inValue` holds.
+interface SpilledEntry {
+  readonly categories: readonly string[] | null;
+  readonly fingerprints?: readonly string[];
 }
 
 interface StoredEntry {
@@ -44,8 +50,8 @@ const timeKey = (forgottenAt: string): string => String(LATEST_MS - Date.parse(f
 const sizeOf = (metadata: EntryMetadata): number =>
   new TextEncoder().encode(JSON.stringify(metadata)).length;
 
-// A list reads the metadata alone, so an entry keeps its keys there, but for those of a person
-// with too many categories to fit, which a read then fetches from the key's value.
+// A list reads the metadata alone, so an entry is kept there, but for the categories and keys of
+// a person with too many to fit, which a read then fetches from the key's value.
 const storedOf = ({
   personId,
   forgottenAt,
@@ -53,30 +59,41 @@ const storedOf = ({
   reason,
   fingerprints,
 }: ForgetLedgerEntry): StoredEntry => {
-  const named: EntryMetadata = {
+  const full: EntryMetadata = {
     personId,
     forgottenAt,
     ...(categories === null ? {} : { categories }),
     reason,
+    ...(fingerprints === undefined ? {} : { fingerprints }),
   };
-  if (fingerprints === undefined) return { metadata: named, value: "" };
-  const full: EntryMetadata = { ...named, fingerprints };
-  return sizeOf(full) > KV_METADATA_BYTES
-    ? { metadata: { ...named, keysInValue: true }, value: JSON.stringify(fingerprints) }
-    : { metadata: full, value: "" };
+  if (sizeOf(full) <= KV_METADATA_BYTES) return { metadata: full, value: "" };
+  const spilled: SpilledEntry = {
+    categories,
+    ...(fingerprints === undefined ? {} : { fingerprints }),
+  };
+  return {
+    metadata: { personId, forgottenAt, reason, inValue: true },
+    value: JSON.stringify(spilled),
+  };
 };
 
 const isTextList = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
-// The keys kept in a value, none when it is gone or does not hold them.
-const keysIn = (value: string | null): readonly string[] | undefined => {
+// What a value holds of its entry, `null` when it is gone or holds something else: the entry is
+// then left out, rather than read as a forgetting of the person as a whole.
+const spilledIn = (value: string | null): SpilledEntry | null => {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(value ?? "null");
-    return isTextList(parsed) ? parsed : undefined;
+    parsed = JSON.parse(value ?? "null");
   } catch {
-    return undefined;
+    return null;
   }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const categories: unknown = Reflect.get(parsed, "categories");
+  const fingerprints: unknown = Reflect.get(parsed, "fingerprints");
+  if (categories !== null && !isTextList(categories)) return null;
+  return isTextList(fingerprints) ? { categories, fingerprints } : { categories };
 };
 
 /**
@@ -94,17 +111,24 @@ const expirationOf = (forgottenAt: string, keepForMs: number, now: number): numb
 const entryOf = (
   metadata: EntryMetadata,
   eventId: string,
-  fingerprints: readonly string[] | undefined = metadata.fingerprints,
+  { categories, fingerprints }: Partial<SpilledEntry> = metadata,
 ): ForgetLedgerEntry => {
   const entry: ForgetLedgerEntry = {
     personId: metadata.personId,
-    categories: Array.isArray(metadata.categories) ? [...metadata.categories] : null,
+    categories: isTextList(categories) ? [...categories] : null,
     eventId,
     forgottenAt: metadata.forgottenAt,
     reason: metadata.reason === "retention" ? "retention" : "requested",
   };
   return isTextList(fingerprints) ? { ...entry, fingerprints: [...fingerprints] } : entry;
 };
+
+interface ListedEntry {
+  readonly name: string;
+  readonly metadata: EntryMetadata;
+  readonly forgottenAt: string;
+  readonly eventId: string;
+}
 
 export interface CreateKvForgetLedgerArgs {
   readonly namespace: KVNamespace;
@@ -154,7 +178,7 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
     },
     read: async ({ after, limit }) => {
       const oldest = after === undefined ? null : timeKey(after.forgottenAt);
-      const found: ForgetLedgerEntry[] = [];
+      const found: ListedEntry[] = [];
       let cursor: string | undefined;
       for (;;) {
         const page = await namespace.list<EntryMetadata>({
@@ -171,20 +195,29 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
             break;
           }
           if (metadata === null || metadata === undefined) continue;
-          const eventId = rest.slice(separator + 1);
-          found.push(
-            metadata.keysInValue === true
-              ? entryOf(metadata, eventId, keysIn(await namespace.get(name)))
-              : entryOf(metadata, eventId),
-          );
+          found.push({
+            name,
+            metadata,
+            forgottenAt: metadata.forgottenAt,
+            eventId: rest.slice(separator + 1),
+          });
         }
         if (past || page.list_complete) break;
         cursor = page.cursor;
       }
-      return found
+      const read = found
         .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
         .sort(byForgetLedgerOrder)
         .slice(0, limit);
+      // Only the values of the entries handed out, at once.
+      const entries = await Promise.all(
+        read.map(async ({ name, metadata, eventId }) => {
+          if (metadata.inValue !== true) return entryOf(metadata, eventId);
+          const spilled = spilledIn(await namespace.get(name));
+          return spilled === null ? null : entryOf(metadata, eventId, spilled);
+        }),
+      );
+      return entries.filter((entry) => entry !== null);
     },
     readMark: async (name) => Number((await namespace.get(markKey(name))) ?? 0),
     // KV has no compare: of two instances raising at once the lower may win, which the next raise,
@@ -262,10 +295,10 @@ export interface KvLedgerKey {
 export interface KvLedgerPut {
   readonly key: string;
   /**
-   * `null` for a key whose value holds the entry's keys: it is written again with the value it
-   * has, which the caller reads first.
+   * `null` for a key whose value holds the entry's categories and keys: it is written again with
+   * the value it has, which the caller reads first, and left alone when that is gone.
    */
-  readonly value: "" | null;
+  readonly value: string | null;
   readonly expiration: number;
   readonly metadata: unknown;
 }
@@ -309,11 +342,8 @@ export const planKvForgetLedgerExpiry: PlanKvForgetLedgerExpiryFunction = ({
     const expiration = expirationOf(forgottenAt, keepForMs, now);
     if (expiration === null) remove.push(name);
     else if (current === undefined || current > expiration) {
-      const keysInValue =
-        typeof metadata === "object" &&
-        metadata !== null &&
-        Reflect.get(metadata, "keysInValue") === true;
-      expire.push({ key: name, value: keysInValue ? null : "", expiration, metadata });
+      const inValue = Reflect.get(metadata as object, "inValue") === true;
+      expire.push({ key: name, value: inValue ? null : "", expiration, metadata });
     }
   }
   return { expire, remove };

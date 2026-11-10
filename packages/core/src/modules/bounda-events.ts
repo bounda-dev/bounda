@@ -47,8 +47,9 @@ export interface PersonalDataForgottenPayload {
   readonly reason: PersonalDataForgottenReason;
   /**
    * Whether the person was forgotten as a whole, by `forget(person)`, the app's retention or a
-   * restore of either; `false` when only some categories were, by `forget(person, { categories })`
-   * or a category's retention.
+   * restore of either, with no key left in force; `false` when only some categories were, by
+   * `forget(person, { categories })` or a category's retention, or when a forgetting committed
+   * again kept a key given to the person after it.
    */
   readonly whole: boolean;
   /**

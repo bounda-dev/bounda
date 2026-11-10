@@ -1506,6 +1506,43 @@ describe("the retention across instances", () => {
     expect((await forgottenFor()).map(([person]) => person)).toEqual(["c-1", "c-2", "c-3", "c-4"]);
   });
 
+  it("leaves the categories after the one it lost its lease in to the instance that took it", async () => {
+    const set = await setUp(undefined, {
+      retentionMs: null,
+      module: { categories: { profile: { basis: "consent", retention: "10d" } } },
+    });
+    const { storage, sweepOver, clock } = set;
+    for (const person of ["c-1", "c-2"]) {
+      await storage.personalKeys.add(person, "profile", testPersonalKey(person));
+      await set.touch(person);
+    }
+    await storage.personalKeys.add("c-9", "retired", testPersonalKey("9"));
+    await storage.personalKeys.retain("c-9", "f-9", { since: day(0), lastActiveAt: day(0) });
+    await set.record();
+    set.advance(11);
+    const other = sweepOver(storage);
+    let retainedLists = 0;
+    let handedOver = 0;
+    const stalling = committing(storage, async () => {
+      clock.set(new Date(clock.now().getTime() + LEASE_MS));
+      handedOver = await other.sweep(clock.now());
+    });
+    const one = sweepOver({
+      ...stalling,
+      personalKeys: {
+        ...stalling.personalKeys,
+        listRetained: (args) => {
+          retainedLists += 1;
+          return stalling.personalKeys.listRetained(args);
+        },
+      },
+    });
+    expect(await one.sweep(clock.now())).toBe(1);
+    expect(handedOver).toBe(2);
+    expect(retainedLists).toBe(0);
+    expect(await storage.personalKeys.list("c-9")).toEqual([]);
+  });
+
   it("clears the holds a restore brought back, on the instance that found it first", async () => {
     const { storage, sweepOver, clock } = await idle(["c-1"]);
     const hold = {
