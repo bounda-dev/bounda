@@ -123,7 +123,28 @@ export const expireKvLedger: ExpireKvLedgerFunction = async ({
   if (!Array.isArray(listed) || !listed.every(isListedKey)) {
     throw new Error("wrangler kv key list printed something else than a list of keys");
   }
-  const { expire, remove } = ledger.planKvForgetLedgerExpiry({ keys: listed, keepForMs, now });
+  const plan = ledger.planKvForgetLedgerExpiry({ keys: listed, keepForMs, now });
+  const { remove } = plan;
+  // A key whose value holds the entry's keys is written again with that value.
+  const expire = await Promise.all(
+    plan.expire.map(async (put) =>
+      put.value === null
+        ? {
+            ...put,
+            value: await wrangler([
+              "kv",
+              "key",
+              "get",
+              put.key,
+              "--binding",
+              binding,
+              "--text",
+              ...where,
+            ]),
+          }
+        : put,
+    ),
+  );
   const directory = await mkdtemp(join(tmpdir(), "bounda-forget-ledger-"));
   try {
     if (expire.length > 0) {

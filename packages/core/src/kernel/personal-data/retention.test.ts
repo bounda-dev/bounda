@@ -587,10 +587,10 @@ describe("createRetentionSweep", () => {
         profile: { basis: "consent", retention: "30d" },
       },
     } as const;
-    const { sweep, record, touch, advance, clock, ids, logger, categories, storage } = await setUp(
-      live,
-      { retentionMs: null, module: legal },
-    );
+    const { sweep, record, touch, advance, clock, storage } = await setUp(live, {
+      retentionMs: null,
+      module: legal,
+    });
     await live.personalKeys.add("c-1", "profile", testPersonalKey("1"));
     await live.personalKeys.add("c-1", "invoices", testPersonalKey("2"));
     await touch("c-1");

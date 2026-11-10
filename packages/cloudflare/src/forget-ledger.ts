@@ -30,6 +30,13 @@ interface EntryMetadata {
   // Absent from a key written before entries kept them.
   readonly reason?: string;
   readonly fingerprints?: readonly string[];
+  // The fingerprints are the key's value instead, as JSON: they did not fit beside the rest.
+  readonly keysInValue?: true;
+}
+
+interface StoredEntry {
+  readonly metadata: EntryMetadata;
+  readonly value: string;
 }
 
 const timeKey = (forgottenAt: string): string => String(LATEST_MS - Date.parse(forgottenAt));
@@ -37,25 +44,39 @@ const timeKey = (forgottenAt: string): string => String(LATEST_MS - Date.parse(f
 const sizeOf = (metadata: EntryMetadata): number =>
   new TextEncoder().encode(JSON.stringify(metadata)).length;
 
-// An entry whose keys do not fit beside its categories is kept without them, which any key
-// matches: a reconciliation then forgets again a key given after it too, never a category it did
-// not ask for.
-const metadataOf = ({
+// A list reads the metadata alone, so an entry keeps its keys there, but for those of a person
+// with too many categories to fit, which a read then fetches from the key's value.
+const storedOf = ({
   personId,
   forgottenAt,
   categories,
   reason,
   fingerprints,
-}: ForgetLedgerEntry): EntryMetadata => {
+}: ForgetLedgerEntry): StoredEntry => {
   const named: EntryMetadata = {
     personId,
     forgottenAt,
     ...(categories === null ? {} : { categories }),
     reason,
   };
-  if (fingerprints === undefined) return named;
+  if (fingerprints === undefined) return { metadata: named, value: "" };
   const full: EntryMetadata = { ...named, fingerprints };
-  return sizeOf(full) > KV_METADATA_BYTES ? named : full;
+  return sizeOf(full) > KV_METADATA_BYTES
+    ? { metadata: { ...named, keysInValue: true }, value: JSON.stringify(fingerprints) }
+    : { metadata: full, value: "" };
+};
+
+const isTextList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+// The keys kept in a value, none when it is gone or does not hold them.
+const keysIn = (value: string | null): readonly string[] | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(value ?? "null");
+    return isTextList(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 /**
@@ -70,7 +91,11 @@ const expirationOf = (forgottenAt: string, keepForMs: number, now: number): numb
   return Math.max(Math.ceil(expiresAt / 1000), Math.floor(now / 1000) + KV_MIN_TTL_S);
 };
 
-const entryOf = (metadata: EntryMetadata, eventId: string): ForgetLedgerEntry => {
+const entryOf = (
+  metadata: EntryMetadata,
+  eventId: string,
+  fingerprints: readonly string[] | undefined = metadata.fingerprints,
+): ForgetLedgerEntry => {
   const entry: ForgetLedgerEntry = {
     personId: metadata.personId,
     categories: Array.isArray(metadata.categories) ? [...metadata.categories] : null,
@@ -78,9 +103,7 @@ const entryOf = (metadata: EntryMetadata, eventId: string): ForgetLedgerEntry =>
     forgottenAt: metadata.forgottenAt,
     reason: metadata.reason === "retention" ? "retention" : "requested",
   };
-  return Array.isArray(metadata.fingerprints)
-    ? { ...entry, fingerprints: [...metadata.fingerprints] }
-    : entry;
+  return isTextList(fingerprints) ? { ...entry, fingerprints: [...fingerprints] } : entry;
 };
 
 export interface CreateKvForgetLedgerArgs {
@@ -121,11 +144,11 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
       await Promise.all(
         entries.flatMap((entry) => {
           const { eventId, forgottenAt } = entry;
-          const metadata = metadataOf(entry);
+          const { metadata, value } = storedOf(entry);
           const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
-          if (keepForMs === undefined) return [namespace.put(key, "", { metadata })];
+          if (keepForMs === undefined) return [namespace.put(key, value, { metadata })];
           const expiration = expirationOf(forgottenAt, keepForMs, now);
-          return expiration === null ? [] : [namespace.put(key, "", { metadata, expiration })];
+          return expiration === null ? [] : [namespace.put(key, value, { metadata, expiration })];
         }),
       );
     },
@@ -148,7 +171,12 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
             break;
           }
           if (metadata === null || metadata === undefined) continue;
-          found.push(entryOf(metadata, rest.slice(separator + 1)));
+          const eventId = rest.slice(separator + 1);
+          found.push(
+            metadata.keysInValue === true
+              ? entryOf(metadata, eventId, keysIn(await namespace.get(name)))
+              : entryOf(metadata, eventId),
+          );
         }
         if (past || page.list_complete) break;
         cursor = page.cursor;
@@ -233,7 +261,11 @@ export interface KvLedgerKey {
  */
 export interface KvLedgerPut {
   readonly key: string;
-  readonly value: "";
+  /**
+   * `null` for a key whose value holds the entry's keys: it is written again with the value it
+   * has, which the caller reads first.
+   */
+  readonly value: "" | null;
   readonly expiration: number;
   readonly metadata: unknown;
 }
@@ -277,7 +309,11 @@ export const planKvForgetLedgerExpiry: PlanKvForgetLedgerExpiryFunction = ({
     const expiration = expirationOf(forgottenAt, keepForMs, now);
     if (expiration === null) remove.push(name);
     else if (current === undefined || current > expiration) {
-      expire.push({ key: name, value: "", expiration, metadata });
+      const keysInValue =
+        typeof metadata === "object" &&
+        metadata !== null &&
+        Reflect.get(metadata, "keysInValue") === true;
+      expire.push({ key: name, value: keysInValue ? null : "", expiration, metadata });
     }
   }
   return { expire, remove };
@@ -320,9 +356,10 @@ export const expireKvForgetLedger: ExpireKvForgetLedgerFunction = async ({
   }
   const expiry = planKvForgetLedgerExpiry({ keys, keepForMs, now });
   await Promise.all([
-    ...expiry.expire.map(({ key, value, expiration, metadata }) =>
-      namespace.put(key, value, { expiration, metadata }),
-    ),
+    ...expiry.expire.map(async ({ key, value, expiration, metadata }) => {
+      const kept = value ?? (await namespace.get(key));
+      if (kept !== null) await namespace.put(key, kept, { expiration, metadata });
+    }),
     ...expiry.remove.map((key) => namespace.delete(key)),
   ]);
   return expiry;
