@@ -863,6 +863,71 @@ describe("forgetAgain", () => {
     expect(await run(null)).toBeNull();
   });
 
+  it("commits again a category's retention only while it would still end the keys it names, destroying those alone", async () => {
+    const storage = await memory().createStorage();
+    const categories = buildPersonalCategories({
+      module: {
+        categories: {
+          profile: { basis: "consent", retention: "30d" },
+          invoices: { basis: "legal-obligation", retention: "30d" },
+        },
+      },
+      retention: null,
+    });
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("3"));
+    const asked: (readonly string[] | null)[] = [];
+    let due = false;
+    const ids = createSequentialIdGenerator();
+    const clock = createFixedClock(NOW);
+    const run = (entry: ForgetAgainEntry) =>
+      forgetAgain({
+        storage,
+        intentions: withoutLedger({ ids, clock }),
+        ids,
+        clock,
+        concurrencyRetries: 3,
+        categories,
+        batchSize: 10,
+        entry,
+        retentionDue: async (_stores, _person, _now, keys) => {
+          asked.push(keys === null ? null : keys.map(({ key }) => key.fingerprint));
+          return due;
+        },
+        record: false,
+      });
+    const entry: ForgetAgainEntry = {
+      personId: "c-1",
+      eventId: "e-1",
+      forgottenAt: at(0),
+      reason: "retention",
+      categories: ["invoices"],
+      fingerprints: ["f-3"],
+    };
+    expect(await run(entry)).toBeNull();
+    expect(asked).toEqual([["f-3"]]);
+    due = true;
+    expect(
+      (await run({ personId: "c-1", reason: "retention", categories: ["invoices"] }))?.payload,
+    ).toMatchObject({
+      reason: "retention",
+      whole: false,
+      categories: ["invoices"],
+      retained: [],
+      fingerprints: ["f-3"],
+    });
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "default",
+    ]);
+    expect(await run(entry)).toBeNull();
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("4"));
+    asked.length = 0;
+    expect((await run({ personId: "c-1", reason: "retention" }))?.payload).toMatchObject({
+      whole: true,
+    });
+    expect(asked).toEqual([null, null]);
+  });
+
   const ledgered = async () => {
     const base = await memory().createStorage();
     let transactions = 0;

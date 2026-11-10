@@ -444,6 +444,7 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       ).toBe(2);
       expect(await store.countDue({ category: "billing" })).toBe(1);
       expect(await store.countRetained({ except: ["invoices"] })).toBe(1);
+      expect(await store.countRetained({ except: ["invoices", "billing"] })).toBe(0);
       expect(await store.countRetained({ except: [] })).toBe(2);
       expect(await store.releaseDueHolds()).toBe(2);
       expect(await store.releaseDueHolds()).toBe(0);
