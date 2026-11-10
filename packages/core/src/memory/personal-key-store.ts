@@ -1,101 +1,251 @@
+import type { KeyState } from "../adapter/storage/append-checks.ts";
 import type { Hold } from "../adapter/storage/hold.ts";
 import { isReleasedBy } from "../adapter/storage/hold.ts";
-import type {
-  KeyedPerson,
-  PersonalKeyStore,
-  StoredPersonalKey,
+import {
+  type DueKey,
+  type HeldPersonalKey,
+  type KeyedPerson,
+  keyedPersonId,
+  type PersonalKeyStore,
+  type StoredPersonalKey,
 } from "../adapter/storage/personal-key-store.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { earliestHoldEnd } from "./holds.ts";
 
 export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, string> {
   /**
-   * Whether the person holds the key of that fingerprint, always for a `null` one, answered
-   * at once: the memory snapshot store checks it in the same step as it writes, so no forget runs
-   * between the two.
+   * Whether the person holds the key of that fingerprint in force, always for a `null` one,
+   * answered at once: the memory snapshot store checks it in the same step as it writes, so no
+   * forget runs between the two.
    */
   holds(held: KeyedPerson): boolean;
   /**
-   * The fingerprint of the person's key, `null` when they hold none, answered at once for the
-   * same reason.
+   * The key of that fingerprint as the person holds it, answered at once for the same reason.
    */
-  fingerprintOf(person: string): string | null;
+  keyOf(person: string, fingerprint: string): KeyState;
+}
+
+export interface CreateKeptPersonalKeyStoreArgs {
+  /**
+   * Whether the processing of the person's data is restricted: `listDue` leaves them out.
+   */
+  readonly restricted: (person: string) => boolean;
+  /**
+   * The person's last activity recorded since their last forgetting as a whole, which a new key
+   * starts from; `null` without one.
+   */
+  readonly lastActiveAt: (person: string) => string | null;
 }
 
 export interface CreateKeptPersonalKeyStoreFunction {
-  (): KeptPersonalKeyStore;
+  (args: CreateKeptPersonalKeyStoreArgs): KeptPersonalKeyStore;
 }
 
 interface KeptPersonalKey extends StoredPersonalKey {
+  readonly person: string;
+  readonly category: string;
   readonly hold: Hold | null;
+  readonly lastActiveAt: string | null;
+  readonly retainedSince: string | null;
+  readonly dueHold: Hold | null;
 }
 
-const stored = ({ hold: _hold, ...key }: KeptPersonalKey): StoredPersonalKey => key;
+const stored = ({ key, fingerprint, kid }: KeptPersonalKey): StoredPersonalKey => ({
+  key,
+  fingerprint,
+  kid,
+});
+
+const held = (kept: KeptPersonalKey): HeldPersonalKey => ({
+  category: kept.category,
+  key: stored(kept),
+  retainedSince: kept.retainedSince,
+  lastActiveAt: kept.lastActiveAt,
+});
 
 const isHeldBy = (
-  held: KeptPersonalKey | undefined,
+  kept: KeptPersonalKey | undefined,
   from: StoredPersonalKey,
-): held is KeptPersonalKey => held?.key === from.key && held.fingerprint === from.fingerprint;
+): kept is KeptPersonalKey => kept?.key === from.key && kept.fingerprint === from.fingerprint;
 
-export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = () => {
+// Entries are named as `keyedPersonId` names a person under a key.
+const idOf = (person: string, fingerprint: string): string =>
+  keyedPersonId({ person, fingerprint });
+
+const dueKeyOf = (kept: KeptPersonalKey): DueKey => ({
+  person: kept.person,
+  category: kept.category,
+  fingerprint: kept.fingerprint,
+  lastActiveAt: kept.lastActiveAt ?? "",
+  retainedSince: kept.retainedSince,
+  hold: kept.dueHold,
+});
+
+// Persons, then fingerprints, are unique together, so no two compare equal.
+const byPerson = (a: KeptPersonalKey, b: KeptPersonalKey): number =>
+  a.person === b.person ? (a.fingerprint < b.fingerprint ? -1 : 1) : a.person < b.person ? -1 : 1;
+
+export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
+  restricted,
+  lastActiveAt: lastActiveOf,
+}) => {
   const keys = new Map<string, KeptPersonalKey>();
+  const of = (person: string): KeptPersonalKey[] =>
+    [...keys.values()].filter((kept) => kept.person === person);
+  const inForce = (person: string, category: string): KeptPersonalKey | undefined =>
+    of(person).find((kept) => kept.category === category && kept.retainedSince === null);
+  const update = (kept: KeptPersonalKey, change: Partial<KeptPersonalKey>): void => {
+    keys.set(idOf(kept.person, kept.fingerprint), { ...kept, ...change });
+  };
+  const due = (category: string, releasedBy: Date | undefined): KeptPersonalKey[] =>
+    [...keys.values()].filter(
+      (kept) =>
+        kept.category === category &&
+        kept.lastActiveAt !== null &&
+        !restricted(kept.person) &&
+        isReleasedBy(kept.dueHold, releasedBy),
+    );
+  const retainedOutside = (except: readonly string[]): KeptPersonalKey[] =>
+    [...keys.values()].filter(
+      (kept) =>
+        kept.retainedSince !== null && !except.includes(kept.category) && !restricted(kept.person),
+    );
   return {
-    holds: ({ person, fingerprint }) => {
-      const stored = keys.get(person);
-      return fingerprint === null || stored?.fingerprint === fingerprint;
+    holds: ({ person, fingerprint }) =>
+      fingerprint === null || keys.get(idOf(person, fingerprint))?.retainedSince === null,
+    keyOf: (person, fingerprint) => {
+      const kept = keys.get(idOf(person, fingerprint));
+      if (kept === undefined) return "gone";
+      return kept.retainedSince === null ? "held" : "retained";
     },
-    fingerprintOf: (person) => keys.get(person)?.fingerprint ?? null,
     store: {
-      get: async (person) => {
-        const kept = keys.get(person);
+      get: async (person, category) => {
+        const kept = inForce(person, category);
         return kept === undefined ? null : stored(kept);
       },
-      add: async (person, key) => {
-        const existing = keys.get(person);
+      find: async (person, fingerprint) => {
+        const kept = keys.get(idOf(person, fingerprint));
+        return kept === undefined ? null : held(kept);
+      },
+      list: async (person) => of(person).sort(byPerson).map(held),
+      add: async (person, category, key) => {
+        const existing = inForce(person, category);
         if (existing !== undefined) return stored(existing);
-        const kept = { key: key.key, fingerprint: key.fingerprint, kid: key.kid, hold: null };
-        keys.set(person, kept);
+        const kept: KeptPersonalKey = {
+          person,
+          category,
+          key: key.key,
+          fingerprint: key.fingerprint,
+          kid: key.kid,
+          hold: null,
+          lastActiveAt: lastActiveOf(person),
+          retainedSince: null,
+          dueHold: null,
+        };
+        keys.set(idOf(person, key.fingerprint), kept);
         return stored(kept);
       },
-      remove: async (person) => keys.delete(person),
-      listWrappedUnder: async ({ kids, releasedBy, limit }) => {
-        return (
-          [...keys.entries()]
-            .filter(([, key]) => kids.includes(key.kid))
-            .filter(([, { hold }]) => isReleasedBy(hold, releasedBy))
-            // Persons are unique, so no two compare equal.
-            .sort(([a], [b]) => (a < b ? -1 : 1))
-            .slice(0, limit)
-            .map(([person, key]) => ({ person, key: stored(key), hold: key.hold }))
-        );
+      remove: async (person, fingerprint) => keys.delete(idOf(person, fingerprint)),
+      retain: async (person, fingerprint, { since, lastActiveAt }) => {
+        const kept = keys.get(idOf(person, fingerprint));
+        if (kept === undefined || kept.retainedSince !== null) return false;
+        update(kept, { retainedSince: since, lastActiveAt, dueHold: null });
+        return true;
       },
+      touch: async (person, lastActiveAt) => {
+        for (const kept of of(person)) {
+          if (kept.retainedSince !== null) continue;
+          if (kept.lastActiveAt !== null && kept.lastActiveAt >= lastActiveAt) continue;
+          update(kept, { lastActiveAt, dueHold: null });
+        }
+      },
+      listDue: async ({ category, activeBefore, releasedBy, limit }) => {
+        const before = activeBefore?.toISOString();
+        return due(category, releasedBy)
+          .filter((kept) => before === undefined || (kept.lastActiveAt ?? "") <= before)
+          .sort((a, b) =>
+            a.lastActiveAt === b.lastActiveAt
+              ? byPerson(a, b)
+              : (a.lastActiveAt ?? "") < (b.lastActiveAt ?? "")
+                ? -1
+                : 1,
+          )
+          .slice(0, limit)
+          .map(dueKeyOf);
+      },
+      holdDue: async (person, fingerprint, lastActiveAt, hold) => {
+        const kept = keys.get(idOf(person, fingerprint));
+        if (kept?.lastActiveAt === lastActiveAt) update(kept, { dueHold: hold });
+      },
+      nextDueHoldEnd: async ({ category, after }) =>
+        earliestHoldEnd(
+          due(category, undefined).map(({ dueHold }) => dueHold),
+          after,
+        ),
+      listRetained: async ({ except, releasedBy, limit }) =>
+        retainedOutside(except)
+          .filter((kept) => isReleasedBy(kept.dueHold, releasedBy))
+          .sort((a, b) =>
+            a.retainedSince === b.retainedSince
+              ? byPerson(a, b)
+              : (a.retainedSince ?? "") < (b.retainedSince ?? "")
+                ? -1
+                : 1,
+          )
+          .slice(0, limit)
+          .map(dueKeyOf),
+      nextRetainedHoldEnd: async ({ except, after }) =>
+        earliestHoldEnd(
+          retainedOutside(except).map(({ dueHold }) => dueHold),
+          after,
+        ),
+      listWrappedUnder: async ({ kids, releasedBy, limit }) =>
+        [...keys.values()]
+          .filter((kept) => kids.includes(kept.kid))
+          .filter(({ hold }) => isReleasedBy(hold, releasedBy))
+          .sort(byPerson)
+          .slice(0, limit)
+          .map((kept) => ({
+            person: kept.person,
+            category: kept.category,
+            key: stored(kept),
+            hold: kept.hold,
+          })),
       rewrap: async (person, from, to) => {
-        const held = keys.get(person);
-        if (!isHeldBy(held, from)) return false;
-        keys.set(person, { ...held, key: to.key, kid: to.kid, hold: null });
+        const kept = keys.get(idOf(person, from.fingerprint));
+        if (!isHeldBy(kept, from)) return false;
+        update(kept, { key: to.key, kid: to.kid, hold: null });
         return true;
       },
       hold: async (person, from, hold) => {
-        const held = keys.get(person);
-        if (isHeldBy(held, from)) keys.set(person, { ...held, hold });
+        const kept = keys.get(idOf(person, from.fingerprint));
+        if (isHeldBy(kept, from)) update(kept, { hold });
       },
       nextHoldEnd: async ({ kids, after }) =>
         earliestHoldEnd(
-          [...keys.values()].filter((key) => kids.includes(key.kid)).map(({ hold }) => hold),
+          [...keys.values()].filter((kept) => kids.includes(kept.kid)).map(({ hold }) => hold),
           after,
         ),
       countWrappedUnder: async ({ kids }) =>
         [...keys.values()].filter((key) => kids.includes(key.kid)).length,
       releaseHolds: async () => {
-        let released = 0;
-        for (const [person, kept] of keys) {
-          if (kept.hold === null) continue;
-          keys.set(person, { ...kept, hold: null });
-          released += 1;
-        }
-        return released;
+        const held = [...keys.values()].filter(({ hold }) => hold !== null);
+        for (const kept of held) update(kept, { hold: null });
+        return held.length;
+      },
+      countDue: async ({ category, activeBefore }) => {
+        const before = activeBefore?.toISOString();
+        return due(category, undefined).filter(
+          (kept) => before === undefined || (kept.lastActiveAt ?? "") <= before,
+        ).length;
+      },
+      countRetained: async ({ except }) => retainedOutside(except).length,
+      releaseDueHolds: async () => {
+        const held = [...keys.values()].filter(({ dueHold }) => dueHold !== null);
+        for (const kept of held) update(kept, { dueHold: null });
+        return held.length;
       },
     },
-    entries: createStoreEntries(keys, (person) => person),
+    entries: createStoreEntries(keys, (id: string) => id),
   };
 };

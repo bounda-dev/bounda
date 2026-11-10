@@ -2,12 +2,18 @@ import type { PersonalDataForgottenReason } from "../../modules/bounda-events.ts
 
 /**
  * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` says so, when, why,
- * and which keys it destroys. Ids, a time and fingerprints, nothing else: the ledger is a
- * suppression list, the one thing about a forgotten person that has to outlive their data. The
- * runtime writes it before the forgetting commits, so an entry may name an event no store holds.
+ * which of their categories it was asked for, and which keys it covers. Ids, names, a time and
+ * fingerprints, nothing else: the ledger is a suppression list, the one thing about a forgotten
+ * person that has to outlive their data. The runtime writes it before the forgetting commits, so
+ * an entry may name an event no store holds.
  */
 export interface ForgetLedgerEntry {
   readonly personId: string;
+  /**
+   * The categories the forgetting was asked for, `null` for the person as a whole: forgetting
+   * them again forgets those again, as the request did.
+   */
+  readonly categories: readonly string[] | null;
   /**
    * The id of the `PersonalDataForgotten` event, which no other copy of the store gives to another
    * event, unlike its position.
@@ -19,9 +25,9 @@ export interface ForgetLedgerEntry {
   readonly forgottenAt: string;
   readonly reason: PersonalDataForgottenReason;
   /**
-   * The fingerprints of the keys the person held when the forgetting was asked: the reconciliation
-   * commits it again only while the person holds one of them, since any other key was given to
-   * them after. Absent from an entry written by a Bounda that did not record them, which any key
+   * The fingerprints of the keys in force the forgetting covered when it was asked: the
+   * reconciliation commits it again only while the person holds one of them, since any other key
+   * was given to them after. Absent from an entry written by a Bounda that did not record them, which any key
    * matches.
    */
   readonly fingerprints?: readonly string[];

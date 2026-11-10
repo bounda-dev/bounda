@@ -1,6 +1,6 @@
 import type { KeyedPerson, Snapshot, SnapshotStore } from "@bounda-dev/core/adapter";
 import { postgresqlDialect, type SqlExecutor } from "@bounda-dev/core/adapter/sql";
-import { heldKeys, naming } from "./held-keys.ts";
+import { heldKeys, naming, outsideKept } from "./held-keys.ts";
 
 export interface CreatePostgresqlSnapshotStoreArgs {
   readonly db: SqlExecutor;
@@ -51,5 +51,9 @@ export const createPostgresqlSnapshotStore: CreatePostgresqlSnapshotStoreFunctio
       aggregateType,
       aggregateId,
     ]),
-  forget: (person) => db.run(`DELETE FROM ${table} WHERE ${naming("$1")}`, [person]),
+  forget: (person, keep = []) =>
+    db.run(
+      `DELETE FROM ${table} WHERE ${naming("$1")} AND ${outsideKept({ person: "$1", keep: "$2" })}`,
+      [person, postgresqlDialect.encode("json", keep)],
+    ),
 });

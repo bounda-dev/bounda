@@ -3,6 +3,7 @@ import { IdempotencyKeyTakenError } from "../../contracts/errors.ts";
 import type { Storage } from "../adapter.ts";
 import type { IdempotencyStore } from "../storage/idempotency-store.ts";
 import type { KeyedPerson, PersonalKeyStore } from "../storage/personal-key-store.ts";
+import { DEFAULT_PERSONAL_CATEGORY as D } from "../storage/personal-key-store.ts";
 import { testKeyedPerson as held, testPersonalKey as stored, testOutcome } from "./fixtures.ts";
 
 export interface IdempotencyStoreContractArgs {
@@ -48,14 +49,14 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
     it("records a record that names people only while each of them has a key", async () => {
       const persons = [held("c-1", "1"), held("c-2", "2"), held("c-3", null)];
       const named = { ...record("k1"), outcome: rejection, persons, now };
-      await keys.add("c-1", stored("1"));
+      await keys.add("c-1", D, stored("1"));
       await store.put(named);
       expect(await store.get({ key: "k1", now })).toBeNull();
-      await keys.add("c-2", stored("2"));
+      await keys.add("c-2", D, stored("2"));
       await store.put(named);
       const { now: _now, ...kept } = named;
       expect(await store.get({ key: "k1", now })).toEqual(kept);
-      await keys.remove("c-1");
+      await keys.remove("c-1", "f-1");
       await expect(store.put({ ...named, fingerprint: "other" })).rejects.toBeInstanceOf(
         IdempotencyKeyTakenError,
       );
@@ -68,7 +69,7 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
         persons,
         now,
       });
-      await keys.add("c-1", stored("new"));
+      await keys.add("c-1", D, stored("new"));
       await store.put(named(held("c-1", "old")));
       expect(await store.get({ key: "k1", now })).toBeNull();
       await store.put(named(held("c-1", "old"), held("c-1", "new")));
@@ -81,8 +82,8 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
     });
 
     it("forgets every record that names a person, and no other", async () => {
-      await keys.add("c-1", stored("1"));
-      await keys.add("c-2", stored("2"));
+      await keys.add("c-1", D, stored("1"));
+      await keys.add("c-2", D, stored("2"));
       const c1 = held("c-1", "1");
       const c2 = held("c-2", "2");
       await store.put({ ...record("k1"), outcome: rejection, persons: [c1], now });
@@ -95,6 +96,22 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
         ["k1", "k2", "k3", "k4"].map(async (key) => (await store.get({ key, now }))?.key ?? null),
       );
       expect(left).toEqual([null, null, "k3", "k4"]);
+    });
+
+    it("forgets the records that name a person under a key outside those kept, and records none under a key kept past a forgetting", async () => {
+      await keys.add("c-1", D, stored("1"));
+      await keys.add("c-1", "invoices", stored("2"));
+      await store.put({ ...record("k1"), outcome: rejection, persons: [held("c-1", "1")], now });
+      await store.put({ ...record("k2"), outcome: rejection, persons: [held("c-1", "2")], now });
+      await store.forget("c-1", ["f-2"]);
+      expect(await store.get({ key: "k1", now })).toBeNull();
+      expect((await store.get({ key: "k2", now }))?.key).toBe("k2");
+      await keys.retain("c-1", "f-2", {
+        since: "2026-02-01T00:00:00.000Z",
+        lastActiveAt: "2026-01-01T00:00:00.000Z",
+      });
+      await store.put({ ...record("k3"), outcome: rejection, persons: [held("c-1", "2")], now });
+      expect(await store.get({ key: "k3", now })).toBeNull();
     });
 
     it("answers a record as it was put, and null for a key it never saw", async () => {

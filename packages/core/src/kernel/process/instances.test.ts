@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { ForgottenSinceLoadError } from "../../adapter/storage/append-checks.ts";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withPersonalData } from "../personal-data/event-store.ts";
-import { keysOver } from "../test-support.ts";
+import { keysOver, removeKeys } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { createProcessInstances } from "./instances.ts";
@@ -79,7 +80,11 @@ describe("createProcessInstances", () => {
     const storage = await memory().createStorage();
     const onboarding: ProcessRuntime = {
       ...process,
-      personal: { person: "customerId", fields: ["email"] },
+      personal: {
+        person: "customerId",
+        fields: ["email"],
+        categories: { email: DEFAULT_PERSONAL_CATEGORY },
+      },
     };
     const instances = createProcessInstances({
       eventStore: withPersonalData({
@@ -99,11 +104,12 @@ describe("createProcessInstances", () => {
     expect(fresh.persons).toEqual([]);
     await instances.append(onboarding, "o-1", fresh, [handled]);
     const loaded = await instances.load(onboarding, "o-1");
-    const fingerprint = (await storage.personalKeys.get("c-1"))?.fingerprint ?? null;
+    const fingerprint =
+      (await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.fingerprint ?? null;
     expect(loaded.state).toEqual(state);
     expect(loaded.persons).toEqual([{ person: "c-1", fingerprint }]);
 
-    await storage.personalKeys.remove("c-1");
+    await removeKeys(storage.personalKeys, "c-1");
     await expect(
       instances.append(onboarding, "o-1", loaded, [lifecycleEntries.resumed(context)]),
     ).rejects.toThrow(ForgottenSinceLoadError);

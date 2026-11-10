@@ -61,37 +61,58 @@ const event = (overrides: Partial<StoredEvent>): StoredEvent => ({
   ...overrides,
 });
 
-const byAggregate: PersonalMarks = { person: null, fields: ["email"] };
-const byField: PersonalMarks = { person: "customerId", fields: ["address"] };
+const byAggregate: PersonalMarks = { person: null, fields: ["email"], categories: {} };
+const byField: PersonalMarks = { person: "customerId", fields: ["address"], categories: {} };
 
 const sealedWith = async <Value>(plan: ResealPlanOf<Value>) => {
   if (plan === null || plan === "unsealable") throw new Error(`no plan: ${String(plan)}`);
   const key = await openedKey(await newStoredKey());
-  return { person: plan.person, key, value: await plan.seal(key) };
+  const opened = await plan.opened(async () => null);
+  if (opened === null) throw new Error("nothing to seal");
+  return {
+    person: plan.person,
+    categories: opened.categories,
+    key,
+    value: await opened.seal(() => key),
+  };
 };
 
 describe("marksFingerprint", () => {
   it("is null when nothing is marked, and names each set of marks apart, whatever their order", () => {
     expect(marksFingerprint(runtimes({ events: { CustomerRegistered: null } }))).toBeNull();
     const one = marksFingerprint(
-      runtimes({ events: { CustomerRegistered: { person: null, fields: ["email", "name"] } } }),
+      runtimes({
+        events: { CustomerRegistered: { person: null, fields: ["email", "name"], categories: {} } },
+      }),
     );
     expect(one).toEqual(
       marksFingerprint(
-        runtimes({ events: { CustomerRegistered: { person: null, fields: ["name", "email"] } } }),
+        runtimes({
+          events: {
+            CustomerRegistered: { person: null, fields: ["name", "email"], categories: {} },
+          },
+        }),
       ),
     );
     const others = [
-      runtimes({ events: { CustomerRegistered: { person: null, fields: ["email"] } } }),
-      runtimes({ events: { CustomerRegistered: { person: "email", fields: ["name"] } } }),
-      runtimes({ commands: { CustomerRegistered: { person: null, fields: ["email", "name"] } } }),
-      runtimes({ process: { person: null, fields: ["email", "name"] } }),
+      runtimes({
+        events: { CustomerRegistered: { person: null, fields: ["email"], categories: {} } },
+      }),
+      runtimes({
+        events: { CustomerRegistered: { person: "email", fields: ["name"], categories: {} } },
+      }),
+      runtimes({
+        commands: {
+          CustomerRegistered: { person: null, fields: ["email", "name"], categories: {} },
+        },
+      }),
+      runtimes({ process: { person: null, fields: ["email", "name"], categories: {} } }),
     ].map(marksFingerprint);
     expect(new Set([one, ...others]).size).toBe(5);
   });
 
   it("names what each mark belongs to, and is the same whatever order the registry lists them in", () => {
-    const marks = { person: null, fields: ["email"] };
+    const marks = { person: null, fields: ["email"], categories: {} };
     const fingerprintOf = (marked: Marked) => marksFingerprint(runtimes(marked));
     expect(fingerprintOf({ events: { A: marks, B: null } })).not.toEqual(
       fingerprintOf({ events: { A: null, B: marks } }),
@@ -99,8 +120,10 @@ describe("marksFingerprint", () => {
     expect(fingerprintOf({ commands: { A: marks, B: null } })).not.toEqual(
       fingerprintOf({ commands: { A: null, B: marks } }),
     );
-    expect(fingerprintOf({ events: { A: marks, B: { person: "x", fields: [] } } })).toEqual(
-      fingerprintOf({ events: { B: { person: "x", fields: [] }, A: marks } }),
+    expect(
+      fingerprintOf({ events: { A: marks, B: { person: "x", fields: [], categories: {} } } }),
+    ).toEqual(
+      fingerprintOf({ events: { B: { person: "x", fields: [], categories: {} }, A: marks } }),
     );
     const named = (name: string) =>
       marksFingerprint({
@@ -109,12 +132,24 @@ describe("marksFingerprint", () => {
       });
     expect(named("a.one")).not.toEqual(named("a.two"));
   });
+
+  it("names a field of the default category as before categories, and one of another category apart", () => {
+    const fingerprintOf = (categories: Readonly<Record<string, string>>) =>
+      marksFingerprint(
+        runtimes({
+          events: { CustomerRegistered: { person: null, fields: ["email"], categories } },
+        }),
+      );
+    expect(fingerprintOf({ email: "default" })).toEqual(fingerprintOf({}));
+    expect(fingerprintOf({ email: "profile" })).not.toEqual(fingerprintOf({}));
+    expect(fingerprintOf({ email: "profile" })).not.toEqual(fingerprintOf({ email: "billing" }));
+  });
 });
 
 describe("planEventReseal", () => {
   const { aggregates, processes } = runtimes({
     events: { CustomerRegistered: byAggregate, OrderPlaced: byField, CustomerNoted: null },
-    process: { person: "customerId", fields: ["email"] },
+    process: { person: "customerId", fields: ["email"], categories: {} },
   });
   const plan = (overrides: Partial<StoredEvent>) =>
     planEventReseal({ event: event(overrides), aggregates, processes });
@@ -135,13 +170,46 @@ describe("planEventReseal", () => {
     expect(ordered.person).toBe("7");
   });
 
+  it("names the categories of the values in the clear, and seals each under its category's key", async () => {
+    const marks: PersonalMarks = {
+      person: null,
+      fields: ["email", "phone", "address"],
+      categories: { phone: "profile", address: "profile" },
+    };
+    const planned = planEventReseal({
+      event: event({ payload: { email: "a", phone: "1", address: null } }),
+      aggregates: runtimes({ events: { CustomerRegistered: marks } }).aggregates,
+      processes,
+    });
+    if (planned === null || planned === "unsealable") throw new Error("no plan");
+    const opened = await planned.opened(async () => null);
+    expect(opened?.categories).toEqual(["default", "profile"]);
+    const keys = {
+      default: await openedKey(await newStoredKey()),
+      profile: await openedKey(await newStoredKey()),
+    };
+    const value = (await opened?.seal((category) => keys[category as keyof typeof keys])) as Record<
+      string,
+      { $personal: { category?: string; key: string } }
+    >;
+    expect(value.email?.$personal).not.toHaveProperty("category");
+    expect(value.email?.$personal.key).toBe(keys.default.fingerprint);
+    expect(value.phone?.$personal).toMatchObject({
+      category: "profile",
+      key: keys.profile.fingerprint,
+    });
+    expect(await unseal({ key: keys.profile, sealed: value.phone as never })).toBe("1");
+  });
+
   it("keeps what is sealed already and seals the rest, and seals a null as the event store does", async () => {
     const key = await openedKey(await newStoredKey());
-    const address = await seal({ key, person: "c-2", value: "Bilbao" });
+    const address = await seal({ key, person: "c-2", category: "default", value: "Bilbao" });
     const partly = planEventReseal({
       event: event({ payload: { email: null }, person: null }),
       aggregates: runtimes({
-        events: { CustomerRegistered: { person: null, fields: ["email", "address"] } },
+        events: {
+          CustomerRegistered: { person: null, fields: ["email", "address"], categories: {} },
+        },
       }).aggregates,
       processes,
     });
@@ -151,7 +219,9 @@ describe("planEventReseal", () => {
       planEventReseal({
         event: event({ payload: { email: "a", address }, person: "c-1" }),
         aggregates: runtimes({
-          events: { CustomerRegistered: { person: null, fields: ["email", "address"] } },
+          events: {
+            CustomerRegistered: { person: null, fields: ["email", "address"], categories: {} },
+          },
         }).aggregates,
         processes,
       }),
@@ -226,7 +296,7 @@ describe("planEventReseal", () => {
         processes,
       }),
     ).toBeNull();
-    const byInstance = runtimes({ process: { person: null, fields: ["email"] } });
+    const byInstance = runtimes({ process: { person: null, fields: ["email"], categories: {} } });
     const instance = await sealedWith(
       planEventReseal({
         event: event({
@@ -257,7 +327,16 @@ describe("planPayloadReseal", () => {
     const byId = await sealedWith(
       planPayloadReseal({ marks: byAggregate, payload: { email: "a" }, aggregateId: "c-1" }),
     );
-    expect(byId.person).toBe("c-1");
+    expect(byId).toMatchObject({ person: "c-1", categories: ["default"] });
+    const categorized = await sealedWith(
+      planPayloadReseal({
+        marks: { ...byAggregate, categories: { email: "profile" } },
+        payload: { email: "a" },
+        aggregateId: "c-1",
+      }),
+    );
+    expect(categorized.categories).toEqual(["profile"]);
+    expect(categorized.value.email).toMatchObject({ $personal: { category: "profile" } });
   });
 
   it("has nothing to seal without a value in the clear, and nobody to seal under without a person", () => {
@@ -273,13 +352,13 @@ describe("planPayloadReseal", () => {
 });
 
 describe("createResealKeys", () => {
-  const forgotten = (person: string, version: number) => ({
+  const forgotten = (person: string, version: number, payload: object = {}) => ({
     id: `forgotten-${person}-${version}`,
     aggregateType: BOUNDA_AGGREGATE,
     aggregateId: person,
     version,
     type: PERSONAL_DATA_FORGOTTEN_EVENT,
-    payload: { personId: person },
+    payload: { personId: person, ...payload },
     timestamp: "2026-01-02T00:00:00.000Z",
     metadata: {
       correlationId: "c",
@@ -309,14 +388,14 @@ describe("createResealKeys", () => {
         ],
       });
     }
-    // Forgotten at position 4, after the events at 1 to 3.
+    // Forgotten at position 4, after the events at 1 to 3, by a forgetting from before categories.
     await storage.eventStore.append({
       aggregateType: BOUNDA_AGGREGATE,
       aggregateId: "gone",
       expectedVersion: 0,
       events: [forgotten("gone", 1)],
     });
-    const back = await storage.personalKeys.add("back", await newStoredKey());
+    const back = await storage.personalKeys.add("back", "default", await newStoredKey());
     await storage.eventStore.append({
       aggregateType: BOUNDA_AGGREGATE,
       aggregateId: "back",
@@ -330,7 +409,7 @@ describe("createResealKeys", () => {
       expectedVersion: 1,
       events: [{ ...forgotten("back", 2), type: "ProcessingRestricted", id: "restricted-back" }],
     });
-    const kept = await storage.personalKeys.add("kept", await newStoredKey());
+    const kept = await storage.personalKeys.add("kept", "default", await newStoredKey());
     const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
     return { storage, keys, back, kept };
   };
@@ -340,69 +419,186 @@ describe("createResealKeys", () => {
     const reads: string[] = [];
     const counted = keysOver({
       ...storage.personalKeys,
-      get: (person: string) => {
-        reads.push(person);
-        return storage.personalKeys.get(person);
+      get: (person: string, category: string) => {
+        reads.push(`get ${person}`);
+        return storage.personalKeys.get(person, category);
+      },
+      list: (person: string) => {
+        reads.push(`list ${person}`);
+        return storage.personalKeys.list(person);
       },
     });
     const keys = createResealKeys({ transaction: storage, keys: counted });
     for (const at of [null, "2026-01-01T00:00:00.000Z"]) {
-      expect(await keys.payload("kept", at)).toMatchObject({
+      expect(await keys.payload("kept", "default", at)).toMatchObject({
         key: { fingerprint: kept.fingerprint },
       });
     }
     expect(await keys.errorText("kept", "2026-01-01T00:00:00.000Z")).toMatchObject({
       discarded: false,
     });
-    expect(reads).toEqual(["kept"]);
+    expect(reads).toEqual(["get kept", "list kept"]);
   });
 
   it("discards a key for what an event held of a person forgotten after it, and creates one otherwise", async () => {
     const { storage, keys, back } = await setup();
-    expect(await keys.event("gone", 3)).toMatchObject({ discarded: true });
-    expect(await storage.personalKeys.get("gone")).toBeNull();
-    const again = await keys.event("gone", 3);
-    expect(again.key).toBe((await keys.event("gone", 1)).key);
-    expect(await keys.event("back", 4)).toMatchObject({ discarded: true });
-    expect(await keys.event("back", 5)).toMatchObject({ discarded: false });
-    expect(await keys.event("back", 6)).toMatchObject({
+    expect(await keys.event("gone", "default", 3)).toMatchObject({ discarded: true });
+    expect(await storage.personalKeys.list("gone")).toEqual([]);
+    const again = await keys.event("gone", "default", 3);
+    expect(again.key).toBe((await keys.event("gone", "default", 1)).key);
+    expect(await keys.event("back", "default", 4)).toMatchObject({ discarded: true });
+    expect(await keys.event("back", "default", 6)).toMatchObject({
       discarded: false,
       key: { fingerprint: back.fingerprint },
     });
-    const fresh = await keys.event("new", 1);
+    const fresh = await keys.event("new", "default", 1);
     expect(fresh.discarded).toBe(false);
-    expect((await storage.personalKeys.get("new"))?.fingerprint).toBe(fresh.key.fingerprint);
-    expect((await keys.event("new", 2)).key).toBe(fresh.key);
+    expect((await storage.personalKeys.get("new", "default"))?.fingerprint).toBe(
+      fresh.key.fingerprint,
+    );
+    expect((await keys.event("new", "default", 2)).key.fingerprint).toBe(fresh.key.fingerprint);
+  });
+
+  it("discards a key only for the categories a forgetting covered, and reads what it retained under the key it kept", async () => {
+    const { storage } = await setup();
+    const held = await storage.personalKeys.add("ana", "default", await newStoredKey());
+    const invoices = await storage.personalKeys.add("ana", "invoices", await newStoredKey());
+    await storage.personalKeys.retain("ana", invoices.fingerprint, {
+      since: "2026-01-02T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "ana",
+      expectedVersion: 0,
+      events: [
+        forgotten("ana", 1, {
+          whole: false,
+          categories: ["profile"],
+          retained: ["invoices"],
+          expired: [],
+        }),
+      ],
+    });
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
+    expect(await keys.event("ana", "profile", 3)).toMatchObject({ discarded: true });
+    expect(await keys.event("ana", "default", 3)).toMatchObject({
+      discarded: false,
+      key: { fingerprint: held.fingerprint },
+    });
+    expect(await keys.event("ana", "invoices", 3)).toMatchObject({
+      discarded: false,
+      key: { fingerprint: invoices.fingerprint },
+    });
+    expect(await keys.event("ana", "profile", 9)).toMatchObject({ discarded: false });
+    expect(await storage.personalKeys.get("ana", "profile")).not.toBeNull();
+    expect(await keys.payload("ana", "invoices", "2026-01-01T00:00:00.000Z")).toMatchObject({
+      discarded: true,
+    });
+  });
+
+  it("reads what a forgetting retained under the latest key it kept of that category, and discards once none is kept", async () => {
+    const { storage } = await setup();
+    const kept = async (category: string, since: string) => {
+      const key = await storage.personalKeys.add("bo", category, await newStoredKey());
+      await storage.personalKeys.retain("bo", key.fingerprint, {
+        since,
+        lastActiveAt: "2025-12-01T00:00:00.000Z",
+      });
+      return key;
+    };
+    await kept("invoices", "2025-12-15T00:00:00.000Z");
+    const latest = await kept("invoices", "2026-01-01T00:00:00.000Z");
+    await kept("invoices", "2026-02-01T00:00:00.000Z");
+    await kept("profile", "2026-01-01T12:00:00.000Z");
+    const retained = { whole: true, categories: ["default"], retained: ["invoices"], expired: [] };
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "bo",
+      expectedVersion: 0,
+      events: [forgotten("bo", 1, retained)],
+    });
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
+    expect(await keys.event("bo", "invoices", 3)).toMatchObject({
+      discarded: false,
+      key: { fingerprint: latest.fingerprint, retained: true },
+    });
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "cy",
+      expectedVersion: 0,
+      events: [forgotten("cy", 1, retained)],
+    });
+    expect(await keys.event("cy", "invoices", 3)).toMatchObject({ discarded: true });
+  });
+
+  it("goes by the last forgetting that covered the category", async () => {
+    const { storage } = await setup();
+    const held = await storage.personalKeys.add("di", "invoices", await newStoredKey());
+    await storage.personalKeys.retain("di", held.fingerprint, {
+      since: "2026-01-02T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "di",
+      expectedVersion: 0,
+      events: [
+        forgotten("di", 1, { whole: false, categories: ["invoices"], retained: [], expired: [] }),
+        forgotten("di", 2, { whole: false, categories: [], retained: ["invoices"], expired: [] }),
+      ],
+    });
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
+    expect(await keys.event("di", "invoices", 3)).toMatchObject({
+      discarded: false,
+      key: { fingerprint: held.fingerprint },
+    });
+  });
+
+  it("discards a key for what an event held of a category declared after the person was forgotten as a whole", async () => {
+    const { storage } = await setup();
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "ana",
+      expectedVersion: 0,
+      events: [
+        forgotten("ana", 1, { whole: true, categories: ["default"], retained: [], expired: [] }),
+      ],
+    });
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
+    expect(await keys.event("ana", "default", 3)).toMatchObject({ discarded: true });
+    expect(await keys.event("ana", "profile", 3)).toMatchObject({ discarded: true });
+    expect(await storage.personalKeys.list("ana")).toEqual([]);
   });
 
   it("seals a payload under the key the person holds unless forgotten after it was filed, and creates none for a forgotten person", async () => {
     const { storage, keys, back, kept } = await setup();
-    expect(await keys.payload("kept", null)).toMatchObject({
+    expect(await keys.payload("kept", "default", null)).toMatchObject({
       discarded: false,
       key: { fingerprint: kept.fingerprint },
     });
-    expect(await keys.payload("back", "2026-01-01T00:00:00.000Z")).toMatchObject({
+    expect(await keys.payload("back", "default", "2026-01-01T00:00:00.000Z")).toMatchObject({
       discarded: true,
     });
-    expect(await keys.payload("back", "2026-01-03T00:00:00.000Z")).toMatchObject({
+    expect(await keys.payload("back", "default", "2026-01-03T00:00:00.000Z")).toMatchObject({
       discarded: false,
       key: { fingerprint: back.fingerprint },
     });
-    expect(await keys.payload("back", "2026-01-02T00:00:00.000Z")).toMatchObject({
+    expect(await keys.payload("back", "default", "2026-01-02T00:00:00.000Z")).toMatchObject({
       discarded: false,
     });
-    expect(await keys.payload("back", null)).toMatchObject({ discarded: false });
-    expect(await keys.payload("gone", null)).toMatchObject({ discarded: true });
-    expect(await storage.personalKeys.get("gone")).toBeNull();
-    expect(await keys.payload("new", null)).toMatchObject({ discarded: false });
-    expect(await storage.personalKeys.get("new")).not.toBeNull();
+    expect(await keys.payload("back", "default", null)).toMatchObject({ discarded: false });
+    expect(await keys.payload("gone", "default", null)).toMatchObject({ discarded: true });
+    expect(await storage.personalKeys.list("gone")).toEqual([]);
+    expect(await keys.payload("new", "default", null)).toMatchObject({ discarded: false });
+    expect(await storage.personalKeys.get("new", "default")).not.toBeNull();
   });
 
-  it("seals the text of an error under the key the person holds, never a new one", async () => {
+  it("seals the text of an error under every key the person holds, never a new one", async () => {
     const { storage, keys, kept } = await setup();
     expect(await keys.errorText("kept", "2026-01-01T00:00:00.000Z")).toMatchObject({
       discarded: false,
-      key: { fingerprint: kept.fingerprint },
+      keys: [{ category: "default", key: { fingerprint: kept.fingerprint } }],
     });
     expect(await keys.errorText("back", "2026-01-01T00:00:00.000Z")).toMatchObject({
       discarded: true,
@@ -415,7 +611,30 @@ describe("createResealKeys", () => {
     });
     expect(await keys.errorText("new", "2026-01-01T00:00:00.000Z")).toMatchObject({
       discarded: true,
+      keys: [{ category: "default" }],
     });
-    expect(await storage.personalKeys.get("new")).toBeNull();
+    expect(await storage.personalKeys.list("new")).toEqual([]);
+  });
+
+  it("seals the text of an error under the keys of every category in order, past a forgetting that only ended a retention", async () => {
+    const { storage } = await setup();
+    const profile = await storage.personalKeys.add("ana", "profile", await newStoredKey());
+    const held = await storage.personalKeys.add("ana", "default", await newStoredKey());
+    await storage.eventStore.append({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: "ana",
+      expectedVersion: 0,
+      events: [
+        forgotten("ana", 1, { whole: false, categories: [], retained: [], expired: ["invoices"] }),
+      ],
+    });
+    const keys = createResealKeys({ transaction: storage, keys: keysOver(storage.personalKeys) });
+    expect(await keys.errorText("ana", "2026-01-01T00:00:00.000Z")).toMatchObject({
+      discarded: false,
+      keys: [
+        { category: "default", key: { fingerprint: held.fingerprint } },
+        { category: "profile", key: { fingerprint: profile.fingerprint } },
+      ],
+    });
   });
 });

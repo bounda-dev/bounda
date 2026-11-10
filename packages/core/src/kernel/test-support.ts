@@ -459,6 +459,20 @@ export const withPersonalKeys: WithPersonalKeysFunction = (storage, clock = crea
   };
 };
 
+export interface RemoveKeysFunction {
+  (keys: PersonalKeyStore, person: string): Promise<boolean>;
+}
+
+/**
+ * Removes every key the person holds, as forgetting the whole person on another instance would,
+ * and reports whether they held any.
+ */
+export const removeKeys: RemoveKeysFunction = async (keys, person) => {
+  const held = await keys.list(person);
+  for (const { key } of held) await keys.remove(person, key.fingerprint);
+  return held.length > 0;
+};
+
 export interface NewStoredKeyFunction {
   (): Promise<StoredPersonalKey>;
 }
@@ -485,6 +499,7 @@ export interface OpenedKeyFunction {
 export const openedKey: OpenedKeyFunction = async ({ key, fingerprint }) => ({
   fingerprint,
   cryptoKey: await importRawKey({ raw: fromBase64(key), extractable: false }),
+  retained: false,
 });
 
 export interface WithoutLedgerArgs {

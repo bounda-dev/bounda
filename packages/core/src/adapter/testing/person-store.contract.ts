@@ -38,6 +38,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
         person: "c-1",
         restrictedSince: "2026-01-01T00:00:00.000Z",
         lastActiveAt: null,
+        position: 0,
         forgottenAt: null,
         hold: null,
       });
@@ -62,6 +63,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
         person: "c-1",
         restrictedSince: null,
         lastActiveAt: at(1),
+        position: 3,
         forgottenAt: null,
         hold: null,
       });
@@ -74,6 +76,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
         person: "c-2",
         restrictedSince: null,
         lastActiveAt: null,
+        position: 9,
         forgottenAt: at(4),
         hold: null,
       });
@@ -127,6 +130,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
           person: "c-1",
           restrictedSince: null,
           lastActiveAt: at(1),
+          position: 3,
           forgottenAt: null,
           hold: null,
         },

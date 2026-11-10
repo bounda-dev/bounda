@@ -9,7 +9,7 @@ import type {
 } from "../index.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { byExecuteAt, earliestDue } from "../sql/index.ts";
-import { naming } from "./held-keys.ts";
+import { naming, outsideKept } from "./held-keys.ts";
 import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteSchedulerArgs {
@@ -186,8 +186,13 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
           [person],
         )
       ).map(toScheduled),
-    forget: async (person) =>
-      (await db.all(`DELETE FROM ${table} WHERE ${names} RETURNING ${COLUMNS}`, [person]))
+    forget: async (person, keep = []) =>
+      (
+        await db.all(
+          `DELETE FROM ${table} WHERE ${names} AND ${outsideKept(table)} RETURNING ${COLUMNS}`,
+          [person, person, JSON.stringify(keep)],
+        )
+      )
         .map(toScheduled)
         .sort(byExecuteAt),
   };

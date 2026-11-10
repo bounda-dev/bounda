@@ -29,6 +29,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/processes/<process>/at-<deadline>.ts`, `at-timeout.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
 | `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes; without it, the app's logger |
+| `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis and retention; without it, every personal field is in the default category |
 | `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once a projection of the read model sees a field marked `personal` or its view marks a field `.personal()` |
@@ -75,7 +76,10 @@ field marked `personal`, or marks a field `.personal()`, and has no
 `projections/bounda/personal-data-forgotten.ts`; one that marks a field `.personal()` and none
 `.person()`; one that marks two fields `.person()`. The generated registry is checked against
 `Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
-fails to compile there. See
+fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
+declares a category named `default`, or one without a basis Bounda knows or a retention, and a
+category that `personal({ category })`, `.personal({ category })` or `forget` names and the file
+does not declare does not compile where it is written. See
 [Personal data in read models](/guides/personal-data/#personal-data-in-read-models).
 
 ## What boot refuses
@@ -94,6 +98,10 @@ Some rules need the modules themselves, so the app checks them when it is create
 - a read model that marks two fields `.person()`, marks a field `.personal()` and none
   `.person()`, or marks a field `.personal()` and does not project `PersonalDataForgotten`;
 - an `app/audit.ts` that does not export `onPersonalDataAccess` as a function;
+- an `app/personal-data.ts` whose `categories` is not an object, declares `default`, names a
+  category with anything but letters, digits, `-` and `_` after a first letter, or gives one a
+  basis article 6 does not name or a retention that is not a duration longer than none; a field
+  marked personal in a category the file does not declare;
 - a `payload`, `repository`, process `state` or `correlate` export that is not a function;
 - a configuration that names a port, an implementation, an aggregate or a read model that does
   not exist, or leaves out a port that has several implementations.
@@ -120,9 +128,9 @@ and not failed on:
 
 | Path | Holds |
 | --- | --- |
-| `.bounda/registry.ts` | Every module, grouped as the runtime needs it, and `app/audit.ts` as `audit` when there is one. `boot()` imports it |
-| `.bounda/register.d.ts` | Registers the registry type and the type of the `ports` section with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument and `defineConfig` checks the implementation names |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), and one `<ReadModel>Forgetting` check per read model |
+| `.bounda/registry.ts` | Every module, grouped as the runtime needs it, and `app/audit.ts` as `audit` and `app/personal-data.ts` as `personalData` when there are. `boot()` imports it |
+| `.bounda/register.d.ts` | Registers the registry type, the type of the `ports` section and the names of the categories of personal data with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument, `defineConfig` checks the implementation names, and `personal({ category })` and `forget` check the categories |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), one `<ReadModel>Forgetting` check per read model, `PersonalCategory`, the names `app/personal-data.ts` declares, and its `PersonalDataDeclaration` check |
 | `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as

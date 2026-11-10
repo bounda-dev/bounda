@@ -22,6 +22,7 @@ export type {
 } from "./forget-ledger.ts";
 export {
   createSqlForgetLedger,
+  forgetLedgerCategoriesStatement,
   forgetLedgerMarksStatement,
   forgetLedgerMarksTableFor,
   forgetLedgerReasonStatements,

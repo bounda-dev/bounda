@@ -333,7 +333,7 @@ describe("createUnitOfWork", () => {
 
   it("runs the steps before the commit's transaction, in order, on the store, and writes nothing when one throws", async () => {
     const storage = await memory().createStorage();
-    await storage.personalKeys.add("c-1", { key: "k", fingerprint: "f-1", kid: null });
+    await storage.personalKeys.add("c-1", "default", { key: "k", fingerprint: "f-1", kid: null });
     const transact = storage.transact.bind(storage);
     const ran: string[] = [];
     storage.transact = (work) => {
@@ -342,7 +342,7 @@ describe("createUnitOfWork", () => {
     };
     const unit = createUnitOfWork({ storage });
     unit.beforeCommit(async ({ personalKeys }) => {
-      ran.push(`first ${(await personalKeys.get("c-1"))?.fingerprint}`);
+      ran.push(`first ${(await personalKeys.get("c-1", "default"))?.fingerprint}`);
     });
     unit.beforeCommit(async () => {
       ran.push("second");
@@ -589,12 +589,25 @@ describe("createUnitOfWork", () => {
         }),
       ).rejects.toBe(failure);
     }
-    expect(readUnder({ person: "c-1", error: failure })).toEqual(["f-1", "f-2"]);
+    const fingerprints = (args: Parameters<typeof readUnder>[0]) =>
+      readUnder(args).map(({ fingerprint }) => fingerprint);
+    expect(fingerprints({ person: "c-1", error: failure })).toEqual(["f-1", "f-2"]);
     expect(readUnder({ person: "c-2", error: failure })).toEqual([]);
     expect(
-      readUnder({ person: "c-1", error: failure, also: [{ person: "c-1", fingerprint: "f-3" }] }),
+      fingerprints({
+        person: "c-1",
+        error: failure,
+        also: [{ person: "c-1", fingerprint: "f-3", retained: true }],
+      }),
     ).toEqual(["f-1", "f-2", "f-3"]);
-    expect(readUnder({ person: "c-1", error: "a string", also: [first] })).toEqual(["f-1"]);
+    expect(
+      readUnder({
+        person: "c-1",
+        error: failure,
+        also: [{ person: "c-1", fingerprint: "f-3", retained: true }],
+      }).at(-1),
+    ).toEqual({ person: "c-1", fingerprint: "f-3", retained: true });
+    expect(fingerprints({ person: "c-1", error: "a string", also: [first] })).toEqual(["f-1"]);
     const wrapped = await commitAttempt({
       storage,
       concurrencyRetries: 0,
@@ -610,7 +623,7 @@ describe("createUnitOfWork", () => {
       value: "mailer down",
       cause: "mailer down",
     });
-    expect(readUnder({ person: "c-1", error: wrapped })).toEqual(["f-1"]);
+    expect(fingerprints({ person: "c-1", error: wrapped })).toEqual(["f-1"]);
     expect(errorIdentity(wrapped)).toEqual({ errorName: "string" });
     expect(errorDetails(wrapped)).toEqual({ message: "mailer down" });
     expect(asError(failure)).toBe(failure);

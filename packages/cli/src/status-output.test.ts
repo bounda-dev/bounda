@@ -55,7 +55,13 @@ const status: AppStatus = {
     held: { until: "2026-05-01T00:05:00.000Z", attempts: 2 },
   },
   keyRotation: { kid: "k-2", previous: ["k-1"], pending: 1, completeAt: null },
-  retention: { retentionMs: 30 * 86_400_000, due: 1, nextDueAt: "2026-05-03T00:00:00.000Z" },
+  retention: {
+    categories: [
+      { category: "default", retention: "30d", due: 1, nextDueAt: "2026-05-03T00:00:00.000Z" },
+      { category: "invoices", retention: "6y", due: 2, nextDueAt: null },
+    ],
+    keptBeyond: 1,
+  },
   deadLetterRetention: { retentionMs: 90_000, nextDueAt: null },
 };
 
@@ -75,7 +81,10 @@ describe("formatStatus", () => {
       "personal data backfill: sealed through position 9, not caught up yet",
       "forget ledger: not reconciled since this instance started, applied through 2026-04-30T00:00:00.000Z, last run never, held until 2026-05-01T00:05:00.000Z after 2 failures",
       "key rotation: under k-2 (previous k-1), 1 key left to rewrap",
-      "retention: 30d, 1 person past it, next due 2026-05-03T00:00:00.000Z",
+      "retention",
+      "  default  30d, 1 person past it, next due 2026-05-03T00:00:00.000Z",
+      "  invoices  6y, 2 keys past it, next due never",
+      "  1 key kept past a forgetting that no legal obligation keeps",
       "dead letter retention: 90s, next purge when a letter is resolved",
     ]);
   });
@@ -110,9 +119,12 @@ describe("formatStatus", () => {
       "personal data backfill: no personal data marked",
       "forget ledger: reconciled, applied through nothing yet, last run 2026-05-01T00:00:00.000Z",
       "key rotation: under k-1, every key wrapped (checked 2026-05-01T00:00:00.000Z)",
-      "retention: not configured",
+      "retention: no personal data marked",
       "dead letter retention: not configured",
     ]);
+    expect(
+      formatStatus({ status: { ...bare, retention: { categories: [], keptBeyond: 0 } } }),
+    ).toContain("retention: not configured\n");
     expect(
       formatStatus({
         status: { ...bare, keyRotation: { ...bare.keyRotation, completeAt: null } as never },

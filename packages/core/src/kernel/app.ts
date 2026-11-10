@@ -15,6 +15,7 @@ import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
 import type { OnPersonalDataAccess } from "../modules/audit.ts";
+import type { ForgetOptions } from "../modules/personal-data.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
@@ -37,6 +38,7 @@ import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { createAccessLog, recorded } from "./personal-data/access.ts";
 import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
+import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import {
@@ -59,6 +61,7 @@ import { liftProcessingRestriction, restrictProcessing } from "./personal-data/r
 import {
   createRetentionSubscriber,
   createRetentionSweep,
+  retains,
   retentionDueOf,
 } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
@@ -138,18 +141,21 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    */
   rebuildReadModel(name: string): Promise<RebuildReadModelResult>;
   /**
-   * Forgets a person: deletes the key their personal fields are encrypted with, so every event
-   * of theirs, and the state of every process instance that names them, reads those fields as
-   * `null` from now on, the instance carrying on, and appends `PersonalDataForgotten` to
-   * the stream `bounda:<personId>`, which every read model that projects personal fields handles.
-   * Both happen together or not at all. Resolves like a command, so
+   * Forgets a person: deletes the keys their personal fields are encrypted with, one per
+   * category, so every event of theirs, and the state of every process instance that names them,
+   * reads those fields as `null` from now on, the instance carrying on, and appends
+   * `PersonalDataForgotten` to the stream `bounda:<personId>`, which every read model that
+   * projects personal fields handles. With `categories`, only those, as when a consent is
+   * withdrawn. A category whose basis is `legal-obligation` is kept instead, restricted, until its
+   * retention ends. Both happen together or not at all. Resolves like a command, so
    * `catchUpReadModels({ through })` waits for those read models. Rejects with
-   * `ValidationError` an empty id. With `runtime.personalData.forgetLedger`, the forgetting is in
-   * the ledger before it commits: one that rejects after that still forgets the person at the next
-   * reconciliation, and calling again is safe; a strict ledger that does not take it rejects with
-   * `ForgetLedgerUnavailableError`, forgetting nobody.
+   * `ValidationError` an empty id, or categories that are empty or that the app does not have.
+   * With `runtime.personalData.forgetLedger`, the forgetting is in the ledger before it commits:
+   * one that rejects after that still forgets what it asked for at the next reconciliation, and
+   * calling again is safe; a strict ledger that does not take it rejects with
+   * `ForgetLedgerUnavailableError`, forgetting nothing.
    */
-  forget(personId: string): Promise<StoredDispatch>;
+  forget(personId: string, options?: ForgetOptions): Promise<StoredDispatch>;
   /**
    * Everything the store holds that names a person, for them to take away: their events, with
    * the fields marked `personal` opened (`null` each once they are forgotten) and nothing else of
@@ -266,9 +272,10 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    */
   readonly deadLetters: DeadLetters;
   /**
-   * Commits again each forgetting an entry names, as a reconciliation does: unless the store holds
-   * the `PersonalDataForgotten` the entry names by `eventId`, and only while the person holds a key
-   * it names, any key when it names none; a whole entry under its own id, time and reason, a bare
+   * Commits again each forgetting an entry names, of the categories it asked for, as a
+   * reconciliation does: unless the store holds the `PersonalDataForgotten` the entry names by
+   * `eventId`, and only while the person holds a key in force it covers and names, any such key
+   * when it names none; a whole entry under its own id, time and reason, a bare
    * person's id as a request. What `bounda forget --from` runs, for a backup restored without
    * `runtime.personalData.forgetLedger`; with one, each is recorded in it first, as `forget` does.
    * Resolves to the ids of the persons it forgot, in order. Rejects with `ValidationError` an entry
@@ -560,6 +567,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     const readModels = await buildReadModels({ registry, config, logger });
     opened.unshift(() => readModels.close());
+    const personalCategories = buildPersonalCategories({
+      module: registry.personalData,
+      retention: config.runtime.personalData.retention,
+    });
+    checkMarkedCategories({
+      categories: personalCategories,
+      aggregates,
+      processes: processDefinitions,
+      readModels: readModels.byName,
+    });
     // One list per `runUntilIdle` under way.
     const observers = new Set<CommandRejection[]>();
     const pipeline = createCommandPipeline({
@@ -594,6 +611,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       pipeline,
       storage,
       config,
+      personalCategories,
       ids,
       clock,
       pendingRetries,
@@ -605,6 +623,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       aggregates,
       pipeline,
       config,
+      personalCategories,
       ids,
       clock,
       logger,
@@ -643,21 +662,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       checkpointStore: storage.checkpointStore,
       following: following.map((subscriber) => subscriber.name),
     });
-    const { retentionMs } = config.runtime.personalData;
+    // Without a retention the sweep still ends what a forgetting kept that no legal obligation keeps
+    // any more, which only an app that marks personal fields can hold.
+    const recordsActivity = retains(personalCategories);
     const retention =
-      retentionMs === null
-        ? undefined
-        : createRetentionSweep({
+      recordsActivity || marksPersonalFields({ aggregates, processes: processDefinitions })
+        ? createRetentionSweep({
             storage: written,
             intentions,
-            retentionMs,
+            categories: personalCategories,
             ids,
             clock,
             logger,
             concurrencyRetries: config.runtime.commands.concurrencyRetries,
             batchSize: config.runtime.dispatcher.batchSize,
             forgotten: wrapping.drop,
-          });
+          })
+        : undefined;
     const letterRetentionMs = config.runtime.deadLetters.retentionMs;
     const letterRetention =
       letterRetentionMs === null
@@ -670,14 +691,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
           });
     const { concurrencyRetries } = config.runtime.commands;
-    const retentionDue =
-      retentionMs === null
-        ? NEVER_DUE
-        : retentionDueOf({
-            retentionMs,
-            batchSize: config.runtime.dispatcher.batchSize,
-            checkpoints: written.checkpointStore,
-          });
+    const retentionDue = recordsActivity
+      ? retentionDueOf({
+          categories: personalCategories,
+          batchSize: config.runtime.dispatcher.batchSize,
+          checkpoints: written.checkpointStore,
+        })
+      : NEVER_DUE;
     const reconciling =
       forgetLedger === null
         ? null
@@ -692,6 +712,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               clock,
               logger,
               concurrencyRetries,
+              categories: personalCategories,
+              batchSize: config.runtime.dispatcher.batchSize,
               reconcileEveryMs: forgetLedger.config.reconcileEveryMs,
               keepForMs,
               forgotten: wrapping.drop,
@@ -720,7 +742,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             wrapping,
             marks,
             batchSize: config.runtime.dispatcher.batchSize,
-            recordsActivity: retention !== undefined,
+            recordsActivity,
             clock,
             logger,
             errorText,
@@ -758,9 +780,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               ...(test === undefined ? {} : { strict: { onError: test.onSnapshotError } }),
             }),
           ),
-        ...(retention === undefined
-          ? []
-          : [createRetentionSubscriber({ persons: storage.persons })]),
+        ...(recordsActivity
+          ? [createRetentionSubscriber({ persons: storage.persons, keys: storage.personalKeys })]
+          : []),
         ...(forgetLedger === null
           ? []
           : [createLedgerOutbox({ ledger: forgetLedger.store, keepForMs, clock })]),
@@ -964,6 +986,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               readModels,
               clock,
               batchSize: config.runtime.dispatcher.batchSize,
+              categories: personalCategories,
               personId,
             });
             return exported;
@@ -1003,7 +1026,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: () => rebuild(name, actor === undefined ? {} : { actor }),
           }),
-        forget: (personId) =>
+        forget: (personId, options) =>
           tracedOperation({
             errorText,
             operation: "forget",
@@ -1016,7 +1039,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 clock,
                 logger,
                 concurrencyRetries,
+                categories: personalCategories,
+                batchSize: config.runtime.dispatcher.batchSize,
                 personId,
+                options,
                 actor,
               }),
           }),
@@ -1138,6 +1164,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             ids,
             clock,
             concurrencyRetries,
+            categories: personalCategories,
+            batchSize: config.runtime.dispatcher.batchSize,
             entry,
             retentionDue,
             record: true,

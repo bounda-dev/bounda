@@ -109,4 +109,6 @@ export interface ProjectModel {
   readonly readModels: readonly ReadModelModel[];
   // `app/audit.ts`, when the project has one.
   readonly audit?: ModuleRef;
+  // `app/personal-data.ts`, when the project has one.
+  readonly personalData?: ModuleRef;
 }

@@ -39,7 +39,7 @@ describe("memory adapter", () => {
   idempotencyStoreContract({ create: storage });
   snapshotStoreContract({ create: storage });
   storageTransactionContract({ create: storage });
-  personalKeyStoreContract({ create: async () => (await storage()).personalKeys });
+  personalKeyStoreContract({ create: async () => storage() });
   personStoreContract({ create: async () => (await storage()).persons });
   inspectionContract({ create: async () => memory() });
   subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });

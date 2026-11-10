@@ -6,10 +6,13 @@ import { ForgetLedgerUnavailableError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import { createRecordingLogger } from "../test-support.ts";
+import type { ForgetScope } from "./forget.ts";
 import { type BoundedForgetLedger, boundForgetLedger } from "./forget-ledger.ts";
 import { createForgetIntentions } from "./intention.ts";
 
 const NOW = new Date("2026-03-01T00:00:00.000Z");
+
+const WHOLE: ForgetScope = { kind: "whole" };
 
 const setUp = async ({
   ledger,
@@ -42,39 +45,67 @@ const recordingLedger = (append: (entries: readonly ForgetLedgerEntry[]) => Prom
   });
 
 describe("the intentions of forgetting", () => {
-  it("record each in the ledger before they resolve, naming the key the person holds now", async () => {
+  it("record each in the ledger before they resolve, naming the keys in force their scope covers", async () => {
     const appended: ForgetLedgerEntry[] = [];
     const { storage, intentions } = await setUp({
       ledger: recordingLedger(async (entries) => {
         appended.push(...entries);
       }),
     });
-    await storage.personalKeys.add("c-1", testPersonalKey("1"));
-    expect(
-      await intentions.intend({ personId: "c-1", reason: "retention", keys: storage.personalKeys }),
-    ).toEqual({
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "profile", testPersonalKey("2"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("3"));
+    await storage.personalKeys.retain("c-1", "f-3", {
+      since: NOW.toISOString(),
+      lastActiveAt: NOW.toISOString(),
+    });
+    const intend = (personId: string, scope: ForgetScope) =>
+      intentions.intend({ personId, reason: "retention", scope, keys: storage.personalKeys });
+    expect(await intend("c-1", WHOLE)).toEqual({
       eventId: "id-1",
       forgottenAt: NOW.toISOString(),
       reason: "retention",
-      fingerprints: ["f-1"],
+      fingerprints: ["f-1", "f-2"],
     });
+    expect(await intend("c-2", WHOLE)).toMatchObject({ eventId: "id-2", fingerprints: [] });
     expect(
-      await intentions.intend({ personId: "c-2", reason: "requested", keys: storage.personalKeys }),
-    ).toMatchObject({ eventId: "id-2", fingerprints: [] });
+      await intend("c-1", { kind: "categories", categories: ["profile", "invoices"] }),
+    ).toMatchObject({ fingerprints: ["f-2"] });
+    expect(await intend("c-1", { kind: "keys", fingerprints: ["f-2", "f-3"] })).toMatchObject({
+      fingerprints: ["f-2", "f-3"],
+    });
     expect(appended).toEqual([
       {
         personId: "c-1",
+        categories: null,
         eventId: "id-1",
         forgottenAt: NOW.toISOString(),
         reason: "retention",
-        fingerprints: ["f-1"],
+        fingerprints: ["f-1", "f-2"],
       },
       {
         personId: "c-2",
+        categories: null,
         eventId: "id-2",
         forgottenAt: NOW.toISOString(),
-        reason: "requested",
+        reason: "retention",
         fingerprints: [],
+      },
+      {
+        personId: "c-1",
+        categories: ["profile", "invoices"],
+        eventId: "id-3",
+        forgottenAt: NOW.toISOString(),
+        reason: "retention",
+        fingerprints: ["f-2"],
+      },
+      {
+        personId: "c-1",
+        categories: ["profile"],
+        eventId: "id-4",
+        forgottenAt: NOW.toISOString(),
+        reason: "retention",
+        fingerprints: ["f-2", "f-3"],
       },
     ]);
   });
@@ -83,18 +114,21 @@ describe("the intentions of forgetting", () => {
     const { storage, intentions } = await setUp({ ledger: null });
     let reads = 0;
     const keys = {
-      get: async (person: string) => {
+      list: async (person: string) => {
         reads += 1;
-        return storage.personalKeys.get(person);
+        return storage.personalKeys.list(person);
       },
     };
-    expect(await intentions.intend({ personId: "c-1", reason: "requested", keys })).toEqual({
+    expect(
+      await intentions.intend({ personId: "c-1", reason: "requested", scope: WHOLE, keys }),
+    ).toEqual({
       eventId: "id-1",
       forgottenAt: NOW.toISOString(),
       reason: "requested",
     });
     await intentions.record({
       personId: "c-1",
+      categories: null,
       eventId: "e-1",
       forgottenAt: NOW.toISOString(),
       reason: "requested",
@@ -113,6 +147,7 @@ describe("the intentions of forgetting", () => {
     const refused = intentions.intend({
       personId: "c-1",
       reason: "requested",
+      scope: WHOLE,
       keys: storage.personalKeys,
     });
     await expect(refused).rejects.toBeInstanceOf(ForgetLedgerUnavailableError);
@@ -126,7 +161,12 @@ describe("the intentions of forgetting", () => {
       }),
     });
     expect(
-      await intentions.intend({ personId: "c-1", reason: "requested", keys: storage.personalKeys }),
+      await intentions.intend({
+        personId: "c-1",
+        reason: "requested",
+        scope: WHOLE,
+        keys: storage.personalKeys,
+      }),
     ).toMatchObject({ eventId: "id-1", fingerprints: [] });
     expect(logs).toEqual([
       {
@@ -153,6 +193,7 @@ describe("the intentions of forgetting", () => {
     await loose.intentions.intend({
       personId: "c-1",
       reason: "requested",
+      scope: WHOLE,
       keys: loose.storage.personalKeys,
     });
     expect(appends).toBe(0);
@@ -160,6 +201,7 @@ describe("the intentions of forgetting", () => {
     await strict.intentions.intend({
       personId: "c-1",
       reason: "requested",
+      scope: WHOLE,
       keys: strict.storage.personalKeys,
     });
     expect(appends).toBe(1);
@@ -167,6 +209,7 @@ describe("the intentions of forgetting", () => {
     await loose.intentions.intend({
       personId: "c-1",
       reason: "requested",
+      scope: WHOLE,
       keys: loose.storage.personalKeys,
     });
     expect(appends).toBe(2);

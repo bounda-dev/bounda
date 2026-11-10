@@ -26,16 +26,22 @@ const aggregates = {
     customer: {
       name: "customer",
       snapshot: null,
-      eventsByType: { CustomerRegistered: { personal: { person: null, fields: ["email"] } } },
+      eventsByType: {
+        CustomerRegistered: { personal: { person: null, fields: ["email"], categories: {} } },
+      },
     },
     order: {
       name: "order",
       snapshot: null,
-      eventsByType: { OrderPlaced: { personal: { person: "customerId", fields: ["address"] } } },
+      eventsByType: {
+        OrderPlaced: { personal: { person: "customerId", fields: ["address"], categories: {} } },
+      },
     },
   },
   commandsByType: {
-    ShipOrder: { command: { personal: { person: "customerId", fields: ["address"] } } },
+    ShipOrder: {
+      command: { personal: { person: "customerId", fields: ["address"], categories: {} } },
+    },
   },
 } as unknown as AggregatesRuntime;
 

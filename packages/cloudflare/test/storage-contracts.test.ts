@@ -62,7 +62,7 @@ describe("the Durable Object adapter", () => {
   idempotencyStoreContract({ create: freshStorage });
   snapshotStoreContract({ create: freshStorage });
   storageTransactionContract({ create: freshStorage });
-  personalKeyStoreContract({ create: async () => (await freshStorage()).personalKeys });
+  personalKeyStoreContract({ create: async () => freshStorage() });
   personStoreContract({ create: async () => (await freshStorage()).persons });
   inspectionContract({ create: freshAdapter });
   subscriberFailureStoreContract({ create: async () => (await freshStorage()).subscriberFailures });

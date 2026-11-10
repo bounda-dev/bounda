@@ -124,6 +124,42 @@ const registry = {
   },
 } as unknown as Registry;
 
+// The same app, with a marketing category its customers subscribe under.
+const customer = (registry.aggregates as Record<string, Registry["aggregates"][string]>).customer;
+const categorized = {
+  ...registry,
+  aggregates: {
+    customer: {
+      ...customer,
+      events: {
+        ...customer?.events,
+        customerSubscribed: {
+          payload: ({ z, personal }: EventPayloadArgs) =>
+            z.object({ topic: personal(z.string(), { category: "marketing" }) }),
+          evolve: () => ({}),
+        },
+      },
+      commands: {
+        ...customer?.commands,
+        subscribeCustomer: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({ customerId: z.string(), topic: z.string() }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { topic: string } };
+              events: Record<string, (payload?: unknown) => unknown>;
+            }) => [events.customerSubscribed?.({ topic: command.payload.topic })],
+          },
+        },
+      },
+    },
+  },
+  personalData: { categories: { marketing: { basis: "consent", retention: "2y" } } },
+} as unknown as Registry;
+
 const SUBSCRIBER = "projection:customers";
 
 interface Logged {
@@ -149,11 +185,11 @@ afterEach(async () => {
 
 let started = 0;
 
-const start = async (adapter: Adapter) => {
+const start = async (adapter: Adapter, of: Registry = registry) => {
   started += 1;
   const logger = recordingLogger();
   const app = await createApp<Registry>({
-    registry,
+    registry: of,
     config: { storage: adapter },
     ids: createSequentialIdGenerator({ prefix: `app-${started}` }),
     clock: createFixedClock(new Date("2026-05-01T00:00:00.000Z")),
@@ -265,6 +301,29 @@ describe.each([
     });
   });
 
+  it("reads the text as null once any category of the person is forgotten, since it may quote any", async () => {
+    const adapter = adapterOf();
+    const { app } = await start(adapter, categorized);
+    await app.commands.subscribeCustomer?.({ customerId: "c-1", topic: "shoes" });
+    failing.on = true;
+    await register(app, "c-1");
+    await app.runUntilIdle({ maxPasses: 3 });
+    expect(await app.subscriberFailures.get(SUBSCRIBER)).toMatchObject({
+      errorMessage: "cannot project c-1@example.com",
+    });
+    await app.forget("c-1", { categories: ["marketing"] });
+    expect(await app.subscriberFailures.get(SUBSCRIBER)).toMatchObject({
+      person: "c-1",
+      errorMessage: null,
+      errorStack: null,
+    });
+    expect((await app.exportPersonalData("c-1")).events.map(({ data }) => data)).toEqual([
+      { topic: null },
+      { email: "c-1@example.com" },
+      {},
+    ]);
+  });
+
   it("keeps in the clear the text of a failure on an event that names nobody", async () => {
     const adapter = adapterOf();
     const { app } = await start(adapter);
@@ -298,7 +357,7 @@ describe("the status of the app", () => {
     const { adapter } = createNodeSqliteAdapter();
     const { app } = await start(adapter);
     expect((await app.status()).schema).toEqual([
-      { database: "storage", scope: "storage", version: 2, latest: 2 },
+      { database: "storage", scope: "storage", version: 3, latest: 3 },
       { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
     ]);
     const inMemory = await start(memory());
@@ -309,7 +368,7 @@ describe("the status of the app", () => {
       personalDataBackfill: { caughtUp: false },
       forgetLedger: null,
       keyRotation: null,
-      retention: null,
+      retention: { categories: [], keptBeyond: 0 },
       deadLetterRetention: null,
     });
   });
@@ -337,14 +396,17 @@ describe("the status of the app", () => {
     await app.runUntilIdle();
     const status = await app.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 2, latest: 2 },
+      { database: "storage", scope: "storage", version: 3, latest: 3 },
       { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
       { database: "readModels.customers", scope: "checkpoints", version: 1, latest: 1 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 3, latest: 3 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 4, latest: 4 },
     ]);
     expect(status).toMatchObject({
       forgetLedger: { reconciled: true, held: null },
-      retention: { due: 0, nextDueAt: null },
+      retention: {
+        categories: [{ category: "default", retention: "30d", due: 0, nextDueAt: null }],
+        keptBeyond: 0,
+      },
       deadLetterRetention: { nextDueAt: null },
     });
   });

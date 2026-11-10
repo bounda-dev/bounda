@@ -66,6 +66,9 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<{
 
 type Expect<Check extends true> = Check;
 
+export type PersonalCategory = core.PersonalCategoriesOf<typeof import("../app/personal-data.ts")>;
+export type PersonalDataDeclaration = Expect<core.DeclaresPersonalData<typeof import("../app/personal-data.ts")>>;
+
 export type CustomerDirectoryRow = core.RowOf<typeof import("../app/read/customer-directory/view.ts")>;
 export type CustomerDirectoryFieldTypes = core.FieldTypesOf<typeof import("../app/read/customer-directory/view.ts")>;
 export type CustomerDirectoryPorts = core.EmptyPayload;

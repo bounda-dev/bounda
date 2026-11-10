@@ -13,12 +13,16 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { type AppStorage, appStorage } from "../events/app-event-store.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
 import { keysOver } from "../test-support.ts";
+import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
 type Table = RowTable<Record<string, unknown>>;
+
+const DAY = 86_400_000;
+const invoices = { category: "invoices" as never };
 
 const registry: Registry = {
   aggregates: {
@@ -49,7 +53,7 @@ const registry: Registry = {
           payload: ({ z, personal, person }: EventPayloadArgs) =>
             z.object({
               customerId: person(z.string()),
-              note: personal(z.string()).optional(),
+              note: personal(z.string(), invoices).optional(),
               total: z.number(),
             }),
           evolve: () => ({}),
@@ -77,7 +81,7 @@ const registry: Registry = {
         fields: ({ f }: FieldsArgs) => ({
           orderId: f.string().primaryKey(),
           customerId: f.string().person(),
-          note: f.string().personal().optional(),
+          note: f.string().personal(invoices).optional(),
           total: f.number(),
         }),
       },
@@ -108,6 +112,17 @@ const registry: Registry = {
       queries: {},
     },
   },
+  personalData: { categories: { invoices: { basis: "legal-obligation", retention: "60d" } } },
+};
+
+const categories = buildPersonalCategories({
+  module: registry.personalData,
+  retention: { months: 0, ms: 30 * DAY },
+});
+
+const exportedCategories = {
+  default: { basis: null, retention: "30d", restrictedUntil: null },
+  invoices: { basis: "legal-obligation", retention: "60d", restrictedUntil: null },
 };
 
 const setup = async () => {
@@ -138,6 +153,7 @@ const setup = async () => {
       readModels,
       clock: createFixedClock(),
       batchSize,
+      categories,
       personId,
     });
   const register = (aggregateId: string, email: string) =>
@@ -251,6 +267,7 @@ describe("exportPersonalData", () => {
     expect(exported).toStrictEqual({
       personId: "c-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
+      categories: exportedCategories,
       events: [
         {
           id: "customer-c-1-1",
@@ -261,6 +278,7 @@ describe("exportPersonalData", () => {
           position: 1,
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { email: "ana@example.com" },
+          categories: { email: "default" },
         },
         {
           id: "order-o-1-1",
@@ -271,6 +289,7 @@ describe("exportPersonalData", () => {
           position: 2,
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { note: "ring twice" },
+          categories: { note: "invoices" },
         },
         {
           id: "order-o-2-1",
@@ -281,6 +300,7 @@ describe("exportPersonalData", () => {
           position: 4,
           timestamp: "2026-01-01T00:00:00.000Z",
           data: {},
+          categories: {},
         },
         {
           id: "order-o-3-1",
@@ -291,6 +311,7 @@ describe("exportPersonalData", () => {
           position: 6,
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { note: "leave at door" },
+          categories: { note: "invoices" },
         },
         {
           id: "customer-c-1-3",
@@ -301,6 +322,7 @@ describe("exportPersonalData", () => {
           position: 7,
           timestamp: "2026-01-01T00:00:00.000Z",
           data: {},
+          categories: {},
         },
       ],
       scheduledCommands: [],
@@ -400,6 +422,7 @@ describe("exportPersonalData", () => {
         type: "RemindCustomer",
         executeAt: "2026-01-02T00:00:00.000Z",
         data: { email: "ana@example.com" },
+        categories: { email: "default" },
       },
     ]);
     expect(exported.deadLetters).toStrictEqual([
@@ -410,8 +433,9 @@ describe("exportPersonalData", () => {
         errorMessage: "no mailbox for ana@example.com",
         errorStack: "Error: no mailbox for ana@example.com\n    at handler",
         data: { email: "ana@example.com" },
+        categories: { email: "default" },
       },
-      { id: "dl-3", kind: "scheduled", handler: "NudgeCustomer", data: {} },
+      { id: "dl-3", kind: "scheduled", handler: "NudgeCustomer", data: {}, categories: {} },
       {
         id: "dl-4",
         kind: "policy",
@@ -419,6 +443,7 @@ describe("exportPersonalData", () => {
         errorMessage: "ana@example.com bounced",
         errorStack: "Error: ana@example.com bounced\n    at handler",
         data: {},
+        categories: {},
       },
     ]);
     expect(JSON.stringify(exported)).not.toContain("bo@example.com");
@@ -454,16 +479,18 @@ describe("exportPersonalData", () => {
 
     const exported = await exportOf("c-1");
     expect(exported.readModels).toStrictEqual({
-      customerDirectory: [{ key: "c-1", data: { email: "ana@example.com" } }],
+      customerDirectory: [
+        { key: "c-1", data: { email: "ana@example.com" }, categories: { email: "default" } },
+      ],
       orderNotes: [
-        { key: "o-1", data: { note: "ring twice" } },
-        { key: "o-3", data: { note: "leave at door" } },
-        { key: "o-4", data: {} },
+        { key: "o-1", data: { note: "ring twice" }, categories: { note: "invoices" } },
+        { key: "o-3", data: { note: "leave at door" }, categories: { note: "invoices" } },
+        { key: "o-4", data: {}, categories: {} },
       ],
       orderCustomers: [
-        { key: "o-1", data: {} },
-        { key: "o-3", data: {} },
-        { key: "o-4", data: {} },
+        { key: "o-1", data: {}, categories: {} },
+        { key: "o-3", data: {}, categories: {} },
+        { key: "o-4", data: {}, categories: {} },
       ],
     });
     expect(await exportOf("c-1", 100)).toEqual(exported);
@@ -510,6 +537,7 @@ describe("exportPersonalData", () => {
         readModels: { ...readModels, byName: { ...readModels.byName, orderNotes: writing } },
         clock: createFixedClock(),
         batchSize: 3,
+        categories,
         personId: "c-1",
       });
       expect(exported.readModels.orderNotes?.map((row) => row.key)).toEqual([
@@ -551,6 +579,7 @@ describe("exportPersonalData", () => {
         readModels: { ...readModels, byName: failing },
         clock: createFixedClock(),
         batchSize: 2,
+        categories,
         personId: "c-1",
       }),
     ).rejects.toBe(down);
@@ -573,11 +602,20 @@ describe("exportPersonalData", () => {
       ...withoutStack,
       person: "c-1",
     });
-    await storage.personalKeys.remove("c-1");
+    for (const { key } of await storage.personalKeys.list("c-1")) {
+      await storage.personalKeys.remove("c-1", key.fingerprint);
+    }
     const exported = await exportOf("c-1");
     expect(exported.events.map((event) => event.data)).toEqual([{ email: null }]);
     expect(exported.deadLetters).toStrictEqual([
-      { id: "dl-1", kind: "policy", handler: "order.p", errorMessage: null, data: {} },
+      {
+        id: "dl-1",
+        kind: "policy",
+        handler: "order.p",
+        errorMessage: null,
+        data: {},
+        categories: {},
+      },
     ]);
     expect(exported.scheduledCommands).toEqual([
       {
@@ -585,8 +623,47 @@ describe("exportPersonalData", () => {
         type: "RemindCustomer",
         executeAt: "2026-01-02T00:00:00.000Z",
         data: { email: null },
+        categories: { email: "default" },
       },
     ]);
     expect(JSON.stringify(exported)).not.toContain("ana@example.com");
+  });
+
+  it("tells until when what a forgetting kept of a category under a legal obligation stays restricted", async () => {
+    const { exportOf, place, storage } = await setup();
+    await place("o-1", { customerId: "c-1", note: "ring twice", total: 10 });
+    const [invoice] = (await storage.personalKeys.list("c-1")).filter(
+      ({ category }) => category === "invoices",
+    );
+    await storage.personalKeys.retain("c-1", invoice?.key.fingerprint ?? "", {
+      since: "2026-01-10T00:00:00.000Z",
+      lastActiveAt: "2026-01-05T00:00:00.000Z",
+    });
+    const exported = await exportOf("c-1");
+    expect(exported.categories).toEqual({
+      ...exportedCategories,
+      invoices: { ...exportedCategories.invoices, restrictedUntil: "2026-03-06T00:00:00.000Z" },
+    });
+    expect(exported.events.map(({ data, categories }) => [data, categories])).toEqual([
+      [{ note: "ring twice" }, { note: "invoices" }],
+    ]);
+  });
+
+  it("names the default category without a basis, and without a retention when the app sets none", async () => {
+    const { exportOf, storage, aggregates, readModels } = await setup();
+    const exported = await exportPersonalData({
+      storage,
+      aggregates,
+      readModels,
+      processes: { byName: {} },
+      clock: createFixedClock(),
+      batchSize: 2,
+      categories: buildPersonalCategories({ module: undefined, retention: null }),
+      personId: "c-1",
+    });
+    expect(exported.categories).toEqual({
+      default: { basis: null, retention: null, restrictedUntil: null },
+    });
+    expect((await exportOf("c-1")).categories).toEqual(exportedCategories);
   });
 });

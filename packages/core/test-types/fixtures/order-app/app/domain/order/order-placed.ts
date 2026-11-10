@@ -6,7 +6,7 @@ export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
     lines: z.array(
       z.object({ sku: z.string(), quantity: z.int().positive(), unitPrice: z.number() }),
     ),
-    note: personal(z.string()).optional(),
+    note: personal(z.string(), { category: "delivery" }).optional(),
   });
 
 export const evolve = ({ state, event }: Event.EvolveArgs) => ({

@@ -1,4 +1,5 @@
 import type { AppStatus, SchemaStatus, SubscriberFailure } from "@bounda-dev/core";
+import { DEFAULT_PERSONAL_CATEGORY } from "@bounda-dev/core/adapter";
 
 export interface FormatStatusArgs {
   readonly status: AppStatus;
@@ -83,10 +84,22 @@ const rotationOf = ({ keyRotation: rotation }: AppStatus): string => {
   return `under ${rotation.kid}${rotation.previous.length === 0 ? "" : ` (previous ${rotation.previous.join(", ")})`}, ${left}`;
 };
 
-const retentionOf = ({ retention }: AppStatus): string =>
-  retention === null
-    ? "not configured"
-    : `${days(retention.retentionMs)}, ${plural(retention.due, "person")} past it, next due ${retention.nextDueAt ?? "never"}`;
+// One line per retention set: the app's forgets persons as a whole, a category's its keys.
+const retentionOf = ({ retention }: AppStatus): string[] => {
+  if (retention === null) return ["retention: no personal data marked"];
+  const { categories, keptBeyond } = retention;
+  if (categories.length === 0 && keptBeyond === 0) return ["retention: not configured"];
+  return [
+    "retention",
+    ...categories.map(
+      ({ category, retention: kept, due, nextDueAt }) =>
+        `  ${category}  ${kept}, ${plural(due, category === DEFAULT_PERSONAL_CATEGORY ? "person" : "key")} past it, next due ${nextDueAt ?? "never"}`,
+    ),
+    ...(keptBeyond === 0
+      ? []
+      : [`  ${plural(keptBeyond, "key")} kept past a forgetting that no legal obligation keeps`]),
+  ];
+};
 
 const purgeOf = ({ deadLetterRetention: purge }: AppStatus): string =>
   purge === null
@@ -107,7 +120,7 @@ export const formatStatus: FormatStatusFunction = (args) => {
     `personal data backfill: ${backfillOf(status)}`,
     `forget ledger: ${ledgerOf(status)}`,
     `key rotation: ${rotationOf(status)}`,
-    `retention: ${retentionOf(status)}`,
+    ...retentionOf(status),
     `dead letter retention: ${purgeOf(status)}`,
   ].join("\n");
 };

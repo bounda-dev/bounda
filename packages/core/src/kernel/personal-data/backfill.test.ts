@@ -237,7 +237,7 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     failing.remind = false;
     const storage = await adapter.createStorage();
     expect(await storage.deadLetterStore.count()).toBe(2);
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
 
     const { logger, logs } = recording();
     const after = await start({
@@ -251,7 +251,7 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     });
     await after.app.runUntilIdle();
 
-    const key = await storage.personalKeys.get("c-1");
+    const key = await storage.personalKeys.get("c-1", "default");
     // Without a retention, nobody's activity is recorded.
     expect(await storage.persons.get("c-1")).toBeNull();
     const events = await raw(adapter);
@@ -336,8 +336,8 @@ describe.each(adapters)("the backfill of personal data on %s", (_name, adapterOf
     await after.app.runUntilIdle();
 
     const storage = await adapter.createStorage();
-    expect(await storage.personalKeys.get("c-1")).toBeNull();
-    const key = await storage.personalKeys.get("c-2");
+    expect(await storage.personalKeys.get("c-1", "default")).toBeNull();
+    const key = await storage.personalKeys.get("c-2", "default");
     const sealedUnder = registered(await raw(adapter)).map(
       (event) => (event.payload as { email: { $personal: { key: string } } }).email.$personal.key,
     );
@@ -579,5 +579,40 @@ describe("the backfill of personal data", () => {
     await app.app.runUntilIdle();
     expect(await app.app.getLag()).toMatchObject({ personalDataBackfill: null });
     expect(await app.app.nextDueAt()).toBeNull();
+  });
+});
+
+describe("marks walked again once others walked since", () => {
+  const startedRow = async (adapter: Adapter): Promise<[string, number]> => {
+    const rows = await (await adapter.createStorage()).checkpointStore.list();
+    const row = rows.find(
+      ({ subscriber }) => subscriber.startsWith(BACKFILL_PREFIX) && subscriber.endsWith(":started"),
+    );
+    if (row === undefined) throw new Error("no walk started");
+    return [row.subscriber, row.position];
+  };
+
+  it("walks again only when other marks started later, or at the same moment under a later name", async () => {
+    const adapter = memory();
+    const { app, clock } = await start({ adapter, marks: marked });
+    await app.runUntilIdle();
+    const [own, first] = await startedRow(adapter);
+    const digest = own.slice(BACKFILL_PREFIX.length).split(":")[0] ?? "";
+    const checkpoints = (await adapter.createStorage()).checkpointStore;
+    const pass = async (): Promise<number> => {
+      clock.advance(BACKFILL_FOLLOW_INTERVAL_MS);
+      await app.runUntilIdle();
+      return checkpoints.get(own);
+    };
+    await checkpoints.set(`${BACKFILL_PREFIX}other:position`, first + 10 * MINUTE_MS);
+    await checkpoints.set(`${BACKFILL_PREFIX}0:started`, first);
+    await checkpoints.set(`${BACKFILL_PREFIX}older:started`, first - 1);
+    await checkpoints.set("projection:x", first + 10 * MINUTE_MS);
+    expect(await pass()).toBe(first);
+    await checkpoints.set(`${BACKFILL_PREFIX}${digest}z:started`, first);
+    const again = await pass();
+    expect(again).toBeGreaterThan(first);
+    await checkpoints.set(`${BACKFILL_PREFIX}newer:started`, again + 1);
+    expect(await pass()).toBeGreaterThan(again);
   });
 });

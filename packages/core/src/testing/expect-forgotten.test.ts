@@ -803,6 +803,7 @@ describe("expectForgotten", () => {
         personId: `p-${index}`,
         eventId: `ledger-event-${String(index).padStart(4, "0")}`,
         forgottenAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
+        categories: null,
         reason: "requested" as const,
       })),
     );
@@ -907,5 +908,97 @@ describe("expectForgotten", () => {
     expect(((await rejection(expectForgotten(app, "c-1"))) as Error).message).toBe(
       'expectForgotten saw a value of "c-1" sealed under a key the test app never held; report this as a bug in Bounda',
     );
+  });
+});
+
+describe("expectForgotten by categories", () => {
+  const categorized = {
+    aggregates: {
+      customer: {
+        state: { initialState: {} },
+        events: {
+          customerBilled: {
+            payload: ({ z, personal }: EventPayloadArgs) =>
+              z.object({
+                newsletter: personal(z.email(), { category: "marketing" }),
+                invoice: personal(z.string(), { category: "invoices" }),
+              }),
+            evolve: () => ({}),
+          },
+        },
+        commands: {
+          billCustomer: {
+            module: {
+              payload: ({ z }: PayloadArgs) =>
+                z.object({ customerId: z.string(), newsletter: z.string(), invoice: z.string() }),
+              handler: ({
+                command,
+                events,
+              }: {
+                command: { payload: { newsletter: string; invoice: string } };
+                events: Events;
+              }) => [events.customerBilled?.(command.payload)],
+            },
+          },
+        },
+        policies: {},
+        processes: {},
+      },
+    },
+    readModels: {},
+    personalData: {
+      categories: {
+        marketing: { basis: "consent", retention: "730d" },
+        invoices: { basis: "legal-obligation", retention: "6y" },
+      },
+    },
+  } as unknown as Registry;
+
+  const billed = async () => {
+    const { app } = await createTestApp({ registry: categorized });
+    await app.commands.billCustomer?.({
+      customerId: "c-1",
+      newsletter: "ana@example.com",
+      invoice: "INV-2026-0001",
+    });
+    return app;
+  };
+
+  it("checks a withdrawn consent alone, and refuses a category the person still holds", async () => {
+    const app = await billed();
+    await app.forget("c-1", { categories: ["marketing"] });
+    await expect(
+      expectForgotten(app, "c-1", { categories: ["marketing"] }),
+    ).resolves.toBeUndefined();
+    await expect(
+      expectForgotten(app, "c-1", {
+        categories: ["marketing"],
+        places: { mail: ["ana@example.com"] },
+      }),
+    ).rejects.toBeInstanceOf(NotForgottenError);
+    await expect(expectForgotten(app, "c-1", { categories: ["invoices"] })).rejects.toThrow(
+      '"c-1" still holds a key in force of "invoices": forget those categories before expectForgotten',
+    );
+    await app.stop();
+  });
+
+  it("leaves out what a legal obligation keeps after the person is forgotten as a whole", async () => {
+    const app = await billed();
+    const before = await app.exportPersonalData("c-1");
+    await app.forget("c-1");
+    await expect(
+      expectForgotten(app, "c-1", { places: { kept: ["INV-2026-0001"] } }),
+    ).resolves.toBeUndefined();
+    await expect(
+      expectForgotten(app, "c-1", {
+        before,
+        categories: ["marketing"],
+        places: { kept: ["INV-2026-0001"] },
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      expectForgotten(app, "c-1", { before, places: { kept: ["INV-2026-0001"] } }),
+    ).rejects.toBeInstanceOf(NotForgottenError);
+    await app.stop();
   });
 });

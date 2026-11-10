@@ -64,10 +64,16 @@ describe("readForgotten", () => {
         reason: "retention",
         fingerprints: ["k-1"],
       }),
-      event(1_007, "bounda", "c-2", "PersonalDataForgotten", "1970-01-01T00:00:00.001Z"),
+      event(1_007, "bounda", "c-2", "PersonalDataForgotten", "1970-01-01T00:00:00.001Z", {
+        whole: false,
+        categories: ["marketing"],
+        retained: ["invoices"],
+      }),
       event(1_008, "bounda", "c-3", "PersonalDataForgotten", undefined, {
         reason: "restored",
         fingerprints: [1],
+        whole: false,
+        categories: "marketing",
       }),
       event(1_009, "bounda", "c-4", "PersonalDataForgotten", undefined, null),
       event(1_010, "bounda", "c-5", "PersonalDataForgotten", undefined, "text"),
@@ -82,6 +88,7 @@ describe("readForgotten", () => {
         personId: "c-1",
         eventId: "e-1006",
         forgottenAt: "2026-11-02T00:00:00.000Z",
+        categories: null,
         reason: "retention",
         fingerprints: ["k-1"],
       },
@@ -89,18 +96,21 @@ describe("readForgotten", () => {
         personId: "c-2",
         eventId: "e-1007",
         forgottenAt: "1970-01-01T00:00:00.001Z",
+        categories: ["marketing", "invoices"],
         reason: "requested",
       },
       {
         personId: "c-3",
         eventId: "e-1008",
         forgottenAt: "2026-11-01T00:00:00.000Z",
+        categories: [],
         reason: "requested",
       },
       ...["c-4", "c-5"].map((personId, index) => ({
         personId,
         eventId: `e-${1_009 + index}`,
         forgottenAt: "2026-11-01T00:00:00.000Z",
+        categories: null,
         reason: "requested",
       })),
     ]);
@@ -128,12 +138,14 @@ describe("parseForgetList", () => {
   it("reads entries, bare ids and blank lines", () => {
     expect(
       parseForgetList(
-        '{"personId":"c-1","eventId":"e-1","forgottenAt":"x"}\r\n\n  c-2  \n{"personId":"c-3"}\n',
+        '{"personId":"c-1","eventId":"e-1","forgottenAt":"x"}\r\n\n  c-2  \n{"personId":"c-3"}\n{"personId":"c-4","categories":null}\n{"personId":"c-5","categories":["marketing"]}\n',
       ),
     ).toStrictEqual([
       { personId: "c-1", eventId: "e-1", forgottenAt: "x" },
       { personId: "c-2" },
       { personId: "c-3" },
+      { personId: "c-4", categories: null },
+      { personId: "c-5", categories: ["marketing"] },
     ]);
   });
 
@@ -163,9 +175,11 @@ describe("parseForgetList", () => {
       '{"personId":"c-1","reason":"toString"}',
       '{"personId":"c-1","fingerprints":"k-1"}',
       '{"personId":"c-1","fingerprints":["k-1",2]}',
+      '{"personId":"c-1","categories":"marketing"}',
+      '{"personId":"c-1","categories":[1]}',
     ]) {
       expect(() => parseForgetList(`c-0\n${line}`)).toThrow(
-        'line 2 needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", and "fingerprints" only as a list of strings',
+        'line 2 needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", "fingerprints" only as a list of strings, and "categories" only as null or a list of names',
       );
     }
     expect(() => parseForgetList("{not json")).toThrow("line 1 is neither a person's id nor JSON");

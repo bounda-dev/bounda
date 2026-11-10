@@ -1,4 +1,8 @@
-import type { PersonalEnvelope, SealedValue } from "../../adapter/storage/personal-key-store.ts";
+import {
+  DEFAULT_PERSONAL_CATEGORY,
+  type PersonalEnvelope,
+  type SealedValue,
+} from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 
 export type { PersonalEnvelope, SealedValue };
@@ -8,12 +12,14 @@ const KEY_BITS = 256;
 const IV_BYTES = 12;
 
 /**
- * A person's key as the kernel seals and opens with it, with the fingerprint envelopes name it by.
- * The key can never be exported: its raw bytes are not reachable from JavaScript.
+ * A person's key as the kernel seals and opens with it, with the fingerprint envelopes name it by,
+ * and whether a forgetting kept it past it, as the store said when it was read. The key can never
+ * be exported: its raw bytes are not reachable from JavaScript.
  */
 export interface PersonalKey {
   readonly fingerprint: string;
   readonly cryptoKey: CryptoKey;
+  readonly retained: boolean;
 }
 
 export interface IsSealedFunction {
@@ -30,6 +36,7 @@ export const isSealed: IsSealedFunction = (value): value is SealedValue => {
     typeof envelope === "object" &&
     envelope !== null &&
     typeof Reflect.get(envelope, "person") === "string" &&
+    ["string", "undefined"].includes(typeof Reflect.get(envelope, "category")) &&
     typeof Reflect.get(envelope, "key") === "string" &&
     typeof Reflect.get(envelope, "iv") === "string" &&
     typeof Reflect.get(envelope, "data") === "string"
@@ -152,7 +159,7 @@ export const createDisposableKey: CreateDisposableKeyFunction = async () => {
     false,
     [...PERSONAL_KEY_USAGES],
   );
-  return { fingerprint: await fingerprintOf(cryptoKey), cryptoKey };
+  return { fingerprint: await fingerprintOf(cryptoKey), cryptoKey, retained: false };
 };
 
 export interface ImportRawKeyArgs {
@@ -198,6 +205,7 @@ export const withRawKey: WithRawKeyFunction = async (key, use) => {
 export interface SealArgs {
   readonly key: PersonalKey;
   readonly person: string;
+  readonly category: string;
   readonly value: unknown;
 }
 
@@ -207,9 +215,10 @@ export interface SealFunction {
 
 /**
  * Encrypts `value` as JSON, under a nonce of its own, so equal values never store alike, and never
- * the fingerprint's.
+ * the fingerprint's. The envelope names the category unless it is the default one, as every
+ * envelope sealed before categories existed reads.
  */
-export const seal: SealFunction = async ({ key, person, value }) => {
+export const seal: SealFunction = async ({ key, person, category, value }) => {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   iv[0] = (iv[0] ?? 0) | SEAL_IV_MARK;
   const encrypted = await crypto.subtle.encrypt(
@@ -220,6 +229,7 @@ export const seal: SealFunction = async ({ key, person, value }) => {
   return {
     $personal: {
       person,
+      ...(category === DEFAULT_PERSONAL_CATEGORY ? {} : { category }),
       key: key.fingerprint,
       iv: toBase64(iv),
       data: toBase64(new Uint8Array(encrypted)),
@@ -235,6 +245,13 @@ export interface UnsealArgs {
 export interface UnsealFunction {
   (args: UnsealArgs): Promise<unknown>;
 }
+
+export interface CategoryOfFunction {
+  (sealed: SealedValue): string;
+}
+
+export const categoryOf: CategoryOfFunction = ({ $personal }) =>
+  $personal.category ?? DEFAULT_PERSONAL_CATEGORY;
 
 /**
  * `null` without a key, or with one the value was not sealed under: the person was forgotten,

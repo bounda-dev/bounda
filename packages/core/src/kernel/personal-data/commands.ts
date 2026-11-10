@@ -1,8 +1,8 @@
-import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
+import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { isSealed, type PersonalKey, refuseSealed, seal, unseal } from "./crypto.ts";
-import type { PersonalMarks } from "./marks.ts";
+import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import type { PersonalKeys } from "./wrapped-keys.ts";
 
 export interface SealCommandPayloadArgs {
@@ -40,8 +40,12 @@ const personOf = (
   return String(value);
 };
 
-const keyInForce = async (keys: PersonalKeys, person: string): Promise<PersonalKey> =>
-  (await keys.held(person)) ?? (await keys.create(person));
+const keyInForce = async (
+  keys: PersonalKeys,
+  person: string,
+  category: string,
+): Promise<PersonalKey> =>
+  (await keys.held(person, category)) ?? (await keys.create(person, category));
 
 export interface KeyOfFunction {
   (person: string, fingerprint: string): Promise<PersonalKey | null>;
@@ -52,29 +56,26 @@ export interface SealedKeysFunction {
 }
 
 /**
- * Reads the key a value was sealed under, `null` when the person holds none or another one:
- * each person's key read and imported once, whatever number of values it opens.
+ * Reads the key a value was sealed under, `null` once the person no longer holds it: each key
+ * read and imported once, whatever number of values it opens.
  */
 export const sealedKeys: SealedKeysFunction = (keys) => {
   const imported = new Map<string, Promise<PersonalKey | null>>();
   return (person, fingerprint) => {
-    const id = `${person}\u0000${fingerprint}`;
+    const id = keyedPersonId({ person, fingerprint });
     const known = imported.get(id);
     if (known !== undefined) return known;
-    const key = keys
-      .get(person)
-      .then((stored) =>
-        stored === null || stored.fingerprint !== fingerprint ? null : keys.open(person, stored),
-      );
+    const key = keys.opened(person, fingerprint);
     imported.set(id, key);
     return key;
   };
 };
 
 /**
- * Seals the payload's personal fields with the key of the person the command names, created on
- * their first sealed field. A key removed before the payload is stored leaves it sealed under a key
- * no one holds: the command then never runs, as `openCommandPayload` tells.
+ * Seals the payload's personal fields with the person's key of each field's category, the person
+ * the command names, created on their first sealed field. A key removed before the payload is
+ * stored leaves it sealed under a key no one holds: the command then never runs, as
+ * `openCommandPayload` tells.
  */
 export const sealCommandPayload: SealCommandPayloadFunction = async (args) => {
   const { payload, marks, keys } = args;
@@ -84,12 +85,15 @@ export const sealCommandPayload: SealCommandPayloadFunction = async (args) => {
   const present = marks.fields.filter((field) => payload[field] !== undefined);
   if (present.length === 0) return { payload, persons: [] };
   const person = personOf(args, payload, marks.person);
-  const key = await keyInForce(keys, person);
   const sealed: Record<string, unknown> = { ...payload };
+  const persons = new Map<string, KeyedPerson>();
   for (const field of present) {
-    sealed[field] = await seal({ key, person, value: payload[field] });
+    const category = fieldCategory(marks, field);
+    const key = await keyInForce(keys, person, category);
+    persons.set(key.fingerprint, { person, fingerprint: key.fingerprint });
+    sealed[field] = await seal({ key, person, category, value: payload[field] });
   }
-  return { payload: sealed, persons: [{ person, fingerprint: key.fingerprint }] };
+  return { payload: sealed, persons: [...persons.values()] };
 };
 
 export interface OpenCommandPayloadArgs {

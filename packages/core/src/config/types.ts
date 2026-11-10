@@ -1,5 +1,5 @@
 import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
-import type { DurationInput } from "../contracts/duration.ts";
+import type { DurationInput, Retention, RetentionInput } from "../contracts/duration.ts";
 import type { ForgetLedgerSource } from "../kernel/personal-data/forget-ledger.ts";
 import type { KeyWrapperDefinition } from "../kernel/personal-data/key-wrapper.ts";
 import type { AppPortsConfig } from "../register/index.ts";
@@ -135,9 +135,10 @@ export interface PersonalDataConfig {
    * How long a person may go without an event of the app's aggregates naming them before the
    * runtime forgets them, as `forget` does, with `reason: "retention"`. A person whose processing
    * is restricted is left alone until it is lifted, and one active again after being forgotten
-   * starts a new clock. No default: without it nobody is forgotten for inactivity.
+   * starts a new clock. A duration, or whole calendar months or years, `"6y"`, as a category's
+   * retention. No default: without it nobody is forgotten for inactivity.
    */
-  readonly retention?: DurationInput;
+  readonly retention?: RetentionInput;
   /**
    * Wraps every person's key before the store keeps it, so a copy of the database holds no key
    * that opens their data: `masterKey({ from: "BOUNDA_MASTER_KEY" })`, or a wrapper of your own
@@ -412,7 +413,7 @@ export interface ResolvedConfig {
       /**
        * `null` when no retention is configured.
        */
-      readonly retentionMs: number | null;
+      readonly retention: Retention | null;
       /**
        * `null` when no key wrapper is configured.
        */

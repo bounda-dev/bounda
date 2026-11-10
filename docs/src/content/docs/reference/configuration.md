@@ -104,9 +104,13 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
 
 ### Personal data
 
-- **`personalData.retention`**, none by default. How long a person may go without an event of the
+- **`personalData.retention`**, none by default. How long, a duration or whole calendar months or
+  years such as `"6y"`, a person may go without an event of the
   app's aggregates naming them before the runtime forgets them, as `forget` does, with `reason:
-  "retention"`. Without it nobody is forgotten for inactivity and nothing is recorded for it. A
+  "retention"`, every category but those a legal obligation keeps: the retention of the default
+  category. Each category `app/personal-data.ts` declares has its own retention besides, see
+  [categories](/guides/personal-data/#categories). Without either, nobody is forgotten for
+  inactivity and nothing is recorded for it. A
   person whose processing is restricted is left alone until it is lifted; one active again after
   being forgotten starts a new clock. Turning it on applies it to the history: whoever was already
   inactive for that long is forgotten in the first passes. It is app-wide and has no override per aggregate: a person's

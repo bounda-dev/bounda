@@ -46,10 +46,11 @@ export interface PurgeIdempotencyRecordsArgs {
  * its outcome, and the other rejects with `IdempotencyKeyTakenError`, which rolls back whatever
  * the recording was part of.
  *
- * A record that names people lives only as long as their keys, as a snapshot does: `put` records
- * nothing unless every person it names with a fingerprint holds the key of that fingerprint (one
- * named with `null` was read in the clear and needs none), checked in the same statement, and
- * `forget` removes every record that names a person.
+ * A record that names people lives only as long as their keys stay in force, as a snapshot does:
+ * `put` records nothing unless every person it names with a fingerprint holds the key of that
+ * fingerprint in force (one named with `null` was read in the clear and needs none), checked in
+ * the same statement, and `forget` removes every record that names the person under a key outside
+ * `keep`, or read in the clear.
  */
 export interface IdempotencyStore {
   /**
@@ -65,5 +66,5 @@ export interface IdempotencyStore {
    * Removes the records expired by `now`, and resolves to how many.
    */
   purge(args: PurgeIdempotencyRecordsArgs): Promise<number>;
-  forget(person: string): Promise<void>;
+  forget(person: string, keep?: readonly string[]): Promise<void>;
 }

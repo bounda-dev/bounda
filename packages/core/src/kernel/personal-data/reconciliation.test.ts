@@ -6,12 +6,14 @@ import type {
   ForgetLedgerEntry,
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
+import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ForgetLedgerUnavailableError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { withoutLedger } from "../test-support.ts";
+import { buildPersonalCategories } from "./categories.ts";
 import { boundForgetLedger } from "./forget-ledger.ts";
 import { HOLD_MS } from "./hold.ts";
 import { createForgetIntentions } from "./intention.ts";
@@ -37,12 +39,13 @@ const loggingErrors = (errors: unknown[]): Logger => ({
 });
 
 const NOW = new Date("2026-03-01T00:00:00.000Z");
+const NO_CATEGORIES = buildPersonalCategories({ module: undefined, retention: null });
 const EVERY = 5 * 60_000;
 
 const keyed = async (storage: Storage, persons: readonly string[]): Promise<void> => {
   for (const person of persons) {
     await storage.transact((transaction) =>
-      transaction.personalKeys.add(person, {
+      transaction.personalKeys.add(person, "default", {
         key: `key-${person}`,
         fingerprint: `f-${person}`,
         kid: null,
@@ -94,6 +97,8 @@ const setUp = async ({
     clock: createFixedClock(NOW),
     logger,
     concurrencyRetries: 3,
+    categories: NO_CATEGORIES,
+    batchSize: 10,
     reconcileEveryMs: EVERY,
     keepForMs: null,
     pageSize,
@@ -105,6 +110,7 @@ const entry = (personId: string, eventId: string, forgottenAt: string): ForgetLe
   personId,
   eventId,
   forgottenAt,
+  categories: null,
   reason: "requested",
 });
 
@@ -232,6 +238,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
       pageSize: 10,
@@ -280,6 +288,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: loggingErrors(errors),
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
     });
@@ -327,6 +337,8 @@ describe("the forget ledger's reconciliation", () => {
         clock: createFixedClock(NOW),
         logger: loggingErrors(errors),
         concurrencyRetries: 3,
+        categories: NO_CATEGORIES,
+        batchSize: 10,
         reconcileEveryMs: EVERY,
         keepForMs: null,
       });
@@ -367,6 +379,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
     });
@@ -396,6 +410,8 @@ describe("the forget ledger's reconciliation", () => {
       clock: createFixedClock(NOW),
       logger: silentLogger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
       forgotten: (personId) => told.push(personId),
@@ -458,6 +474,8 @@ describe("the forget ledger's periodic reconciliation", () => {
       clock: createFixedClock(NOW),
       logger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs,
     });
@@ -633,7 +651,7 @@ describe("what the reconciliation commits again", () => {
         persons: ["c-1"],
       });
       expect(await reconciliation.reconcile(NOW)).toBe(forgotten);
-      expect((await storage.personalKeys.get("c-1")) === null).toBe(forgotten === 1);
+      expect((await storage.personalKeys.get("c-1", "default")) === null).toBe(forgotten === 1);
     }
   });
 
@@ -674,6 +692,8 @@ describe("what the reconciliation commits again", () => {
         clock,
         logger: silentLogger,
         concurrencyRetries: 3,
+        categories: NO_CATEGORIES,
+        batchSize: 10,
         reconcileEveryMs: EVERY,
         keepForMs: null,
       });
@@ -699,7 +719,7 @@ describe("what the reconciliation commits again", () => {
       persons: ["c-1", "c-2", "c-3"],
     });
     expect(await reconciliation.reconcile(NOW)).toBe(1);
-    expect(await storage.personalKeys.get("c-2")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-2", "default")).not.toBeNull();
     expect(reconciliation.nextDueAt()).toEqual(
       new Date(Date.parse(younger) + FORGET_LEDGER_GRACE_MS),
     );
@@ -717,7 +737,7 @@ describe("what the reconciliation commits again", () => {
     expect(await reconciliation.reconcile(NOW)).toBe(1);
     entries.push(entry("c-2", "e-2", young));
     expect(await reconciliation.reconcile(NOW)).toBe(0);
-    expect(await storage.personalKeys.get("c-2")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-2", "default")).not.toBeNull();
   });
 
   it("is due at the sooner of a ledger's delay and an entry's grace", async () => {
@@ -747,6 +767,8 @@ describe("forgetAgain", () => {
       ids,
       clock,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       entry: { personId: "" },
       retentionDue: NEVER_DUE,
       record: true,
@@ -774,6 +796,8 @@ describe("forgetAgain", () => {
         ids,
         clock,
         concurrencyRetries: 3,
+        categories: NO_CATEGORIES,
+        batchSize: 10,
         entry,
         retentionDue: NEVER_DUE,
         record: true,
@@ -783,6 +807,125 @@ describe("forgetAgain", () => {
     await keyed(storage, ["c-1"]);
     expect(await run({ personId: "c-1", eventId: "e-1" })).not.toBeNull();
     expect(transactions).toBe(1);
+  });
+
+  it("forgets again only the categories the entry asked for, while one of them still has a key in force", async () => {
+    const storage = await memory().createStorage();
+    const categories = buildPersonalCategories({
+      module: {
+        categories: {
+          profile: { basis: "consent", retention: "30d" },
+          invoices: { basis: "legal-obligation", retention: "30d" },
+        },
+      },
+      retention: null,
+    });
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "profile", testPersonalKey("2"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("3"));
+    await storage.personalKeys.retain("c-1", "f-3", { since: at(0), lastActiveAt: at(0) });
+    const ids = createSequentialIdGenerator();
+    const clock = createFixedClock(NOW);
+    const run = (asked: readonly string[] | null) =>
+      forgetAgain({
+        storage,
+        intentions: withoutLedger({ ids, clock }),
+        ids,
+        clock,
+        concurrencyRetries: 3,
+        categories,
+        batchSize: 10,
+        entry: { personId: "c-1", eventId: "e-1", categories: asked },
+        retentionDue: NEVER_DUE,
+        record: false,
+      });
+    expect(await run([])).toBeNull();
+    expect(await run(["orders"])).toBeNull();
+    expect(await run(["invoices"])).toBeNull();
+    expect((await run(["profile", "orders"]))?.payload).toMatchObject({
+      reason: "requested",
+      whole: false,
+      categories: ["profile"],
+      retained: [],
+    });
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "default",
+      "invoices",
+    ]);
+    expect(await run(["profile"])).toBeNull();
+    expect((await run(null))?.payload).toMatchObject({
+      whole: true,
+      categories: ["default", "profile"],
+    });
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "invoices",
+    ]);
+    expect(await run(null)).toBeNull();
+  });
+
+  it("commits again a category's retention only while it would still end the keys it names, destroying those alone", async () => {
+    const storage = await memory().createStorage();
+    const categories = buildPersonalCategories({
+      module: {
+        categories: {
+          profile: { basis: "consent", retention: "30d" },
+          invoices: { basis: "legal-obligation", retention: "30d" },
+        },
+      },
+      retention: null,
+    });
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("3"));
+    const asked: (readonly string[] | null)[] = [];
+    let due = false;
+    const ids = createSequentialIdGenerator();
+    const clock = createFixedClock(NOW);
+    const run = (entry: ForgetAgainEntry) =>
+      forgetAgain({
+        storage,
+        intentions: withoutLedger({ ids, clock }),
+        ids,
+        clock,
+        concurrencyRetries: 3,
+        categories,
+        batchSize: 10,
+        entry,
+        retentionDue: async (_stores, _person, _now, keys) => {
+          asked.push(keys === null ? null : keys.map(({ key }) => key.fingerprint));
+          return due;
+        },
+        record: false,
+      });
+    const entry: ForgetAgainEntry = {
+      personId: "c-1",
+      eventId: "e-1",
+      forgottenAt: at(0),
+      reason: "retention",
+      categories: ["invoices"],
+      fingerprints: ["f-3"],
+    };
+    expect(await run(entry)).toBeNull();
+    expect(asked).toEqual([["f-3"]]);
+    due = true;
+    expect(
+      (await run({ personId: "c-1", reason: "retention", categories: ["invoices"] }))?.payload,
+    ).toMatchObject({
+      reason: "retention",
+      whole: false,
+      categories: ["invoices"],
+      retained: [],
+      fingerprints: ["f-3"],
+    });
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "default",
+    ]);
+    expect(await run(entry)).toBeNull();
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("4"));
+    asked.length = 0;
+    expect((await run({ personId: "c-1", reason: "retention" }))?.payload).toMatchObject({
+      whole: true,
+    });
+    expect(asked).toEqual([null, null]);
   });
 
   const ledgered = async () => {
@@ -829,6 +972,8 @@ describe("forgetAgain", () => {
         ids,
         clock,
         concurrencyRetries: 3,
+        categories: NO_CATEGORIES,
+        batchSize: 10,
         entry,
         retentionDue: NEVER_DUE,
         record: true,
@@ -869,6 +1014,7 @@ describe("forgetAgain", () => {
     expect(recorded).toEqual([
       {
         personId: "c-1",
+        categories: null,
         eventId: "id-2",
         forgottenAt: NOW.toISOString(),
         reason: "requested",
@@ -885,7 +1031,7 @@ describe("forgetAgain", () => {
       ForgetLedgerUnavailableError,
     );
     await expect(run({ personId: "c-1" })).rejects.toBeInstanceOf(ForgetLedgerUnavailableError);
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
     expect(await storage.eventStore.lastPosition()).toBe(0);
   });
 
@@ -896,7 +1042,7 @@ describe("forgetAgain", () => {
     expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).not.toBeNull();
     await keyed(storage, ["c-1"]);
     expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).toBeNull();
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
   });
 
   it("leaves a key the entry does not name without a transaction", async () => {
@@ -915,7 +1061,7 @@ describe("forgetAgain", () => {
     expect(await run(legacy)).not.toBeNull();
     await keyed(storage, ["c-1"]);
     expect(await run(legacy)).toBeNull();
-    expect(await storage.personalKeys.get("c-1")).not.toBeNull();
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
   });
 
   it("takes an intention of its own for an entry missing its id, its time or its reason", async () => {
@@ -943,8 +1089,12 @@ describe("forgetAgain", () => {
     const { storage, recorded, run, beforeTransaction } = await ledgered();
     await keyed(storage, ["c-1"]);
     beforeTransaction(async () => {
-      await storage.personalKeys.remove("c-1");
-      await storage.personalKeys.add("c-1", { key: "k-2", fingerprint: "f-2", kid: null });
+      await storage.personalKeys.remove("c-1", "f-c-1");
+      await storage.personalKeys.add("c-1", "default", {
+        key: "k-2",
+        fingerprint: "f-2",
+        kid: null,
+      });
     });
     expect(await run({ personId: "c-1" })).toMatchObject({
       event: { id: "id-3", payload: { fingerprints: ["f-2"] } },
@@ -967,6 +1117,8 @@ describe("forgetAgain", () => {
       clock,
       logger: silentLogger,
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
     });
@@ -975,14 +1127,14 @@ describe("forgetAgain", () => {
   });
 
   it("never commits again a forgetting the retention made without a retention", async () => {
-    expect(await NEVER_DUE(await memory().createStorage(), "c-1", NOW)).toBe(false);
+    expect(await NEVER_DUE(await memory().createStorage(), "c-1", NOW, null)).toBe(false);
   });
 
   it("forgets nobody whose key went between its check and its transaction", async () => {
     const { storage, run, beforeTransaction } = await ledgered();
     await keyed(storage, ["c-1"]);
     beforeTransaction(async () => {
-      await storage.personalKeys.remove("c-1");
+      await storage.personalKeys.remove("c-1", "f-c-1");
     });
     expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).toBeNull();
     expect(await storage.eventStore.lastPosition()).toBe(0);
@@ -1062,6 +1214,8 @@ describe("the reconciliation's status and restores", () => {
       clock: createFixedClock(NOW),
       logger: { ...silentLogger, error: (...args: unknown[]) => logged.push(args) },
       concurrencyRetries: 3,
+      categories: NO_CATEGORIES,
+      batchSize: 10,
       reconcileEveryMs: EVERY,
       keepForMs: null,
     });

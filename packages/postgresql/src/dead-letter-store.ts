@@ -15,7 +15,7 @@ import {
   postgresqlDialect,
 } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
-import { naming } from "./held-keys.ts";
+import { naming, outsideKept } from "./held-keys.ts";
 
 export interface CreatePostgresqlDeadLetterStoreArgs {
   readonly db: PostgresqlDatabase;
@@ -163,8 +163,13 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           [person],
         )
       ).map(toLetter),
-    forget: async (person) =>
-      (await db.all(`DELETE FROM ${table} WHERE ${naming("$1")} RETURNING ${COLUMNS}`, [person]))
+    forget: async (person, keep = []) =>
+      (
+        await db.all(
+          `DELETE FROM ${table} WHERE ${naming("$1")} AND ${outsideKept({ person: "$1", keep: "$2" })} RETURNING ${COLUMNS}`,
+          [person, postgresqlDialect.encode("json", keep)],
+        )
+      )
         .map(toLetter)
         .sort(byFirstFailure),
     firstResolvedAt: async () => {

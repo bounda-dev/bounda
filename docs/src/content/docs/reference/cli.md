@@ -54,7 +54,7 @@ the same way.
 ## Who runs a command
 
 `--actor <id>` names who runs a command that acts or reads personal data: `rebuild`,
-`dead-letters list`, `retry` and `discard`, `status`, and `forget`. The command acts as that id, as
+`dead-letters list`, `retry` and `discard`, `status`, `export` and `forget`. The command acts as that id, as
 [`client.as(actor)`](/concepts/ids-causation-and-correlation/#who-acts) does in code: the events it
 writes carry it in their metadata, its log lines name it, and so does every access log record it
 causes.
@@ -258,9 +258,9 @@ bounda status --error-text --actor ops-ana
 
 ```
 tables
-  storage  storage  2 of 2
+  storage  storage  3 of 3
   storage  checkpoints  1 of 1
-  forgetLedger  forget-ledger  1 of 1
+  forgetLedger  forget-ledger  4 of 4
 restores found while running: 0
 subscribers (head at 1204)
   projection:customerDirectory  at 1197, 7 behind
@@ -269,7 +269,10 @@ subscribers (head at 1204)
 personal data backfill: sealed through position 1204, caught up
 forget ledger: reconciled, applied through 2026-11-08T22:15:00.000Z, last run 2026-11-09T10:00:00.000Z
 key rotation: under 7Kx0Qw9z (previous Wn3eT1aa), 12 keys left to rewrap
-retention: 730d, 0 persons past it, next due 2028-01-04T09:13:00.000Z
+retention
+  default  2y, 0 persons past it, next due 2028-01-04T09:13:00.000Z
+  marketing  18mo, 3 keys past it, next due 2026-11-09T11:40:00.000Z
+  invoices  6y, 0 keys past it, next due 2031-02-12T16:20:00.000Z
 dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
 ```
 
@@ -287,6 +290,10 @@ dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
   [rotation](/guides/personal-data/#rotating-the-master-key) of the master key, the
   [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
   letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
+  The retention has a line for the app's, which forgets persons as a whole, under `default`, and
+  one for each category of `app/personal-data.ts`, which [forgets its
+  keys](/guides/personal-data/#each-category-for-its-own-time), with how many are past it now and
+  when the next comes due, and the keys a forgetting kept that no legal obligation keeps any more.
 
 Under the rule of [error text](#error-text) set to `"include"`, by `--error-text`,
 `BOUNDA_ERROR_TEXT=include` or the configuration, it also prints, under each failure, the text it
@@ -332,7 +339,7 @@ bounda migrate
 
 ```
 migrated
-  storage  storage  2 of 2
+  storage  storage  3 of 3
   storage  checkpoints  1 of 1
   readModels.reports  checkpoints  1 of 1
 ```
@@ -351,7 +358,29 @@ are refused untouched with [`STORAGE_SCHEMA_TOO_NEW`](/reference/errors/#codes).
 Exit codes: `0` migrated, `1` bad arguments, `2` the configuration could not be loaded or a
 migration failed.
 
-## `bounda forgotten` and `bounda forget`
+## `bounda export` and `bounda forget <person>`
+
+Answer a person's request from the command line. Both boot the project as `bounda dead-letters`
+does, and act as `--actor`.
+
+```bash
+bounda export c-42 --actor ops-ana > c-42.json
+bounda forget c-42 --category marketing --actor ops-ana
+bounda forget c-42 --actor ops-ana
+```
+
+`bounda export <person>` prints, as JSON, what `app.exportPersonalData` answers: every record that
+names the person, with each field's category, and every category's basis and retention (see
+[Exporting a person's data](/guides/personal-data/#exporting-a-persons-data)). It is recorded in the
+access log like any export.
+
+`bounda forget <person>` forgets the person as a whole, as `app.forget` does, and prints
+`forgot c-42`; with `--category`, repeated for several, only those categories, as when a consent is
+withdrawn, and prints `forgot marketing of c-42`. A category whose basis is `legal-obligation` is
+kept, restricted, until its retention ends, either way. A category the app does not have fails with
+`VALIDATION_FAILED` and nothing is forgotten.
+
+## `bounda forgotten` and `bounda forget --from`
 
 Apply again, by hand, the forgettings a restored backup undid, for an app without a
 [forget ledger](/guides/personal-data/#backups). `bounda forget` boots the project as
@@ -367,16 +396,18 @@ bounda forget --from forgotten.jsonl
 `bounda forgotten` reads the stream and prints, one line of JSON each, the `PersonalDataForgotten`
 of every person forgotten since `--since`: a date, compared with each event's time, which reads the
 whole stream, or a position of the stream to read after. Each line is
-`{"personId":…,"eventId":…,"forgottenAt":…,"reason":…,"fingerprints":[…]}`, the entry a ledger
-would hold, without `fingerprints` for a forgetting recorded before Bounda 0.4.0; the count goes to
-standard error, so standard output is the list alone. Run it against the database before it is
-restored, or regularly next to the backups.
+`{"personId":…,"eventId":…,"forgottenAt":…,"reason":…,"fingerprints":[…],"categories":…}`, the
+entry a ledger would hold: `categories` `null` for a person forgotten as a whole and else the
+categories the forgetting asked for, and no `fingerprints` for a forgetting recorded before Bounda
+0.4.0; the count goes to standard error, so standard output is the list alone. Run it against the
+database before it is restored, or regularly next to the backups.
 
-`bounda forget --from <file>` commits again each forgetting listed, under its own id, time and
-reason, unless the database holds it, and only while the person holds a key the line names, as a
-reconciliation would; with a forget ledger configured, it records each in the ledger first. A
-line may also be a bare person's id, forgotten as a request whenever they hold a key; blank lines
-are skipped. It prints each person it forgot and how many of those listed:
+`bounda forget --from <file>` commits again each forgetting listed, of the categories it asked for
+or of the person as a whole, under its own id, time and reason, unless the database holds it, and
+only while the person holds a key in force the line covers and names, as a reconciliation would;
+with a forget ledger configured, it records each in the ledger first. A line may also be a bare
+person's id, forgotten as a whole, as a request, whenever they hold a key; blank lines are skipped.
+It prints each person it forgot and how many of those listed:
 
 ```
 forgot again c-42
@@ -386,12 +417,14 @@ forgot again 1 of 3 listed; the rest hold no key the line names, or this store h
 | Option | Applies to | Meaning |
 | --- | --- | --- |
 | `--since <date\|position>` | `forgotten` | A date such as `2026-11-01` or `2026-11-01T03:00:00Z`, or a position: a whole number |
-| `--from <file>` | `forget` | What `bounda forgotten` printed, or one person's id a line |
-| `--root`, `--config`, `--registry`, `--error-text` | both | As for `bounda rebuild` |
-| `--actor <id>` | `forget` | Who forgets them again, named in each `PersonalDataForgotten` and its log line |
+| `--from <file>` | `forget` | What `bounda forgotten` printed, or one person's id a line; not with a person |
+| `--category <name>` | `forget <person>` | Forget only this category of the person; repeat it for several |
+| `--root`, `--config`, `--registry`, `--error-text` | all | As for `bounda rebuild` |
+| `--actor <id>` | `export`, `forget` | Who acts, named in each `PersonalDataForgotten`, its log line and the access log |
 
-Exit codes: `0` done, `1` bad arguments, `2` the project could not be loaded, or the file could not
-be read or has a line that is neither a person's id nor an entry, in which case nobody is forgotten.
+Exit codes: `0` done, `1` bad arguments, or a person and `--from` both or neither, `2` the project
+could not be loaded, the export or the forget failed, or the file could not be read or has a line
+that is neither a person's id nor an entry, in which case nobody is forgotten.
 
 ## `bounda forget-ledger expire`
 
@@ -444,6 +477,8 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `app.as(actor).rebuildReadModel(name)`. `bounda status` is `app.status()`, and its failures' text
 `app.as(actor).subscriberFailures.list()`; `bounda migrate` is `migrateTables({ config })` from
 `@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
-or `app.as(actor).deadLetters`, and `bounda forget` is `app.forgetAgain(entries, { actor })`. The
+or `app.as(actor).deadLetters`, `bounda export` is `app.as(actor).exportPersonalData(person)`,
+`bounda forget <person>` is `app.as(actor).forget(person, { categories })`, and
+`bounda forget --from` is `app.forgetAgain(entries, { actor })`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.

@@ -183,8 +183,10 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(toScheduled),
     listByPerson: async (person) => naming(person).map(toScheduled),
-    forget: async (person) => {
-      const named = naming(person);
+    forget: async (person, keep) => {
+      const named = [...entries.values()]
+        .filter((entry) => namesPerson(entry, person, keep))
+        .sort(byExecuteAt);
       for (const { dedupeKey } of named) entries.delete(dedupeKey);
       return named.map(toScheduled);
     },

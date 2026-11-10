@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { createApp, silentLogger } from "@bounda-dev/core";
+import { createApp, type PersonalDataExport, silentLogger } from "@bounda-dev/core";
 import { loadProject } from "@bounda-dev/core/node";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { registry as failingRegistry } from "./fixtures/rebuild-project/.bounda/failing-registry.ts";
@@ -714,6 +714,7 @@ describe("bounda forgotten and bounda forget", () => {
         personId: forgotten,
         eventId: event?.id,
         forgottenAt: event?.timestamp,
+        categories: null,
         reason: "requested",
         fingerprints: Reflect.get(Object(event?.payload), "fingerprints"),
       })}\n`,
@@ -742,6 +743,47 @@ describe("bounda forgotten and bounda forget", () => {
       [forgotten, "requested"],
       [kept, "requested"],
     ]);
+  });
+
+  it("forgets a person, or some categories of theirs, and exports what the store holds of them", async () => {
+    const memberId = `m-${Date.now()}-direct`;
+    const app = await open();
+    await app.commands.join({ memberId, name: "Ivo" });
+    await app.stop();
+
+    const exported = await cli(["export", memberId, "--actor", "operator-1"], fixture);
+    expect(exported.code).toBe(EXIT_OK);
+    const data = JSON.parse(exported.stdout) as PersonalDataExport;
+    expect(data.personId).toBe(memberId);
+    expect(data.categories.default).toMatchObject({ basis: null, restrictedUntil: null });
+    expect(data.events.length).toBeGreaterThan(0);
+
+    const unknown = await cli(["forget", memberId, "--category", "marketing"], fixture);
+    expect(unknown.code).not.toBe(EXIT_OK);
+    const partial = await cli(["forget", memberId, "--category", "default"], fixture);
+    expect(partial).toMatchObject({ code: EXIT_OK, stdout: `forgot default of ${memberId}\n` });
+    const whole = await cli(["forget", memberId, "--actor", "operator-1"], fixture);
+    expect(whole).toMatchObject({ code: EXIT_OK, stdout: `forgot ${memberId}\n` });
+    const after = await open();
+    const forgettings = (await after.events.read({ limit: 1_000 }))
+      .filter((event) => event.type === "PersonalDataForgotten" && event.aggregateId === memberId)
+      .map(({ payload, metadata }) => [(payload as { whole: boolean }).whole, metadata.actor]);
+    await after.stop();
+    expect(forgettings).toEqual([
+      [false, undefined],
+      [true, "operator-1"],
+    ]);
+  });
+
+  it("refuses a forget that names no one, or both a person and a list", async () => {
+    const neither = await cli(["forget"], fixture);
+    expect(neither.code).toBe(EXIT_CONVENTION);
+    expect(neither.stderr).toContain("name one person, or a list with --from, not both");
+    const both = await cli(["forget", "m-1", "--from", "list.txt"], fixture);
+    expect(both.code).toBe(EXIT_CONVENTION);
+    const listed = await cli(["forget", "--from", "list.txt", "--category", "default"], fixture);
+    expect(listed.code).toBe(EXIT_CONVENTION);
+    expect(listed.stderr).toContain("--category forgets one person");
   });
 
   it("names who forgets again with --actor, in the event's metadata", async () => {

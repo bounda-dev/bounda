@@ -1,7 +1,7 @@
 import { ValidationError } from "../../contracts/errors.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { isSealed, type PersonalKey, seal } from "./crypto.ts";
-import type { PersonalMarks } from "./marks.ts";
+import { fieldCategory, type PersonalMarks } from "./marks.ts";
 
 export interface LifecycleStateOfFunction {
   (payload: unknown): Readonly<Record<string, unknown>> | null;
@@ -73,7 +73,7 @@ export interface SealStateArgs {
   readonly marks: PersonalMarks;
   readonly state: Readonly<Record<string, unknown>>;
   readonly person: string;
-  readonly key: (person: string) => Promise<PersonalKey>;
+  readonly key: (person: string, category: string) => Promise<PersonalKey>;
 }
 
 export interface SealStateFunction {
@@ -81,7 +81,8 @@ export interface SealStateFunction {
 }
 
 /**
- * The state with each personal field that holds a value sealed under the person's key. One that
+ * The state with each personal field that holds a value sealed under the person's key of the
+ * field's category. One that
  * holds `null` holds nothing of theirs and is kept, as is one sealed already, so a lifecycle event
  * written before its fields were marked can be sealed in place with what it still has in the
  * clear.
@@ -91,7 +92,8 @@ export const sealState: SealStateFunction = async ({ marks, state, person, key }
   for (const field of marks.fields) {
     const value = state[field];
     if (!holdsValue(value) || isSealed(value)) continue;
-    sealed[field] = await seal({ key: await key(person), person, value });
+    const category = fieldCategory(marks, field);
+    sealed[field] = await seal({ key: await key(person, category), person, category, value });
   }
   return sealed;
 };
@@ -100,7 +102,7 @@ export interface SealLifecycleEventArgs<Event extends LifecycleEvent> {
   readonly process: string;
   readonly marks: PersonalMarks;
   readonly event: Event;
-  readonly key: (person: string) => Promise<PersonalKey>;
+  readonly key: (person: string, category: string) => Promise<PersonalKey>;
 }
 
 export interface LifecycleEvent {

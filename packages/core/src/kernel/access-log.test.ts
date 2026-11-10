@@ -199,7 +199,9 @@ describe("the access log", () => {
 
     const exported = await app.as("operator-1").exportPersonalData("ana");
     expect(exported.readModels).toEqual({
-      customerDirectory: [{ key: "ana", data: { email: "ana@example.com" } }],
+      customerDirectory: [
+        { key: "ana", data: { email: "ana@example.com" }, categories: { email: "default" } },
+      ],
       customerPlans: [],
     });
     expect(accesses()).toEqual([

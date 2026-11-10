@@ -62,7 +62,9 @@ export interface AppStatus {
    */
   readonly keyRotation: KeyRotationStatus | null;
   /**
-   * `null` without `runtime.personalData.retention`.
+   * `null` when no schema marks personal data: every retention set, of the app and of each
+   * declared category, and the keys kept past a forgetting that no legal obligation keeps any
+   * more.
    */
   readonly retention: RetentionStatus | null;
   /**

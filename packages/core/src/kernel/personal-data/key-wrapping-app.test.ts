@@ -131,8 +131,11 @@ const emailOf = async (app: BoundaApp<Registry>, customerId: string) =>
   (await app.exportPersonalData(customerId)).events[0]?.data;
 
 const keyRows = (db: ReturnType<typeof createNodeSqliteAdapter>["db"]) =>
-  db.prepare(`SELECT "person", "key", "fingerprint", "kid" FROM "bounda_personal_keys"`).all() as {
+  db
+    .prepare(`SELECT "person", "category", "key", "fingerprint", "kid" FROM "bounda_personal_keys"`)
+    .all() as {
     person: string;
+    category: string;
     key: string;
     fingerprint: string;
     kid: string | null;
@@ -197,8 +200,14 @@ describe("personal keys wrapped under a master key", () => {
     expect(await app.forgetAgain([{ personId: "c-1" }])).toEqual(["c-1"]);
     // The same row put back, as a restore would: unwrapped again, so the app had let it go.
     db.prepare(
-      `INSERT INTO "bounda_personal_keys" ("person", "key", "fingerprint", "kid") VALUES (?, ?, ?, ?)`,
-    ).run(row?.person ?? "", row?.key ?? "", row?.fingerprint ?? "", row?.kid ?? null);
+      `INSERT INTO "bounda_personal_keys" ("person", "category", "key", "fingerprint", "kid") VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      row?.person ?? "",
+      row?.category ?? "",
+      row?.key ?? "",
+      row?.fingerprint ?? "",
+      row?.kid ?? null,
+    );
     const before = unwraps;
     await emailOf(app, "c-1");
     expect(unwraps).toBe(before + 1);

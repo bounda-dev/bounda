@@ -1,6 +1,6 @@
 import type { KeyedPerson, Snapshot, SnapshotStore } from "../index.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
-import { heldKeys, naming } from "./held-keys.ts";
+import { heldKeys, naming, outsideKept } from "./held-keys.ts";
 import { PERSON_INDEXED } from "./schema.ts";
 
 export interface CreateSqliteSnapshotStoreArgs {
@@ -58,9 +58,9 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
       aggregateType,
       aggregateId,
     ]),
-  forget: (person) =>
+  forget: (person, keep = []) =>
     db.run(
-      `DELETE FROM ${table} WHERE ${naming({ personRows, indexed: PERSON_INDEXED.snapshots })}`,
-      [person],
+      `DELETE FROM ${table} WHERE ${naming({ personRows, indexed: PERSON_INDEXED.snapshots })} AND ${outsideKept(table)}`,
+      [person, person, JSON.stringify(keep)],
     ),
 });

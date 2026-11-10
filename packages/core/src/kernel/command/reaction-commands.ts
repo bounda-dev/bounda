@@ -8,8 +8,15 @@ import { BoundaError, ChainDepthExceededError } from "../../contracts/errors.ts"
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import type { ForgetOptions } from "../../modules/personal-data.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import { forgetWithin, logForgotten, STALE_INTENTION } from "../personal-data/forget.ts";
+import type { PersonalCategories } from "../personal-data/categories.ts";
+import {
+  forgetScopeOf,
+  forgetWithin,
+  logForgotten,
+  STALE_INTENTION,
+} from "../personal-data/forget.ts";
 import type { ForgetIntention, ForgetIntentions } from "../personal-data/intention.ts";
 import { checkPersonId } from "../personal-data/transact.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
@@ -63,7 +70,7 @@ export interface ReactionCommands {
    * before the transaction opens, so an attempt whose transaction then fails leaves it for the
    * next reconciliation, which commits it.
    */
-  forget(personId: string): Promise<void>;
+  forget(personId: string, options?: ForgetOptions): Promise<void>;
   /**
    * What the run's commands decided, in the order they finished, once every dispatch, awaited by
    * the handler or not, has settled; rejects with the first that failed. The run awaits it before
@@ -102,6 +109,11 @@ export interface CreateReactionCommandsArgs {
    * How deep a `forget` may go, which no pipeline checks for it as it does for a command.
    */
   readonly maxChainDepth: number;
+  readonly personalCategories: PersonalCategories;
+  /**
+   * How many events a `forget` reads at once.
+   */
+  readonly batchSize: number;
 }
 
 export interface CreateReactionCommandsFunction {
@@ -126,6 +138,8 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   clock,
   intentions,
   maxChainDepth,
+  personalCategories,
+  batchSize,
 }) => {
   const commandIds = createReactionCommandIds(idempotencyKey);
   const forgetting = new Set<string>();
@@ -203,8 +217,9 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   return {
     commands,
     signal: handler.signal,
-    forget: async (personId) => {
+    forget: async (personId, options) => {
       checkPersonId(personId, "forget");
+      const scope = forgetScopeOf({ categories: personalCategories, options });
       if (abandoned.signal.aborted) throw abandoned.signal.reason;
       if (finished) {
         throw new ReactionFinishedError(
@@ -214,13 +229,15 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
       }
       const depth = context.depth + 1;
       if (depth > maxChainDepth) throw new ChainDepthExceededError(depth, maxChainDepth);
-      if (forgetting.has(personId)) return;
-      forgetting.add(personId);
+      const asked = JSON.stringify([personId, scope]);
+      if (forgetting.has(asked)) return;
+      forgetting.add(asked);
       let intention: ForgetIntention | undefined;
       within.beforeCommit(async (storage) => {
         intention = await intentions.intend({
           personId,
           reason: "requested",
+          scope,
           keys: storage.personalKeys,
         });
       });
@@ -234,6 +251,9 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
             personId,
             intention: named,
             context: { ...context, depth },
+            categories: personalCategories,
+            scope,
+            batchSize,
           });
         // A key given after the intention goes too: the commit is one, and a run whose commit
         // fails is delivered again, with an intention that names it.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { newStoredKey, openedKey } from "../test-support.ts";
 import { isSealed, unseal } from "./crypto.ts";
@@ -11,8 +12,16 @@ import {
   statePersonOf,
 } from "./process-state.ts";
 
-const byField: PersonalMarks = { person: "customerId", fields: ["email", "phone"] };
-const byInstance: PersonalMarks = { person: null, fields: ["email"] };
+const byField: PersonalMarks = {
+  person: "customerId",
+  fields: ["email", "phone"],
+  categories: { email: "profile", phone: DEFAULT_PERSONAL_CATEGORY },
+};
+const byInstance: PersonalMarks = {
+  person: null,
+  fields: ["email"],
+  categories: { email: DEFAULT_PERSONAL_CATEGORY },
+};
 
 describe("lifecycleStateOf", () => {
   it("is the state a lifecycle event carries, and null for one that carries none", () => {
@@ -79,8 +88,8 @@ describe("sealState", () => {
         marks: byField,
         state,
         person: "c-1",
-        key: async (person) => {
-          persons.push(person);
+        key: async (person, category) => {
+          persons.push(`${person}:${category}`);
           return key;
         },
       });
@@ -91,7 +100,8 @@ describe("sealState", () => {
     expect(sealed.nudges).toBe(2);
     expect(isSealed(sealed.email)).toBe(true);
     expect(isSealed(sealed.email) && (await unseal({ key, sealed: sealed.email }))).toBe("a@b.c");
-    expect(persons).toEqual(["c-1"]);
+    expect(persons).toEqual(["c-1:profile"]);
+    expect(isSealed(sealed.email) && sealed.email.$personal.category).toBe("profile");
     expect(await sealOnce({ ...sealed, phone: "555" })).toMatchObject({ email: sealed.email });
   });
 });
