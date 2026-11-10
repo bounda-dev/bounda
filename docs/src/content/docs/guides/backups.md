@@ -85,6 +85,8 @@ restored.
   letter and in the state of their processes, and none of their values in any row of the
   database.
 - **Their scheduled commands never run**, even when they fall due as the copy comes back.
+- **A forgetting of some categories alone** goes again for those categories alone, and what a
+  [legal obligation](/guides/personal-data/#categories) keeps after a person is forgotten stays readable.
 - **A forgetting whose commit never happened**, recorded in the ledger by a process that stopped
   before committing it, is committed at the restored start too.
 - **A strict ledger that cannot be read** fails the restored start before it serves anything; the

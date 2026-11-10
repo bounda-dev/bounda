@@ -228,6 +228,68 @@ const registry = {
   },
 } as unknown as Registry;
 
+// A newsletter address under a consent, a tax id kept by law for six years, and a name in the
+// default category.
+const categorized = {
+  aggregates: {
+    customer: {
+      state: { initialState: {} },
+      events: {
+        customerBilled: {
+          payload: ({ z, personal }: EventPayloadArgs) =>
+            z.object({
+              newsletter: personal(z.string(), { category: "marketing" }),
+              taxId: personal(z.string(), { category: "invoices" }),
+              name: personal(z.string()),
+            }),
+          evolve: () => ({}),
+        },
+      },
+      commands: {
+        billCustomer: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({
+                customerId: z.string(),
+                newsletter: z.string(),
+                taxId: z.string(),
+                name: z.string(),
+              }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { newsletter: string; taxId: string; name: string } };
+              events: Builders;
+            }) => [
+              events.customerBilled?.({
+                newsletter: command.payload.newsletter,
+                taxId: command.payload.taxId,
+                name: command.payload.name,
+              }),
+            ],
+          },
+        },
+      },
+      policies: {},
+      processes: {},
+    },
+  },
+  readModels: {},
+  personalData: {
+    categories: {
+      marketing: { basis: "consent", retention: "730d" },
+      invoices: { basis: "legal-obligation", retention: "6y" },
+    },
+  },
+} as unknown as Registry;
+
+const billOf = (person: string) => ({
+  newsletter: `${person}.newsletter@example.com`,
+  taxId: `${person}-TAX-2026-0001`,
+  name: `${person} Billedname`,
+});
+
 const START = new Date("2026-11-09T09:00:00.000Z");
 // Longer than the scenario runs for, so no periodic reconciliation hides a restore the app missed.
 const RECONCILE_EVERY_MS = 24 * 60 * 60_000;
@@ -592,11 +654,12 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       await write(first, "ana");
       await target.backUp();
       const written = await target.storage.createStorage();
-      const key = await written.personalKeys.get("ana");
+      const key = await written.personalKeys.get("ana", "default");
       await written.close();
       // What a forget records before it commits, left alone by a process that stopped in between.
       const intention = {
         personId: "ana",
+        categories: null,
         eventId: "019a6b1e-0000-7000-8000-00000000a7a0",
         forgottenAt: clock.now().toISOString(),
         reason: "requested" as const,
@@ -636,6 +699,64 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
       await expectForgottenIn(storage, restored, "ana");
       await expectForgottenIn(storage, restored, "bob");
+    });
+
+    it("forgets again only the categories a partial forgetting named, and keeps readable what the law keeps", async () => {
+      const target = await create();
+      const clock = createFixedClock(START);
+      const open = async (storage: Adapter) => {
+        const app = await createApp({
+          registry: categorized,
+          config: {
+            storage,
+            runtime: {
+              personalData: {
+                keyWrapper: BEFORE_ROTATION,
+                forgetLedger: { store: target.forgetLedger, reconcileEvery: RECONCILE_EVERY_MS },
+              },
+            },
+          },
+          clock,
+          env,
+        });
+        stops.push(() => app.stop());
+        return app;
+      };
+      const read = async (app: BoundaApp, person: string) =>
+        (await app.exportPersonalData(person)).events[0]?.data;
+      const first = await open(target.storage);
+      const commands = first.commands as unknown as Commands;
+      for (const person of ["ana", "bob"]) {
+        await commands.billCustomer?.({ customerId: person, ...billOf(person) });
+      }
+      await target.backUp();
+      // Ana withdraws her consent to the newsletter; bob is forgotten as a whole.
+      const anaForgotten = (await first.forget("ana", { categories: ["marketing"] })).eventIds;
+      const bobForgotten = (await first.forget("bob")).eventIds;
+      await first.runUntilIdle();
+      await first.stop();
+
+      const storage = await target.restore();
+      const restored = await open(storage);
+      expect(await forgettings(restored, "ana")).toEqual(anaForgotten);
+      expect(await forgettings(restored, "bob")).toEqual(bobForgotten);
+      const ana = billOf("ana");
+      const bob = billOf("bob");
+      expect(await read(restored, "ana")).toEqual({
+        newsletter: null,
+        taxId: ana.taxId,
+        name: ana.name,
+      });
+      expect(await read(restored, "bob")).toEqual({
+        newsletter: null,
+        taxId: bob.taxId,
+        name: null,
+      });
+      await expectForgotten(storage, "ana", {
+        categories: ["marketing"],
+        values: [ana.newsletter],
+      });
+      await expectForgotten(storage, "bob", { values: [bob.newsletter, bob.name] });
     });
   });
 };
