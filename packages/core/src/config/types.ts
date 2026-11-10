@@ -155,12 +155,11 @@ export interface PersonalDataConfig {
 }
 
 /**
- * The `runtime.personalData.forgetLedger` of the configuration. The runtime appends each
- * forgetting to the ledger as soon as it commits, and copies it again from the stream in the
- * background, in case the process stops in between. When the app starts, and every
- * `reconcileEvery` while it runs, it reads the ledger and forgets again, with `reason:
- * "restored"`, whoever it names whose forgetting the database does not hold and who still holds
- * a key.
+ * The `runtime.personalData.forgetLedger` of the configuration. Every forgetting writes its
+ * intention to the ledger before it commits, and the stream copies each committed one again in
+ * the background. When the app starts, and every `reconcileEvery` while it runs, it reads the
+ * ledger and commits again each forgetting the database does not hold whose person still holds a
+ * key it names: one a restored backup rolled back, or one whose commit never happened.
  */
 export interface ForgetLedgerConfig {
   /**
@@ -179,10 +178,14 @@ export interface ForgetLedgerConfig {
    */
   readonly reconcileEvery?: DurationInput;
   /**
-   * When `true`, the app does not start until it has read the ledger through: a ledger that cannot
-   * be read fails the start with `ForgetLedgerUnreconciledError`, and the start waits for the
-   * reconciliation however long it takes. When `false`, the default, the app starts anyway, waits
-   * for the ledger at most a few seconds, and reconciles in the background.
+   * When `true`, nothing is forgotten that the ledger has not recorded, and the app does not
+   * start until it has read the ledger through: a forgetting whose intention the ledger does not
+   * take fails with `ForgetLedgerUnavailableError` and forgets nobody, so calling again is safe;
+   * a ledger that cannot be read fails the start with `ForgetLedgerUnreconciledError`, and the
+   * start waits for the reconciliation however long it takes. When `false`, the default, a
+   * forgetting the ledger does not take is logged and commits all the same, for the stream to copy
+   * later, and the app starts after waiting for the ledger at most `timeout`, reconciling in the
+   * background.
    */
   readonly strict?: boolean;
   /**
@@ -191,6 +194,12 @@ export interface ForgetLedgerConfig {
    * default: entries are kept for good.
    */
   readonly keepFor?: DurationInput;
+  /**
+   * How long each call to the ledger may take before it is given up with
+   * `ForgetLedgerTimeoutError`, and how long a start that is not strict waits for the
+   * reconciliation. Defaults to `DEFAULT_FORGET_LEDGER_TIMEOUT_MS` (ten seconds).
+   */
+  readonly timeout?: DurationInput;
 }
 
 export interface ResolvedForgetLedgerConfig {
@@ -201,6 +210,7 @@ export interface ResolvedForgetLedgerConfig {
    * `null` when entries are kept for good.
    */
   readonly keepForMs: number | null;
+  readonly timeoutMs: number;
 }
 
 /**

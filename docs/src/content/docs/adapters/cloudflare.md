@@ -166,7 +166,11 @@ in `wrangler.jsonc` and name it in `runtime.personalData.forgetLedger.store`; an
 `ConfigurationError`. Each object keeps its entries under its own name, and reads the ledger once
 more a minute after it starts, since KV may take that long to list a key. The periodic
 reconciliation never wakes an object on its own, and with `keepFor` each key expires in KV by
-itself. See [backups](/guides/personal-data/#backups).
+itself; `bounda forget-ledger expire` gives the keys written before `keepFor` was set theirs.
+Every forgetting writes its intention to KV before the object commits it, so one the object did not
+get to commit, because it was evicted or its transaction failed, is committed at its next start;
+with `strict`, a forgetting KV does not take fails and forgets nobody. See
+[backups](/guides/personal-data/#backups).
 
 ## One object per tenant
 

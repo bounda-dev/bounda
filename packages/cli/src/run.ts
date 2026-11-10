@@ -10,16 +10,24 @@ import {
   type Logger,
   MAX_ACTOR_LENGTH,
   migrateTables,
+  parseDuration,
   type Registry,
   rebuildReadModel,
   resolveErrorText,
   type SubscriberFailure,
   withErrorText,
 } from "@bounda-dev/core";
+import { type AdapterDefinition, isAdapter, type Storage } from "@bounda-dev/core/adapter";
 import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
+import {
+  expireKvLedger,
+  type KvLedgerModule,
+  type Wrangler,
+  wranglerIn,
+} from "./forget-ledger-expire.ts";
 import { parseForgetList, parseSince, readForgotten, type Since } from "./forgotten.ts";
 import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
@@ -40,6 +48,8 @@ export interface RunCliArgs {
   readonly stdout: Output;
   readonly stderr: Output;
   readonly signal?: AbortSignal;
+  // How `forget-ledger expire` runs wrangler in a project's root; the project's own by default.
+  readonly wrangler?: (root: string) => Wrangler;
 }
 
 export interface RunCliFunction {
@@ -105,7 +115,8 @@ const errorTextArgs = (options: ProjectOptions, config: Config) => ({
   config,
 });
 
-const rootOf = (options: ProjectOptions, cwd: string): string => resolve(cwd, options.root ?? ".");
+const rootOf = (options: Pick<ProjectOptions, "root">, cwd: string): string =>
+  resolve(cwd, options.root ?? ".");
 
 // What fails while the project's modules load, or a `BOUNDA_ERROR_TEXT` it does not know, tells of
 // files, exports and settings, never of data a handler read, so it is printed in full.
@@ -304,18 +315,44 @@ interface ForgottenOptions extends ProjectOptions {
   readonly since: Since;
 }
 
-const runForgotten = (
+// Reads the event store alone, without starting the app: no ports, read models or forget ledger,
+// so a strict ledger that is down does not keep it from listing what the database holds.
+const runForgotten = async (
   options: ForgottenOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
-): Promise<number> =>
-  withApp(options, cwd, stderr, async (app) => {
-    const lines = await readForgotten({ events: app.events, since: options.since });
+): Promise<number> => {
+  const project = await load(options, cwd, logTo(stderr), stderr);
+  if (project === undefined) return EXIT_FAILURE;
+  const definition: AdapterDefinition = project.config.storage;
+  if (!isAdapter(definition)) {
+    line(
+      stderr,
+      `error: storage "${definition.name}" is a definition without factories. Import the adapter package's factory.`,
+    );
+    return EXIT_FAILURE;
+  }
+  let storage: Storage | undefined;
+  try {
+    storage = await definition.createStorage();
+    const { eventStore } = storage;
+    const lines = await readForgotten({
+      events: {
+        read: ({ after = 0, limit = 1_000 } = {}) =>
+          eventStore.readAll({ afterPosition: after, limit }),
+      },
+      since: options.since,
+    });
     for (const forgotten of lines) line(stdout, JSON.stringify(forgotten));
     line(stderr, `${lines.length} person${lines.length === 1 ? "" : "s"} forgotten`);
     return EXIT_OK;
-  });
+  } catch (error) {
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, project.config)));
+  } finally {
+    await storage?.close();
+  }
+};
 
 interface ForgetOptions extends ActingOptions {
   readonly from: string;
@@ -346,10 +383,74 @@ const runForget = async (
     for (const personId of forgotten) line(stdout, `forgot again ${personId}`);
     line(
       stdout,
-      `forgot again ${forgotten.length} of ${entries.length} listed; the rest hold no key, or this store holds their forgetting`,
+      `forgot again ${forgotten.length} of ${entries.length} listed; the rest hold no key the line names, or this store holds their forgetting`,
     );
     return EXIT_OK;
   });
+};
+
+interface ExpireOptions {
+  readonly root?: string;
+  readonly errorText: boolean;
+  readonly binding: string;
+  readonly keepFor: number;
+  readonly local: boolean;
+  readonly env?: string;
+  readonly wranglerConfig?: string;
+  readonly persistTo?: string;
+}
+
+const parseKeepFor = (value: string): number => {
+  try {
+    const keepForMs = parseDuration(value.trim());
+    if (keepForMs > 0) return keepForMs;
+  } catch {}
+  throw new InvalidArgumentError("expected a duration longer than 0, such as 35d");
+};
+
+const runExpire = async (
+  options: ExpireOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+  wrangler: (root: string) => Wrangler,
+): Promise<number> => {
+  let ledger: KvLedgerModule;
+  try {
+    ledger = await import("@bounda-dev/cloudflare/forget-ledger");
+  } catch {
+    line(
+      stderr,
+      "error: @bounda-dev/cloudflare is not installed, and the KV forget ledger comes from it",
+    );
+    return EXIT_FAILURE;
+  }
+  try {
+    const { expired, removed } = await expireKvLedger({
+      wrangler: wrangler(rootOf(options, cwd)),
+      ledger,
+      binding: options.binding,
+      keepForMs: options.keepFor,
+      target: {
+        local: options.local,
+        env: options.env,
+        config: options.wranglerConfig,
+        persistTo: options.persistTo,
+      },
+      now: Date.now(),
+    });
+    line(
+      stdout,
+      `gave ${expired} entr${expired === 1 ? "y" : "ies"} the expiration keepFor sets; removed ${removed} already past it`,
+    );
+    return EXIT_OK;
+  } catch (error) {
+    return failed(
+      stderr,
+      error,
+      resolveErrorText({ forced: options.errorText ? "include" : undefined, env: process.env }),
+    );
+  }
 };
 
 interface StatusOptions extends ActingOptions {
@@ -469,7 +570,14 @@ const actingOptions = <T extends Command>(command: T): T =>
     parseActor,
   );
 
-export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal }) => {
+export const runCli: RunCliFunction = async ({
+  argv,
+  cwd,
+  stdout,
+  stderr,
+  signal,
+  wrangler = wranglerIn,
+}) => {
   let exitCode = EXIT_OK;
   const program = new Command("bounda")
     .description("Bounda: event sourcing and CQRS for TypeScript")
@@ -596,6 +704,29 @@ export const runCli: RunCliFunction = async ({ argv, cwd, stdout, stderr, signal
   ).action(async (options: ForgetOptions) => {
     exitCode = await runForget(options, cwd, stdout, stderr);
   });
+
+  program
+    .command("forget-ledger")
+    .description("look after a forget ledger outside the app")
+    .command("expire")
+    .description(
+      "give every entry of a Workers KV forget ledger the expiration keepFor sets, those written before it was set included",
+    )
+    .requiredOption("--binding <name>", "the KV namespace's binding in wrangler.jsonc")
+    .requiredOption(
+      "--keep-for <duration>",
+      "runtime.personalData.forgetLedger.keepFor, such as 35d",
+      parseKeepFor,
+    )
+    .option("--local", "the local state of wrangler dev instead of the deployed namespace", false)
+    .option("--env <name>", "the wrangler environment")
+    .option("--wrangler-config <path>", "the wrangler configuration file")
+    .option("--persist-to <dir>", "with --local, where wrangler dev keeps its state")
+    .option("--root <dir>", "the project's root directory, where wrangler is installed")
+    .option("--error-text", "print the message of the error the command fails on", false)
+    .action(async (options: ExpireOptions) => {
+      exitCode = await runExpire(options, cwd, stdout, stderr, wrangler);
+    });
 
   actingOptions(
     program

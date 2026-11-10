@@ -30,6 +30,11 @@ export interface AppendSystemEventArgs {
    * The person the event is about, on their own stream.
    */
   readonly person?: string;
+  /**
+   * The event's id and timestamp when they were set before, as a forgetting's intention sets them;
+   * from `ids` and `clock` when omitted.
+   */
+  readonly identity?: { readonly id: string; readonly timestamp: string };
 }
 
 export interface AppendSystemEventFunction {
@@ -51,6 +56,7 @@ export const appendSystemEvent: AppendSystemEventFunction = async ({
   payload,
   context,
   person = null,
+  identity,
 }) => {
   const { version } = await eventStore.load({
     aggregateType,
@@ -63,13 +69,13 @@ export const appendSystemEvent: AppendSystemEventFunction = async ({
     expectedVersion: version,
     events: [
       {
-        id: ids.next(),
+        id: identity?.id ?? ids.next(),
         aggregateType,
         aggregateId,
         version: version + 1,
         type,
         payload,
-        timestamp: clock.now().toISOString(),
+        timestamp: identity?.timestamp ?? clock.now().toISOString(),
         metadata: { ...context, schemaVersion: 1, system: true },
         person,
       },

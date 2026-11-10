@@ -7,6 +7,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
+import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -51,6 +52,7 @@ export interface CreatePolicyExecutorArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
+  readonly intentions: ForgetIntentions;
 }
 
 export interface CreatePolicyExecutorFunction {
@@ -64,6 +66,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   ids,
   clock,
   logger,
+  intentions,
 }) => ({
   run: async ({ policy, event, attempt, retryId, actor, within }) => {
     within.read(openedUnder(event));
@@ -83,6 +86,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       logger,
       ids,
       clock,
+      intentions,
       maxChainDepth: config.forAggregate(policy.aggregate).policies.maxChainDepth,
     });
     const handled = traced({

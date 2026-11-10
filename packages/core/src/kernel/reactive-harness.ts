@@ -14,6 +14,7 @@ import { createRestrictedRetries } from "./dead-letters/restricted.ts";
 import { createDeadLetterRetry, type DeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
 import type { AppStorage } from "./events/app-event-store.ts";
+import { createForgetIntentions } from "./personal-data/intention.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
@@ -104,6 +105,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
   });
   const policies = buildPolicies({ registry, aggregates });
+  const intentions = createForgetIntentions({ ledger: null, ids, clock, logger });
   const policyExecutor = createPolicyExecutor({
     aggregates,
     pipeline,
@@ -111,6 +113,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     ids,
     clock,
     logger,
+    intentions,
   });
   const processes = createProcessRunner({
     processes: buildProcesses({ registry, aggregates, config }),
@@ -122,6 +125,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     clock,
     pendingRetries: ignoredRetries,
     logger,
+    intentions,
   });
   const retries = createDeadLetterRetry({
     storage,

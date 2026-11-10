@@ -710,7 +710,13 @@ describe("bounda forgotten and bounda forget", () => {
     expect(byPosition.code).toBe(EXIT_OK);
     expect(besidesLogs(byPosition.stderr)).toBe("1 person forgotten\n");
     expect(byPosition.stdout).toBe(
-      `${JSON.stringify({ personId: forgotten, eventId: event?.id, forgottenAt: event?.timestamp })}\n`,
+      `${JSON.stringify({
+        personId: forgotten,
+        eventId: event?.id,
+        forgottenAt: event?.timestamp,
+        reason: "requested",
+        fingerprints: Reflect.get(Object(event?.payload), "fingerprints"),
+      })}\n`,
     );
     const byDate = await cli(["forgotten", "--since", before], fixture);
     expect(byDate.code).toBe(EXIT_OK);
@@ -725,7 +731,7 @@ describe("bounda forgotten and bounda forget", () => {
     expect(besidesLogs(forget.stderr)).toBe("");
     expect(forget.code).toBe(EXIT_OK);
     expect(forget.stdout).toBe(
-      `forgot again ${kept}\nforgot again 1 of 2 listed; the rest hold no key, or this store holds their forgetting\n`,
+      `forgot again ${kept}\nforgot again 1 of 2 listed; the rest hold no key the line names, or this store holds their forgetting\n`,
     );
     const after = await open();
     const reasons = (await after.events.read({ after: lastPosition, limit: 100 }))
@@ -734,7 +740,7 @@ describe("bounda forgotten and bounda forget", () => {
     await after.stop();
     expect(reasons).toEqual([
       [forgotten, "requested"],
-      [kept, "restored"],
+      [kept, "requested"],
     ]);
   });
 
@@ -748,7 +754,7 @@ describe("bounda forgotten and bounda forget", () => {
     const forget = await cli(["forget", "--from", file, "--actor", "operator-1"], fixture);
     expect(forget.code).toBe(EXIT_OK);
     expect(logged(forget.stderr, "info", "personal data forgotten")).toEqual([
-      expect.objectContaining({ personId: memberId, reason: "restored", actor: "operator-1" }),
+      expect.objectContaining({ personId: memberId, reason: "requested", actor: "operator-1" }),
     ]);
     const after = await open();
     const forgetting = (await after.events.read({ limit: 1_000 })).find(
@@ -756,6 +762,77 @@ describe("bounda forgotten and bounda forget", () => {
     );
     await after.stop();
     expect(forgetting?.metadata.actor).toBe("operator-1");
+  });
+
+  it("lists what the database holds without starting the app, so a strict ledger that is down does not stop it", async () => {
+    const strict = ["--config", "strict-ledger.config.ts"];
+    const listed = await cli(["forgotten", "--since", "0", ...strict], fixture);
+    expect(listed).toMatchObject({ code: EXIT_OK, stdout: "" });
+    expect(besidesLogs(listed.stderr)).toBe("0 persons forgotten\n");
+    const booted = await cli(["dead-letters", "list", ...strict], fixture);
+    expect(booted.code).toBe(EXIT_FAILURE);
+    expect(booted.stderr).toContain(
+      "error: The forget ledger could not be read, and runtime.personalData.forgetLedger.strict keeps the app from starting until it is",
+    );
+  });
+
+  it("fails a listing whose project cannot load, or whose storage cannot open, and closes what opened", async () => {
+    const missing = await cli(
+      ["forgotten", "--since", "0", "--config", "missing.config.ts"],
+      fixture,
+    );
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stdout).toBe("");
+    expect(besidesLogs(missing.stderr).match(/^error: /gm)).toHaveLength(1);
+    const root = await list();
+    await writeFile(
+      join(root, "registry.ts"),
+      "export const registry = { aggregates: {}, readModels: {} };\n",
+    );
+    const adapter = (open: string) =>
+      `import { writeFileSync } from "node:fs";\nexport default { storage: { kind: "bounda-adapter", name: "broken", options: {}, createReadModel: async () => undefined, rebuildReadModel: async () => undefined, ${open} } };\n`;
+    await writeFile(
+      join(root, "down.config.ts"),
+      adapter(`createStorage: async () => { throw new Error("database is down"); }`),
+    );
+    const down = await cli(
+      ["forgotten", "--since", "0", "--config", "down.config.ts", "--registry", "registry.ts"],
+      root,
+    );
+    expect(down.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(down.stderr)).toBe(
+      "error: Error; its message may quote personal data: run again with --error-text to print it\n",
+    );
+    await writeFile(
+      join(root, "failing.config.ts"),
+      adapter(
+        `createStorage: async () => ({ eventStore: { readAll: async () => { throw new Error("read failed"); } }, close: async () => writeFileSync(${JSON.stringify(join(root, "closed"))}, "") })`,
+      ),
+    );
+    const failing = await cli(
+      ["forgotten", "--since", "0", "--config", "failing.config.ts", "--registry", "registry.ts"],
+      root,
+    );
+    expect(failing.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(failing.stderr)).toMatch(/^error: Error; /);
+    await expect(stat(join(root, "closed"))).resolves.toBeDefined();
+  });
+
+  it("says a storage without its factories cannot be listed", async () => {
+    const root = await list();
+    await writeFile(
+      join(root, "bounda.config.ts"),
+      `export default { storage: { kind: "bounda-adapter", name: "elsewhere", options: {} } };\n`,
+    );
+    await writeFile(
+      join(root, "registry.ts"),
+      "export const registry = { aggregates: {}, readModels: {} };\n",
+    );
+    const refused = await cli(["forgotten", "--since", "0", "--registry", "registry.ts"], root);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(refused.stderr).toContain(
+      `error: storage "elsewhere" is a definition without factories. Import the adapter package's factory.`,
+    );
   });
 
   it("refuses a --since that is neither a position nor a date", async () => {
@@ -776,7 +853,7 @@ describe("bounda forgotten and bounda forget", () => {
     expect(missing.stderr).toMatch(/^error: nowhere\.jsonl: ENOENT/);
     for (const [content, message] of [
       ["m-1\n{not json", "line 2 is neither a person's id nor JSON"],
-      ['{"eventId":"e-1"}', 'line 1 needs a "personId" string, and "eventId" only as a string'],
+      ['{"eventId":"e-1"}', 'line 1 needs a "personId" string; "eventId" and "forgottenAt"'],
       ['{"personId":"m-1","eventId":7}', 'line 1 needs a "personId" string'],
     ] as const) {
       await writeFile(join(root, "list.jsonl"), content);
@@ -804,6 +881,159 @@ describe("bounda forgotten and bounda forget", () => {
     expect(forget).toContain(
       "forget again, after restoring a backup, each person listed who still holds a key and whose forgetting the store does not hold",
     );
+  });
+});
+
+describe("bounda forget-ledger expire", () => {
+  const ROOT = "bounda/forget-ledger/";
+  const expire = async (argv: readonly string[], listed: unknown = []) => {
+    const stdout = capture();
+    const stderr = capture();
+    const calls: { readonly root: string; readonly args: readonly string[] }[] = [];
+    const code = await runCli({
+      argv: ["forget-ledger", "expire", ...argv],
+      cwd: "/project",
+      stdout,
+      stderr,
+      wrangler: (root) => async (args) => {
+        calls.push({ root, args });
+        if (args[1] === "bulk" && args[2] === "put") throw new Error("wrangler: not authorized");
+        return JSON.stringify(listed);
+      },
+    });
+    return { code, stdout: stdout.text(), stderr: stderr.text(), calls, listed };
+  };
+
+  it("gives the entries their expiration through the project's wrangler, and says how many", async () => {
+    const day = 86_400_000;
+    const old = { personId: "c-1", forgottenAt: new Date(Date.now() - 40 * day).toISOString() };
+    const done = await expire(
+      [
+        "--binding",
+        "FORGET_LEDGER",
+        "--keep-for",
+        " 35d ",
+        "--local",
+        "--env",
+        "staging",
+        "--wrangler-config",
+        "w.jsonc",
+        "--persist-to",
+        ".state",
+        "--root",
+        "app",
+      ],
+      [{ name: `${ROOT}t/1:e-1`, metadata: old }],
+    );
+    expect(done).toMatchObject({
+      code: EXIT_OK,
+      stdout: "gave 0 entries the expiration keepFor sets; removed 1 already past it\n",
+      stderr: "",
+    });
+    expect(done.calls.map(({ root }) => root)).toEqual([
+      resolve("/project", "app"),
+      resolve("/project", "app"),
+    ]);
+    expect(done.calls[0]?.args).toEqual([
+      "kv",
+      "key",
+      "list",
+      "--binding",
+      "FORGET_LEDGER",
+      "--prefix",
+      ROOT,
+      "--local",
+      "--env",
+      "staging",
+      "--config",
+      "w.jsonc",
+      "--persist-to",
+      ".state",
+    ]);
+    const one = await expire(
+      ["--binding", "L", "--keep-for", "35d"],
+      [{ name: `${ROOT}t/1:e-1`, metadata: { ...old, forgottenAt: new Date().toISOString() } }],
+    );
+    expect(one.code).toBe(EXIT_FAILURE);
+    expect(one.stderr).toBe(
+      "error: Error; its message may quote personal data: run again with --error-text to print it\n",
+    );
+    const told = await expire(["--binding", "L", "--keep-for", "35d", "--error-text"], one.listed);
+    expect(told.stderr).toBe("error: wrangler: not authorized\n");
+    expect(one.calls.map(({ root, args }) => [root, args.at(-1)])).toEqual([
+      [resolve("/project"), "--remote"],
+      [resolve("/project"), "--remote"],
+    ]);
+  });
+
+  it("says how many it gave an expiration, one or more", async () => {
+    const stdout = capture();
+    const listed = [1, 2].map((index) => ({
+      name: `${ROOT}t/${index}:e-${index}`,
+      metadata: { personId: "c-1", forgottenAt: new Date().toISOString() },
+    }));
+    for (const keys of [listed.slice(0, 1), listed]) {
+      await runCli({
+        argv: ["forget-ledger", "expire", "--binding", "L", "--keep-for", "35d"],
+        cwd: "/project",
+        stdout,
+        stderr: capture(),
+        wrangler: () => async (args) => (args[1] === "key" ? JSON.stringify(keys) : ""),
+      });
+    }
+    expect(stdout.text()).toBe(
+      "gave 1 entry the expiration keepFor sets; removed 0 already past it\ngave 2 entries the expiration keepFor sets; removed 0 already past it\n",
+    );
+  });
+
+  it("refuses a keep-for that is not a duration longer than 0, and a missing binding", async () => {
+    for (const keepFor of ["0s", "soon", "-1d", ""]) {
+      const refused = await expire(["--binding", "L", "--keep-for", keepFor]);
+      expect(refused.code).toBe(EXIT_CONVENTION);
+      expect(refused.stderr).toContain("expected a duration longer than 0, such as 35d");
+      expect(refused.calls).toEqual([]);
+    }
+    expect((await expire(["--keep-for", "35d"])).code).toBe(EXIT_CONVENTION);
+  });
+
+  it("documents itself in its help", async () => {
+    const parent = await runCli({
+      argv: ["forget-ledger", "--help"],
+      cwd: "/project",
+      stdout: capture(),
+      stderr: capture(),
+    });
+    expect(parent).toBe(EXIT_OK);
+    const group = capture();
+    await runCli({
+      argv: ["forget-ledger", "--help"],
+      cwd: "/project",
+      stdout: group,
+      stderr: capture(),
+    });
+    expect(group.text()).toContain("look after a forget ledger outside the app");
+    const help = (await expire(["--help"])).stdout.replace(/\s+/g, " ");
+    for (const text of [
+      "give every entry of a Workers KV forget ledger the expiration keepFor sets, those written before it was set included",
+      "--binding <name>",
+      "the KV namespace's binding in wrangler.jsonc",
+      "--keep-for <duration>",
+      "runtime.personalData.forgetLedger.keepFor, such as 35d",
+      "--local",
+      "the local state of wrangler dev instead of the deployed namespace",
+      "--env <name>",
+      "the wrangler environment",
+      "--wrangler-config <path>",
+      "the wrangler configuration file",
+      "--persist-to <dir>",
+      "with --local, where wrangler dev keeps its state",
+      "--root <dir>",
+      "the project's root directory, where wrangler is installed",
+      "--error-text",
+      "print the message of the error the command fails on",
+    ]) {
+      expect(help).toContain(text);
+    }
   });
 });
 

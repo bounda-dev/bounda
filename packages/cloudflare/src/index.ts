@@ -16,8 +16,24 @@ export type {
   IsCloudflareDefinitionFunction,
 } from "./definition.ts";
 export { cloudflare, isCloudflareDefinition } from "./definition.ts";
-export type { KvForgetLedgerFunction, KvForgetLedgerOptions } from "./forget-ledger.ts";
-export { KV_LIST_DELAY_MS, kvForgetLedger } from "./forget-ledger.ts";
+export type {
+  ExpireKvForgetLedgerArgs,
+  ExpireKvForgetLedgerFunction,
+  KvForgetLedgerExpiry,
+  KvForgetLedgerFunction,
+  KvForgetLedgerOptions,
+  KvLedgerKey,
+  KvLedgerPut,
+  PlanKvForgetLedgerExpiryArgs,
+  PlanKvForgetLedgerExpiryFunction,
+} from "./forget-ledger.ts";
+export {
+  expireKvForgetLedger,
+  KV_FORGET_LEDGER_ROOT,
+  KV_LIST_DELAY_MS,
+  kvForgetLedger,
+  planKvForgetLedgerExpiry,
+} from "./forget-ledger.ts";
 export { workersLogger } from "./logger.ts";
 export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
 export type { DurableSqlStorage } from "./sql-database.ts";
