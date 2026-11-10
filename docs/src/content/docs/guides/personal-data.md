@@ -1230,14 +1230,19 @@ and `bounda status` counts the restores found. How it is found depends on when t
 
 | The copy was restored | Found by | What is guaranteed |
 | --- | --- | --- |
-| under the running app | every instance, on its next pass, or within five seconds in the `web` role | Any copy taken before the last write the instances saw. A copy taken after it differs from the database in nothing but waits, which the jobs read again anyway. |
+| under the running app | every instance, on its next pass, before it delivers an event or claims a scheduled command, or within five seconds in the `web` role | Any copy taken before the last write the instances saw, or before the newest event an instance read or committed. A copy taken after both differs from the database in nothing but waits, which the jobs read again anyway. |
 | while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, or before a forgetting the ledger holds and the copy does not. Only after a crash can a copy of the last five seconds of writes, with no forgetting among them, go unseen: it differs from the database in waits alone. |
 | while the app was stopped, without a ledger | `bounda restored`, which you run after restoring | What you declare: the database alone cannot tell a copy from itself. |
 
 Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
 it wrote, at most every five seconds, and remembers what it read: a copy holds less, and the
 first instance to see it counts the restore in another row, which every other instance then sees
-changed. An idle instance writes nothing, so neither does its watch. With a forget ledger the
+changed. An idle instance writes nothing, so neither does its watch. Every instance also watches
+the newest event it read, or committed as a forgetting, at its position: events are only ever
+appended, so a copy that lost it is found at once, even one taken in the five seconds before the
+counter moved. A pass that finds a restore reconciles the ledger before the dispatcher delivers
+anything or the worker claims anything, so a scheduled command of someone the copy brought back
+never runs. [Backups and restores](/guides/backups/) has the steps for each engine. With a forget ledger the
 counter is also raised in the ledger, as a mark outside the database, which is how a start tells
 a copy restored while the app was stopped; and a forgetting the ledger holds that the database
 does not is a restore too, whatever the counter says, so the forgettings a copy undid are

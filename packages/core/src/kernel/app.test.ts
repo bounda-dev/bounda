@@ -824,7 +824,9 @@ describe("policies and processes follow the stream from when they are deployed",
     ]);
     expect(lag.maxLag).toBe(0);
     const { checkpointStore } = await storage.createStorage();
+    // The generation the restore watch moved after the pass that projected the order.
     expect((await checkpointStore.list()).map((checkpoint) => checkpoint.subscriber)).toEqual([
+      "runtime:generation",
       "projection:orderSummary",
     ]);
     await app.stop();

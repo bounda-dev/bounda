@@ -47,6 +47,42 @@ const recorder = (
 };
 
 describe("createDispatcher", () => {
+  it("runs beforePass at the start of every pass, before it delivers, and delivers nothing when it throws", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 2);
+    const steps: string[] = [];
+    let failing = false;
+    const subscriber: Subscriber = {
+      name: "a",
+      kind: "projection",
+      process: async (events) => {
+        steps.push(`deliver ${events.length}`);
+        return events.length;
+      },
+    };
+    const dispatcher = createDispatcher({
+      clock: createFixedClock(),
+      eventStore,
+      checkpointStore,
+      subscribers: [subscriber],
+      batchSize: 1,
+      pollIntervalMs: 10,
+      beforePass: async () => {
+        steps.push("before");
+        if (failing) throw new Error("the store cannot be read");
+      },
+      logger: silentLogger,
+      errorText: "include",
+    });
+    await dispatcher.processOnce();
+    expect(steps).toEqual(["before", "deliver 1"]);
+    await dispatcher.catchUp("projection");
+    expect(steps).toEqual(["before", "deliver 1", "before", "deliver 1", "before"]);
+    failing = true;
+    await expect(dispatcher.runUntilIdle()).rejects.toThrow("the store cannot be read");
+    expect(steps.at(-1)).toBe("before");
+  });
+
   it("delivers batches per subscriber in order and checkpoints after each", async () => {
     const { eventStore, checkpointStore } = await storage();
     await appendMany(eventStore, 5);

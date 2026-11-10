@@ -60,6 +60,12 @@ export type {
   TransactionLocking,
 } from "./read-model-transaction.contract.ts";
 export { readModelTransactionContract } from "./read-model-transaction.contract.ts";
+export type {
+  RestoreContractArgs,
+  RestoreContractFunction,
+  RestoreTarget,
+} from "./restore.contract.ts";
+export { restoreContract } from "./restore.contract.ts";
 export type { SchedulerContractArgs, SchedulerContractFunction } from "./scheduler.contract.ts";
 export { schedulerContract } from "./scheduler.contract.ts";
 export type {

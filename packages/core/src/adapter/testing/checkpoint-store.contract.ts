@@ -136,7 +136,7 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
 
       // A stream whose head the test moves, as appends do.
       const stream = { head: 0 };
-      const events = { lastPosition: async () => stream.head };
+      const events = { lastPosition: async () => stream.head, readAll: async () => [] };
       const watchOver = () =>
         createRestoreWatch({ checkpoints: store, events, marks: null, logger: silentLogger });
       const at = (ms: number) => new Date(start + ms);

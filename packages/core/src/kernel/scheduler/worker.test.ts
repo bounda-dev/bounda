@@ -53,6 +53,90 @@ const failingRegistry: Registry = {
 };
 
 describe("scheduled command worker", () => {
+  it("says, on a restore its pass finds without a forget ledger, that the persons forgotten since are back", async () => {
+    const { logger, entries } = createRecordingLogger("omit");
+    let finds: { first: boolean } | null = { first: true };
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      logger,
+      restores: {
+        start: async () => null,
+        check: async () => {
+          const result = finds;
+          finds = null;
+          return result;
+        },
+        declare: async () => ({ first: true }),
+        flush: async () => undefined,
+        found: async () => 0,
+        saw: () => undefined,
+      },
+    });
+    expect(await harness.worker.runOnce()).toBe(0);
+    expect(entries.map(({ level, message }) => [level, message])).toEqual([
+      ["warn", "the database went back to an earlier copy; background jobs start over"],
+      [
+        "error",
+        "without runtime.personalData.forgetLedger, whoever was forgotten after the copy was taken is back until forgotten again, as bounda forget --from does",
+      ],
+    ]);
+  });
+
+  it("starts the jobs over on a restore its pass finds, and reconciles before it claims anything, once", async () => {
+    const steps: string[] = [];
+    const found = { first: true };
+    let finds: { first: boolean } | null = found;
+    const { logger, entries } = createRecordingLogger("omit");
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      logger,
+      restores: {
+        start: async () => null,
+        check: async () => {
+          steps.push("check");
+          const result = finds;
+          finds = null;
+          return result;
+        },
+        declare: async () => ({ first: true }),
+        flush: async () => undefined,
+        found: async () => 0,
+        saw: () => undefined,
+      },
+      reconciliation: {
+        reconcile: async () => 0,
+        sweep: async () => {
+          steps.push("sweep");
+          return 1;
+        },
+        nextDueAt: () => null,
+        reconciled: () => true,
+        status: async () => ({}) as never,
+        restored: async (first) => {
+          steps.push(`restored ${first}`);
+        },
+      },
+    });
+    const { scheduler } = harness.storage;
+    const nextDueAt = scheduler.nextDueAt.bind(scheduler);
+    vi.spyOn(scheduler, "nextDueAt").mockImplementation((args) => {
+      steps.push("claim");
+      return nextDueAt(args);
+    });
+    expect(await harness.worker.runOnce()).toBe(2);
+    expect(steps.slice(0, 5)).toEqual(["check", "restored true", "sweep", "claim", "sweep"]);
+    expect(entries.map(({ message }) => message)).toEqual([
+      "the database went back to an earlier copy; background jobs start over",
+    ]);
+    // Found by this pass already: a dispatcher, or another pass, that shared the check leaves it.
+    expect(await harness.worker.restored(found)).toBe(false);
+    finds = found;
+    await harness.worker.runOnce();
+    expect(steps.filter((step) => step.startsWith("restored"))).toEqual(["restored true"]);
+    expect(await harness.worker.restored({ first: false })).toBe(true);
+    expect(steps.at(-1)).toBe("restored false");
+  });
+
   it("purges the expired idempotency keys once per interval, and goes on when it cannot", async () => {
     const { logger, entries } = createRecordingLogger("omit");
     const harness = await createReactiveHarness({ registry: orderRegistry, logger });

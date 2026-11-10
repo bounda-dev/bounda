@@ -32,7 +32,7 @@ import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../proces
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createMutex } from "../shared/mutex.ts";
-import type { RestoreWatch } from "../shared/restores.ts";
+import type { Restored, RestoreWatch } from "../shared/restores.ts";
 import { classifyFailure, errorIdentity, errorLabel, retryDelayMs } from "../shared/retry.ts";
 import {
   appendSystemEvent,
@@ -64,9 +64,10 @@ export interface ScheduledCommandWorker {
   /**
    * Starts every background job over from what the database holds, as after a restore, between
    * passes; `first` also clears the holds the copy brought back, and `reconciled` leaves alone
-   * the reconciliation that found it. Never rejects.
+   * the reconciliation that found it. Resolves whether it started them over: a restore this
+   * worker's own pass handled already is left. Never rejects.
    */
-  restored(first: boolean, options?: { readonly reconciled?: boolean }): Promise<void>;
+  restored(found: Restored, options?: { readonly reconciled?: boolean }): Promise<boolean>;
 }
 
 export interface CreateScheduledCommandWorkerArgs {
@@ -558,6 +559,10 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     return storage.scheduler.claimDue({ now, limit: CLAIM_LIMIT, leaseMs });
   };
 
+  // What `restores.check` found last and was handled: a check shared with the dispatcher gives
+  // both the same finding.
+  let handled: Restored | null = null;
+
   // The jobs' holds the copy brought back count failures it undid: the instance that found the
   // restore first clears them, and every one forgets what it knew of the jobs. Each never rejects.
   // `reconciled` when the reconciliation that just ran is what found the restore.
@@ -565,6 +570,11 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     logger.warn("the database went back to an earlier copy; background jobs start over", {
       first,
     });
+    if (reconciliation === undefined) {
+      logger.error(
+        "without runtime.personalData.forgetLedger, whoever was forgotten after the copy was taken is back until forgotten again, as bounda forget --from does",
+      );
+    }
     purgedAt = Number.NEGATIVE_INFINITY;
     waits.clear();
     onRestored?.();
@@ -583,7 +593,14 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
       const restored = await restores?.check(clock.now(), { active: worked });
-      if (restored !== undefined && restored !== null) await restart(restored.first);
+      let reconciledAtOnce = 0;
+      if (restored !== undefined && restored !== null && restored !== handled) {
+        handled = restored;
+        await restart(restored.first);
+        // Before anything is claimed: the scheduled commands of whom the copy brought back go
+        // with their forgetting.
+        reconciledAtOnce = (await reconciliation?.sweep(clock.now())) ?? 0;
+      }
       const claimedAt = clock.now();
       const due = await claimDue(claimedAt);
       // The batch is claimed already: an error escaping here would leave every entry to lapse, and
@@ -624,12 +641,20 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       // A forgetting the ledger holds and the database does not: the database went back, though
       // the generation did not show it, as for a copy taken just before a forget.
       if (forgottenAgain > 0 && restores !== undefined && (restored ?? null) === null) {
-        await restart((await restores.declare()).first, true);
+        handled = await restores.declare();
+        await restart(handled.first, true);
       }
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
-      const done = due.length + forgotten + rewrapped + forgottenAgain + purged + backfilled;
+      const done =
+        reconciledAtOnce +
+        due.length +
+        forgotten +
+        rewrapped +
+        forgottenAgain +
+        purged +
+        backfilled;
       worked = done > 0;
       return done;
     });
@@ -664,6 +689,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     runOnce,
     leaseMs,
     waitingDeadlines: () => waits.size,
-    restored: (first, { reconciled } = {}) => mutex.run(() => restart(first, reconciled)),
+    restored: (found, { reconciled } = {}) =>
+      mutex.run(async () => {
+        if (found === handled) return false;
+        handled = found;
+        await restart(found.first, reconciled);
+        return true;
+      }),
   };
 };
