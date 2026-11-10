@@ -290,6 +290,11 @@ const billOf = (person: string) => ({
   name: `${person} Billedname`,
 });
 
+// Each case starts and stops apps several times and commits hundreds of write transactions, each
+// synced to disk: a file database on a Windows runner takes some seconds for what takes a few
+// hundred milliseconds elsewhere, waiting on nothing but the disk.
+const RESTORE_CASE_TIMEOUT_MS = 30_000;
+
 const START = new Date("2026-11-09T09:00:00.000Z");
 // Longer than the scenario runs for, so no periodic reconciliation hides a restore the app missed.
 const RECONCILE_EVERY_MS = 24 * 60 * 60_000;
@@ -566,40 +571,49 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       }
     };
 
-    it("forgets again at the start after a restore whoever was forgotten since the copy, everywhere, and goes on", async () => {
-      await scenario("at start");
-    });
+    it(
+      "forgets again at the start after a restore whoever was forgotten since the copy, everywhere, and goes on",
+      async () => {
+        await scenario("at start");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
 
     it.skipIf(!hot)(
       "forgets again, at the worker's next pass, whoever a restore under the running app brings back",
       async () => {
         await scenario("hot");
       },
+      RESTORE_CASE_TIMEOUT_MS,
     );
 
-    it("reconciles at the start after a restore whatever the copy says of a failed reconciliation", async () => {
-      const target = await create();
-      const clock = createFixedClock(START);
-      const { definition, state } = faultyLedger(target.forgetLedger);
-      const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
-      await write(first, "ana");
-      // A reconciliation fails, and its hold is in the copy.
-      state.failing = true;
-      clock.advance(RECONCILE_EVERY_MS);
-      await first.app.runUntilIdle();
-      expect(await first.app.getLag()).toMatchObject({ forgetLedger: { reconciled: false } });
-      await target.backUp();
-      state.failing = false;
-      const anaForgotten = (await first.app.forget("ana")).eventIds;
-      await first.app.runUntilIdle();
-      await first.app.stop();
+    it(
+      "reconciles at the start after a restore whatever the copy says of a failed reconciliation",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, state } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        // A reconciliation fails, and its hold is in the copy.
+        state.failing = true;
+        clock.advance(RECONCILE_EVERY_MS);
+        await first.app.runUntilIdle();
+        expect(await first.app.getLag()).toMatchObject({ forgetLedger: { reconciled: false } });
+        await target.backUp();
+        state.failing = false;
+        const anaForgotten = (await first.app.forget("ana")).eventIds;
+        await first.app.runUntilIdle();
+        await first.app.stop();
 
-      const storage = await target.restore();
-      const restored = await start(storage, definition, BEFORE_ROTATION, clock);
-      expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
-      expect(await restored.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
-      await expectForgottenIn(storage, restored, "ana");
-    });
+        const storage = await target.restore();
+        const restored = await start(storage, definition, BEFORE_ROTATION, clock);
+        expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
+        expect(await restored.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
+        await expectForgottenIn(storage, restored, "ana");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
 
     it.skipIf(!hot)(
       "forgets again whoever a restore under an instance that runs no worker brings back",
@@ -623,140 +637,157 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
           await expectForgottenIn(target.storage, web, "ana");
         });
       },
+      RESTORE_CASE_TIMEOUT_MS,
     );
 
-    it("starts over when an operator says a database without a forget ledger was restored, which bounda forget --from then forgets again", async () => {
-      const target = await create();
-      const clock = createFixedClock(START);
-      const first = await start(target.storage, null, BEFORE_ROTATION, clock);
-      await write(first, "ana");
-      await target.backUp();
-      await first.app.forget("ana");
-      await first.app.runUntilIdle();
-      await first.app.stop();
+    it(
+      "starts over when an operator says a database without a forget ledger was restored, which bounda forget --from then forgets again",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, null, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        await first.app.forget("ana");
+        await first.app.runUntilIdle();
+        await first.app.stop();
 
-      const storage = await target.restore();
-      const restored = await start(storage, null, BEFORE_ROTATION, clock);
-      // Nothing outside the database says it went back.
-      expect((await restored.app.status()).restoresFound).toBe(0);
-      await restored.app.restored();
-      expect((await restored.app.status()).restoresFound).toBe(1);
-      expect(await restored.app.forgetAgain([{ personId: "ana" }])).toEqual(["ana"]);
-      await restored.app.runUntilIdle();
-      await expectForgottenIn(storage, restored, "ana");
-    });
+        const storage = await target.restore();
+        const restored = await start(storage, null, BEFORE_ROTATION, clock);
+        // Nothing outside the database says it went back.
+        expect((await restored.app.status()).restoresFound).toBe(0);
+        await restored.app.restored();
+        expect((await restored.app.status()).restoresFound).toBe(1);
+        expect(await restored.app.forgetAgain([{ personId: "ana" }])).toEqual(["ana"]);
+        await restored.app.runUntilIdle();
+        await expectForgottenIn(storage, restored, "ana");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
 
-    it("commits at the restored start a forgetting the ledger recorded before a commit that never happened", async () => {
-      const target = await create();
-      const clock = createFixedClock(START);
-      const { definition, opened } = faultyLedger(target.forgetLedger);
-      const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
-      await write(first, "ana");
-      await target.backUp();
-      const written = await target.storage.createStorage();
-      const key = await written.personalKeys.get("ana", "default");
-      await written.close();
-      // What a forget records before it commits, left alone by a process that stopped in between.
-      const intention = {
-        personId: "ana",
-        categories: null,
-        eventId: "019a6b1e-0000-7000-8000-00000000a7a0",
-        forgottenAt: clock.now().toISOString(),
-        reason: "requested" as const,
-        fingerprints: key === null ? [] : [key.fingerprint],
-      };
-      await opened[0]?.append([intention]);
-      await first.app.stop();
+    it(
+      "commits at the restored start a forgetting the ledger recorded before a commit that never happened",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, opened } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        const written = await target.storage.createStorage();
+        const key = await written.personalKeys.get("ana", "default");
+        await written.close();
+        // What a forget records before it commits, left alone by a process that stopped in between.
+        const intention = {
+          personId: "ana",
+          categories: null,
+          eventId: "019a6b1e-0000-7000-8000-00000000a7a0",
+          forgottenAt: clock.now().toISOString(),
+          reason: "requested" as const,
+          fingerprints: key === null ? [] : [key.fingerprint],
+        };
+        await opened[0]?.append([intention]);
+        await first.app.stop();
 
-      const storage = await target.restore();
-      const restored = await start(storage, definition, BEFORE_ROTATION, clock);
-      expect(await forgettings(restored.app, "ana")).toEqual([intention.eventId]);
-      await expectForgottenIn(storage, restored, "ana");
-    });
+        const storage = await target.restore();
+        const restored = await start(storage, definition, BEFORE_ROTATION, clock);
+        expect(await forgettings(restored.app, "ana")).toEqual([intention.eventId]);
+        await expectForgottenIn(storage, restored, "ana");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
 
-    it("does not start on a restored copy a strict ledger cannot read, and applies the whole restore once it can", async () => {
-      const target = await create();
-      const clock = createFixedClock(START);
-      const { definition, state } = faultyLedger(target.forgetLedger);
-      const strict = { strict: true };
-      const first = await start(target.storage, definition, BEFORE_ROTATION, clock, strict);
-      await write(first, "ana");
-      await write(first, "bob");
-      await target.backUp();
-      const anaForgotten = (await first.app.forget("ana")).eventIds;
-      const bobForgotten = (await first.app.forget("bob")).eventIds;
-      await first.app.runUntilIdle();
-      await first.app.stop();
+    it(
+      "does not start on a restored copy a strict ledger cannot read, and applies the whole restore once it can",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, state } = faultyLedger(target.forgetLedger);
+        const strict = { strict: true };
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock, strict);
+        await write(first, "ana");
+        await write(first, "bob");
+        await target.backUp();
+        const anaForgotten = (await first.app.forget("ana")).eventIds;
+        const bobForgotten = (await first.app.forget("bob")).eventIds;
+        await first.app.runUntilIdle();
+        await first.app.stop();
 
-      const storage = await target.restore();
-      state.failing = true;
-      await expect(start(storage, definition, BEFORE_ROTATION, clock, strict)).rejects.toThrow(
-        ForgetLedgerUnreconciledError,
-      );
-      state.failing = false;
-      const restored = await start(storage, definition, BEFORE_ROTATION, clock, strict);
-      expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
-      expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
-      await expectForgottenIn(storage, restored, "ana");
-      await expectForgottenIn(storage, restored, "bob");
-    });
+        const storage = await target.restore();
+        state.failing = true;
+        await expect(start(storage, definition, BEFORE_ROTATION, clock, strict)).rejects.toThrow(
+          ForgetLedgerUnreconciledError,
+        );
+        state.failing = false;
+        const restored = await start(storage, definition, BEFORE_ROTATION, clock, strict);
+        expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
+        expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
+        await expectForgottenIn(storage, restored, "ana");
+        await expectForgottenIn(storage, restored, "bob");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
 
-    it("forgets again only the categories a partial forgetting named, and keeps readable what the law keeps", async () => {
-      const target = await create();
-      const clock = createFixedClock(START);
-      const open = async (storage: Adapter) => {
-        const app = await createApp({
-          registry: categorized,
-          config: {
-            storage,
-            runtime: {
-              personalData: {
-                keyWrapper: BEFORE_ROTATION,
-                forgetLedger: { store: target.forgetLedger, reconcileEvery: RECONCILE_EVERY_MS },
+    it(
+      "forgets again only the categories a partial forgetting named, and keeps readable what the law keeps",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const open = async (storage: Adapter) => {
+          const app = await createApp({
+            registry: categorized,
+            config: {
+              storage,
+              runtime: {
+                personalData: {
+                  keyWrapper: BEFORE_ROTATION,
+                  forgetLedger: { store: target.forgetLedger, reconcileEvery: RECONCILE_EVERY_MS },
+                },
               },
             },
-          },
-          clock,
-          env,
-        });
-        stops.push(() => app.stop());
-        return app;
-      };
-      const read = async (app: BoundaApp, person: string) =>
-        (await app.exportPersonalData(person)).events[0]?.data;
-      const first = await open(target.storage);
-      const commands = first.commands as unknown as Commands;
-      for (const person of ["ana", "bob"]) {
-        await commands.billCustomer?.({ customerId: person, ...billOf(person) });
-      }
-      await target.backUp();
-      // Ana withdraws her consent to the newsletter; bob is forgotten as a whole.
-      const anaForgotten = (await first.forget("ana", { categories: ["marketing"] })).eventIds;
-      const bobForgotten = (await first.forget("bob")).eventIds;
-      await first.runUntilIdle();
-      await first.stop();
+            clock,
+            env,
+          });
+          stops.push(() => app.stop());
+          return app;
+        };
+        const read = async (app: BoundaApp, person: string) =>
+          (await app.exportPersonalData(person)).events[0]?.data;
+        const first = await open(target.storage);
+        const commands = first.commands as unknown as Commands;
+        for (const person of ["ana", "bob"]) {
+          await commands.billCustomer?.({ customerId: person, ...billOf(person) });
+        }
+        await target.backUp();
+        // Ana withdraws her consent to the newsletter; bob is forgotten as a whole.
+        const anaForgotten = (await first.forget("ana", { categories: ["marketing"] })).eventIds;
+        const bobForgotten = (await first.forget("bob")).eventIds;
+        await first.runUntilIdle();
+        await first.stop();
 
-      const storage = await target.restore();
-      const restored = await open(storage);
-      expect(await forgettings(restored, "ana")).toEqual(anaForgotten);
-      expect(await forgettings(restored, "bob")).toEqual(bobForgotten);
-      const ana = billOf("ana");
-      const bob = billOf("bob");
-      expect(await read(restored, "ana")).toEqual({
-        newsletter: null,
-        taxId: ana.taxId,
-        name: ana.name,
-      });
-      expect(await read(restored, "bob")).toEqual({
-        newsletter: null,
-        taxId: bob.taxId,
-        name: null,
-      });
-      await expectForgotten(storage, "ana", {
-        categories: ["marketing"],
-        values: [ana.newsletter],
-      });
-      await expectForgotten(storage, "bob", { values: [bob.newsletter, bob.name] });
-    });
+        const storage = await target.restore();
+        const restored = await open(storage);
+        expect(await forgettings(restored, "ana")).toEqual(anaForgotten);
+        expect(await forgettings(restored, "bob")).toEqual(bobForgotten);
+        const ana = billOf("ana");
+        const bob = billOf("bob");
+        expect(await read(restored, "ana")).toEqual({
+          newsletter: null,
+          taxId: ana.taxId,
+          name: ana.name,
+        });
+        expect(await read(restored, "bob")).toEqual({
+          newsletter: null,
+          taxId: bob.taxId,
+          name: null,
+        });
+        await expectForgotten(storage, "ana", {
+          categories: ["marketing"],
+          values: [ana.newsletter],
+        });
+        await expectForgotten(storage, "bob", { values: [bob.newsletter, bob.name] });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
   });
 };
