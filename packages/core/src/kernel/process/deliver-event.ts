@@ -13,7 +13,12 @@ import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import type { ProcessFailures } from "./failures.ts";
 import type { ProcessHandlers } from "./handlers.ts";
-import { type LifecycleEntry, lifecycleEntries, type ProcessInstance } from "./lifecycle.ts";
+import {
+  instanceContext,
+  type LifecycleEntry,
+  lifecycleEntries,
+  type ProcessInstance,
+} from "./lifecycle.ts";
 import { actsOn, completesOn, followsUp, handledEntries, handlerOf, startsOn } from "./routes.ts";
 import type { DeadlineSchedule } from "./schedule.ts";
 import type { ProcessUnits } from "./units.ts";
@@ -65,27 +70,19 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
   const leaseMs = (process: ProcessRuntime): number => process.handlerTimeoutMs * 2;
 
   // Whether `event` waits behind the instance's failure: not the event that failed, delivered
-  // again, and nothing once the failure's letter was discarded, since the instance is given up.
-  // A letter is written with the failure, so one that is gone was purged once resolved: an
-  // instance still failed on it was given up.
-  const parks = async (
-    unit: UnitOfWork,
-    process: ProcessRuntime,
-    event: StoredEvent,
-    instance: ProcessInstance,
-  ): Promise<boolean> => {
-    if (
-      !actsOn(process, event) ||
-      event.id === instance.failure?.eventId ||
-      instance.handledEventIds.has(event.id) ||
-      instance.parked.some((parked) => parked.eventId === event.id)
-    ) {
-      return false;
-    }
+  // again. An instance given up is `abandoned` and parks nothing, whatever became of its letter.
+  const parks = (process: ProcessRuntime, event: StoredEvent, instance: ProcessInstance): boolean =>
+    actsOn(process, event) &&
+    event.id !== instance.failure?.eventId &&
+    !instance.handledEventIds.has(event.id) &&
+    !instance.parked.some((parked) => parked.eventId === event.id);
+
+  // A failure whose letter was discarded before `ProcessAbandoned` existed: the instance is
+  // abandoned now, while the letter still says so, rather than parking for good.
+  const discardedBefore = async (unit: UnitOfWork, instance: ProcessInstance): Promise<boolean> => {
     const letterId = instance.failure?.letterId;
-    if (letterId === undefined) return true;
-    const letter = await unit.deadLetterStore.get(letterId);
-    return letter !== null && letter.status !== "discarded";
+    if (letterId === undefined) return false;
+    return (await unit.deadLetterStore.get(letterId))?.status === "discarded";
   };
 
   // The instance with its start staged in `entries` when `event` starts it; as it is otherwise.
@@ -114,8 +111,15 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     const instance = started(process, event, await within.load(process, instanceId), entries);
     if (!instance.exists) return false;
     let parked = false;
-    if (instance.status === "failed") {
-      if (await parks(unit, process, event, instance)) {
+    if (instance.status === "failed" && (await discardedBefore(unit, instance))) {
+      entries.push(
+        lifecycleEntries.abandoned(
+          instance.failure?.letterId ?? "",
+          instanceContext(process, instanceId, instance),
+        ),
+      );
+    } else if (instance.status === "failed") {
+      if (parks(process, event, instance)) {
         entries.push(lifecycleEntries.parked(event));
         parked = true;
       }
@@ -264,7 +268,9 @@ export const createEventDelivery: CreateEventDeliveryFunction = ({
     const instance = await units.live.load(process, instanceId);
     if (followsUp(process, instance, event)) return handle(process, event, instanceId);
     const ended = instance.exists
-      ? instance.status === "completed" || instance.status === "timed_out"
+      ? instance.status === "completed" ||
+        instance.status === "timed_out" ||
+        instance.status === "abandoned"
       : !startsOn(process, event);
     if (ended) return "done";
     if (

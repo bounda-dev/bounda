@@ -2,7 +2,12 @@ import type { ObservableResult } from "@opentelemetry/api";
 import { isAdapter } from "../adapter/adapter.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
-import type { Config, ResolvedConfig, RuntimeRole } from "../config/types.ts";
+import type {
+  Config,
+  ResolvedConfig,
+  ResolvedForgetLedgerConfig,
+  RuntimeRole,
+} from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
 import type { CommandRejection, DispatchResult, StoredDispatch } from "../contracts/command.ts";
 import { ConfigurationError, ForgetLedgerUnreconciledError } from "../contracts/errors.ts";
@@ -23,7 +28,12 @@ import { createRestrictedRetries } from "./dead-letters/restricted.ts";
 import { createDeadLetterRetention } from "./dead-letters/retention.ts";
 import { createDeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
+import { createLastFailures } from "./dispatch/last-failures.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
+import {
+  createSubscriberFailures,
+  type SubscriberFailures,
+} from "./dispatch/subscriber-failures.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { createAccessLog, recorded } from "./personal-data/access.ts";
@@ -32,17 +42,19 @@ import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import {
-  FORGET_LEDGER_WAIT_MS,
+  type BoundedForgetLedger,
+  boundForgetLedger,
   openForgetLedger,
   waitForLedger,
 } from "./personal-data/forget-ledger.ts";
-import { withLedgerAppend } from "./personal-data/ledger-append.ts";
+import { createForgetIntentions } from "./personal-data/intention.ts";
 import { createLedgerOutbox } from "./personal-data/ledger-outbox.ts";
 import { marksPersonalFields } from "./personal-data/marks.ts";
 import {
   createForgetLedgerReconciliation,
   type ForgetAgainEntry,
   forgetAgain,
+  NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
 import { marksFingerprint } from "./personal-data/resealing.ts";
 import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
@@ -50,6 +62,7 @@ import {
   createRetentionSubscriber,
   createRetentionSweep,
   retains,
+  retentionDueOf,
 } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
 import { checkPersonId } from "./personal-data/transact.ts";
@@ -74,7 +87,9 @@ import {
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
+import { createRestoreWatch, GENERATION_INTERVAL_MS } from "./shared/restores.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
+import { type AppStatus, readAppStatus } from "./status.ts";
 import { ATTRIBUTES, METRICS, meter, tracedOperation } from "./telemetry.ts";
 
 /**
@@ -100,6 +115,18 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    */
   readonly queries: QueriesFacade<R>;
   getLag(): Promise<AppLag>;
+  /**
+   * Where the runtime's background work stands, as the database says: the versions of its tables,
+   * every subscriber's lag and last failure without its text, the backfill of personal data, the
+   * forget ledger's reconciliation, the key rotation, the retention and the purge of dead letters.
+   * What `bounda status` prints. Records nothing in the access log: none of it is personal data.
+   */
+  status(): Promise<AppStatus>;
+  /**
+   * Each subscriber's last failure with its text opened; each call that finds one is recorded in
+   * the access log, as `exportPersonalData` is.
+   */
+  readonly subscriberFailures: SubscriberFailures;
   readonly events: GlobalStream;
   /**
    * Retrying and discarding a letter is acted by the client's actor, as `as` says. Each call but
@@ -122,6 +149,10 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * retention ends. Both happen together or not at all. Resolves like a command, so
    * `catchUpReadModels({ through })` waits for those read models. Rejects with
    * `ValidationError` an empty id, or categories that are empty or that the app does not have.
+   * With `runtime.personalData.forgetLedger`, the forgetting is in the ledger before it commits:
+   * one that rejects after that still forgets what it asked for at the next reconciliation, and
+   * calling again is safe; a strict ledger that does not take it rejects with
+   * `ForgetLedgerUnavailableError`, forgetting nothing.
    */
   forget(personId: string, options?: ForgetOptions): Promise<StoredDispatch>;
   /**
@@ -179,8 +210,9 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
   readonly config: ResolvedConfig;
   readonly role: RuntimeRole;
   /**
-   * Starts background work: the dispatcher and the scheduled command worker. Does nothing for
-   * `role: "web"`.
+   * Starts background work: the dispatcher and the scheduled command worker. For `role: "web"`,
+   * only the watch for a database restored under the app, which forgets again at once whom the
+   * copy brought back.
    */
   start(): void;
   /**
@@ -239,18 +271,27 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    */
   readonly deadLetters: DeadLetters;
   /**
-   * Forgets again, as `forget` does with `reason: "restored"`, each person an entry names who
-   * still holds a key, unless the store holds the `PersonalDataForgotten` the entry names by
-   * `eventId`: a store that holds it applied that forgetting, and a key the person holds was given
-   * to them after. What `bounda forget --from` runs, for a backup restored without
-   * `runtime.personalData.forgetLedger`; resolves to the ids of the persons it forgot, in order.
-   * Rejects with `ValidationError` an entry without a person's id, or an `actor` that `as` would
-   * refuse, before forgetting anyone.
+   * Commits again each forgetting an entry names, of the categories it asked for, as a
+   * reconciliation does: unless the store holds the `PersonalDataForgotten` the entry names by
+   * `eventId`, and only while the person holds a key in force it covers and names, any such key
+   * when it names none; a whole entry under its own id, time and reason, a bare
+   * person's id as a request. What `bounda forget --from` runs, for a backup restored without
+   * `runtime.personalData.forgetLedger`; with one, each is recorded in it first, as `forget` does.
+   * Resolves to the ids of the persons it forgot, in order. Rejects with `ValidationError` an entry
+   * without a person's id, or an `actor` that `as` would refuse, before forgetting anyone.
    */
   forgetAgain(
     entries: readonly ForgetAgainEntry[],
     options?: ForgetAgainOptions,
   ): Promise<readonly string[]>;
+  /**
+   * Says the database was restored from a copy: what `bounda restored` runs after restoring while
+   * the app was stopped, without a forget ledger that tells it. Counts the restore, so every
+   * running instance starts its background jobs over, clears the holds the copy brought back, and
+   * reconciles the forget ledger at once when there is one. A restore made under a running app,
+   * or while it was stopped with a ledger, is found without it.
+   */
+  restored(): Promise<void>;
 }
 
 /**
@@ -460,22 +501,35 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     opened.unshift(() => adapted.close());
     const ledgerConfig = config.runtime.personalData.forgetLedger;
     const keepForMs = ledgerConfig?.keepForMs ?? null;
-    const ledger = await openForgetLedger({
-      source: ledgerConfig?.store ?? null,
-      storage: config.storage,
-      env,
-      tenant,
-      keepForMs: keepForMs ?? undefined,
-    });
-    if (ledger !== null) witness?.onForgetLedger(ledger);
-    if (ledger?.close !== undefined) {
-      const close = ledger.close.bind(ledger);
-      opened.unshift(close);
+    let forgetLedger: {
+      readonly config: ResolvedForgetLedgerConfig;
+      readonly store: BoundedForgetLedger;
+    } | null = null;
+    if (ledgerConfig !== null) {
+      const ledger = await openForgetLedger({
+        source: ledgerConfig.store,
+        storage: config.storage,
+        env,
+        tenant,
+        keepForMs: keepForMs ?? undefined,
+      });
+      witness?.onForgetLedger(ledger);
+      if (ledger.close !== undefined) opened.unshift(ledger.close.bind(ledger));
+      forgetLedger = {
+        config: ledgerConfig,
+        store: boundForgetLedger({ ledger, timeoutMs: ledgerConfig.timeoutMs, clock }),
+      };
     }
-    const written =
-      ledger === null
-        ? adapted
-        : withLedgerAppend({ storage: adapted, ledger, keepForMs, clock, logger });
+    const intentions = createForgetIntentions({
+      ledger:
+        forgetLedger === null
+          ? null
+          : { store: forgetLedger.store, strict: forgetLedger.config.strict },
+      ids,
+      clock,
+      logger,
+    });
+    const written = adapted;
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const storage = appStorage({
@@ -549,6 +603,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       pendingRetries,
       logger,
+      intentions,
     });
     const policies = buildPolicies({ registry, aggregates });
     const policyExecutor = createPolicyExecutor({
@@ -559,6 +614,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ids,
       clock,
       logger,
+      intentions,
     });
     const reactive = [
       {
@@ -600,6 +656,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       recordsActivity || marksPersonalFields({ aggregates, processes: processDefinitions })
         ? createRetentionSweep({
             storage: written,
+            intentions,
             categories: personalCategories,
             ids,
             clock,
@@ -615,26 +672,41 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ? undefined
         : createDeadLetterRetention({
             store: written.deadLetterStore,
+            checkpoints: written.checkpointStore,
             retentionMs: letterRetentionMs,
+            clock,
             logger,
           });
     const { concurrencyRetries } = config.runtime.commands;
-    const reconciliation =
-      ledger === null || ledgerConfig === null
-        ? undefined
-        : createForgetLedgerReconciliation({
-            ledger,
-            storage: written,
-            ids,
-            clock,
-            logger,
-            concurrencyRetries,
-            categories: personalCategories,
-            batchSize: config.runtime.dispatcher.batchSize,
-            reconcileEveryMs: ledgerConfig.reconcileEveryMs,
-            keepForMs,
-            forgotten: wrapping.drop,
-          });
+    const retentionDue = recordsActivity
+      ? retentionDueOf({
+          categories: personalCategories,
+          batchSize: config.runtime.dispatcher.batchSize,
+          checkpoints: written.checkpointStore,
+        })
+      : NEVER_DUE;
+    const reconciling =
+      forgetLedger === null
+        ? null
+        : {
+            config: forgetLedger.config,
+            reconciliation: createForgetLedgerReconciliation({
+              ledger: forgetLedger.store,
+              intentions,
+              retentionDue,
+              storage: written,
+              ids,
+              clock,
+              logger,
+              concurrencyRetries,
+              categories: personalCategories,
+              batchSize: config.runtime.dispatcher.batchSize,
+              reconcileEveryMs: forgetLedger.config.reconcileEveryMs,
+              keepForMs,
+              forgotten: wrapping.drop,
+            }),
+          };
+    const reconciliation = reconciling?.reconciliation;
     const rotation =
       wrapping.wrapper === null
         ? undefined
@@ -662,6 +734,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             errorText,
           });
+    const restores = createRestoreWatch({
+      checkpoints: written.checkpointStore,
+      events: written.eventStore,
+      marks: forgetLedger?.store ?? null,
+      logger,
+    });
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -690,7 +768,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ...(recordsActivity
           ? [createRetentionSubscriber({ persons: storage.persons, keys: storage.personalKeys })]
           : []),
-        ...(ledger === null ? [] : [createLedgerOutbox({ ledger, keepForMs, clock })]),
+        ...(forgetLedger === null
+          ? []
+          : [createLedgerOutbox({ ledger: forgetLedger.store, keepForMs, clock })]),
       ],
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
@@ -698,6 +778,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       catchUp: config.runtime.dispatcher.catchUp,
       idleIntervalMs: config.runtime.dispatcher.idleIntervalMs,
       ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
+      lastFailures: createLastFailures({
+        store: written.subscriberFailures,
+        aggregates,
+        keys: storage.personalKeys,
+        logger,
+      }),
       clock,
       logger,
       errorText,
@@ -719,6 +805,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       rotation,
       reconciliation,
       backfill,
+      restores,
+      onRestored: dispatcher.restored,
       reactive: following.map((subscriber) => subscriber.name),
       config,
       ids,
@@ -782,23 +870,60 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
       personalDataBackfill: backfill === undefined ? null : await backfill.status(),
     });
+    const status = (): Promise<AppStatus> =>
+      readAppStatus({
+        config,
+        lag: getLag,
+        failures: written.subscriberFailures,
+        restores,
+        reconciliation,
+        rotation,
+        retention,
+        letterRetention,
+      });
+    // A copy restored while the app was stopped holds less than the forget ledger's mark: the
+    // holds it brought back are cleared before anything runs, and the reconciliation below forgets
+    // again whom it brought back.
+    const cold = await restores.start();
+    if (cold !== null) await worker.restored(cold.first);
+    // An instance that runs no worker still watches for a restore, and reconciles the ledger at
+    // once when it finds one, since no pass of its own would.
+    const watchForRestores = (): (() => void) => {
+      let cancel: (() => void) | undefined;
+      const next = (): void => {
+        cancel = clock.after(GENERATION_INTERVAL_MS, async () => {
+          const found = await restores.check(clock.now());
+          if (found !== null) {
+            await worker.restored(found.first);
+            await reconciliation?.reconcile(clock.now());
+          }
+          next();
+        });
+      };
+      next();
+      return () => cancel?.();
+    };
+    let unwatch: (() => void) | undefined;
     // Before the app serves anything: a backup restored brings back persons forgotten since, and
     // the read models that show them hear of it by the time the start resolves. A ledger that
     // does not answer in time is left to finish behind the start, as one that fails is retried,
     // unless the ledger is strict, whose start waits and fails with it.
-    if (reconciliation !== undefined) {
-      const reconciling = reconciliation.reconcile(clock.now());
-      const forgotten = ledgerConfig?.strict
-        ? await reconciling
-        : await waitForLedger(clock, reconciling);
+    if (reconciling !== null) {
+      const { strict, timeoutMs } = reconciling.config;
+      const started = reconciling.reconciliation.reconcile(clock.now());
+      const forgotten = strict ? await started : await waitForLedger(clock, timeoutMs, started);
       if (forgotten === "late") {
         logger.error(
           "forget ledger did not answer in time; the app starts and reconciles in the background",
-          { timeoutMs: FORGET_LEDGER_WAIT_MS },
+          { timeoutMs },
         );
       } else if (typeof forgotten !== "number") {
-        if (ledgerConfig?.strict) throw new ForgetLedgerUnreconciledError(forgotten.failed);
+        if (strict) throw new ForgetLedgerUnreconciledError(forgotten.failed);
       } else if (forgotten > 0) {
+        // The ledger held a forgetting the database does not: a restore, whatever the mark said.
+        if (cold === null) {
+          await worker.restored((await restores.declare()).first, { reconciled: true });
+        }
         await dispatcher.catchUp("projection");
       }
     }
@@ -823,6 +948,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                       events: exported.events.length,
                       scheduledCommands: exported.scheduledCommands.length,
                       deadLetters: exported.deadLetters.length,
+                      subscriberFailures: exported.subscriberFailures.length,
                       readModelRows: Object.values(exported.readModels).reduce(
                         (sum, rows) => sum + rows.length,
                         0,
@@ -854,6 +980,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }) as CommandsFacade<R>,
         queries: queryRunner.facade(actor) as QueriesFacade<R>,
         getLag,
+        status: () => tracedOperation({ errorText, operation: "status", actor, run: status }),
+        subscriberFailures: createSubscriberFailures({
+          store: written.subscriberFailures,
+          keys: storage.personalKeys,
+          actor,
+          recordAccess,
+          errorText,
+        }),
         events,
         deadLetters: createDeadLetters({
           storage,
@@ -880,6 +1014,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             run: () =>
               forgetPersonalData({
                 storage,
+                intentions,
                 ids,
                 clock,
                 logger,
@@ -942,7 +1077,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       config,
       role,
       start: () => {
-        if (role === "web" || stopping !== undefined) return;
+        if (stopping !== undefined) return;
+        if (role === "web") {
+          unwatch ??= watchForRestores();
+          return;
+        }
         dispatcher.start();
         worker.start();
       },
@@ -950,7 +1089,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         stopping ??= (async () => {
           try {
             lag.removeCallback(observeLag);
+            unwatch?.();
             await Promise.all([dispatcher.stop(), worker.stop()]);
+            await restores.flush();
             try {
               await readModels.close();
             } finally {
@@ -958,7 +1099,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 await storage.close();
               } finally {
                 wrapping.close();
-                await ledger?.close?.();
+                await forgetLedger?.store.close?.();
               }
             }
           } finally {
@@ -999,12 +1140,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         for (const entry of entries) {
           const again = await forgetAgain({
             storage: written,
+            intentions,
             ids,
             clock,
             concurrencyRetries,
             categories: personalCategories,
             batchSize: config.runtime.dispatcher.batchSize,
             entry,
+            retentionDue,
+            record: true,
             actor,
           });
           if (again === null) continue;
@@ -1013,6 +1157,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           forgotten.push(entry.personId);
         }
         return forgotten;
+      },
+      restored: async () => {
+        const { first } = await restores.declare();
+        await worker.restored(first);
+        await reconciliation?.reconcile(clock.now());
       },
       pendingRebuilds: async () => {
         const paused = await Promise.all(

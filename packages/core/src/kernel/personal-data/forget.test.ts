@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import {
+  pendingEvent,
   testCommand,
   testContext,
   testDeadLetter,
@@ -13,9 +15,11 @@ import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import type { ForgetOptions, PersonalDataModule } from "../../modules/personal-data.ts";
-import { createRecordingLogger } from "../test-support.ts";
+import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
-import { forgetPersonalData } from "./forget.ts";
+import { forgetIntended, forgetPersonalData, forgetWithin, STALE_INTENTION } from "./forget.ts";
+import { boundForgetLedger } from "./forget-ledger.ts";
+import { createForgetIntentions } from "./intention.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -29,11 +33,13 @@ const declared: PersonalDataModule = {
 const setup = async (storage?: Storage, module?: PersonalDataModule) => {
   const live = storage ?? (await memory().createStorage());
   const { logger, entries: logs } = createRecordingLogger();
+  const ids = createSequentialIdGenerator();
   const clock = createFixedClock();
   const forget = (personId: string, options?: ForgetOptions) =>
     forgetPersonalData({
       storage: live,
-      ids: createSequentialIdGenerator(),
+      intentions: withoutLedger({ ids, clock }),
+      ids,
       clock,
       logger,
       concurrencyRetries: 2,
@@ -78,6 +84,7 @@ describe("forgetPersonalData", () => {
         payload: {
           personId: "c-1",
           ...forgottenFields,
+          fingerprints: ["f-1"],
           cancelledCommands: [],
           removedDeadLetters: [],
         },
@@ -154,6 +161,7 @@ describe("forgetPersonalData", () => {
     expect(event?.payload).toEqual({
       personId: "c-1",
       ...forgottenFields,
+      fingerprints: [],
       cancelledCommands: [
         { commandId: "cmd-1", type: "RemindCustomer" },
         { commandId: "deadline:x", type: "RemindCustomer" },
@@ -212,6 +220,7 @@ describe("forgetPersonalData", () => {
       categories: ["profile"],
       retained: [],
       expired: [],
+      fingerprints: ["f-2"],
       cancelledCommands: [
         { commandId: "cmd-2", type: "RemindCustomer" },
         { commandId: "cmd-3", type: "RemindCustomer" },
@@ -367,5 +376,192 @@ describe("forgetPersonalData", () => {
     expect((await forget("c-1")).version).toBe(1);
     conflicts = 3;
     await expect(forget("c-1")).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+});
+
+describe("forgetIntended", () => {
+  const recordingIntentions = (ids = createSequentialIdGenerator()) => {
+    const recorded: ForgetLedgerEntry[] = [];
+    const clock = createFixedClock();
+    const intentions = createForgetIntentions({
+      ledger: {
+        store: boundForgetLedger({
+          ledger: {
+            readMark: async () => 0,
+            raiseMark: async () => undefined,
+            append: async (entries) => {
+              recorded.push(...entries);
+            },
+            read: async () => [],
+          },
+          timeoutMs: 1_000,
+          clock,
+        }),
+        strict: true,
+      },
+      ids,
+      clock,
+      logger: createRecordingLogger().logger,
+    });
+    return { intentions, recorded, ids, clock };
+  };
+
+  it("takes a new intention that names a key given to the person between the intention and the commit", async () => {
+    const base = await memory().createStorage();
+    await base.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    let raced = false;
+    const racing: Storage = {
+      ...base,
+      transact: async (work) => {
+        if (!raced) {
+          raced = true;
+          // Another forgetting committed meanwhile, and the person came back with a new key.
+          await base.personalKeys.remove("c-1", "f-1");
+          await base.personalKeys.add("c-1", "default", testPersonalKey("2"));
+        }
+        return base.transact(work);
+      },
+    };
+    const { intentions, recorded, ids, clock } = recordingIntentions();
+    const forgotten = await forgetIntended({
+      storage: racing,
+      intentions,
+      ids,
+      clock,
+      concurrencyRetries: 0,
+      categories: buildPersonalCategories({ module: undefined, retention: null }),
+      batchSize: 10,
+      personId: "c-1",
+      scope: { kind: "whole" },
+      reason: "requested",
+      context: testContext,
+    });
+    expect(recorded.map(({ eventId, fingerprints }) => [eventId, fingerprints])).toEqual([
+      ["id-1", ["f-1"]],
+      ["id-2", ["f-2"]],
+    ]);
+    expect(forgotten).toMatchObject({
+      destroyed: 1,
+      event: { id: "id-2", payload: { fingerprints: ["f-2"] } },
+    });
+    expect(await base.personalKeys.get("c-1", "default")).toBeNull();
+  });
+
+  it("forgets a person whose key went since the intention, naming none", async () => {
+    const base = await memory().createStorage();
+    await base.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    let raced = false;
+    const racing: Storage = {
+      ...base,
+      transact: async (work) => {
+        if (!raced) {
+          raced = true;
+          await base.personalKeys.remove("c-1", "f-1");
+        }
+        return base.transact(work);
+      },
+    };
+    const { intentions, recorded, ids, clock } = recordingIntentions();
+    const forgotten = await forgetIntended({
+      storage: racing,
+      intentions,
+      ids,
+      clock,
+      concurrencyRetries: 0,
+      categories: buildPersonalCategories({ module: undefined, retention: null }),
+      batchSize: 10,
+      personId: "c-1",
+      scope: { kind: "whole" },
+      reason: "requested",
+      context: testContext,
+    });
+    expect(recorded).toHaveLength(1);
+    expect(forgotten).toMatchObject({ destroyed: 0, payload: { fingerprints: [] } });
+  });
+
+  it("answers with the forgetting a reconciliation committed under the intention's id meanwhile", async () => {
+    const { storage, logs } = await setup();
+    const intended = {
+      eventId: "id-1",
+      forgottenAt: "2026-01-01T00:00:00.000Z",
+      reason: "requested" as const,
+      fingerprints: [],
+    };
+    await storage.eventStore.append({
+      aggregateType: "bounda",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [
+        {
+          ...pendingEvent({
+            aggregateType: "bounda",
+            aggregateId: "c-1",
+            version: 1,
+            type: "PersonalDataForgotten",
+            id: "id-1",
+          }),
+          person: "c-1",
+        },
+      ],
+    });
+    const dispatch = await forgetPersonalData({
+      storage,
+      intentions: { intend: async () => intended, record: async () => undefined },
+      ids: createSequentialIdGenerator({ prefix: "other" }),
+      clock: createFixedClock(),
+      logger: createRecordingLogger().logger,
+      concurrencyRetries: 0,
+      categories: buildPersonalCategories({ module: undefined, retention: null }),
+      batchSize: 10,
+      personId: "c-1",
+    });
+    expect(dispatch).toMatchObject({ eventIds: ["id-1"], version: 1, position: 1 });
+    expect(await storage.eventStore.lastPosition()).toBe(1);
+    expect(logs).toEqual([]);
+  });
+
+  it("reads the held event and checks the key only when its caller has not", async () => {
+    const storage = await memory().createStorage();
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    let reads = 0;
+    const forget = (checked: boolean, fingerprints: readonly string[]) =>
+      storage.transact((transaction) => {
+        const { readOne } = transaction.eventStore;
+        return forgetWithin({
+          transaction: {
+            ...transaction,
+            eventStore: {
+              ...transaction.eventStore,
+              readOne: (args) => {
+                reads += 1;
+                return readOne.call(transaction.eventStore, args);
+              },
+            },
+          },
+          ids: createSequentialIdGenerator(),
+          clock: createFixedClock(),
+          personId: "c-1",
+          intention: {
+            eventId: `e-${checked}`,
+            forgottenAt: "t",
+            reason: "requested",
+            fingerprints,
+          },
+          context: testContext,
+          categories: buildPersonalCategories({ module: undefined, retention: null }),
+          scope: { kind: "whole" },
+          batchSize: 10,
+          checked,
+        });
+      });
+    expect(await forget(false, ["f-other"])).toBe(STALE_INTENTION);
+    expect(reads).toBe(1);
+    // A caller that checked keeps a key the intention does not name: given after it.
+    expect(await forget(true, ["f-other"])).toMatchObject({
+      destroyed: 0,
+      event: { id: "e-true", payload: { fingerprints: [] } },
+    });
+    expect(reads).toBe(1);
+    expect(await storage.personalKeys.list("c-1")).toHaveLength(1);
   });
 });

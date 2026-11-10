@@ -63,6 +63,7 @@ export interface ExportAccess extends AccessRecord {
     readonly events: number;
     readonly scheduledCommands: number;
     readonly deadLetters: number;
+    readonly subscriberFailures: number;
     readonly readModelRows: number;
   } | null;
 }
@@ -89,6 +90,27 @@ export interface DeadLetterAccess extends AccessRecord {
 }
 
 /**
+ * `subscriberFailures.list`, with how many failures it read. `persons` are those the failures'
+ * events name, under whose key their error text is sealed.
+ */
+export interface SubscriberFailuresListAccess extends AccessRecord {
+  readonly operation: "subscriberFailures.list";
+  readonly detail: {
+    readonly failures: number;
+  };
+}
+
+/**
+ * `subscriberFailures.get` of one subscriber's last failure.
+ */
+export interface SubscriberFailureAccess extends AccessRecord {
+  readonly operation: "subscriberFailures.get";
+  readonly detail: {
+    readonly subscriber: string;
+  };
+}
+
+/**
  * One record of the access log: an operation that handed out personal data in the clear, who
  * called it and whose data it was.
  */
@@ -96,7 +118,9 @@ export type PersonalDataAccess =
   | QueryAccess
   | ExportAccess
   | DeadLettersListAccess
-  | DeadLetterAccess;
+  | DeadLetterAccess
+  | SubscriberFailuresListAccess
+  | SubscriberFailureAccess;
 
 /**
  * What `onPersonalDataAccess` receives: the record, and the host's environment and store name as a

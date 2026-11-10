@@ -12,6 +12,7 @@ export interface StorageTables {
   readonly persons: string;
   readonly snapshots: string;
   readonly personRows: string;
+  readonly subscriberFailures: string;
 }
 
 export interface StorageTablesForFunction {
@@ -29,6 +30,7 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
   snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
   personRows: quoteIdentifier(storageTableNameFor({ prefix, table: "personRows" })),
+  subscriberFailures: quoteIdentifier(storageTableNameFor({ prefix, table: "subscriberFailures" })),
 });
 
 /**
@@ -239,3 +241,25 @@ export const personRowsBackfillStatements: PersonRowsBackfillStatementsFunction 
     ([table, indexed]) =>
       `INSERT OR IGNORE INTO ${tables.personRows} ("person", "store", "row") SELECT json_extract("named"."value", '$.person'), '${indexed.store}', ${rowOf('"stored"', indexed)} FROM ${table} AS "stored", json_each("stored"."persons") AS "named"`,
   );
+
+export interface SubscriberFailuresTableStatementFunction {
+  (table: string): string;
+}
+
+// Migration 2 of the storage tables. One row per subscriber, without an index: there are few.
+export const subscriberFailuresTableStatement: SubscriberFailuresTableStatementFunction = (table) =>
+  `CREATE TABLE IF NOT EXISTS ${table} (
+    "subscriber" TEXT PRIMARY KEY,
+    "position" INTEGER NOT NULL,
+    "event_id" TEXT NOT NULL,
+    "event_type" TEXT NOT NULL,
+    "person" TEXT,
+    "error_name" TEXT NOT NULL,
+    "error_code" TEXT,
+    "error_message" TEXT NOT NULL,
+    "error_stack" TEXT,
+    "attempts" INTEGER NOT NULL,
+    "first_failed_at" TEXT NOT NULL,
+    "last_failed_at" TEXT NOT NULL,
+    "resolved_at" TEXT
+  )`;

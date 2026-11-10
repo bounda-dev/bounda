@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, migrate its tables and declare a restore."
 sidebar:
   order: 0
 ---
@@ -41,17 +41,20 @@ error: ValidationError (VALIDATION_FAILED); its message may quote personal data:
 ```
 
 `--error-text`, on every command that loads the project, prints the message and lets the log lines
-carry the text of errors for that run; a configuration that sets `errorText: "include"` does the
-same without it. What fails before any handler runs is printed in full: a configuration or a
+carry the text of errors for that run; `BOUNDA_ERROR_TEXT=include` in the environment or in `.env`,
+or a configuration that sets `errorText: "include"`, does the same without it, and
+`BOUNDA_ERROR_TEXT=omit` keeps the text out whatever the configuration says. What fails before any handler runs is printed in full: a configuration or a
 registry that cannot be loaded, a read model that is not in the registry, a list `forget` cannot
 read, and errors whose message Bounda writes from names and ids alone, such as a dead letter that is
 not found or was already settled. To read what a reaction failed on, read its letter:
 `bounda dead-letters list` opens the text it keeps encrypted, an access the access log records.
+What a subscriber, a projection say, failed on last is in `bounda status --error-text`, recorded
+the same way.
 
 ## Who runs a command
 
 `--actor <id>` names who runs a command that acts or reads personal data: `rebuild`,
-`dead-letters list`, `retry` and `discard`, `export` and `forget`. The command acts as that id, as
+`dead-letters list`, `retry` and `discard`, `status`, `export` and `forget`. The command acts as that id, as
 [`client.as(actor)`](/concepts/ids-causation-and-correlation/#who-acts) does in code: the events it
 writes carry it in their metadata, its log lines name it, and so does every access log record it
 causes.
@@ -242,6 +245,119 @@ first, the error is printed, as [error text](#error-text) says, and the exit cod
 process letter it also says when one of the parked events failed the process again. What a retry runs for each kind is in
 [Dead letters](/guides/dead-letters/).
 
+## `bounda status`
+
+Prints where the runtime's background work stands, as the database says. It boots the project as
+`bounda dead-letters` does.
+
+```bash
+bounda status
+bounda status --json
+bounda status --error-text --actor ops-ana
+```
+
+```
+tables
+  storage  storage  3 of 3
+  storage  checkpoints  1 of 1
+  forgetLedger  forget-ledger  4 of 4
+restores found while running: 0
+subscribers (head at 1204)
+  projection:customerDirectory  at 1197, 7 behind
+    failing: Error on CustomerRegistered at 1198, 4 attempts since 2026-11-09T10:02:11.000Z
+  policies  at 1204, 0 behind
+personal data backfill: sealed through position 1204, caught up
+forget ledger: reconciled, applied through 2026-11-08T22:15:00.000Z, last run 2026-11-09T10:00:00.000Z
+key rotation: under 7Kx0Qw9z (previous Wn3eT1aa), 12 keys left to rewrap
+retention
+  default  2y, 0 persons past it, next due 2028-01-04T09:13:00.000Z
+  marketing  18mo, 3 keys past it, next due 2026-11-09T11:40:00.000Z
+  invoices  6y, 0 keys past it, next due 2031-02-12T16:20:00.000Z
+dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
+```
+
+- `tables`: each scope of Bounda's tables, in each database the configuration names (`storage`,
+  `readModels.<name>` for read models in a database of their own, `forgetLedger`), at the version
+  the database holds of the one this release migrates it to; one behind says
+  `(migrations pending: bounda migrate)`. A store without tables, as `memory()`, has none.
+- `restores found while running`: how many times a running instance found the database gone back
+  to an earlier copy ([restores](/guides/personal-data/#restores)), or declared by `bounda restored`.
+- each subscriber's checkpoint and lag, and its last failure, by any instance: `failing` while it is
+  still stuck on it, `last failed, resolved …` once it got past. Its class and code, the event, how
+  many deliveries in a row failed and since when; never its text.
+- the [backfill](/guides/personal-data/#marking-a-field-later) of personal data, the forget
+  ledger's [reconciliation](/guides/personal-data/#what-the-runtime-does-with-it), the
+  [rotation](/guides/personal-data/#rotating-the-master-key) of the master key, the
+  [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
+  letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
+  The retention has a line for the app's, which forgets persons as a whole, under `default`, and
+  one for each category of `app/personal-data.ts`, which [forgets its
+  keys](/guides/personal-data/#each-category-for-its-own-time), with how many are past it now and
+  when the next comes due, and the keys a forgetting kept that no legal obligation keeps any more.
+
+Under the rule of [error text](#error-text) set to `"include"`, by `--error-text`,
+`BOUNDA_ERROR_TEXT=include` or the configuration, it also prints, under each failure, the text it
+keeps, encrypted under the person the event names: it is read through `app.subscriberFailures.list()`, which records it in the
+[access log](/guides/personal-data/#who-opened-what) with the persons and `--actor`. A failure whose
+person was forgotten says its text went with them.
+
+| Option | Meaning |
+| --- | --- |
+| `--json` | Print `app.status()` as JSON; with `--error-text`, `subscriberFailures` holds the failures with their text |
+| `--root`, `--config`, `--registry`, `--error-text` | As for `bounda rebuild` |
+| `--actor <id>` | Who reads the failures' text with `--error-text`, named in the access log |
+
+## `bounda restored`
+
+Says the database was restored from a copy while the app was stopped, for an app without a
+[forget ledger](/guides/personal-data/#backups), whose mark tells it on its own. It boots the
+project as `bounda dead-letters` does.
+
+```bash
+bounda restored
+```
+
+```
+restore recorded: 1 found so far; the background jobs start over from the copy, without the holds it brought back
+```
+
+The restore is counted, so every running instance starts its background jobs over; the holds of
+failures the copy brought back are cleared; and with a ledger, it is reconciled at once. Run it
+after `bounda forget --from` when restoring without a ledger (see
+[restores](/guides/personal-data/#restores)). Options: `--root`, `--config`, `--registry`,
+`--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, `2` the project could not be
+loaded.
+
+## `bounda migrate`
+
+Brings Bounda's tables to this release's version in every database the configuration names, as
+the first instance to start would, and prints the versions after:
+
+```bash
+bounda migrate
+```
+
+```
+migrated
+  storage  storage  3 of 3
+  storage  checkpoints  1 of 1
+  readModels.reports  checkpoints  1 of 1
+```
+
+It reads only the configuration, never the registry, and starts no app: run it as a step of the
+deploy, after stopping the previous version and before starting the new one (see
+[Schema](/guides/deployment/#schema)). Each database migrates under its own lock, as a start does,
+so running it twice, or while an instance starts, migrates once. Tables a newer release migrated
+are refused untouched with [`STORAGE_SCHEMA_TOO_NEW`](/reference/errors/#codes).
+
+| Option | Meaning |
+| --- | --- |
+| `--root <dir>` | The project root, the current directory by default |
+| `--config <file>` | The configuration module under the root, `bounda.config.ts` by default |
+
+Exit codes: `0` migrated, `1` bad arguments, `2` the configuration could not be loaded or a
+migration failed.
+
 ## `bounda export` and `bounda forget <person>`
 
 Answer a person's request from the command line. Both boot the project as `bounda dead-letters`
@@ -267,8 +383,9 @@ kept, restricted, until its retention ends, either way. A category the app does 
 ## `bounda forgotten` and `bounda forget --from`
 
 Apply again, by hand, the forgettings a restored backup undid, for an app without a
-[forget ledger](/guides/personal-data/#backups). Both boot the project as `bounda dead-letters`
-does.
+[forget ledger](/guides/personal-data/#backups). `bounda forget` boots the project as
+`bounda dead-letters` does; `bounda forgotten` only opens the project's storage and reads its
+event store, without starting the app, so a strict forget ledger that is down does not stop it.
 
 ```bash
 bounda forgotten --since 2026-11-01T03:00:00Z > forgotten.jsonl
@@ -279,21 +396,22 @@ bounda forget --from forgotten.jsonl
 `bounda forgotten` reads the stream and prints, one line of JSON each, the `PersonalDataForgotten`
 of every person forgotten since `--since`: a date, compared with each event's time, which reads the
 whole stream, or a position of the stream to read after. Each line is
-`{"personId":…,"eventId":…,"forgottenAt":…,"categories":…}`, the entry a ledger would hold, with
-`categories` `null` for a person forgotten as a whole and else the categories the forgetting asked
-for; the count goes to
-standard error, so standard output is the list alone. Run it against the database before it is
-restored, or regularly next to the backups.
+`{"personId":…,"eventId":…,"forgottenAt":…,"reason":…,"fingerprints":[…],"categories":…}`, the
+entry a ledger would hold: `categories` `null` for a person forgotten as a whole and else the
+categories the forgetting asked for, and no `fingerprints` for a forgetting recorded before Bounda
+0.4.0; the count goes to standard error, so standard output is the list alone. Run it against the
+database before it is restored, or regularly next to the backups.
 
-`bounda forget --from <file>` forgets again, with `reason: "restored"`, each person listed who
-still holds a key the line covers, unless the database holds the forgetting the line names by
-`eventId`: the categories it names, or the person as a whole. A line may also be a bare person's
-id, forgotten as a whole whenever they hold a key; blank lines are skipped. It
-prints each person it forgot and how many of those listed:
+`bounda forget --from <file>` commits again each forgetting listed, of the categories it asked for
+or of the person as a whole, under its own id, time and reason, unless the database holds it, and
+only while the person holds a key in force the line covers and names, as a reconciliation would;
+with a forget ledger configured, it records each in the ledger first. A line may also be a bare
+person's id, forgotten as a whole, as a request, whenever they hold a key; blank lines are skipped.
+It prints each person it forgot and how many of those listed:
 
 ```
 forgot again c-42
-forgot again 1 of 3 listed; the rest hold no key, or this store holds their forgetting
+forgot again 1 of 3 listed; the rest hold no key the line names, or this store holds their forgetting
 ```
 
 | Option | Applies to | Meaning |
@@ -307,6 +425,38 @@ forgot again 1 of 3 listed; the rest hold no key, or this store holds their forg
 Exit codes: `0` done, `1` bad arguments, or a person and `--from` both or neither, `2` the project
 could not be loaded, the export or the forget failed, or the file could not be read or has a line
 that is neither a person's id nor an entry, in which case nobody is forgotten.
+
+## `bounda forget-ledger expire`
+
+Gives every entry of a Workers KV [forget ledger](/guides/personal-data/#keeping-the-ledger-short)
+the expiration `keepFor` sets: KV expires a key only as it was written, so the keys written before
+`keepFor` was set, or while it was longer, keep the expiration they had, none at first. Run it once
+after setting or shortening `keepFor`, from the project's root.
+
+```bash
+bounda forget-ledger expire --binding FORGET_LEDGER --keep-for 35d
+```
+
+It runs the project's own wrangler, logged in to the account: it lists every object's keys under
+the ledger, writes again with their expiration those that expire later than `keepFor` after their
+forgetting or never, and removes those already past it, through `wrangler kv bulk`. A key that is
+not an entry of the ledger is never touched. It prints what it changed:
+
+```
+gave 1204 entries the expiration keepFor sets; removed 37 already past it
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--binding <name>` | The KV namespace's binding in `wrangler.jsonc`, as `kvForgetLedger({ binding })` names it |
+| `--keep-for <duration>` | The configuration's `keepFor`, such as `35d` |
+| `--local` | The local state of `wrangler dev` instead of the deployed namespace |
+| `--env <name>`, `--wrangler-config <path>`, `--persist-to <dir>` | As wrangler takes `--env`, `--config` and `--persist-to` |
+| `--root <dir>` | The project's root, where wrangler is installed |
+| `--error-text` | Print the message of the error it fails on, as [error text](#error-text) says |
+
+Exit codes: `0` done, `1` bad arguments, `2` wrangler failed, is not installed, or
+`@bounda-dev/cloudflare` is not; the failure is printed as [error text](#error-text) says.
 
 ## Programmatic use
 
@@ -324,7 +474,9 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `formatWarnings` format the error and the warnings as the command prints them. `bounda rebuild` is `rebuildReadModel` from
 `@bounda-dev/core` over a project loaded with `loadProject` from `@bounda-dev/core/node`, with
 `actor` for `--actor`; an app exposes the same as `app.rebuildReadModel(name)`, and
-`app.as(actor).rebuildReadModel(name)`. `bounda dead-letters` is `app.deadLetters` on a booted app,
+`app.as(actor).rebuildReadModel(name)`. `bounda status` is `app.status()`, and its failures' text
+`app.as(actor).subscriberFailures.list()`; `bounda migrate` is `migrateTables({ config })` from
+`@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
 or `app.as(actor).deadLetters`, `bounda export` is `app.as(actor).exportPersonalData(person)`,
 `bounda forget <person>` is `app.as(actor).forget(person, { categories })`, and
 `bounda forget --from` is `app.forgetAgain(entries, { actor })`. The

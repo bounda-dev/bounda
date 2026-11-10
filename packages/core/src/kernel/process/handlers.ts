@@ -11,6 +11,7 @@ import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
+import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { checkStatePerson } from "../personal-data/process-state.ts";
 import { refuseRestricted } from "../personal-data/refusal.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
@@ -91,6 +92,7 @@ export interface CreateProcessHandlersArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
+  readonly intentions: ForgetIntentions;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -105,6 +107,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   ids,
   clock,
   logger,
+  intentions,
 }) => {
   const reactionFor = (
     process: ProcessRuntime,
@@ -123,6 +126,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       clock,
       personalCategories,
       batchSize: config.runtime.dispatcher.batchSize,
+      intentions,
       maxChainDepth: config.forAggregate(process.aggregate).policies.maxChainDepth,
     });
 

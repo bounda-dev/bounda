@@ -53,9 +53,18 @@ const withoutStack = ({
   ...fields
 }: ErrorFields): Omit<ErrorFields, "errorStack"> => fields;
 
+/**
+ * A failed delivery also carries the event it failed on and what it threw, for the record the
+ * dispatcher keeps of it.
+ */
 export type Delivery =
   | { readonly outcome: Exclude<DeliveryOutcome, "failed"> }
-  | { readonly outcome: "failed"; readonly failure: DeliveryFailure };
+  | {
+      readonly outcome: "failed";
+      readonly failure: DeliveryFailure;
+      readonly event: StoredEvent;
+      readonly error: unknown;
+    };
 
 /**
  * Thrown by `process` when the first `done` events went through and the next one threw `cause`.
@@ -223,6 +232,8 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
           eventType: failed.type,
           ...withoutStack(errorFields({ error: cause, errorText })),
         },
+        event: failed,
+        error: cause,
       };
     }
   };

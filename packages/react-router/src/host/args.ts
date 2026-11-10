@@ -26,9 +26,11 @@ export interface CreateHostArgs<R extends Registry = AppRegistry> {
   readonly importActor?: ImportModuleFunction | undefined;
   readonly consistency: Consistency;
   /**
-   * What `runtime.telemetry.errorText` is when the configuration sets none: the dev server passes
-   * `"include"`. Only the Node host applies it: on Cloudflare the app runs in its Durable Object,
-   * under the configuration `createBoundaObject` takes.
+   * What `runtime.telemetry.errorText` is when the configuration sets none, and what
+   * `handleError` follows before the app has booted: the dev server passes `"include"`. Only the
+   * Node host applies it: on Cloudflare the app runs in its Durable Object, under the
+   * configuration `createBoundaObject` takes and `BOUNDA_ERROR_TEXT` in its `env`, which
+   * `.dev.vars` sets in development.
    */
   readonly errorText?: ErrorText;
 }

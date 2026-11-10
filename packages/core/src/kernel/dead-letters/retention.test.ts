@@ -1,23 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { testDeadLetter } from "../../adapter/testing/fixtures.ts";
+import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
 import { HOLD_MS } from "../personal-data/hold.ts";
+import { LEASE_MS } from "../shared/lease.ts";
 import { createRecordingLogger } from "../test-support.ts";
-import { createDeadLetterRetention, DEAD_LETTER_PURGE_LIMIT } from "./retention.ts";
+import {
+  createDeadLetterRetention,
+  DEAD_LETTER_PURGE_LEASE,
+  DEAD_LETTER_PURGE_LIMIT,
+} from "./retention.ts";
 
 const DAY = 86_400_000;
 const start = new Date("2026-01-01T00:00:00.000Z");
 const later = (ms: number): Date => new Date(start.getTime() + ms);
 
 const setUp = async () => {
-  const { deadLetterStore: store } = await memory().createStorage();
+  const { deadLetterStore: store, checkpointStore: checkpoints } = await memory().createStorage();
   const { logger, entries: logs } = createRecordingLogger();
-  const retention = createDeadLetterRetention({ store, retentionMs: 7 * DAY, logger });
+  const retention = createDeadLetterRetention({
+    store,
+    checkpoints,
+    retentionMs: 7 * DAY,
+    clock: createFixedClock(start),
+    logger,
+  });
   const resolve = async (id: string, at: Date, status: "retried" | "discarded" = "retried") => {
     await store.add(testDeadLetter(id));
     await store.updateStatus(id, status, at);
   };
-  return { store, logs, retention, resolve };
+  // Another instance over the same store.
+  const other = () =>
+    createDeadLetterRetention({
+      store,
+      checkpoints,
+      retentionMs: 7 * DAY,
+      clock: createFixedClock(start),
+      logger,
+    });
+  return { store, checkpoints, logs, retention, resolve, other };
 };
 
 describe("the retention of dead letters", () => {
@@ -140,5 +161,66 @@ describe("the retention of dead letters", () => {
     const next = resumed + 7 * DAY;
     expect(await retention.sweep(new Date(next))).toBe(0);
     expect(await retention.nextDueAt()).toEqual(new Date(next + HOLD_MS));
+  });
+});
+
+describe("the retention of dead letters across instances", () => {
+  it("purges each batch once while two instances run it: the one holding the lease", async () => {
+    const { store, checkpoints, retention, resolve, other } = await setUp();
+    for (let at = 0; at <= DEAD_LETTER_PURGE_LIMIT; at += 1) await resolve(`l-${at}`, later(at));
+    const second = other();
+    const due = later(8 * DAY);
+    expect(await retention.sweep(due)).toBe(DEAD_LETTER_PURGE_LIMIT);
+    expect(await second.sweep(due)).toBe(0);
+    expect(await store.count()).toBe(1);
+    expect(await checkpoints.get(DEAD_LETTER_PURGE_LEASE)).toBe(due.getTime() + LEASE_MS);
+    expect(await second.nextDueAt()).toEqual(new Date(due.getTime() + LEASE_MS));
+    await retention.release();
+    expect(await second.sweep(due)).toBe(1);
+  });
+
+  it("hands the purge to another instance once its lease lapsed, and purges nothing more itself", async () => {
+    const { store, retention, resolve, other } = await setUp();
+    for (let at = 0; at < 2 * DEAD_LETTER_PURGE_LIMIT; at += 1) await resolve(`l-${at}`, later(at));
+    const due = later(8 * DAY);
+    expect(await retention.sweep(due)).toBe(DEAD_LETTER_PURGE_LIMIT);
+    const lapsed = new Date(due.getTime() + LEASE_MS);
+    const second = other();
+    expect(await second.sweep(lapsed)).toBe(DEAD_LETTER_PURGE_LIMIT);
+    await resolve("late", start);
+    expect(await retention.sweep(new Date(lapsed.getTime() + 1))).toBe(0);
+    expect(await store.count()).toBe(1);
+  });
+
+  it("purges again at once after a restore, though the store had paused it", async () => {
+    const { store, retention, resolve } = await setUp();
+    await resolve("a", later(-8 * DAY));
+    const { firstResolvedAt } = store;
+    store.firstResolvedAt = () => Promise.reject(new Error("down"));
+    expect(await retention.sweep(start)).toBe(0);
+    store.firstResolvedAt = firstResolvedAt;
+    expect(await retention.sweep(start)).toBe(0);
+    retention.restored();
+    expect(await retention.sweep(start)).toBe(1);
+  });
+
+  it("reads the store again at once after a restore", async () => {
+    const { store, retention, resolve } = await setUp();
+    await retention.sweep(start);
+    await resolve("a", later(-8 * DAY));
+    expect(await retention.sweep(later(DAY))).toBe(0);
+    retention.restored();
+    expect(await retention.sweep(later(DAY))).toBe(1);
+    expect(await store.count()).toBe(0);
+  });
+
+  it("says when the earliest resolved letter comes due", async () => {
+    const { retention, resolve } = await setUp();
+    expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, nextDueAt: null });
+    await resolve("a", later(DAY));
+    expect(await retention.status()).toEqual({
+      retentionMs: 7 * DAY,
+      nextDueAt: later(8 * DAY).toISOString(),
+    });
   });
 });

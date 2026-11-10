@@ -212,6 +212,8 @@ describe("createCheckpointedSubscriber", () => {
     expect(await subscriber.deliver({ read, wait: true })).toEqual({
       outcome: "failed",
       failure: { position: 3, eventId: "order-1-3", eventType: "OrderPlaced", errorName: "Error" },
+      event: expect.objectContaining({ id: "order-1-3", position: 3 }),
+      error: expect.objectContaining({ message: "poison" }),
     });
     expect(seen).toEqual([
       [1, 2, 3, 4],
@@ -348,6 +350,8 @@ describe("createCheckpointedSubscriber", () => {
         eventType: "OrderPlaced",
         errorName: "string",
       },
+      event: expect.objectContaining({ id: "order-1-1", position: 1 }),
+      error: "not an error",
     });
     expect(transactions.waits).toEqual([true]);
   });

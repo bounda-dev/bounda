@@ -90,6 +90,15 @@ Object has no loop running between requests:
 `createBoundaObject` accepts `passesPerAlarm` (50 by default): how many rounds of work one alarm
 does before it yields and wakes itself again.
 
+The object and the Worker log one JSON line per entry, which Workers Logs parses into fields;
+`workersLogger` is that logger, and a `logger` option takes another. A failure is logged by its
+class and its `code`, without its message, as [error text](/reference/observability/#error-text)
+says by default. The configuration is the same bundle wherever it is deployed, so
+`BOUNDA_ERROR_TEXT` in the Worker's `env` decides instead: `include` there, in `.dev.vars`, puts
+the message and the stack in the logs under `wrangler dev`, for the object and the Worker alike,
+and a deployment, which never reads `.dev.vars`, keeps them out. `create-bounda` writes that line;
+`.dev.vars.example` only mentions it, so Deploy to Cloudflare never asks for it.
+
 ## Ports and `env`
 
 A port implementation that exports `create` receives the object's `env`: the Worker's
@@ -157,7 +166,14 @@ in `wrangler.jsonc` and name it in `runtime.personalData.forgetLedger.store`; an
 `ConfigurationError`. Each object keeps its entries under its own name, and reads the ledger once
 more a minute after it starts, since KV may take that long to list a key. The periodic
 reconciliation never wakes an object on its own, and with `keepFor` each key expires in KV by
-itself. See [backups](/guides/personal-data/#backups).
+itself; `bounda forget-ledger expire` gives the keys written before `keepFor` was set theirs.
+Every forgetting writes its intention to KV before the object commits it, so one the object did not
+get to commit, because it was evicted or its transaction failed, is committed at its next start;
+with `strict`, a forgetting KV does not take fails and forgets nobody. An entry lives in its key's
+metadata, which KV caps at 1024 bytes: one whose keys do not fit beside its categories, a person
+with some thirty categories, is kept without its keys, so a reconciliation forgets again what the
+person was given after it too, in the categories it asked for. See
+[backups](/guides/personal-data/#backups).
 
 ## One object per tenant
 
@@ -180,7 +196,7 @@ global stream.
 
 Refusals come back as `{ "error": { "code", "message" } }` with the statuses in
 [errors over HTTP](/reference/errors/#over-http); anything else is a 500 whose message goes to the
-logs, not to the caller. A body over `maxPayloadBytes`, `DEFAULT_MAX_PAYLOAD_BYTES` unless
+logs, not to the caller, under the rule of [error text](/reference/observability/#error-text). A body over `maxPayloadBytes`, `DEFAULT_MAX_PAYLOAD_BYTES` unless
 `createWorker({ config, tenantOf, maxPayloadBytes })` says otherwise, is refused with a 413
 before it is read.
 
@@ -204,8 +220,10 @@ export default {
 
 `connect(stub)` gives a `BoundaClient`, the type `@bounda-dev/core` gives to what a request sees
 of an app wherever it runs: the same `commands` and `queries` as `app.commands` and
-`app.queries`, typed from your modules, plus `getLag()`, `events`, `deadLetters`,
-`rebuildReadModel`, `forget`, `exportPersonalData`, `restrict` and `unrestrict`.
+`app.queries`, typed from your modules, plus `getLag()`, `status()`, `events`, `deadLetters`,
+`subscriberFailures`, `rebuildReadModel`, `forget`, `exportPersonalData`, `restrict` and
+`unrestrict`. `bounda status` runs where Node can open the store, so a Durable Object's is read
+through `status()`, from an admin route of the Worker, say.
 Its commands resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })`
 resolves them once their events are stored, for a request that reads nothing after it. A refusal comes
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever

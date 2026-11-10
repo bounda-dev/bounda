@@ -102,5 +102,19 @@ export const createSqlPersonStore: CreateSqlPersonStoreFunction = ({ db, table, 
           [after.toISOString()],
         ),
       ),
+    countIdle: async ({ activeBefore }) => {
+      const [row] = await db.all(
+        `SELECT count(*) AS "count" FROM ${table} WHERE ${IDLE}${activeBefore === undefined ? "" : ` AND "last_active_at" <= ${p(1)}`}`,
+        activeBefore === undefined ? [] : [activeBefore.toISOString()],
+      );
+      return Number(row?.count ?? 0);
+    },
+    releaseHolds: async () =>
+      (
+        await db.all(
+          `UPDATE ${table} SET "held_until" = NULL, "attempts" = 0 WHERE "held_until" IS NOT NULL RETURNING "person"`,
+          [],
+        )
+      ).length,
   };
 };

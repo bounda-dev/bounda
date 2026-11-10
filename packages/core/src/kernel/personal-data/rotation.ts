@@ -3,6 +3,7 @@ import type { PersonalKeyRow, PersonalKeyStore } from "../../adapter/storage/per
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { digest } from "../read-model/fingerprint.ts";
+import { createLease } from "../shared/lease.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import type { CryptoKeyWrapper } from "./key-wrapper.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
@@ -27,6 +28,28 @@ export const ROTATED_PREFIX = "personal-keys:rotated:";
 // `ROTATION_CHECK_INTERVAL_MS`, so a mark this old is no running instance's.
 export const ROTATION_MARK_EXPIRY_MS: number = 10 * ROTATION_CHECK_INTERVAL_MS;
 
+/**
+ * The checkpoint rows of the lease each set of wrapping keys rotates under, named after the set's
+ * digest as its mark is: one instance rewraps at a time.
+ */
+export const ROTATION_LEASE_PREFIX = "personal-keys:rotating:";
+
+/**
+ * Where the rotation under one set of wrapping keys stands.
+ */
+export interface KeyRotationStatus {
+  readonly kid: string;
+  readonly previous: readonly string[];
+  /**
+   * How many keys are left to rewrap, held ones included.
+   */
+  readonly pending: number;
+  /**
+   * When a pass last found none left, `null` while one is.
+   */
+  readonly completeAt: string | null;
+}
+
 export interface KeyRotation {
   /**
    * Rewraps under the wrapper's key up to `ROTATION_BATCH` keys wrapped under a previous one or
@@ -39,6 +62,16 @@ export interface KeyRotation {
    * is none, and without reading the key table once the rotation is complete.
    */
   nextDueAt(): Promise<Date | null>;
+  status(): Promise<KeyRotationStatus>;
+  /**
+   * Gives the lease back when this instance holds it. Never rejects.
+   */
+  release(): Promise<void>;
+  /**
+   * After the database went back to a copy: forgets what this instance knew of the rotation, and,
+   * when `first`, clears the holds of the keys the copy brought back. Never rejects.
+   */
+  restored(first: boolean): Promise<void>;
 }
 
 export interface CreateKeyRotationArgs {
@@ -57,8 +90,8 @@ export interface CreateKeyRotationFunction {
   (args: CreateKeyRotationArgs): KeyRotation;
 }
 
-const markerOf = (kid: string, previous: readonly string[]): string =>
-  `${ROTATED_PREFIX}${digest(JSON.stringify([kid, ...[...new Set(previous)].sort()]))}`;
+const digestOf = (kid: string, previous: readonly string[]): string =>
+  digest(JSON.stringify([kid, ...[...new Set(previous)].sort()]));
 
 interface Answer {
   readonly next: number | null;
@@ -84,7 +117,14 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   // A wrapper that names its own key among the previous ones would rewrap it on every pass.
   const previous = wrapper.previous.filter((kid) => kid !== wrapper.kid);
   const kids = [...previous, null];
-  const marker = markerOf(wrapper.kid, previous);
+  const set = digestOf(wrapper.kid, previous);
+  const marker = `${ROTATED_PREFIX}${set}`;
+  const lease = createLease({
+    checkpoints,
+    row: `${ROTATION_LEASE_PREFIX}${set}`,
+    clock,
+    logger,
+  });
   // Until when a pass reads nothing: the mark stands, or every key left is held.
   let completeUntil = Number.NEGATIVE_INFINITY;
   let restUntil = Number.NEGATIVE_INFINITY;
@@ -110,10 +150,12 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     completeUntil = at + ROTATION_CHECK_INTERVAL_MS;
     if (!(await checkpoints.compareAndSet(marker, markedAt, at))) return;
     if (markedAt === 0) report();
+    // The lease of another set lapsed at its position, as long ago as its mark was renewed.
     for (const { subscriber, position } of await checkpoints.list()) {
       if (
-        subscriber.startsWith(ROTATED_PREFIX) &&
+        (subscriber.startsWith(ROTATED_PREFIX) || subscriber.startsWith(ROTATION_LEASE_PREFIX)) &&
         subscriber !== marker &&
+        subscriber !== `${ROTATION_LEASE_PREFIX}${set}` &&
         at - position >= ROTATION_MARK_EXPIRY_MS
       ) {
         await checkpoints.remove(subscriber);
@@ -158,6 +200,8 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       completeUntil = markedAt + ROTATION_CHECK_INTERVAL_MS;
       return 0;
     }
+    // While another instance holds the lease, its row is one read, the keys a batch.
+    if (at < lease.heldElsewhereUntil() && !(await lease.take(at))) return 0;
     answer = null;
     const due = await keys.listWrappedUnder({ kids, releasedBy: now, limit: ROTATION_BATCH });
     if (due.length === 0) {
@@ -173,6 +217,8 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     let rewrapped = 0;
     let kept = true;
     for (const row of due) {
+      // A lease that lapsed while this instance stalled was taken by another, which goes on.
+      if (!(await lease.take(clock.now().getTime()))) break;
       const outcome = await rewrap(row, at);
       if (outcome.rewrapped) rewrapped += 1;
       kept &&= outcome.kept;
@@ -212,7 +258,31 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       if (answer === null || at >= answer.until) answer = await read(now);
       return answer.next === null
         ? null
-        : new Date(pause.notBefore(Math.max(answer.next, restUntil)));
+        : new Date(pause.notBefore(Math.max(answer.next, restUntil, lease.heldElsewhereUntil())));
+    },
+    status: async () => {
+      const [pending, markedAt] = await Promise.all([
+        keys.countWrappedUnder({ kids }),
+        checkpoints.get(marker),
+      ]);
+      return {
+        kid: wrapper.kid,
+        previous,
+        pending,
+        completeAt: markedAt === 0 ? null : new Date(markedAt).toISOString(),
+      };
+    },
+    release: lease.release,
+    restored: async (first) => {
+      completeUntil = Number.NEGATIVE_INFINITY;
+      restUntil = Number.NEGATIVE_INFINITY;
+      answer = null;
+      pause.resume();
+      lease.reset();
+      if (!first) return;
+      await keys.releaseHolds().catch((error: unknown) => {
+        logger.error("personal keys' holds could not be cleared", { error });
+      });
     },
   };
 };

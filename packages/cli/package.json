@@ -41,21 +41,27 @@
     "commander": "catalog:"
   },
   "peerDependencies": {
+    "@bounda-dev/cloudflare": "workspace:*",
     "@bounda-dev/core": "workspace:*",
     "typescript": ">=7.0.0"
   },
   "peerDependenciesMeta": {
+    "@bounda-dev/cloudflare": {
+      "optional": true
+    },
     "typescript": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@bounda-dev/cloudflare": "workspace:*",
     "@bounda-dev/core": "workspace:*",
     "@stryker-mutator/core": "catalog:",
     "@stryker-mutator/vitest-runner": "catalog:",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
   }
 }

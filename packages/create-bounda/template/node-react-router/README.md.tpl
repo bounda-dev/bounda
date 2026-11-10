@@ -23,6 +23,7 @@ app/read/orders/            a read model
   queries/list-orders.ts
 app/routes/home.tsx         a loader that queries and an action that dispatches
 app/root.tsx                mounts boundaMiddleware
+app/entry.server.tsx        React Router's entry, with Bounda's handleError
 vite.config.ts              plugins: [bounda(), reactRouter()]
 bounda.config.ts            storage and ports
 tests/orders.test.ts        the app on an in-memory adapter
@@ -30,7 +31,9 @@ tests/orders.test.ts        the app on an in-memory adapter
 
 The `bounda()` Vite plugin generates the types when the dev server starts and after every change
 under `app/domain` and `app/read`, and serves `@bounda-dev/react-router/app`: the `bounda`
-context for loaders and actions and the `boundaMiddleware` that boots the app. The
+context for loaders and actions, the `boundaMiddleware` that boots the app, and the
+`handleError` that `app/entry.server.tsx` exports, which logs what a request throws without its
+message, which may quote personal data, except under the dev server. The
 [React Router guide](https://docs.bounda.dev/guides/react-router/) has the details; the
 [project layout guide](https://docs.bounda.dev/guides/project-layout/) covers every kind of
 module.

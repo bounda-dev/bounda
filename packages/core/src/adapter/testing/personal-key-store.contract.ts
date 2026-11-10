@@ -161,6 +161,29 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       expect(await store.nextHoldEnd({ kids: ["kid-1", "kid-2"], after: before })).toBeNull();
     });
 
+    it("counts the keys wrapped under the ids asked for, held or not, and clears every hold at once", async () => {
+      await store.add("c-1", D, wrapped("1", "kid-1"));
+      await store.add("c-2", D, wrapped("2", "kid-1"));
+      await store.add("c-3", D, stored("3"));
+      await store.add("c-4", D, wrapped("4", "kid-2"));
+      await store.hold("c-1", wrapped("1", "kid-1"), {
+        until: "2026-02-01T00:00:30.000Z",
+        attempts: 2,
+      });
+      await store.hold("c-3", stored("3"), { until: "2026-02-01T00:00:20.000Z", attempts: 1 });
+      expect(await store.countWrappedUnder({ kids: ["kid-1"] })).toBe(2);
+      expect(await store.countWrappedUnder({ kids: ["kid-1", null] })).toBe(3);
+      expect(await store.countWrappedUnder({ kids: [null] })).toBe(1);
+      expect(await store.countWrappedUnder({ kids: [] })).toBe(0);
+      expect(await store.releaseHolds()).toBe(2);
+      expect(await store.listWrappedUnder({ kids: ["kid-1", null], limit: 10 })).toEqual([
+        { person: "c-1", category: D, key: wrapped("1", "kid-1"), hold: null },
+        { person: "c-2", category: D, key: wrapped("2", "kid-1"), hold: null },
+        { person: "c-3", category: D, key: stored("3"), hold: null },
+      ]);
+      expect(await store.releaseHolds()).toBe(0);
+    });
+
     it("never holds a key forgotten or replaced since it was read, and forgets a hold with its key", async () => {
       const read = wrapped("first", "kid-1");
       const hold = { until: "2026-02-01T00:00:30.000Z", attempts: 1 };
@@ -390,6 +413,47 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       expect(
         await store.nextRetainedHoldEnd({ except: [], after: new Date(hold.until) }),
       ).toBeNull();
+    });
+
+    it("counts what the retention lists, held or not, and clears the retention's holds alone", async () => {
+      for (const person of ["c-1", "c-2", "c-3", "c-4"]) {
+        await store.add(person, "profile", stored(person.slice(2)));
+        await store.touch(person, `2026-01-0${person.slice(2)}T00:00:00.000Z`);
+      }
+      await store.add("c-5", "billing", stored("5"));
+      await store.retain("c-5", "f-5", {
+        since: "2026-02-01T00:00:00.000Z",
+        lastActiveAt: "2026-01-01T00:00:00.000Z",
+      });
+      await store.add("c-6", "invoices", stored("6"));
+      await store.retain("c-6", "f-6", {
+        since: "2026-02-01T00:00:00.000Z",
+        lastActiveAt: "2026-01-01T00:00:00.000Z",
+      });
+      await persons.restrict("c-4", new Date("2026-02-05T00:00:00.000Z"));
+      const hold = { until: "2026-03-01T00:00:00.000Z", attempts: 1 };
+      await store.holdDue("c-1", "f-1", "2026-01-01T00:00:00.000Z", hold);
+      await store.holdDue("c-5", "f-5", "2026-01-01T00:00:00.000Z", hold);
+      await store.hold("c-2", stored("2"), hold);
+      expect(await store.countDue({ category: "profile" })).toBe(3);
+      expect(
+        await store.countDue({
+          category: "profile",
+          activeBefore: new Date("2026-01-02T00:00:00.000Z"),
+        }),
+      ).toBe(2);
+      expect(await store.countDue({ category: "billing" })).toBe(1);
+      expect(await store.countRetained({ except: ["invoices"] })).toBe(1);
+      expect(await store.countRetained({ except: [] })).toBe(2);
+      expect(await store.releaseDueHolds()).toBe(2);
+      expect(await store.releaseDueHolds()).toBe(0);
+      expect(
+        (await store.listDue({ category: "profile", limit: 10 })).map(({ hold: held }) => held),
+      ).toEqual([null, null, null]);
+      expect(
+        await store.listWrappedUnder({ kids: [null], releasedBy: new Date(0), limit: 10 }),
+      ).toHaveLength(5);
+      expect(await store.releaseHolds()).toBe(1);
     });
   });
 };

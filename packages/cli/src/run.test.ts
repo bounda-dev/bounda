@@ -403,6 +403,51 @@ describe("bounda rebuild", () => {
     expect(told.stderr).toContain('"errorMessage":"cannot total ana@example.com"');
   });
 
+  it("prints and logs the text of errors as BOUNDA_ERROR_TEXT says, under --error-text", async () => {
+    const args = ["dead-letters", "list", "--registry", ".bounda/failing-registry.ts"];
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      const told = await cli(args, fixture);
+      expect(told.stderr).toContain('"errorMessage":"probed ana@example.com"');
+      process.env.BOUNDA_ERROR_TEXT = "omit";
+      const quiet = await cli(args, fixture);
+      expect(quiet.stderr).not.toContain("ana@example.com");
+      const flagged = await cli([...args, "--error-text"], fixture);
+      expect(flagged.stderr).toContain('"errorMessage":"probed ana@example.com"');
+      process.env.BOUNDA_ERROR_TEXT = "loud";
+      const refused = await cli(args, fixture);
+      expect(refused.code).toBe(EXIT_FAILURE);
+      expect(refused.stderr).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+  });
+
+  it("prints the text of a rebuild's error when BOUNDA_ERROR_TEXT includes it", async () => {
+    const project = await loadProject<typeof failingRegistry>({
+      root: fixture,
+      registryPath: ".bounda/failing-registry.ts",
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.commands.increment({ counterId: `c-${Date.now()}` });
+    await app.stop();
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      const told = await cli(
+        ["rebuild", "failingTotals", "--registry", ".bounda/failing-registry.ts"],
+        fixture,
+      );
+      expect(told.code).toBe(EXIT_FAILURE);
+      expect(told.stderr).toContain("error: cannot total ana@example.com\n");
+      expect(told.stderr).toContain('"errorMessage":"cannot total ana@example.com"');
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+  });
+
   it("logs the text of errors while the app runs only with --error-text", async () => {
     const args = ["dead-letters", "list", "--registry", ".bounda/failing-registry.ts"];
     const quiet = await cli(args, fixture);
@@ -665,7 +710,14 @@ describe("bounda forgotten and bounda forget", () => {
     expect(byPosition.code).toBe(EXIT_OK);
     expect(besidesLogs(byPosition.stderr)).toBe("1 person forgotten\n");
     expect(byPosition.stdout).toBe(
-      `${JSON.stringify({ personId: forgotten, eventId: event?.id, forgottenAt: event?.timestamp, categories: null })}\n`,
+      `${JSON.stringify({
+        personId: forgotten,
+        eventId: event?.id,
+        forgottenAt: event?.timestamp,
+        categories: null,
+        reason: "requested",
+        fingerprints: Reflect.get(Object(event?.payload), "fingerprints"),
+      })}\n`,
     );
     const byDate = await cli(["forgotten", "--since", before], fixture);
     expect(byDate.code).toBe(EXIT_OK);
@@ -680,7 +732,7 @@ describe("bounda forgotten and bounda forget", () => {
     expect(besidesLogs(forget.stderr)).toBe("");
     expect(forget.code).toBe(EXIT_OK);
     expect(forget.stdout).toBe(
-      `forgot again ${kept}\nforgot again 1 of 2 listed; the rest hold no key, or this store holds their forgetting\n`,
+      `forgot again ${kept}\nforgot again 1 of 2 listed; the rest hold no key the line names, or this store holds their forgetting\n`,
     );
     const after = await open();
     const reasons = (await after.events.read({ after: lastPosition, limit: 100 }))
@@ -689,7 +741,7 @@ describe("bounda forgotten and bounda forget", () => {
     await after.stop();
     expect(reasons).toEqual([
       [forgotten, "requested"],
-      [kept, "restored"],
+      [kept, "requested"],
     ]);
   });
 
@@ -744,7 +796,7 @@ describe("bounda forgotten and bounda forget", () => {
     const forget = await cli(["forget", "--from", file, "--actor", "operator-1"], fixture);
     expect(forget.code).toBe(EXIT_OK);
     expect(logged(forget.stderr, "info", "personal data forgotten")).toEqual([
-      expect.objectContaining({ personId: memberId, reason: "restored", actor: "operator-1" }),
+      expect.objectContaining({ personId: memberId, reason: "requested", actor: "operator-1" }),
     ]);
     const after = await open();
     const forgetting = (await after.events.read({ limit: 1_000 })).find(
@@ -752,6 +804,77 @@ describe("bounda forgotten and bounda forget", () => {
     );
     await after.stop();
     expect(forgetting?.metadata.actor).toBe("operator-1");
+  });
+
+  it("lists what the database holds without starting the app, so a strict ledger that is down does not stop it", async () => {
+    const strict = ["--config", "strict-ledger.config.ts"];
+    const listed = await cli(["forgotten", "--since", "0", ...strict], fixture);
+    expect(listed).toMatchObject({ code: EXIT_OK, stdout: "" });
+    expect(besidesLogs(listed.stderr)).toBe("0 persons forgotten\n");
+    const booted = await cli(["dead-letters", "list", ...strict], fixture);
+    expect(booted.code).toBe(EXIT_FAILURE);
+    expect(booted.stderr).toContain(
+      "error: The forget ledger could not be read, and runtime.personalData.forgetLedger.strict keeps the app from starting until it is",
+    );
+  });
+
+  it("fails a listing whose project cannot load, or whose storage cannot open, and closes what opened", async () => {
+    const missing = await cli(
+      ["forgotten", "--since", "0", "--config", "missing.config.ts"],
+      fixture,
+    );
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stdout).toBe("");
+    expect(besidesLogs(missing.stderr).match(/^error: /gm)).toHaveLength(1);
+    const root = await list();
+    await writeFile(
+      join(root, "registry.ts"),
+      "export const registry = { aggregates: {}, readModels: {} };\n",
+    );
+    const adapter = (open: string) =>
+      `import { writeFileSync } from "node:fs";\nexport default { storage: { kind: "bounda-adapter", name: "broken", options: {}, createReadModel: async () => undefined, rebuildReadModel: async () => undefined, ${open} } };\n`;
+    await writeFile(
+      join(root, "down.config.ts"),
+      adapter(`createStorage: async () => { throw new Error("database is down"); }`),
+    );
+    const down = await cli(
+      ["forgotten", "--since", "0", "--config", "down.config.ts", "--registry", "registry.ts"],
+      root,
+    );
+    expect(down.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(down.stderr)).toBe(
+      "error: Error; its message may quote personal data: run again with --error-text to print it\n",
+    );
+    await writeFile(
+      join(root, "failing.config.ts"),
+      adapter(
+        `createStorage: async () => ({ eventStore: { readAll: async () => { throw new Error("read failed"); } }, close: async () => writeFileSync(${JSON.stringify(join(root, "closed"))}, "") })`,
+      ),
+    );
+    const failing = await cli(
+      ["forgotten", "--since", "0", "--config", "failing.config.ts", "--registry", "registry.ts"],
+      root,
+    );
+    expect(failing.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(failing.stderr)).toMatch(/^error: Error; /);
+    await expect(stat(join(root, "closed"))).resolves.toBeDefined();
+  });
+
+  it("says a storage without its factories cannot be listed", async () => {
+    const root = await list();
+    await writeFile(
+      join(root, "bounda.config.ts"),
+      `export default { storage: { kind: "bounda-adapter", name: "elsewhere", options: {} } };\n`,
+    );
+    await writeFile(
+      join(root, "registry.ts"),
+      "export const registry = { aggregates: {}, readModels: {} };\n",
+    );
+    const refused = await cli(["forgotten", "--since", "0", "--registry", "registry.ts"], root);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(refused.stderr).toContain(
+      `error: storage "elsewhere" is a definition without factories. Import the adapter package's factory.`,
+    );
   });
 
   it("refuses a --since that is neither a position nor a date", async () => {
@@ -772,7 +895,7 @@ describe("bounda forgotten and bounda forget", () => {
     expect(missing.stderr).toMatch(/^error: nowhere\.jsonl: ENOENT/);
     for (const [content, message] of [
       ["m-1\n{not json", "line 2 is neither a person's id nor JSON"],
-      ['{"eventId":"e-1"}', 'line 1 needs a "personId" string, and "eventId" only as a string'],
+      ['{"eventId":"e-1"}', 'line 1 needs a "personId" string; "eventId" and "forgottenAt"'],
       ['{"personId":"m-1","eventId":7}', 'line 1 needs a "personId" string'],
     ] as const) {
       await writeFile(join(root, "list.jsonl"), content);
@@ -800,5 +923,391 @@ describe("bounda forgotten and bounda forget", () => {
     expect(forget).toContain(
       "forget again, after restoring a backup, each person listed who still holds a key and whose forgetting the store does not hold",
     );
+  });
+});
+
+describe("bounda forget-ledger expire", () => {
+  const ROOT = "bounda/forget-ledger/";
+  const expire = async (argv: readonly string[], listed: unknown = []) => {
+    const stdout = capture();
+    const stderr = capture();
+    const calls: { readonly root: string; readonly args: readonly string[] }[] = [];
+    const code = await runCli({
+      argv: ["forget-ledger", "expire", ...argv],
+      cwd: "/project",
+      stdout,
+      stderr,
+      wrangler: (root) => async (args) => {
+        calls.push({ root, args });
+        if (args[1] === "bulk" && args[2] === "put") throw new Error("wrangler: not authorized");
+        return JSON.stringify(listed);
+      },
+    });
+    return { code, stdout: stdout.text(), stderr: stderr.text(), calls, listed };
+  };
+
+  it("gives the entries their expiration through the project's wrangler, and says how many", async () => {
+    const day = 86_400_000;
+    const old = { personId: "c-1", forgottenAt: new Date(Date.now() - 40 * day).toISOString() };
+    const done = await expire(
+      [
+        "--binding",
+        "FORGET_LEDGER",
+        "--keep-for",
+        " 35d ",
+        "--local",
+        "--env",
+        "staging",
+        "--wrangler-config",
+        "w.jsonc",
+        "--persist-to",
+        ".state",
+        "--root",
+        "app",
+      ],
+      [{ name: `${ROOT}t/1:e-1`, metadata: old }],
+    );
+    expect(done).toMatchObject({
+      code: EXIT_OK,
+      stdout: "gave 0 entries the expiration keepFor sets; removed 1 already past it\n",
+      stderr: "",
+    });
+    expect(done.calls.map(({ root }) => root)).toEqual([
+      resolve("/project", "app"),
+      resolve("/project", "app"),
+    ]);
+    expect(done.calls[0]?.args).toEqual([
+      "kv",
+      "key",
+      "list",
+      "--binding",
+      "FORGET_LEDGER",
+      "--prefix",
+      ROOT,
+      "--local",
+      "--env",
+      "staging",
+      "--config",
+      "w.jsonc",
+      "--persist-to",
+      ".state",
+    ]);
+    const one = await expire(
+      ["--binding", "L", "--keep-for", "35d"],
+      [{ name: `${ROOT}t/1:e-1`, metadata: { ...old, forgottenAt: new Date().toISOString() } }],
+    );
+    expect(one.code).toBe(EXIT_FAILURE);
+    expect(one.stderr).toBe(
+      "error: Error; its message may quote personal data: run again with --error-text to print it\n",
+    );
+    const told = await expire(["--binding", "L", "--keep-for", "35d", "--error-text"], one.listed);
+    expect(told.stderr).toBe("error: wrangler: not authorized\n");
+    expect(one.calls.map(({ root, args }) => [root, args.at(-1)])).toEqual([
+      [resolve("/project"), "--remote"],
+      [resolve("/project"), "--remote"],
+    ]);
+  });
+
+  it("says how many it gave an expiration, one or more", async () => {
+    const stdout = capture();
+    const listed = [1, 2].map((index) => ({
+      name: `${ROOT}t/${index}:e-${index}`,
+      metadata: { personId: "c-1", forgottenAt: new Date().toISOString() },
+    }));
+    for (const keys of [listed.slice(0, 1), listed]) {
+      await runCli({
+        argv: ["forget-ledger", "expire", "--binding", "L", "--keep-for", "35d"],
+        cwd: "/project",
+        stdout,
+        stderr: capture(),
+        wrangler: () => async (args) => (args[1] === "key" ? JSON.stringify(keys) : ""),
+      });
+    }
+    expect(stdout.text()).toBe(
+      "gave 1 entry the expiration keepFor sets; removed 0 already past it\ngave 2 entries the expiration keepFor sets; removed 0 already past it\n",
+    );
+  });
+
+  it("refuses a keep-for that is not a duration longer than 0, and a missing binding", async () => {
+    for (const keepFor of ["0s", "soon", "-1d", ""]) {
+      const refused = await expire(["--binding", "L", "--keep-for", keepFor]);
+      expect(refused.code).toBe(EXIT_CONVENTION);
+      expect(refused.stderr).toContain("expected a duration longer than 0, such as 35d");
+      expect(refused.calls).toEqual([]);
+    }
+    expect((await expire(["--keep-for", "35d"])).code).toBe(EXIT_CONVENTION);
+  });
+
+  it("documents itself in its help", async () => {
+    const parent = await runCli({
+      argv: ["forget-ledger", "--help"],
+      cwd: "/project",
+      stdout: capture(),
+      stderr: capture(),
+    });
+    expect(parent).toBe(EXIT_OK);
+    const group = capture();
+    await runCli({
+      argv: ["forget-ledger", "--help"],
+      cwd: "/project",
+      stdout: group,
+      stderr: capture(),
+    });
+    expect(group.text()).toContain("look after a forget ledger outside the app");
+    const help = (await expire(["--help"])).stdout.replace(/\s+/g, " ");
+    for (const text of [
+      "give every entry of a Workers KV forget ledger the expiration keepFor sets, those written before it was set included",
+      "--binding <name>",
+      "the KV namespace's binding in wrangler.jsonc",
+      "--keep-for <duration>",
+      "runtime.personalData.forgetLedger.keepFor, such as 35d",
+      "--local",
+      "the local state of wrangler dev instead of the deployed namespace",
+      "--env <name>",
+      "the wrangler environment",
+      "--wrangler-config <path>",
+      "the wrangler configuration file",
+      "--persist-to <dir>",
+      "with --local, where wrangler dev keeps its state",
+      "--root <dir>",
+      "the project's root directory, where wrangler is installed",
+      "--error-text",
+      "print the message of the error the command fails on",
+    ]) {
+      expect(help).toContain(text);
+    }
+  });
+});
+
+describe("bounda status", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+  const failing = ["--registry", ".bounda/failing-registry.ts"];
+
+  const fail = async (): Promise<void> => {
+    const project = await loadProject<typeof failingRegistry>({
+      root: fixture,
+      registryPath: ".bounda/failing-registry.ts",
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.commands.increment({ counterId: `c-${Date.now()}` });
+    await app.runUntilIdle({ maxPasses: 2 });
+    await app.stop();
+  };
+
+  it("prints every subscriber's lag and last failure without its text, and the background jobs", async () => {
+    await fail();
+    const result = await cli(["status", ...failing], fixture);
+    expect(result.code).toBe(EXIT_OK);
+    expect(besidesLogs(result.stderr)).toBe("");
+    expect(result.stdout).not.toContain("ana@example.com");
+    const lines = result.stdout.split("\n");
+    expect(lines.slice(0, 3)).toEqual(["tables", "  no tables to version", expect.any(String)]);
+    expect(lines[2]).toMatch(/^restores found while running: \d+$/);
+    expect(result.stdout).toMatch(/^ {2}projection:failingTotals {2}at \d+, \d+ behind$/m);
+    expect(result.stdout).toMatch(
+      /^ {4}failing: Error on Incremented at \d+, \d+ attempts? since \S+$/m,
+    );
+    // The fixture's other registry marks personal data, and the store is shared by the tests.
+    expect(lines.at(-6)).toMatch(
+      /^personal data backfill: (no personal data marked|sealed through position \d+, caught up)$/,
+    );
+    expect(lines.slice(-5, -1)).toEqual([
+      "forget ledger: not configured",
+      "key rotation: not configured",
+      "retention: not configured",
+      "dead letter retention: not configured",
+    ]);
+    expect(logged(result.stderr, "info", "personal data accessed")).toEqual([]);
+  });
+
+  it("prints the text of each failure with --error-text, through a call the access log records", async () => {
+    await fail();
+    const result = await cli(
+      ["status", ...failing, "--error-text", "--actor", "operator-1"],
+      fixture,
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.stdout).toMatch(/^ {4}cannot total ana@example\.com$/m);
+    expect(logged(result.stderr, "info", "personal data accessed")).toEqual([
+      expect.objectContaining({
+        operation: "subscriberFailures.list",
+        actor: "operator-1",
+        outcome: "ok",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["include", [], true],
+    ["omit", [], false],
+    ["omit", ["--error-text"], true],
+  ] as const)(
+    "opens the texts of the failures as BOUNDA_ERROR_TEXT %s says, under %j",
+    async (variable, flags, opened) => {
+      await fail();
+      try {
+        process.env.BOUNDA_ERROR_TEXT = variable;
+        const result = await cli(["status", ...failing, ...flags], fixture);
+        expect(result.code).toBe(EXIT_OK);
+        expect(result.stdout.includes("cannot total ana@example.com")).toBe(opened);
+        expect(logged(result.stderr, "info", "personal data accessed")).toHaveLength(
+          opened ? 1 : 0,
+        );
+      } finally {
+        delete process.env.BOUNDA_ERROR_TEXT;
+      }
+    },
+  );
+
+  it("prints the status as JSON with --json, with the texts only when asked for", async () => {
+    await fail();
+    const quiet = await cli(["status", ...failing, "--json"], fixture);
+    expect(quiet.code).toBe(EXIT_OK);
+    const status = JSON.parse(quiet.stdout);
+    expect(status).toMatchObject({ schema: [], forgetLedger: null, keyRotation: null });
+    expect(status.subscriberFailures).toContainEqual(
+      expect.objectContaining({ subscriber: "projection:failingTotals", errorName: "Error" }),
+    );
+    expect(quiet.stdout).not.toContain("ana@example.com");
+    const told = await cli(["status", ...failing, "--json", "--error-text"], fixture);
+    expect(JSON.parse(told.stdout).subscriberFailures).toContainEqual(
+      expect.objectContaining({ errorMessage: "cannot total ana@example.com" }),
+    );
+  });
+
+  it("documents its options in its help", async () => {
+    const help = await cli(["status", "--help"], fixture);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "print the version of the tables, every subscriber's lag and last failure, and how the backfill, forget ledger, key rotation and retention stand",
+    );
+    for (const option of ["--json", "--error-text", "--actor <id>", "--registry <file>"]) {
+      expect(help.stdout).toContain(option);
+    }
+  });
+});
+
+describe("bounda migrate", () => {
+  // A configuration whose storage records the scopes it is asked to migrate: what the CLI hands
+  // over. Migrating real tables is core's, tested there on every database.
+  const migrating = async (): Promise<string> => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-cli-migrate-"));
+    temporary.push(root);
+    await writeFile(
+      join(root, "bounda.config.ts"),
+      `const versions = (scopes) => [
+  { scope: "storage", version: scopes.includes("storage") ? 2 : 0, latest: 2 },
+  { scope: "checkpoints", version: scopes.includes("checkpoints") ? 1 : 0, latest: 1 },
+];
+const adapter = {
+  kind: "bounda-adapter",
+  name: "recording",
+  options: {},
+  createStorage: async () => { throw new Error("not opened by migrate"); },
+  createReadModel: async () => { throw new Error("not opened by migrate"); },
+  rebuildReadModel: async () => { throw new Error("not opened by migrate"); },
+  createForgetLedger: async () => { throw new Error("not opened by migrate"); },
+  schemaVersions: async () => versions([]),
+  migrate: async (scopes) => {
+    globalThis.migratedScopes = scopes;
+    if (process.env.REFUSE_MIGRATION === "1") throw new Error("too new for ana@example.com");
+    return versions(scopes);
+  },
+};
+export default { storage: adapter };
+`,
+    );
+    return root;
+  };
+
+  it("migrates the scopes of every database the configuration names, needing no registry", async () => {
+    const root = await migrating();
+    const result = await cli(["migrate"], root);
+    expect(result.code).toBe(EXIT_OK);
+    expect(Reflect.get(globalThis, "migratedScopes")).toEqual(["storage", "checkpoints"]);
+    expect(result.stdout).toBe(
+      "migrated\n  storage  storage  2 of 2\n  storage  checkpoints  1 of 1\n",
+    );
+  });
+
+  it("names the error a migration fails on without its text, and exits 2", async () => {
+    const root = await migrating();
+    process.env.REFUSE_MIGRATION = "1";
+    try {
+      const result = await cli(["migrate", "--root", root], repoRoot);
+      expect(result.code).toBe(EXIT_FAILURE);
+      expect(result.stderr).not.toContain("ana@example.com");
+      expect(result.stderr).toContain("error: Error; its message may quote personal data");
+    } finally {
+      delete process.env.REFUSE_MIGRATION;
+    }
+  });
+
+  it("prints the text a migration fails on under BOUNDA_ERROR_TEXT, and refuses a value it does not know before migrating", async () => {
+    const root = await migrating();
+    process.env.REFUSE_MIGRATION = "1";
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "include";
+      const told = await cli(["migrate", "--root", root], repoRoot);
+      expect(told.code).toBe(EXIT_FAILURE);
+      expect(told.stderr).toContain("ana@example.com");
+      Reflect.deleteProperty(globalThis, "migratedScopes");
+      process.env.BOUNDA_ERROR_TEXT = "loud";
+      const refused = await cli(["migrate", "--root", root], repoRoot);
+      expect(refused.code).toBe(EXIT_FAILURE);
+      expect(refused.stderr).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+      expect(Reflect.get(globalThis, "migratedScopes")).toBeUndefined();
+    } finally {
+      delete process.env.REFUSE_MIGRATION;
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+  });
+
+  it("exits 2 with the reason when the configuration is not there", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bounda-cli-migrate-"));
+    temporary.push(root);
+    const result = await cli(["migrate"], root);
+    expect(result.code).toBe(EXIT_FAILURE);
+    expect(result.stderr).toMatch(/^error: Cannot find the configuration/);
+  });
+
+  it("documents its options in its help", async () => {
+    const help = await cli(["migrate", "--help"], repoRoot);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "bring Bounda's tables to this release's version in every database of the configuration, before a deploy",
+    );
+    for (const option of ["--root <dir>", "--config <file>"]) {
+      expect(help.stdout).toContain(option);
+    }
+  });
+});
+
+describe("bounda restored", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+
+  it("records a restore, which the status counts", async () => {
+    const before = JSON.parse((await cli(["status", "--json"], fixture)).stdout).restoresFound;
+    const result = await cli(["restored"], fixture);
+    expect(result.code).toBe(EXIT_OK);
+    expect(besidesLogs(result.stderr)).toBe("");
+    expect(result.stdout).toBe(
+      `restore recorded: ${before + 1} found so far; the background jobs start over from the copy, without the holds it brought back\n`,
+    );
+    expect(result.stderr).toContain(
+      '[bounda] warn the database went back to an earlier copy; background jobs start over {"first":true}',
+    );
+  });
+
+  it("documents itself in its help", async () => {
+    const help = await cli(["restored", "--help"], fixture);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "say the database was restored from a copy while the app was stopped",
+    );
+    expect(help.stdout).toContain("--registry <file>");
   });
 });

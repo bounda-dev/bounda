@@ -422,6 +422,7 @@ describe("personal data in delayed commands", () => {
       categories: [DEFAULT_PERSONAL_CATEGORY],
       retained: [],
       expired: [],
+      fingerprints: [expect.any(String)],
       cancelledCommands: named.map((entry) => ({
         commandId: entry.dedupeKey.replace(/^command:/, ""),
         type: entry.command.type,
@@ -470,6 +471,7 @@ describe("personal data in delayed commands", () => {
       categories: [DEFAULT_PERSONAL_CATEGORY],
       retained: [],
       expired: [],
+      fingerprints: [key?.fingerprint],
       cancelledCommands: [],
       removedDeadLetters: [{ id: stored?.id, commandType: "RemindCustomer" }],
     });

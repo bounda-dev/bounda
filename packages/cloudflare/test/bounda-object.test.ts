@@ -4,18 +4,18 @@ import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
 import { expectForgotten } from "@bounda-dev/core/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
-import { configForObject } from "../src/bounda-object.ts";
+import { configForObject, createBoundaObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
 import {
   outage,
   type processRegistry,
-  type quietRegistry,
+  quietRegistry,
   type registry,
   type slicedRegistry,
 } from "./app.ts";
 import { clock } from "./clock.ts";
-import { logs } from "./logs.ts";
+import { logs, recordingLogger } from "./logs.ts";
 import { QuietStore } from "./test-worker.ts";
 
 const fresh = () => env.STORE.get(env.STORE.newUniqueId());
@@ -522,6 +522,35 @@ describe("a Bounda Durable Object", () => {
     });
   });
 
+  it("reports its status and keeps a projection's last failure, opened through a recorded call", async () => {
+    const { store } = open();
+    outage.projection = true;
+    await store.commands.placeOrder({ orderId: "o-1", total: 5, customer: "ada", note: "x" });
+    outage.projection = false;
+    const status = await store.status();
+    expect(status.schema).toEqual([
+      { database: "storage", scope: "storage", version: 3, latest: 3 },
+      { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
+    ]);
+    expect(status.subscriberFailures).toContainEqual(
+      expect.objectContaining({
+        subscriber: "projection:orders",
+        errorName: "Error",
+        current: true,
+      }),
+    );
+    expect(JSON.stringify(status)).not.toContain("projection is down");
+    const [failure] = await store.as("ops-1").subscriberFailures.list();
+    expect(failure).toMatchObject({
+      subscriber: "projection:orders",
+      errorMessage: "projection is down",
+    });
+    expect(await store.subscriberFailures.get("projection:orders")).toMatchObject({
+      errorMessage: "projection is down",
+    });
+    expect(await store.subscriberFailures.get("projection:nothing")).toBeNull();
+  });
+
   it("dead-letters a failing policy and lets it be discarded", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "fail-1", total: 3, customer: "ada" });
@@ -808,5 +837,61 @@ describe("configForObject", () => {
         ),
       ).toThrow('set storage to cloudflare(), not "sqlite"');
     });
+  });
+});
+
+describe("BOUNDA_ERROR_TEXT", () => {
+  // An object built in the context of an empty one, so it reads the environment the test hands it.
+  const failingAlarmWith = async (
+    variables: Readonly<Record<string, string>>,
+    runtime: { readonly telemetry?: { readonly errorText: "omit" | "include" } } = {
+      telemetry: { errorText: "omit" },
+    },
+  ) =>
+    runInDurableObject(env.BARE.get(env.BARE.newUniqueId()), async (_bare, state) => {
+      const Store = createBoundaObject({
+        registry: quietRegistry,
+        config: { storage: cloudflare(), runtime },
+        clock,
+        logger: recordingLogger,
+      });
+      const store = new Store(state, { ...env, ...variables } as Cloudflare.Env);
+      await vi.waitFor(async () => expect((await store.lag()).ok).toBe(true));
+      const tables = state.storage.sql
+        .exec(`SELECT "name" FROM sqlite_master WHERE "type" = 'table' AND "name" LIKE 'bounda_%'`)
+        .toArray();
+      for (const { name } of tables) state.storage.sql.exec(`DROP TABLE "${String(name)}"`);
+      logs.error.length = 0;
+      await store.alarm();
+      return objectLogs(logs.error)[0];
+    });
+
+  it("logs the text of the object's errors when its environment includes it, over the configuration", async () => {
+    expect(await failingAlarmWith({ BOUNDA_ERROR_TEXT: "include" })).toEqual([
+      "bounda rebuilds could not be listed",
+      {
+        errorName: "Error",
+        errorMessage: expect.stringContaining("no such table"),
+        errorStack: expect.any(String),
+      },
+    ]);
+    expect(await failingAlarmWith({})).toEqual([
+      "bounda rebuilds could not be listed",
+      { errorName: "Error" },
+    ]);
+    expect(
+      await failingAlarmWith(
+        { BOUNDA_ERROR_TEXT: "omit" },
+        { telemetry: { errorText: "include" } },
+      ),
+    ).toEqual(["bounda rebuilds could not be listed", { errorName: "Error" }]);
+    expect(await failingAlarmWith({}, { telemetry: { errorText: "include" } })).toMatchObject([
+      "bounda rebuilds could not be listed",
+      { errorMessage: expect.stringContaining("no such table") },
+    ]);
+    expect(await failingAlarmWith({ BOUNDA_ERROR_TEXT: "include" }, {})).toMatchObject([
+      "bounda rebuilds could not be listed",
+      { errorMessage: expect.stringContaining("no such table") },
+    ]);
   });
 });

@@ -22,6 +22,8 @@ const entry = (
   eventId,
   forgottenAt: new Date(Date.UTC(2026, 10, 7, 12, minute)).toISOString(),
   categories,
+  reason: "requested",
+  fingerprints: [`k-${personId}`],
 });
 
 const readAll = async (ledger: ForgetLedger, limit = 2): Promise<ForgetLedgerEntry[]> => {
@@ -106,6 +108,20 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       ]);
     });
 
+    it("keeps each entry's reason and the keys it names, none, or none recorded", async () => {
+      const retained: ForgetLedgerEntry = {
+        ...entry("c-1", "e-1", 1),
+        reason: "retention",
+        fingerprints: ["k-1", "k-2"],
+      };
+      const keyless: ForgetLedgerEntry = { ...entry("c-2", "e-2", 2), fingerprints: [] };
+      const { fingerprints: _, ...unrecorded } = entry("c-3", "e-3", 3);
+      await ledger.append([retained, keyless, unrecorded]);
+      const read = await ledger.read({ limit: 10 });
+      expect(read).toEqual([retained, keyless, unrecorded]);
+      expect(read[2]).not.toHaveProperty("fingerprints");
+    });
+
     it("keeps one person's forgettings apart, each under its event", async () => {
       await ledger.append([entry("c-1", "e-1", 1), entry("c-1", "e-2", 2)]);
       expect(await ledger.read({ limit: 10 })).toEqual([
@@ -151,6 +167,19 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
         entry("c-2", "e-2", 2),
       ]);
       expect(await third.read({ limit: 10 })).toEqual([]);
+    });
+
+    it("raises a mark only upward, keeps it apart from the entries, and each tenant's apart", async () => {
+      const other = await ledgerFor("tenant-b");
+      expect(await ledger.readMark("restore:generation")).toBe(0);
+      await ledger.raiseMark("restore:generation", 7);
+      await ledger.raiseMark("restore:generation", 5);
+      expect(await ledger.readMark("restore:generation")).toBe(7);
+      await ledger.raiseMark("restore:generation", 9);
+      expect(await ledger.readMark("restore:generation")).toBe(9);
+      expect(await ledger.readMark("another")).toBe(0);
+      expect(await other.readMark("restore:generation")).toBe(0);
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
     });
   });
 };

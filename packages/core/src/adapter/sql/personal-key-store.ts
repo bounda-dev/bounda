@@ -248,5 +248,52 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
         ),
       );
     },
+    countWrappedUnder: async ({ kids }) => {
+      const under = wrappedUnder(kids);
+      if (under === null) return 0;
+      const [row] = await db.all(
+        `SELECT count(*) AS "count" FROM ${table} WHERE ${under.condition}`,
+        under.values,
+      );
+      return Number(row?.count ?? 0);
+    },
+    releaseHolds: async () =>
+      (
+        await db.all(
+          `UPDATE ${table} SET "held_until" = NULL, "attempts" = 0 WHERE "held_until" IS NOT NULL RETURNING "person"`,
+          [],
+        )
+      ).length,
+    countDue: async ({ category, activeBefore }) => {
+      const conditions = [`"category" = ${p(1)}`, ACTIVE, unrestricted];
+      const values: unknown[] = [category];
+      if (activeBefore !== undefined) {
+        values.push(activeBefore.toISOString());
+        conditions.push(`"last_active_at" <= ${p(values.length)}`);
+      }
+      const [row] = await db.all(
+        `SELECT count(*) AS "count" FROM ${table} WHERE ${conditions.join(" AND ")}`,
+        values,
+      );
+      return Number(row?.count ?? 0);
+    },
+    countRetained: async ({ except }) => {
+      const outside =
+        except.length === 0
+          ? ""
+          : ` AND "category" NOT IN (${except.map((_, index) => p(index + 1)).join(", ")})`;
+      const [row] = await db.all(
+        `SELECT count(*) AS "count" FROM ${table} WHERE ${RETAINED}${outside} AND ${unrestricted}`,
+        [...except],
+      );
+      return Number(row?.count ?? 0);
+    },
+    releaseDueHolds: async () =>
+      (
+        await db.all(
+          `UPDATE ${table} SET "forget_held_until" = NULL, "forget_attempts" = 0 WHERE "forget_held_until" IS NOT NULL RETURNING "person"`,
+          [],
+        )
+      ).length,
   };
 };

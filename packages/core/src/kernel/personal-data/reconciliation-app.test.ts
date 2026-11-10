@@ -2,9 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { Table } from "../../adapter/storage/table.ts";
+import { DEFAULT_FORGET_LEDGER_TIMEOUT_MS } from "../../config/defaults.ts";
 import type { ForgetLedgerConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ForgetLedgerUnreconciledError, ValidationError } from "../../contracts/errors.ts";
+import {
+  ForgetLedgerUnavailableError,
+  ForgetLedgerUnreconciledError,
+  ValidationError,
+} from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
@@ -18,16 +23,13 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
-import {
-  defineForgetLedger,
-  FORGET_LEDGER_WAIT_MS,
-  type ForgetLedgerSource,
-} from "./forget-ledger.ts";
+import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
 import { HOLD_MS } from "./hold.ts";
 import { FORGET_LEDGER_SUBSCRIBER } from "./ledger-outbox.ts";
 import {
   FORGET_LEDGER_ATTEMPTS,
   FORGET_LEDGER_CURSOR,
+  FORGET_LEDGER_GRACE_MS,
   FORGET_LEDGER_HELD_UNTIL,
   FORGET_LEDGER_REREAD_MS,
 } from "./reconciliation.ts";
@@ -191,7 +193,11 @@ const entry = (
   categories,
   eventId,
   forgottenAt: at.toISOString(),
+  reason: "requested",
 });
+
+// A forgetting the store lost, old enough at `START` for a reconciliation to commit it again.
+const LOST = new Date(START.getTime() - FORGET_LEDGER_GRACE_MS - 60_000);
 
 const opened = async (ledgerAdapter: Adapter): Promise<ForgetLedger> =>
   ledgerAdapter.createForgetLedger({});
@@ -214,18 +220,21 @@ describe("the forget ledger", () => {
       (event) => event.type === "PersonalDataForgotten",
     );
     expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual(
-      events.map((event) => entry(event.aggregateId, event.id, new Date(event.timestamp))),
+      events.map((event) => ({
+        ...entry(event.aggregateId, event.id, new Date(event.timestamp)),
+        fingerprints: [],
+      })),
     );
     expect(events.map((event) => event.aggregateId)).toEqual(["c-0", "c-1"]);
   });
 
-  it("forgets again at start, with reason restored, a person the ledger names whose forgetting the store does not hold", async () => {
+  it("commits again at start, under its own id, time and reason, a forgetting the ledger names that the store does not hold", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
     const { app: before, register } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
     await register("c-2");
-    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", LOST)]);
     await before.stop();
     const { logs, logger } = recording();
     const { app, forgotten, customer } = await start({
@@ -233,13 +242,13 @@ describe("the forget ledger", () => {
       forgetLedger: ledgerAdapter,
       logger,
     });
-    expect(await forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await forgotten()).toEqual([["c-1", "requested"]]);
     expect(await customer("c-1")).toBeNull();
     expect(await customer("c-2")).toEqual({ customerId: "c-2", name: "name of c-2" });
     expect(logs).toContainEqual([
       "info",
       "personal data forgotten",
-      expect.objectContaining({ personId: "c-1", reason: "restored", destroyedKeys: 1 }),
+      expect.objectContaining({ personId: "c-1", reason: "requested", destroyedKeys: 1 }),
     ]);
     const exported = await app.exportPersonalData("c-1");
     expect(exported.events.map(({ type, data }) => [type, data])).toEqual([
@@ -249,18 +258,20 @@ describe("the forget ledger", () => {
     expect((await app.exportPersonalData("c-2")).events[0]?.data).toEqual({ name: "name of c-2" });
     expect(logs).toContainEqual([
       "warn",
-      "forgot again persons a restored backup brought back",
+      "committed again forgettings the database did not hold",
       { forgotten: 1 },
     ]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     await app.runUntilIdle();
     const restored = (await app.events.read({ limit: 100 })).at(-1);
-    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toContainEqual({
-      personId: "c-1",
-      categories: null,
-      eventId: restored?.id,
-      forgottenAt: restored?.timestamp,
+    expect(restored).toMatchObject({
+      id: "lost-forget",
+      timestamp: LOST.toISOString(),
+      payload: { reason: "requested", fingerprints: [expect.any(String)] },
     });
+    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual([
+      entry("c-1", "lost-forget", LOST),
+    ]);
   });
 
   it("forgets nobody on a normal start, nor a person given a key again after the forgetting the store holds", async () => {
@@ -285,7 +296,7 @@ describe("the forget ledger", () => {
     // A start that forgot nobody leaves the read models to the background.
     expect(await customer("c-2")).toBeNull();
     expect(logs.map(([, message]) => message)).not.toContain(
-      "forgot again persons a restored backup brought back",
+      "committed again forgettings the database did not hold",
     );
     expect((await app.exportPersonalData("c-1")).events.at(-1)?.data).toEqual({
       name: "name of c-1",
@@ -318,8 +329,12 @@ describe("the forget ledger", () => {
       entry("c-1", "too-old", new Date(cursor - FORGET_LEDGER_REREAD_MS - 1)),
       entry("c-2", "in-window", new Date(cursor - FORGET_LEDGER_REREAD_MS + 1)),
     ]);
-    const { forgotten } = await start({ storage, forgetLedger: ledgerAdapter });
-    expect(await forgotten()).toEqual([["c-2", "restored"]]);
+    const { forgotten } = await start({
+      storage,
+      forgetLedger: ledgerAdapter,
+      now: new Date(cursor),
+    });
+    expect(await forgotten()).toEqual([["c-2", "requested"]]);
     expect(await written.checkpointStore.get(FORGET_LEDGER_CURSOR)).toBe(cursor);
   });
 
@@ -328,13 +343,13 @@ describe("the forget ledger", () => {
     const ledgerAdapter = memory();
     const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
-    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", LOST)]);
     await first.stop();
     const [one] = await Promise.all([
       start({ storage, forgetLedger: ledgerAdapter }),
       start({ storage, forgetLedger: ledgerAdapter }),
     ]);
-    expect(await one.forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await one.forgotten()).toEqual([["c-1", "requested"]]);
   });
 
   it("starts when the ledger cannot be read, says so, and reconciles in the worker after a while", async () => {
@@ -343,12 +358,14 @@ describe("the forget ledger", () => {
     const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
     await first.stop();
-    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", LOST)]);
     let failures = 2;
     const flaky = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           if (failures > 0) {
             failures -= 1;
@@ -376,7 +393,7 @@ describe("the forget ledger", () => {
     expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + 3 * HOLD_MS));
     clock.advance(2 * HOLD_MS);
     expect(await app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
-    expect(await forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await forgotten()).toEqual([["c-1", "requested"]]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     expect(await app.nextDueAt()).toBeNull();
   });
@@ -387,13 +404,15 @@ describe("the forget ledger", () => {
     const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
     await first.stop();
-    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", LOST)]);
     let down = true;
     let reads = 0;
     const flaky = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           reads += 1;
           if (down) throw new Error("ledger is down");
@@ -426,13 +445,13 @@ describe("the forget ledger", () => {
     down = false;
     one.clock.set(new Date(heldUntil));
     expect(await one.app.runUntilIdle({ maxPasses: 1 })).toMatchObject({ idle: false });
-    expect(await one.forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await one.forgotten()).toEqual([["c-1", "requested"]]);
     expect(await stored()).toEqual([0, 0]);
     expect(await one.app.nextDueAt()).toBeNull();
     other.clock.set(new Date(heldUntil));
     await other.app.runUntilIdle();
     expect(await other.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
-    expect(await other.forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await other.forgotten()).toEqual([["c-1", "requested"]]);
   });
 
   it("reconciles at every start, and backs off from the failures before a restart", async () => {
@@ -442,6 +461,8 @@ describe("the forget ledger", () => {
       read: async () => {
         throw new Error("ledger is down");
       },
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
     }));
     const { app: first } = await start({ storage, forgetLedger: broken });
     // A fresh store's first pass finds nothing written before the marks.
@@ -463,7 +484,7 @@ describe("the forget ledger", () => {
     const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
     await first.stop();
-    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", LOST)]);
     let answer: () => void = () => undefined;
     const answered = new Promise<void>((resolve) => {
       answer = resolve;
@@ -472,6 +493,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           await answered;
           return inner.read(args);
@@ -493,18 +516,81 @@ describe("the forget ledger", () => {
     });
     // The start arms its timer once it reaches the ledger, which the test cannot see.
     while (started === undefined) {
-      clock.advance(FORGET_LEDGER_WAIT_MS);
+      clock.advance(DEFAULT_FORGET_LEDGER_TIMEOUT_MS);
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     const app = await starting;
     stops.push(() => app.stop());
+    // Each call to the ledger is given up at the timeout, so the reconciliation fails then, and
+    // tries again once its hold ends.
     expect(logs).toContainEqual([
       "error",
-      "forget ledger did not answer in time; the app starts and reconciles in the background",
-      { timeoutMs: FORGET_LEDGER_WAIT_MS },
+      "forget ledger could not be reconciled; persons a restored backup brought back are not forgotten yet",
+      expect.objectContaining({
+        errorName: "ForgetLedgerTimeoutError",
+        errorCode: "FORGET_LEDGER_TIMEOUT",
+      }),
     ]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: false } });
     answer();
+    clock.advance(HOLD_MS);
+    await app.runUntilIdle();
+    expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
+  });
+
+  it("starts after the timeout when the reconciliation takes longer, each call to the ledger within it", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
+    for (const person of ["c-1", "c-2", "c-3"]) await register(person);
+    await first.stop();
+    await (await opened(ledgerAdapter)).append(
+      ["c-1", "c-2", "c-3"].map((person) => entry(person, `lost-${person}`, LOST)),
+    );
+    const clock = createFixedClock(START);
+    let reconciling = false;
+    // Each forgetting the reconciliation commits again takes most of the timeout.
+    const slow: Adapter = {
+      ...storage,
+      createStorage: async () => {
+        const opened = await storage.createStorage();
+        return {
+          ...opened,
+          transact: async (work) => {
+            if (reconciling) {
+              clock.advance(DEFAULT_FORGET_LEDGER_TIMEOUT_MS / 2);
+              await new Promise((resolve) => setTimeout(resolve, 1));
+            }
+            return opened.transact(work);
+          },
+        };
+      },
+    };
+    const watching = defineForgetLedger(async () => {
+      const inner = await opened(ledgerAdapter);
+      return {
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
+        append: (entries) => inner.append(entries),
+        read: (args) => {
+          reconciling = true;
+          return inner.read(args);
+        },
+      };
+    });
+    const { logs, logger } = recording();
+    const app = await createApp({
+      registry,
+      config: { storage: slow, runtime: { personalData: { forgetLedger: { store: watching } } } },
+      clock,
+      logger,
+    });
+    stops.push(() => app.stop());
+    expect(logs).toContainEqual([
+      "error",
+      "forget ledger did not answer in time; the app starts and reconciles in the background",
+      { timeoutMs: DEFAULT_FORGET_LEDGER_TIMEOUT_MS },
+    ]);
     await vi.waitFor(async () =>
       expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } }),
     );
@@ -525,11 +611,11 @@ describe("the forget ledger", () => {
     await (await opened(ledgerAdapter)).append([entry("c-1", "shown-late", START)]);
     clock.advance(60_000);
     await app.runUntilIdle();
-    expect(await forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await forgotten()).toEqual([["c-1", "requested"]]);
     expect(await app.nextDueAt()).toBeNull();
   });
 
-  it("copies a forgetting from the stream once the ledger takes it, when it refused it at commit", async () => {
+  it("copies a forgetting from the stream once the ledger takes it, when it refused its intention", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
     let refusals = 2;
@@ -537,6 +623,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async (entries) => {
           if (refusals > 0) {
             refusals -= 1;
@@ -552,8 +640,8 @@ describe("the forget ledger", () => {
     expect(refusals).toBe(1);
     expect(logs).toContainEqual([
       "warn",
-      "forget ledger did not take the forgetting; the stream copies it",
-      expect.objectContaining({ forgotten: 1, errorName: "Error" }),
+      "forget ledger did not take the forgetting; it commits, and the stream copies it",
+      expect.objectContaining({ errorName: "Error" }),
     ]);
     await app.runUntilIdle({ maxPasses: 1 });
     expect(refusals).toBe(0);
@@ -569,7 +657,7 @@ describe("the forget ledger", () => {
     ).toEqual(["c-1"]);
   });
 
-  it("appends a forgetting to the ledger before forget resolves, and the stream copies it once", async () => {
+  it("records a forgetting in the ledger before it commits, and the stream copies it once", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
     const { app, register } = await start({ storage, forgetLedger: ledgerAdapter });
@@ -578,7 +666,9 @@ describe("the forget ledger", () => {
     const [forgetting] = (await app.events.read({ limit: 100 })).filter(
       (event) => event.type === "PersonalDataForgotten",
     );
-    const appended = [entry("c-1", forgetting?.id ?? "", START)];
+    const appended = [
+      { ...entry("c-1", forgetting?.id ?? "", START), fingerprints: [expect.any(String)] },
+    ];
     expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual(appended);
     await app.runUntilIdle();
     expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual(appended);
@@ -594,19 +684,25 @@ describe("the forget ledger", () => {
       (event) => event.type === "PersonalDataForgotten",
     );
     expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual([
-      entry("c-1", forgetting?.id ?? "", START, ["default"]),
+      {
+        ...entry("c-1", forgetting?.id ?? "", START, ["default"]),
+        fingerprints: [expect.any(String)],
+      },
     ]);
     await register("c-2");
-    await (await opened(ledgerAdapter)).append([entry("c-2", "lost-forget", START, ["default"])]);
+    await (await opened(ledgerAdapter)).append([entry("c-2", "lost-forget", LOST, ["default"])]);
     await before.stop();
     const { app, forgotten, customer } = await start({ storage, forgetLedger: ledgerAdapter });
     expect(await forgotten()).toEqual([
       ["c-1", "requested"],
-      ["c-2", "restored"],
+      ["c-2", "requested"],
     ]);
     expect(await customer("c-2")).toBeNull();
     const restored = (await app.events.read({ limit: 100 })).at(-1);
-    expect(restored?.payload).toMatchObject({ whole: false, categories: ["default"] });
+    expect(restored).toMatchObject({
+      id: "lost-forget",
+      payload: { whole: false, categories: ["default"] },
+    });
   });
 
   it("appends the forgettings of forgetAgain as they commit", async () => {
@@ -614,20 +710,30 @@ describe("the forget ledger", () => {
     const ledgerAdapter = memory();
     const { app, register, forgotten } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
+    await register("c-2");
     await app.forgetAgain([{ personId: "c-1" }]);
-    expect(await forgotten()).toEqual([["c-1", "restored"]]);
+    expect(await forgotten()).toEqual([["c-1", "requested"]]);
     expect(
       (await (await opened(ledgerAdapter)).read({ limit: 10 })).map(({ personId }) => personId),
     ).toEqual(["c-1"]);
+    const elsewhere = entry("c-2", "from-elsewhere", LOST);
+    await app.forgetAgain([elsewhere]);
+    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toContainEqual(elsewhere);
+    expect(await forgotten()).toEqual([
+      ["c-1", "requested"],
+      ["c-2", "requested"],
+    ]);
   });
 
-  it("appends what the retention forgets as it commits, before the stream copies it", async () => {
+  it("records what the retention forgets before it commits, and the stream copies it", async () => {
     const ledgerAdapter = memory();
     const appends: string[] = [];
     const watching = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: async (entries) => {
           appends.push(...entries.map(({ personId }) => personId));
           await inner.append(entries);
@@ -657,17 +763,19 @@ describe("the forget ledger", () => {
         (event) => event.type === "PersonalDataForgotten",
       ),
     ).toHaveLength(1);
-    // Once as the forgetting committed, once more from the stream.
+    // Once as the forgetting's intention, once more from the stream.
     expect(appends).toEqual(["c-1", "c-1"]);
   });
 
-  it("resolves forget once the ledger has not taken the forgetting in time, and says so", async () => {
+  it("commits a forgetting once the ledger has not taken its intention in time, says so, and waits for it no more while it hangs", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
     const hanging = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
         append: () => new Promise<void>(() => undefined),
       };
     });
@@ -677,17 +785,25 @@ describe("the forget ledger", () => {
     const forgetting = app.forget("c-1").then(() => {
       done = true;
     });
-    // The append arms its timer once the forgetting commits, which the test cannot see.
+    // The append arms its timer once it is called, which the test cannot see.
     while (!done) {
-      clock.advance(FORGET_LEDGER_WAIT_MS);
+      clock.advance(DEFAULT_FORGET_LEDGER_TIMEOUT_MS);
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     await forgetting;
     expect(logs).toContainEqual([
       "warn",
-      "forget ledger did not take the forgetting in time; the stream copies it",
-      { forgotten: 1, timeoutMs: FORGET_LEDGER_WAIT_MS },
+      "forget ledger did not take the forgetting; it commits, and the stream copies it",
+      expect.objectContaining({
+        errorName: "ForgetLedgerTimeoutError",
+        errorCode: "FORGET_LEDGER_TIMEOUT",
+      }),
     ]);
+    await app.forget("c-2");
+    const forgotten = (await app.events.read({ limit: 100 })).filter(
+      (event) => event.type === "PersonalDataForgotten",
+    );
+    expect(forgotten.map((event) => event.aggregateId)).toEqual(["c-1", "c-2"]);
   });
 
   it("reconciles again every reconcileEvery while the app runs, one instance a period", async () => {
@@ -698,6 +814,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           reads += 1;
           return inner.read(args);
@@ -710,7 +828,7 @@ describe("the forget ledger", () => {
     await one.register("c-1");
     expect(reads).toBe(2);
     // As if the database had been restored, while the app runs, to before c-1 was forgotten.
-    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", LOST)]);
     expect(await one.app.nextDueAt()).toBeNull();
     one.clock.advance(59_999);
     other.clock.advance(59_999);
@@ -719,14 +837,17 @@ describe("the forget ledger", () => {
     one.clock.advance(1);
     other.clock.advance(1);
     await one.app.runUntilIdle();
-    await other.app.runUntilIdle();
     expect(reads).toBe(3);
-    expect(await one.forgotten()).toEqual([["c-1", "restored"]]);
+    // The forgetting the ledger held is a restore the other instance learns of: it reads the
+    // ledger at once too.
+    await other.app.runUntilIdle();
+    expect(reads).toBe(4);
+    expect(await one.forgotten()).toEqual([["c-1", "requested"]]);
     expect(await one.customer("c-1")).toBeNull();
     other.clock.advance(60_000);
     await other.app.runUntilIdle();
     await one.app.runUntilIdle();
-    expect(reads).toBe(4);
+    expect(reads).toBe(5);
   });
 
   it("waits for another instance's failure before its periodic reconciliation", async () => {
@@ -738,6 +859,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           reads += 1;
           if (failures > 0) {
@@ -831,10 +954,12 @@ describe("the forget ledger", () => {
     const { app: first, register } = await start({ storage, forgetLedger: ledgerAdapter });
     await register("c-1");
     await first.stop();
-    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", START)]);
+    await (await opened(ledgerAdapter)).append([entry("c-1", "lost-forget", LOST)]);
     const down = new Error("ledger is down");
     let closed = 0;
     const broken = defineForgetLedger(async () => ({
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
       append: async () => {},
       read: async () => {
         throw down;
@@ -858,6 +983,8 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         append: (entries) => inner.append(entries),
+        readMark: (name) => inner.readMark(name),
+        raiseMark: (name, value) => inner.raiseMark(name, value),
         read: async (args) => {
           await answered;
           return inner.read(args);
@@ -865,26 +992,44 @@ describe("the forget ledger", () => {
       };
     });
     const clock = createFixedClock(START);
-    let started = false;
+    let settled = false;
     const starting = createApp({
+      registry,
+      config: {
+        storage,
+        runtime: {
+          personalData: { forgetLedger: { store: slow, strict: true, timeout: "1m" } },
+        },
+      },
+      clock,
+    }).finally(() => {
+      settled = true;
+    });
+    void starting.catch(() => undefined);
+    // Waits past the default timeout, then gives the read up at its own.
+    for (let round = 0; round < 5; round += 1) {
+      clock.advance(DEFAULT_FORGET_LEDGER_TIMEOUT_MS);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(settled).toBe(false);
+    while (!settled) {
+      clock.advance(DEFAULT_FORGET_LEDGER_TIMEOUT_MS);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await expect(starting).rejects.toMatchObject({
+      code: "FORGET_LEDGER_UNRECONCILED",
+      cause: { code: "FORGET_LEDGER_TIMEOUT", operation: "read", timeoutMs: 60_000 },
+    });
+    answer();
+    const app = await createApp({
       registry,
       config: {
         storage,
         runtime: { personalData: { forgetLedger: { store: slow, strict: true } } },
       },
       clock,
-    }).then((app) => {
-      started = true;
-      stops.push(() => app.stop());
-      return app;
     });
-    for (let round = 0; round < 3; round += 1) {
-      clock.advance(FORGET_LEDGER_WAIT_MS);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    expect(started).toBe(false);
-    answer();
-    const app = await starting;
+    stops.push(() => app.stop());
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     const events = await app.events.read({ limit: 100 });
     expect(events.filter((event) => event.type === "PersonalDataForgotten")).toHaveLength(1);
@@ -939,6 +1084,302 @@ describe("the forget ledger", () => {
   });
 });
 
+// The memory adapter whose storage transactions fail while `failing` says so, as a process that
+// stops between the intention and the commit leaves the store.
+const crashing = (storage: Adapter) => {
+  const state = { failing: false };
+  const adapter: Adapter = {
+    ...storage,
+    createStorage: async () => {
+      const opened = await storage.createStorage();
+      return {
+        ...opened,
+        transact: async (work) => {
+          if (state.failing) throw new Error("the process stopped");
+          return opened.transact(work);
+        },
+      };
+    },
+  };
+  return { adapter, state };
+};
+
+describe("the intention a forgetting records first", () => {
+  it("is committed by the next start when the process stops before the commit, under its id, time and reason", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const { adapter, state } = crashing(storage);
+    const { app, register } = await start({ storage: adapter, forgetLedger: ledgerAdapter });
+    await register("c-1");
+    state.failing = true;
+    await expect(app.forget("c-1")).rejects.toThrow("the process stopped");
+    const [intention] = await (await opened(ledgerAdapter)).read({ limit: 10 });
+    expect(intention).toEqual({
+      personId: "c-1",
+      categories: null,
+      eventId: expect.any(String),
+      forgottenAt: START.toISOString(),
+      reason: "requested",
+      fingerprints: [expect.any(String)],
+    });
+    expect(await app.exportPersonalData("c-1")).toMatchObject({
+      events: [{ data: { name: "name of c-1" } }],
+    });
+    await app.stop();
+    state.failing = false;
+    const later = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const { app: next, customer } = await start({
+      storage,
+      forgetLedger: ledgerAdapter,
+      now: later,
+    });
+    const forgetting = (await next.events.read({ limit: 100 })).at(-1);
+    expect(forgetting).toMatchObject({
+      id: intention?.eventId,
+      timestamp: START.toISOString(),
+      payload: { personId: "c-1", reason: "requested", fingerprints: intention?.fingerprints },
+    });
+    expect(await customer("c-1")).toBeNull();
+  });
+
+  it("waits for its grace before a reconciliation commits it, and is due once that ends", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const { adapter, state } = crashing(storage);
+    const { app, register } = await start({ storage: adapter, forgetLedger: ledgerAdapter });
+    await register("c-1");
+    state.failing = true;
+    await expect(app.forget("c-1")).rejects.toThrow("the process stopped");
+    await app.stop();
+    state.failing = false;
+    const {
+      app: next,
+      clock,
+      forgotten,
+    } = await start({
+      storage,
+      forgetLedger: ledgerAdapter,
+    });
+    expect(await forgotten()).toEqual([]);
+    expect(await next.nextDueAt()).toEqual(new Date(START.getTime() + FORGET_LEDGER_GRACE_MS));
+    clock.advance(FORGET_LEDGER_GRACE_MS);
+    await next.runUntilIdle();
+    expect(await forgotten()).toEqual([["c-1", "requested"]]);
+    expect(await next.nextDueAt()).toBeNull();
+  });
+
+  it("leaves a key given to the person after it, when its commit never happened", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const { adapter, state } = crashing(storage);
+    const { app } = await start({ storage: adapter, forgetLedger: ledgerAdapter });
+    state.failing = true;
+    await expect(app.forget("c-1")).rejects.toThrow("the process stopped");
+    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toMatchObject([
+      { personId: "c-1", fingerprints: [] },
+    ]);
+    state.failing = false;
+    await app.stop();
+    const later = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const { register } = await start({ storage, forgetLedger: ledgerAdapter, now: later });
+    await register("c-1");
+    const { forgotten, customer } = await start({
+      storage,
+      forgetLedger: ledgerAdapter,
+      now: later,
+    });
+    expect(await forgotten()).toEqual([]);
+    expect(await customer("c-1")).toEqual({ customerId: "c-1", name: "name of c-1" });
+  });
+
+  it("forgets nobody, when strict, while the ledger does not take it, so calling again is safe", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    let down = true;
+    const flaky = defineForgetLedger(async () => {
+      const inner = await opened(ledgerAdapter);
+      return {
+        read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
+        append: async (entries) => {
+          if (down) throw new Error("ledger is down");
+          await inner.append(entries);
+        },
+      };
+    });
+    const { app, register, forgotten, customer } = await start({
+      storage,
+      forgetLedger: flaky,
+      options: { strict: true },
+    });
+    await register("c-1");
+    const refused = app.forget("c-1");
+    await expect(refused).rejects.toBeInstanceOf(ForgetLedgerUnavailableError);
+    await expect(refused).rejects.toMatchObject({
+      code: "FORGET_LEDGER_UNAVAILABLE",
+      cause: new Error("ledger is down"),
+    });
+    expect(await forgotten()).toEqual([]);
+    expect(await customer("c-1")).toEqual({ customerId: "c-1", name: "name of c-1" });
+    expect(await app.forgetAgain([{ personId: "c-1" }]).catch((error: unknown) => error)).toEqual(
+      expect.any(ForgetLedgerUnavailableError),
+    );
+    expect(await forgotten()).toEqual([]);
+    down = false;
+    await app.forget("c-1");
+    expect(await forgotten()).toEqual([["c-1", "requested"]]);
+    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toHaveLength(1);
+  });
+
+  it("forgets nobody, when strict, once the ledger has not taken it within its timeout", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const hanging = defineForgetLedger(async () => {
+      const inner = await opened(ledgerAdapter);
+      return {
+        read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
+        append: () => new Promise<void>(() => undefined),
+      };
+    });
+    const { app, clock, register, forgotten } = await start({
+      storage,
+      forgetLedger: hanging,
+      options: { strict: true, timeout: "2s" },
+    });
+    await register("c-1");
+    let outcome: unknown;
+    const forgetting = app.forget("c-1").then(
+      () => "forgotten",
+      (error: unknown) => error,
+    );
+    void forgetting.then((settled) => {
+      outcome = settled;
+    });
+    while (outcome === undefined) {
+      clock.advance(1_000);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(outcome).toBeInstanceOf(ForgetLedgerUnavailableError);
+    expect(outcome).toMatchObject({
+      cause: { code: "FORGET_LEDGER_TIMEOUT", operation: "append", timeoutMs: 2_000 },
+    });
+    expect(await forgotten()).toEqual([]);
+  });
+
+  it("keeps a person past the retention, when strict, while the ledger does not take it", async () => {
+    let down = true;
+    const ledgerAdapter = memory();
+    const flaky = defineForgetLedger(async () => {
+      const inner = await opened(ledgerAdapter);
+      return {
+        read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: async () => undefined,
+        append: async (entries) => {
+          if (down) throw new Error("ledger is down");
+          await inner.append(entries);
+        },
+      };
+    });
+    const clock = createFixedClock(START);
+    const { logs, logger } = recording();
+    const app = await createApp({
+      registry,
+      config: {
+        storage: memory(),
+        runtime: {
+          personalData: { retention: "1h", forgetLedger: { store: flaky, strict: true } },
+        },
+      },
+      clock,
+      logger,
+    });
+    stops.push(() => app.stop());
+    const commands = app.commands as unknown as Record<
+      string,
+      (payload: { customerId: string; name: string }) => Promise<unknown>
+    >;
+    await commands.registerCustomer?.({ customerId: "c-1", name: "Ada" });
+    await app.runUntilIdle();
+    clock.advance(3_600_000);
+    await app.runUntilIdle();
+    const forgettings = async () =>
+      (await app.events.read({ limit: 100 })).filter(
+        (event) => event.type === "PersonalDataForgotten",
+      );
+    expect(await forgettings()).toEqual([]);
+    expect(logs).toContainEqual([
+      "error",
+      "personal data past the retention could not be forgotten",
+      expect.objectContaining({ personId: "c-1", errorCode: "FORGET_LEDGER_UNAVAILABLE" }),
+    ]);
+    down = false;
+    clock.advance(HOLD_MS);
+    await app.runUntilIdle();
+    expect((await forgettings()).map((event) => event.payload)).toMatchObject([
+      { personId: "c-1", reason: "retention" },
+    ]);
+  });
+
+  it("commits again a forgetting the retention made only while the retention would still forget the person", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const config = (retention?: "1h" | "2h") => ({
+      storage,
+      runtime: {
+        personalData: {
+          ...(retention === undefined ? {} : { retention }),
+          forgetLedger: { store: ledgerAdapter },
+        },
+      },
+    });
+    const clock = createFixedClock(START);
+    const first = await createApp({ registry, config: config("1h"), clock });
+    const commands = first.commands as unknown as Record<
+      string,
+      (payload: { customerId: string; name: string }) => Promise<unknown>
+    >;
+    await commands.registerCustomer?.({ customerId: "c-1", name: "Ada" });
+    await commands.registerCustomer?.({ customerId: "c-2", name: "Bob" });
+    await first.runUntilIdle();
+    await first.stop();
+    const retained = (person: string): ForgetLedgerEntry => ({
+      ...entry(person, `retained-${person}`, LOST),
+      reason: "retention",
+    });
+    await (await opened(ledgerAdapter)).append([retained("c-1"), retained("c-2")]);
+    clock.advance(90 * 60_000);
+    const later = await createApp({ registry, config: config("2h"), clock });
+    stops.push(() => later.stop());
+    expect(
+      (await later.events.read({ limit: 100 })).filter(
+        (event) => event.type === "PersonalDataForgotten",
+      ),
+    ).toEqual([]);
+    await later.stop();
+    const without = await createApp({ registry, config: config(), clock });
+    expect(
+      (await without.events.read({ limit: 100 })).filter(
+        (event) => event.type === "PersonalDataForgotten",
+      ),
+    ).toEqual([]);
+    await without.stop();
+    const due = await createApp({ registry, config: config("1h"), clock });
+    stops.push(() => due.stop());
+    expect(
+      (await due.events.read({ limit: 100 }))
+        .filter((event) => event.type === "PersonalDataForgotten")
+        .map((event) => [event.id, (event.payload as PersonalDataForgottenPayload).reason]),
+    ).toEqual([
+      ["retained-c-1", "retention"],
+      ["retained-c-2", "retention"],
+    ]);
+  });
+});
+
 describe("forgetAgain", () => {
   it("forgets again whom an entry names unless the store holds its forgetting or they hold no key", async () => {
     const storage = memory();
@@ -969,8 +1410,8 @@ describe("forgetAgain", () => {
     expect(logs.filter(([, message]) => message === "personal data forgotten")).toHaveLength(3);
     expect(await forgotten()).toEqual([
       ["c-4", "requested"],
-      ["c-1", "restored"],
-      ["c-2", "restored"],
+      ["c-1", "requested"],
+      ["c-2", "requested"],
     ]);
   });
 
@@ -990,7 +1431,7 @@ describe("forgetAgain", () => {
     expect(logs).toContainEqual([
       "info",
       "personal data forgotten",
-      expect.objectContaining({ personId: "c-1", reason: "restored", actor: "operator-1" }),
+      expect.objectContaining({ personId: "c-1", reason: "requested", actor: "operator-1" }),
     ]);
   });
 

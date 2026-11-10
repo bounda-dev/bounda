@@ -41,7 +41,9 @@ export type PolicyHandlerArgs<Event, Commands, Ports extends object = EmptyPaylo
   /**
    * Forgets a person, as `forget` on the app does, with the commands of this run: when its
    * attempt commits, in the same transaction, once however often the attempt runs. Resolves at
-   * once; rejects with `ValidationError` an empty id.
+   * once; rejects with `ValidationError` an empty id. With a forget ledger, its intention goes to
+   * the ledger just before the run's transaction opens, so a run whose transaction then fails is
+   * forgotten by the next reconciliation; a strict ledger that does not take it fails the run.
    */
   readonly forget: ReactionForgetFunction;
 } & Readonly<Ports>;

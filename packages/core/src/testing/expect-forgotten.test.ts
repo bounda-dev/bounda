@@ -804,6 +804,7 @@ describe("expectForgotten", () => {
         eventId: `ledger-event-${String(index).padStart(4, "0")}`,
         forgottenAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
         categories: null,
+        reason: "requested" as const,
       })),
     );
     const { app } = await createTestApp({

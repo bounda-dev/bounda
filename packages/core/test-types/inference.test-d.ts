@@ -2,10 +2,12 @@ import type {
   AccessOutcome,
   AfterOptions,
   AppRegistry,
+  AppStatus,
   BoundaApp,
   BoundaClient,
   CancelledCommand,
   CatchUpReadModelsArgs,
+  CategoryRetentionStatus,
   CausationContext,
   CheckActorFunction,
   Clock,
@@ -21,6 +23,7 @@ import type {
   DeadLetter,
   DeadLetterAccess,
   DeadLetterKind,
+  DeadLetterRetentionStatus,
   DecidedDispatch,
   DispatchOptions,
   DispatchResult,
@@ -37,17 +40,20 @@ import type {
   ExportedEvent,
   ExportedRow,
   ExportedScheduledCommand,
+  ExportedSubscriberFailure,
   Field,
   FieldFilter,
   FieldsArgs,
   FieldTypes,
   FieldTypesOf,
   FieldTypesOfRow,
+  ForgetLedgerReconciliationStatus,
   ForgetOptions,
   ForgetsPersonalData,
   HasPersonalFields,
   ImplementationModule,
   Instant,
+  KeyRotationStatus,
   LegalBasis,
   Logger,
   OnPersonalDataAccess,
@@ -71,6 +77,7 @@ import type {
   ProcessingRestrictedPayload,
   ProcessingRestrictionLiftedEvent,
   ProcessingRestrictionLiftedPayload,
+  ProcessStatus,
   QueriesFacade,
   RangeFilter,
   ReactionDispatchResult,
@@ -82,10 +89,15 @@ import type {
   RejectionCodeOf,
   RemovedDeadLetter,
   RetentionInput,
+  RetentionStatus,
   ScheduledDispatch,
+  SchemaStatus,
   SetFilter,
   StoredDispatch,
   StoredEvent,
+  SubscriberFailure,
+  SubscriberFailureStatus,
+  SubscriberFailures,
   Table,
   Where,
 } from "@bounda-dev/core";
@@ -96,6 +108,13 @@ import {
   MAX_ACCESS_PERSONS,
   MAX_ACTOR_LENGTH,
 } from "@bounda-dev/core";
+import type {
+  Adapter,
+  ForgetLedger,
+  SchemaScopeName,
+  SchemaVersion,
+  StoredSubscriberFailure,
+} from "@bounda-dev/core/adapter";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type {
@@ -667,6 +686,8 @@ describe("personal data", () => {
       | "deadLetters.get"
       | "deadLetters.retry"
       | "deadLetters.discard"
+      | "subscriberFailures.list"
+      | "subscriberFailures.get"
     >();
     expectTypeOf<PersonalDataAccess["actor"]>().toEqualTypeOf<string | null>();
     expectTypeOf<PersonalDataAccess["persons"]>().toEqualTypeOf<readonly string[]>();
@@ -685,11 +706,18 @@ describe("personal data", () => {
       Extract<PersonalDataAccess, { operation: "deadLetters.list" }>["detail"]
     >().toEqualTypeOf<{ readonly letters: number }>();
     expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "subscriberFailures.list" }>["detail"]
+    >().toEqualTypeOf<{ readonly failures: number }>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "subscriberFailures.get" }>["detail"]
+    >().toEqualTypeOf<{ readonly subscriber: string }>();
+    expectTypeOf<
       Extract<PersonalDataAccess, { operation: "exportPersonalData" }>["detail"]
     >().toEqualTypeOf<{
       readonly events: number;
       readonly scheduledCommands: number;
       readonly deadLetters: number;
+      readonly subscriberFailures: number;
       readonly readModelRows: number;
     } | null>();
     expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<AccessOutcome>();
@@ -725,16 +753,15 @@ describe("personal data", () => {
       readonly categories: readonly PersonalCategoryName[];
       readonly retained: readonly PersonalCategoryName[];
       readonly expired: readonly PersonalCategoryName[];
+      readonly fingerprints?: readonly string[];
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
     }>();
     expectTypeOf<PersonalCategoryName>().toEqualTypeOf<"default" | "delivery" | "invoices">();
-    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<
-      "requested" | "retention" | "restored"
-    >();
+    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
     expectTypeOf<
       AuditOnPersonalDataForgotten.HandlerArgs["event"]["payload"]["reason"]
-    >().toEqualTypeOf<"requested" | "retention" | "restored">();
+    >().toEqualTypeOf<"requested" | "retention">();
     expectTypeOf<CancelledCommand>().toEqualTypeOf<{
       readonly commandId: string;
       readonly type: string;
@@ -812,7 +839,15 @@ describe("personal data", () => {
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
+      readonly subscriberFailures: readonly ExportedSubscriberFailure[];
       readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
+    }>();
+    expectTypeOf<ExportedSubscriberFailure>().toEqualTypeOf<{
+      readonly subscriber: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly errorMessage: string | null;
+      readonly errorStack?: string | null;
     }>();
     expectTypeOf<ExportedRow>().toEqualTypeOf<{
       readonly key: unknown;
@@ -1328,5 +1363,91 @@ describe("facades", () => {
     expectTypeOf<
       ListUnpaidOrders.HandlerArgs["query"]["payload"]["limit"]
     >().toEqualTypeOf<number>();
+  });
+});
+
+describe("operations", () => {
+  it("types the status every client reads, without text, and the scopes of the tables", () => {
+    expectTypeOf<BoundaClient["status"]>().toEqualTypeOf<() => Promise<AppStatus>>();
+    expectTypeOf<BoundaApp["status"]>().toEqualTypeOf<BoundaClient["status"]>();
+    expectTypeOf<AppStatus["schema"]>().toEqualTypeOf<readonly SchemaStatus[]>();
+    expectTypeOf<SchemaStatus>().toEqualTypeOf<{
+      readonly database: string;
+      readonly scope: string;
+      readonly version: number;
+      readonly latest: number;
+    }>();
+    expectTypeOf<SchemaVersion>().toEqualTypeOf<{
+      readonly scope: string;
+      readonly version: number;
+      readonly latest: number;
+    }>();
+    expectTypeOf<SchemaScopeName>().toEqualTypeOf<"storage" | "checkpoints" | "forget-ledger">();
+    expectTypeOf<Adapter["schemaVersions"]>().toEqualTypeOf<
+      () => Promise<readonly SchemaVersion[]>
+    >();
+    expectTypeOf<Adapter["migrate"]>().toEqualTypeOf<
+      (scopes: readonly SchemaScopeName[]) => Promise<readonly SchemaVersion[]>
+    >();
+    expectTypeOf<AppStatus["restoresFound"]>().toEqualTypeOf<number>();
+    expectTypeOf<AppStatus["keyRotation"]>().toEqualTypeOf<KeyRotationStatus | null>();
+    expectTypeOf<AppStatus["retention"]>().toEqualTypeOf<RetentionStatus | null>();
+    expectTypeOf<
+      AppStatus["deadLetterRetention"]
+    >().toEqualTypeOf<DeadLetterRetentionStatus | null>();
+    expectTypeOf<
+      AppStatus["forgetLedger"]
+    >().toEqualTypeOf<ForgetLedgerReconciliationStatus | null>();
+    expectTypeOf<
+      AppStatus["personalDataBackfill"]
+    >().toEqualTypeOf<PersonalDataBackfillLag | null>();
+    expectTypeOf<
+      "errorMessage" | "errorStack" extends keyof SubscriberFailureStatus ? true : false
+    >().toEqualTypeOf<false>();
+    expectTypeOf<SubscriberFailureStatus["current"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<KeyRotationStatus>().toEqualTypeOf<{
+      readonly kid: string;
+      readonly previous: readonly string[];
+      readonly pending: number;
+      readonly completeAt: string | null;
+    }>();
+    expectTypeOf<RetentionStatus>().toEqualTypeOf<{
+      readonly categories: readonly CategoryRetentionStatus[];
+      readonly keptBeyond: number;
+    }>();
+    expectTypeOf<CategoryRetentionStatus>().toEqualTypeOf<{
+      readonly category: string;
+      readonly retention: string;
+      readonly due: number;
+      readonly nextDueAt: string | null;
+    }>();
+  });
+
+  it("opens a subscriber's last failure only through a recorded call", () => {
+    expectTypeOf<BoundaClient["subscriberFailures"]>().toEqualTypeOf<SubscriberFailures>();
+    expectTypeOf<SubscriberFailures["list"]>().toEqualTypeOf<
+      () => Promise<readonly SubscriberFailure[]>
+    >();
+    expectTypeOf<SubscriberFailures["get"]>().toEqualTypeOf<
+      (subscriber: string) => Promise<SubscriberFailure | null>
+    >();
+    expectTypeOf<SubscriberFailure["errorMessage"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<SubscriberFailure["errorStack"]>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<StoredSubscriberFailure["person"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<SubscriberFailure["resolvedAt"]>().toEqualTypeOf<string | null>();
+  });
+
+  it("declares a restore on the app, and keeps the ledger's marks outside the database", () => {
+    expectTypeOf<BoundaApp["restored"]>().toEqualTypeOf<() => Promise<void>>();
+    expectTypeOf<ForgetLedger["readMark"]>().toEqualTypeOf<(name: string) => Promise<number>>();
+    expectTypeOf<ForgetLedger["raiseMark"]>().toEqualTypeOf<
+      (name: string, value: number) => Promise<void>
+    >();
+  });
+
+  it("names a process given up as abandoned", () => {
+    expectTypeOf<ProcessStatus>().toEqualTypeOf<
+      "started" | "completed" | "failed" | "timed_out" | "abandoned"
+    >();
   });
 });

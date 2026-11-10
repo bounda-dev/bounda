@@ -368,7 +368,7 @@ describe("events of a failed process", () => {
     expect(await deadLetters.get("nope")).toBeNull();
   });
 
-  it("stay given up once the discarded failure's letter is purged", async () => {
+  it("stay given up once the discarded failure's letter is purged: the instance is abandoned", async () => {
     const context = await setUp();
     const { harness, deadLetters, settle, types } = context;
     await failOnFirstPayment(context);
@@ -391,11 +391,135 @@ describe("events of a failed process", () => {
     });
     await settle();
     expect((await types()).filter((type) => type === PROCESS_EVENTS.eventParked)).toEqual([]);
-    expect((await types()).at(-1)).toBe(PROCESS_EVENTS.failed);
+    expect((await types()).slice(-2)).toEqual([PROCESS_EVENTS.failed, PROCESS_EVENTS.abandoned]);
     expect(await harness.storage.checkpointStore.get(PROCESSES_SUBSCRIBER)).toBe(
       await harness.storage.eventStore.lastPosition(),
     );
     expect(await harness.storage.deadLetterStore.list()).toEqual([]);
+  });
+
+  it("keep parking behind a failure whose letter is gone without a discard: only a discard abandons", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    const [letter] = await deadLetters.list();
+    await harness.storage.deadLetterStore.updateStatus(
+      letter?.id ?? "",
+      "retried",
+      harness.clock.now(),
+    );
+    await harness.storage.deadLetterStore.purge({ resolvedBy: harness.clock.now(), limit: 10 });
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const last = order.events.at(-1);
+    if (last === undefined) throw new Error("no order");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...last, id: "after-purge", version: order.events.length + 1 }],
+    });
+    await settle();
+    expect((await types()).slice(-2)).toEqual([PROCESS_EVENTS.failed, PROCESS_EVENTS.eventParked]);
+  });
+
+  it("abandon the instance as whoever discards, once, and refuse a discard a retry settled", async () => {
+    const context = await setUp();
+    const { harness, settle } = context;
+    await failOnFirstPayment(context);
+    const actor = createDeadLetters({
+      recordAccess: unrecordedAccess,
+      storage: harness.storage,
+      retries: harness.retries,
+      processes: harness.processes,
+      clock: harness.clock,
+      logger: harness.logger,
+      errorText: "omit",
+      actor: "operator-7",
+    });
+    const [letter] = await actor.list();
+    const id = letter?.id ?? "";
+    await actor.discard(id);
+    const abandoned = (await harness.storage.eventStore.load(stream)).events.at(-1);
+    expect(abandoned).toMatchObject({
+      type: PROCESS_EVENTS.abandoned,
+      payload: { letterId: id },
+      metadata: { actor: "operator-7" },
+    });
+    await expect(actor.discard(id)).rejects.toMatchObject({ code: "DEAD_LETTER_SETTLED" });
+    await settle();
+    expect(
+      (await harness.storage.eventStore.load(stream)).events.filter(
+        (event) => event.type === PROCESS_EVENTS.abandoned,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("abandon an instance whose letter was discarded before ProcessAbandoned existed", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, settle, types } = context;
+    await failOnFirstPayment(context);
+    const [letter] = await deadLetters.list();
+    // As a discard before this release left it: the letter discarded, the instance failed.
+    await harness.storage.deadLetterStore.updateStatus(
+      letter?.id ?? "",
+      "discarded",
+      harness.clock.now(),
+    );
+    const order = await harness.storage.eventStore.load({
+      aggregateType: "order",
+      aggregateId: "o-1",
+    });
+    const last = order.events.at(-1);
+    if (last === undefined) throw new Error("no order");
+    await harness.storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: order.events.length,
+      events: [{ ...last, id: "after-upgrade", version: order.events.length + 1 }],
+    });
+    await settle();
+    expect((await types()).slice(-2)).toEqual([PROCESS_EVENTS.failed, PROCESS_EVENTS.abandoned]);
+    expect((await harness.storage.eventStore.load(stream)).events.at(-1)?.payload).toEqual({
+      letterId: letter?.id,
+    });
+  });
+
+  it("abandon nothing for a letter its instance is not failed on", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, types } = context;
+    await failOnFirstPayment(context);
+    const [letter] = await harness.storage.deadLetterStore.list();
+    if (letter === undefined) throw new Error("no letter");
+    const { status: _status, resolvedAt: _resolvedAt, ...stale } = letter;
+    await harness.storage.deadLetterStore.add({ ...stale, id: "stale" });
+    const before = await types();
+    expect((await deadLetters.discard("stale")).status).toBe("discarded");
+    expect(await types()).toEqual(before);
+    expect((await deadLetters.list())[0]).toMatchObject({ id: letter.id, status: "failed" });
+  });
+
+  it("refuse a discard a retry settled while it ran, abandoning nothing", async () => {
+    const context = await setUp();
+    const { harness, deadLetters, types } = context;
+    await failOnFirstPayment(context);
+    const [letter] = await deadLetters.list();
+    const before = await types();
+    const { get } = harness.storage.deadLetterStore;
+    let reads = 0;
+    harness.storage.deadLetterStore.get = async (id) => {
+      reads += 1;
+      const stored = await get(id);
+      return reads === 1 || stored === null ? stored : { ...stored, status: "retried" };
+    };
+    await expect(deadLetters.discard(letter?.id ?? "")).rejects.toMatchObject({
+      code: "DEAD_LETTER_SETTLED",
+    });
+    harness.storage.deadLetterStore.get = get;
+    expect(await types()).toEqual(before);
+    expect((await harness.storage.deadLetterStore.get(letter?.id ?? ""))?.status).toBe("failed");
   });
 
   it("wait behind a failed deadline, which runs first when retried", async () => {

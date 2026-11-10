@@ -341,6 +341,7 @@ describe("forget in a reaction", () => {
         categories: ["default"],
         retained: [],
         expired: [],
+        fingerprints: [expect.any(String)],
         cancelledCommands: [],
         removedDeadLetters: [],
       },

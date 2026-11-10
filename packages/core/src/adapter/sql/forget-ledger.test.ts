@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { ForgetLedgerEntry } from "../storage/forget-ledger.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
 import {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
+  forgetLedgerReasonStatements,
   forgetLedgerStatements,
 } from "./forget-ledger.ts";
 
@@ -20,11 +22,13 @@ const recording = (rows: readonly Record<string, unknown>[] = []) => {
   return { db, statements };
 };
 
-const entry = (index: number) => ({
+const entry = (index: number): ForgetLedgerEntry => ({
   personId: `c-${index}`,
   eventId: `e-${index}`,
   forgottenAt: "2026-01-01T00:00:00.000Z",
   categories: index % 2 === 0 ? null : ["profile"],
+  reason: "requested",
+  fingerprints: [`k-${index}`],
 });
 
 describe("the SQL forget ledger", () => {
@@ -39,6 +43,13 @@ describe("the SQL forget ledger", () => {
     );
   });
 
+  it("adds the reason, a request for the entries before it, and the keys, none recorded", () => {
+    expect(forgetLedgerReasonStatements(`"t"`)).toEqual([
+      `ALTER TABLE "t" ADD COLUMN "reason" TEXT NOT NULL DEFAULT 'requested'`,
+      `ALTER TABLE "t" ADD COLUMN "fingerprints" TEXT`,
+    ]);
+  });
+
   it("adds the categories in a migration of their own, again harmlessly on PostgreSQL", () => {
     expect(forgetLedgerCategoriesStatement(`"t_forget_ledger"`, postgresqlDialect)).toBe(
       `ALTER TABLE "t_forget_ledger" ADD COLUMN IF NOT EXISTS "categories" TEXT`,
@@ -48,7 +59,7 @@ describe("the SQL forget ledger", () => {
     );
   });
 
-  it("inserts at most 20 entries a statement, each bound to its own numbered parameters", async () => {
+  it("inserts at most 14 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -58,26 +69,44 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    await ledger.append(Array.from({ length: 21 }, (_, index) => entry(index)));
+    const { fingerprints: _, ...unrecorded } = entry(14);
+    await ledger.append([
+      ...Array.from({ length: 14 }, (_, index) => entry(index)),
+      { ...unrecorded, reason: "retention" },
+    ]);
     expect(statements).toHaveLength(2);
     const [first, second] = statements;
-    expect(first?.[0]).toContain("($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)");
-    expect(first?.[0]).toContain("($96, $97, $98, $99, $100) ON CONFLICT");
-    expect(first?.[1]).toHaveLength(100);
-    expect(first?.[1].slice(0, 10)).toEqual([
+    expect(first?.[0]).toContain(
+      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories") VALUES ($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)`,
+    );
+    expect(first?.[0]).toContain("($92, $93, $94, $95, $96, $97, $98) ON CONFLICT");
+    expect(first?.[1]).toHaveLength(98);
+    expect(first?.[1].slice(0, 14)).toEqual([
       "",
       "e-0",
       "c-0",
       "2026-01-01T00:00:00.000Z",
+      "requested",
+      `["k-0"]`,
       null,
       "",
       "e-1",
       "c-1",
       "2026-01-01T00:00:00.000Z",
+      "requested",
+      `["k-1"]`,
       `["profile"]`,
     ]);
-    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5) ON CONFLICT`);
-    expect(second?.[1]).toEqual(["", "e-20", "c-20", "2026-01-01T00:00:00.000Z", null]);
+    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT`);
+    expect(second?.[1]).toEqual([
+      "",
+      "e-14",
+      "c-14",
+      "2026-01-01T00:00:00.000Z",
+      "retention",
+      null,
+      null,
+    ]);
   });
 
   it("reads the categories of an entry back, null for a forgetting of the person as a whole", async () => {
@@ -86,12 +115,16 @@ describe("the SQL forget ledger", () => {
         event_id: "e-0",
         person: "c-0",
         forgotten_at: "2026-01-01T00:00:00.000Z",
+        reason: "requested",
+        fingerprints: `["k-0"]`,
         categories: null,
       },
       {
         event_id: "e-1",
         person: "c-1",
         forgotten_at: "2026-01-01T00:00:00.000Z",
+        reason: "requested",
+        fingerprints: `["k-1"]`,
         categories: `["profile"]`,
       },
     ]);

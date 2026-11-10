@@ -19,6 +19,7 @@ import { actedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { lastActivity } from "./activity.ts";
 import type { PersonalCategories } from "./categories.ts";
+import { coveredBy, type ForgetIntention, type ForgetIntentions } from "./intention.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 /**
@@ -35,7 +36,7 @@ export interface ForgetWithinArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly personId: string;
-  readonly reason: PersonalDataForgottenReason;
+  readonly intention: ForgetIntention;
   readonly context: CausationContext;
   readonly categories: PersonalCategories;
   readonly scope: ForgetScope;
@@ -43,6 +44,11 @@ export interface ForgetWithinArgs {
    * How many events a read of the person's last activity takes at once.
    */
   readonly batchSize: number;
+  /**
+   * The caller found already, in this transaction, the intention's event not held and a key the
+   * scope covers named by it.
+   */
+  readonly checked?: boolean;
 }
 
 export interface Forgotten {
@@ -54,8 +60,12 @@ export interface Forgotten {
   readonly event: StoredEvent;
 }
 
-export interface ForgetWithinFunction {
-  (args: ForgetWithinArgs): Promise<Forgotten>;
+/**
+ * The forgetting the intention names is in the store already, committed by a reconciliation
+ * meanwhile.
+ */
+export interface HeldForgetting {
+  readonly held: StoredEvent;
 }
 
 // A key in force of a category under a legal obligation outlives a request while its retention
@@ -71,27 +81,47 @@ const keptUntil = async (
 };
 
 /**
+ * The person holds a key the intention does not name: given to them after it was written.
+ */
+export const STALE_INTENTION: "stale" = "stale";
+
+export type ForgetOutcome = Forgotten | HeldForgetting | typeof STALE_INTENTION;
+
+export interface ForgetWithinFunction {
+  (args: ForgetWithinArgs): Promise<ForgetOutcome>;
+}
+
+/**
  * Forgets what `scope` covers on the transaction given, and appends `PersonalDataForgotten` to the
- * person's stream: whoever reads the event finds the fields gone already. A key in force of a
- * category whose basis is a legal obligation is retained instead while its retention has not run
- * out, when the person or the category is what was asked for; a key named by fingerprint goes
- * whatever it is. The scheduled commands, dead letters, snapshots and remembered rejections that
- * hold the person's data under a key no longer in force go in the same transaction, every one
- * that names them when they are forgotten as a whole, and the event names the commands and the
- * letters. A person without a key is forgotten all the same, since read models may hold what
- * their events carried in the clear.
+ * person's stream, with the id, time and reason of the intention: whoever reads the event finds
+ * the fields gone already. A key in force of a category whose basis is a legal obligation is
+ * retained instead while its retention has not run out, when the person or the category is what
+ * was asked for; a key named by fingerprint goes whatever it is. The scheduled commands, dead
+ * letters, snapshots and remembered rejections that hold the person's data under a key no longer
+ * in force go in the same transaction, every one that names them when they are forgotten as a
+ * whole, and the event names the commands and the letters. A person without a key is forgotten
+ * all the same, since read models may hold what their events carried in the clear.
  */
 export const forgetWithin: ForgetWithinFunction = async (args) => {
-  const { transaction, ids, clock, personId, reason, context, categories, scope } = args;
+  const { transaction, ids, clock, personId, intention, context, categories, scope } = args;
+  const { checked = false } = args;
+  const { fingerprints } = intention;
+  if (fingerprints !== undefined && !checked) {
+    const applied = await transaction.eventStore.readOne({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: personId,
+      eventId: intention.eventId,
+    });
+    if (applied !== null) return { held: applied };
+  }
   const now = clock.now();
-  const held = await transaction.personalKeys.list(personId);
-  const inForce = held.filter(({ retainedSince }) => retainedSince === null);
-  const asked =
-    scope.kind === "keys"
-      ? held.filter(({ key }) => scope.fingerprints.includes(key.fingerprint))
-      : inForce.filter(
-          ({ category }) => scope.kind === "whole" || scope.categories.includes(category),
-        );
+  // A key the scope covers that the intention does not name was given to the person after it: a
+  // caller that checked the intention already keeps it.
+  const covered = coveredBy(scope, await transaction.personalKeys.list(personId));
+  const asked = covered.filter(
+    ({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint),
+  );
+  if (!checked && asked.length < covered.length) return STALE_INTENTION;
   let activity: Promise<string | null> | undefined;
   const lastActive = (): Promise<string | null> => {
     activity ??= lastActivity({
@@ -145,7 +175,7 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
         : [...gone];
   const payload: PersonalDataForgottenPayload = {
     personId,
-    reason,
+    reason: intention.reason,
     whole: scope.kind === "whole",
     categories: named.filter(
       (category) => !retainedAfter.has(category) || gone.has(category),
@@ -154,6 +184,7 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
       ? []
       : named.filter((category) => retainedAfter.has(category))) as PersonalCategoryName[],
     expired: [...expired] as PersonalCategoryName[],
+    fingerprints: asked.map(({ key }) => key.fingerprint),
     cancelledCommands: cancelled.map(({ dedupeKey, command }) => ({
       commandId: scheduledCommandId(dedupeKey) ?? dedupeKey,
       type: command.type,
@@ -170,21 +201,73 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
     payload,
     context,
     person: personId,
+    identity: { id: intention.eventId, timestamp: intention.forgottenAt },
   });
   return { destroyed, payload, event };
 };
 
-export interface RequestedCategoriesFunction {
-  (payload: PersonalDataForgottenPayload): readonly string[] | null;
+export interface ForgetIntendedArgs {
+  readonly storage: Pick<Storage, "transact" | "personalKeys">;
+  readonly intentions: ForgetIntentions;
+  readonly ids: IdGenerator;
+  readonly clock: Clock;
+  readonly concurrencyRetries: number;
+  readonly categories: PersonalCategories;
+  readonly batchSize: number;
+  readonly personId: string;
+  readonly scope: ForgetScope;
+  readonly reason: PersonalDataForgottenReason;
+  readonly context: CausationContext;
+}
+
+export interface ForgetIntendedFunction {
+  (args: ForgetIntendedArgs): Promise<Forgotten | HeldForgetting>;
 }
 
 /**
- * What a forgetting asked for, as the ledger keeps it to forget the person again: `null` for the
- * person as a whole, else the categories named, those retained included. A forgetting of what an
- * earlier one retained asked for nothing: the retention ends that again on its own.
+ * Records the intention, then forgets in a transaction of its own. A key given to the person
+ * between the two takes a new intention that names it: each round needs a forgetting of the same
+ * person to commit in between, so the rounds end when those do.
  */
-export const requestedCategories: RequestedCategoriesFunction = (payload) =>
-  payload.whole === false ? [...payload.categories, ...payload.retained] : null;
+export const forgetIntended: ForgetIntendedFunction = async ({
+  storage,
+  intentions,
+  ids,
+  clock,
+  concurrencyRetries,
+  categories,
+  batchSize,
+  personId,
+  scope,
+  reason,
+  context,
+}) => {
+  for (;;) {
+    const intention = await intentions.intend({
+      personId,
+      reason,
+      scope,
+      keys: storage.personalKeys,
+    });
+    const outcome = await transactRetrying({
+      storage,
+      concurrencyRetries,
+      work: (transaction) =>
+        forgetWithin({
+          transaction,
+          ids,
+          clock,
+          personId,
+          intention,
+          context,
+          categories,
+          scope,
+          batchSize,
+        }),
+    });
+    if (outcome !== STALE_INTENTION) return outcome;
+  }
+};
 
 export interface LogForgottenFunction {
   (logger: Logger, forgotten: Forgotten): void;
@@ -221,6 +304,7 @@ export const forgottenDispatch: ForgottenDispatchFunction = (event) => ({
 
 export interface ForgetPersonalDataArgs {
   readonly storage: Storage;
+  readonly intentions: ForgetIntentions;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -275,10 +359,11 @@ export const forgetScopeOf: ForgetScopeOfFunction = ({ categories, options }) =>
 };
 
 /**
- * `forget` of a client: `forgetWithin` in a transaction of its own, as a request of the person.
+ * `forget` of a client: `forgetIntended`, as a request of the person.
  */
 export const forgetPersonalData: ForgetPersonalDataFunction = async ({
   storage,
+  intentions,
   ids,
   clock,
   logger,
@@ -292,22 +377,20 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
   checkPersonId(personId, "forget");
   const scope = forgetScopeOf({ categories, options });
   const correlationId = ids.next();
-  const forgotten = await transactRetrying({
+  const forgotten = await forgetIntended({
     storage,
+    intentions,
+    ids,
+    clock,
     concurrencyRetries,
-    work: (transaction) =>
-      forgetWithin({
-        transaction,
-        ids,
-        clock,
-        personId,
-        reason: "requested",
-        context: startedBy(correlationId, actor),
-        categories,
-        scope,
-        batchSize,
-      }),
+    categories,
+    batchSize,
+    personId,
+    scope,
+    reason: "requested",
+    context: startedBy(correlationId, actor),
   });
+  if ("held" in forgotten) return forgottenDispatch(forgotten.held);
   logForgotten(logger, forgotten);
   return forgottenDispatch(forgotten.event);
 };

@@ -1,12 +1,27 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { ConfigurationError, createApp, type PersonalDataForgottenPayload } from "@bounda-dev/core";
+import {
+  ConfigurationError,
+  createApp,
+  FORGET_LEDGER_GRACE_MS,
+  ForgetLedgerUnavailableError,
+  type PersonalDataForgottenPayload,
+} from "@bounda-dev/core";
+import type { Adapter } from "@bounda-dev/core/adapter";
 import { forgetLedgerContract } from "@bounda-dev/core/adapter/testing";
 import { describe, expect, it } from "vitest";
+import { durableObjectAdapter } from "../src/adapter.ts";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
-import { createKvForgetLedger, KV_LIST_DELAY_MS, kvForgetLedger } from "../src/forget-ledger.ts";
+import {
+  createKvForgetLedger,
+  expireKvForgetLedger,
+  KV_FORGET_LEDGER_ROOT,
+  KV_LIST_DELAY_MS,
+  kvForgetLedger,
+  planKvForgetLedgerExpiry,
+} from "../src/forget-ledger.ts";
 import { quietRegistry } from "./app.ts";
 import { clock } from "./clock.ts";
 
@@ -35,6 +50,8 @@ describe("the forget ledger in Workers KV", () => {
       eventId: "e-1",
       forgottenAt: "2026-11-07T12:00:00.000Z",
       categories: ["marketing"],
+      reason: "requested" as const,
+      fingerprints: ["k-1"],
     };
     await ada.append([entry]);
     expect(await ada.read({ limit: 10 })).toEqual([entry]);
@@ -103,6 +120,7 @@ describe("the KV forget ledger's listing", () => {
       eventId: `e-${String(index).padStart(4, "0")}`,
       forgottenAt: minute(index),
       categories: null,
+      reason: "requested" as const,
     }));
     await ledger.append(entries);
     expect(await ledger.read({ limit: 2_000 })).toEqual(entries);
@@ -117,6 +135,7 @@ describe("the KV forget ledger's listing", () => {
       eventId: `e-${String(index).padStart(4, "0")}`,
       forgottenAt: minute(index),
       categories: null,
+      reason: "requested" as const,
     }));
     await ledger.append(entries);
     const after = entries[1_002] as (typeof entries)[number];
@@ -135,9 +154,27 @@ describe("the KV forget ledger's listing", () => {
     const now = Date.now();
     const at = (milliseconds: number): string => new Date(now + milliseconds).toISOString();
     await ledger.append([
-      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs - 1_000), categories: null },
-      { personId: "c-2", eventId: "e-2", forgottenAt: at(-keepForMs + 30_000), categories: null },
-      { personId: "c-3", eventId: "e-3", forgottenAt: at(0), categories: null },
+      {
+        personId: "c-1",
+        eventId: "e-1",
+        forgottenAt: at(-keepForMs - 1_000),
+        categories: null,
+        reason: "requested",
+      },
+      {
+        personId: "c-2",
+        eventId: "e-2",
+        forgottenAt: at(-keepForMs + 30_000),
+        categories: null,
+        reason: "requested",
+      },
+      {
+        personId: "c-3",
+        eventId: "e-3",
+        forgottenAt: at(0),
+        categories: null,
+        reason: "requested",
+      },
     ]);
     expect(
       [...keys.values()].map((metadata) => (metadata as { personId: string }).personId),
@@ -149,7 +186,13 @@ describe("the KV forget ledger's listing", () => {
     expect(later).toBe(Math.ceil((Date.parse(at(0)) + keepForMs) / 1000));
     const forever = countingNamespace();
     await createKvForgetLedger({ namespace: forever.namespace, prefix: "p/" }).append([
-      { personId: "c-1", eventId: "e-1", forgottenAt: at(-keepForMs * 1_000), categories: null },
+      {
+        personId: "c-1",
+        eventId: "e-1",
+        forgottenAt: at(-keepForMs * 1_000),
+        categories: null,
+        reason: "requested",
+      },
     ]);
     expect([...forever.expirations.values()]).toEqual([undefined]);
   });
@@ -159,6 +202,59 @@ describe("the KV forget ledger's listing", () => {
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     keys.set("p/1:e-stray", null);
     expect(await ledger.read({ limit: 10 })).toEqual([]);
+  });
+
+  it("keeps an entry without its keys when they do not fit KV's metadata beside its categories", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const entry = (eventId: string, pad: string) => ({
+      personId: "c-1",
+      categories: ["marketing", "invoices"],
+      eventId,
+      forgottenAt: minute(0),
+      reason: "requested" as const,
+      fingerprints: ["k-1", pad],
+    });
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+    const { eventId: _, ...unpadded } = entry("e-0", "");
+    const pad = "x".repeat(1_024 - bytes(unpadded));
+    await ledger.append([entry("e-1", pad), entry("e-2", `${pad}x`)]);
+    expect([...keys.values()].map(bytes)).toEqual([1_024, 1_024 - bytes(["k-1", pad]) - 16]);
+    expect(
+      (await ledger.read({ limit: 10 })).map(({ eventId, categories, fingerprints }) => [
+        eventId,
+        categories,
+        fingerprints,
+      ]),
+    ).toEqual([
+      ["e-1", ["marketing", "invoices"], ["k-1", pad]],
+      ["e-2", ["marketing", "invoices"], undefined],
+    ]);
+  });
+
+  it("reads a key written before entries kept their reason and keys as a request naming none", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    keys.set("p/1:e-1", { personId: "c-1", forgottenAt: minute(0) });
+    keys.set("p/2:e-2", { personId: "c-2", forgottenAt: minute(0), reason: "retention" });
+    const read = await ledger.read({ limit: 10 });
+    expect(read).toEqual([
+      {
+        personId: "c-1",
+        categories: null,
+        eventId: "e-1",
+        forgottenAt: minute(0),
+        reason: "requested",
+      },
+      {
+        personId: "c-2",
+        categories: null,
+        eventId: "e-2",
+        forgottenAt: minute(0),
+        reason: "retention",
+      },
+    ]);
+    expect(read[0]).not.toHaveProperty("fingerprints");
   });
 
   it("refuses an object without a name, whose entries it could not keep apart", async () => {
@@ -181,12 +277,30 @@ describe("the KV forget ledger's listing", () => {
       tenant: "acme/eu",
     });
     await ledger.append([
-      { personId: "c-1", eventId: "e-1", forgottenAt: minute(0), categories: null },
+      {
+        personId: "c-1",
+        eventId: "e-1",
+        forgottenAt: minute(0),
+        categories: null,
+        reason: "retention",
+        fingerprints: ["k-1"],
+      },
+      {
+        personId: "c-2",
+        eventId: "e-2",
+        forgottenAt: minute(0),
+        categories: null,
+        reason: "requested",
+      },
     ]);
     expect([...keys.keys()]).toEqual([
-      `bounda/forget-ledger/acme%2Feu/${8_640_000_000_000_000 - Date.parse(minute(0))}:e-1`,
+      `${KV_FORGET_LEDGER_ROOT}acme%2Feu/${8_640_000_000_000_000 - Date.parse(minute(0))}:e-1`,
+      `${KV_FORGET_LEDGER_ROOT}acme%2Feu/${8_640_000_000_000_000 - Date.parse(minute(0))}:e-2`,
     ]);
-    expect([...keys.values()]).toEqual([{ personId: "c-1", forgottenAt: minute(0) }]);
+    expect([...keys.values()]).toEqual([
+      { personId: "c-1", forgottenAt: minute(0), reason: "retention", fingerprints: ["k-1"] },
+      { personId: "c-2", forgottenAt: minute(0), reason: "requested" },
+    ]);
   });
 });
 
@@ -228,6 +342,7 @@ describe("restoring a Durable Object's storage with a forget ledger", () => {
     await store.forget("ada");
     await runInDurableObject(stub, (instance) => instance.alarm());
     await runInDurableObject(stub, (_instance, state) => copyTables(state.storage, true));
+    clock.advance(FORGET_LEDGER_GRACE_MS);
 
     // What the object's constructor runs when it starts again.
     const outcome = await runInDurableObject(stub, async (_instance, state) => {
@@ -255,11 +370,204 @@ describe("restoring a Durable Object's storage with a forget ledger", () => {
       }
     });
     expect(outcome).toMatchObject({
-      forgotten: ["restored"],
+      forgotten: ["requested"],
       ada: { note: null },
       bob: { note: "door" },
       lag: { reconciled: true },
     });
     expect(outcome.nextDueAt).toBe(outcome.now + KV_LIST_DELAY_MS);
+  });
+});
+
+describe("expiring a KV forget ledger", () => {
+  const DAY = 86_400_000;
+  const NOW = Date.UTC(2026, 10, 9);
+  const at = (daysAgo: number) => ({
+    personId: "c-1",
+    forgottenAt: new Date(NOW - daysAgo * DAY).toISOString(),
+  });
+
+  it("plans an expiration for every entry kept for good or longer than keepFor, and the removal of those past it", () => {
+    // A second short of keepFor: KV expires a key a minute from now at the soonest.
+    const soonest = { ...at(0), forgottenAt: new Date(NOW - 35 * DAY + 1_000).toISOString() };
+    expect(
+      planKvForgetLedgerExpiry({
+        keys: [
+          { name: "kept", metadata: at(1) },
+          { name: "past", metadata: at(36) },
+          { name: "just-past", metadata: at(35) },
+          { name: "longer", metadata: at(2), expiration: NOW / 1000 + 100 * 86_400 },
+          { name: "sooner", metadata: at(2), expiration: NOW / 1000 + 86_400 },
+          { name: "due", metadata: at(2), expiration: (NOW + 33 * DAY) / 1000 },
+          { name: "soonest", metadata: soonest },
+          { name: "stray" },
+          { name: "empty", metadata: null },
+          { name: "unreadable", metadata: { forgottenAt: "not a time" } },
+          { name: "untimed", metadata: { forgottenAt: 3 } },
+          { name: "text", metadata: "kept" },
+        ],
+        keepForMs: 35 * DAY,
+        now: NOW,
+      }),
+    ).toEqual({
+      expire: [
+        { key: "kept", value: "", expiration: (NOW + 34 * DAY) / 1000, metadata: at(1) },
+        { key: "longer", value: "", expiration: (NOW + 33 * DAY) / 1000, metadata: at(2) },
+        {
+          key: "soonest",
+          value: "",
+          expiration: NOW / 1000 + 60,
+          metadata: soonest,
+        },
+      ],
+      remove: ["past", "just-past"],
+    });
+  });
+
+  it("writes the plan to the namespace, every object's entries and nothing else", async () => {
+    const namespace = env.FORGET_LEDGER;
+    const now = Date.now();
+    const written = (daysAgo: number) => ({
+      personId: "c-1",
+      forgottenAt: new Date(now - daysAgo * DAY).toISOString(),
+      reason: "requested",
+    });
+    await namespace.put(`${KV_FORGET_LEDGER_ROOT}expire-a/1:e-1`, "", { metadata: written(1) });
+    await namespace.put(`${KV_FORGET_LEDGER_ROOT}expire-b/2:e-2`, "", { metadata: written(40) });
+    await namespace.put("expire-elsewhere", "kept", { metadata: written(1) });
+    const expiry = await expireKvForgetLedger({ namespace, keepForMs: 35 * DAY, now });
+    expect(expiry.expire.map(({ key }) => key)).toContain(`${KV_FORGET_LEDGER_ROOT}expire-a/1:e-1`);
+    expect(expiry.remove).toContain(`${KV_FORGET_LEDGER_ROOT}expire-b/2:e-2`);
+    const listed = await namespace.list({ prefix: KV_FORGET_LEDGER_ROOT });
+    expect(listed.keys.find(({ name }) => name.endsWith("expire-a/1:e-1"))).toMatchObject({
+      expiration: Math.ceil((now + 34 * DAY) / 1000),
+      metadata: written(1),
+    });
+    expect(listed.keys.some(({ name }) => name.endsWith("expire-b/2:e-2"))).toBe(false);
+    expect((await namespace.list({ prefix: "expire-elsewhere" })).keys).toEqual([
+      { name: "expire-elsewhere", metadata: written(1) },
+    ]);
+    expect(await expireKvForgetLedger({ namespace, keepForMs: 35 * DAY })).toMatchObject({
+      remove: [],
+    });
+  });
+
+  it("lists every page of a namespace with more keys than a page", async () => {
+    const { namespace, keys, pages } = countingNamespace();
+    for (let index = 0; index < 1_001; index += 1) {
+      keys.set(`${KV_FORGET_LEDGER_ROOT}t/${index}:e-${index}`, at(0));
+    }
+    const expiry = await expireKvForgetLedger({ namespace, keepForMs: DAY, now: NOW });
+    expect(expiry.expire).toHaveLength(1_001);
+    expect(pages()).toBe(2);
+  });
+});
+
+describe("a Durable Object's forgetting and the KV ledger", () => {
+  it("records the intention in KV before it commits, and the next start commits one whose commit never happened", async () => {
+    const stub = env.LEDGER_STORE.get(env.LEDGER_STORE.idFromName("intended-tenant"));
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "bell" });
+    const intention = await runInDurableObject(stub, async (_instance, state) => {
+      const opened = durableObjectAdapter({ storage: state.storage, options: {} });
+      const evicted: Adapter = {
+        ...opened,
+        createStorage: async () => {
+          const storage = await opened.createStorage();
+          return {
+            ...storage,
+            transact: () => Promise.reject(new Error("the object was evicted")),
+          };
+        },
+      };
+      const app = await createApp({
+        registry: quietRegistry,
+        config: { ...configForObject(config, state.storage), storage: evicted },
+        env,
+        tenant: "intended-tenant",
+        clock,
+      });
+      try {
+        await expect(app.forget("ada")).rejects.toThrow("the object was evicted");
+      } finally {
+        await app.stop();
+      }
+      const ledger = await kvForgetLedger({ binding: "FORGET_LEDGER" }).create({
+        env,
+        tenant: "intended-tenant",
+      });
+      const [entry] = await ledger.read({ limit: 10 });
+      return entry;
+    });
+    expect(intention).toMatchObject({
+      personId: "ada",
+      reason: "requested",
+      fingerprints: [expect.any(String)],
+    });
+    clock.advance(FORGET_LEDGER_GRACE_MS);
+    const outcome = await runInDurableObject(stub, async (_instance, state) => {
+      const app = await createApp({
+        registry: quietRegistry,
+        config: configForObject(config, state.storage),
+        env,
+        tenant: "intended-tenant",
+        clock,
+      });
+      try {
+        return {
+          forgotten: (await app.events.read({ limit: 100 }))
+            .filter((event) => event.type === "PersonalDataForgotten")
+            .map((event) => event.id),
+          ada: (await app.exportPersonalData("ada")).events[0]?.data,
+        };
+      } finally {
+        await app.stop();
+      }
+    });
+    expect(outcome).toEqual({
+      forgotten: [intention?.eventId],
+      ada: expect.objectContaining({ note: null }),
+    });
+  });
+
+  it("forgets nobody, when strict, while KV does not take the intention", async () => {
+    const stub = env.LEDGER_STORE.get(env.LEDGER_STORE.idFromName("strict-tenant"));
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "bell" });
+    const refusal = await runInDurableObject(stub, async (_instance, state) => {
+      const down = {
+        list: (options?: KVNamespaceListOptions) => env.FORGET_LEDGER.list(options),
+        put: () => Promise.reject(new Error("KV is down")),
+      };
+      const app = await createApp({
+        registry: quietRegistry,
+        config: {
+          ...configForObject(config, state.storage),
+          runtime: {
+            personalData: {
+              forgetLedger: { store: kvForgetLedger({ binding: "DOWN" }), strict: true },
+            },
+          },
+        },
+        env: { ...env, DOWN: down } as typeof env,
+        tenant: "strict-tenant",
+        clock,
+      });
+      try {
+        const error = await app.forget("ada").catch((thrown: unknown) => thrown);
+        return {
+          unavailable: error instanceof ForgetLedgerUnavailableError,
+          code: (error as { code?: string }).code,
+          ada: (await app.exportPersonalData("ada")).events[0]?.data,
+        };
+      } finally {
+        await app.stop();
+      }
+    });
+    expect(refusal).toEqual({
+      unavailable: true,
+      code: "FORGET_LEDGER_UNAVAILABLE",
+      ada: expect.objectContaining({ note: "bell" }),
+    });
   });
 });

@@ -96,6 +96,18 @@ export interface ExportedDeadLetter {
 }
 
 /**
+ * The last failure of a subscriber on an event that names the person, whose error text is sealed
+ * under their key: opened, `null` once they are forgotten.
+ */
+export interface ExportedSubscriberFailure {
+  readonly subscriber: string;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly errorMessage: string | null;
+  readonly errorStack?: string | null;
+}
+
+/**
  * A row of a read model whose field marked `.person()` names the person: its primary key, which
  * tells it apart, and its fields marked `.personal()`, a field the row does not have left out.
  */
@@ -124,6 +136,7 @@ export interface PersonalDataExport {
   readonly events: readonly ExportedEvent[];
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
+  readonly subscriberFailures: readonly ExportedSubscriberFailure[];
   /**
    * By read model, every one with a field marked `.person()`, rows or none.
    */
@@ -334,6 +347,20 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   const deadLetters = await Promise.all(
     (await storage.deadLetterStore.listByPerson(personId)).map(exportedLetter),
   );
+  // One row per subscriber: few enough to read whole.
+  const subscriberFailures = await Promise.all(
+    (await storage.subscriberFailures.list())
+      .filter((failure) => failure.person === personId)
+      .map(async (failure) => ({
+        subscriber: failure.subscriber,
+        eventId: failure.eventId,
+        eventType: failure.eventType,
+        errorMessage: await openText(failure.errorMessage),
+        ...(failure.errorStack === undefined
+          ? {}
+          : { errorStack: await openText(failure.errorStack) }),
+      })),
+  );
   return {
     personId,
     exportedAt,
@@ -341,6 +368,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     events,
     scheduledCommands,
     deadLetters,
+    subscriberFailures,
     readModels: Object.fromEntries(await rows),
   };
 };

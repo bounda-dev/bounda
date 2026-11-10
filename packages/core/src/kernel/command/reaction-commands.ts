@@ -11,7 +11,13 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import type { ForgetOptions } from "../../modules/personal-data.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
-import { forgetScopeOf, forgetWithin, logForgotten } from "../personal-data/forget.ts";
+import {
+  forgetScopeOf,
+  forgetWithin,
+  logForgotten,
+  STALE_INTENTION,
+} from "../personal-data/forget.ts";
+import type { ForgetIntention, ForgetIntentions } from "../personal-data/intention.ts";
 import { checkPersonId } from "../personal-data/transact.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import { errorDetails } from "../shared/retry.ts";
@@ -60,7 +66,9 @@ export interface ReactionCommands {
   readonly signal: AbortSignal;
   /**
    * Forgets the person when the run's attempt commits, in its transaction: once however often the
-   * attempt runs, never for one that does not commit, and once for a person named twice.
+   * attempt runs, and once for a person named twice. Its intention goes to the forget ledger just
+   * before the transaction opens, so an attempt whose transaction then fails leaves it for the
+   * next reconciliation, which commits it.
    */
   forget(personId: string, options?: ForgetOptions): Promise<void>;
   /**
@@ -96,6 +104,7 @@ export interface CreateReactionCommandsArgs {
   readonly logger: Logger;
   readonly ids: IdGenerator;
   readonly clock: Clock;
+  readonly intentions: ForgetIntentions;
   /**
    * How deep a `forget` may go, which no pipeline checks for it as it does for a command.
    */
@@ -127,6 +136,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   logger,
   ids,
   clock,
+  intentions,
   maxChainDepth,
   personalCategories,
   batchSize,
@@ -222,18 +232,36 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
       const asked = JSON.stringify([personId, scope]);
       if (forgetting.has(asked)) return;
       forgetting.add(asked);
-      within.atCommit(async (transaction) => {
-        const forgotten = await forgetWithin({
-          transaction,
-          ids,
-          clock,
+      let intention: ForgetIntention | undefined;
+      within.beforeCommit(async (storage) => {
+        intention = await intentions.intend({
           personId,
           reason: "requested",
-          context: { ...context, depth },
-          categories: personalCategories,
           scope,
-          batchSize,
+          keys: storage.personalKeys,
         });
+      });
+      within.atCommit(async (transaction) => {
+        const intended = intention as ForgetIntention;
+        const forget = (named: ForgetIntention) =>
+          forgetWithin({
+            transaction,
+            ids,
+            clock,
+            personId,
+            intention: named,
+            context: { ...context, depth },
+            categories: personalCategories,
+            scope,
+            batchSize,
+          });
+        // A key given after the intention goes too: the commit is one, and a run whose commit
+        // fails is delivered again, with an intention that names it.
+        let outcome = await forget(intended);
+        if (outcome === STALE_INTENTION)
+          outcome = await forget({ ...intended, fingerprints: undefined });
+        if (outcome === STALE_INTENTION || "held" in outcome) return;
+        const forgotten = outcome;
         within.afterCommit(() => logForgotten(logger, forgotten));
       });
     },

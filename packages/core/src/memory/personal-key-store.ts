@@ -226,6 +226,25 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
           [...keys.values()].filter((kept) => kids.includes(kept.kid)).map(({ hold }) => hold),
           after,
         ),
+      countWrappedUnder: async ({ kids }) =>
+        [...keys.values()].filter((key) => kids.includes(key.kid)).length,
+      releaseHolds: async () => {
+        const held = [...keys.values()].filter(({ hold }) => hold !== null);
+        for (const kept of held) update(kept, { hold: null });
+        return held.length;
+      },
+      countDue: async ({ category, activeBefore }) => {
+        const before = activeBefore?.toISOString();
+        return due(category, undefined).filter(
+          (kept) => before === undefined || (kept.lastActiveAt ?? "") <= before,
+        ).length;
+      },
+      countRetained: async ({ except }) => retainedOutside(except).length,
+      releaseDueHolds: async () => {
+        const held = [...keys.values()].filter(({ dueHold }) => dueHold !== null);
+        for (const kept of held) update(kept, { dueHold: null });
+        return held.length;
+      },
     },
     entries: createStoreEntries(keys, (id: string) => id),
   };

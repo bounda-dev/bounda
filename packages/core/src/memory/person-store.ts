@@ -105,6 +105,21 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
           [...persons.values()].filter(isIdle).map(({ hold }) => hold),
           after,
         ),
+      countIdle: async ({ activeBefore }) => {
+        const before = activeBefore?.toISOString();
+        return [...persons.values()]
+          .filter(isIdle)
+          .filter((kept) => before === undefined || kept.lastActiveAt <= before).length;
+      },
+      releaseHolds: async () => {
+        let released = 0;
+        for (const [person, kept] of persons) {
+          if (kept.hold === null) continue;
+          persons.set(person, { ...kept, hold: null });
+          released += 1;
+        }
+        return released;
+      },
     },
     entries: createStoreEntries(persons, (person) => person),
   };

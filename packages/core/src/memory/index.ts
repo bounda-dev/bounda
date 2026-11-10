@@ -26,6 +26,7 @@ import { createKeptPersonStore } from "./person-store.ts";
 import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
 import { createKeptScheduler } from "./scheduler.ts";
 import { createMemorySnapshotStore } from "./snapshot-store.ts";
+import { createMemorySubscriberFailureStore } from "./subscriber-failure-store.ts";
 import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./table.ts";
 import {
   createCheckpointJournal,
@@ -122,6 +123,9 @@ export const memory: MemoryFunction = (options = {}) => {
     kind: "bounda-adapter",
     name: "memory",
     options,
+    // Nothing to version: the stores live in this process alone.
+    schemaVersions: async () => [],
+    migrate: async () => [],
     createStorage: async () => {
       const notifier = createMemoryEventNotifier();
       const inboxLedger = createKeptInboxLedger();
@@ -134,6 +138,7 @@ export const memory: MemoryFunction = (options = {}) => {
       });
       const idempotencyStore = createKeptIdempotencyStore({ holds: personalKeys.holds });
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
+      const subscriberFailures = createMemorySubscriberFailureStore();
       const stores = {
         eventStore: createMemoryEventStore({
           onAppend: notifier.notify,
@@ -154,6 +159,11 @@ export const memory: MemoryFunction = (options = {}) => {
             table: "snapshots",
             key: ["aggregateType", "aggregateId"],
             rows: snapshotStore.rows(),
+          }),
+          storageTable({
+            table: "subscriberFailures",
+            key: ["subscriber"],
+            rows: subscriberFailures.rows(),
           }),
           storageTable({
             table: "inbox",
@@ -188,6 +198,7 @@ export const memory: MemoryFunction = (options = {}) => {
         notifier,
         checkpointStore,
         snapshotStore,
+        subscriberFailures,
         transact: createMemoryStorageTransaction({
           ...stores,
           entries: {

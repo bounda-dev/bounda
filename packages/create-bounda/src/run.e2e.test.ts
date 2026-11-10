@@ -375,6 +375,18 @@ describe("a project created by create-bounda", () => {
       const grace = await fetch(`${server.url}/?customer=grace`);
       expect(await rendered(grace)).toContain("grace: 1 order(s), 99 in total");
 
+      // React Router hands what it throws to app/entry.server.tsx's handleError, which logs its
+      // text in development.
+      expect((await fetch(`${server.url}/nope/ana`)).status).toBe(404);
+      await until(
+        () =>
+          /request failed \{"method":"GET","path":"\/nope\/ana","errorName":"Error","errorMessage":"No route matches URL/.test(
+            server.output(),
+          ),
+        () => `the dev server did not log the error's text:\n${server.output()}`,
+        10_000,
+      );
+
       // An edited configuration reboots the app: here, on a database of its own.
       expect(original).toContain("./data/app.db");
       await writeFile(config, original.replace("./data/app.db", "./data/edited.db"));
@@ -405,6 +417,18 @@ describe("a project created by create-bounda", () => {
       const grace = await fetch(`${production.url}/?customer=grace`);
       expect(grace.status).toBe(200);
       expect(await rendered(grace)).toContain("grace: 1 order(s), 99 in total");
+
+      // The build logs no text of an error: an error's message may quote personal data.
+      expect((await fetch(`${production.url}/nope/ana`)).status).toBe(404);
+      await until(
+        () =>
+          production
+            .output()
+            .includes('[bounda] error request failed {"method":"GET","errorName":"Error"}'),
+        () => `the build did not log the error:\n${production.output()}`,
+        10_000,
+      );
+      expect(production.output()).not.toContain("No route matches");
     } finally {
       await production.stop();
     }
@@ -475,8 +499,10 @@ describe("a project created by create-bounda", () => {
     expect(await portTaken(server.port)).toBe(false);
 
     // Without the secret the object refuses to start, saying which one, rather than store keys in
-    // the clear; the Worker answers 500 without the reason, which it logs.
+    // the clear; the Worker answers 500 without the reason, which it logs, with its text as
+    // BOUNDA_ERROR_TEXT in .dev.vars says.
     await rename(join(project, ".dev.vars"), join(project, ".dev.vars.kept"));
+    await writeFile(join(project, ".dev.vars"), "BOUNDA_ERROR_TEXT=include\n");
     const keyless = await startServer(project, {
       args: (port) => [wrangler, "dev", "--port", String(port), "--ip", "127.0.0.1"],
     });
@@ -500,6 +526,14 @@ describe("a project created by create-bounda", () => {
             keyless.output(),
           ),
         () => `the object's failure was not logged:\n${keyless.output()}`,
+        10_000,
+      );
+      await until(
+        () =>
+          /"message":"bounda worker request failed","path":"\/commands\/placeOrder","errorName":"[^"]+","errorMessage":"[^"]*BOUNDA_MASTER_KEY/.test(
+            keyless.output(),
+          ),
+        () => `the Worker did not log the failure's text:\n${keyless.output()}`,
         10_000,
       );
     } finally {
@@ -573,21 +607,48 @@ describe("a project created by create-bounda", () => {
         "--strictPort",
       ],
     });
+    // React Router hands what it throws to app/entry.server.tsx's handleError, which logs it as
+    // BOUNDA_ERROR_TEXT in .dev.vars says.
+    const notFound = async (url: string, output: () => string, line: RegExp): Promise<void> => {
+      expect((await fetch(`${url}/nope/ana`)).status).toBe(404);
+      await until(
+        () => line.test(output()),
+        () => `the Worker did not log the error as expected:\n${output()}`,
+        10_000,
+      );
+    };
     try {
       await placeAndList(server.url, "grace");
+      await notFound(
+        server.url,
+        server.output,
+        /"message":"bounda request failed","method":"GET","path":"\/nope\/ana","errorName":"Error","errorMessage":"No route matches URL/,
+      );
     } finally {
       await server.stop();
     }
     expect(await portTaken(server.port)).toBe(false);
 
-    // What `wrangler deploy` would upload: the Worker the build wrote, with its own wrangler.json.
+    // What `wrangler deploy` would upload: the Worker the build wrote, with its own wrangler.json,
+    // here without BOUNDA_ERROR_TEXT, as a deployment has it.
+    const devVars = join(project, ".dev.vars");
+    const vars = await readFile(devVars, "utf8");
+    expect(vars).toMatch(/^BOUNDA_ERROR_TEXT=include$/m);
+    await writeFile(devVars, vars.replace(/^BOUNDA_ERROR_TEXT=.*$/m, ""));
     const production = await startServer(project, {
       args: (port) => [wrangler, "dev", "--port", String(port), "--ip", "127.0.0.1"],
     });
     try {
       await placeAndList(production.url, "lin");
+      await notFound(
+        production.url,
+        production.output,
+        /\{"level":"error","message":"bounda request failed","method":"GET","errorName":"Error"\}/,
+      );
+      expect(production.output()).not.toContain("No route matches");
     } finally {
       await production.stop();
+      await writeFile(devVars, vars);
     }
   }, 300_000);
 });

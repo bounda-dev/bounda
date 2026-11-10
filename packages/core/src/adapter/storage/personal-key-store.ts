@@ -242,4 +242,26 @@ export interface PersonalKeyStore {
   rewrap(person: string, from: StoredPersonalKey, to: RewrappedKey): Promise<boolean>;
   hold(person: string, from: StoredPersonalKey, hold: Hold): Promise<void>;
   nextHoldEnd(args: NextKeyHoldEndArgs): Promise<Date | null>;
+  /**
+   * How many keys are wrapped under one of `kids`, whatever their holds.
+   */
+  countWrappedUnder(args: Pick<ListWrappedUnderArgs, "kids">): Promise<number>;
+  /**
+   * Clears every key's hold, and resolves to how many it cleared: what the runtime does once the
+   * database went back to a copy, whose holds count failures the copy undid.
+   */
+  releaseHolds(): Promise<number>;
+  /**
+   * How many keys `listDue` lists with `activeBefore`, whatever their holds.
+   */
+  countDue(args: Pick<ListDueArgs, "category" | "activeBefore">): Promise<number>;
+  /**
+   * How many keys `listRetained` lists, whatever their holds.
+   */
+  countRetained(args: Pick<ListRetainedArgs, "except">): Promise<number>;
+  /**
+   * Clears the hold of every key `holdDue` held, and resolves to how many it cleared, as
+   * `releaseHolds` does for the rotation's.
+   */
+  releaseDueHolds(): Promise<number>;
 }

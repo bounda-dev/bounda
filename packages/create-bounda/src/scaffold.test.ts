@@ -155,6 +155,7 @@ describe("scaffoldProject", () => {
       "app/app.css",
       "app/domain/order/commands/place-order.ts",
       "app/domain/order/order-placed.ts",
+      "app/entry.server.tsx",
       "app/read/orders/projections/bounda/personal-data-forgotten.ts",
       "app/read/orders/projections/order/order-placed.ts",
       "app/read/orders/queries/list-orders.ts",
@@ -297,6 +298,7 @@ describe("scaffoldProject", () => {
       "app/app.css",
       "app/domain/order/commands/place-order.ts",
       "app/domain/order/order-placed.ts",
+      "app/entry.server.tsx",
       "app/read/orders/projections/bounda/personal-data-forgotten.ts",
       "app/read/orders/projections/order/order-placed.ts",
       "app/read/orders/queries/list-orders.ts",
@@ -444,6 +446,9 @@ describe("scaffoldProject", () => {
     });
     expect(await readFile(join(given, ".dev.vars"), "utf8")).toMatch(
       /^BOUNDA_MASTER_KEY=given-key$/m,
+    );
+    expect(await readFile(join(given, ".dev.vars"), "utf8")).toMatch(
+      /^BOUNDA_ERROR_TEXT=include$/m,
     );
     expect(await readFile(join(given, ".dev.vars.example"), "utf8")).toMatch(
       /^BOUNDA_MASTER_KEY=$/m,

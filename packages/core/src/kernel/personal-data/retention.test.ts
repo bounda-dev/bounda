@@ -1,27 +1,34 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { StoredPerson } from "../../adapter/storage/person-store.ts";
 import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
-import { createFixedClock } from "../../contracts/clock.ts";
+import { createFixedClock, type FixedClock } from "../../contracts/clock.ts";
 import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { createSequentialIdGenerator } from "../../contracts/ids.ts";
+import { createSequentialIdGenerator, type IdGenerator } from "../../contracts/ids.ts";
+import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { createKeptPersonStore } from "../../memory/person-store.ts";
 import { createKeptPersonalKeyStore } from "../../memory/personal-key-store.ts";
 import type { PersonalDataModule } from "../../modules/personal-data.ts";
+import { LEASE_MS } from "../shared/lease.ts";
 import { tracer } from "../telemetry.ts";
-import { createRecordingLogger } from "../test-support.ts";
+import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories, type PersonalCategories } from "./categories.ts";
 import { forgetPersonalData } from "./forget.ts";
+import { boundForgetLedger } from "./forget-ledger.ts";
 import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
+import { createForgetIntentions } from "./intention.ts";
 import { restrictProcessing } from "./restriction.ts";
 import {
   createRetentionSubscriber,
   createRetentionSweep,
+  RETENTION_LEASE,
   RETENTION_SUBSCRIBER,
   RETENTION_SWEEP_LIMIT,
   retains,
+  retentionDueOf,
 } from "./retention.ts";
 
 const DAY = 86_400_000;
@@ -184,6 +191,7 @@ const setUp = async (storage?: Storage, { retentionMs = 30 * DAY, module }: SetU
   const sweepOver = (storage: Storage) =>
     createRetentionSweep({
       storage,
+      intentions: withoutLedger({ ids, clock }),
       categories,
       ids,
       clock,
@@ -319,6 +327,7 @@ describe("createRetentionSweep", () => {
     await touch("c-1");
     await forgetPersonalData({
       storage,
+      intentions: withoutLedger({ ids, clock }),
       ids,
       clock,
       logger,
@@ -353,6 +362,7 @@ describe("createRetentionSweep", () => {
       await setUp();
     const other = createRetentionSweep({
       storage,
+      intentions: withoutLedger({ ids, clock }),
       categories,
       ids,
       clock,
@@ -787,6 +797,8 @@ describe("createRetentionSweep", () => {
     advance(31);
     const failedAt = clock.now().getTime();
     expect(await failing.sweep(clock.now())).toBe(0);
+    // Stopped, as an instance gives its lease back when it stops.
+    await failing.release();
     expect((await storage.persons.get("c-1"))?.hold).toEqual({
       until: new Date(failedAt + HOLD_MS).toISOString(),
       attempts: 1,
@@ -817,6 +829,7 @@ describe("createRetentionSweep", () => {
     clock.advance(HOLD_MS);
     await before.sweep(clock.now());
     expect(await before.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
+    await before.release();
     const restarted = sweepOver(broken);
     expect(await restarted.nextDueAt()).toEqual(new Date(clock.now().getTime() + 2 * HOLD_MS));
     expect(await restarted.sweep(clock.now())).toBe(0);
@@ -883,6 +896,7 @@ describe("createRetentionSweep", () => {
     let lists = 0;
     const { touch, record, advance, clock, sweepOver } = await setUp(live);
     const told: string[] = [];
+    const toldIds = createSequentialIdGenerator();
     const sweep = createRetentionSweep({
       storage: {
         ...live,
@@ -894,8 +908,9 @@ describe("createRetentionSweep", () => {
           },
         },
       },
+      intentions: withoutLedger({ ids: toldIds, clock }),
       categories: categoriesOf(30 * DAY),
-      ids: createSequentialIdGenerator(),
+      ids: toldIds,
       clock,
       logger: createRecordingLogger().logger,
       concurrencyRetries: 1,
@@ -926,10 +941,12 @@ describe("createRetentionSweep", () => {
     const { storage, record, touch, clock, sweepOver } = await setUp();
     await touch("c-1");
     await record();
+    const longerIds = createSequentialIdGenerator();
     const longer = createRetentionSweep({
       storage,
+      intentions: withoutLedger({ ids: longerIds, clock }),
       categories: categoriesOf(60 * DAY),
-      ids: createSequentialIdGenerator(),
+      ids: longerIds,
       clock,
       logger: createRecordingLogger().logger,
       concurrencyRetries: 0,
@@ -989,6 +1006,7 @@ describe("createRetentionSweep", () => {
       categories: ["profile"],
       retained: [],
       expired: [],
+      fingerprints: ["f-2"],
       cancelledCommands: [],
       removedDeadLetters: [],
     });
@@ -1033,6 +1051,7 @@ describe("createRetentionSweep", () => {
     advance(10);
     await forgetPersonalData({
       storage,
+      intentions: withoutLedger({ ids, clock }),
       ids,
       clock,
       logger,
@@ -1086,6 +1105,7 @@ describe("createRetentionSweep", () => {
     for (const person of ["c-1", "c-2"]) {
       await forgetPersonalData({
         storage: live,
+        intentions: withoutLedger({ ids: kept.ids, clock: kept.clock }),
         ids: kept.ids,
         clock: kept.clock,
         logger: kept.logger,
@@ -1151,5 +1171,434 @@ describe("retains", () => {
         categoriesOf(null, { categories: { profile: { basis: "consent", retention: "1d" } } }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("the retention and the forget ledger", () => {
+  const recordingIntentions = (ids: IdGenerator, clock: FixedClock) => {
+    const recorded: ForgetLedgerEntry[] = [];
+    const intentions = createForgetIntentions({
+      ledger: {
+        store: boundForgetLedger({
+          ledger: {
+            readMark: async () => 0,
+            raiseMark: async () => undefined,
+            append: async (entries) => {
+              recorded.push(...entries);
+            },
+            read: async () => [],
+          },
+          timeoutMs: 1_000,
+          clock,
+        }),
+        strict: true,
+      },
+      ids,
+      clock,
+      logger: silentLogger,
+    });
+    return { intentions, recorded };
+  };
+
+  it("records the intention of each forgetting before it commits, and none for a person it skips", async () => {
+    const { record, touch, advance, clock, storage, ids, logger } = await setUp();
+    const { intentions, recorded } = recordingIntentions(ids, clock);
+    const sweep = createRetentionSweep({
+      storage,
+      intentions,
+      categories: categoriesOf(30 * DAY),
+      ids,
+      clock,
+      logger,
+      concurrencyRetries: 1,
+      batchSize: 2,
+    });
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    await touch("c-1");
+    await touch("c-2");
+    await record();
+    await storage.persons.restrict("c-2", new Date(day(0)));
+    advance(31);
+    expect(await sweep.sweep(clock.now())).toBe(1);
+    const [forgetting] = (
+      await storage.eventStore.readAll({ afterPosition: 0, limit: 100 })
+    ).filter((event) => event.type === "PersonalDataForgotten");
+    expect(recorded).toEqual([
+      {
+        personId: "c-1",
+        categories: null,
+        eventId: forgetting?.id,
+        forgottenAt: forgetting?.timestamp,
+        reason: "retention",
+        fingerprints: ["f-1"],
+      },
+    ]);
+  });
+
+  it("says a person is due as a sweep would forget them now, by their row and what it has not recorded", async () => {
+    const { record, touch, advance, clock, storage } = await setUp();
+    const due = retentionDueOf({
+      categories: categoriesOf(30 * DAY),
+      batchSize: 2,
+      checkpoints: storage.checkpointStore,
+    });
+    const isDue = (person: string) => due(storage, person, clock.now(), null);
+    for (const person of ["c-1", "c-2", "c-3", "c-4"]) await touch(person);
+    await record();
+    expect(await isDue("c-1")).toBe(false);
+    advance(30);
+    expect(await isDue("c-1")).toBe(true);
+    expect(await isDue("c-9")).toBe(false);
+    await storage.persons.restrict("c-2", new Date(day(30)));
+    expect(await isDue("c-2")).toBe(false);
+    await touch("c-3");
+    expect(await isDue("c-3")).toBe(false);
+    await storage.persons.record({ person: "c-4", position: 99, forgottenAt: day(30) });
+    expect(await isDue("c-4")).toBe(false);
+  });
+
+  it("says keys are due as their category's retention would forget them now, every one of them", async () => {
+    const { record, touch, advance, clock, storage } = await setUp(undefined, {
+      retentionMs: null,
+      module: {
+        categories: {
+          profile: { basis: "consent", retention: "30d" },
+          invoices: { basis: "legal-obligation", retention: "60d" },
+        },
+      },
+    });
+    const due = retentionDueOf({
+      categories: categoriesOf(null, {
+        categories: {
+          profile: { basis: "consent", retention: "30d" },
+          invoices: { basis: "legal-obligation", retention: "60d" },
+        },
+      }),
+      batchSize: 2,
+      checkpoints: storage.checkpointStore,
+    });
+    await storage.personalKeys.add("c-1", "profile", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("2"));
+    await storage.personalKeys.add("c-1", "retired", testPersonalKey("3"));
+    await touch("c-1");
+    await record();
+    advance(30);
+    const keys = async (...categories: string[]) =>
+      (await storage.personalKeys.list("c-1")).filter(({ category }) =>
+        categories.includes(category),
+      );
+    const isDue = async (...categories: string[]) =>
+      due(storage, "c-1", clock.now(), await keys(...categories));
+    expect(await isDue("profile")).toBe(true);
+    expect(await isDue("profile", "invoices")).toBe(false);
+    expect(await isDue("retired")).toBe(false);
+    expect(await due(storage, "c-1", clock.now(), null)).toBe(false);
+    await storage.persons.restrict("c-1", new Date(day(30)));
+    expect(await isDue("profile")).toBe(false);
+  });
+
+  // A sweep through a store that runs `meanwhile` once, between the list and the person's forget,
+  // or before the forget's transaction.
+  const racing = async (
+    when: "listed" | "transaction",
+    meanwhile: (storage: Storage) => Promise<void>,
+  ) => {
+    const setup = await setUp();
+    const { storage, ids, clock, logger } = setup;
+    let pending: ((storage: Storage) => Promise<void>) | undefined = meanwhile;
+    const once = async () => {
+      const step = pending;
+      pending = undefined;
+      await step?.(storage);
+    };
+    const raced: Storage = {
+      ...storage,
+      persons: {
+        ...storage.persons,
+        listIdle: async (args) => {
+          const listed = await storage.persons.listIdle(args);
+          if (when === "listed" && listed.length > 0) await once();
+          return listed;
+        },
+      },
+      transact: async (work) => {
+        if (when === "transaction") await once();
+        return storage.transact(work);
+      },
+    };
+    const { intentions, recorded } = recordingIntentions(ids, clock);
+    const sweep = createRetentionSweep({
+      storage: raced,
+      intentions,
+      categories: categoriesOf(30 * DAY),
+      ids,
+      clock,
+      logger,
+      concurrencyRetries: 1,
+      batchSize: 2,
+    });
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    await setup.touch("c-1");
+    await setup.record();
+    setup.advance(31);
+    return { ...setup, sweep, recorded };
+  };
+
+  it("records no intention for a person restricted between the list and their forget", async () => {
+    const { sweep, clock, recorded, forgottenFor } = await racing("listed", (storage) =>
+      storage.persons.restrict("c-1", new Date(day(31))).then(() => undefined),
+    );
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(recorded).toEqual([]);
+    expect(await forgottenFor()).toEqual([]);
+  });
+
+  it("forgets nobody whose transaction finds them restricted after the intention, nor given a key since, and holds them", async () => {
+    const restricted = await racing("transaction", (storage) =>
+      storage.persons.restrict("c-1", new Date(day(31))).then(() => undefined),
+    );
+    expect(await restricted.sweep.sweep(restricted.clock.now())).toBe(0);
+    expect(restricted.recorded).toHaveLength(1);
+    expect(await restricted.forgottenFor()).toEqual([]);
+
+    const rekeyed = await racing("transaction", async (storage) => {
+      await storage.personalKeys.remove("c-1", "f-1");
+      await storage.personalKeys.add("c-1", "default", testPersonalKey("2"));
+    });
+    expect(await rekeyed.sweep.sweep(rekeyed.clock.now())).toBe(0);
+    expect(rekeyed.entries.filter(({ level }) => level === "error")).toEqual([]);
+    expect(await rekeyed.forgottenFor()).toEqual([]);
+    expect(await rekeyed.storage.personalKeys.get("c-1", "default")).toEqual(testPersonalKey("2"));
+    const [row] = await rekeyed.storage.persons.listIdle({ limit: 1 });
+    expect(row?.hold).not.toBeNull();
+    expect(await rekeyed.sweep.sweep(rekeyed.clock.now())).toBe(0);
+  });
+
+  it("leaves a person a reconciliation forgot under the intention's id meanwhile", async () => {
+    let intended = "";
+    const { sweep, clock, recorded, forgottenFor, storage } = await racing(
+      "transaction",
+      async (store) => {
+        intended = recorded[0]?.eventId ?? "";
+        await store.eventStore.append({
+          aggregateType: "bounda",
+          aggregateId: "c-1",
+          expectedVersion: 0,
+          events: [
+            {
+              ...forgotten(99, "c-1"),
+              aggregateId: "c-1",
+              id: intended,
+              payload: { personId: "c-1", reason: "retention" },
+            },
+          ],
+        });
+      },
+    );
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect((await forgottenFor()).map(([person]) => person)).toEqual(["c-1"]);
+    expect(intended).not.toBe("");
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
+  });
+
+  it("says a person whose row never saw them active is not due", async () => {
+    const { storage, clock } = await setUp();
+    await storage.persons.record({ person: "c-5", position: 1, forgottenAt: null });
+    const due = retentionDueOf({
+      categories: categoriesOf(DAY),
+      batchSize: 2,
+      checkpoints: storage.checkpointStore,
+    });
+    expect(await due(storage, "c-5", new Date(clock.now().getTime() + 2 * DAY), null)).toBe(false);
+  });
+
+  it("records no intention for a person active since their row was recorded", async () => {
+    const { sweep, clock, recorded, forgottenFor, touch } = await racing(
+      "listed",
+      async () => undefined,
+    );
+    await touch("c-1");
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(recorded).toEqual([]);
+    expect(await forgottenFor()).toEqual([]);
+  });
+});
+
+describe("the retention across instances", () => {
+  // A store that runs `after` once each forget commits.
+  const committing = (live: Storage, after: () => Promise<void>): Storage => ({
+    ...live,
+    transact: async (work) => {
+      const result = await live.transact(work);
+      await after();
+      return result;
+    },
+  });
+
+  const idle = async (persons: readonly string[]) => {
+    const set = await setUp();
+    for (const person of persons) await set.touch(person);
+    await set.record();
+    set.advance(31);
+    return set;
+  };
+
+  it("forgets each person once while two instances sweep: the one holding the lease", async () => {
+    const { storage, sweepOver, forgottenFor, clock } = await idle(["c-1", "c-2", "c-3"]);
+    const one = sweepOver(storage);
+    const other = sweepOver(storage);
+    expect(await one.sweep(clock.now())).toBe(3);
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(await forgottenFor()).toEqual([
+      ["c-1", "retention"],
+      ["c-2", "retention"],
+      ["c-3", "retention"],
+    ]);
+    expect(await storage.checkpointStore.get(RETENTION_LEASE)).toBe(
+      clock.now().getTime() + LEASE_MS,
+    );
+  });
+
+  it("leaves the persons to the instance holding the lease, and names when it lapses", async () => {
+    const { storage, sweepOver, touch, record, advance, clock } = await idle(["c-1"]);
+    const one = sweepOver(storage);
+    const leased = clock.now().getTime() + LEASE_MS;
+    expect(await one.sweep(clock.now())).toBe(1);
+    advance(-31);
+    await touch("c-2");
+    await record();
+    advance(31);
+    let lists = 0;
+    const other = sweepOver({
+      ...storage,
+      persons: {
+        ...storage.persons,
+        listIdle: (args) => {
+          lists += 1;
+          return storage.persons.listIdle(args);
+        },
+      },
+    });
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(await other.sweep(clock.now())).toBe(0);
+    expect(lists).toBe(1);
+    expect(await other.nextDueAt()).toEqual(new Date(leased));
+    await one.release();
+    expect(await other.sweep(clock.now())).toBe(1);
+  });
+
+  it("hands the rest to another instance when its lease lapses mid-way, forgetting nobody twice", async () => {
+    const { storage, sweepOver, forgottenFor, clock } = await idle(["c-1", "c-2", "c-3", "c-4"]);
+    const other = sweepOver(storage);
+    let commits = 0;
+    let handedOver = 0;
+    // After its second forget the instance stalls past its lease, and the other runs a pass.
+    const one = sweepOver(
+      committing(storage, async () => {
+        commits += 1;
+        if (commits !== 2) return;
+        clock.set(new Date(clock.now().getTime() + LEASE_MS));
+        handedOver = await other.sweep(clock.now());
+      }),
+    );
+    expect(await one.sweep(clock.now())).toBe(2);
+    expect(handedOver).toBe(2);
+    expect((await forgottenFor()).map(([person]) => person)).toEqual(["c-1", "c-2", "c-3", "c-4"]);
+  });
+
+  it("clears the holds a restore brought back, on the instance that found it first", async () => {
+    const { storage, sweepOver, clock } = await idle(["c-1"]);
+    const hold = {
+      until: new Date(clock.now().getTime() + HOLD_MAX_MS).toISOString(),
+      attempts: 5,
+    };
+    await storage.persons.hold("c-1", day(0), hold);
+    await sweepOver(storage).restored(false);
+    expect((await storage.persons.get("c-1"))?.hold).toEqual(hold);
+    const sweep = sweepOver(storage);
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    await sweep.restored(true);
+    expect((await storage.persons.get("c-1"))?.hold).toBeNull();
+    expect(await sweep.nextDueAt()).toEqual(new Date(Date.parse(day(0)) + 30 * DAY));
+    expect(await sweep.sweep(clock.now())).toBe(1);
+  });
+
+  it("sweeps again at once after a restore, though the store had paused it", async () => {
+    const { storage, sweepOver, clock } = await idle(["c-1"]);
+    let down = true;
+    const sweep = sweepOver({
+      ...storage,
+      persons: {
+        ...storage.persons,
+        listIdle: (args) =>
+          down ? Promise.reject(new Error("down")) : storage.persons.listIdle(args),
+      },
+    });
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    down = false;
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    await sweep.restored(false);
+    expect(await sweep.sweep(clock.now())).toBe(1);
+  });
+
+  it("logs holds it could not clear after a restore, and goes on", async () => {
+    const { storage, sweepOver, entries } = await idle([]);
+    await sweepOver({
+      ...storage,
+      persons: {
+        ...storage.persons,
+        releaseHolds: () => Promise.reject(new Error("cannot write")),
+      },
+    }).restored(true);
+    expect(entries).toContainEqual({
+      level: "error",
+      message: "the holds of personal data past the retention could not be cleared",
+      fields: expect.objectContaining({ errorMessage: "cannot write" }),
+    });
+  });
+
+  it("says, for each retention, how many are past it and when the next one comes due", async () => {
+    const module: PersonalDataModule = {
+      categories: {
+        profile: { basis: "consent", retention: "10d" },
+        invoices: { basis: "legal-obligation", retention: "6y" },
+      },
+    };
+    const { storage, sweepOver, touch, record, advance, clock } = await setUp(undefined, {
+      module,
+    });
+    const sweep = sweepOver(storage);
+    const status = (
+      app: readonly [number, string | null],
+      profile: readonly [number, string | null],
+      invoices: readonly [number, string | null],
+      keptBeyond = 0,
+    ) => ({
+      categories: [
+        { category: "default", retention: "30d", due: app[0], nextDueAt: app[1] },
+        { category: "profile", retention: "10d", due: profile[0], nextDueAt: profile[1] },
+        { category: "invoices", retention: "6y", due: invoices[0], nextDueAt: invoices[1] },
+      ],
+      keptBeyond,
+    });
+    expect(await sweep.status()).toEqual(status([0, null], [0, null], [0, null]));
+    await storage.personalKeys.add("c-1", "profile", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("2"));
+    await storage.personalKeys.add("c-3", "retired", testPersonalKey("3"));
+    await storage.personalKeys.retain("c-3", "f-3", { since: day(0), lastActiveAt: day(0) });
+    await touch("c-1");
+    advance(1);
+    await touch("c-2");
+    await record();
+    advance(29.5);
+    expect(await sweep.status()).toEqual(
+      status(
+        [1, new Date(Date.parse(day(0)) + 30 * DAY).toISOString()],
+        [1, new Date(Date.parse(day(0)) + 10 * DAY).toISOString()],
+        [0, "2032-01-01T00:00:00.000Z"],
+        1,
+      ),
+    );
+    expect(clock.now().getTime()).toBe(Date.parse(day(30)) + DAY / 2);
   });
 });

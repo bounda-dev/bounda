@@ -30,11 +30,12 @@ export interface StorageSchemaContractFunction {
   (args: StorageSchemaContractArgs): void;
 }
 
-// What a new database holds: every scope the storage migrates, at its latest version.
+// What a new database holds: every migration of every scope the storage migrates, one row each.
 const LATEST = [
   { scope: "checkpoints", version: 1 },
   { scope: "storage", version: 1 },
   { scope: "storage", version: 2 },
+  { scope: "storage", version: 3 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -143,6 +144,50 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
 
+    it("reads the version of every scope without migrating, and migrates only the scopes asked", async () => {
+      const target = await create();
+      const versions = await target.adapter.schemaVersions();
+      expect(versions).toEqual([
+        { scope: "storage", version: 0, latest: 3 },
+        { scope: "checkpoints", version: 0, latest: 1 },
+        { scope: "forget-ledger", version: 0, latest: 4 },
+      ]);
+      expect(await shapeOf(target, dialect)).toEqual([]);
+      expect(await target.adapter.migrate(["checkpoints"])).toEqual([
+        { scope: "storage", version: 0, latest: 3 },
+        { scope: "checkpoints", version: 1, latest: 1 },
+        { scope: "forget-ledger", version: 0, latest: 4 },
+      ]);
+      expect(await target.adapter.migrate(["storage", "forget-ledger"])).toEqual([
+        { scope: "storage", version: 3, latest: 3 },
+        { scope: "checkpoints", version: 1, latest: 1 },
+        { scope: "forget-ledger", version: 4, latest: 4 },
+      ]);
+      const shape = await shapeOf(target, dialect);
+      await opened(target.adapter, async () => undefined);
+      expect(await shapeOf(target, dialect)).toEqual(shape);
+    });
+
+    it("refuses to migrate a scope a newer version migrated, writing nothing", async () => {
+      const target = await create();
+      const table = schemaMigrationsTableFor(target.prefix);
+      await target.execute(schemaMigrationsTableStatement(table));
+      await target.execute(
+        `INSERT INTO ${table} ("scope", "version", "applied_at") VALUES ('checkpoints', 999, '2099-01-01T00:00:00.000Z')`,
+      );
+      const shape = await shapeOf(target, dialect);
+      await expect(target.adapter.migrate(["storage", "checkpoints"])).rejects.toMatchObject({
+        code: "STORAGE_SCHEMA_TOO_NEW",
+        scope: "checkpoints",
+      });
+      expect(await shapeOf(target, dialect)).toEqual(shape);
+      expect(await target.adapter.schemaVersions()).toContainEqual({
+        scope: "checkpoints",
+        version: 999,
+        latest: 1,
+      });
+    });
+
     it.skipIf(!concurrent)("migrates once when instances start together", async () => {
       const target = await create();
       const storages = await Promise.all([1, 2, 3].map(() => target.adapter.createStorage()));
@@ -170,7 +215,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 2,
+        supported: 3,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -261,6 +306,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
             eventId: "e-1",
             forgottenAt: "2026-01-01T00:00:00.000Z",
             categories: null,
+            reason: "requested",
           },
         ]);
       } finally {
@@ -269,6 +315,8 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual([
         { scope: "forget-ledger", version: 1 },
         { scope: "forget-ledger", version: 2 },
+        { scope: "forget-ledger", version: 3 },
+        { scope: "forget-ledger", version: 4 },
       ]);
     });
 

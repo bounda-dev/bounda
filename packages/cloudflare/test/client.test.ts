@@ -73,6 +73,8 @@ describe("connect", () => {
     await user.deadLetters.list({ status: "failed" });
     await user.deadLetters.retry("l-1");
     await user.as("operator-1").deadLetters.discard("l-1");
+    await user.subscriberFailures.list();
+    await store.subscriberFailures.get("projection:orders");
     await store.queries.getOrder({ orderId: "o-1" });
     expect(recorded).toMatchObject({
       commands: [["payOrder", { orderId: "o-1" }, undefined, "eventual", "user-1"]],
@@ -90,6 +92,10 @@ describe("connect", () => {
         ["list", { status: "failed" }, "user-1"],
         ["retry", "l-1", "user-1"],
         ["discard", "l-1", "operator-1"],
+      ],
+      failures: [
+        ["list", "user-1"],
+        ["get", "projection:orders", undefined],
       ],
     });
   });

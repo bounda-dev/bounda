@@ -3,8 +3,9 @@ import {
   type ForgetAgainEntry,
   type GlobalStream,
   PERSONAL_DATA_FORGOTTEN_EVENT,
-  type PersonalDataForgottenPayload,
+  type PersonalDataForgottenReason,
 } from "@bounda-dev/core";
+import type { ForgetLedgerEntry } from "@bounda-dev/core/adapter";
 import { InvalidArgumentError } from "commander";
 
 const PAGE = 1_000;
@@ -43,15 +44,30 @@ export const parseSince: ParseSinceFunction = (value) => {
  * One forgetting, as a line of what `bounda forgotten` prints and `bounda forget --from` reads:
  * the entry a forget ledger keeps.
  */
-export interface ForgottenLine {
-  readonly personId: string;
-  readonly eventId: string;
-  readonly forgottenAt: string;
-  /**
-   * The categories the forgetting asked for, `null` for the person as a whole.
-   */
-  readonly categories: readonly string[] | null;
-}
+export type ForgottenLine = ForgetLedgerEntry;
+
+const fieldOf = (payload: unknown, name: string): unknown =>
+  typeof payload === "object" && payload !== null ? Reflect.get(payload, name) : undefined;
+
+const isTextList = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const REASONS: Readonly<Record<PersonalDataForgottenReason, true>> = {
+  requested: true,
+  retention: true,
+};
+
+const isReason = (value: unknown): value is PersonalDataForgottenReason =>
+  typeof value === "string" && Object.hasOwn(REASONS, value);
+
+// What the forgetting asked for: `null` for the person as a whole, as one that does not say it
+// forgot only some categories did, else the categories named, those retained included.
+const askedOf = (payload: unknown): readonly string[] | null => {
+  if (fieldOf(payload, "whole") !== false) return null;
+  const forgotten = fieldOf(payload, "categories");
+  const retained = fieldOf(payload, "retained");
+  return [...(isTextList(forgotten) ? forgotten : []), ...(isTextList(retained) ? retained : [])];
+};
 
 export interface ReadForgottenArgs {
   readonly events: GlobalStream;
@@ -74,12 +90,15 @@ export const readForgotten: ReadForgottenFunction = async ({ events, since }) =>
       if (event.aggregateType !== BOUNDA_AGGREGATE) continue;
       if (event.type !== PERSONAL_DATA_FORGOTTEN_EVENT) continue;
       if (since.kind === "date" && Date.parse(event.timestamp) < since.value) continue;
-      const payload = event.payload as PersonalDataForgottenPayload;
+      const reason = fieldOf(event.payload, "reason");
+      const fingerprints = fieldOf(event.payload, "fingerprints");
       lines.push({
         personId: event.aggregateId,
         eventId: event.id,
         forgottenAt: event.timestamp,
-        categories: payload.whole === false ? [...payload.categories, ...payload.retained] : null,
+        categories: askedOf(event.payload),
+        reason: isReason(reason) ? reason : "requested",
+        ...(isTextList(fingerprints) ? { fingerprints } : {}),
       });
     }
     const last = page.at(-1);
@@ -96,23 +115,31 @@ const entryOf = (line: string, number: number): ForgetAgainEntry => {
   } catch {
     throw new Error(`line ${number} is neither a person's id nor JSON`);
   }
-  const personId: unknown = Reflect.get(parsed as object, "personId");
-  const eventId: unknown = Reflect.get(parsed as object, "eventId");
-  const categories: unknown = Reflect.get(parsed as object, "categories");
-  if (typeof personId !== "string" || (eventId !== undefined && typeof eventId !== "string")) {
-    throw new Error(`line ${number} needs a "personId" string, and "eventId" only as a string`);
-  }
+  const personId = fieldOf(parsed, "personId");
+  const eventId = fieldOf(parsed, "eventId");
+  const forgottenAt = fieldOf(parsed, "forgottenAt");
+  const reason = fieldOf(parsed, "reason");
+  const fingerprints = fieldOf(parsed, "fingerprints");
+  const categories = fieldOf(parsed, "categories");
   if (
-    categories !== undefined &&
-    categories !== null &&
-    !(Array.isArray(categories) && categories.every((category) => typeof category === "string"))
+    typeof personId !== "string" ||
+    (eventId !== undefined && typeof eventId !== "string") ||
+    (forgottenAt !== undefined && typeof forgottenAt !== "string") ||
+    (reason !== undefined && !isReason(reason)) ||
+    (fingerprints !== undefined && !isTextList(fingerprints)) ||
+    (categories !== undefined && categories !== null && !isTextList(categories))
   ) {
-    throw new Error(`line ${number} has "categories" that is neither null nor a list of names`);
+    throw new Error(
+      `line ${number} needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", "fingerprints" only as a list of strings, and "categories" only as null or a list of names`,
+    );
   }
   return {
     personId,
     ...(eventId === undefined ? {} : { eventId }),
-    ...(categories === undefined ? {} : { categories: categories as readonly string[] | null }),
+    ...(forgottenAt === undefined ? {} : { forgottenAt }),
+    ...(reason === undefined ? {} : { reason }),
+    ...(fingerprints === undefined ? {} : { fingerprints }),
+    ...(categories === undefined ? {} : { categories }),
   };
 };
 

@@ -1,10 +1,14 @@
 import { ConfigurationError } from "@bounda-dev/core";
+import type { SchemaVersion } from "@bounda-dev/core/adapter";
 import {
   forgetLedgerCategoriesStatement,
+  forgetLedgerMarksStatement,
+  forgetLedgerReasonStatements,
   forgetLedgerStatements,
   migrateSchemas,
   postgresqlDialect,
   quoteIdentifier,
+  readSchemaVersions,
   resolvedAtOfEarlierLetters,
   SCHEMA_SCOPES,
   type SchemaScope,
@@ -18,6 +22,7 @@ import {
   inSchema,
   type StorageTables,
   storageSchemaStatements,
+  subscriberFailuresTableStatement,
 } from "./schema.ts";
 
 type StorageTable = Exclude<
@@ -137,7 +142,7 @@ const keysIndex = (tables: StorageTables, suffix: string): string =>
   quoteIdentifier(`${tables.personalKeys.slice(1, -1)}_${suffix}_idx`);
 
 /**
- * The second migration: a key per person and category instead of one per person, each named by
+ * The third migration: a key per person and category instead of one per person, each named by
  * its fingerprint, with the person's last activity on it and whether a forgetting kept it under a
  * legal obligation. Every key there was is the person's key in the default category, last active
  * when the person was, unless they were forgotten after that, when the key came later. Every
@@ -193,7 +198,11 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
   scope: SCHEMA_SCOPES.storage,
   migrations: [
     { version: 1, migrate: (tx) => adoptStorageTables(tx, schema, tables) },
-    { version: 2, migrate: (tx) => adoptCategories(tx, schema, tables) },
+    {
+      version: 2,
+      migrate: (tx) => tx.run(subscriberFailuresTableStatement(tables.subscriberFailures), []),
+    },
+    { version: 3, migrate: (tx) => adoptCategories(tx, schema, tables) },
   ],
 });
 
@@ -221,8 +230,15 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
         }
       },
     },
+    { version: 2, migrate: (tx) => tx.run(forgetLedgerMarksStatement(table), []) },
     {
-      version: 2,
+      version: 3,
+      migrate: async (tx) => {
+        for (const statement of forgetLedgerReasonStatements(table)) await tx.run(statement, []);
+      },
+    },
+    {
+      version: 4,
       migrate: (tx) => tx.run(forgetLedgerCategoriesStatement(table, postgresqlDialect), []),
     },
   ],
@@ -242,6 +258,32 @@ export interface MigratePostgresqlFunction {
   (args: MigratePostgresqlArgs): Promise<void>;
 }
 
+const isUndefinedTable = (error: unknown): boolean =>
+  error instanceof Error && Reflect.get(error, "code") === UNDEFINED_TABLE;
+
+export interface ReadPostgresqlSchemaVersionsArgs {
+  readonly db: PostgresqlDatabase;
+  readonly prefix: string;
+  readonly scopes: readonly SchemaScope[];
+}
+
+export interface ReadPostgresqlSchemaVersionsFunction {
+  (args: ReadPostgresqlSchemaVersionsArgs): Promise<readonly SchemaVersion[]>;
+}
+
+// In the schema the connection's `search_path` names, where the adapter keeps its tables.
+export const readPostgresqlSchemaVersions: ReadPostgresqlSchemaVersionsFunction = ({
+  db,
+  prefix,
+  scopes,
+}) =>
+  readSchemaVersions({
+    db,
+    table: schemaMigrationsTableFor(prefix),
+    scopes,
+    isMissingTable: isUndefinedTable,
+  });
+
 /**
  * `migrateSchemas` in a schema, under the schema's advisory lock, which the read models' changes
  * to their tables take too.
@@ -253,6 +295,5 @@ export const migratePostgresql: MigratePostgresqlFunction = ({ db, schema, prefi
     table: schemaMigrationsTableFor(prefix),
     scopes,
     locked: (work) => inSchema({ db, schema, work }),
-    isMissingTable: (error) =>
-      error instanceof Error && Reflect.get(error, "code") === UNDEFINED_TABLE,
+    isMissingTable: isUndefinedTable,
   });

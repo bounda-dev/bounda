@@ -237,6 +237,8 @@ const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
     "A remembered answer quotes the value: keep personal data out of a rejection's message and say what went wrong with its code and ids.",
   snapshots:
     "A snapshot holds the value from a field left unmarked: mark it personal() where the state's value comes from.",
+  subscriberFailures:
+    "A subscriber's last failure quotes the value in the clear: its event names the person by no marked field holding a value, so mark the field the value comes from personal(), and keep personal data out of error messages.",
 };
 
 const opened = async (

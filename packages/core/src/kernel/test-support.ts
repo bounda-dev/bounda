@@ -6,7 +6,7 @@ import { resolveConfig } from "../config/schema.ts";
 import type { Config, ErrorText, PortsConfig, ResolvedConfig } from "../config/types.ts";
 import { type Clock, createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import type { CommandRejection } from "../contracts/command.ts";
-import { createSequentialIdGenerator } from "../contracts/ids.ts";
+import { createSequentialIdGenerator, type IdGenerator } from "../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import type { RejectFunction } from "../modules/command.ts";
@@ -27,6 +27,7 @@ import {
   toBase64,
   withRawKey,
 } from "./personal-data/crypto.ts";
+import { createForgetIntentions, type ForgetIntentions } from "./personal-data/intention.ts";
 import { createPersonalKeyWrapping, type PersonalKeys } from "./personal-data/wrapped-keys.ts";
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
@@ -500,3 +501,14 @@ export const openedKey: OpenedKeyFunction = async ({ key, fingerprint }) => ({
   cryptoKey: await importRawKey({ raw: fromBase64(key), extractable: false }),
   retained: false,
 });
+
+export interface WithoutLedgerArgs {
+  readonly ids: IdGenerator;
+  readonly clock: Clock;
+}
+
+/**
+ * The intentions of an app without a forget ledger: ids and times, nothing recorded.
+ */
+export const withoutLedger = ({ ids, clock }: WithoutLedgerArgs): ForgetIntentions =>
+  createForgetIntentions({ ledger: null, ids, clock, logger: silentLogger });

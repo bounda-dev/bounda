@@ -13,7 +13,8 @@ export const BOUNDA_AGGREGATE: "bounda" = "bounda";
  * a policy or process that forgets them, or the retention: every event's personal field of theirs
  * reads as `null` from then on, and every read model that projects such fields handles it. It
  * names the stored commands that held the person's data and went with the key, since no other
- * event records them.
+ * event records them. With a forget ledger, the reconciliation may append it again, with the same
+ * id, time and reason, to a store that lost it.
  */
 export const PERSONAL_DATA_FORGOTTEN_EVENT: "PersonalDataForgotten" = "PersonalDataForgotten";
 
@@ -34,12 +35,12 @@ export interface RemovedDeadLetter {
 }
 
 /**
- * Why a person was forgotten: `requested` by `forget`, from a client or a policy or process,
- * `retention`, past `runtime.personalData.retention` without activity, or `restored`, again,
- * because a backup restored from before they were forgotten brought their key back, as
- * `runtime.personalData.forgetLedger` or `bounda forget --from` found.
+ * Why a person was forgotten: `requested` by `forget`, from a client or a policy or process, or
+ * by `bounda forget --from` for a bare id, or `retention`, past `runtime.personalData.retention`,
+ * or a category's own, without activity. A forgetting committed again from `runtime.personalData.forgetLedger`, after
+ * a restore or a commit that never happened, keeps the reason it was asked with.
  */
-export type PersonalDataForgottenReason = "requested" | "retention" | "restored";
+export type PersonalDataForgottenReason = "requested" | "retention";
 
 export interface PersonalDataForgottenPayload {
   readonly personId: string;
@@ -65,6 +66,12 @@ export interface PersonalDataForgottenPayload {
    * forgotten now.
    */
   readonly expired: readonly PersonalCategoryName[];
+  /**
+   * The fingerprints of the keys the forgetting covered, destroyed or retained, none when it
+   * covered none: a key in force the person holds whose fingerprint is not here was given to them
+   * after. Absent from a forgetting recorded before Bounda 0.4.0.
+   */
+  readonly fingerprints?: readonly string[];
   readonly cancelledCommands: readonly CancelledCommand[];
   readonly removedDeadLetters: readonly RemovedDeadLetter[];
 }

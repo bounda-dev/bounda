@@ -2,7 +2,12 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { resolvedAtOfEarlierLetters } from "../sql/dead-letters.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
-import { forgetLedgerCategoriesStatement, forgetLedgerStatements } from "../sql/forget-ledger.ts";
+import {
+  forgetLedgerCategoriesStatement,
+  forgetLedgerMarksStatement,
+  forgetLedgerReasonStatements,
+  forgetLedgerStatements,
+} from "../sql/forget-ledger.ts";
 import { quoteIdentifier } from "../sql/identifiers.ts";
 import {
   migrateSchemas,
@@ -16,6 +21,7 @@ import {
   personRowsBackfillStatements,
   type StorageTables,
   storageSchemaStatements,
+  subscriberFailuresTableStatement,
 } from "./schema.ts";
 import { busyRetryDelay, pause } from "./wal.ts";
 
@@ -116,7 +122,7 @@ const keysIndex = (tables: StorageTables, suffix: string): string =>
   quoteIdentifier(`${tables.personalKeys.slice(1, -1)}_${suffix}_idx`);
 
 /**
- * The second migration: a key per person and category instead of one per person, each named by
+ * The third migration: a key per person and category instead of one per person, each named by
  * its fingerprint, with the person's last activity on it and whether a forgetting kept it under a
  * legal obligation. Every key there was is the person's key in the default category, last active
  * when the person was, unless they were forgotten after that, when the key came later. Every
@@ -169,7 +175,11 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.storage,
   migrations: [
     { version: 1, migrate: (tx) => adoptStorageTables(tx, tables) },
-    { version: 2, migrate: (tx) => adoptCategories(tx, tables) },
+    {
+      version: 2,
+      migrate: (tx) => tx.run(subscriberFailuresTableStatement(tables.subscriberFailures), []),
+    },
+    { version: 3, migrate: (tx) => adoptCategories(tx, tables) },
   ],
 });
 
@@ -197,8 +207,15 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
         }
       },
     },
+    { version: 2, migrate: (tx) => tx.run(forgetLedgerMarksStatement(table), []) },
     {
-      version: 2,
+      version: 3,
+      migrate: async (tx) => {
+        for (const statement of forgetLedgerReasonStatements(table)) await tx.run(statement, []);
+      },
+    },
+    {
+      version: 4,
       migrate: async (tx) => {
         if ((await columnsOf(tx, table)).has("categories")) return;
         await tx.run(forgetLedgerCategoriesStatement(table, sqliteDialect), []);
@@ -206,6 +223,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
     },
   ],
 });
+
+export interface IsMissingSqliteTableFunction {
+  (error: unknown): boolean;
+}
+
+export const isMissingSqliteTable: IsMissingSqliteTableFunction = (error) =>
+  error instanceof Error && /no such table/i.test(error.message);
 
 export interface MigrateSqliteArgs {
   readonly db: SqlDatabase;
@@ -249,5 +273,5 @@ export const migrateSqlite: MigrateSqliteFunction = ({
         }
       }
     },
-    isMissingTable: (error) => error instanceof Error && /no such table/i.test(error.message),
+    isMissingTable: isMissingSqliteTable,
   });

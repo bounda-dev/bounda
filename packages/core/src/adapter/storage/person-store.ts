@@ -103,4 +103,13 @@ export interface PersonStore {
    * is held past it.
    */
   nextHoldEnd(after: Date): Promise<Date | null>;
+  /**
+   * How many persons `listIdle` lists with `activeBefore`, whatever their holds.
+   */
+  countIdle(args: Pick<ListIdleArgs, "activeBefore">): Promise<number>;
+  /**
+   * Clears every person's hold, and resolves to how many it cleared: what the runtime does once the
+   * database went back to a copy, whose holds count failures the copy undid.
+   */
+  releaseHolds(): Promise<number>;
 }

@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { pendingEvent } from "../../adapter/testing/fixtures.ts";
+import { pendingEvent, testMetadata } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { advanceUntilWaiting, eventually } from "../test-support.ts";
 import type { CheckpointedSubscriber, Delivery, DeliveryFailure } from "./delivery.ts";
 import { createDispatcher, type Subscriber } from "./dispatcher.ts";
+
+const failedEvent: StoredEvent = {
+  id: "e-1",
+  aggregateType: "order",
+  aggregateId: "o-1",
+  version: 1,
+  position: 1,
+  type: "OrderPlaced",
+  payload: {},
+  timestamp: "2026-01-01T00:00:00.000Z",
+  metadata: testMetadata,
+  person: null,
+};
 
 const failure: DeliveryFailure = {
   position: 1,
@@ -13,7 +27,12 @@ const failure: DeliveryFailure = {
   eventType: "OrderPlaced",
   errorName: "Error",
 };
-const failed: Delivery = { outcome: "failed", failure };
+const failed: Delivery = {
+  outcome: "failed",
+  failure,
+  event: failedEvent,
+  error: new Error("boom"),
+};
 
 interface Scripted extends CheckpointedSubscriber {
   readonly deliveries: number;
@@ -77,6 +96,56 @@ describe("the dispatcher's backoff", () => {
     }
     await dispatcher.stop();
     expect(attemptsAt).toEqual([100, 1_100, 3_100, 7_100, 11_100]);
+  });
+
+  it("resolves the stored failure again after a restore, which may have brought it back", async () => {
+    const resolved: string[] = [];
+    const { eventStore, checkpointStore } = await memory().createStorage();
+    const recovering = scripted("projection:x", [
+      { outcome: "advanced" },
+      { outcome: "advanced" },
+      { outcome: "moved" },
+      { outcome: "advanced" },
+    ]);
+    const dispatcher = createDispatcher({
+      clock: createFixedClock(),
+      eventStore,
+      checkpointStore,
+      subscribers: [recovering],
+      batchSize: 10,
+      pollIntervalMs: 100,
+      lastFailures: {
+        record: async () => undefined,
+        resolve: async (subscriber) => {
+          resolved.push(subscriber);
+        },
+      },
+      logger: silentLogger,
+      errorText: "omit",
+    });
+    await dispatcher.processOnce();
+    await dispatcher.processOnce();
+    await dispatcher.processOnce();
+    expect(resolved).toEqual(["projection:x"]);
+    dispatcher.restored();
+    await dispatcher.processOnce();
+    expect(resolved).toEqual(["projection:x", "projection:x"]);
+  });
+
+  it("forgets every failure it met after a restore, so each is tried again at once", async () => {
+    const poisoned = scripted("projection:poisoned", [failed, failed, failed]);
+    const { clock, dispatcher } = await setUp([poisoned]);
+    await dispatcher.processOnce();
+    await dispatcher.processOnce();
+    expect(await failingOf(dispatcher, "projection:poisoned")).toMatchObject({ attempts: 2 });
+    dispatcher.restored();
+    expect(await failingOf(dispatcher, "projection:poisoned")).toBeUndefined();
+    await dispatcher.catchUp("projection");
+    expect(poisoned.deliveries).toBe(3);
+    expect(await failingOf(dispatcher, "projection:poisoned")).toMatchObject({
+      attempts: 1,
+      since: clock.now().toISOString(),
+    });
   });
 
   it("says what a subscriber is stuck on, since when and when it is tried again, until it recovers", async () => {

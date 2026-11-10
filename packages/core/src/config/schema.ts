@@ -19,6 +19,7 @@ import {
   DEFAULT_COMMANDS,
   DEFAULT_CONCURRENCY_RETRIES,
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
+  DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
   DEFAULT_IDEMPOTENCY_KEY_LIFETIME_MS,
   DEFAULT_IDLE_INTERVAL_MS,
   DEFAULT_POLICIES,
@@ -113,6 +114,7 @@ const forgetLedger = z
     reconcileEvery: timeout.optional(),
     strict: z.boolean().optional(),
     keepFor: timeout.optional(),
+    timeout: timeout.optional(),
   })
   .refine(
     ({ reconcileEvery = DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS, keepFor }) =>
@@ -237,6 +239,7 @@ const resolveForgetLedger = (
         reconcileEveryMs: parsed.reconcileEvery ?? DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
         strict: parsed.strict ?? false,
         keepForMs: parsed.keepFor ?? null,
+        timeoutMs: parsed.timeout ?? DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
       };
 
 const formatIssues = (issues: readonly z.core.$ZodIssue[]): string =>

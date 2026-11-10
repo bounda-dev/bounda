@@ -327,6 +327,7 @@ describe("exportPersonalData", () => {
       ],
       scheduledCommands: [],
       deadLetters: [],
+      subscriberFailures: [],
       readModels: { customerDirectory: [], orderNotes: [], orderCustomers: [] },
     });
     expect(await exportOf("c-1", 100)).toEqual(exported);

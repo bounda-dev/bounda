@@ -3,14 +3,18 @@ export type {
   CommitReadModelRebuildArgs,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
+  IsAdapterFunction,
   ReadModelRebuild,
   ReadModelStorage,
   ReadModelTransactArgs,
   ReadModelTransacted,
   ReadModelTransaction,
+  SchemaScopeName,
+  SchemaVersion,
   Storage,
   StorageTransaction,
 } from "./adapter.ts";
+export { isAdapter } from "./adapter.ts";
 export type { AdapterDefinition } from "./adapter-definition.ts";
 export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
 export { rebuildFencing } from "./rebuild-fencing.ts";
@@ -110,6 +114,11 @@ export type {
   Scheduler,
 } from "./storage/scheduler.ts";
 export type { Snapshot, SnapshotStore } from "./storage/snapshot-store.ts";
+export type {
+  NewSubscriberFailure,
+  StoredSubscriberFailure,
+  SubscriberFailureStore,
+} from "./storage/subscriber-failure-store.ts";
 export type {
   FieldFilter,
   FindManyArgs,

@@ -35,13 +35,20 @@ export type {
 } from "./kernel/app.ts";
 export { createApp } from "./kernel/app.ts";
 export type { DeadLetters } from "./kernel/dead-letters/dead-letters.ts";
+export type { DeadLetterRetentionStatus } from "./kernel/dead-letters/retention.ts";
 export type {
   DispatcherLag,
   SubscriberFailing,
   SubscriberKind,
   SubscriberLag,
 } from "./kernel/dispatch/dispatcher.ts";
+export type {
+  SubscriberFailure,
+  SubscriberFailures,
+} from "./kernel/dispatch/subscriber-failures.ts";
 export type { GlobalStream, ReadEventsArgs } from "./kernel/events/global-stream.ts";
+export type { MigrateTablesArgs, MigrateTablesFunction } from "./kernel/migrate.ts";
+export { migrateTables } from "./kernel/migrate.ts";
 export type {
   ExportedCategories,
   ExportedCategory,
@@ -50,9 +57,19 @@ export type {
   ExportedEvent,
   ExportedRow,
   ExportedScheduledCommand,
+  ExportedSubscriberFailure,
   PersonalDataExport,
 } from "./kernel/personal-data/export.ts";
-export type { ForgetAgainEntry } from "./kernel/personal-data/reconciliation.ts";
+export type {
+  ForgetAgainEntry,
+  ForgetLedgerReconciliationStatus,
+} from "./kernel/personal-data/reconciliation.ts";
+export { FORGET_LEDGER_GRACE_MS } from "./kernel/personal-data/reconciliation.ts";
+export type {
+  CategoryRetentionStatus,
+  RetentionStatus,
+} from "./kernel/personal-data/retention.ts";
+export type { KeyRotationStatus } from "./kernel/personal-data/rotation.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export type {
   RebuildReadModelArgs,
@@ -72,7 +89,19 @@ export type {
   ErrorFieldsFunction,
 } from "./kernel/shared/error-fields.ts";
 export { errorFields } from "./kernel/shared/error-fields.ts";
+export type {
+  ResolveErrorTextArgs,
+  ResolveErrorTextFunction,
+  WithErrorTextArgs,
+  WithErrorTextFunction,
+} from "./kernel/shared/error-text.ts";
+export {
+  ERROR_TEXT_VARIABLE,
+  resolveErrorText,
+  withErrorText,
+} from "./kernel/shared/error-text.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
+export type { AppStatus, SchemaStatus, SubscriberFailureStatus } from "./kernel/status.ts";
 export * from "./modules/index.ts";
 export type { AppEnv, AppRegistry, EnvSection, Register } from "./register/index.ts";

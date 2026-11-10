@@ -6,6 +6,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
+import { createLease, LEASE_MS } from "../shared/lease.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import {
@@ -32,8 +33,8 @@ export const BACKFILL_PREFIX = "personal-data:backfill:";
 // late.
 export const BACKFILL_FOLLOW_INTERVAL_MS = 60_000;
 
-// How long the instance walking holds the walk without renewing it, which it does on every pass.
-export const BACKFILL_LEASE_MS: number = 2 * BACKFILL_FOLLOW_INTERVAL_MS;
+// How long the instance walking holds the walk without renewing it.
+export const BACKFILL_LEASE_MS: number = LEASE_MS;
 
 // How long the lease of other marks must have lapsed before their rows are removed: marks some
 // instance still runs renew theirs at least every lease.
@@ -68,6 +69,12 @@ export interface PersonalDataBackfill {
    * for it to lapse. Never rejects.
    */
   release(): Promise<void>;
+  /**
+   * After the database went back to a copy: forgets what this instance knew of the walk, and,
+   * when `first`, clears the hold the copy brought back, so the walk starts again at once from
+   * where the copy stood. Never rejects.
+   */
+  restored(first: boolean): Promise<void>;
 }
 
 export interface CreatePersonalDataBackfillArgs {
@@ -142,10 +149,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
   const rows = rowsOf(marks);
   const pause = createPause();
   let restUntil = Number.NEGATIVE_INFINITY;
-  // Until when another instance's lease keeps the walk, for `nextDueAt`: the passes read the lease
-  // again, so a lease given back is taken at once.
-  let leasedUntil = Number.NEGATIVE_INFINITY;
-  let lease: number | null = null;
+  const lease = createLease({ checkpoints: checkpointStore, row: rows.lease, clock, logger });
   let caughtUp = false;
   // This instance's tally since it started, for the line it logs when the walk catches up.
   let tally = { events: 0, discarded: 0, unsealable: 0, scheduledCommands: 0, deadLetters: 0 };
@@ -170,7 +174,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     for (;;) {
       let reading = NOTHING_SEALED;
       for (let offset = 0; ; offset += batchSize) {
-        if (!(await takeLease(clock.now().getTime()))) return null;
+        if (!(await lease.take(clock.now().getTime()))) return null;
         const page = await list({ limit: batchSize, offset });
         reading = addSealed(reading, await sealPage(page));
         if (page.length < batchSize) break;
@@ -207,27 +211,6 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     if ((await checkpointStore.get(rows.attempts)) === 0) return;
     await checkpointStore.remove(rows.attempts);
     await checkpointStore.remove(rows.heldUntil);
-  };
-
-  // Resolves whether this instance walks: it holds the lease, renewed once half of it is spent, or
-  // took it once it lapsed. A lease more than a lease ahead was written by a clock that runs ahead,
-  // and is taken.
-  const takeLease = async (at: number): Promise<boolean> => {
-    const held = await checkpointStore.get(rows.lease);
-    if (held === lease && held - at > BACKFILL_LEASE_MS / 2) return true;
-    if (held !== lease && held > at && held <= at + BACKFILL_LEASE_MS) {
-      lease = null;
-      leasedUntil = held;
-      return false;
-    }
-    const until = at + BACKFILL_LEASE_MS;
-    if (!(await checkpointStore.compareAndSet(rows.lease, held, until))) {
-      lease = null;
-      return false;
-    }
-    lease = until;
-    leasedUntil = Number.NEGATIVE_INFINITY;
-    return true;
   };
 
   // The rows of other marks whose lease lapsed long ago: no instance runs those marks any more.
@@ -372,7 +355,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       restUntil = heldUntil;
       return 0;
     }
-    if (!(await takeLease(at))) return 0;
+    if (!(await lease.take(at))) return 0;
     let started = await checkpointStore.get(rows.started);
     if (started !== 0 && (await walkedSince(started))) {
       for (const row of [rows.position, rows.stores, rows.started]) {
@@ -429,17 +412,20 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       if (caughtUp) return null;
       caughtUp = (await status()).caughtUp;
       if (caughtUp) return null;
-      return new Date(pause.notBefore(Math.max(clock.now().getTime(), restUntil, leasedUntil)));
+      return new Date(
+        pause.notBefore(Math.max(clock.now().getTime(), restUntil, lease.heldElsewhereUntil())),
+      );
     },
     status,
-    // Lapsed now rather than removed, so the rows of these marks stay while instances may run them.
-    release: async () => {
-      if (lease === null) return;
-      const held = lease;
-      lease = null;
-      const lapsed = Math.min(held, clock.now().getTime());
-      await checkpointStore.compareAndSet(rows.lease, held, lapsed).catch((error: unknown) => {
-        logger.error("personal data backfill could not give its lease back", { error });
+    release: lease.release,
+    restored: async (first) => {
+      caughtUp = false;
+      restUntil = Number.NEGATIVE_INFINITY;
+      pause.resume();
+      lease.reset();
+      if (!first) return;
+      await releaseHold().catch((error: unknown) => {
+        logger.error("personal data backfill's hold could not be cleared", { error });
       });
     },
   };

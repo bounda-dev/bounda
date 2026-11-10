@@ -80,6 +80,16 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         state: "{}",
         persons: [],
       });
+      await storage.subscriberFailures.record({
+        subscriber: "projection:orders",
+        position: 1,
+        eventId: "e-1",
+        eventType: "OrderPlaced",
+        person: null,
+        errorName: "Error",
+        errorMessage: "boom",
+        failedAt: now.toISOString(),
+      });
       const tables = await adapter.inspect();
       for (const { name } of tables) expect(name.startsWith("bounda_")).toBe(true);
       for (const [name, store] of [
@@ -92,6 +102,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         ["bounda_personal_keys", "personalKeys"],
         ["bounda_persons", "persons"],
         ["bounda_snapshots", "snapshots"],
+        ["bounda_subscriber_failures", "subscriberFailures"],
       ] as const) {
         const table = tableOf(tables, name);
         expect(table.store, name).toBe(store);
@@ -160,6 +171,8 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
           eventId: "e-1",
           forgottenAt: "2026-11-07T12:00:00.000Z",
           categories: null,
+          reason: "requested",
+          fingerprints: [],
         },
       ]);
       const ledger = tableOf(await adapter.inspect(), "bounda_forget_ledger");

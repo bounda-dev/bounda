@@ -73,14 +73,21 @@ default no span and no log line of the runtime carries the text of an error:
   `exception` event has neither `exception.message` nor `exception.stacktrace`;
 - a log line names the error with `errorName` and, for a `BoundaError`, `errorCode`, next to the
   ids of what failed: the event, the command, the subscriber;
-- `app.getLag()` says what a failing subscriber is stuck on with `errorName` and `errorCode`.
+- `app.getLag()` says what a failing subscriber is stuck on with `errorName` and `errorCode`, and
+  `app.status()` (and `bounda status`) its last failure, by any instance, with the same identity.
 
 An error whose message Bounda writes from names and ids alone, such as `ConcurrencyError`,
 `ClaimLostError`, `HandlerTimeoutError` or a dead letter not found, keeps its message, never its
 stack. To find out what a reaction failed on, follow the log line that filed its dead letter:
 `policy dead-lettered`, `process dead-lettered` and `scheduled command dropped` carry `letterId`,
 and `app.deadLetters.get(letterId)` opens the text the letter keeps encrypted under the person
-(see [what a letter holds](/guides/dead-letters/#what-a-letter-holds)). Your own logger calls
+(see [what a letter holds](/guides/dead-letters/#what-a-letter-holds)). A projection has no
+letter: its batch is delivered again until it goes through, so the runtime keeps the last failure
+of each subscriber instead, its text encrypted under the person the event names, or in the clear
+for an event that names nobody, whatever `errorText` says. `app.subscriberFailures.list()` and
+`.get(subscriber)`, or `bounda status --error-text`, open it, and each call is recorded in the
+[access log](/guides/personal-data/#the-access-log); once the person is forgotten it reads `null`.
+Your own logger calls
 around the app, in a request handler, can follow the same rule with `errorFields`:
 
 ```ts
@@ -89,12 +96,35 @@ import { errorFields } from "@bounda-dev/core";
 logger.error("request failed", { path, ...errorFields({ error }) });
 ```
 
+A React Router app exports Bounda's `handleError` from `app/entry.server.tsx`, which logs what a
+loader, an action or the render throws by the same rule: React Router's default logs every message
+and stack, in production too (see [logging errors](/guides/react-router/#logging-errors)).
+
 [`runtime.telemetry.errorText: "include"`](/reference/configuration/#telemetry) adds the message
 and the stack everywhere: `errorMessage` and `errorStack` in log lines, `exception.message` and
 `exception.stacktrace` on spans, the message as a failed span's status and `errorMessage` in the
 lag. It is for development: `createTestApp` and the dev server of `@bounda-dev/react-router`
 default to it unless the configuration says otherwise, `bounda --error-text` turns it on for one
 command, and the logger handed to port implementations follows it too.
+
+The environment variable `BOUNDA_ERROR_TEXT`, `"omit"` or `"include"`, sets it for a deployment
+without touching the configuration, which on Cloudflare is the same bundle everywhere: `boot()`,
+the CLI, and the Durable Object and the Worker of `@bounda-dev/cloudflare` read it, over what the
+configuration says. `bounda --error-text` and `boot({ errorText })` still win over it, and any
+other value fails the boot with `ConfigurationError`. Projects from `create-bounda` on Cloudflare
+set it in `.dev.vars`, which `wrangler dev` and `vite dev` read and a deployment never sees; the
+constant `ERROR_TEXT_VARIABLE` from `@bounda-dev/core` names it.
+
+Every host resolves the rule with the same precedence: its own override, then `BOUNDA_ERROR_TEXT`,
+then the configuration, then the host's own default (the dev server's `"include"`), then
+`"omit"`. A host of your own resolves it the same way with `resolveErrorText` from
+`@bounda-dev/core`, and `withErrorText` returns the configuration with it applied:
+
+```ts
+import { withErrorText } from "@bounda-dev/core";
+
+const app = await createApp({ registry, config: withErrorText({ config, env: process.env }) });
+```
 
 ## How a command loaded its aggregate
 
