@@ -104,7 +104,7 @@ export const postgresql: PostgresqlFunction = (options) => {
 
   const scopes: Readonly<Record<SchemaScopeName, SchemaScope>> = {
     storage: postgresqlStorageScope({ schema, tables }),
-    checkpoints: postgresqlCheckpointsScope(tables.checkpoints),
+    checkpoints: postgresqlCheckpointsScope(tables),
     "forget-ledger": postgresqlForgetLedgerScope(tables.forgetLedger),
   };
   // A use of the pool for one call, handed back whatever the call does.
@@ -140,10 +140,7 @@ export const postgresql: PostgresqlFunction = (options) => {
           db,
           schema,
           prefix: tablePrefix,
-          scopes: [
-            postgresqlStorageScope({ schema, tables }),
-            postgresqlCheckpointsScope(tables.checkpoints),
-          ],
+          scopes: [postgresqlStorageScope({ schema, tables }), postgresqlCheckpointsScope(tables)],
         });
         const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
           eventStore: createPostgresqlEventStore({
@@ -152,6 +149,7 @@ export const postgresql: PostgresqlFunction = (options) => {
             lockKey: tables.appendLockKey,
             channel: tables.channel,
             personalKeys: tables.personalKeys,
+            restrictions: tables.restrictions,
             persons: tables.persons,
           }),
           inboxLedger: createPostgresqlInboxLedger({ db: database, table: tables.inbox }),
@@ -170,11 +168,13 @@ export const postgresql: PostgresqlFunction = (options) => {
             db: database,
             table: tables.personalKeys,
             persons: tables.persons,
+            restrictions: tables.restrictions,
           }),
           persons: createSqlPersonStore({
             dialect: postgresqlDialect,
             db: database,
             table: tables.persons,
+            restrictions: tables.restrictions,
           }),
           snapshotStore: createPostgresqlSnapshotStore({
             db: database,

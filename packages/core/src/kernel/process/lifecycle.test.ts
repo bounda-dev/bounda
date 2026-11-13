@@ -344,6 +344,7 @@ describe("deadlineContext", () => {
     deadlineFields: [],
     deadlineHandlers: {},
     ports: {},
+    restricted: null,
     instanceOf: (event) => event.aggregateId,
   };
 

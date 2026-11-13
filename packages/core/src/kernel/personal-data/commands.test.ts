@@ -155,6 +155,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
     expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual({
       payload: { customerId: "c-1", email: "ana@example.com" },
       forgotten: false,
+      opened: [{ person: "c-1", fingerprint: key?.fingerprint }],
     });
   });
 
@@ -192,6 +193,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
     expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual({
       payload: { email: "ana@example.com", iban: null, name: "Ana" },
       forgotten: true,
+      opened: [{ person: "c-1", fingerprint: profile?.fingerprint }],
     });
   });
 
@@ -292,7 +294,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
       keys: keysOver(storage.personalKeys),
     });
     await removeKeys(storage.personalKeys, "c-1");
-    const forgotten = { payload: { email: null, plan: "pro" }, forgotten: true };
+    const forgotten = { payload: { email: null, plan: "pro" }, forgotten: true, opened: [] };
     expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual(
       forgotten,
     );
@@ -341,14 +343,21 @@ describe("sealCommandPayload and openCommandPayload", () => {
         return storage.personalKeys.find(person, fingerprint);
       },
     });
+    const anaKey = await storage.personalKeys.get("f-1", DEFAULT_PERSONAL_CATEGORY);
+    const boKey = await storage.personalKeys.get("f-2", DEFAULT_PERSONAL_CATEGORY);
     expect(await openCommandPayload({ payload: ana, keys })).toEqual({
       payload: { friendId: "f-1", a: "a1", b: "b1" },
       forgotten: false,
+      opened: [{ person: "f-1", fingerprint: anaKey?.fingerprint }],
     });
     expect(reads).toEqual(["f-1"]);
     expect(await openCommandPayload({ payload: { a: ana.a, b: bo.b }, keys })).toEqual({
       payload: { a: "a1", b: "b2" },
       forgotten: false,
+      opened: [
+        { person: "f-1", fingerprint: anaKey?.fingerprint },
+        { person: "f-2", fingerprint: boKey?.fingerprint },
+      ],
     });
   });
 
@@ -358,6 +367,7 @@ describe("sealCommandPayload and openCommandPayload", () => {
       expect(await openCommandPayload({ payload, keys: keysOver(storage.personalKeys) })).toEqual({
         payload,
         forgotten: false,
+        opened: [],
       });
     }
   });

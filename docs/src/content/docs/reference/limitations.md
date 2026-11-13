@@ -22,6 +22,7 @@ get today. Each item says why, so nobody discovers it the hard way:
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
 - **Every read of personal data in the access log.** See [The access log](#the-access-log).
+- **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
 
 ## The access log
 
@@ -34,7 +35,8 @@ client, and nothing it does not see:
   driver behind `client.raw` is not, so a query that takes it is recorded with
   `unattributed: true`, and the persons of the rows it read there are not in `persons`.
 - **Rows without their person.** A query that selects columns with SQL and leaves out the
-  `person` column reads rows that name no one.
+  `person` column reads rows that name no one; one that selects a field marked `.personal()` that
+  way is refused, since its rows' restrictions cannot be told either.
 - **Read models without personal fields.** A query of one is not recorded, even when its rows
   hold a person's id: an id alone is what every event already carries.
 - **The global stream.** `app.events.read()` hands out events as stored, personal fields
@@ -42,6 +44,20 @@ client, and nothing it does not see:
   is the runtime's own work.
 - **What a policy sends out.** A port that mails a person their data, or a search index, records
   what it does itself.
+
+## Restricted rows
+
+A [restriction](/guides/personal-data/#restricting-processing) leaves a person's rows out of what a
+query reads through its `table` and its `client`, by the field marked `.person()`; read models
+keep their columns in the clear, so what goes around the queries is not filtered:
+
+- **Code that reads a read model directly**, and a query's `client.raw`, read restricted rows as
+  any other.
+- **SQL a query writes** has its `LIMIT` applied before the restricted rows are dropped, so a page
+  may come back short; `table` pages exactly.
+- **A person who comes back after a forgetting** that kept a category under a legal obligation
+  has every row of that category left out until its retention ends, the new ones with the kept:
+  the columns do not say which key a value was written under.
 
 ## What it does get
 

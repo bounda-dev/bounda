@@ -4,11 +4,13 @@ import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { capitalize, toKebabCase } from "../../modules/naming.ts";
+import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { ProcessCorrelation, ProcessEntry } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { type PersonalMarks, personalMarksOf } from "../personal-data/marks.ts";
 import { holdsPersonalValue, statePersonOf } from "../personal-data/process-state.ts";
+import { restrictionBasisOf } from "../policy/build-policies.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { deadlineFieldsOf, processStateArgs, TIMEOUT_DEADLINE } from "./deadlines.ts";
 
@@ -33,6 +35,11 @@ export interface ProcessRuntime {
    */
   readonly deadlineHandlers: Readonly<Record<string, (args: Record<string, unknown>) => unknown>>;
   readonly ports: Readonly<Record<string, unknown>>;
+  /**
+   * The basis it processes restricted data on; `null` for a process whose steps on restricted data
+   * wait for the lift.
+   */
+  readonly restricted: RestrictionBasis | null;
   /**
    * The id of the instance an event belongs to: what `correlate` says for it, the id field of an
    * event of another aggregate, or the event's `aggregateId` for the process's own aggregate;
@@ -306,6 +313,7 @@ const buildProcess = (
     deadlineFields,
     deadlineHandlers: compileDeadlines(path, entry, deadlineFields),
     ports: aggregates.byName[aggregate]?.ports ?? {},
+    restricted: restrictionBasisOf(path, entry.module.restricted),
     instanceOf: (event) => {
       const qualified = qualifiedEventType(event.aggregateType, event.type);
       const correlator = correlate[qualified];

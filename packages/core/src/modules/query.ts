@@ -1,6 +1,7 @@
 import type { FieldTypes, FieldTypesOfRow, ReadClient, Table } from "../adapter/storage/table.ts";
 import type { Query } from "../contracts/query.ts";
 import type { EmptyPayload, PayloadFunction } from "./payload.ts";
+import type { RestrictionBasis } from "./personal-data.ts";
 
 export interface QueryModule {
   readonly payload?: PayloadFunction;
@@ -65,3 +66,19 @@ export type QueryResultOf<Module> = Module extends {
 }
   ? Awaited<Result>
   : never;
+
+/**
+ * What a call of `app.queries.<name>` takes besides its payload.
+ */
+export interface QueryOptions {
+  /**
+   * Reads the rows of restricted persons too, on a basis named explicitly, which the access log
+   * records with those persons: the person's `consent`, `legal-claims`, the `protection-of-rights`
+   * of another person or an important `public-interest`, as article 18(2) allows, read every row;
+   * `legal-obligation` reads what a forgetting kept under a legal obligation, and still leaves out
+   * what a person asked to restrict. Without it the rows whose field marked `.person()` names a
+   * person restricted as a whole, or in a category a field of the read model holds, are left out.
+   * The queries the handler composes read on the same basis unless they name their own.
+   */
+  readonly includeRestricted?: RestrictionBasis;
+}

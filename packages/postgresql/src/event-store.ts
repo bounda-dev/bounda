@@ -24,6 +24,7 @@ export interface CreatePostgresqlEventStoreArgs {
    * The key and person tables an append checks the persons it names against.
    */
   readonly personalKeys: string;
+  readonly restrictions: string;
   readonly persons: string;
 }
 
@@ -58,6 +59,7 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
   lockKey,
   channel,
   personalKeys,
+  restrictions,
   persons,
 }) => {
   const currentVersion = async (
@@ -90,7 +92,7 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         await checkSqlAppend({
           tx,
           dialect: postgresqlDialect,
-          tables: { personalKeys, persons },
+          tables: { personalKeys, restrictions, persons },
           args,
           lock: "FOR SHARE",
         });

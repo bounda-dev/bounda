@@ -22,9 +22,9 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/<port>.ts` | `interface <Port>`, named after the file; it is a port because `infrastructure/<port>/` exists |
 | `app/domain/<aggregate>/infrastructure/<port>/<implementation>.ts` | `export default ... satisfies <Port>`, or `create`, typed as `CreateImplementation<Port>` |
 | `app/domain/<aggregate>/commands/<command>.ts` | `payload` (optional), `rejections` (optional), `handler` |
-| `app/domain/<aggregate>/policies/<action>-on-<event>.ts` | `handler`; `on` and `delay` optional |
-| `app/domain/<aggregate>/policies/<other-aggregate>/<action>-on-<event>.ts` | the same, for that aggregate's events; `bounda` for the runtime's own: `PersonalDataForgotten`, `ProcessingRestricted`, `ProcessingRestrictionLifted` |
-| `app/domain/<aggregate>/processes/<process>/index.ts` | `config` (`startedBy`, `completedBy`, `timeout`), `state` (optional), `correlate` (optional) |
+| `app/domain/<aggregate>/policies/<action>-on-<event>.ts` | `handler`; `on`, `delay` and `restricted`, the [basis it processes restricted data on](/guides/personal-data/#processing-restricted-data-anyway), optional |
+| `app/domain/<aggregate>/policies/<other-aggregate>/<action>-on-<event>.ts` | the same, for that aggregate's events; `bounda` for the runtime's own: `PersonalDataForgotten`, `ProcessingRestricted`, `ProcessingRestrictionLiftAnnounced`, `ProcessingRestrictionLifted` |
+| `app/domain/<aggregate>/processes/<process>/index.ts` | `config` (`startedBy`, `completedBy`, `timeout`), `state` (optional), `correlate` (optional), `restricted` (optional, the [basis it processes restricted data on](/guides/personal-data/#processing-restricted-data-anyway)) |
 | `app/domain/<aggregate>/processes/<process>/on-<event>.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/at-<deadline>.ts`, `at-timeout.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
@@ -33,7 +33,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once a projection of the read model sees a field marked `personal` or its view marks a field `.personal()` |
-| `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lifted.ts` | `project`, optional |
+| `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts`, `processing-restriction-lifted.ts` | `project`, optional |
 | `app/read/<read-model>/queries/<query>.ts` | `payload` (optional), `repository` (optional), `handler` |
 | `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate; only the queries' `handler` receives them |
 

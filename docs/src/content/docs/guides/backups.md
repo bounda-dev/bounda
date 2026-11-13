@@ -1,15 +1,16 @@
 ---
 title: Backups and restores
-description: Taking a backup, restoring it with the app stopped or running, and what Bounda guarantees about the persons forgotten in between.
+description: Taking a backup, restoring it with the app stopped or running, and what Bounda guarantees about the persons forgotten or restricted in between.
 sidebar:
   order: 12
 ---
 
 A backup is a copy of the database at one moment. Restoring it takes every table back to that
 moment, the keys of the persons forgotten since included, so their data would open again. With a
-[forget ledger](/guides/personal-data/#the-forget-ledger), a record of every forgetting kept
-outside the database, Bounda forgets them again. This page is what an operator does, and what the
-runtime then guarantees.
+[forget ledger](/guides/personal-data/#the-forget-ledger), a record of every forgetting and every
+change of a person's restrictions kept outside the database, Bounda forgets them again, and
+restricts again or lifts again whoever was restricted or lifted since. This page is what an
+operator does, and what the runtime then guarantees.
 
 ## Before you need one
 
@@ -91,6 +92,12 @@ restored.
   before committing it, is committed at the restored start too.
 - **A strict ledger that cannot be read** fails the restored start before it serves anything; the
   next start, once it can, applies the whole restore.
+- **Whoever was [restricted](/guides/personal-data/#restricting-processing) after the copy is
+  restricted again, and whoever's restriction was lifted is lifted again,** each change committed
+  once more with the id and time the ledger recorded before it first committed, in order: their
+  rows leave the queries, their commands are refused, and a lift announced is scheduled again. A
+  change whose commit never happened is committed at the restored start too, unless a later change
+  of that person's restrictions is in the copy.
 - **Whoever was forgotten before the copy stays forgotten,** once: the copy holds their forgetting.
   Someone who registered after the copy is gone with it, and their entry in the ledger finds no
   key to remove.
@@ -100,7 +107,8 @@ restored.
   work, and the next normal start forgets nobody again. A failed reconciliation the copy
   remembers does not hold the restored start back, and `bounda status` counts the restore.
 - **Without a forget ledger,** `bounda restored` counts the restore and starts the jobs over, and
-  `bounda forget --from` forgets again whom you list.
+  `bounda forget --from` forgets again whom you list; `bounda restrict` restricts again whom you
+  know was restricted since.
 
 What ran after the copy was taken runs again: scheduled commands of persons nobody forgot, and
 reactions to events the copy holds but its subscribers had not reached yet. Effects outside the

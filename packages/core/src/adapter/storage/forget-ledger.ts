@@ -1,4 +1,31 @@
-import type { PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
+import type {
+  PersonalDataForgottenReason,
+  PROCESSING_RESTRICTED_EVENT,
+  PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
+  PROCESSING_RESTRICTION_LIFTED_EVENT,
+  ProcessingRestrictedPayload,
+  ProcessingRestrictionLiftAnnouncedPayload,
+  ProcessingRestrictionLiftedPayload,
+} from "../../modules/bounda-events.ts";
+
+/**
+ * A change of a person's restrictions as the ledger keeps it: the event that records it, with its
+ * payload, which holds ids, grounds, category names and times, and every restriction the person
+ * has after it, so a restore that lost it applies it again as it stands.
+ */
+export type LedgerRestriction =
+  | {
+      readonly type: typeof PROCESSING_RESTRICTED_EVENT;
+      readonly payload: ProcessingRestrictedPayload;
+    }
+  | {
+      readonly type: typeof PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT;
+      readonly payload: ProcessingRestrictionLiftAnnouncedPayload;
+    }
+  | {
+      readonly type: typeof PROCESSING_RESTRICTION_LIFTED_EVENT;
+      readonly payload: ProcessingRestrictionLiftedPayload;
+    };
 
 /**
  * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` says so, when, why,
@@ -31,6 +58,12 @@ export interface ForgetLedgerEntry {
    * matches.
    */
   readonly fingerprints?: readonly string[];
+  /**
+   * Present on an entry that records a change of the person's restrictions rather than a
+   * forgetting, whose `eventId` and `forgottenAt` are that event's, `reason` `requested` and
+   * `categories` `null`: a restriction has to outlive a restore as a forgetting does.
+   */
+  readonly restriction?: LedgerRestriction;
 }
 
 /**
@@ -59,8 +92,9 @@ export interface PruneForgetLedgerArgs {
 }
 
 /**
- * The record of every person forgotten, kept outside the database, so restoring a copy of the
- * database taken before someone was forgotten can forget them again. The runtime appends each
+ * The record of every person forgotten, and of every change of a person's restrictions, kept
+ * outside the database, so restoring a copy of the database taken before someone was forgotten or
+ * restricted forgets or restricts them again. The runtime appends each
  * forgetting to it before the forgetting commits, and again from the stream once it has, and
  * reads it when the app starts and every `reconcileEvery` while it runs. One ledger holds one
  * store: a ledger built for a tenant sees only that tenant's entries.

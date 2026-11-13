@@ -331,6 +331,26 @@ await expectForgotten(app, "c-1");
 [Personal data in tests](/guides/personal-data/#in-tests) says what it looks for and where, and
 how to point it at a Durable Object's storage.
 
+## Nothing handed out of a restricted person
+
+`expectRestricted` checks, after `restrict`, that what the app hands out keeps the person's
+restricted data back: the results the test passes as `places`, and the app's dead letters and
+subscriber failures as an operator lists them. It rejects with `NotRestrictedError`, naming each
+value found and where:
+
+```ts
+import { createTestApp, expectRestricted } from "@bounda-dev/core/testing";
+
+await app.restrict("c-1", { ground: "accuracy-contested" });
+await app.catchUpReadModels();
+await expectRestricted(app, "c-1", {
+  places: { "pro customers": await app.queries.customersOnPlan({ plan: "pro" }) },
+});
+```
+
+It looks for every value the person's export marks restricted, and the `values` the test adds;
+see [Personal data in tests](/guides/personal-data/#in-tests).
+
 ## Snapshots are checked
 
 An aggregate configured with [`snapshot`](/concepts/long-streams/#snapshots) gets them in a test

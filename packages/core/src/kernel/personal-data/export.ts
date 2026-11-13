@@ -4,7 +4,7 @@ import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-st
 import type { Clock } from "../../contracts/clock.ts";
 import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import type { LegalBasis } from "../../modules/personal-data.ts";
+import type { LegalBasis, ProcessingRestriction } from "../../modules/personal-data.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
@@ -18,6 +18,7 @@ import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
+import { processingRestrictionsOf } from "./restriction.ts";
 import { checkPersonId } from "./transact.ts";
 
 /**
@@ -30,6 +31,15 @@ export type ExportedData = Readonly<Record<string, unknown>>;
  * The category of each field of `data`, by field, which the export's `categories` describes.
  */
 export type ExportedCategories = Readonly<Record<string, string>>;
+
+/**
+ * What of a record a restriction covers, so the person sees what is only kept (article 15 still
+ * hands it out): the fields of `data` by name, of a category restricted, or kept under a legal
+ * obligation, or every one for a person restricted as a whole; and `errorMessage` and
+ * `errorStack` for an error's text, which may quote any of their data, while any restriction
+ * holds.
+ */
+export type ExportedRestricted = readonly string[];
 
 /**
  * A category of the app as the export tells the person of it (article 15(1) of the GDPR): why it
@@ -57,6 +67,7 @@ export interface ExportedEvent {
   readonly timestamp: string;
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
+  readonly restricted: ExportedRestricted;
 }
 
 /**
@@ -68,6 +79,7 @@ export interface ExportedScheduledCommand {
   readonly executeAt: string;
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
+  readonly restricted: ExportedRestricted;
 }
 
 /**
@@ -93,6 +105,7 @@ export interface ExportedDeadLetter {
   readonly errorStack?: string | null;
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
+  readonly restricted: ExportedRestricted;
 }
 
 /**
@@ -105,6 +118,7 @@ export interface ExportedSubscriberFailure {
   readonly eventType: string;
   readonly errorMessage: string | null;
   readonly errorStack?: string | null;
+  readonly restricted: ExportedRestricted;
 }
 
 /**
@@ -115,6 +129,7 @@ export interface ExportedRow {
   readonly key: unknown;
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
+  readonly restricted: ExportedRestricted;
 }
 
 /**
@@ -133,6 +148,11 @@ export interface PersonalDataExport {
    * Every category of the app, the default one included, by name.
    */
   readonly categories: Readonly<Record<string, ExportedCategory>>;
+  /**
+   * The restrictions the person asked for and has not had lifted, by ground; a lift announced is
+   * in `events`, as `ProcessingRestrictionLiftAnnounced` with when it comes.
+   */
+  readonly restrictions: readonly ProcessingRestriction[];
   readonly events: readonly ExportedEvent[];
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
@@ -187,6 +207,7 @@ const exportedRows = async (
   fields: FieldsRecord,
   personId: string,
   batchSize: number,
+  restricted: (categories: ExportedCategories) => ExportedRestricted,
 ): Promise<readonly ExportedRow[]> => {
   const rows: ExportedRow[] = [];
   let page: readonly Record<string, unknown>[];
@@ -202,12 +223,14 @@ const exportedRows = async (
     });
     for (const row of page) {
       const held = personal.filter((field) => row[field] !== undefined);
+      const categories = Object.fromEntries(
+        held.map((field) => [field, fields[field]?.category ?? DEFAULT_PERSONAL_CATEGORY]),
+      );
       rows.push({
         key: row[primaryKey],
         data: Object.fromEntries(held.map((field) => [field, row[field]])),
-        categories: Object.fromEntries(
-          held.map((field) => [field, fields[field]?.category ?? DEFAULT_PERSONAL_CATEGORY]),
-        ),
+        categories,
+        restricted: restricted(categories),
       });
     }
     after = page.at(-1)?.[primaryKey];
@@ -260,6 +283,21 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
 }) => {
   checkPersonId(personId, "exportPersonalData");
   const exportedAt = clock.now().toISOString();
+  const restrictions = processingRestrictionsOf(await storage.persons.restrictions(personId));
+  const exportedCategories = await categoriesOf(storage, categories, personId);
+  const whole = restrictions.some((restriction) => restriction.categories === null);
+  const covered = new Set<string>([
+    ...restrictions.flatMap((restriction) => restriction.categories ?? []),
+    ...Object.entries(exportedCategories)
+      .filter(([, category]) => category.restrictedUntil !== null)
+      .map(([name]) => name),
+  ]);
+  const restrictedFields = (of: ExportedCategories): ExportedRestricted =>
+    Object.entries(of)
+      .filter(([, category]) => whole || covered.has(category))
+      .map(([field]) => field);
+  const textRestricted: ExportedRestricted =
+    restrictions.length > 0 ? ["errorMessage", "errorStack"] : [];
   // Independent of the store's records, and often on another adapter, so read meanwhile; a
   // failure of the store's reads first leaves this one handled, the export rejecting with that.
   const rows = Promise.all(
@@ -268,9 +306,14 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         personalData === null
           ? []
           : [
-              exportedRows(rowsStorage, personalData, fields, personId, batchSize).then(
-                (exported) => [name, exported] as const,
-              ),
+              exportedRows(
+                rowsStorage,
+                personalData,
+                fields,
+                personId,
+                batchSize,
+                restrictedFields,
+              ).then((exported) => [name, exported] as const),
             ],
     ),
   );
@@ -300,6 +343,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   // persons its payload names keeps whatever its own `person` holds.
   const exportedLetter = async (letter: StoredDeadLetter): Promise<ExportedDeadLetter> => {
     const theirs = letter.person === personId;
+    const data = await openedData(letter.eventType, letter.payload);
     return {
       id: letter.id,
       kind: letter.kind,
@@ -308,7 +352,15 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
       ...(theirs && letter.errorStack !== undefined
         ? { errorStack: await openText(letter.errorStack) }
         : {}),
-      ...(await openedData(letter.eventType, letter.payload)),
+      ...data,
+      restricted: [
+        ...restrictedFields(data.categories),
+        ...(theirs
+          ? textRestricted.filter(
+              (field) => field === "errorMessage" || letter.errorStack !== undefined,
+            )
+          : []),
+      ],
     };
   };
 
@@ -322,6 +374,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
       limit: batchSize,
     });
     for (const event of page) {
+      const data = eventData(event);
       events.push({
         id: event.id,
         type: event.type,
@@ -330,19 +383,24 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         version: event.version,
         position: event.position,
         timestamp: event.timestamp,
-        ...eventData(event),
+        ...data,
+        restricted: restrictedFields(data.categories),
       });
       afterPosition = event.position;
     }
   } while (page.length === batchSize);
 
   const scheduledCommands = await Promise.all(
-    (await storage.scheduler.listByPerson(personId)).map(async (entry) => ({
-      commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
-      type: entry.command.type,
-      executeAt: entry.executeAt,
-      ...(await openedData(entry.command.type, entry.command.payload)),
-    })),
+    (await storage.scheduler.listByPerson(personId)).map(async (entry) => {
+      const data = await openedData(entry.command.type, entry.command.payload);
+      return {
+        commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
+        type: entry.command.type,
+        executeAt: entry.executeAt,
+        ...data,
+        restricted: restrictedFields(data.categories),
+      };
+    }),
   );
   const deadLetters = await Promise.all(
     (await storage.deadLetterStore.listByPerson(personId)).map(exportedLetter),
@@ -359,12 +417,16 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         ...(failure.errorStack === undefined
           ? {}
           : { errorStack: await openText(failure.errorStack) }),
+        restricted: textRestricted.filter(
+          (field) => field === "errorMessage" || failure.errorStack !== undefined,
+        ),
       })),
   );
   return {
     personId,
     exportedAt,
-    categories: await categoriesOf(storage, categories, personId),
+    categories: exportedCategories,
+    restrictions,
     events,
     scheduledCommands,
     deadLetters,

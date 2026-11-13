@@ -18,7 +18,12 @@ export { isAdapter } from "./adapter.ts";
 export type { AdapterDefinition } from "./adapter-definition.ts";
 export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
 export { rebuildFencing } from "./rebuild-fencing.ts";
-export type { CheckAppendArgs, CheckAppendFunction, KeyState } from "./storage/append-checks.ts";
+export type {
+  CheckAppendArgs,
+  CheckAppendFunction,
+  KeyRead,
+  RestrictionRead,
+} from "./storage/append-checks.ts";
 export { checkAppend, ForgottenSinceLoadError } from "./storage/append-checks.ts";
 export type { Checkpoint, CheckpointStore } from "./storage/checkpoint-store.ts";
 export type {
@@ -52,6 +57,7 @@ export type {
   ForgetLedger,
   ForgetLedgerEntry,
   ForgetLedgerPosition,
+  LedgerRestriction,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "./storage/forget-ledger.ts";
@@ -80,7 +86,10 @@ export type {
   ListIdleArgs,
   PersonActivity,
   PersonStore,
+  RestrictArgs,
   StoredPerson,
+  StoredRestriction,
+  UnrestrictArgs,
 } from "./storage/person-store.ts";
 export type {
   DueKey,
@@ -99,6 +108,21 @@ export type {
   StoredPersonalKey,
 } from "./storage/personal-key-store.ts";
 export { DEFAULT_PERSONAL_CATEGORY } from "./storage/personal-key-store.ts";
+export type {
+  IsLeftOutArgs,
+  IsLeftOutFunction,
+  RestrictedFields,
+  RestrictedFieldsOfFunction,
+  RestrictedPerson,
+  RestrictedPersonsStore,
+  RestrictedReads,
+  RestrictionView,
+} from "./storage/restricted-persons.ts";
+export {
+  isLeftOut,
+  RETAINED_SOURCE,
+  restrictedFieldsOf,
+} from "./storage/restricted-persons.ts";
 export type {
   ClaimDueArgs,
   ClaimedCommand,

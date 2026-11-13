@@ -30,6 +30,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
   storageSchemaContract,
@@ -42,8 +43,8 @@ import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteAdapter } from "./index.ts";
 import { storageTablesFor } from "./schema.ts";
 
-const { events: table, personalKeys, persons } = storageTablesFor("bounda_");
-const eventTables = { table, personalKeys, persons };
+const { events: table, personalKeys, restrictions } = storageTablesFor("bounda_");
+const eventTables = { table, personalKeys, restrictions };
 
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
@@ -157,6 +158,7 @@ describe("the SQLite stores on node:sqlite", () => {
     create: async () => nodeSqlite().adapter,
     locking: "single-writer",
   });
+  restrictedReadsContract({ create: async () => nodeSqlite().adapter });
   storageSchemaContract({
     create: async () => {
       const { adapter, db } = nodeSqlite();
@@ -529,6 +531,8 @@ describe("createSqliteAdapter", () => {
       "app_person_rows",
       "app_personal_keys",
       "app_persons",
+      "app_restricted_persons",
+      "app_restrictions",
       "app_rm_order_summary",
       "app_scheduled_commands",
       "app_snapshots",

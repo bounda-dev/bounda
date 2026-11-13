@@ -1,3 +1,4 @@
+import type { RestrictionBasis } from "../modules/personal-data.ts";
 import { ValidationError } from "./errors.ts";
 
 /**
@@ -44,6 +45,11 @@ export interface EventMetadata {
   readonly causationId: string;
   readonly commandId?: string;
   readonly actor?: string;
+  /**
+   * The basis the command that wrote the event processed restricted data on, from
+   * `processRestricted`; absent when it named none.
+   */
+  readonly restrictionBasis?: RestrictionBasis;
   readonly depth: number;
   readonly schemaVersion: number;
   readonly system: boolean;
@@ -58,6 +64,10 @@ export interface CommandMetadata {
   readonly correlationId: string;
   readonly causationId: string;
   readonly actor?: string;
+  /**
+   * The basis it processes restricted data on, from `processRestricted`; absent when it names none.
+   */
+  readonly restrictionBasis?: RestrictionBasis;
   readonly depth: number;
   readonly timestamp: string;
 }

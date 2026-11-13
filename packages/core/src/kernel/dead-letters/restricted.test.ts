@@ -6,7 +6,9 @@ import {
   DeadLetterSettledError,
   ProcessingRestrictedError,
 } from "../../contracts/errors.ts";
-import { liftProcessingRestriction } from "../personal-data/restriction.ts";
+import type { RestrictionNotice } from "../../modules/personal-data.ts";
+import { buildPersonalCategories } from "../personal-data/categories.ts";
+import { unrestrictProcessing } from "../personal-data/restriction.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
@@ -45,8 +47,8 @@ const setup = async (config?: Parameters<typeof createReactiveHarness>[0]["confi
     logger,
     ...(config === undefined ? {} : { config }),
   });
-  const lift = (personId: string, actor?: string) =>
-    liftProcessingRestriction({
+  const lift = (personId: string, actor?: string, notice: RestrictionNotice = "given") =>
+    unrestrictProcessing({
       storage: harness.storage,
       ids: harness.ids,
       clock: harness.clock,
@@ -54,6 +56,9 @@ const setup = async (config?: Parameters<typeof createReactiveHarness>[0]["confi
       concurrencyRetries: 2,
       personId,
       actor,
+      categories: buildPersonalCategories({ module: undefined, retention: null }),
+      intentions: { record: async () => {} },
+      options: { notice },
     });
   return { harness, entries, lift };
 };
@@ -62,7 +67,11 @@ describe("the retry of a restricted person's dead letters", () => {
   it("retries them in order once the runners caught up, and files again under the same id one that fails for another reason", async () => {
     const { harness, entries, lift } = await setup();
     const { deadLetterStore } = harness.storage;
-    await harness.storage.persons.restrict("c-1", harness.clock.now());
+    await harness.storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: harness.clock.now(),
+    });
     await deadLetterStore.add(refused("later", "TouchOrder", "o-1", "c-1", "2026-01-01T00:02:00Z"));
     await deadLetterStore.add(
       refused("broken", "BreakOrder", "o-2", "c-1", "2026-01-01T00:01:00Z"),
@@ -149,7 +158,11 @@ describe("the retry of a restricted person's dead letters", () => {
     ]);
 
     // Lifted again, nothing is left to retry, and the retried letter is left alone.
-    await harness.storage.persons.restrict("c-1", harness.clock.now());
+    await harness.storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: harness.clock.now(),
+    });
     await lift("c-1");
     await harness.dispatcher.runUntilIdle();
     expect(await harness.worker.runOnce()).toBe(1);
@@ -160,7 +173,11 @@ describe("the retry of a restricted person's dead letters", () => {
   it("waits for every runner, where a deadline waits for the process runner alone", async () => {
     const { harness, lift } = await setup();
     const { storage, worker } = harness;
-    await storage.persons.restrict("c-1", harness.clock.now());
+    await storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: harness.clock.now(),
+    });
     await lift("c-1");
     const payload = { process: "order.gone", aggregateId: "o-1", field: "timeout", at: "" };
     await storage.scheduler.schedule({
@@ -183,7 +200,11 @@ describe("the retry of a restricted person's dead letters", () => {
 
   it("runs the entry anyway once the runners have had their rounds", async () => {
     const { harness, lift } = await setup();
-    await harness.storage.persons.restrict("c-1", harness.clock.now());
+    await harness.storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: harness.clock.now(),
+    });
     await harness.storage.deadLetterStore.add(
       refused("one", "TouchOrder", "o-1", "c-1", "2026-01-01T00:00:00Z"),
     );
@@ -198,7 +219,11 @@ describe("the retry of a restricted person's dead letters", () => {
 
   it("retries them as whoever lifted the restriction", async () => {
     const { harness, lift } = await setup();
-    await harness.storage.persons.restrict("c-1", harness.clock.now());
+    await harness.storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: harness.clock.now(),
+    });
     await harness.storage.deadLetterStore.add({
       ...refused("one", "PlaceOrder", "o-1", "c-1", "2026-01-01T00:00:00Z"),
       payload: { orderId: "o-1", total: 10 },
@@ -220,7 +245,11 @@ describe("the retry of a restricted person's dead letters", () => {
     const { harness, entries, lift } = await setup({
       runtime: { policies: { retry: { strategy: "none" } } },
     });
-    await harness.storage.persons.restrict("c-1", harness.clock.now());
+    await harness.storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: harness.clock.now(),
+    });
     await lift("c-1");
     await harness.dispatcher.runUntilIdle();
     harness.storage.deadLetterStore.listFailed = async () => {
@@ -232,6 +261,29 @@ describe("the retry of a restricted person's dead letters", () => {
     expect(entries).toContainEqual({
       level: "error",
       message: "restricted dead letters could not be retried; retry them by hand",
+      fields: expect.objectContaining({ personId: "c-1", attempts: 1, errorName: "Error" }),
+    });
+  });
+
+  it("drops an announced lift that keeps failing, telling the operator to lift it by hand", async () => {
+    const { harness, entries, lift } = await setup({
+      runtime: { policies: { retry: { strategy: "none" } } },
+    });
+    await harness.storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: harness.clock.now(),
+    });
+    await lift("c-1", undefined, "1h");
+    harness.storage.persons.unrestrict = async () => {
+      throw new Error("down");
+    };
+    harness.clock.advance(3_600_000);
+    expect(await harness.worker.runOnce()).toBe(1);
+    expect(await harness.storage.scheduler.list()).toEqual([]);
+    expect(entries).toContainEqual({
+      level: "error",
+      message: "an announced restriction lift could not run; lift it with unrestrict",
       fields: expect.objectContaining({ personId: "c-1", attempts: 1, errorName: "Error" }),
     });
   });

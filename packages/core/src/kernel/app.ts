@@ -15,7 +15,11 @@ import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
 import type { OnPersonalDataAccess } from "../modules/audit.ts";
-import type { ForgetOptions } from "../modules/personal-data.ts";
+import type {
+  ForgetOptions,
+  RestrictOptions,
+  UnrestrictOptions,
+} from "../modules/personal-data.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
@@ -57,7 +61,11 @@ import {
   NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
 import { marksFingerprint } from "./personal-data/resealing.ts";
-import { liftProcessingRestriction, restrictProcessing } from "./personal-data/restriction.ts";
+import {
+  createRestrictedPersonsSubscriber,
+  restrictedPersonsHosts,
+} from "./personal-data/restricted-persons.ts";
+import { restrictProcessing, unrestrictProcessing } from "./personal-data/restriction.ts";
 import {
   createRetentionSubscriber,
   createRetentionSweep,
@@ -78,7 +86,7 @@ import { createProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber } from "./projection/runner.ts";
 import { buildQueries } from "./query/build-queries.ts";
 import { createQueryRunner } from "./query/runner.ts";
-import { buildReadModels } from "./read-model/build-read-models.ts";
+import { adapterForReadModel, buildReadModels } from "./read-model/build-read-models.ts";
 import {
   pendingRebuilds,
   type RebuildReadModelResult,
@@ -170,25 +178,32 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
   /**
-   * Restricts the processing of a person's data: from then on every command that touches them,
-   * the one their payload names with `person` or whose aggregate is the person, is refused with
-   * `ProcessingRestrictedError`, and a policy, process or scheduled command whose command is
-   * refused becomes a dead letter at once, with that code and the person, as does a step of a
-   * process instance whose state names them, before its handler runs. Writes their row and
-   * appends `ProcessingRestricted` to the stream `bounda:<personId>` together, and resolves like
-   * a command, so `catchUpReadModels({ through })` waits for the read models that handle it.
-   * Restricting a person restricted already appends nothing and resolves without events. Reading
-   * their data, `forget` and the export stay allowed. Rejects with `ValidationError` an empty id.
+   * Restricts the processing of a person's data on a ground of article 18(1), of some categories
+   * or of the person as a whole: from then on it is only kept. A command that touches a person
+   * restricted as a whole, or would read or write data of theirs it covers, is refused with
+   * `ProcessingRestrictedError` before its handler runs; a policy, process step or scheduled
+   * command that would waits as a dead letter with that code, retried once it is lifted; a query
+   * leaves their rows out; a dead letter keeps their data sealed. A basis of article 18(2) named
+   * explicitly lets each through, recorded. Records it and appends `ProcessingRestricted` to the
+   * stream `bounda:<personId>` together, cancelling a lift announced on the ground, and resolves
+   * like a command, so `catchUpReadModels({ through })` waits for the read models. A restriction
+   * that adds nothing appends nothing and resolves without events. `forget` and the export stay
+   * allowed. Rejects with `ValidationError` an empty id, a ground article 18(1) does not name,
+   * or categories that are empty or that the app does not have.
    */
-  restrict(personId: string): Promise<StoredDispatch>;
+  restrict(personId: string, options: RestrictOptions): Promise<StoredDispatch>;
   /**
-   * Lifts the restriction: appends `ProcessingRestrictionLifted` the same way, and the runtime
-   * then retries, in the background, every dead letter the restriction caused, in order; one
-   * that fails again for another reason stays, as that failure's letter. Lifting for a person
-   * not restricted appends nothing and resolves without events. Rejects with `ValidationError`
-   * an empty id.
+   * Lifts the person's restrictions on `ground`, every ground without it, of `categories`, every
+   * category without them. Article 18(3) asks that the person be told first: with a `notice`
+   * duration it appends `ProcessingRestrictionLiftAnnounced`, which the app tells them from, and
+   * lifts that long after, unless a `restrict` on the ground comes first; with `"given"` it lifts
+   * at once. A lift appends `ProcessingRestrictionLifted`, and the runtime then retries, in the
+   * background, every dead letter the restriction caused, in order. Nothing to lift appends
+   * nothing and resolves without events. Rejects with `ValidationError` an empty id, a missing or
+   * non-positive notice, an unknown ground or category, or categories of a restriction of the
+   * person as a whole.
    */
-  unrestrict(personId: string): Promise<StoredDispatch>;
+  unrestrict(personId: string, options: UnrestrictOptions): Promise<StoredDispatch>;
   /**
    * The same client, acting as `actor`: who does what it does, for the audit trail the event
    * store keeps. Every command it dispatches carries the actor in its metadata, and so does every
@@ -579,6 +594,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     // One list per `runUntilIdle` under way.
     const observers = new Set<CommandRejection[]>();
+    const recordAccess = createAccessLog({
+      hook: test === undefined ? registry.audit?.onPersonalDataAccess : onPersonalDataAccess,
+      env,
+      tenant,
+      logger,
+      clock,
+    });
     const pipeline = createCommandPipeline({
       aggregates,
       loader,
@@ -587,16 +609,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ids,
       clock,
       logger,
+      recordAccess,
       onRejection: (rejection) => {
         for (const observed of observers) observed.push(rejection);
       },
-    });
-    const recordAccess = createAccessLog({
-      hook: test === undefined ? registry.audit?.onPersonalDataAccess : onPersonalDataAccess,
-      env,
-      tenant,
-      logger,
-      clock,
     });
     const queryRunner = createQueryRunner({
       queries: buildQueries({ readModels }),
@@ -617,6 +633,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       pendingRetries,
       logger,
       intentions,
+      recordAccess,
     });
     const policies = buildPolicies({ registry, aggregates });
     const policyExecutor = createPolicyExecutor({
@@ -628,6 +645,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       logger,
       intentions,
+      keys: storage.personalKeys,
+      recordAccess,
     });
     const reactive = [
       {
@@ -767,6 +786,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
           }),
         ),
+        ...restrictedPersonsHosts({
+          readModels: Object.values(readModels.byName),
+          adapterOf: (name) => adapterForReadModel({ name, config }),
+        }).map((readModel) => createRestrictedPersonsSubscriber({ readModel, logger, errorText })),
         ...following,
         ...Object.values(aggregates.byName)
           .filter(takesSnapshots)
@@ -825,6 +848,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       letterRetention,
       rotation,
       reconciliation,
+      intentions,
       backfill,
       restores,
       onRestored: dispatcher.restored,
@@ -1004,6 +1028,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         subscriberFailures: createSubscriberFailures({
           store: written.subscriberFailures,
           keys: storage.personalKeys,
+          persons: storage.persons,
           actor,
           recordAccess,
           errorText,
@@ -1053,7 +1078,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: () => exportAs(personId),
           }),
-        restrict: (personId) =>
+        restrict: (personId, options) =>
           tracedOperation({
             errorText,
             operation: "restrict",
@@ -1067,15 +1092,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 concurrencyRetries,
                 personId,
                 actor,
+                categories: personalCategories,
+                intentions,
+                options,
               }),
           }),
-        unrestrict: (personId) =>
+        unrestrict: (personId, options) =>
           tracedOperation({
             errorText,
             operation: "unrestrict",
             actor,
             run: () =>
-              liftProcessingRestriction({
+              unrestrictProcessing({
                 storage,
                 ids,
                 clock,
@@ -1083,6 +1111,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 concurrencyRetries,
                 personId,
                 actor,
+                categories: personalCategories,
+                intentions,
+                options,
               }),
           }),
         as: (next) => {

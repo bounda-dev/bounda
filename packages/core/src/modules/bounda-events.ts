@@ -1,5 +1,9 @@
 import type { StoredEvent } from "../contracts/event.ts";
-import type { PersonalCategoryName } from "./personal-data.ts";
+import type {
+  PersonalCategoryName,
+  ProcessingRestriction,
+  RestrictionGround,
+} from "./personal-data.ts";
 
 /**
  * The aggregate the runtime's own events belong to, one stream per subject: a read model
@@ -83,22 +87,43 @@ export type PersonalDataForgottenEvent = StoredEvent<
 >;
 
 /**
- * Appended by `restrict(personId)` to the stream `bounda:<personId>`, once their row says so:
- * every command that touches the person is refused with `ProcessingRestrictedError` from then on,
- * and the reactions it refuses wait as dead letters. Handling it is optional: a read model may
- * show the person as restricted, a policy may tell the outside world.
+ * Appended by `restrict(personId, { ground })` to the stream `bounda:<personId>`, once the
+ * restriction is recorded: from then on nothing processes the data it covers but storage, unless
+ * on a basis of article 18(2) named explicitly. A command that would read or write it is refused
+ * with `ProcessingRestrictedError`, a reaction that would waits as a dead letter, a query leaves
+ * the rows out. Handling it is optional: a read model may show the person as restricted, a policy
+ * may tell those the data went to (article 19).
  */
 export const PROCESSING_RESTRICTED_EVENT: "ProcessingRestricted" = "ProcessingRestricted";
 
 /**
- * Appended by `unrestrict(personId)` to the stream `bounda:<personId>`, once the restriction is
- * lifted: the dead letters it caused are retried by the runtime, in the background.
+ * Appended by `unrestrict(personId, { notice })` with a duration, to the stream
+ * `bounda:<personId>`, when the lift is announced: article 18(3) asks that the person be told
+ * before it, so a policy reacting to it tells them. The restriction holds until `liftsAt`, when
+ * the runtime lifts it, unless a `restrict` on the same ground comes first.
+ */
+export const PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT: "ProcessingRestrictionLiftAnnounced" =
+  "ProcessingRestrictionLiftAnnounced";
+
+/**
+ * Appended to the stream `bounda:<personId>` once a restriction is lifted, at once by
+ * `unrestrict(personId, { notice: "given" })` or when an announced lift comes due: the dead
+ * letters the restriction caused are retried by the runtime, in the background.
  */
 export const PROCESSING_RESTRICTION_LIFTED_EVENT: "ProcessingRestrictionLifted" =
   "ProcessingRestrictionLifted";
 
 export interface ProcessingRestrictedPayload {
   readonly personId: string;
+  readonly ground: RestrictionGround;
+  /**
+   * The categories restricted, `null` for the person as a whole.
+   */
+  readonly categories: readonly PersonalCategoryName[] | null;
+  /**
+   * Every restriction the person has once this one is recorded, as `app.restrictions` reads them.
+   */
+  readonly restrictions: readonly ProcessingRestriction[];
 }
 
 export type ProcessingRestrictedEvent = StoredEvent<
@@ -106,8 +131,41 @@ export type ProcessingRestrictedEvent = StoredEvent<
   ProcessingRestrictedPayload
 >;
 
+export interface ProcessingRestrictionLiftAnnouncedPayload {
+  readonly personId: string;
+  /**
+   * The grounds whose restrictions the lift covers.
+   */
+  readonly grounds: readonly RestrictionGround[];
+  /**
+   * The categories lifted, `null` for every category the grounds cover.
+   */
+  readonly categories: readonly PersonalCategoryName[] | null;
+  /**
+   * When the restriction is lifted, as an ISO timestamp.
+   */
+  readonly liftsAt: string;
+}
+
+export type ProcessingRestrictionLiftAnnouncedEvent = StoredEvent<
+  typeof PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
+  ProcessingRestrictionLiftAnnouncedPayload
+>;
+
 export interface ProcessingRestrictionLiftedPayload {
   readonly personId: string;
+  /**
+   * The grounds whose restrictions were lifted, wholly or in part.
+   */
+  readonly grounds: readonly RestrictionGround[];
+  /**
+   * The categories lifted, `null` for every category the grounds covered.
+   */
+  readonly categories: readonly PersonalCategoryName[] | null;
+  /**
+   * Every restriction the person still has, none once their processing is no longer restricted.
+   */
+  readonly restrictions: readonly ProcessingRestriction[];
 }
 
 export type ProcessingRestrictionLiftedEvent = StoredEvent<
@@ -121,5 +179,6 @@ export type ProcessingRestrictionLiftedEvent = StoredEvent<
 export const BOUNDA_EVENTS: Readonly<Record<string, string>> = {
   personalDataForgotten: PERSONAL_DATA_FORGOTTEN_EVENT,
   processingRestricted: PROCESSING_RESTRICTED_EVENT,
+  processingRestrictionLiftAnnounced: PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
   processingRestrictionLifted: PROCESSING_RESTRICTION_LIFTED_EVENT,
 };

@@ -206,8 +206,8 @@ describe("telemetry", () => {
     await user.queries.getOrder({ orderId: "o-1" });
     await app.queries.getOrder({ orderId: "o-1" });
     await user.forget("p-1");
-    await user.restrict("p-2");
-    await user.unrestrict("p-2");
+    await user.restrict("p-2", { ground: "accuracy-contested" });
+    await user.unrestrict("p-2", { notice: "given" });
     await user.exportPersonalData("p-2");
     await user.deadLetters.list();
     // The bound client's type offers neither, as an operator asks those of the app.

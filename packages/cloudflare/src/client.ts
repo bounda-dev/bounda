@@ -11,15 +11,19 @@ import {
   type DispatchOptions,
   type DispatchResult,
   type ForgetOptions,
+  type IncludeRestrictedOptions,
   type ListDeadLettersArgs,
   type PersonalDataExport,
   type QueriesFacade,
+  type QueryOptions,
   type ReadEventsArgs,
   type RebuildReadModelResult,
   type Registry,
+  type RestrictOptions,
   type StoredDispatch,
   type StoredEvent,
   type SubscriberFailure,
+  type UnrestrictOptions,
 } from "@bounda-dev/core";
 import { unwrap } from "./outcome.ts";
 
@@ -36,13 +40,26 @@ export interface BoundaStub {
     consistency?: Consistency,
     actor?: string,
   ): PromiseLike<unknown>;
-  query(name: string, payload?: unknown, actor?: string): PromiseLike<unknown>;
+  query(
+    name: string,
+    payload?: unknown,
+    actor?: string,
+    options?: QueryOptions,
+  ): PromiseLike<unknown>;
   lag(): PromiseLike<unknown>;
   status(): PromiseLike<unknown>;
-  listSubscriberFailures(actor?: string): PromiseLike<unknown>;
-  getSubscriberFailure(subscriber: string, actor?: string): PromiseLike<unknown>;
+  listSubscriberFailures(actor?: string, options?: IncludeRestrictedOptions): PromiseLike<unknown>;
+  getSubscriberFailure(
+    subscriber: string,
+    actor?: string,
+    options?: IncludeRestrictedOptions,
+  ): PromiseLike<unknown>;
   readEvents(args?: ReadEventsArgs): PromiseLike<unknown>;
-  listDeadLetters(args?: ListDeadLettersArgs, actor?: string): PromiseLike<unknown>;
+  listDeadLetters(
+    args?: ListDeadLettersArgs,
+    actor?: string,
+    options?: IncludeRestrictedOptions,
+  ): PromiseLike<unknown>;
   retryDeadLetter(id: string, actor?: string): PromiseLike<unknown>;
   discardDeadLetter(id: string, actor?: string): PromiseLike<unknown>;
   rebuildReadModel(name: string): PromiseLike<unknown>;
@@ -53,8 +70,18 @@ export interface BoundaStub {
     options?: ForgetOptions,
   ): PromiseLike<unknown>;
   exportPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
-  restrict(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
-  unrestrict(personId: string, consistency?: Consistency, actor?: string): PromiseLike<unknown>;
+  restrict(
+    personId: string,
+    consistency: Consistency | undefined,
+    actor: string | undefined,
+    options: RestrictOptions,
+  ): PromiseLike<unknown>;
+  unrestrict(
+    personId: string,
+    consistency: Consistency | undefined,
+    actor: string | undefined,
+    options: UnrestrictOptions,
+  ): PromiseLike<unknown>;
 }
 
 export interface ConnectOptions {
@@ -118,17 +145,21 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
         ),
       ),
     ),
-    queries: byName<QueriesFacade<R>>((name, payload) => unwrap(stub.query(name, payload, actor))),
+    queries: byName<QueriesFacade<R>>((name, payload, options) =>
+      unwrap(stub.query(name, payload, actor, options as QueryOptions | undefined)),
+    ),
     getLag: () => unwrap<AppLag>(stub.lag()),
     status: () => unwrap<AppStatus>(stub.status()),
     subscriberFailures: {
-      list: () => unwrap<readonly SubscriberFailure[]>(stub.listSubscriberFailures(actor)),
-      get: (subscriber) =>
-        unwrap<SubscriberFailure | null>(stub.getSubscriberFailure(subscriber, actor)),
+      list: (options) =>
+        unwrap<readonly SubscriberFailure[]>(stub.listSubscriberFailures(actor, options)),
+      get: (subscriber, options) =>
+        unwrap<SubscriberFailure | null>(stub.getSubscriberFailure(subscriber, actor, options)),
     },
     events: { read: (args) => unwrap<readonly StoredEvent[]>(stub.readEvents(args)) },
     deadLetters: {
-      list: (args) => unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args, actor)),
+      list: (args, options) =>
+        unwrap<readonly DeadLetter[]>(stub.listDeadLetters(args, actor, options)),
       retry: (id) => unwrap<DeadLetter>(stub.retryDeadLetter(id, actor)),
       discard: (id) => unwrap<DeadLetter>(stub.discardDeadLetter(id, actor)),
     },
@@ -137,8 +168,10 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       unwrap<StoredDispatch>(stub.forget(personId, consistency, actor, options)),
     exportPersonalData: (personId) =>
       unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor)),
-    restrict: (personId) => unwrap<StoredDispatch>(stub.restrict(personId, consistency, actor)),
-    unrestrict: (personId) => unwrap<StoredDispatch>(stub.unrestrict(personId, consistency, actor)),
+    restrict: (personId, options) =>
+      unwrap<StoredDispatch>(stub.restrict(personId, consistency, actor, options)),
+    unrestrict: (personId, options) =>
+      unwrap<StoredDispatch>(stub.unrestrict(personId, consistency, actor, options)),
     as: (next) => {
       checkActor(next);
       return clientAs(next);

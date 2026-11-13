@@ -16,6 +16,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
   storageSchemaContract,
@@ -91,6 +92,7 @@ describe("the Durable Object adapter", () => {
     locking: "single-writer",
     concurrent: false,
   });
+  restrictedReadsContract({ create: freshAdapter, concurrent: false });
   storageSchemaContract({ create: freshObject, dialect: "sqlite", concurrent: false });
 });
 

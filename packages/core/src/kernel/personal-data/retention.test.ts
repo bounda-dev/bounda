@@ -339,8 +339,18 @@ describe("createRetentionSweep", () => {
     // Restrictions are not activity: a page of them, a batch long, reads on to the next.
     const restrictions = async (personId: string, times: number): Promise<void> => {
       for (let restriction = 0; restriction < times; restriction += 1) {
-        await restrictProcessing({ storage, ids, clock, logger, concurrencyRetries: 0, personId });
-        await storage.persons.unrestrict(personId);
+        await restrictProcessing({
+          storage,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries: 0,
+          personId,
+          categories,
+          intentions: { record: async () => {} },
+          options: { ground: "accuracy-contested" },
+        });
+        await storage.persons.unrestrict(personId, { categories: null });
       }
     };
     await restrictions("c-3", 2);
@@ -525,7 +535,11 @@ describe("createRetentionSweep", () => {
           const idle = await live.persons.listIdle(args);
           if (args.activeBefore !== undefined && restrictNext) {
             restrictNext = false;
-            await live.persons.restrict("c-1", new Date());
+            await live.persons.restrict("c-1", {
+              ground: "accuracy-contested",
+              categories: null,
+              since: new Date(),
+            });
           }
           return idle;
         },
@@ -538,7 +552,7 @@ describe("createRetentionSweep", () => {
     expect(await forgottenFor()).toEqual([]);
     expect((await storage.persons.get("c-1"))?.restrictedSince).not.toBeNull();
     expect(entries.filter(({ level }) => level === "error")).toEqual([]);
-    await live.persons.unrestrict("c-1");
+    await live.persons.unrestrict("c-1", { categories: null });
     expect(await sweep.sweep(clock.now())).toBe(1);
     expect(await forgottenFor()).toEqual([["c-1", "retention"]]);
   });
@@ -567,9 +581,12 @@ describe("createRetentionSweep", () => {
     await touch("c-1");
     await record();
     advance(31);
-    change = () => live.persons.restrict("c-1", clock.now()).then(() => undefined);
+    change = () =>
+      live.persons
+        .restrict("c-1", { ground: "accuracy-contested", categories: null, since: clock.now() })
+        .then(() => undefined);
     expect(await sweep.sweep(clock.now())).toBe(0);
-    await live.persons.unrestrict("c-1");
+    await live.persons.unrestrict("c-1", { categories: null });
     change = () => live.personalKeys.touch("c-1", clock.now().toISOString());
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(await forgettings()).toEqual([]);
@@ -632,9 +649,12 @@ describe("createRetentionSweep", () => {
       since: day(0),
       lastActiveAt: day(0),
     });
-    change = () => live.persons.restrict("c-1", clock.now()).then(() => undefined);
+    change = () =>
+      live.persons
+        .restrict("c-1", { ground: "accuracy-contested", categories: null, since: clock.now() })
+        .then(() => undefined);
     expect(await sweep.sweep(clock.now())).toBe(0);
-    await live.persons.unrestrict("c-1");
+    await live.persons.unrestrict("c-1", { categories: null });
     change = async () => {
       await live.personalKeys.remove("c-1", testPersonalKey("1").fingerprint);
     };
@@ -1217,7 +1237,11 @@ describe("the retention and the forget ledger", () => {
     await touch("c-1");
     await touch("c-2");
     await record();
-    await storage.persons.restrict("c-2", new Date(day(0)));
+    await storage.persons.restrict("c-2", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date(day(0)),
+    });
     advance(31);
     expect(await sweep.sweep(clock.now())).toBe(1);
     const [forgetting] = (
@@ -1249,7 +1273,11 @@ describe("the retention and the forget ledger", () => {
     advance(30);
     expect(await isDue("c-1")).toBe(true);
     expect(await isDue("c-9")).toBe(false);
-    await storage.persons.restrict("c-2", new Date(day(30)));
+    await storage.persons.restrict("c-2", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date(day(30)),
+    });
     expect(await isDue("c-2")).toBe(false);
     await touch("c-3");
     expect(await isDue("c-3")).toBe(false);
@@ -1293,7 +1321,11 @@ describe("the retention and the forget ledger", () => {
     expect(await isDue("profile", "invoices")).toBe(false);
     expect(await isDue("retired")).toBe(false);
     expect(await due(storage, "c-1", clock.now(), null)).toBe(false);
-    await storage.persons.restrict("c-1", new Date(day(30)));
+    await storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date(day(30)),
+    });
     expect(await isDue("profile")).toBe(false);
   });
 
@@ -1346,7 +1378,13 @@ describe("the retention and the forget ledger", () => {
 
   it("records no intention for a person restricted between the list and their forget", async () => {
     const { sweep, clock, recorded, forgottenFor } = await racing("listed", (storage) =>
-      storage.persons.restrict("c-1", new Date(day(31))).then(() => undefined),
+      storage.persons
+        .restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: new Date(day(31)),
+        })
+        .then(() => undefined),
     );
     expect(await sweep.sweep(clock.now())).toBe(0);
     expect(recorded).toEqual([]);
@@ -1355,7 +1393,13 @@ describe("the retention and the forget ledger", () => {
 
   it("forgets nobody whose transaction finds them restricted after the intention, nor given a key since, and holds them", async () => {
     const restricted = await racing("transaction", (storage) =>
-      storage.persons.restrict("c-1", new Date(day(31))).then(() => undefined),
+      storage.persons
+        .restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: new Date(day(31)),
+        })
+        .then(() => undefined),
     );
     expect(await restricted.sweep.sweep(restricted.clock.now())).toBe(0);
     expect(restricted.recorded).toHaveLength(1);

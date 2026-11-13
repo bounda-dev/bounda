@@ -21,6 +21,7 @@ import {
 } from "./forget.ts";
 import { holdAfter } from "./hold.ts";
 import { coveredBy, type ForgetIntention, type ForgetIntentions } from "./intention.ts";
+import { restrictAgain } from "./restriction.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 /**
@@ -385,6 +386,23 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         if (!restoredSince && time + FORGET_LEDGER_GRACE_MS > at) {
           // Entries come in the order of their time: the last one left is the youngest.
           youngest = time;
+          continue;
+        }
+        if (entry.restriction !== undefined) {
+          const restricted = await restrictAgain({
+            storage,
+            ids,
+            clock,
+            concurrencyRetries,
+            entry: { ...entry, restriction: entry.restriction },
+          });
+          if (restricted === null) continue;
+          logger.info("restriction committed again from the forget ledger", {
+            personId: entry.personId,
+            eventId: entry.eventId,
+            eventType: restricted.type,
+          });
+          forgotten += 1;
           continue;
         }
         const again = await forgetAgain({

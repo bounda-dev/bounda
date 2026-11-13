@@ -111,7 +111,7 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   category. Each category `app/personal-data.ts` declares has its own retention besides, see
   [categories](/guides/personal-data/#categories). Without either, nobody is forgotten for
   inactivity and nothing is recorded for it. A
-  person whose processing is restricted is left alone until it is lifted; one active again after
+  person with any restriction is left alone until it is lifted; one active again after
   being forgotten starts a new clock. Turning it on applies it to the history: whoever was already
   inactive for that long is forgotten in the first passes. It is app-wide and has no override per aggregate: a person's
   events span aggregates, so their inactivity is one clock, not one per aggregate. See

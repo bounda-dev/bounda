@@ -3,6 +3,7 @@ import {
   byForgetLedgerOrder,
   type ForgetLedger,
   type ForgetLedgerEntry,
+  type LedgerRestriction,
 } from "@bounda-dev/core/adapter";
 import { defineForgetLedger, type ForgetLedgerDefinition } from "@bounda-dev/core/config";
 
@@ -34,10 +35,12 @@ interface EntryMetadata {
   readonly inValue?: true;
 }
 
-// What the value of an entry `inValue` holds.
+// What the value of an entry `inValue` holds: always where the entry records a change of
+// restrictions, whose payload can outgrow the metadata.
 interface SpilledEntry {
   readonly categories: readonly string[] | null;
   readonly fingerprints?: readonly string[];
+  readonly restriction?: LedgerRestriction;
 }
 
 interface StoredEntry {
@@ -58,6 +61,7 @@ const storedOf = ({
   categories,
   reason,
   fingerprints,
+  restriction,
 }: ForgetLedgerEntry): StoredEntry => {
   const full: EntryMetadata = {
     personId,
@@ -66,10 +70,13 @@ const storedOf = ({
     reason,
     ...(fingerprints === undefined ? {} : { fingerprints }),
   };
-  if (sizeOf(full) <= KV_METADATA_BYTES) return { metadata: full, value: "" };
+  if (restriction === undefined && sizeOf(full) <= KV_METADATA_BYTES) {
+    return { metadata: full, value: "" };
+  }
   const spilled: SpilledEntry = {
     categories,
     ...(fingerprints === undefined ? {} : { fingerprints }),
+    ...(restriction === undefined ? {} : { restriction }),
   };
   return {
     metadata: { personId, forgottenAt, reason, inValue: true },
@@ -92,9 +99,22 @@ const spilledIn = (value: string | null): SpilledEntry | null => {
   if (typeof parsed !== "object" || parsed === null) return null;
   const categories: unknown = Reflect.get(parsed, "categories");
   const fingerprints: unknown = Reflect.get(parsed, "fingerprints");
+  const restriction: unknown = Reflect.get(parsed, "restriction");
   if (categories !== null && !isTextList(categories)) return null;
-  return isTextList(fingerprints) ? { categories, fingerprints } : { categories };
+  if (restriction !== undefined && !isRestriction(restriction)) return null;
+  return {
+    categories,
+    ...(isTextList(fingerprints) ? { fingerprints } : {}),
+    ...(restriction === undefined ? {} : { restriction }),
+  };
 };
+
+const isRestriction = (value: unknown): value is LedgerRestriction =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof Reflect.get(value, "type") === "string" &&
+  typeof Reflect.get(value, "payload") === "object" &&
+  Reflect.get(value, "payload") !== null;
 
 /**
  * Where every object's entries live, each under its own name.
@@ -111,7 +131,7 @@ const expirationOf = (forgottenAt: string, keepForMs: number, now: number): numb
 const entryOf = (
   metadata: EntryMetadata,
   eventId: string,
-  { categories, fingerprints }: Partial<SpilledEntry> = metadata,
+  { categories, fingerprints, restriction }: Partial<SpilledEntry> = metadata,
 ): ForgetLedgerEntry => {
   const entry: ForgetLedgerEntry = {
     personId: metadata.personId,
@@ -120,7 +140,11 @@ const entryOf = (
     forgottenAt: metadata.forgottenAt,
     reason: metadata.reason === "retention" ? "retention" : "requested",
   };
-  return isTextList(fingerprints) ? { ...entry, fingerprints: [...fingerprints] } : entry;
+  return {
+    ...entry,
+    ...(isTextList(fingerprints) ? { fingerprints: [...fingerprints] } : {}),
+    ...(restriction === undefined ? {} : { restriction }),
+  };
 };
 
 interface ListedEntry {

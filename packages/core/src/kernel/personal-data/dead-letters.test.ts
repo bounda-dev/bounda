@@ -134,10 +134,14 @@ const setup = async () => {
   whileFailing = null;
   const adapter = memory();
   const storage = await adapter.createStorage();
+  const accesses: { operation: string; restricted: unknown }[] = [];
   const { app, clock } = await createTestApp({
     registry,
     adapter,
     logger: silentLogger,
+    onPersonalDataAccess: ({ access }) => {
+      accesses.push({ operation: access.operation, restricted: access.restricted });
+    },
     config: {
       runtime: {
         policies: { retry: { strategy: "none" } },
@@ -145,7 +149,7 @@ const setup = async () => {
       },
     },
   });
-  return { app, storage, clock };
+  return { app, storage, clock, accesses };
 };
 
 describe("dead letters of work that names a person", () => {
@@ -239,6 +243,117 @@ describe("dead letters of work that names a person", () => {
     ).toMatchObject({
       lastError: "ValidationError (VALIDATION_FAILED)",
     });
+    await app.stop();
+  });
+
+  it("keeps a restricted person's letters sealed, their stack and payload included, and opens them on a basis, recorded with them", async () => {
+    const { app, clock } = await setup();
+    await app.commands.registerCustomer(ana);
+    await app.commands.remindCustomer(ana, { delay: "1m" });
+    await app.runUntilIdle();
+    clock.advance(60_000);
+    await app.runUntilIdle();
+    await app.restrict("c-1", { ground: "objection-pending", categories: ["default"] });
+
+    const sealed = await app.deadLetters.list({ kind: "scheduled" });
+    expect(sealed).toEqual([
+      expect.objectContaining({
+        errorMessage: null,
+        errorStack: null,
+        payload: { customerId: "c-1", email: null },
+        restricted: true,
+      }),
+    ]);
+    const id = sealed[0]?.id ?? "";
+    expect(await app.deadLetters.get(id)).toMatchObject({ errorMessage: null, restricted: true });
+    expect(await app.deadLetters.get(id, { includeRestricted: "legal-obligation" })).toMatchObject({
+      restricted: true,
+    });
+    const opened = await app.deadLetters.get(id, { includeRestricted: "consent" });
+    expect(opened).toMatchObject({
+      errorMessage: "mailer refuses ana@example.com",
+      payload: { email: "ana@example.com" },
+    });
+    expect(opened).not.toHaveProperty("restricted");
+    expect(
+      (await app.deadLetters.list({ kind: "scheduled" }, { includeRestricted: "legal-claims" }))[0],
+    ).toMatchObject({ errorMessage: "mailer refuses ana@example.com" });
+    await expect(
+      app.deadLetters.list(undefined, { includeRestricted: "curiosity" as never }),
+    ).rejects.toThrow("deadLetters.list names a basis restricted data is not read on");
+    await expect(
+      app.deadLetters.get(id, { includeRestricted: "curiosity" as never }),
+    ).rejects.toThrow("deadLetters.get names a basis restricted data is not read on");
+    await app.stop();
+  });
+
+  it("keeps sealed a scheduled command's fields a forgetting kept, and opens them on legal-obligation, recorded with their person", async () => {
+    const { app, storage, clock, accesses } = await setup();
+    await app.commands.registerCustomer(ana);
+    await app.commands.remindCustomer(ana, { delay: "1m" });
+    clock.advance(60_000);
+    await app.runUntilIdle();
+    const [stored] = await storage.deadLetterStore.list({ kind: "scheduled" });
+    const fingerprint = stored?.persons?.[0]?.fingerprint ?? "";
+    await storage.personalKeys.retain("c-1", fingerprint, {
+      since: "2026-02-01T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect((await app.deadLetters.list({ kind: "scheduled" }))[0]).toMatchObject({
+      payload: { email: null },
+      restricted: true,
+    });
+    expect(
+      (
+        await app.deadLetters.list({ kind: "scheduled" }, { includeRestricted: "legal-obligation" })
+      )[0],
+    ).toMatchObject({ payload: { email: "ana@example.com" } });
+    expect(accesses.at(-1)).toEqual({
+      operation: "deadLetters.list",
+      restricted: { basis: "legal-obligation", persons: ["c-1"], personCount: 1 },
+    });
+    await app.deadLetters.get(stored?.id ?? "", { includeRestricted: "consent" });
+    expect(accesses.at(-1)).toEqual({
+      operation: "deadLetters.get",
+      restricted: { basis: "consent", persons: ["c-1"], personCount: 1 },
+    });
+    await app.stop();
+  });
+
+  it("records the restricted persons whose letters a call opened on a basis, and none without one", async () => {
+    const accesses: { restricted: unknown; operation: string }[] = [];
+    mailerDown = true;
+    const { app, clock } = await createTestApp({
+      registry,
+      logger: silentLogger,
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+      onPersonalDataAccess: ({ access }) => {
+        accesses.push({ operation: access.operation, restricted: access.restricted });
+      },
+    });
+    await app.commands.registerCustomer(ana);
+    await app.commands.remindCustomer(ana, { delay: "1m" });
+    clock.advance(60_000);
+    await app.runUntilIdle();
+    await app.restrict("c-1", { ground: "legal-claims" });
+    accesses.length = 0;
+    const [letter] = await app.deadLetters.list(
+      { kind: "scheduled" },
+      { includeRestricted: "consent" },
+    );
+    await app.deadLetters.get(letter?.id ?? "", { includeRestricted: "legal-claims" });
+    await app.deadLetters.get(letter?.id ?? "");
+    expect(accesses).toEqual([
+      {
+        operation: "deadLetters.list",
+        restricted: { basis: "consent", persons: ["c-1"], personCount: 1 },
+      },
+      {
+        operation: "deadLetters.get",
+        restricted: { basis: "legal-claims", persons: ["c-1"], personCount: 1 },
+      },
+      { operation: "deadLetters.get", restricted: null },
+    ]);
     await app.stop();
   });
 

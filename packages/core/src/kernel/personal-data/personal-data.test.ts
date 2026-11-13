@@ -601,13 +601,13 @@ describe("personal data in an app", () => {
     const { app } = await createTestApp({ registry });
     await app.commands.registerCustomer(ana);
     await app.commands.registerCustomer(bo);
-    expect(await app.restrict("c-2")).toMatchObject({
+    expect(await app.restrict("c-2", { ground: "accuracy-contested" })).toMatchObject({
       aggregateType: "bounda",
       aggregateId: "c-2",
       eventTypes: ["ProcessingRestricted"],
       position: 3,
     });
-    expect((await app.restrict("c-2")).eventIds).toEqual([]);
+    expect((await app.restrict("c-2", { ground: "accuracy-contested" })).eventIds).toEqual([]);
 
     // The aggregate is the person, the payload names the person, and a command with `delay` is
     // refused before it is scheduled.
@@ -640,18 +640,27 @@ describe("personal data in an app", () => {
       errorType: "terminal",
       errorName: "ProcessingRestrictedError",
       errorCode: "PROCESSING_RESTRICTED",
+      errorMessage: null,
+      restricted: true,
+    });
+    expect(
+      (await app.deadLetters.list(undefined, { includeRestricted: "legal-claims" }))[0],
+    ).toMatchObject({
       errorMessage: "The processing of this person's data is restricted",
     });
+    expect(
+      (await app.deadLetters.list(undefined, { includeRestricted: "consent" }))[0],
+    ).not.toHaveProperty("restricted");
     expect(await app.deadLetters.list()).toHaveLength(1);
 
     // Forgetting stays allowed.
-    await app.restrict("c-3");
+    await app.restrict("c-3", { ground: "accuracy-contested" });
     expect((await app.forget("c-3")).eventTypes).toEqual(["PersonalDataForgotten"]);
 
-    expect(await app.unrestrict("c-2")).toMatchObject({
+    expect(await app.unrestrict("c-2", { notice: "given" })).toMatchObject({
       eventTypes: ["ProcessingRestrictionLifted"],
     });
-    expect((await app.unrestrict("c-2")).eventIds).toEqual([]);
+    expect((await app.unrestrict("c-2", { notice: "given" })).eventIds).toEqual([]);
     expect((await app.runUntilIdle()).idle).toBe(true);
     expect((await app.deadLetters.list()).map(({ id, status }) => [id, status])).toEqual([
       [letter?.id, "retried"],
@@ -684,7 +693,7 @@ describe("personal data in an app", () => {
       const storage = await adapter.createStorage();
       const { app, clock } = await createTestApp({ registry, adapter });
       await app.commands.registerCustomer(ana);
-      whileDeciding = () => app.restrict("c-1");
+      whileDeciding = () => app.restrict("c-1", { ground: "accuracy-contested" });
       const refused = await app.commands
         .remindCustomer({ customerId: "c-1" }, options)
         .catch((error: unknown) => error);
@@ -702,7 +711,7 @@ describe("personal data in an app", () => {
 
   it("dead-letters a reaction whose command was running when restrict committed, and retries it once lifted", async () => {
     const { app } = await createTestApp({ registry });
-    whileDeciding = () => app.restrict("c-3");
+    whileDeciding = () => app.restrict("c-3", { ground: "accuracy-contested" });
     await app.commands.invite({ newsletterId: "n-1", customerId: "c-3", email: "cy@example.com" });
     expect((await app.runUntilIdle()).idle).toBe(true);
     expect(whileDeciding).toBeNull();
@@ -719,7 +728,7 @@ describe("personal data in an app", () => {
       "Invited",
       "ProcessingRestricted",
     ]);
-    await app.unrestrict("c-3");
+    await app.unrestrict("c-3", { notice: "given" });
     expect((await app.runUntilIdle()).idle).toBe(true);
     expect((await app.events.read()).map((event) => event.type)).toEqual([
       "Invited",
@@ -735,7 +744,7 @@ describe("personal data in an app", () => {
     const { app, clock } = await createTestApp({ registry });
     await app.commands.registerCustomer(ana);
     await app.commands.remindCustomer({ customerId: "c-1" }, { delay: "1m" });
-    await app.restrict("c-1");
+    await app.restrict("c-1", { ground: "accuracy-contested" });
     clock.advance(60_000);
     expect((await app.runUntilIdle()).idle).toBe(true);
     const [letter] = await app.deadLetters.list();
@@ -748,7 +757,7 @@ describe("personal data in an app", () => {
       payload: { customerId: "c-1" },
     });
     expect(letter).not.toHaveProperty("persons");
-    await app.unrestrict("c-1");
+    await app.unrestrict("c-1", { notice: "given" });
     expect((await app.runUntilIdle()).idle).toBe(true);
     expect((await app.deadLetters.list())[0]?.status).toBe("retried");
     expect((await app.events.read()).map((event) => event.type)).toEqual([

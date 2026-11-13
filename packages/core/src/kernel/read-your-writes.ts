@@ -46,9 +46,9 @@ export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
   app: BoundaApp<R>,
 ): BoundaApp<R> => {
   const caughtUpOn =
-    (act: (personId: string) => Promise<StoredDispatch>) =>
-    async (personId: string): Promise<StoredDispatch> => {
-      const result = await act(personId);
+    <Options>(act: (personId: string, options: Options) => Promise<StoredDispatch>) =>
+    async (personId: string, options: Options): Promise<StoredDispatch> => {
+      const result = await act(personId, options);
       await app.catchUpReadModels({ through: result });
       return result;
     };

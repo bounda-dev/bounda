@@ -14,18 +14,22 @@ import {
   errorFields,
   type ForgetOptions,
   type IdGenerator,
+  type IncludeRestrictedOptions,
   type ListDeadLettersArgs,
   type Logger,
   NotFoundError,
   type PersonalDataExport,
+  type QueryOptions,
   type ReadEventsArgs,
   type RebuildReadModelResult,
   RebuildSupersededError,
   type Registry,
+  type RestrictOptions,
   type StoredDispatch,
   type StoredEvent,
   type SubscriberFailure,
   systemClock,
+  type UnrestrictOptions,
   withErrorText,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
@@ -84,22 +88,32 @@ export interface BoundaObjectMethods {
     consistency?: Consistency,
     actor?: string,
   ): Promise<RpcOutcome<DispatchResult>>;
-  query(name: string, payload?: unknown, actor?: string): Promise<RpcOutcome<unknown>>;
+  query(
+    name: string,
+    payload?: unknown,
+    actor?: string,
+    options?: QueryOptions,
+  ): Promise<RpcOutcome<unknown>>;
   lag(): Promise<RpcOutcome<AppLag>>;
   status(): Promise<RpcOutcome<AppStatus>>;
   /**
    * Each subscriber's last failure with its text opened, recorded in the access log as
    * `BoundaClient.subscriberFailures` records it.
    */
-  listSubscriberFailures(actor?: string): Promise<RpcOutcome<readonly SubscriberFailure[]>>;
+  listSubscriberFailures(
+    actor?: string,
+    options?: IncludeRestrictedOptions,
+  ): Promise<RpcOutcome<readonly SubscriberFailure[]>>;
   getSubscriberFailure(
     subscriber: string,
     actor?: string,
+    options?: IncludeRestrictedOptions,
   ): Promise<RpcOutcome<SubscriberFailure | null>>;
   readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>>;
   listDeadLetters(
     args?: ListDeadLettersArgs,
     actor?: string,
+    options?: IncludeRestrictedOptions,
   ): Promise<RpcOutcome<readonly DeadLetter[]>>;
   retryDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>>;
   discardDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>>;
@@ -128,17 +142,20 @@ export interface BoundaObjectMethods {
    */
   restrict(
     personId: string,
-    consistency?: Consistency,
-    actor?: string,
+    consistency: Consistency | undefined,
+    actor: string | undefined,
+    options: RestrictOptions,
   ): Promise<RpcOutcome<StoredDispatch>>;
   /**
-   * Lifts the restriction, as `BoundaClient.unrestrict` does, waiting the same way; the alarm
-   * then retries the dead letters it caused.
+   * Lifts or announces the lift of restrictions, as `BoundaClient.unrestrict` does, waiting the
+   * same way; the alarm then lifts an announced one when it comes due, and retries the dead
+   * letters a lift leaves to retry.
    */
   unrestrict(
     personId: string,
-    consistency?: Consistency,
-    actor?: string,
+    consistency: Consistency | undefined,
+    actor: string | undefined,
+    options: UnrestrictOptions,
   ): Promise<RpcOutcome<StoredDispatch>>;
   /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
@@ -324,14 +341,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       });
     }
 
-    query(name: string, payload?: unknown, actor?: string): Promise<RpcOutcome<unknown>> {
+    query(
+      name: string,
+      payload?: unknown,
+      actor?: string,
+      options?: QueryOptions,
+    ): Promise<RpcOutcome<unknown>> {
       return settle(async () => {
-        const run = ownFunction<(payload?: unknown) => Promise<unknown>>(
+        const run = ownFunction<(payload?: unknown, options?: QueryOptions) => Promise<unknown>>(
           this.#as(actor).queries,
           name,
         );
         if (run === undefined) throw new NotFoundError(`Unknown query "${name}"`);
-        return run(payload);
+        return run(payload, options);
       });
     }
 
@@ -343,15 +365,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       return settle(() => this.#ready().status());
     }
 
-    listSubscriberFailures(actor?: string): Promise<RpcOutcome<readonly SubscriberFailure[]>> {
-      return settle(() => this.#as(actor).subscriberFailures.list());
+    listSubscriberFailures(
+      actor?: string,
+      options?: IncludeRestrictedOptions,
+    ): Promise<RpcOutcome<readonly SubscriberFailure[]>> {
+      return settle(() => this.#as(actor).subscriberFailures.list(options));
     }
 
     getSubscriberFailure(
       subscriber: string,
       actor?: string,
+      options?: IncludeRestrictedOptions,
     ): Promise<RpcOutcome<SubscriberFailure | null>> {
-      return settle(() => this.#as(actor).subscriberFailures.get(subscriber));
+      return settle(() => this.#as(actor).subscriberFailures.get(subscriber, options));
     }
 
     readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>> {
@@ -361,8 +387,9 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
     listDeadLetters(
       args?: ListDeadLettersArgs,
       actor?: string,
+      options?: IncludeRestrictedOptions,
     ): Promise<RpcOutcome<readonly DeadLetter[]>> {
-      return settle(() => this.#as(actor).deadLetters.list(args));
+      return settle(() => this.#as(actor).deadLetters.list(args, options));
     }
 
     retryDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>> {
@@ -417,18 +444,20 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     restrict(
       personId: string,
-      consistency?: Consistency,
-      actor?: string,
+      consistency: Consistency | undefined,
+      actor: string | undefined,
+      options: RestrictOptions,
     ): Promise<RpcOutcome<StoredDispatch>> {
-      return this.#onPerson((client) => client.restrict(personId), consistency, actor);
+      return this.#onPerson((client) => client.restrict(personId, options), consistency, actor);
     }
 
     unrestrict(
       personId: string,
-      consistency?: Consistency,
-      actor?: string,
+      consistency: Consistency | undefined,
+      actor: string | undefined,
+      options: UnrestrictOptions,
     ): Promise<RpcOutcome<StoredDispatch>> {
-      return this.#onPerson((client) => client.unrestrict(personId), consistency, actor);
+      return this.#onPerson((client) => client.unrestrict(personId, options), consistency, actor);
     }
 
     override async alarm(): Promise<void> {

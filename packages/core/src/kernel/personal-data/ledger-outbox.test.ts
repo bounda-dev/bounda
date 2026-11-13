@@ -23,7 +23,7 @@ const stored = (position: number, event: Parameters<typeof pendingEvent>[0]): St
 });
 
 describe("the forget ledger's outbox", () => {
-  it("appends only the runtime's PersonalDataForgotten, and all of a batch at once", async () => {
+  it("appends only the runtime's PersonalDataForgotten and changes of restrictions, and all of a batch at once", async () => {
     const appended: (readonly ForgetLedgerEntry[])[] = [];
     const outbox = createLedgerOutbox({
       ledger: {
@@ -78,6 +78,14 @@ describe("the forget ledger's outbox", () => {
         {
           personId: "c-1",
           categories: null,
+          eventId: "r-1",
+          forgottenAt: "2026-01-01T00:00:00.000Z",
+          reason: "requested",
+          restriction: { type: "ProcessingRestricted", payload: events[1]?.payload },
+        },
+        {
+          personId: "c-1",
+          categories: null,
           eventId: "f-1",
           forgottenAt: "2026-01-01T00:00:00.000Z",
           reason: "requested",
@@ -98,7 +106,12 @@ describe("the forget ledger's outbox", () => {
         },
       ],
     ]);
-    expect(await outbox.process(events.slice(0, 3), span)).toBe(3);
+    expect(
+      await outbox.process(
+        [events[0], events[2]].filter((event) => event !== undefined),
+        span,
+      ),
+    ).toBe(2);
     expect(appended).toHaveLength(1);
   });
 

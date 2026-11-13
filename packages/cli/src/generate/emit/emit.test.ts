@@ -742,7 +742,7 @@ describe("emitProject without a file-name trigger", () => {
       "core.PolicyHandlerArgs<\n    core.PersonalDataForgottenEvent,",
     );
     expect(ofFile("policies/bounda/+types/audit.ts")).toContain(
-      "core.PolicyHandlerArgs<\n    core.PersonalDataForgottenEvent | core.ProcessingRestrictedEvent | core.ProcessingRestrictionLiftedEvent,",
+      "core.PolicyHandlerArgs<\n    core.PersonalDataForgottenEvent | core.ProcessingRestrictedEvent | core.ProcessingRestrictionLiftAnnouncedEvent | core.ProcessingRestrictionLiftedEvent,",
     );
     expect(ofFile("domain/shipment/+types/created.ts")).toContain(
       "type PayloadArgs = core.EventPayloadArgs;",

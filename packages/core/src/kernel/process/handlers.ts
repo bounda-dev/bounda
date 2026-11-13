@@ -1,3 +1,4 @@
+import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { ReactionDispatchResult } from "../../contracts/command.ts";
@@ -9,11 +10,13 @@ import type { CausationContext } from "../../contracts/metadata.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands, type ReactionCommands } from "../command/reaction-commands.ts";
+import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
-import { openedUnder } from "../personal-data/event-store.ts";
+import { openedUnder, withoutRetained } from "../personal-data/event-store.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
+import { personTouchedByEvent } from "../personal-data/persons.ts";
 import { checkStatePerson } from "../personal-data/process-state.ts";
-import { refuseRestricted } from "../personal-data/refusal.ts";
+import { refuseRestrictedRead } from "../personal-data/refusal.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
@@ -68,8 +71,9 @@ export interface RunDeadlineHandlerArgs {
  * returned merged over it, validated by the process schema; a deadline's also to what its commands
  * decided. A run whose handler or one of whose commands fails, or that runs out of time, is
  * abandoned: its commands are refused from then on. A step on an instance whose state names a
- * person whose processing is restricted is refused with `ProcessingRestrictedError` before its
- * handler runs, as a command of theirs would be.
+ * person restricted as a whole, or whose event or state opens data a restriction covers, is
+ * refused with `ProcessingRestrictedError` before its handler runs, as a command of theirs would
+ * be, unless the process declares the basis it runs on as `restricted`.
  */
 export interface ProcessHandlers {
   runEventHandler(args: RunEventHandlerArgs): Promise<object>;
@@ -93,6 +97,11 @@ export interface CreateProcessHandlersArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly intentions: ForgetIntentions;
+  /**
+   * The keys a step on restricted data reads the categories of.
+   */
+  readonly keys: Pick<PersonalKeyStore, "find">;
+  readonly recordAccess: RecordAccess;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -108,7 +117,40 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   clock,
   logger,
   intentions,
+  keys,
+  recordAccess,
 }) => {
+  // Refused before the handler runs, unless the process declares the basis it runs on: then run,
+  // and recorded however it settles when it let restricted data through.
+  const restrictedStep = async <Result>(
+    process: ProcessRuntime,
+    actor: string | undefined,
+    reads: { readonly opened: readonly KeyedPerson[]; readonly touches: readonly string[] },
+    within: UnitStores,
+    step: () => Promise<Result>,
+  ): Promise<Result> => {
+    const basis = process.restricted;
+    const letThrough = await refuseRestrictedRead({
+      persons: within.persons,
+      keys,
+      ...reads,
+      basis: basis ?? undefined,
+    });
+    if (basis === null || letThrough.length === 0) return step();
+    return recorded(
+      (outcome) =>
+        recordAccess({
+          operation: "process",
+          detail: { handler: process.name },
+          actor,
+          persons: letThrough,
+          outcome,
+          restricted: { basis, persons: letThrough },
+        }),
+      step,
+    );
+  };
+
   const reactionFor = (
     process: ProcessRuntime,
     context: CausationContext,
@@ -128,6 +170,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       batchSize: config.runtime.dispatcher.batchSize,
       intentions,
       maxChainDepth: config.forAggregate(process.aggregate).policies.maxChainDepth,
+      restricted: process.restricted,
     });
 
   const handlerArgs = (
@@ -172,7 +215,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
 
   const runEventHandler = ({
     process,
-    event,
+    event: delivered,
     instanceId,
     instance,
     attempt,
@@ -180,6 +223,8 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     actor,
     within,
   }: RunEventHandlerArgs): Promise<object> => {
+    // What a forgetting kept reads as `null` to a process that declares no basis for it.
+    const event = process.restricted === null ? withoutRetained(delivered) : delivered;
     within.read(openedUnder(event));
     within.read(instance.persons);
     const idempotencyKey = deriveIdempotencyKey({
@@ -190,46 +235,55 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     });
     const context = { ...causedBy(event), ...actedBy(actor) };
     const reaction = reactionFor(process, context, idempotencyKey, within);
-    return runOf(reaction, async () => {
-      await refuseRestricted({
-        persons: within.persons,
-        person: instancePersonOf(process, instanceId, instance),
-      });
-      const { returned } = await traced({
-        errorText: config.runtime.telemetry.errorText,
-        name: `bounda.process ${process.name}`,
-        attributes: {
-          [ATTRIBUTES.process]: process.name,
-          [ATTRIBUTES.eventId]: event.id,
-          [ATTRIBUTES.eventType]: event.type,
-          [ATTRIBUTES.aggregateType]: event.aggregateType,
-          [ATTRIBUTES.aggregateId]: event.aggregateId,
-          [ATTRIBUTES.correlationId]: event.metadata.correlationId,
-          [ATTRIBUTES.attempt]: attempt,
-          ...actorAttribute(context.actor),
+    const statePerson = instancePersonOf(process, instanceId, instance);
+    const eventPerson = personTouchedByEvent({ aggregates, event });
+    return runOf(reaction, () =>
+      restrictedStep(
+        process,
+        context.actor,
+        {
+          opened: [...openedUnder(event), ...instance.persons],
+          touches: [statePerson, eventPerson].filter((person) => person !== null),
         },
-        run: () =>
-          withTimeout({
+        within,
+        async () => {
+          const { returned } = await traced({
+            errorText: config.runtime.telemetry.errorText,
+            name: `bounda.process ${process.name}`,
+            attributes: {
+              [ATTRIBUTES.process]: process.name,
+              [ATTRIBUTES.eventId]: event.id,
+              [ATTRIBUTES.eventType]: event.type,
+              [ATTRIBUTES.aggregateType]: event.aggregateType,
+              [ATTRIBUTES.aggregateId]: event.aggregateId,
+              [ATTRIBUTES.correlationId]: event.metadata.correlationId,
+              [ATTRIBUTES.attempt]: attempt,
+              ...actorAttribute(context.actor),
+            },
             run: () =>
-              settled(reaction, () =>
-                handlerOf(
-                  process,
-                  event,
-                )?.(
-                  handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
-                    event,
-                    state: instance.state,
-                    aggregateId: instanceId,
-                  }),
-                ),
-              ),
-            timeoutMs: process.handlerTimeoutMs,
-            subject: `process ${process.name}`,
-            clock,
-          }),
-      });
-      return validState(process, merged(instance.state, returned), instanceId);
-    });
+              withTimeout({
+                run: () =>
+                  settled(reaction, () =>
+                    handlerOf(
+                      process,
+                      event,
+                    )?.(
+                      handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
+                        event,
+                        state: instance.state,
+                        aggregateId: instanceId,
+                      }),
+                    ),
+                  ),
+                timeoutMs: process.handlerTimeoutMs,
+                subject: `process ${process.name}`,
+                clock,
+              }),
+          });
+          return validState(process, merged(instance.state, returned), instanceId);
+        },
+      ),
+    );
   };
 
   const runDeadlineHandler = async ({
@@ -243,15 +297,17 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     within,
   }: RunDeadlineHandlerArgs): Promise<DeadlineRun> => {
     within.read(instance.persons);
-    const refused = () =>
-      refuseRestricted({
-        persons: within.persons,
-        person: instancePersonOf(process, instanceId, instance),
-      });
+    const statePerson = instancePersonOf(process, instanceId, instance);
+    const reads = {
+      opened: instance.persons,
+      touches: statePerson === null ? [] : [statePerson],
+    };
     const handler = process.deadlineHandlers[due.field];
     if (handler === undefined) {
-      await refused();
-      return { state: validState(process, instance.state, instanceId), decided: [] };
+      return restrictedStep(process, context.actor, reads, within, async () => ({
+        state: validState(process, instance.state, instanceId),
+        decided: [],
+      }));
     }
     const idempotencyKey = deriveIdempotencyKey({
       kind: "process",
@@ -265,39 +321,40 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       idempotencyKey,
       within,
     );
-    return runOf(reaction, async () => {
-      await refused();
-      const { returned, decided } = await traced({
-        errorText: config.runtime.telemetry.errorText,
-        name: `bounda.process ${process.name} at ${due.field}`,
-        attributes: {
-          [ATTRIBUTES.process]: process.name,
-          [ATTRIBUTES.aggregateType]: process.aggregate,
-          [ATTRIBUTES.aggregateId]: instanceId,
-          [ATTRIBUTES.correlationId]: context.correlationId,
-          ...actorAttribute(context.actor),
-        },
-        run: () =>
-          withTimeout({
-            run: () =>
-              settled(reaction, () =>
-                handler(
-                  handlerArgs(process, reaction, idempotencyKey, due.at, {
-                    state: instance.state,
-                    aggregateId: instanceId,
-                  }),
+    return runOf(reaction, () =>
+      restrictedStep(process, context.actor, reads, within, async () => {
+        const { returned, decided } = await traced({
+          errorText: config.runtime.telemetry.errorText,
+          name: `bounda.process ${process.name} at ${due.field}`,
+          attributes: {
+            [ATTRIBUTES.process]: process.name,
+            [ATTRIBUTES.aggregateType]: process.aggregate,
+            [ATTRIBUTES.aggregateId]: instanceId,
+            [ATTRIBUTES.correlationId]: context.correlationId,
+            ...actorAttribute(context.actor),
+          },
+          run: () =>
+            withTimeout({
+              run: () =>
+                settled(reaction, () =>
+                  handler(
+                    handlerArgs(process, reaction, idempotencyKey, due.at, {
+                      state: instance.state,
+                      aggregateId: instanceId,
+                    }),
+                  ),
                 ),
-              ),
-            timeoutMs: process.handlerTimeoutMs,
-            subject: `process ${process.name} at ${due.field}`,
-            clock,
-          }),
-      });
-      return {
-        state: validState(process, merged(instance.state, returned), instanceId),
-        decided,
-      };
-    });
+              timeoutMs: process.handlerTimeoutMs,
+              subject: `process ${process.name} at ${due.field}`,
+              clock,
+            }),
+        });
+        return {
+          state: validState(process, merged(instance.state, returned), instanceId),
+          decided,
+        };
+      }),
+    );
   };
 
   return { runEventHandler, runDeadlineHandler };

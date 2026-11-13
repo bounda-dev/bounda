@@ -2,7 +2,6 @@ import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredDispatch } from "../../contracts/command.ts";
 import { type Retention, retentionEnd } from "../../contracts/duration.ts";
-import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -18,7 +17,7 @@ import { scheduledCommandId } from "../command/pipeline.ts";
 import { actedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { lastActivity } from "./activity.ts";
-import type { PersonalCategories } from "./categories.ts";
+import { checkCategoryNames, type PersonalCategories } from "./categories.ts";
 import { coveredBy, type ForgetIntention, type ForgetIntentions } from "./intention.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
@@ -335,30 +334,17 @@ export interface ForgetScopeOfFunction {
  * The scope of `forget(personId, options)`: the person as a whole without `categories`. Throws
  * `ValidationError` for categories that are empty or that the app does not have.
  */
-export const forgetScopeOf: ForgetScopeOfFunction = ({ categories, options }) => {
-  if (options?.categories === undefined) return { kind: "whole" };
-  const asked: unknown = options.categories;
-  if (!Array.isArray(asked) || asked.length === 0) {
-    throw new ValidationError("forget needs at least one category when it names them", [
-      { path: ["categories"], message: "Expected a non-empty array of categories" },
-    ]);
-  }
-  const unknown = asked.filter(
-    (category) => typeof category !== "string" || categories.of(category) === undefined,
-  );
-  if (unknown.length > 0) {
-    throw new ValidationError(
-      `forget names categories the app does not have: ${unknown.map((category) => JSON.stringify(category)).join(", ")}`,
-      [
-        {
-          path: ["categories"],
-          message: 'Expected categories app/personal-data.ts declares, or "default"',
-        },
-      ],
-    );
-  }
-  return { kind: "categories", categories: [...new Set(asked as string[])] };
-};
+export const forgetScopeOf: ForgetScopeOfFunction = ({ categories, options }) =>
+  options?.categories === undefined
+    ? { kind: "whole" }
+    : {
+        kind: "categories",
+        categories: checkCategoryNames({
+          categories,
+          asked: options.categories,
+          operation: "forget",
+        }),
+      };
 
 /**
  * `forget` of a client: `forgetIntended`, as a request of the person.

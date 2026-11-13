@@ -21,8 +21,13 @@ import {
   swapTableStatements,
   tableNameFor,
 } from "../sql/index.ts";
+import {
+  createSqlRestrictedPersonsStore,
+  createSqlRestrictedReads,
+} from "../sql/restricted-persons.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { migrateSqlite, sqliteCheckpointsScope } from "./migrations.ts";
+import { storageTablesFor } from "./schema.ts";
 
 /**
  * The table's columns with what its indexes say of them; none when the table does not exist.
@@ -92,6 +97,7 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   close,
 }: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelStorage<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
+  const { restrictedPersons } = storageTablesFor(tablePrefix);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
   const plan = async (executor: SqlExecutor) => {
     const existing = await existingColumns(executor, table);
@@ -122,7 +128,7 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
     db,
     isBusy,
     prefix: tablePrefix,
-    scopes: [sqliteCheckpointsScope(checkpoints)],
+    scopes: [sqliteCheckpointsScope({ checkpoints, restrictedPersons })],
   });
   return {
     table: createSqlTable<Row>({
@@ -138,6 +144,14 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
       dialect: sqliteDialect,
       executor: db,
       raw,
+    }),
+    restricted: createSqlRestrictedReads<Row>({
+      readModel: name,
+      table,
+      fields,
+      dialect: sqliteDialect,
+      executor: db,
+      restrictedPersons,
     }),
     checkpointStore: createSqlCheckpointStore({ dialect: sqliteDialect, db, table: checkpoints }),
     // SQLite has a single writer, so holding the write transaction is the lock and `wait` changes
@@ -164,6 +178,11 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
             dialect: sqliteDialect,
             db: tx,
             table: checkpoints,
+          }),
+          restrictedPersons: createSqlRestrictedPersonsStore({
+            db: tx,
+            table: restrictedPersons,
+            dialect: sqliteDialect,
           }),
         }),
       })),
@@ -204,6 +223,7 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   close,
 }: RebuildSqliteReadModelArgs<Raw>): Promise<ReadModelRebuild<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
+  const { restrictedPersons } = storageTablesFor(tablePrefix);
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
   const fencing = rebuildFencing(name);
@@ -213,7 +233,7 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
     db,
     isBusy,
     prefix: tablePrefix,
-    scopes: [sqliteCheckpointsScope(checkpoints)],
+    scopes: [sqliteCheckpointsScope({ checkpoints, restrictedPersons })],
   });
   const opened = await db.write(async (tx) => {
     const store = checkpointsIn(tx);
@@ -278,6 +298,11 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
             raw: tx.raw,
           }),
           checkpointStore: checkpointsIn(tx),
+          restrictedPersons: createSqlRestrictedPersonsStore({
+            db: tx,
+            table: restrictedPersons,
+            dialect: sqliteDialect,
+          }),
         });
       }),
     commit: async ({ subscriber, position }) => {

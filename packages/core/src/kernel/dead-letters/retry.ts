@@ -141,7 +141,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
         ),
       );
     }
-    const { payload, forgotten } = await openCommandPayload({
+    const { payload, forgotten, opened } = await openCommandPayload({
       payload: letter.payload,
       keys: storage.personalKeys,
     });
@@ -158,6 +158,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
       await pipeline.dispatchUnattended({
         type: letter.eventType,
         payload,
+        opened,
         context,
         within: unit,
       });

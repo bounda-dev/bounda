@@ -5,6 +5,7 @@ import type { EventModules, EventTypeNames, StoredEventOf } from "./event.ts";
 import type { TypeNameOf } from "./naming.ts";
 import type { EmptyPayload, PayloadArgs } from "./payload.ts";
 import type { PersonalFunction, PersonFunction } from "./personal.ts";
+import type { RestrictionBasis } from "./personal-data.ts";
 import type { ReactionForgetFunction } from "./policy.ts";
 
 /**
@@ -125,10 +126,21 @@ export interface ProcessAfterFunction {
   (delay: DurationInput): Instant;
 }
 
+/**
+ * The shape of a process's `index.ts`: its `config`, its `state` schema, how it `correlate`s
+ * events to instances, and the basis it processes restricted data on.
+ */
 export interface ProcessModule {
   readonly config: (args: never) => ProcessConfig;
   readonly state?: (args: ProcessStateArgs) => unknown;
   readonly correlate?: (args: never) => readonly ProcessCorrelation[];
+  /**
+   * The basis of article 18(2) the process processes restricted data on: without it, a step whose
+   * event or state names a person restricted as a whole, or opens data a restriction covers, waits
+   * as a dead letter until the restriction is lifted; with it, the step runs, its commands carry
+   * the basis as `processRestricted`, and the access log records it.
+   */
+  readonly restricted?: RestrictionBasis;
 }
 
 export interface ProcessHandlerModule {

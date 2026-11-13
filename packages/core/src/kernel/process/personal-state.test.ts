@@ -250,8 +250,8 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
 
   it("refuses a step while the person is restricted, and runs it once the restriction lifts", async () => {
     const { app, stream } = await setup();
-    await app.restrict("c-1");
-    await app.commands.nudgeSignup({ signupId: "s-1" });
+    await app.restrict("c-1", { ground: "accuracy-contested" });
+    await app.commands.nudgeSignup({ signupId: "s-1" }, { processRestricted: "consent" });
     await app.runUntilIdle();
 
     expect(seen).toEqual([]);
@@ -262,7 +262,7 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
       person: "c-1",
     });
 
-    await app.unrestrict("c-1");
+    await app.unrestrict("c-1", { notice: "given" });
     await app.runUntilIdle();
     expect(seen).toEqual(["ada@example.com"]);
     const events = await stream();
@@ -291,7 +291,7 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
 
   it("refuses a deadline while the person is restricted, and runs it once the restriction lifts", async () => {
     const { app, clock } = await setup();
-    await app.restrict("c-1");
+    await app.restrict("c-1", { ground: "accuracy-contested" });
     clock.advance(HOUR_MS);
     await app.runUntilIdle();
 
@@ -299,7 +299,7 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
     expect(await app.deadLetters.list()).toMatchObject([
       { eventType: "bounda.ProcessDeadline", errorCode: PROCESSING_RESTRICTED, person: "c-1" },
     ]);
-    await app.unrestrict("c-1");
+    await app.unrestrict("c-1", { notice: "given" });
     await app.runUntilIdle();
     expect(seen).toEqual(["ada@example.com"]);
     await app.stop();
@@ -308,7 +308,7 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
   it("refuses reaching the timeout while the person is restricted, though it has no handler", async () => {
     startWith = (payload) => ({ ...payload, reminder: null });
     const { app, clock, stream } = await setup();
-    await app.restrict("c-1");
+    await app.restrict("c-1", { ground: "accuracy-contested" });
     clock.advance(48 * HOUR_MS);
     await app.runUntilIdle();
 
@@ -316,7 +316,7 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
       { eventId: "deadline:timeout", errorCode: PROCESSING_RESTRICTED, person: "c-1" },
     ]);
     expect((await stream()).at(-1)?.type).toBe(PROCESS_EVENTS.failed);
-    await app.unrestrict("c-1");
+    await app.unrestrict("c-1", { notice: "given" });
     await app.runUntilIdle();
     expect((await stream()).map((event) => event.type)).toContain(PROCESS_EVENTS.timedOut);
     await app.stop();

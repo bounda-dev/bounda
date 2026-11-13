@@ -13,6 +13,8 @@ export interface StorageTables {
   readonly snapshots: string;
   readonly personRows: string;
   readonly subscriberFailures: string;
+  readonly restrictions: string;
+  readonly restrictedPersons: string;
 }
 
 export interface StorageTablesForFunction {
@@ -31,6 +33,8 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
   personRows: quoteIdentifier(storageTableNameFor({ prefix, table: "personRows" })),
   subscriberFailures: quoteIdentifier(storageTableNameFor({ prefix, table: "subscriberFailures" })),
+  restrictions: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictions" })),
+  restrictedPersons: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPersons" })),
 });
 
 /**
@@ -263,3 +267,37 @@ export const subscriberFailuresTableStatement: SubscriberFailuresTableStatementF
     "last_failed_at" TEXT NOT NULL,
     "resolved_at" TEXT
   )`;
+
+export interface RestrictionStatementsFunction {
+  (tables: Pick<StorageTables, "events" | "persons" | "restrictions">): readonly string[];
+}
+
+// Migration 4 of the storage tables. A restriction recorded before it had a ground was of the
+// person as a whole, and is taken in as `accuracy-contested`, the first ground of article 18(1);
+// its events say so, and what restrictions the person had after each.
+export const restrictionStatements: RestrictionStatementsFunction = (tables) => [
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictions} (
+    "person" TEXT NOT NULL,
+    "ground" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "since" TEXT NOT NULL,
+    PRIMARY KEY ("person", "ground", "category")
+  ) WITHOUT ROWID`,
+  `INSERT OR IGNORE INTO ${tables.restrictions} ("person", "ground", "category", "since") SELECT "person", 'accuracy-contested', '', "restricted_since" FROM ${tables.persons} WHERE "restricted_since" IS NOT NULL`,
+  `UPDATE ${tables.events} SET "payload" = json_set("payload", '$.ground', 'accuracy-contested', '$.categories', json('null'), '$.restrictions', json_array(json_object('ground', 'accuracy-contested', 'categories', json('null'), 'since', "timestamp"))) WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestricted' AND json_type("payload", '$.ground') IS NULL`,
+  `UPDATE ${tables.events} SET "payload" = json_set("payload", '$.grounds', json('["accuracy-contested"]'), '$.categories', json('null'), '$.restrictions', json('[]')) WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestrictionLifted' AND json_type("payload", '$.grounds') IS NULL`,
+];
+
+export interface RestrictedPersonsTableStatementFunction {
+  (table: string): string;
+}
+
+// Migration 2 of the checkpoint tables: the read side's copy of who is restricted, in every
+// database that holds read models, which a query of one of them filters by.
+export const restrictedPersonsTableStatement: RestrictedPersonsTableStatementFunction = (table) =>
+  `CREATE TABLE IF NOT EXISTS ${table} (
+    "person" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    PRIMARY KEY ("person", "source", "category")
+  ) WITHOUT ROWID`;

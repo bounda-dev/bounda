@@ -149,7 +149,7 @@ describe("work running when a person is restricted", () => {
         },
       });
       await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com" });
-      await app.restrict("c-1");
+      await app.restrict("c-1", { ground: "accuracy-contested" });
       await app.runUntilIdle();
       const refused = (await app.deadLetters.list()).find((letter) => letter.handler === handler);
       expect(refused).toMatchObject({ errorCode: "PROCESSING_RESTRICTED", person: "c-1" });
@@ -159,7 +159,7 @@ describe("work running when a person is restricted", () => {
         await app.forget("c-1");
         await app.commands.registerCustomer({ customerId: "c-1", email: "ana@again.example" });
       };
-      await app.unrestrict("c-1");
+      await app.unrestrict("c-1", { notice: "given" });
       await app.runUntilIdle();
       expect(whileFailing).toBeNull();
       const again = (await app.deadLetters.list()).find((letter) => letter.id === refused?.id);
@@ -174,7 +174,7 @@ describe("work running when a person is restricted", () => {
 
   it("refuses a command running when restrict commits, though its events name nobody", async () => {
     const { app } = await createTestApp({ registry, logger: silentLogger });
-    whileNotifying = () => app.restrict("c-1");
+    whileNotifying = () => app.restrict("c-1", { ground: "accuracy-contested" });
     await expect(
       app.commands.notify({ notificationId: "n-1", customerId: "c-1" }),
     ).rejects.toMatchObject({ code: "PROCESSING_RESTRICTED", personId: "c-1" });

@@ -31,6 +31,7 @@ describe("createAccessLog", () => {
       actor: "agent-7",
       persons: [],
       outcome: "ok",
+      restricted: { basis: "legal-claims", persons: ["bo", "bo"] },
     });
     expect(received).toStrictEqual([
       {
@@ -41,6 +42,7 @@ describe("createAccessLog", () => {
           personCount: 2,
           at: "2026-03-01T10:00:00.000Z",
           outcome: "failed",
+          restricted: null,
           detail: { letter: "dl-1" },
         },
         env: { KEY: "value" },
@@ -54,6 +56,7 @@ describe("createAccessLog", () => {
           personCount: 0,
           at: "2026-03-01T10:00:00.000Z",
           outcome: "ok",
+          restricted: { basis: "legal-claims", persons: ["bo"], personCount: 1 },
           unattributed: false,
           detail: { query: "getCustomer", readModel: "customers" },
         },

@@ -1,5 +1,6 @@
 import type { Logger } from "../contracts/logger.ts";
 import type { AppEnv } from "../register/index.ts";
+import type { RestrictionBasis } from "./personal-data.ts";
 
 /**
  * The most persons one access record names; `personCount` says how many there were in all.
@@ -29,12 +30,28 @@ interface AccessRecord {
    * an error that may quote what it read.
    */
   readonly outcome: AccessOutcome;
+  /**
+   * The restricted data the operation opened on a basis named explicitly, `null` when it named
+   * none: a query, a dead letter or a subscriber failure read with `includeRestricted`, a command
+   * dispatched with `processRestricted`, a policy or process that declares `restricted`.
+   */
+  readonly restricted: RestrictedAccess | null;
 }
 
 /**
  * How an operation that read personal data ended.
  */
 export type AccessOutcome = "ok" | "failed";
+
+/**
+ * The persons whose restricted data an operation opened, and the basis it named, as article 18(2)
+ * asks it be accountable for: each once, at most `MAX_ACCESS_PERSONS` of them, and how many in all.
+ */
+export interface RestrictedAccess {
+  readonly basis: RestrictionBasis;
+  readonly persons: readonly string[];
+  readonly personCount: number;
+}
 
 /**
  * A query of a read model with fields marked `.personal()`. `persons` are those the `person`
@@ -114,8 +131,25 @@ export interface SubscriberFailureAccess extends AccessRecord {
  * One record of the access log: an operation that handed out personal data in the clear, who
  * called it and whose data it was.
  */
+/**
+ * Work that processed restricted data on a basis named explicitly: a command dispatched with
+ * `processRestricted`, or a run of a policy, a process step or a scheduled command whose module
+ * declares `restricted`. `persons` names those whose restricted data it opened.
+ */
+export interface RestrictedProcessingAccess extends AccessRecord {
+  readonly operation: "command" | "policy" | "process" | "scheduledCommand";
+  readonly restricted: RestrictedAccess;
+  readonly detail: {
+    /**
+     * The command's type, or the policy's or process's key.
+     */
+    readonly handler: string;
+  };
+}
+
 export type PersonalDataAccess =
   | QueryAccess
+  | RestrictedProcessingAccess
   | ExportAccess
   | DeadLettersListAccess
   | DeadLetterAccess

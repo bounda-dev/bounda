@@ -50,7 +50,7 @@ describe("cloudflareClients", () => {
         "eventual",
         undefined,
       ],
-      ["acme", "query", "getOrder", { orderId: "o-1" }, undefined],
+      ["acme", "query", "getOrder", { orderId: "o-1" }, undefined, undefined],
     ]);
 
     await Reflect.get(clientOf(requestArgs()).queries, "getOrder")({ orderId: "o-1" });
@@ -78,23 +78,23 @@ describe("cloudflareClients", () => {
     await client.forget("c-1");
     await client.forget("c-1", { categories: ["default"] });
     await client.exportPersonalData("c-1");
-    await client.restrict("c-2");
-    await client.unrestrict("c-2");
+    await client.restrict("c-2", { ground: "accuracy-contested" });
+    await client.unrestrict("c-2", { notice: "given" });
     expect(store.calls).toEqual([
       ["acme", "lag"],
       ["acme", "status"],
-      ["acme", "listSubscriberFailures", undefined],
-      ["acme", "getSubscriberFailure", "projection:orders", undefined],
+      ["acme", "listSubscriberFailures", undefined, undefined],
+      ["acme", "getSubscriberFailure", "projection:orders", undefined, undefined],
       ["acme", "readEvents", { after: 3, limit: 10 }],
-      ["acme", "listDeadLetters", { limit: 5 }, undefined],
+      ["acme", "listDeadLetters", { limit: 5 }, undefined, undefined],
       ["acme", "retryDeadLetter", "d-1", undefined],
       ["acme", "discardDeadLetter", "d-2", undefined],
       ["acme", "rebuildReadModel", "orders"],
       ["acme", "forget", "c-1", "read-your-writes", undefined, undefined],
       ["acme", "forget", "c-1", "read-your-writes", undefined, { categories: ["default"] }],
       ["acme", "exportPersonalData", "c-1", undefined],
-      ["acme", "restrict", "c-2", "read-your-writes", undefined],
-      ["acme", "unrestrict", "c-2", "read-your-writes", undefined],
+      ["acme", "restrict", "c-2", "read-your-writes", undefined, { ground: "accuracy-contested" }],
+      ["acme", "unrestrict", "c-2", "read-your-writes", undefined, { notice: "given" }],
     ]);
   });
 

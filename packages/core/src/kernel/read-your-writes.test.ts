@@ -116,9 +116,9 @@ describe("readYourWrites", () => {
     });
     const forgotten = await consistent.forget("p-1");
     expect(forgotten).toMatchObject({ eventTypes: ["PersonalDataForgotten"] });
-    const restricted = await consistent.restrict("p-2");
+    const restricted = await consistent.restrict("p-2", { ground: "accuracy-contested" });
     expect(restricted).toMatchObject({ eventTypes: ["ProcessingRestricted"] });
-    const lifted = await consistent.unrestrict("p-2");
+    const lifted = await consistent.unrestrict("p-2", { notice: "given" });
     expect(lifted).toMatchObject({ eventTypes: ["ProcessingRestrictionLifted"] });
     expect(through).toEqual([forgotten, restricted, lifted]);
     await app.stop();
@@ -140,8 +140,8 @@ describe("readYourWrites", () => {
     const bound = consistent.as("user-1").as("user-2");
     const placed = await bound.commands.placeOrder({ orderId: "o-1", total: 5 });
     const forgotten = await bound.forget("p-1");
-    const restricted = await bound.restrict("p-2");
-    const lifted = await bound.unrestrict("p-2");
+    const restricted = await bound.restrict("p-2", { ground: "accuracy-contested" });
+    const lifted = await bound.unrestrict("p-2", { notice: "given" });
     expect(through).toEqual([placed, forgotten, restricted, lifted]);
     const actors = (await app.events.read()).map((event) => event.metadata.actor);
     expect(actors).toEqual(["user-2", "user-2", "user-2", "user-2"]);

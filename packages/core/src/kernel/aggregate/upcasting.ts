@@ -1,7 +1,7 @@
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import { carryOpening } from "../personal-data/event-store.ts";
+import { carryOpening, retainedHidden } from "../personal-data/event-store.ts";
 import type { AggregatesRuntime } from "./runtime.ts";
 
 export interface WithUpcastingArgs {
@@ -36,15 +36,19 @@ export const upcastEvent: UpcastEventFunction = ({ event, aggregates }) => {
     );
   }
   if (from === runtime.schemaVersion) return event;
-  let payload: unknown = event.payload;
-  for (const upcast of runtime.upcasts.slice(from - 1)) {
-    payload = (upcast as (payload: unknown) => unknown)(payload);
-  }
-  return carryOpening(event, {
-    ...event,
-    payload,
-    metadata: { ...event.metadata, schemaVersion: runtime.schemaVersion },
-  });
+  const current = (stored: StoredEvent): StoredEvent => {
+    let payload: unknown = stored.payload;
+    for (const upcast of runtime.upcasts.slice(from - 1)) {
+      payload = (upcast as (payload: unknown) => unknown)(payload);
+    }
+    return {
+      ...stored,
+      payload,
+      metadata: { ...stored.metadata, schemaVersion: runtime.schemaVersion },
+    };
+  };
+  const hidden = retainedHidden(event);
+  return carryOpening(event, current(event), hidden === null ? undefined : current(hidden));
 };
 
 /**

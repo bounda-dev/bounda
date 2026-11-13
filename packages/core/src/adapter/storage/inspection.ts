@@ -11,6 +11,8 @@ export type InspectedStore =
   | "idempotencyKeys"
   | "personalKeys"
   | "persons"
+  | "restrictions"
+  | "restrictedPersons"
   | "snapshots"
   | "subscriberFailures"
   | "personRows"
@@ -31,6 +33,8 @@ export const STORAGE_STORES: readonly Exclude<InspectedStore, "readModel">[] = [
   "idempotencyKeys",
   "personalKeys",
   "persons",
+  "restrictions",
+  "restrictedPersons",
   "snapshots",
   "subscriberFailures",
   "personRows",

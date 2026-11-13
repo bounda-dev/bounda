@@ -11,6 +11,7 @@ import type { InboxLedger } from "./storage/inbox-ledger.ts";
 import type { InspectedTable } from "./storage/inspection.ts";
 import type { PersonStore } from "./storage/person-store.ts";
 import type { PersonalKeyStore } from "./storage/personal-key-store.ts";
+import type { RestrictedPersonsStore, RestrictedReads } from "./storage/restricted-persons.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
 import type { SnapshotStore } from "./storage/snapshot-store.ts";
 import type { SubscriberFailureStore } from "./storage/subscriber-failure-store.ts";
@@ -85,6 +86,11 @@ export interface ReadModelStorage<Row extends object = Record<string, unknown>, 
   readonly table: Table<Row>;
   readonly client: ReadClient<Row, Raw>;
   /**
+   * The reads a query makes, which leave out the rows of restricted persons as the database's copy
+   * of who is restricted says.
+   */
+  readonly restricted: RestrictedReads<Row>;
+  /**
    * The checkpoints of this read model's projections, in the same database as its rows.
    */
   readonly checkpointStore: CheckpointStore;
@@ -106,6 +112,11 @@ export interface ReadModelTransaction<Row extends object = Record<string, unknow
   readonly table: Table<Row>;
   readonly client: ReadClient<Row>;
   readonly checkpointStore: CheckpointStore;
+  /**
+   * The database's copy of who is restricted, shared by every read model in it, which the runtime
+   * keeps under its own subscriber.
+   */
+  readonly restrictedPersons: RestrictedPersonsStore;
 }
 
 export interface ReadModelTransactArgs<Row extends object, T> {

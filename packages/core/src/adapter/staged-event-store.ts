@@ -1,5 +1,6 @@
 import { ConcurrencyError } from "../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../contracts/event.ts";
+import type { RestrictionBasis } from "../modules/personal-data.ts";
 import type { AppendArgs, EventStore, ResealedEvent } from "./storage/event-store.ts";
 import { type KeyedPerson, keyedPersonId } from "./storage/personal-key-store.ts";
 
@@ -24,6 +25,7 @@ export interface StagedBatch extends AppendArgs {
   readonly positions: readonly number[];
   readonly persons: readonly KeyedPerson[];
   readonly touches: readonly string[];
+  readonly seals: readonly KeyedPerson[];
 }
 
 export interface CreateStagedEventStoreArgs {
@@ -45,6 +47,10 @@ interface StagedStream {
   readonly events: StoredEvent[];
   readonly persons: Map<string, KeyedPerson>;
   readonly touches: Set<string>;
+  readonly seals: Map<string, KeyedPerson>;
+  // What every append to the stream named alike; `null` once two named differently, so none
+  // carries over to an append that named none.
+  basis: RestrictionBasis | null | undefined;
 }
 
 export const createStagedEventStore: CreateStagedEventStoreFunction = (
@@ -72,6 +78,8 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       events: [],
       persons: new Map<string, KeyedPerson>(),
       touches: new Set<string>(),
+      seals: new Map<string, KeyedPerson>(),
+      basis: undefined,
     };
     streams.set(key, created);
     return created;
@@ -91,7 +99,9 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
             events: [],
             persons: new Map<string, KeyedPerson>(),
             touches: new Set<string>(),
-          };
+            seals: new Map<string, KeyedPerson>(),
+            basis: undefined,
+          } as StagedStream;
           streams.set(key, created);
           return created;
         })();
@@ -111,6 +121,8 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       events,
       persons = [],
       touches = [],
+      seals = [],
+      basis,
     }) => {
       const staged = await stagedFor(aggregateType, aggregateId);
       const actualVersion = staged.base + staged.events.length;
@@ -127,6 +139,10 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
         staged.persons.set(keyedPersonId(held), held);
       }
       for (const person of touches) staged.touches.add(person);
+      for (const held of seals) staged.seals.set(keyedPersonId(held), held);
+      const named = basis ?? null;
+      staged.basis =
+        staged.events.length === stored.length || staged.basis === named ? named : null;
       return { version: actualVersion + stored.length, events: stored };
     },
     readOne: (args) => base.readOne(args),
@@ -140,14 +156,27 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
     batches: () =>
       [...streams.values()]
         .filter((staged) => staged.events.length > 0)
-        .map(({ aggregateType, aggregateId, base: expectedVersion, events, persons, touches }) => ({
-          aggregateType,
-          aggregateId,
-          expectedVersion,
-          events: events.map(({ position: _position, ...event }) => event),
-          persons: [...persons.values()],
-          touches: [...touches],
-          positions: events.map((event) => event.position),
-        })),
+        .map(
+          ({
+            aggregateType,
+            aggregateId,
+            base: expectedVersion,
+            events,
+            persons,
+            touches,
+            seals,
+            basis,
+          }) => ({
+            aggregateType,
+            aggregateId,
+            expectedVersion,
+            events: events.map(({ position: _position, ...event }) => event),
+            persons: [...persons.values()],
+            touches: [...touches],
+            seals: [...seals.values()],
+            ...(basis === null || basis === undefined ? {} : { basis }),
+            positions: events.map((event) => event.position),
+          }),
+        ),
   };
 };

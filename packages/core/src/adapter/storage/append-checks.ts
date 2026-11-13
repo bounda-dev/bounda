@@ -21,12 +21,12 @@ export class ForgottenSinceLoadError extends ConcurrencyError {
   }
 }
 
-// The persons an append asks the store to check, each once: `keyed`, named in `persons` with a
-// fingerprint, whose key rows `checkAppend` reads; `touched`, named in `touches`, whose restriction
-// it reads.
+// The persons an append asks the store to check, each once: `keyed`, named with a fingerprint in
+// `persons` or `seals`, whose key rows `checkAppend` reads; `restricted`, named in `touches` or
+// `seals`, whose restrictions it reads.
 export interface AppendPersons {
   readonly keyed: readonly string[];
-  readonly touched: readonly string[];
+  readonly restricted: readonly string[];
 }
 
 export interface AppendPersonsOfFunction {
@@ -35,28 +35,45 @@ export interface AppendPersonsOfFunction {
 
 // Whom `args` asks the store to check, so a store reads only those rows, and none for an append
 // that names nobody.
-export const appendPersonsOf: AppendPersonsOfFunction = ({ persons = [], touches = [] }) => ({
+export const appendPersonsOf: AppendPersonsOfFunction = ({
+  persons = [],
+  touches = [],
+  seals = [],
+}) => ({
   keyed: [
     ...new Set(
-      persons.filter(({ fingerprint }) => fingerprint !== null).map(({ person }) => person),
+      [...persons, ...seals]
+        .filter(({ fingerprint }) => fingerprint !== null)
+        .map(({ person }) => person),
     ),
   ],
-  touched: [...new Set(touches)],
+  restricted: [...new Set([...touches, ...seals.map(({ person }) => person)])],
 });
 
 /**
- * A key of a person as the append's transaction reads it: `held` unless it is gone, `retained`
- * when a forgetting kept it past it.
+ * A key of a person as the append's transaction reads it: `held` in force, `retained` when a
+ * forgetting kept it past it, with the category it seals.
  */
-export type KeyState = "held" | "retained" | "gone";
+export interface KeyRead {
+  readonly state: "held" | "retained";
+  readonly category: string;
+}
+
+/**
+ * A restriction a person asked for, as the append's transaction reads it: of a category, or `null`
+ * for the person as a whole.
+ */
+export interface RestrictionRead {
+  readonly category: string | null;
+}
 
 export interface CheckAppendArgs {
   readonly args: AppendArgs;
-  readonly keyOf: (person: string, fingerprint: string) => KeyState;
   /**
-   * Whether the processing of the person's data is restricted, as the same transaction reads it.
+   * `null` once the key is gone.
    */
-  readonly restricted: (person: string) => boolean;
+  readonly keyOf: (person: string, fingerprint: string) => KeyRead | null;
+  readonly restrictionsOf: (person: string) => readonly RestrictionRead[];
 }
 
 export interface CheckAppendFunction {
@@ -64,20 +81,32 @@ export interface CheckAppendFunction {
 }
 
 /**
- * Throws `ProcessingRestrictedError` when a person `touches` names is restricted, and else
- * `ForgottenSinceLoadError` when a person `persons` names with a fingerprint no longer holds
- * that key, or holds it retained where it was read in force. A store calls it in the transaction that writes the events, on what that transaction
- * reads, so a `restrict` or `forget` committing beside the append is ordered before it or after
- * it, never across.
+ * Throws `ProcessingRestrictedError` for a person `touches` names who is restricted as a whole, or
+ * a key `seals` names whose category, or whose person as a whole, is restricted; else
+ * `ForgottenSinceLoadError` for a person `persons` or `seals` names with a fingerprint who no
+ * longer holds that key, or holds it retained where it was read in force. A store calls it in the
+ * transaction that writes the events, on what that transaction reads, so a `restrict` or `forget`
+ * committing beside the append is ordered before it or after it, never across. Reading
+ * restricted data is refused before the work runs, by the runtime.
  */
-export const checkAppend: CheckAppendFunction = ({ args, keyOf, restricted }) => {
+export const checkAppend: CheckAppendFunction = ({ args, keyOf, restrictionsOf }) => {
+  const covers = (person: string, category: string | null): boolean =>
+    restrictionsOf(person).some((row) => row.category === null || row.category === category);
   for (const person of args.touches ?? []) {
-    if (restricted(person)) throw new ProcessingRestrictedError(person);
+    if (covers(person, null)) throw new ProcessingRestrictedError(person);
   }
-  for (const { person, fingerprint, retained } of args.persons ?? []) {
+  for (const { person, fingerprint } of args.seals ?? []) {
     if (fingerprint === null) continue;
-    const state = keyOf(person, fingerprint);
-    if (state === "gone" || (state === "retained" && retained !== true)) {
+    const category = keyOf(person, fingerprint)?.category ?? null;
+    if (covers(person, category)) throw new ProcessingRestrictedError(person);
+  }
+  for (const { person, fingerprint, retained } of [
+    ...(args.persons ?? []),
+    ...(args.seals ?? []),
+  ]) {
+    if (fingerprint === null) continue;
+    const key = keyOf(person, fingerprint);
+    if (key === null || (key.state === "retained" && retained !== true)) {
       throw new ForgottenSinceLoadError(args, person);
     }
   }

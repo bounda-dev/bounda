@@ -16,7 +16,7 @@ import type { PolicyEntry } from "./policy.ts";
 import type { PortModules } from "./port.ts";
 import type { ProcessEntry } from "./process.ts";
 import type { ProjectionModule } from "./projection.ts";
-import type { QueryModule, QueryResultOf } from "./query.ts";
+import type { QueryModule, QueryOptions, QueryResultOf } from "./query.ts";
 import type { UpcastsModule } from "./upcast.ts";
 import type { ViewModule } from "./view.ts";
 
@@ -144,10 +144,10 @@ export type CommandsFacade<R extends Registry> = Simplify<
  */
 export type QueryInvoker<Module> =
   HasPayload<Module> extends true
-    ? (payload: PayloadInputOf<Module>) => Promise<QueryResultOf<Module>>
+    ? (payload: PayloadInputOf<Module>, options?: QueryOptions) => Promise<QueryResultOf<Module>>
     : "payload" extends keyof Module
-      ? (payload?: unknown) => Promise<QueryResultOf<Module>>
-      : () => Promise<QueryResultOf<Module>>;
+      ? (payload?: unknown, options?: QueryOptions) => Promise<QueryResultOf<Module>>
+      : (payload?: undefined, options?: QueryOptions) => Promise<QueryResultOf<Module>>;
 
 /**
  * `app.queries` typed from a map of query modules.

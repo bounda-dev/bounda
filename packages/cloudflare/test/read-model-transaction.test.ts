@@ -269,9 +269,17 @@ describe("appends in a Durable Object", () => {
     });
 
   it("refuses an append that a transaction restricting its person held up", async () => {
-    const { refusal, position } = await heldUp((tx) => tx.persons.restrict("c-1", new Date()), {
-      touches: ["c-1"],
-    });
+    const { refusal, position } = await heldUp(
+      (tx) =>
+        tx.persons.restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: new Date(),
+        }),
+      {
+        touches: ["c-1"],
+      },
+    );
     expect(refusal).toMatchObject({ code: "PROCESSING_RESTRICTED", personId: "c-1" });
     expect(position).toBe(0);
   });

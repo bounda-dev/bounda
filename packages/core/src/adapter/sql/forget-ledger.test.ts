@@ -59,7 +59,7 @@ describe("the SQL forget ledger", () => {
     );
   });
 
-  it("inserts at most 14 entries a statement, each bound to its own numbered parameters", async () => {
+  it("inserts at most 12 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -69,25 +69,38 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    const { fingerprints: _, ...unrecorded } = entry(14);
+    const { fingerprints: _, ...unrecorded } = entry(12);
     await ledger.append([
-      ...Array.from({ length: 14 }, (_, index) => entry(index)),
-      { ...unrecorded, reason: "retention" },
+      ...Array.from({ length: 12 }, (_, index) => entry(index)),
+      {
+        ...unrecorded,
+        reason: "retention",
+        restriction: {
+          type: "ProcessingRestrictionLifted",
+          payload: {
+            personId: "c-12",
+            grounds: ["legal-claims"],
+            categories: null,
+            restrictions: [],
+          },
+        },
+      },
     ]);
     expect(statements).toHaveLength(2);
     const [first, second] = statements;
     expect(first?.[0]).toContain(
-      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories") VALUES ($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)`,
+      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction") VALUES ($1, $2, $3, $4, $5, $6, $7, $8), ($9, $10, $11, $12, $13, $14, $15, $16)`,
     );
-    expect(first?.[0]).toContain("($92, $93, $94, $95, $96, $97, $98) ON CONFLICT");
-    expect(first?.[1]).toHaveLength(98);
-    expect(first?.[1].slice(0, 14)).toEqual([
+    expect(first?.[0]).toContain("($89, $90, $91, $92, $93, $94, $95, $96) ON CONFLICT");
+    expect(first?.[1]).toHaveLength(96);
+    expect(first?.[1].slice(0, 16)).toEqual([
       "",
       "e-0",
       "c-0",
       "2026-01-01T00:00:00.000Z",
       "requested",
       `["k-0"]`,
+      null,
       null,
       "",
       "e-1",
@@ -96,16 +109,26 @@ describe("the SQL forget ledger", () => {
       "requested",
       `["k-1"]`,
       `["profile"]`,
+      null,
     ]);
-    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT`);
+    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT`);
     expect(second?.[1]).toEqual([
       "",
-      "e-14",
-      "c-14",
+      "e-12",
+      "c-12",
       "2026-01-01T00:00:00.000Z",
       "retention",
       null,
       null,
+      JSON.stringify({
+        type: "ProcessingRestrictionLifted",
+        payload: {
+          personId: "c-12",
+          grounds: ["legal-claims"],
+          categories: null,
+          restrictions: [],
+        },
+      }),
     ]);
   });
 

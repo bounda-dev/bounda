@@ -1,4 +1,4 @@
-import type { KeyState } from "../adapter/storage/append-checks.ts";
+import type { KeyRead } from "../adapter/storage/append-checks.ts";
 import type { Hold } from "../adapter/storage/hold.ts";
 import { isReleasedBy } from "../adapter/storage/hold.ts";
 import {
@@ -22,14 +22,15 @@ export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, stri
   /**
    * The key of that fingerprint as the person holds it, answered at once for the same reason.
    */
-  keyOf(person: string, fingerprint: string): KeyState;
+  keyOf(person: string, fingerprint: string): KeyRead | null;
 }
 
 export interface CreateKeptPersonalKeyStoreArgs {
   /**
-   * Whether the processing of the person's data is restricted: `listDue` leaves them out.
+   * Whether the category is restricted for the person, or they are as a whole: the sweeps leave
+   * such a key alone.
    */
-  readonly restricted: (person: string) => boolean;
+  readonly restricted: (person: string, category: string) => boolean;
   /**
    * The person's last activity recorded since their last forgetting as a whole, which a new key
    * starts from; `null` without one.
@@ -102,21 +103,23 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
       (kept) =>
         kept.category === category &&
         kept.lastActiveAt !== null &&
-        !restricted(kept.person) &&
+        !restricted(kept.person, kept.category) &&
         isReleasedBy(kept.dueHold, releasedBy),
     );
   const retainedOutside = (except: readonly string[]): KeptPersonalKey[] =>
     [...keys.values()].filter(
       (kept) =>
-        kept.retainedSince !== null && !except.includes(kept.category) && !restricted(kept.person),
+        kept.retainedSince !== null &&
+        !except.includes(kept.category) &&
+        !restricted(kept.person, kept.category),
     );
   return {
     holds: ({ person, fingerprint }) =>
       fingerprint === null || keys.get(idOf(person, fingerprint))?.retainedSince === null,
     keyOf: (person, fingerprint) => {
       const kept = keys.get(idOf(person, fingerprint));
-      if (kept === undefined) return "gone";
-      return kept.retainedSince === null ? "held" : "retained";
+      if (kept === undefined) return null;
+      return { state: kept.retainedSince === null ? "held" : "retained", category: kept.category };
     },
     store: {
       get: async (person, category) => {

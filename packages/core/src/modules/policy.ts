@@ -1,16 +1,21 @@
 import type { DurationInput } from "../contracts/duration.ts";
 import type { EmptyPayload } from "./payload.ts";
-import type { ForgetOptions } from "./personal-data.ts";
+import type { ForgetOptions, RestrictionBasis } from "./personal-data.ts";
 
 /**
  * The shape of a policy module. `on` overrides the event type derived from the file name and may
  * list several events. `delay` runs the handler that long after the event was stored instead of
- * as soon as it is read.
+ * as soon as it is read. `restricted` names the basis of article 18(2) the policy processes
+ * restricted data on: without it, a run on an event that names a person restricted as a whole, or
+ * opens data a restriction covers, waits as a dead letter until the restriction is lifted; with
+ * it, the run goes ahead, its commands carry the basis as `processRestricted`, and the access log
+ * records it.
  */
 export interface PolicyModule {
   readonly handler: (args: never) => unknown;
   readonly on?: string | readonly string[];
   readonly delay?: DurationInput;
+  readonly restricted?: RestrictionBasis;
 }
 
 export interface PolicyEntry {

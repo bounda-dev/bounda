@@ -71,7 +71,11 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         persons: [],
         now,
       });
-      await storage.persons.restrict("c-1", now);
+      await storage.persons.restrict("c-1", {
+        ground: "accuracy-contested",
+        categories: null,
+        since: now,
+      });
       await storage.snapshotStore.put({
         aggregateType: "order",
         aggregateId: "o-1",

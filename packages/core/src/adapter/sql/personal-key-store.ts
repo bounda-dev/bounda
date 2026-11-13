@@ -6,15 +6,18 @@ import type {
 } from "../storage/personal-key-store.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { holdEndOf, holdOf, releasedBy as released } from "./hold.ts";
+import { WHOLE_PERSON } from "./person-store.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 export interface CreateSqlPersonalKeyStoreArgs {
   readonly db: SqlExecutor;
   /**
-   * Both already quoted: the keys, and the persons whose restriction `listDue` reads.
+   * All already quoted: the keys, the persons whose last activity a new key starts from, and the
+   * restrictions the sweeps leave alone.
    */
   readonly table: string;
   readonly persons: string;
+  readonly restrictions: string;
   readonly dialect: Pick<SqlDialect, "placeholder">;
 }
 
@@ -67,6 +70,7 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
   db,
   table,
   persons,
+  restrictions,
   dialect,
 }) => {
   const p = dialect.placeholder;
@@ -83,8 +87,9 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
   };
   // The row as `from` was read: `rewrap` and `hold` change it only while it holds that key.
   const holding = `"person" = ${p(3)} AND "key" = ${p(4)} AND "fingerprint" = ${p(5)}`;
-  // A key whose person is restricted is left alone, so a list never fills up with such keys.
-  const unrestricted = `NOT EXISTS (SELECT 1 FROM ${persons} AS "r" WHERE "r"."person" = ${table}."person" AND "r"."restricted_since" IS NOT NULL)`;
+  // A key whose category is restricted, or whose person is as a whole, is left alone, so a list
+  // never fills up with such keys.
+  const unrestricted = `NOT EXISTS (SELECT 1 FROM ${restrictions} AS "r" WHERE "r"."person" = ${table}."person" AND "r"."category" IN ('${WHOLE_PERSON}', ${table}."category"))`;
   const dueReleasedBy = (placeholder: string): string =>
     released(placeholder).replaceAll('"held_until"', '"forget_held_until"');
   const get = async (person: string, category: string): Promise<StoredPersonalKey | null> => {

@@ -107,3 +107,23 @@ export const personOfCommand: PersonOfCommandFunction = ({
   }
   return field === null || aggregateIsPerson(aggregate) ? aggregateId : null;
 };
+
+export interface PersonTouchedByEventFunction {
+  (args: PersonOfEventArgs): string | null;
+}
+
+/**
+ * Whom the event is about, though its marked fields hold nothing: the one its person field names,
+ * or the aggregate when the aggregate is the person, as `personOfCommand` tells it for a command.
+ * What a restriction of the person as a whole holds back; `personOfEvent` stays what seals.
+ */
+export const personTouchedByEvent: PersonTouchedByEventFunction = ({ aggregates, event }) => {
+  const aggregate = aggregates.byName[event.aggregateType];
+  if (aggregate === undefined) return null;
+  const field = aggregate.eventsByType[event.type]?.personal?.person;
+  if (typeof field === "string") {
+    const named = isRecord(event.payload) ? event.payload[field] : undefined;
+    return typeof named === "string" || typeof named === "number" ? String(named) : null;
+  }
+  return field === null || aggregateIsPerson(aggregate) ? event.aggregateId : null;
+};

@@ -29,6 +29,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
   storageSchemaContract,
@@ -218,6 +219,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     },
     locking: "per-subscriber",
   });
+  restrictedReadsContract({
+    create: async () => {
+      await closeOpened();
+      return fresh();
+    },
+  });
 
   it("keeps the stores of two schemas apart: neither waits on the other's append or projection lock", async () => {
     const [first, second] = [`a_${run}`, `b_${run}`].map((schema) =>
@@ -367,10 +374,18 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       db,
       schema: "public",
       prefix,
-      scopes: [postgresqlCheckpointsScope(`"${prefix}checkpoints"`)],
+      scopes: [
+        postgresqlCheckpointsScope({
+          checkpoints: `"${prefix}checkpoints"`,
+          restrictedPersons: `"${prefix}restricted_persons"`,
+        }),
+      ],
     });
-    expect(await db.all(`SELECT "scope", "version" FROM "${prefix}migrations"`, [])).toEqual([
+    expect(
+      await db.all(`SELECT "scope", "version" FROM "${prefix}migrations" ORDER BY "version"`, []),
+    ).toEqual([
       { scope: "checkpoints", version: 1 },
+      { scope: "checkpoints", version: 2 },
     ]);
   });
 
@@ -543,8 +558,12 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       fingerprint: "f",
       kid: null,
     });
-    await storage.persons.restrict("c-2", new Date());
-    await storage.persons.unrestrict("c-2");
+    await storage.persons.restrict("c-2", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date(),
+    });
+    await storage.persons.unrestrict("c-2", { categories: null });
     const steps: string[] = [];
     let release = (): void => {};
     const held = new Promise<void>((resolve) => {
@@ -570,7 +589,9 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     await checking;
     const writes = [
       storage.personalKeys.remove("c-1", "f").then(() => steps.push("key removed")),
-      storage.persons.restrict("c-2", new Date()).then(() => steps.push("restricted")),
+      storage.persons
+        .restrict("c-2", { ground: "accuracy-contested", categories: null, since: new Date() })
+        .then(() => steps.push("restricted")),
     ];
     // A writer waits on a row lock the append holds (the pool may queue the other), and nothing
     // finished meanwhile.
@@ -622,6 +643,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       lockKey: "unused",
       channel: "unused",
       personalKeys: "unused",
+      restrictions: "unused",
       persons: "unused",
     });
     const loaded = await store.load({ ...stream, fromVersion: 2 });
@@ -654,6 +676,8 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "migrations",
       "personal_keys",
       "persons",
+      "restricted_persons",
+      "restrictions",
       "rm_order_summary",
       "scheduled_commands",
       "snapshots",

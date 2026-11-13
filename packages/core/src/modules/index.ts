@@ -16,6 +16,8 @@ export type {
   OnPersonalDataAccessArgs,
   PersonalDataAccess,
   QueryAccess,
+  RestrictedAccess,
+  RestrictedProcessingAccess,
   SubscriberFailureAccess,
   SubscriberFailuresListAccess,
 } from "./audit.ts";
@@ -27,6 +29,8 @@ export type {
   PersonalDataForgottenReason,
   ProcessingRestrictedEvent,
   ProcessingRestrictedPayload,
+  ProcessingRestrictionLiftAnnouncedEvent,
+  ProcessingRestrictionLiftAnnouncedPayload,
   ProcessingRestrictionLiftedEvent,
   ProcessingRestrictionLiftedPayload,
   RemovedDeadLetter,
@@ -36,6 +40,7 @@ export {
   BOUNDA_EVENTS,
   PERSONAL_DATA_FORGOTTEN_EVENT,
   PROCESSING_RESTRICTED_EVENT,
+  PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
   PROCESSING_RESTRICTION_LIFTED_EVENT,
 } from "./bounda-events.ts";
 export type {
@@ -90,8 +95,14 @@ export type {
   PersonalDataCategories,
   PersonalDataCategory,
   PersonalDataModule,
+  ProcessingRestriction,
+  RestrictionBasis,
+  RestrictionGround,
+  RestrictionNotice,
+  RestrictOptions,
+  UnrestrictOptions,
 } from "./personal-data.ts";
-export { LEGAL_BASES } from "./personal-data.ts";
+export { LEGAL_BASES, RESTRICTION_BASES, RESTRICTION_GROUNDS } from "./personal-data.ts";
 export type { PolicyHandlerArgs, PolicyModule, ReactionForgetFunction } from "./policy.ts";
 export type {
   CreateArgs,
@@ -115,6 +126,7 @@ export type {
   ProcessHandlerArgs,
   ProcessHandlerResult,
   ProcessHandlerReturnCheck,
+  ProcessModule,
   ProcessStateArgs,
   ProcessStateOf,
   QualifiedEventName,
@@ -122,6 +134,7 @@ export type {
 export type { ProjectionArgs } from "./projection.ts";
 export type {
   QueryHandlerArgs,
+  QueryOptions,
   QueryRepositoryArgs,
   QueryResultOf,
   RepositoryDataOf,

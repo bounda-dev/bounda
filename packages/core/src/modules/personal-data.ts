@@ -1,5 +1,5 @@
 import type { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
-import type { RetentionInput } from "../contracts/duration.ts";
+import type { DurationInput, RetentionInput } from "../contracts/duration.ts";
 import type { AppPersonalCategory } from "../register/index.ts";
 
 /**
@@ -95,3 +95,100 @@ export type DeclaresPersonalData<Module> = [CategoriesOf<Module>] extends [never
       ? 'app/personal-data.ts declares "default", the category of fields marked without one; name it otherwise'
       : true
     : "app/personal-data.ts declares a category without a basis Bounda knows or a retention";
+
+/**
+ * Why a person's processing is restricted, as article 18(1) of the GDPR names the cases:
+ * `accuracy-contested`, while the controller verifies data the person says is wrong (a);
+ * `unlawful-processing`, processing that was unlawful and the person asked to keep rather than
+ * erase (b); `legal-claims`, data the controller no longer needs and the person needs for a legal
+ * claim (c); `objection-pending`, while an objection under article 21(1) is weighed (d).
+ */
+export type RestrictionGround =
+  | "accuracy-contested"
+  | "unlawful-processing"
+  | "legal-claims"
+  | "objection-pending";
+
+/**
+ * Every ground, in the order of article 18(1).
+ */
+export const RESTRICTION_GROUNDS: readonly RestrictionGround[] = [
+  "accuracy-contested",
+  "unlawful-processing",
+  "legal-claims",
+  "objection-pending",
+];
+
+/**
+ * On what basis restricted data is processed anyway, as the exceptions of article 18(2) name
+ * them: the person's `consent`, `legal-claims`, the `protection-of-rights` of another person, or an
+ * important `public-interest`; any of them opens every restricted value. `legal-obligation` opens
+ * only what a forgetting kept under a legal obligation, for that obligation (article 17(3)(b)), and
+ * nothing a person asked to restrict.
+ */
+export type RestrictionBasis =
+  | "consent"
+  | "legal-claims"
+  | "protection-of-rights"
+  | "public-interest"
+  | "legal-obligation";
+
+/**
+ * Every basis: those of article 18(2), then `legal-obligation`.
+ */
+export const RESTRICTION_BASES: readonly RestrictionBasis[] = [
+  "consent",
+  "legal-claims",
+  "protection-of-rights",
+  "public-interest",
+  "legal-obligation",
+];
+
+/**
+ * One restriction a person asked for and has not had lifted: its ground, the categories it covers,
+ * `null` for every category and the person as a whole, and since when, as an ISO timestamp.
+ */
+export interface ProcessingRestriction {
+  readonly ground: RestrictionGround;
+  readonly categories: readonly PersonalCategoryName[] | null;
+  readonly since: string;
+}
+
+/**
+ * What `restrict(personId, options)` takes besides the person.
+ */
+export interface RestrictOptions {
+  readonly ground: RestrictionGround;
+  /**
+   * Restricts these categories of the person alone, as when they contest the accuracy of one kind
+   * of data. Without it, the person as a whole is restricted, every category included.
+   */
+  readonly categories?: readonly PersonalCategoryName[];
+}
+
+/**
+ * How long before the lift the person is told, as `unrestrict` takes it: a duration, after which
+ * the restriction is lifted, or `"given"`, when they were told already and it is lifted at once.
+ */
+export type RestrictionNotice = DurationInput | "given";
+
+/**
+ * What `unrestrict(personId, options)` takes besides the person.
+ */
+export interface UnrestrictOptions {
+  /**
+   * Article 18(3) asks that the person be told before their restriction is lifted. A duration
+   * announces the lift with `ProcessingRestrictionLiftAnnounced`, which the app tells them from,
+   * and lifts it that long after; `"given"` lifts it at once, for a person told already.
+   */
+  readonly notice: RestrictionNotice;
+  /**
+   * Lifts the restrictions on this ground alone; every ground when omitted.
+   */
+  readonly ground?: RestrictionGround;
+  /**
+   * Lifts these categories alone from restrictions of categories; every category when omitted. A
+   * restriction of the person as a whole is lifted as a whole.
+   */
+  readonly categories?: readonly PersonalCategoryName[];
+}
