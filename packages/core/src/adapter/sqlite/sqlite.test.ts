@@ -532,6 +532,7 @@ describe("createSqliteAdapter", () => {
       "app_personal_keys",
       "app_persons",
       "app_restricted_persons",
+      "app_restricted_positions",
       "app_restrictions",
       "app_rm_order_summary",
       "app_scheduled_commands",

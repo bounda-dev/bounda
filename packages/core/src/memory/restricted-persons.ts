@@ -10,6 +10,7 @@ export interface MemoryRestrictedPersons {
   // Returns what puts the rows back the way they were.
   snapshot(): () => void;
   rows(): readonly RestrictedPerson[];
+  positions(): readonly { readonly person: string; readonly position: number }[];
 }
 
 export interface CreateMemoryRestrictedPersonsFunction {
@@ -22,6 +23,7 @@ export interface CreateMemoryRestrictedPersonsFunction {
  */
 export const createMemoryRestrictedPersons: CreateMemoryRestrictedPersonsFunction = () => {
   let rows: readonly RestrictedPerson[] = [];
+  let positions: ReadonlyMap<string, number> = new Map();
   const add = (row: RestrictedPerson): void => {
     const same = rows.some(
       (kept) =>
@@ -31,6 +33,11 @@ export const createMemoryRestrictedPersons: CreateMemoryRestrictedPersonsFunctio
   };
   return {
     store: {
+      advance: async (person, position) => {
+        if ((positions.get(person) ?? 0) >= position) return false;
+        positions = new Map([...positions, [person, position]]);
+        return true;
+      },
       request: async (person, restrictions) => {
         rows = rows.filter((row) => row.person !== person || row.source === RETAINED_SOURCE);
         for (const { ground, categories } of restrictions) {
@@ -55,11 +62,12 @@ export const createMemoryRestrictedPersons: CreateMemoryRestrictedPersonsFunctio
         .filter((row) => row.person === person)
         .map(({ source, category }) => ({ source, category })),
     snapshot: () => {
-      const saved = rows;
+      const saved = { rows, positions };
       return () => {
-        rows = saved;
+        ({ rows, positions } = saved);
       };
     },
     rows: () => rows,
+    positions: () => [...positions].map(([person, position]) => ({ person, position })),
   };
 };

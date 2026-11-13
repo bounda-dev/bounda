@@ -39,8 +39,14 @@ export const restrictedPersonsSubscriberName: RestrictedPersonsSubscriberNameFun
   readModel,
 ) => `restrictions:${readModel}`;
 
-const apply = async (store: RestrictedPersonsStore, event: StoredEvent): Promise<void> => {
-  if (event.aggregateType !== BOUNDA_AGGREGATE) return;
+export interface ApplyToRestrictedPersonsFunction {
+  (store: RestrictedPersonsStore, event: StoredEvent): Promise<void>;
+}
+
+export const applyToRestrictedPersons: ApplyToRestrictedPersonsFunction = async (store, event) => {
+  if (!REACTS_TO.has(qualifiedEventType(event.aggregateType, event.type))) return;
+  const { personId } = event.payload as { readonly personId: string };
+  if (!(await store.advance(personId, event.position))) return;
   switch (event.type) {
     case PROCESSING_RESTRICTED_EVENT:
     case PROCESSING_RESTRICTION_LIFTED_EVENT: {
@@ -109,7 +115,7 @@ export const createRestrictedPersonsSubscriber: CreateRestrictedPersonsSubscribe
           }),
       }),
     process: async (events, { restrictedPersons }) => {
-      for (const event of events) await apply(restrictedPersons, event);
+      for (const event of events) await applyToRestrictedPersons(restrictedPersons, event);
       return events.length;
     },
     logger,

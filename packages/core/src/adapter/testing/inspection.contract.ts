@@ -166,6 +166,35 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       await model.close();
     });
 
+    it("reads the copy of who is restricted and the position of each person in it", async () => {
+      const adapter = await create();
+      const model = await adapter.createReadModel<ContractRow>({
+        name: "orderSummary",
+        fields: contractFields,
+        logger: silentLogger,
+      });
+      await model.transact({
+        subscriber: "restrictions:orderSummary",
+        wait: true,
+        work: async ({ restrictedPersons }) => {
+          await restrictedPersons.advance("c-1", 7);
+          await restrictedPersons.request("c-1", [{ ground: "legal-claims", categories: null }]);
+        },
+      });
+      const tables = await adapter.inspect();
+      const positions = tableOf(tables, "bounda_restricted_positions");
+      expect(positions).toMatchObject({ store: "restrictedPositions", key: ["person"] });
+      // PostgreSQL hands a bigint out as text.
+      expect(positions.rows.map(({ person, position }) => [person, Number(position)])).toEqual([
+        ["c-1", 7],
+      ]);
+      expect(tableOf(tables, "bounda_restricted_persons")).toMatchObject({
+        store: "restrictedPersons",
+        rows: [{ person: "c-1", source: "legal-claims", category: "" }],
+      });
+      await model.close();
+    });
+
     it("reads a forget ledger kept in its database", async () => {
       const adapter = await create();
       const opened = await adapter.createForgetLedger({ tenant: "t-1" });

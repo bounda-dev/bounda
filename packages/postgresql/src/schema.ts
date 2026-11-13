@@ -17,6 +17,7 @@ export interface StorageTables {
   readonly persons: string;
   readonly restrictions: string;
   readonly restrictedPersons: string;
+  readonly restrictedPositions: string;
   readonly snapshots: string;
   readonly subscriberFailures: string;
   // In a database of its own, apart from the other storage tables.
@@ -65,6 +66,9 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
     restrictions: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictions" })),
     restrictedPersons: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPersons" })),
+    restrictedPositions: quoteIdentifier(
+      storageTableNameFor({ prefix, table: "restrictedPositions" }),
+    ),
     snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
     subscriberFailures: quoteIdentifier(
       storageTableNameFor({ prefix, table: "subscriberFailures" }),
@@ -277,16 +281,24 @@ export const restrictionStatements: RestrictionStatementsFunction = (tables) => 
   `UPDATE ${tables.events} SET "payload" = "payload" || '{"grounds":["accuracy-contested"],"categories":null,"restrictions":[]}'::jsonb WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestrictionLifted' AND "payload"->'grounds' IS NULL`,
 ];
 
-export interface RestrictedPersonsTableStatementFunction {
-  (table: string): string;
+export interface RestrictedPersonsTableStatementsFunction {
+  (tables: Pick<StorageTables, "restrictedPersons" | "restrictedPositions">): readonly string[];
 }
 
 // Migration 2 of the checkpoint tables: the read side's copy of who is restricted, in every
-// database that holds read models, which a query of one of them filters by.
-export const restrictedPersonsTableStatement: RestrictedPersonsTableStatementFunction = (table) =>
-  `CREATE TABLE IF NOT EXISTS ${table} (
+// database that holds read models, which a query of one of them filters by, and the position of
+// the last event of each person written into it.
+export const restrictedPersonsTableStatements: RestrictedPersonsTableStatementsFunction = (
+  tables,
+) => [
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictedPersons} (
     "person" text NOT NULL,
     "source" text NOT NULL,
     "category" text NOT NULL,
     PRIMARY KEY ("person", "source", "category")
-  )`;
+  )`,
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictedPositions} (
+    "person" text NOT NULL PRIMARY KEY,
+    "position" bigint NOT NULL
+  )`,
+];

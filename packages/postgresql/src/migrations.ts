@@ -21,7 +21,7 @@ import type { PostgresqlDatabase } from "./database.ts";
 import {
   checkpointTableStatement,
   inSchema,
-  restrictedPersonsTableStatement,
+  restrictedPersonsTableStatements,
   restrictionStatements,
   type StorageTables,
   storageSchemaStatements,
@@ -216,7 +216,9 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
 });
 
 export interface PostgresqlCheckpointsScopeFunction {
-  (tables: Pick<StorageTables, "checkpoints" | "restrictedPersons">): SchemaScope;
+  (
+    tables: Pick<StorageTables, "checkpoints" | "restrictedPersons" | "restrictedPositions">,
+  ): SchemaScope;
 }
 
 export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (tables) => ({
@@ -225,7 +227,10 @@ export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (t
     { version: 1, migrate: (tx) => tx.run(checkpointTableStatement(tables.checkpoints), []) },
     {
       version: 2,
-      migrate: (tx) => tx.run(restrictedPersonsTableStatement(tables.restrictedPersons), []),
+      migrate: async (tx) => {
+        for (const statement of restrictedPersonsTableStatements(tables))
+          await tx.run(statement, []);
+      },
     },
   ],
 });

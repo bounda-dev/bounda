@@ -394,6 +394,11 @@ export const memory: MemoryFunction = (options = {}) => {
           .map(({ person, source, category }) => ({ person, source, category: category ?? "" })),
       }),
       storageTable({
+        table: "restrictedPositions",
+        key: ["person"],
+        rows: restrictedPersons.positions(),
+      }),
+      storageTable({
         table: "forgetLedger",
         key: ["tenant", "eventId"],
         rows: forgetLedgers.rows(),

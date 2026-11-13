@@ -20,7 +20,7 @@ import type { SqlExecutor } from "../sql/sql-table.ts";
 import {
   checkpointTableStatement,
   personRowsBackfillStatements,
-  restrictedPersonsTableStatement,
+  restrictedPersonsTableStatements,
   restrictionStatements,
   type StorageTables,
   storageSchemaStatements,
@@ -193,7 +193,9 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
 });
 
 export interface SqliteCheckpointsScopeFunction {
-  (tables: Pick<StorageTables, "checkpoints" | "restrictedPersons">): SchemaScope;
+  (
+    tables: Pick<StorageTables, "checkpoints" | "restrictedPersons" | "restrictedPositions">,
+  ): SchemaScope;
 }
 
 export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (tables) => ({
@@ -202,7 +204,10 @@ export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (tables) =
     { version: 1, migrate: (tx) => tx.run(checkpointTableStatement(tables.checkpoints), []) },
     {
       version: 2,
-      migrate: (tx) => tx.run(restrictedPersonsTableStatement(tables.restrictedPersons), []),
+      migrate: async (tx) => {
+        for (const statement of restrictedPersonsTableStatements(tables))
+          await tx.run(statement, []);
+      },
     },
   ],
 });

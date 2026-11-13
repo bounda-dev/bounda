@@ -633,6 +633,55 @@ describe("unrestrictProcessing", () => {
     expect((await restrict("c-1", { ground: "objection-pending" })).eventTypes).toEqual([]);
   });
 
+  it("counts a lift pending only while it would lift something: one come due, lifted at once or of a category gone calls nothing off", async () => {
+    const { storage, clock, ids, logger, intentions, restrict, unrestrict } = await setup();
+    const due = async () => {
+      clock.advance(86_400_000);
+      for (const entry of await storage.scheduler.list()) {
+        if (entry.command.type !== LIFT_RESTRICTION_COMMAND) continue;
+        await liftAnnounced({
+          storage,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries: 2,
+          intentions,
+          personId: "c-1",
+          payload: entry.command.payload as never,
+          context: { correlationId: "c", causationId: "c", depth: 0 },
+        });
+        await storage.scheduler.cancel(entry.dedupeKey);
+      }
+    };
+    const again = async () =>
+      (await restrict("c-1", { ground: "legal-claims", categories: ["invoices"] })).eventTypes;
+    await restrict("c-1", { ground: "legal-claims", categories: ["marketing", "invoices"] });
+    await unrestrict("c-1", { notice: "1d", categories: ["marketing"] });
+    await due();
+    expect(await storage.persons.restrictions("c-1")).toEqual([
+      expect.objectContaining({ ground: "legal-claims", category: "invoices" }),
+    ]);
+    expect(await again()).toEqual([]);
+    await unrestrict("c-1", { notice: "1d", categories: ["invoices"] });
+    await unrestrict("c-1", { notice: "given", categories: ["invoices"] });
+    await restrict("c-1", { ground: "legal-claims", categories: ["invoices"] });
+    expect(await again()).toEqual([]);
+    await restrict("c-1", { ground: "legal-claims", categories: ["marketing"] });
+    await unrestrict("c-1", { notice: "1d", categories: ["marketing"] });
+    await unrestrict("c-1", { notice: "given", categories: ["marketing"] });
+    expect(await again()).toEqual([]);
+    await restrict("c-1", { ground: "legal-claims", categories: ["marketing"] });
+    await unrestrict("c-1", { notice: "1d", ground: "legal-claims", categories: ["marketing"] });
+    await unrestrict("c-1", { notice: "given", ground: "legal-claims", categories: ["marketing"] });
+    await restrict("c-1", { ground: "objection-pending", categories: ["marketing"] });
+    expect(await again()).toEqual([]);
+    await unrestrict("c-1", { notice: "1d", ground: "legal-claims", categories: ["invoices"] });
+    expect(await again()).toEqual(["ProcessingRestricted"]);
+    await unrestrict("c-1", { notice: "1d", ground: "legal-claims" });
+    expect(await again()).toEqual(["ProcessingRestricted"]);
+    expect(await again()).toEqual([]);
+  });
+
   it("keeps every lift announced on a ground, each lifting what it announced, and cancels them all on a restrict of the ground", async () => {
     const { storage, clock, ids, logger, intentions, restrict, unrestrict } = await setup();
     await restrict("c-1", { ground: "legal-claims", categories: ["marketing", "invoices"] });

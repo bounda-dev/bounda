@@ -34,6 +34,7 @@ describe("migrateTables", () => {
       "bounda_checkpoints",
       "bounda_migrations",
       "bounda_restricted_persons",
+      "bounda_restricted_positions",
     ]);
     expect(tablesIn(ledger.db)).toEqual([
       "bounda_forget_ledger",

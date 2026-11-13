@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
+import { applyToRestrictedPersons } from "../../kernel/personal-data/restricted-persons.ts";
 import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter, ReadModelStorage } from "../adapter.ts";
 import type { RestrictedPersonsStore } from "../storage/restricted-persons.ts";
@@ -191,6 +193,83 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({ creat
       await write((store) => store.request("ana", [{ ground: "legal-claims", categories: null }]));
       expect(await plain.restricted.among(["ana"], "unrestricted")).toEqual(new Set());
       expect(await plain.restricted.unrestricted.count()).toBe(1);
+    });
+
+    it("moves each person only forward, and rolls the move back with its transaction", async () => {
+      const moved: boolean[] = [];
+      const advance = (person: string, position: number) =>
+        write(async (store) => {
+          moved.push(await store.advance(person, position));
+        });
+      await advance("ana", 3);
+      await advance("ana", 2);
+      await advance("ana", 3);
+      await advance("bo", 1);
+      await advance("ana", 4);
+      expect(moved).toEqual([true, false, false, true, true]);
+      await expect(
+        write(async (store) => {
+          await store.advance("ana", 9);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      await advance("ana", 5);
+      expect(moved.at(-1)).toBe(true);
+    });
+
+    it("never takes back a later change when the stream is read again from the start, as a subscriber under a new name does", async () => {
+      const event = (position: number, type: string, payload: object): StoredEvent => ({
+        id: `e-${position}`,
+        aggregateType: "bounda",
+        aggregateId: "ana",
+        version: position,
+        position,
+        type,
+        payload: { personId: "ana", ...payload },
+        person: "ana",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        metadata: {
+          correlationId: "c",
+          causationId: "c",
+          depth: 0,
+          schemaVersion: 1,
+          system: true,
+        },
+      });
+      const whole = [
+        { ground: "legal-claims", categories: null, since: "2026-01-01T00:00:00.000Z" },
+      ];
+      const history = [
+        event(1, "ProcessingRestricted", { restrictions: whole }),
+        event(2, "ProcessingRestrictionLifted", { restrictions: [] }),
+        event(3, "ProcessingRestricted", { restrictions: whole }),
+        event(4, "PersonalDataForgotten", { categories: [], retained: ["profile"], expired: [] }),
+      ];
+      const play = async (events: readonly StoredEvent[], check: () => Promise<void>) => {
+        for (const played of events) {
+          await write((store) => applyToRestrictedPersons(store, played));
+          await check();
+        }
+      };
+      await play([{ ...history[0], aggregateType: "order" } as StoredEvent], async () => {
+        expect(await orders.restricted.among(["ana"], "unrestricted")).toEqual(new Set());
+      });
+      await play(history, async () => {});
+      const hidden = async () => {
+        expect(await orders.restricted.among(["ana"], "unrestricted")).toEqual(new Set(["ana"]));
+        expect(await found(orders.restricted.unrestricted)).toEqual(["o-2", "o-3", "o-4"]);
+        expect(await found(orders.restricted.retained)).toEqual(["o-2", "o-3", "o-4"]);
+      };
+      await hidden();
+      await play(history, hidden);
+      await write((store) =>
+        applyToRestrictedPersons(
+          store,
+          event(5, "ProcessingRestrictionLifted", { restrictions: [] }),
+        ),
+      );
+      expect(await found(orders.restricted.retained)).toEqual(["o-1", "o-2", "o-3", "o-4", "o-5"]);
+      expect(await found(orders.restricted.unrestricted)).toEqual(["o-2", "o-3", "o-4"]);
     });
 
     it("rolls back with the transaction that wrote it", async () => {

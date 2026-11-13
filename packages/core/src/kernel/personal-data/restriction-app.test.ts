@@ -695,6 +695,74 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.stop();
   });
 
+  it("keeps restricted rows out while a read model added since takes the copy over, reading the stream again", async () => {
+    const adapter = adapterOf();
+    const before = await setup({ adapter });
+    await before.register("ana");
+    await before.register("bo");
+    await before.app.restrict("ana", { ground: "legal-claims" });
+    await before.app.unrestrict("ana", { notice: "given" });
+    await before.app.restrict("ana", { ground: "legal-claims" });
+    await before.app.runUntilIdle();
+    await before.app.stop();
+
+    // Every write to the copy while the subscriber named after `accounts` catches up.
+    const requested: (readonly unknown[])[] = [];
+    const watched: Adapter = {
+      ...adapter,
+      createReadModel: async <Row extends object>(
+        args: Parameters<Adapter["createReadModel"]>[0],
+      ) => {
+        const storage = await adapter.createReadModel<Row>(args);
+        return {
+          ...storage,
+          transact: (transaction) =>
+            storage.transact({
+              ...transaction,
+              work: (stores) =>
+                transaction.work({
+                  ...stores,
+                  restrictedPersons: {
+                    ...stores.restrictedPersons,
+                    request: async (person, restrictions) => {
+                      requested.push([person, restrictions]);
+                      await stores.restrictedPersons.request(person, restrictions);
+                    },
+                  },
+                }),
+            }),
+        } as typeof storage;
+      },
+    };
+    const registry = registryWith();
+    const { app } = await createTestApp({
+      registry: {
+        ...registry,
+        readModels: {
+          ...registry.readModels,
+          accounts: {
+            view: {
+              fields: ({ f }: FieldsArgs) => ({
+                customerId: f.string().primaryKey().person(),
+              }),
+            },
+            projections: {},
+            queries: {},
+          },
+        },
+      },
+      adapter: watched,
+    });
+    await app.runUntilIdle();
+    expect(requested).toEqual([]);
+    const queries = app.queries as unknown as Record<
+      string,
+      (payload: unknown) => Promise<unknown>
+    >;
+    expect(await queries.customersOnPlan?.({ plan: "pro" })).toEqual(["bo"]);
+    await app.stop();
+  });
+
   it("refuses a basis that is none, and one given to a delayed command", async () => {
     const { app, commands, register } = await setup({ adapter: adapterOf() });
     await register("ana");

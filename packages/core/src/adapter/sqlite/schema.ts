@@ -15,6 +15,7 @@ export interface StorageTables {
   readonly subscriberFailures: string;
   readonly restrictions: string;
   readonly restrictedPersons: string;
+  readonly restrictedPositions: string;
 }
 
 export interface StorageTablesForFunction {
@@ -35,6 +36,9 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   subscriberFailures: quoteIdentifier(storageTableNameFor({ prefix, table: "subscriberFailures" })),
   restrictions: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictions" })),
   restrictedPersons: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPersons" })),
+  restrictedPositions: quoteIdentifier(
+    storageTableNameFor({ prefix, table: "restrictedPositions" }),
+  ),
 });
 
 /**
@@ -288,16 +292,24 @@ export const restrictionStatements: RestrictionStatementsFunction = (tables) => 
   `UPDATE ${tables.events} SET "payload" = json_set("payload", '$.grounds', json('["accuracy-contested"]'), '$.categories', json('null'), '$.restrictions', json('[]')) WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestrictionLifted' AND json_type("payload", '$.grounds') IS NULL`,
 ];
 
-export interface RestrictedPersonsTableStatementFunction {
-  (table: string): string;
+export interface RestrictedPersonsTableStatementsFunction {
+  (tables: Pick<StorageTables, "restrictedPersons" | "restrictedPositions">): readonly string[];
 }
 
 // Migration 2 of the checkpoint tables: the read side's copy of who is restricted, in every
-// database that holds read models, which a query of one of them filters by.
-export const restrictedPersonsTableStatement: RestrictedPersonsTableStatementFunction = (table) =>
-  `CREATE TABLE IF NOT EXISTS ${table} (
+// database that holds read models, which a query of one of them filters by, and the position of
+// the last event of each person written into it.
+export const restrictedPersonsTableStatements: RestrictedPersonsTableStatementsFunction = (
+  tables,
+) => [
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictedPersons} (
     "person" TEXT NOT NULL,
     "source" TEXT NOT NULL,
     "category" TEXT NOT NULL,
     PRIMARY KEY ("person", "source", "category")
-  ) WITHOUT ROWID`;
+  ) WITHOUT ROWID`,
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictedPositions} (
+    "person" TEXT NOT NULL PRIMARY KEY,
+    "position" INTEGER NOT NULL
+  ) WITHOUT ROWID`,
+];

@@ -378,6 +378,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
         postgresqlCheckpointsScope({
           checkpoints: `"${prefix}checkpoints"`,
           restrictedPersons: `"${prefix}restricted_persons"`,
+          restrictedPositions: `"${prefix}restricted_positions"`,
         }),
       ],
     });
@@ -677,6 +678,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "personal_keys",
       "persons",
       "restricted_persons",
+      "restricted_positions",
       "restrictions",
       "rm_order_summary",
       "scheduled_commands",

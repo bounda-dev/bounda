@@ -325,30 +325,43 @@ interface ChangeArgs {
   readonly plan: (
     rows: readonly StoredRestriction[],
     at: string,
-    announced: ReadonlySet<RestrictionGround>,
+    pending: PendingLifts,
   ) => Planned | null;
 }
 
-// The grounds whose lift was announced and has not come, as the person's stream tells: a
-// restriction on the ground since, or a lift that left nothing of it, ends it.
-const announcedGrounds = (events: readonly StoredEvent[]): ReadonlySet<RestrictionGround> => {
-  const announced = new Set<RestrictionGround>();
+// The lifts announced on each ground since the last restriction on it, which calls them all off,
+// by category, `null` for the whole ground, as `scheduleLifts` keys their entries. One that came
+// due or whose category was lifted meanwhile lifts nothing more, which `liftsPending` tells from
+// the rows.
+const pendingLifts = (events: readonly StoredEvent[]): PendingLifts => {
+  const pending = new Map<RestrictionGround, ReadonlySet<string | null>>();
   for (const event of events) {
     const restriction = { type: event.type, payload: event.payload } as LedgerRestriction;
     if (restriction.type === PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT) {
-      for (const ground of restriction.payload.grounds) announced.add(ground);
-    } else if (restriction.type === PROCESSING_RESTRICTED_EVENT) {
-      announced.delete(restriction.payload.ground);
-    } else if (restriction.type === PROCESSING_RESTRICTION_LIFTED_EVENT) {
-      for (const ground of restriction.payload.grounds) {
-        if (!restriction.payload.restrictions.some((left) => left.ground === ground)) {
-          announced.delete(ground);
-        }
+      const { grounds, categories } = restriction.payload;
+      for (const ground of grounds) {
+        pending.set(ground, new Set([...(pending.get(ground) ?? []), ...(categories ?? [null])]));
       }
+    } else if (restriction.type === PROCESSING_RESTRICTED_EVENT) {
+      pending.delete(restriction.payload.ground);
     }
   }
-  return announced;
+  return pending;
 };
+
+type PendingLifts = ReadonlyMap<RestrictionGround, ReadonlySet<string | null>>;
+
+// Whether a lift announced on the ground would still lift something of the rows, which hold the
+// ground: the whole of it, or a category it still holds.
+const liftsPending = (
+  pending: PendingLifts,
+  rows: readonly StoredRestriction[],
+  ground: RestrictionGround,
+): boolean =>
+  [...(pending.get(ground) ?? [])].some(
+    (category) =>
+      category === null || rows.some((row) => row.ground === ground && row.category === category),
+  );
 
 interface RestrictionState {
   readonly persons: Pick<Storage["persons"], "restrictions">;
@@ -358,13 +371,13 @@ interface RestrictionState {
 const stateOf = async (
   { persons, eventStore }: RestrictionState,
   personId: string,
-): Promise<readonly [readonly StoredRestriction[], ReadonlySet<RestrictionGround>]> => {
+): Promise<readonly [readonly StoredRestriction[], PendingLifts]> => {
   const rows = await persons.restrictions(personId);
   const { events } = await eventStore.load({
     aggregateType: BOUNDA_AGGREGATE,
     aggregateId: personId,
   });
-  return [rows, announcedGrounds(events)];
+  return [rows, pendingLifts(events)];
 };
 
 // The change is planned on the rows as they stand, written to the ledger with the id and time its
@@ -385,8 +398,8 @@ const change = async ({
   for (;;) {
     const id = ids.next();
     const at = clock.now().toISOString();
-    const [rows, announced] = await stateOf(storage, personId);
-    const planned = plan(rows, at, announced);
+    const [rows, pending] = await stateOf(storage, personId);
+    const planned = plan(rows, at, pending);
     if (planned !== null) {
       await intentions.record({
         personId,
@@ -463,9 +476,10 @@ export const restrictProcessing: RestrictProcessingFunction = async ({
     context: startedBy(ids.next(), actor),
     // A restriction that adds nothing is still appended while a lift of its ground is announced,
     // since it is what calls that lift off.
-    plan: (rows, at, announced) => {
+    plan: (rows, at, pending) => {
       const after =
-        restricted(rows, ground, categories, at) ?? (announced.has(ground) ? rows : null);
+        restricted(rows, ground, categories, at) ??
+        (liftsPending(pending, rows, ground) ? rows : null);
       if (after === null) return null;
       return {
         restriction: {

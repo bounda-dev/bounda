@@ -32,6 +32,9 @@ import { inSchema } from "./schema.ts";
 const restrictedPersonsTableOf = (prefix: string): string =>
   quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPersons" }));
 
+const restrictedPositionsTableOf = (prefix: string): string =>
+  quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPositions" }));
+
 /**
  * The table's columns with what its indexes say of them; none when the table does not exist.
  */
@@ -115,6 +118,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
 }: OpenPostgresqlReadModelArgs): Promise<ReadModelStorage<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const restrictedPersons = restrictedPersonsTableOf(tablePrefix);
+  const restrictedPositions = restrictedPositionsTableOf(tablePrefix);
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
   const plan = async (executor: SqlExecutor) => {
     const existing = await existingColumns(executor, schema, table);
@@ -130,7 +134,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
     db,
     schema,
     prefix: tablePrefix,
-    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons })],
+    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
   });
   if ((await plan(db)).statements.length > 0) {
     await inSchema({
@@ -214,6 +218,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
             restrictedPersons: createSqlRestrictedPersonsStore({
               db: tx,
               table: restrictedPersons,
+              positions: restrictedPositions,
               dialect: postgresqlDialect,
             }),
           }),
@@ -266,6 +271,7 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
 }: RebuildPostgresqlReadModelArgs): Promise<ReadModelRebuild<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const restrictedPersons = restrictedPersonsTableOf(tablePrefix);
+  const restrictedPositions = restrictedPositionsTableOf(tablePrefix);
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
   const fencing = rebuildFencing(name);
@@ -280,7 +286,7 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
     db,
     schema,
     prefix: tablePrefix,
-    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons })],
+    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
   });
   const opened = await db.write(async (tx) => {
     await lock(tx, fencing.lock);
@@ -351,6 +357,7 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
           restrictedPersons: createSqlRestrictedPersonsStore({
             db: tx,
             table: restrictedPersons,
+            positions: restrictedPositions,
             dialect: postgresqlDialect,
           }),
         });

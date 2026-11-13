@@ -199,8 +199,11 @@ own.
 
 Each database that holds a read model with a field marked `.person()` keeps a copy of who is
 restricted, `<prefix>restricted_persons`, which the runtime writes from the stream as a projection
-does, so a read model in a database of its own filters the same way. `catchUpReadModels({ through
-})` of a `restrict`, `unrestrict` or `forget` waits for it.
+does, so a read model in a database of its own filters the same way, and the position of the last
+event of each person it wrote, `<prefix>restricted_positions`: the copy only goes forward, so
+reading the stream again from the start, as happens when a read model whose name sorts first is
+added and takes the copy over, never shows a restricted person's rows on the way.
+`catchUpReadModels({ through })` of a `restrict`, `unrestrict` or `forget` waits for it.
 
 The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
 any other module or directory the projections and queries share, which the generator leaves

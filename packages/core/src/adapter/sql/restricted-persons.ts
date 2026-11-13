@@ -15,9 +15,10 @@ import { createSqlTable, type SqlCondition, type SqlExecutor } from "./sql-table
 export interface CreateSqlRestrictedPersonsStoreArgs {
   readonly db: SqlExecutor;
   /**
-   * Already quoted.
+   * Already quoted, as `positions`.
    */
   readonly table: string;
+  readonly positions: string;
   readonly dialect: Pick<SqlDialect, "placeholder">;
 }
 
@@ -32,6 +33,7 @@ export interface CreateSqlRestrictedPersonsStoreFunction {
 export const createSqlRestrictedPersonsStore: CreateSqlRestrictedPersonsStoreFunction = ({
   db,
   table,
+  positions,
   dialect,
 }) => {
   const p = dialect.placeholder;
@@ -41,6 +43,13 @@ export const createSqlRestrictedPersonsStore: CreateSqlRestrictedPersonsStoreFun
       [person, source, category],
     );
   return {
+    advance: async (person, position) =>
+      (
+        await db.all(
+          `INSERT INTO ${positions} AS "held" ("person", "position") VALUES (${p(1)}, ${p(2)}) ON CONFLICT ("person") DO UPDATE SET "position" = excluded."position" WHERE "held"."position" < excluded."position" RETURNING "person"`,
+          [person, position],
+        )
+      ).length > 0,
     request: async (person, restrictions) => {
       await db.run(`DELETE FROM ${table} WHERE "person" = ${p(1)} AND "source" <> ${p(2)}`, [
         person,

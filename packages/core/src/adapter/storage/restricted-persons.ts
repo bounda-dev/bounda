@@ -32,6 +32,12 @@ export interface RestrictedPerson {
  */
 export interface RestrictedPersonsStore {
   /**
+   * Moves the person to the event at `position`, `false` when one at or after it was written
+   * already: the copy only goes forward, so a subscriber reading the stream again from an
+   * earlier point, under a new name or after a reset, never takes back a later change.
+   */
+  advance(person: string, position: number): Promise<boolean>;
+  /**
    * Replaces what the person asked to restrict with `restrictions`, leaving what a forgetting kept.
    */
   request(
