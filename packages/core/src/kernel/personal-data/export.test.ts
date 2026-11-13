@@ -268,6 +268,7 @@ describe("exportPersonalData", () => {
       personId: "c-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
       categories: exportedCategories,
+      restrictions: [],
       events: [
         {
           id: "customer-c-1-1",
@@ -279,6 +280,7 @@ describe("exportPersonalData", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { email: "ana@example.com" },
           categories: { email: "default" },
+          restricted: [],
         },
         {
           id: "order-o-1-1",
@@ -290,6 +292,7 @@ describe("exportPersonalData", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { note: "ring twice" },
           categories: { note: "invoices" },
+          restricted: [],
         },
         {
           id: "order-o-2-1",
@@ -301,6 +304,7 @@ describe("exportPersonalData", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
           data: {},
           categories: {},
+          restricted: [],
         },
         {
           id: "order-o-3-1",
@@ -312,6 +316,7 @@ describe("exportPersonalData", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
           data: { note: "leave at door" },
           categories: { note: "invoices" },
+          restricted: [],
         },
         {
           id: "customer-c-1-3",
@@ -323,6 +328,7 @@ describe("exportPersonalData", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
           data: {},
           categories: {},
+          restricted: [],
         },
       ],
       scheduledCommands: [],
@@ -423,6 +429,7 @@ describe("exportPersonalData", () => {
         executeAt: "2026-01-02T00:00:00.000Z",
         data: { email: "ana@example.com" },
         categories: { email: "default" },
+        restricted: [],
       },
     ]);
     expect(exported.deadLetters).toStrictEqual([
@@ -434,8 +441,16 @@ describe("exportPersonalData", () => {
         errorStack: "Error: no mailbox for ana@example.com\n    at handler",
         data: { email: "ana@example.com" },
         categories: { email: "default" },
+        restricted: [],
       },
-      { id: "dl-3", kind: "scheduled", handler: "NudgeCustomer", data: {}, categories: {} },
+      {
+        id: "dl-3",
+        kind: "scheduled",
+        handler: "NudgeCustomer",
+        data: {},
+        categories: {},
+        restricted: [],
+      },
       {
         id: "dl-4",
         kind: "policy",
@@ -444,9 +459,73 @@ describe("exportPersonalData", () => {
         errorStack: "Error: ana@example.com bounced\n    at handler",
         data: {},
         categories: {},
+        restricted: [],
       },
     ]);
     expect(JSON.stringify(exported)).not.toContain("bo@example.com");
+
+    // Restricted, the same records come out, saying what of them the restriction covers.
+    await storage.persons.restrict("c-1", {
+      ground: "objection-pending",
+      categories: ["default"],
+      since: new Date("2026-01-03T00:00:00.000Z"),
+    });
+    const restricted = await exportOf("c-1");
+    expect(restricted.restrictions).toEqual([
+      { ground: "objection-pending", categories: ["default"], since: "2026-01-03T00:00:00.000Z" },
+    ]);
+    expect(restricted.scheduledCommands[0]?.restricted).toEqual(["email"]);
+    expect(restricted.deadLetters.map(({ id, restricted: covered }) => [id, covered])).toEqual([
+      ["dl-1", ["email", "errorMessage", "errorStack"]],
+      ["dl-3", []],
+      ["dl-4", ["errorMessage", "errorStack"]],
+    ]);
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-5"),
+      ...(await failure("c-1", "no stack")),
+      errorStack: undefined,
+      firstFailedAt: "2026-01-01T00:03:00.000Z",
+      person: "c-1",
+    } as never);
+    expect((await exportOf("c-1")).deadLetters.at(-1)?.restricted).toEqual(["errorMessage"]);
+  });
+
+  it("hands the person the last failures about them, marking their text while a restriction holds", async () => {
+    const { exportOf, storage, failure } = await setup();
+    const sealed = await failure("c-1", "cannot index ana@example.com");
+    for (const [subscriber, withStack] of [
+      ["projection:a", true],
+      ["projection:b", false],
+    ] as const) {
+      await storage.subscriberFailures.record({
+        subscriber,
+        position: 1,
+        eventId: `e-${subscriber}`,
+        eventType: "CustomerRegistered",
+        person: "c-1",
+        errorName: "Error",
+        errorMessage: sealed.errorMessage,
+        ...(withStack ? { errorStack: sealed.errorStack } : {}),
+        failedAt: "2026-01-01T00:00:00.000Z",
+      } as never);
+    }
+    expect((await exportOf("c-1")).subscriberFailures.map(({ restricted }) => restricted)).toEqual([
+      [],
+      [],
+    ]);
+    await storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date("2026-01-03T00:00:00.000Z"),
+    });
+    const exported = await exportOf("c-1");
+    expect(exported.subscriberFailures).toEqual([
+      expect.objectContaining({
+        subscriber: "projection:a",
+        restricted: ["errorMessage", "errorStack"],
+      }),
+      expect.objectContaining({ subscriber: "projection:b", restricted: ["errorMessage"] }),
+    ]);
   });
 
   it("includes the rows of every read model with a person field, page by page, with their key and marked fields only", async () => {
@@ -480,17 +559,32 @@ describe("exportPersonalData", () => {
     const exported = await exportOf("c-1");
     expect(exported.readModels).toStrictEqual({
       customerDirectory: [
-        { key: "c-1", data: { email: "ana@example.com" }, categories: { email: "default" } },
+        {
+          key: "c-1",
+          data: { email: "ana@example.com" },
+          categories: { email: "default" },
+          restricted: [],
+        },
       ],
       orderNotes: [
-        { key: "o-1", data: { note: "ring twice" }, categories: { note: "invoices" } },
-        { key: "o-3", data: { note: "leave at door" }, categories: { note: "invoices" } },
-        { key: "o-4", data: {}, categories: {} },
+        {
+          key: "o-1",
+          data: { note: "ring twice" },
+          categories: { note: "invoices" },
+          restricted: [],
+        },
+        {
+          key: "o-3",
+          data: { note: "leave at door" },
+          categories: { note: "invoices" },
+          restricted: [],
+        },
+        { key: "o-4", data: {}, categories: {}, restricted: [] },
       ],
       orderCustomers: [
-        { key: "o-1", data: {}, categories: {} },
-        { key: "o-3", data: {}, categories: {} },
-        { key: "o-4", data: {}, categories: {} },
+        { key: "o-1", data: {}, categories: {}, restricted: [] },
+        { key: "o-3", data: {}, categories: {}, restricted: [] },
+        { key: "o-4", data: {}, categories: {}, restricted: [] },
       ],
     });
     expect(await exportOf("c-1", 100)).toEqual(exported);
@@ -615,6 +709,7 @@ describe("exportPersonalData", () => {
         errorMessage: null,
         data: {},
         categories: {},
+        restricted: [],
       },
     ]);
     expect(exported.scheduledCommands).toEqual([
@@ -624,6 +719,7 @@ describe("exportPersonalData", () => {
         executeAt: "2026-01-02T00:00:00.000Z",
         data: { email: null },
         categories: { email: "default" },
+        restricted: [],
       },
     ]);
     expect(JSON.stringify(exported)).not.toContain("ana@example.com");

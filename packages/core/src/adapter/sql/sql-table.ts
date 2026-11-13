@@ -43,12 +43,23 @@ export const decodeRow: DecodeRowFunction = <Row extends object>({
   return decoded as Row;
 };
 
+/**
+ * A condition every read of a table adds to its own, its placeholders numbered past `offset`.
+ */
+export interface SqlCondition {
+  (offset: number): { readonly sql: string; readonly params: readonly unknown[] };
+}
+
 export interface CreateSqlTableArgs {
   readonly readModel: string;
   readonly table: string;
   readonly fields: FieldsRecord;
   readonly dialect: SqlDialect;
   readonly executor: SqlExecutor;
+  /**
+   * Added to the condition of `findOne`, `findMany` and `count`; writes never see it.
+   */
+  readonly reads?: SqlCondition;
 }
 
 export interface CreateSqlTableFunction {
@@ -65,8 +76,18 @@ export const createSqlTable: CreateSqlTableFunction = <Row extends object>({
   fields,
   dialect,
   executor,
+  reads,
 }: CreateSqlTableArgs): Table<Row> => {
   const columns = columnsOf({ readModel, fields, dialect });
+  const readWhere = (where: Where<Row> | undefined) => {
+    const clause = buildWhere({ where, columns, dialect });
+    if (reads === undefined) return clause;
+    const added = reads(clause.params.length);
+    return {
+      sql: `${clause.sql === "" ? " WHERE" : `${clause.sql} AND`} ${added.sql}`,
+      params: [...clause.params, ...added.params],
+    };
+  };
   const primaryKey = columns.find((column) => column.primaryKey) as ColumnDefinition;
   const target = quoteIdentifier(table);
   const columnList = columns.map((column) => quoteIdentifier(column.name)).join(", ");
@@ -98,7 +119,7 @@ export const createSqlTable: CreateSqlTableFunction = <Row extends object>({
     readonly limit?: number;
     readonly offset?: number;
   }): Promise<readonly Row[]> => {
-    const where = buildWhere({ where: args.where, columns, dialect });
+    const where = readWhere(args.where);
     const order = buildOrderBy({ orderBy: args.orderBy, columns });
     const limit = buildLimit({
       limit: args.limit,
@@ -138,7 +159,7 @@ export const createSqlTable: CreateSqlTableFunction = <Row extends object>({
     findOne: async (where) => (await select({ where, limit: 1 }))[0] ?? null,
     findMany: (args = {}) => select(args),
     count: async (where) => {
-      const clause = buildWhere({ where, columns, dialect });
+      const clause = readWhere(where);
       const [row] = await executor.all(
         `SELECT COUNT(*) AS count FROM ${target}${clause.sql}`,
         clause.params,

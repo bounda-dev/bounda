@@ -105,8 +105,10 @@ key, and each category is forgotten on its own:
 
 A category whose basis is `legal-obligation` outlives a `forget` while its retention, counted from
 the person's last activity, has not run out: the law that requires the data outweighs the request
-to erase it (article 17(3)(b)). Its key is kept, restricted, and no longer in force: what it sealed
-still opens, for the export and for the reads the law needs, but nothing new is sealed under it,
+to erase it (article 17(3)(b)). Its key is kept, [restricted](#restricting-processing), and no
+longer in force: what it sealed still opens for the export, for a query that reads on
+`legal-obligation` and for work that names that basis, while a command, a policy or a process that
+names none reads it as `null`, as if forgotten; nothing new is sealed under it,
 no snapshot or remembered rejection holds its data, and the scheduled commands and dead letters
 that held it go with the rest. The key's last activity is fixed at the forgetting, so a person who
 comes back extends nothing kept from before: what they write afterwards gets a new key in force,
@@ -400,31 +402,39 @@ person, for them to take away, as the right of access and the right to portabili
     profile: { basis: "contract", retention: "30d", restrictedUntil: null },
     invoices: { basis: "legal-obligation", retention: "6y", restrictedUntil: null },
   },
+  restrictions: [
+    { ground: "accuracy-contested", categories: ["invoices"], since: "2026-02-20T09:00:00.000Z" },
+  ],
   events: [
     { id, type: "CustomerRegistered", aggregateType: "customer", aggregateId: "c-42",
       version: 1, position: 17, timestamp, data: { email: "ana@example.com" },
-      categories: { email: "default" } },
+      categories: { email: "default" }, restricted: [] },
     { id, type: "OrderPlaced", aggregateType: "order", aggregateId: "o-9",
       version: 1, position: 40, timestamp,
       data: { billingAddress: "1 Main St", deliveryNote: "ring twice" },
-      categories: { billingAddress: "invoices", deliveryNote: "profile" } },
+      categories: { billingAddress: "invoices", deliveryNote: "profile" },
+      restricted: ["billingAddress"] },
   ],
   scheduledCommands: [
-    { commandId, type: "RemindCustomer", executeAt, data: { email }, categories: { email: "default" } },
+    { commandId, type: "RemindCustomer", executeAt, data: { email },
+      categories: { email: "default" }, restricted: [] },
   ],
   deadLetters: [
     { id, kind: "policy", handler: "customer.welcomeOnCustomerRegistered",
-      errorMessage: "no mailbox for ana@example.com", errorStack, data: {}, categories: {} },
+      errorMessage: "no mailbox for ana@example.com", errorStack, data: {}, categories: {},
+      restricted: ["errorMessage", "errorStack"] },
   ],
   subscriberFailures: [
     { subscriber: "projection:customerDirectory", eventId, eventType: "CustomerRegistered",
-      errorMessage: "cannot index ana@example.com", errorStack },
+      errorMessage: "cannot index ana@example.com", errorStack,
+      restricted: ["errorMessage", "errorStack"] },
   ],
   readModels: {
     customerDirectory: [
-      { key: "c-42", data: { email: "ana@example.com" }, categories: { email: "default" } },
+      { key: "c-42", data: { email: "ana@example.com" }, categories: { email: "default" },
+        restricted: [] },
     ],
-    orderSummary: [{ key: "o-9", data: {}, categories: {} }],
+    orderSummary: [{ key: "o-9", data: {}, categories: {}, restricted: [] }],
   },
 }
 ```
@@ -434,6 +444,15 @@ processed, its `basis`, `null` for the default category, which declares none; ho
 after their last activity, its `retention`, `null` when nothing forgets it for inactivity; and,
 for a category a legal obligation kept past a forgetting, when what was kept goes,
 `restrictedUntil`. Every record lists the category of each field of its `data` in `categories`.
+
+`restrictions` are the [restrictions](#restricting-processing) the person asked for and has not had
+lifted, one per ground, with the categories each covers, `null` for the person as a whole, and
+since when; a lift announced is among `events`, as `ProcessingRestrictionLiftAnnounced` with
+`liftsAt`. Restricted data is still in the export, since the right of access holds: every record
+says in `restricted` what of it a restriction covers, the fields of `data` of a restricted
+category, or kept under a legal obligation, or every one for a person restricted as a whole, and
+`errorMessage` and `errorStack` while any restriction holds, since an error's text may quote any
+of their data.
 
 `events` are every event that names the person, by its field marked `person` or its aggregate's
 id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
@@ -542,10 +561,13 @@ person's data in the clear records it, once per call:
 | `deadLetters.get`, `retry`, `discard` | those the letter names | `{ letter }`, its id |
 | `subscriberFailures.list` | those the failures' events name | `{ failures }`, how many |
 | `subscriberFailures.get` | the one the failure's event names | `{ subscriber }`, its name |
-| a query of a read model with fields marked `.personal()` | those the `person` field names in the rows the query read | `{ query, readModel }` |
+| a query of a read model with fields marked `.personal()`, or of one with a field marked `.person()` that names `includeRestricted` | those the `person` field names in the rows the query read | `{ query, readModel }` |
+| `command`, `policy`, `process` | the restricted persons whose data it read on its [basis](#processing-restricted-data-anyway) | `{ handler }`, the command's type or the policy's or process's key |
 
-Each record is `{ operation, actor, persons, personCount, at, outcome, detail }`, and a query's
-adds `unattributed`: `actor` is the client's, from
+Each record is `{ operation, actor, persons, personCount, at, outcome, restricted, detail }`, and a
+query's adds `unattributed`. `restricted` is `{ basis, persons, personCount }` for a call that read
+restricted data on a basis it named, `includeRestricted` or `processRestricted` or a module's
+`restricted`, the persons whose restricted data it opened, and `null` for every other: `actor` is the client's, from
 [`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names
 nobody; `persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of
 them, with `personCount` saying how many there were in all, so a query that lists every customer
@@ -616,67 +638,174 @@ typed with `PersonalDataForgottenEvent`.
 
 ## Restricting processing
 
-A person may ask that their data be kept but not processed for a while, the GDPR's restriction
-of processing, while a dispute about it is settled. `restrict` is on every `BoundaClient`, next
-to `forget`:
+A person may ask that their data be kept but not processed for a while: the GDPR's restriction of
+processing, article 18. `restrict` is on every `BoundaClient`, next to `forget`, and takes the
+ground of article 18(1) the restriction rests on:
 
 ```ts
-const restricted = await app.restrict("c-42");
+const restricted = await app.restrict("c-42", { ground: "accuracy-contested" });
 await app.catchUpReadModels({ through: restricted });
 ```
 
-In one transaction it writes the person's row in `bounda_persons` and appends
-`ProcessingRestricted` to the stream `bounda:<personId>`, and it resolves like a command, so
-`catchUpReadModels({ through })` waits for the read models that handle it, and the Durable Object
-and React Router wait for them themselves unless `consistency` is `"eventual"`. Restricting a
-person restricted already appends nothing and resolves without events. An empty id is refused
-with `ValidationError`.
+| Ground | Article 18(1) | When |
+| --- | --- | --- |
+| `accuracy-contested` | (a) | the person contests the accuracy of their data, while it is verified |
+| `unlawful-processing` | (b) | the processing was unlawful and the person asked to keep the data rather than erase it |
+| `legal-claims` | (c) | the app no longer needs the data and the person needs it for a legal claim |
+| `objection-pending` | (d) | the person objected under article 21(1), while the objection is weighed |
 
-From then on every command that touches the person is refused with
-[`ProcessingRestrictedError`](/reference/errors/) (`PROCESSING_RESTRICTED`, with the id in
-`personId`) before it runs, and before it is scheduled when it has a `delay`: a command whose
-payload names them with `person`, or whose aggregate is the person, that is when the command's
-payload or any event of the aggregate marks a field without `person`. A command that names them
-nowhere Bounda cannot tell is theirs, so mark the `person` field of every command that acts for
-someone. `app.commands` throws the refusal; nothing is recorded under an `idempotencyKey`, so the
-same request sent once the restriction is lifted runs. A command already running when `restrict`
-commits is refused all the same: the store checks, in the transaction that would write its
-events, that nobody they touch is restricted, so the two are ordered one before the other and its
-events are never stored after the restriction. Its events touch the person the command names and
-every person whose fields they seal, so a command for someone else whose events copy a restricted
-person's marked fields is refused too.
+Without `categories` the person is restricted as a whole; `restrict("c-42", { ground:
+"accuracy-contested", categories: ["contact"] })` restricts those [categories](#categories) alone,
+as when the person contests one kind of data. A person may hold several restrictions at once, one
+per ground, each with the categories it covers; restricting as a whole on a ground takes the place
+of the categories restricted on it. In one transaction `restrict` records the restriction and
+appends `ProcessingRestricted` to the stream `bounda:<personId>`, with the ground, the categories
+and every restriction the person has after it, ids and names alone, and it resolves like a
+command, so `catchUpReadModels({ through })` waits for the read models, and the Durable Object and
+React Router wait for them themselves unless `consistency` is `"eventual"`. A restriction that adds
+nothing appends nothing and resolves without events. An empty id, a ground the article does not
+name, or categories that are empty or that the app does not have are refused with
+`ValidationError`.
 
-A policy, process or scheduled command whose command is refused this way becomes a dead letter at
-once, as for any terminal error, with `errorCode: "PROCESSING_RESTRICTED"` and the person in
-`person`, even when the event it handled names nobody: a policy on `Invited`, an event of the
-newsletter, dispatching `registerCustomer` for the restricted customer. So does a step of a
-process instance whose [state names the person](#in-a-processs-state), before its handler runs,
-and the store refuses a lifecycle event that would encrypt their fields as it refuses a command's.
-A failed process parks what follows, as [it always does](/guides/dead-letters/#a-failed-process). Reading the person's
-data, `forget` and the export of their data stay allowed: a restriction is not an erasure.
+What a [forgetting kept under a legal obligation](#categories) is restricted too, without anyone
+asking: kept for the law alone, and for nothing else, until its retention ends.
 
-`unrestrict` lifts it:
+### What restricted means
+
+Restricted data is kept and nothing else, as article 18(2) asks. From the moment the restriction
+commits:
+
+- **Commands.** A command that touches a person restricted as a whole is refused with
+  [`ProcessingRestrictedError`](/reference/errors/) (`PROCESSING_RESTRICTED`, with the id in
+  `personId`) before it runs, and before it is scheduled when it has a `delay`: one whose payload
+  names them with `person`, or whose aggregate is the person. So is one whose aggregate's events
+  hold data the restriction covers, a field of a restricted category or anything of a person
+  restricted as a whole, whoever the command is for, before its handler runs, since the handler
+  could hand what it read to a port: an order of a restricted customer is not shipped to the
+  address they contest. The store checks again, in the transaction that would write the events,
+  that nobody they touch is restricted as a whole and that no field they seal is of a restricted
+  category, so a command running when `restrict` commits stores nothing it decided after. `app.commands`
+  throws the refusal; nothing is recorded under an `idempotencyKey`, so the same request sent once
+  the restriction is lifted runs.
+- **Reactions.** A policy whose event is about a person restricted as a whole, by its `person`
+  field or because its aggregate is the person, though it carries none of their data, or whose
+  event holds data a restriction covers, a step of a process whose event or [state](#in-a-processs-state) does, and a
+  scheduled command whose payload does, wait as a dead letter with `errorCode:
+  "PROCESSING_RESTRICTED"` and the person in `person`, before the handler runs. So does a reaction
+  whose command is refused, even when the event it handled names nobody: a policy on `Invited`,
+  an event of the newsletter, dispatching `registerCustomer` for the restricted customer. A policy
+  on the runtime's own events, `PersonalDataForgotten` and the restriction events, runs: they carry
+  ids alone, and telling those the data went to is what such a policy is for.
+- **Queries.** A query leaves out every row of a read model whose field marked
+  [`.person()`](#personal-data-in-read-models) names a person restricted as a whole, or restricted
+  in a category a field of the read model marked `.personal()` holds, or whose such category a
+  forgetting kept. `table` leaves them out in the statement itself, so a page and a count are cut
+  after; `client.get` and `client.all` drop them from what their SQL answers, and refuse, with
+  `ConfigurationError`, a row that holds a field marked `.personal()` without the one marked
+  `.person()`, whose person they cannot tell. Queries read who is restricted from a copy kept
+  beside the read models, written from the stream as a projection is, so a query right after
+  `restrict` may still read the rows until the copy catches up: `restrict` resolves like a
+  command, so `catchUpReadModels({ through })` waits for it. See
+  [Queries](/guides/read-models/#restricted-rows).
+- **Dead letters and subscriber failures.** `deadLetters.list` and `get` keep a letter that names a
+  restricted person sealed, its error text and fields reading as `null`, and say `restricted: true`;
+  so do `subscriberFailures.list` and `get`.
+- **What a forgetting kept.** A command, a policy or a process step reads a field opened under a
+  key a forgetting kept as `null`, as if forgotten: those keys are never lifted, so nothing waits
+  for them, and the business goes on with the rest. A query leaves the row out unless it reads on
+  `legal-obligation`.
+
+Projections keep storing, since storing is what a restriction keeps, and a rebuild replays every
+event. `forget` and the export stay allowed: a restriction is not an erasure, and the right of
+access holds. The export lists the person's `restrictions` and, on each record, the fields a
+restriction covers in `restricted`; see [Exporting a person's data](#exporting-a-persons-data).
+
+### Processing restricted data anyway
+
+Article 18(2) allows restricted data to be processed on the person's consent, for legal claims,
+to protect the rights of another person, or for an important public interest. Bounda never assumes
+one: the call names it, and the [access log](#who-opened-what) records it.
+
+| Basis | Opens |
+| --- | --- |
+| `consent`, `legal-claims`, `protection-of-rights`, `public-interest` | every restricted value, a restriction asked for or what a forgetting kept |
+| `legal-obligation` | what a forgetting kept under a legal obligation, never a restriction a person asked for |
+
+- A query reads restricted rows with `includeRestricted`: `app.queries.invoicesOf({ customerId },
+  { includeRestricted: "legal-obligation" })`. The queries its handler composes read on the same
+  basis unless they name their own. Its record says `restricted: { basis, persons, personCount }`,
+  the restricted persons whose rows it read.
+- A command runs on restricted data with `processRestricted`: `app.commands.correctAddress(payload,
+  { processRestricted: "consent" })`. Its events carry the basis in `metadata.restrictionBasis`, and
+  the access log records the restricted persons it read, as `operation: "command"`. It cannot be
+  combined with `delay`: a basis holds when it is given.
+- A policy or a process declares the basis it runs on: `export const restricted = "legal-claims";`
+  in the policy's module, or in the process's `index.ts`. Its runs on restricted data go ahead, the
+  commands it dispatches carry the basis as `processRestricted`, and each run that opened
+  restricted data is recorded as `operation: "policy"` or `"process"`. An unknown basis fails the
+  start with `ConfigurationError`.
+- `deadLetters.list(args, { includeRestricted })`, `deadLetters.get(id, { includeRestricted })` and
+  the same option of `subscriberFailures.list` and `get` open what a restriction keeps sealed.
+
+A basis is not a check that the processing is lawful: it says, on the record, why the code that
+names it believes it is.
+
+### Lifting a restriction
+
+Article 18(3) asks that the person be told before their restriction is lifted. `unrestrict` takes
+how long before:
 
 ```ts
-const lifted = await app.unrestrict("c-42");
+await app.unrestrict("c-42", { notice: "7d", ground: "accuracy-contested" });
 ```
 
-It clears the row, appends `ProcessingRestrictionLifted` the same way and schedules a run of the
-worker that retries, in order, every `failed` dead letter the restriction caused, each as
+With a duration, it appends `ProcessingRestrictionLiftAnnounced` to their stream, with the grounds
+and categories it covers and `liftsAt`, and schedules the lift that long after, per ground and
+category: a policy reacting to that event tells the person. Another announcement adds its own
+lifts beside those. A `restrict` on the same ground before then cancels every lift announced on
+it, and is appended even when the person is restricted on that ground already, since it is what
+calls the lift off. When it comes due, the worker lifts what still matches, as whoever announced it. With
+`notice: "given"`, for a person told already, it lifts at once. Without `ground` it lifts every
+ground, and with `categories` only those categories of restrictions of categories; categories of a
+person restricted as a whole on a ground it lifts are refused with `ValidationError`, as is a
+notice missing or not positive.
+
+A lift appends `ProcessingRestrictionLifted`, with the grounds and categories lifted and every
+restriction the person still has, and schedules a run of the worker that retries, in order, every
+`failed` dead letter the restriction caused, each as
 [`app.deadLetters.retry`](/guides/dead-letters/#retrying-and-discarding) would, so the policies
 run, the processes resume and the scheduled commands are dispatched, without an operator. A letter
 that fails again for good stays `failed`, as that failure's letter, for the operator; one that
 fails in a way worth retrying, a timeout or a store that does not answer, stays as it was and the
 run is retried with the [retry settings](/reference/configuration/#retry) of policies; one refused
-because the person is restricted again waits for the next lift. Lifting for a person
-not restricted appends nothing and resolves without events.
+because the person is still restricted waits for the next lift. Nothing to lift appends nothing
+and resolves without events.
 
-Handling the two events is optional. A read model may project them from
-`projections/bounda/processing-restricted.ts` and
-`projections/bounda/processing-restriction-lifted.ts`, to show the person as restricted where
-customer service looks, and a policy may react from
-`policies/bounda/<action>-on-processing-restricted.ts`, to tell the outside world. Both carry
-`{ personId }` and are typed `ProcessingRestrictedEvent` and `ProcessingRestrictionLiftedEvent`.
+The three events are the runtime's own: a read model may project them from
+`projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts` and
+`processing-restriction-lifted.ts`, to show the person as restricted where customer service looks,
+and a policy may react from `policies/bounda/<action>-on-processing-restricted.ts` and the others,
+to tell the person or those the data went to (article 19). They are typed
+`ProcessingRestrictedEvent`, `ProcessingRestrictionLiftAnnouncedEvent` and
+`ProcessingRestrictionLiftedEvent`.
+
+### Restrictions and restores
+
+With a [forget ledger](#backups), every change of a person's restrictions is in it before it
+commits, as a forgetting is: a restore of a copy taken before a restriction restricts the person
+again, and one taken before a lift lifts them again, each change with its id and time, in order.
+A change the ledger holds whose commit never happened is committed by the next reconciliation,
+unless a later change of the person's restrictions is in the store. Without a ledger, `bounda
+restored` and `restrict` again are how an operator puts them back.
+
+### From the command line
+
+```sh
+bounda restrict c-42 --ground accuracy-contested --category contact
+bounda unrestrict c-42 --notice 7d --ground accuracy-contested
+```
+
+See [the CLI reference](/reference/cli/#bounda-restrict).
 
 ## Retention
 
@@ -705,9 +834,10 @@ or its aggregate's id, as the [export](#exporting-a-persons-data) finds them. Th
 events on `bounda:<personId>` are not activity: restricting or lifting a restriction does not
 start the clock again, and neither does forgetting, which the runtime records instead. A person
 active again after being forgotten starts a new clock from that activity; their old events stay
-unreadable. A person whose processing is [restricted](#restricting-processing) is left alone
-while the restriction lasts, since keeping their data is what they asked for, and is forgotten
-once it is lifted if they are due by then.
+unreadable. A person with any [restriction](#restricting-processing) is left alone while it lasts,
+since keeping their data is what they asked for, and is forgotten once it is lifted if they are due
+by then; a category's own retention leaves alone only the keys of a restricted category, or of a
+person restricted as a whole.
 
 No timer is armed per person. A subscriber of the dispatcher, `retention`, follows the stream from
 its first event and records in `bounda_persons` when each person was last active and last
@@ -785,7 +915,7 @@ Activity is the person's, as for the app's retention: any event of the app's agg
 them, whatever category it carries, so a customer who keeps ordering keeps their profile. The sweep
 reads each category's keys by their last activity, recorded on every key the person holds in force
 by the same subscriber, `retention`, which runs whenever the app has a retention or declares a
-category; a person whose processing is restricted is left alone, and a key the sweep could not
+category; a key whose category is restricted, or whose person is as a whole, is left alone, and a key the sweep could not
 forget waits on its own row, as a person does. `runtime.personalData.retention` is the default
 category's retention, and forgets the person as a whole: every category but those a legal
 obligation keeps, after which each declared category has nothing left to forget but what was
@@ -1364,6 +1494,31 @@ Durable Object's storage, read from inside the object with `durableObjectAdapter
 the whole database, so point it only at a test's, and call it before `app.stop()`: an
 in-memory database is gone once the app stops. It works on every adapter: the in-memory one,
 SQLite, the Durable Object and PostgreSQL alike, each through its `inspect()`.
+
+`expectRestricted` checks the other right a person may exercise, the restriction of their
+processing: once they are restricted, that what the app hands out holds nothing the restriction
+covers.
+
+```ts
+import { createTestApp, expectRestricted } from "@bounda-dev/core/testing";
+
+await app.restrict("c-1", { ground: "accuracy-contested" });
+await app.catchUpReadModels();
+await expectRestricted(app, "c-1", {
+  places: {
+    "pro customers": await app.queries.customersOnPlan({ plan: "pro" }),
+    "mailer": mailer.sent,
+  },
+});
+```
+
+It exports the person, and looks for the value of every field the export marks `restricted`, and
+for the `values` the test adds, in the `places` the test passes, the results of its queries or
+what a test double of a port was sent, and in the app's dead letters and subscriber failures as
+`list` gives them. A value is matched as `expectForgotten` matches one. When it finds one, it
+rejects with `NotRestrictedError`, whose `found` holds `{ value, place, field }` for each and whose
+message says what to do. A person with no restriction, or none of whose values a restriction
+covers, rejects with an `Error` saying so.
 
 `app.runUntilIdle()` never moves a test's clock to a retention deadline, or every person the test
 created would be forgotten; a test reaches it by moving the clock itself:

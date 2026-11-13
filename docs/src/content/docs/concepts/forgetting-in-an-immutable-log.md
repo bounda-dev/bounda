@@ -74,14 +74,16 @@ same way, and its instance carries on once they read as `null`. `app.forget("c-4
 and appends `PersonalDataForgotten` to the person's own stream, and
 `app.exportPersonalData("c-42")` hands the person every marked field and every sealed error the
 store holds of them, and the rows of the read models that name them, for the right of access and
-the right to portability. `app.restrict("c-42")`
-keeps the data and refuses every command that touches the person until `unrestrict`, the GDPR's
-restriction of processing, and the reactions it refused run once it is lifted. With
+the right to portability. `app.restrict("c-42", { ground: "accuracy-contested" })`, the GDPR's
+restriction of processing, keeps the data and nothing else: commands that would read or write it
+are refused, reactions wait, queries leave the person's rows out, unless a call names the basis of
+article 18(2) it processes them on; `unrestrict` announces the lift so the person is told first,
+and the reactions that waited run once it comes. With
 `runtime.personalData.retention` the runtime forgets whoever no event has named for that long, the
 GDPR's storage limitation, and a process that calls `forget` at its timeout forgets someone once a
 purpose of the domain ends. The [guide](/guides/personal-data/) has the rest: the types a
 forgotten field takes, what read models have to do, what an export holds, who opened what, what
-a restriction refuses, how retention counts and where the keys live.
+what a restriction keeps back, how retention counts and where the keys live.
 
 ## What forgetting changes for the rest of the app
 

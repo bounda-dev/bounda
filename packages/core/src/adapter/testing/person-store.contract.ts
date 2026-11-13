@@ -11,6 +11,7 @@ export interface PersonStoreContractFunction {
 
 const since = new Date("2026-01-01T00:00:00.000Z");
 const later = new Date("2026-01-02T00:00:00.000Z");
+const latest = new Date("2026-01-03T00:00:00.000Z");
 const at = (day: number): string => new Date(Date.UTC(2026, 1, 1 + day)).toISOString();
 
 /**
@@ -27,13 +28,44 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
 
     it("knows nothing of a person it never met, and lifting changes nothing for them", async () => {
       expect(await store.get("c-1")).toBeNull();
-      expect(await store.unrestrict("c-1")).toBe(false);
+      expect(await store.restrictions("c-1")).toEqual([]);
+      expect(await store.unrestrict("c-1", { categories: null })).toEqual([]);
       expect(await store.get("c-1")).toBeNull();
     });
 
+    it("lists a person's rows oldest first, then by ground and category, the oldest their restrictedSince", async () => {
+      await store.restrict("c-1", {
+        ground: "objection-pending",
+        categories: ["marketing", "invoices"],
+        since: later,
+      });
+      await store.restrict("c-1", { ground: "legal-claims", categories: null, since: later });
+      await store.restrict("c-1", { ground: "accuracy-contested", categories: ["profile"], since });
+      expect(await store.restrictions("c-1")).toEqual([
+        { ground: "accuracy-contested", category: "profile", since: since.toISOString() },
+        { ground: "legal-claims", category: null, since: later.toISOString() },
+        { ground: "objection-pending", category: "invoices", since: later.toISOString() },
+        { ground: "objection-pending", category: "marketing", since: later.toISOString() },
+      ]);
+      expect((await store.get("c-1"))?.restrictedSince).toBe(since.toISOString());
+      expect(await store.unrestrict("c-1", { categories: ["contact"] })).toEqual([]);
+      expect(await store.restrictions("c-1")).toHaveLength(4);
+    });
+
     it("restricts a person once, keeping the first moment, and tells the second time apart", async () => {
-      expect(await store.restrict("c-1", since)).toBe(true);
-      expect(await store.restrict("c-1", later)).toBe(false);
+      expect(
+        await store.restrict("c-1", { ground: "accuracy-contested", categories: null, since }),
+      ).toBe(true);
+      expect(
+        await store.restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: later,
+        }),
+      ).toBe(false);
+      expect(await store.restrictions("c-1")).toEqual([
+        { ground: "accuracy-contested", category: null, since: since.toISOString() },
+      ]);
       expect(await store.get("c-1")).toEqual({
         person: "c-1",
         restrictedSince: "2026-01-01T00:00:00.000Z",
@@ -46,15 +78,121 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
     });
 
     it("lifts a restriction once, keeps the row, and restricts the person again from a new moment", async () => {
-      await store.restrict("c-1", since);
-      expect(await store.unrestrict("c-1")).toBe(true);
-      expect(await store.unrestrict("c-1")).toBe(false);
+      await store.restrict("c-1", { ground: "accuracy-contested", categories: null, since: since });
+      expect(await store.unrestrict("c-1", { categories: null })).toEqual(["accuracy-contested"]);
+      expect(await store.unrestrict("c-1", { categories: null })).toEqual([]);
       expect(await store.get("c-1")).toMatchObject({ person: "c-1", restrictedSince: null });
-      expect(await store.restrict("c-1", later)).toBe(true);
+      expect(
+        await store.restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: later,
+        }),
+      ).toBe(true);
       expect(await store.get("c-1")).toMatchObject({
         person: "c-1",
         restrictedSince: "2026-01-02T00:00:00.000Z",
       });
+    });
+
+    it("restricts categories on a ground, each once, and the person as a whole on it instead of them", async () => {
+      expect(
+        await store.restrict("c-1", {
+          ground: "objection-pending",
+          categories: ["marketing", "profile"],
+          since,
+        }),
+      ).toBe(true);
+      expect(
+        await store.restrict("c-1", {
+          ground: "objection-pending",
+          categories: ["profile"],
+          since: later,
+        }),
+      ).toBe(false);
+      expect(
+        await store.restrict("c-1", {
+          ground: "legal-claims",
+          categories: ["invoices"],
+          since: later,
+        }),
+      ).toBe(true);
+      expect(await store.restrictions("c-1")).toEqual([
+        { ground: "objection-pending", category: "marketing", since: since.toISOString() },
+        { ground: "objection-pending", category: "profile", since: since.toISOString() },
+        { ground: "legal-claims", category: "invoices", since: later.toISOString() },
+      ]);
+      expect(await store.get("c-1")).toMatchObject({ restrictedSince: since.toISOString() });
+      expect(
+        await store.restrict("c-1", {
+          ground: "objection-pending",
+          categories: null,
+          since: latest,
+        }),
+      ).toBe(true);
+      expect(
+        await store.restrict("c-1", {
+          ground: "objection-pending",
+          categories: ["contact"],
+          since: latest,
+        }),
+      ).toBe(false);
+      expect(await store.restrictions("c-1")).toEqual([
+        { ground: "legal-claims", category: "invoices", since: later.toISOString() },
+        { ground: "objection-pending", category: null, since: latest.toISOString() },
+      ]);
+      expect(await store.get("c-1")).toMatchObject({ restrictedSince: later.toISOString() });
+    });
+
+    it("lifts what matches a ground and categories, answering the grounds it lifted, and keeps the oldest left as the row's", async () => {
+      await store.restrict("c-1", {
+        ground: "accuracy-contested",
+        categories: ["marketing", "profile"],
+        since,
+      });
+      await store.restrict("c-1", { ground: "legal-claims", categories: null, since: later });
+      expect(
+        await store.unrestrict("c-1", { ground: "objection-pending", categories: null }),
+      ).toEqual([]);
+      expect(await store.unrestrict("c-1", { categories: ["profile", "contact"] })).toEqual([
+        "accuracy-contested",
+      ]);
+      expect(await store.restrictions("c-1")).toEqual([
+        { ground: "accuracy-contested", category: "marketing", since: since.toISOString() },
+        { ground: "legal-claims", category: null, since: later.toISOString() },
+      ]);
+      expect(await store.unrestrict("c-1", { categories: [] })).toEqual([]);
+      expect(
+        await store.unrestrict("c-1", { ground: "accuracy-contested", categories: null }),
+      ).toEqual(["accuracy-contested"]);
+      expect(await store.get("c-1")).toMatchObject({ restrictedSince: later.toISOString() });
+      expect(await store.unrestrict("c-1", { categories: null })).toEqual(["legal-claims"]);
+      expect(await store.get("c-1")).toMatchObject({ restrictedSince: null });
+      expect(await store.restrictions("c-1")).toEqual([]);
+    });
+
+    it("answers the grounds it lifted in their order, each once", async () => {
+      await store.restrict("c-1", { ground: "objection-pending", categories: ["profile"], since });
+      await store.restrict("c-1", {
+        ground: "legal-claims",
+        categories: ["profile", "invoices"],
+        since,
+      });
+      await store.restrict("c-1", { ground: "accuracy-contested", categories: null, since });
+      expect(await store.unrestrict("c-1", { categories: null })).toEqual([
+        "accuracy-contested",
+        "legal-claims",
+        "objection-pending",
+      ]);
+    });
+
+    it("keeps one person's restrictions apart from another's", async () => {
+      await store.restrict("c-1", { ground: "legal-claims", categories: null, since });
+      await store.restrict("c-2", { ground: "legal-claims", categories: ["invoices"], since });
+      expect(await store.unrestrict("c-2", { categories: null })).toEqual(["legal-claims"]);
+      expect(await store.restrictions("c-1")).toEqual([
+        { ground: "legal-claims", category: null, since: since.toISOString() },
+      ]);
     });
 
     it("records a person's activity and their forgetting, keeping the last activity when only a forget comes", async () => {
@@ -92,13 +230,13 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
     });
 
     it("keeps a restriction through a record, and a record through a restriction and its lift", async () => {
-      await store.restrict("c-1", since);
+      await store.restrict("c-1", { ground: "accuracy-contested", categories: null, since: since });
       await store.record({ person: "c-1", position: 2, lastActiveAt: at(1), forgottenAt: null });
       expect(await store.get("c-1")).toMatchObject({
         restrictedSince: since.toISOString(),
         lastActiveAt: at(1),
       });
-      await store.unrestrict("c-1");
+      await store.unrestrict("c-1", { categories: null });
       expect(await store.get("c-1")).toMatchObject({ restrictedSince: null, lastActiveAt: at(1) });
       await store.record({ person: "c-1", position: 1, lastActiveAt: at(0), forgottenAt: null });
       expect(await store.get("c-1")).toMatchObject({ lastActiveAt: at(1) });
@@ -142,13 +280,13 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
       await store.record({ person: "c-2", position: 2, lastActiveAt: at(1), forgottenAt: null });
       await store.record({ person: "c-2", position: 3, forgottenAt: at(2) });
       await store.record({ person: "c-3", position: 4, lastActiveAt: at(1), forgottenAt: null });
-      await store.restrict("c-3", since);
+      await store.restrict("c-3", { ground: "accuracy-contested", categories: null, since: since });
       await store.record({ person: "c-4", position: 5, forgottenAt: at(2) });
-      await store.restrict("c-5", since);
-      await store.restrict("c-6", since);
-      await store.unrestrict("c-6");
+      await store.restrict("c-5", { ground: "accuracy-contested", categories: null, since: since });
+      await store.restrict("c-6", { ground: "accuracy-contested", categories: null, since: since });
+      await store.unrestrict("c-6", { categories: null });
       expect((await store.listIdle({ limit: 10 })).map(({ person }) => person)).toEqual(["c-1"]);
-      await store.unrestrict("c-3");
+      await store.unrestrict("c-3", { categories: null });
       await store.record({ person: "c-2", position: 6, lastActiveAt: at(3), forgottenAt: null });
       expect((await store.listIdle({ limit: 10 })).map(({ person }) => person)).toEqual([
         "c-1",
@@ -190,7 +328,7 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
       await store.record({ person: "c-2", position: 2, lastActiveAt: at(2), forgottenAt: null });
       await store.record({ person: "c-3", position: 3, lastActiveAt: at(3), forgottenAt: null });
       await store.record({ person: "c-4", position: 4, lastActiveAt: at(1), forgottenAt: null });
-      await store.restrict("c-4", since);
+      await store.restrict("c-4", { ground: "accuracy-contested", categories: null, since: since });
       await store.hold("c-1", at(1), { until: at(5), attempts: 2 });
       await store.hold("c-2", at(2), { until: at(6), attempts: 1 });
       expect(await store.countIdle({})).toBe(3);
@@ -208,10 +346,10 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
       await store.record({ person: "c-2", position: 2, lastActiveAt: at(1), forgottenAt: null });
       await store.hold("c-1", at(1), { until: at(6), attempts: 1 });
       await store.hold("c-2", at(1), { until: at(5), attempts: 1 });
-      await store.restrict("c-2", since);
+      await store.restrict("c-2", { ground: "accuracy-contested", categories: null, since: since });
       expect(await store.get("c-2")).toMatchObject({ hold: { until: at(5), attempts: 1 } });
       expect(await store.nextHoldEnd(new Date(at(0)))).toEqual(new Date(at(6)));
-      await store.unrestrict("c-2");
+      await store.unrestrict("c-2", { categories: null });
       expect(await store.nextHoldEnd(new Date(at(0)))).toEqual(new Date(at(5)));
       await store.record({ person: "c-3", position: 3, lastActiveAt: at(1), forgottenAt: null });
       await store.hold("c-3", at(1), { until: at(7), attempts: 1 });
@@ -233,7 +371,9 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
 
     it("lets one of several writers restricting a person at once through", async () => {
       const changed = await Promise.all(
-        [since, later, later].map((moment) => store.restrict("c-1", moment)),
+        [since, later, later].map((moment) =>
+          store.restrict("c-1", { ground: "accuracy-contested", categories: null, since: moment }),
+        ),
       );
       expect(changed.filter(Boolean)).toHaveLength(1);
       expect((await store.get("c-1"))?.restrictedSince).not.toBeNull();

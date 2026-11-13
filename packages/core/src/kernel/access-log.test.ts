@@ -200,7 +200,12 @@ describe("the access log", () => {
     const exported = await app.as("operator-1").exportPersonalData("ana");
     expect(exported.readModels).toEqual({
       customerDirectory: [
-        { key: "ana", data: { email: "ana@example.com" }, categories: { email: "default" } },
+        {
+          key: "ana",
+          data: { email: "ana@example.com" },
+          categories: { email: "default" },
+          restricted: [],
+        },
       ],
       customerPlans: [],
     });
@@ -212,6 +217,7 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "ok",
+        restricted: null,
         detail: {
           events: 1,
           scheduledCommands: 0,
@@ -251,6 +257,7 @@ describe("the access log", () => {
         personCount: 2,
         at: AT,
         outcome: "ok",
+        restricted: null,
         detail: { letters: 2 },
       },
       {
@@ -260,6 +267,7 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "ok",
+        restricted: null,
         detail: { letter: first.id },
       },
       {
@@ -269,6 +277,7 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "failed",
+        restricted: null,
         detail: { letter: first.id },
       },
       {
@@ -278,6 +287,7 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "ok",
+        restricted: null,
         detail: { letter: second.id },
       },
     ]);
@@ -306,6 +316,7 @@ describe("the access log", () => {
         personCount: 2,
         at: AT,
         outcome: "ok",
+        restricted: null,
         unattributed: false,
         detail: { query: "customersOnPlan", readModel: "customerDirectory" },
       },
@@ -316,6 +327,7 @@ describe("the access log", () => {
         personCount: 0,
         at: AT,
         outcome: "ok",
+        restricted: null,
         unattributed: false,
         detail: { query: "customerCount", readModel: "customerDirectory" },
       },
@@ -326,6 +338,7 @@ describe("the access log", () => {
         personCount: 0,
         at: AT,
         outcome: "ok",
+        restricted: null,
         unattributed: false,
         detail: { query: "customersOnPlan", readModel: "customerDirectory" },
       },
@@ -349,6 +362,7 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "failed",
+        restricted: null,
         unattributed: false,
         detail: { query: "emailCheck", readModel: "customerDirectory" },
       },
@@ -368,6 +382,7 @@ describe("the access log", () => {
         persons: [],
         personCount: 0,
         outcome: "ok",
+        restricted: null,
         unattributed: true,
         detail: { query: "customersByDriver", readModel: "customerDirectory" },
       }),
@@ -410,6 +425,7 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "failed",
+        restricted: null,
         detail: null,
       },
     ]);
@@ -515,6 +531,7 @@ describe("the access log", () => {
           personCount: 1,
           at: AT,
           outcome: "ok",
+          restricted: null,
           unattributed: false,
           detail: { query: "customersOnPlan", readModel: "customerDirectory" },
         },

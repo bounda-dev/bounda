@@ -27,6 +27,11 @@ export interface MemoryTable<Row> extends Table<Row> {
    * The field of its primary key.
    */
   readonly key: string;
+  /**
+   * The table, its reads leaving out the rows `keep` refuses before a page is cut or counted, as a
+   * condition in SQL would; its writes are the table's.
+   */
+  keeping(keep: (row: Readonly<Record<string, unknown>>) => boolean): Table<Row>;
 }
 
 export interface CreateMemoryTableFunction {
@@ -127,9 +132,13 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
     rows.set(key, stored);
   };
 
-  const select = (args: FindManyArgs<Row> = {}): Row[] => {
+  const select = (
+    args: FindManyArgs<Row> = {},
+    keep: (stored: Stored) => boolean = () => true,
+  ): Row[] => {
     assertPage(args);
-    const selected = [...rows.values()].filter(matcher(args.where));
+    const matches = matcher(args.where);
+    const selected = [...rows.values()].filter((stored) => matches(stored) && keep(stored));
     if (args.orderBy !== undefined) {
       const { field, direction } = args.orderBy;
       const column = columnFor({ field, columns });
@@ -143,7 +152,7 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
       .map(decode);
   };
 
-  return {
+  const table: MemoryTable<Row> = {
     upsert: async (row) => write(encode(row)),
     insert: async (row) => {
       const stored = encode(row);
@@ -197,7 +206,17 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
         for (const [key, row] of saved) rows.set(key, row);
       };
     },
+    keeping: (keep) => ({
+      ...table,
+      findOne: async (where) => select({ where, limit: 1 }, keep)[0] ?? null,
+      findMany: async (args) => select(args, keep),
+      count: async (where) => {
+        const matches = matcher(where);
+        return [...rows.values()].filter((stored) => matches(stored) && keep(stored)).length;
+      },
+    }),
   };
+  return table;
 };
 
 export interface CreateMemoryReadClientFunction {

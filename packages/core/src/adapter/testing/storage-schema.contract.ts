@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigurationError, StorageSchemaTooNewError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import type { Adapter, Storage } from "../adapter.ts";
+import { storageTableNameFor } from "../sql/identifiers.ts";
 import { schemaMigrationsTableFor, schemaMigrationsTableStatement } from "../sql/migrations.ts";
 import { earlierRowsFor, expectEarlierRowsTakenIn } from "./earlier-rows.ts";
 import { EARLIER_SCHEMAS, type EarlierVersion, earlierTablesFor } from "./earlier-schemas.ts";
@@ -33,9 +34,11 @@ export interface StorageSchemaContractFunction {
 // What a new database holds: every migration of every scope the storage migrates, one row each.
 const LATEST = [
   { scope: "checkpoints", version: 1 },
+  { scope: "checkpoints", version: 2 },
   { scope: "storage", version: 1 },
   { scope: "storage", version: 2 },
   { scope: "storage", version: 3 },
+  { scope: "storage", version: 4 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -148,20 +151,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 3 },
-        { scope: "checkpoints", version: 0, latest: 1 },
-        { scope: "forget-ledger", version: 0, latest: 4 },
+        { scope: "storage", version: 0, latest: 4 },
+        { scope: "checkpoints", version: 0, latest: 2 },
+        { scope: "forget-ledger", version: 0, latest: 5 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 3 },
-        { scope: "checkpoints", version: 1, latest: 1 },
-        { scope: "forget-ledger", version: 0, latest: 4 },
+        { scope: "storage", version: 0, latest: 4 },
+        { scope: "checkpoints", version: 2, latest: 2 },
+        { scope: "forget-ledger", version: 0, latest: 5 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger"])).toEqual([
-        { scope: "storage", version: 3, latest: 3 },
-        { scope: "checkpoints", version: 1, latest: 1 },
-        { scope: "forget-ledger", version: 4, latest: 4 },
+        { scope: "storage", version: 4, latest: 4 },
+        { scope: "checkpoints", version: 2, latest: 2 },
+        { scope: "forget-ledger", version: 5, latest: 5 },
       ]);
       const shape = await shapeOf(target, dialect);
       await opened(target.adapter, async () => undefined);
@@ -184,7 +187,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(await target.adapter.schemaVersions()).toContainEqual({
         scope: "checkpoints",
         version: 999,
-        latest: 1,
+        latest: 2,
       });
     });
 
@@ -215,7 +218,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 3,
+        supported: 4,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -237,6 +240,87 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         ).toEqual(LATEST);
       });
     }
+
+    it("takes in the restrictions recorded before they had a ground, as of the person as a whole on the first ground of article 18(1)", async () => {
+      const target = await create();
+      await opened(target.adapter, async (storage) => {
+        await storage.persons.restrict("c-1", {
+          ground: "objection-pending",
+          categories: null,
+          since: new Date("2026-01-01T00:00:00.000Z"),
+        });
+        await storage.eventStore.append({
+          aggregateType: "bounda",
+          aggregateId: "c-1",
+          expectedVersion: 0,
+          events: (
+            ["ProcessingRestricted", "ProcessingRestrictionLifted", "ProcessingRestricted"] as const
+          ).map((type, index) => ({
+            id: `r-${index + 1}`,
+            aggregateType: "bounda",
+            aggregateId: "c-1",
+            version: index + 1,
+            type,
+            payload: { personId: "c-1" },
+            timestamp: `2026-01-0${index + 1}T00:00:00.000Z`,
+            metadata: {
+              correlationId: "c",
+              causationId: "c",
+              depth: 0,
+              schemaVersion: 1,
+              system: true,
+            },
+            person: "c-1",
+          })),
+        });
+      });
+      const shape = await shapeOf(target, dialect);
+      await target.execute(
+        `DROP TABLE "${storageTableNameFor({ prefix: target.prefix, table: "restrictions" })}"`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'storage' AND "version" = 4`,
+      );
+      await opened(target.adapter, async (storage) => {
+        expect(await storage.persons.restrictions("c-1")).toEqual([
+          { ground: "accuracy-contested", category: null, since: "2026-01-01T00:00:00.000Z" },
+        ]);
+        const events = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+        expect(events.map(({ payload }) => payload)).toEqual([
+          {
+            personId: "c-1",
+            ground: "accuracy-contested",
+            categories: null,
+            restrictions: [
+              {
+                ground: "accuracy-contested",
+                categories: null,
+                since: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+          {
+            personId: "c-1",
+            grounds: ["accuracy-contested"],
+            categories: null,
+            restrictions: [],
+          },
+          {
+            personId: "c-1",
+            ground: "accuracy-contested",
+            categories: null,
+            restrictions: [
+              {
+                ground: "accuracy-contested",
+                categories: null,
+                since: "2026-01-03T00:00:00.000Z",
+              },
+            ],
+          },
+        ]);
+      });
+      expect(await shapeOf(target, dialect)).toEqual(shape);
+    });
 
     it("takes in a database the current tables were created in before they were versioned", async () => {
       const target = await create();
@@ -317,6 +401,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 2 },
         { scope: "forget-ledger", version: 3 },
         { scope: "forget-ledger", version: 4 },
+        { scope: "forget-ledger", version: 5 },
       ]);
     });
 
@@ -330,6 +415,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       await readModel.close();
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual([
         { scope: "checkpoints", version: 1 },
+        { scope: "checkpoints", version: 2 },
       ]);
     });
   });

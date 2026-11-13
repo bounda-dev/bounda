@@ -27,6 +27,7 @@ const process: ProcessRuntime = {
   deadlineFields: [],
   deadlineHandlers: {},
   ports: {},
+  restricted: null,
   instanceOf: (event) => event.aggregateId,
 };
 

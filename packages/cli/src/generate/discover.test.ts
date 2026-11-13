@@ -306,7 +306,7 @@ describe("discoverProject on the order-app fixture", () => {
       "app/read/summary/projections/bounda/personal-data-lost.ts",
     ]);
     expect(await problemsOf(root)).toEqual([
-      'app/read/summary/projections/bounda/personal-data-lost.ts: "PersonalDataLost" is not an event the runtime emits; it emits PersonalDataForgotten, ProcessingRestricted, ProcessingRestrictionLifted',
+      'app/read/summary/projections/bounda/personal-data-lost.ts: "PersonalDataLost" is not an event the runtime emits; it emits PersonalDataForgotten, ProcessingRestricted, ProcessingRestrictionLiftAnnounced, ProcessingRestrictionLifted',
     ]);
     const valid = await project([
       "app/domain/order/order-placed.ts",

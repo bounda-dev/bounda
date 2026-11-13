@@ -26,6 +26,7 @@ export {
   forgetLedgerMarksStatement,
   forgetLedgerMarksTableFor,
   forgetLedgerReasonStatements,
+  forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
 } from "./forget-ledger.ts";
 export {
@@ -57,7 +58,7 @@ export {
   schemaMigrationsTableFor,
 } from "./migrations.ts";
 export type { CreateSqlPersonStoreArgs, CreateSqlPersonStoreFunction } from "./person-store.ts";
-export { createSqlPersonStore } from "./person-store.ts";
+export { createSqlPersonStore, WHOLE_PERSON } from "./person-store.ts";
 export type {
   CreateSqlPersonalKeyStoreArgs,
   CreateSqlPersonalKeyStoreFunction,
@@ -73,7 +74,20 @@ export {
   shadowTableStatements,
   swapTableStatements,
 } from "./read-model-schema.ts";
+export type {
+  CreateSqlRestrictedPersonsStoreArgs,
+  CreateSqlRestrictedPersonsStoreFunction,
+  CreateSqlRestrictedReadsArgs,
+  CreateSqlRestrictedReadsFunction,
+  RestrictedRowsConditionArgs,
+  RestrictedRowsConditionFunction,
+} from "./restricted-persons.ts";
+export {
+  createSqlRestrictedPersonsStore,
+  createSqlRestrictedReads,
+  restrictedRowsCondition,
+} from "./restricted-persons.ts";
 export { byExecuteAt, earliestDue } from "./scheduling.ts";
-export type { SqlExecutor } from "./sql-table.ts";
+export type { SqlCondition, SqlExecutor } from "./sql-table.ts";
 export { createSqlReadClient, createSqlTable } from "./sql-table.ts";
 export { createSqlSubscriberFailureStore } from "./subscriber-failure-store.ts";

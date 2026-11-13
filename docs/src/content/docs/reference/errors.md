@@ -60,12 +60,16 @@ dead letter with `errorType: "retriable_exhausted"`.
   another command or for the same command with another payload or `delay`. Nothing runs.
   `idempotencyKey`.
   See [idempotent commands](/guides/idempotent-commands/).
-- **`PROCESSING_RESTRICTED`** (`ProcessingRestrictedError`; terminal). A command touches a person
-  whose [processing is restricted](/guides/personal-data/#restricting-processing): the one its
-  payload names with `person`, or whose aggregate is the person, refused before it runs; or one
-  restricted while it ran, or whose fields its events seal, refused as its events are appended.
-  Nothing is stored and nothing is recorded. `personId`. A reaction's letter with this code is retried by the runtime once
-  `unrestrict` lifts the restriction.
+- **`PROCESSING_RESTRICTED`** (`ProcessingRestrictedError`; terminal). Work would process data a
+  [restriction](/guides/personal-data/#restricting-processing) covers, on no basis that opens it:
+  a command that touches a person restricted as a whole, the one its payload names with `person`
+  or whose aggregate is the person, or whose aggregate's events hold data a restriction covers,
+  refused before its handler runs; one restricted while it ran, or whose events seal a field of a
+  restricted category, refused as its events are appended; a policy, process step or scheduled
+  command on such data, before its handler runs. Nothing is stored and nothing is recorded.
+  `personId`. A reaction's letter with this code is retried by the runtime once `unrestrict` lifts
+  the restriction; `processRestricted`, or `restricted` in a policy or process, names the basis that
+  lets the work through.
 - **`CREATION_ORDER`** (`CreationOrderError`; terminal). A command returned events that do not fit
   whether its aggregate exists: the first event is not one that exports `begin`, or an event that
   only exports `begin` goes on an aggregate that exists. Nothing is stored.

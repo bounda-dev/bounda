@@ -164,7 +164,7 @@ describe("a Bounda Durable Object", () => {
   it("restricts a person's processing, refusing their commands, and lifts it, arming the alarm that retries what was refused", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada" });
-    const restricted = await store.restrict("ada");
+    const restricted = await store.restrict("ada", { ground: "accuracy-contested" });
     expect(restricted).toMatchObject({
       aggregateType: "bounda",
       aggregateId: "ada",
@@ -184,7 +184,7 @@ describe("a Bounda Durable Object", () => {
 
     // In one event of the object, so its alarm cannot run between the lift and the look.
     const lifted = await runInDurableObject(stub, async (instance, state) => ({
-      outcome: await instance.unrestrict("ada"),
+      outcome: await instance.unrestrict("ada", undefined, undefined, { notice: "given" }),
       alarm: await state.storage.getAlarm(),
     }));
     expect(lifted.outcome).toMatchObject({
@@ -529,8 +529,8 @@ describe("a Bounda Durable Object", () => {
     outage.projection = false;
     const status = await store.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 3, latest: 3 },
-      { database: "storage", scope: "checkpoints", version: 1, latest: 1 },
+      { database: "storage", scope: "storage", version: 4, latest: 4 },
+      { database: "storage", scope: "checkpoints", version: 2, latest: 2 },
     ]);
     expect(status.subscriberFailures).toContainEqual(
       expect.objectContaining({

@@ -180,8 +180,8 @@ describe("the actor", () => {
   it("is recorded on the events forget, restrict and unrestrict append", async () => {
     const { app, eventsOf } = await setUp();
     const officer = app.as("dpo-1");
-    await officer.restrict("p-1");
-    await officer.unrestrict("p-1");
+    await officer.restrict("p-1", { ground: "accuracy-contested" });
+    await officer.unrestrict("p-1", { notice: "given" });
     await officer.forget("p-1");
     await app.forget("p-2");
 

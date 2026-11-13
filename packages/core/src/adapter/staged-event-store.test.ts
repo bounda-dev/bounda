@@ -227,4 +227,48 @@ describe("createStagedEventStore", () => {
     });
     expect(await staged.readOne({ ...order, eventId: "order-1-2" })).toBeNull();
   });
+
+  it("carries the keys sealed under and the basis of a stream's appends to its batch, no basis once two named different ones", async () => {
+    const { staged } = await setUp();
+    const event = (version: number) => pendingEvent({ aggregateId: "1", version });
+    await staged.append({
+      ...order,
+      expectedVersion: 1,
+      events: [event(2)],
+      seals: [held("c-1", "f-1"), held("c-1", "f-1")],
+      basis: "consent",
+    });
+    await staged.append({ ...order, expectedVersion: 2, events: [event(3)], basis: "consent" });
+    await staged.append({
+      ...customer,
+      expectedVersion: 1,
+      events: [pendingEvent({ aggregateType: "customer", aggregateId: "1", version: 2 })],
+      basis: "legal-claims",
+    });
+    await staged.append({
+      ...customer,
+      expectedVersion: 2,
+      events: [pendingEvent({ aggregateType: "customer", aggregateId: "1", version: 3 })],
+    });
+    const [orders, customers] = staged.batches();
+    expect(orders).toMatchObject({ seals: [held("c-1", "f-1")], basis: "consent" });
+    expect(customers).toMatchObject({ seals: [] });
+    expect(customers).not.toHaveProperty("basis");
+  });
+
+  it("names no basis for a stream whose first append named none, whatever the later ones say", async () => {
+    const { staged } = await setUp();
+    await staged.append({
+      ...order,
+      expectedVersion: 1,
+      events: [pendingEvent({ aggregateId: "1", version: 2 })],
+    });
+    await staged.append({
+      ...order,
+      expectedVersion: 2,
+      events: [pendingEvent({ aggregateId: "1", version: 3 })],
+      basis: "consent",
+    });
+    expect(staged.batches()[0]).not.toHaveProperty("basis");
+  });
 });

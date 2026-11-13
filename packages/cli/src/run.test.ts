@@ -775,6 +775,84 @@ describe("bounda forgotten and bounda forget", () => {
     ]);
   });
 
+  it("restricts a person on a ground, and lifts the restriction at once or announces it", async () => {
+    const memberId = `m-${Date.now()}-restricted`;
+    const app = await open();
+    await app.commands.join({ memberId, name: "Ivo" });
+    await app.stop();
+
+    const restricted = await cli(
+      ["restrict", memberId, "--ground", "accuracy-contested", "--actor", "operator-1"],
+      fixture,
+    );
+    expect(restricted).toMatchObject({
+      code: EXIT_OK,
+      stdout: `restricted ${memberId} on accuracy-contested\n`,
+    });
+    const again = await cli(["restrict", memberId, "--ground", "accuracy-contested"], fixture);
+    expect(again.stdout).toBe(`${memberId} was restricted on accuracy-contested already\n`);
+    const unknown = await cli(["restrict", memberId, "--ground", "annoyed"], fixture);
+    expect(unknown.code).not.toBe(EXIT_OK);
+    expect(unknown.stderr).toContain("accuracy-contested");
+    const ungrounded = await cli(["restrict", memberId], fixture);
+    expect(ungrounded.code).not.toBe(EXIT_OK);
+    const category = await cli(
+      ["restrict", memberId, "--ground", "legal-claims", "--category", "default"],
+      fixture,
+    );
+    expect(category.stdout).toBe(`restricted default of ${memberId} on legal-claims\n`);
+
+    const announced = await cli(
+      ["unrestrict", memberId, "--notice", "7d", "--ground", "legal-claims"],
+      fixture,
+    );
+    expect(announced).toMatchObject({
+      code: EXIT_OK,
+      stdout: `announced the lift of the restriction of ${memberId}, lifted 7d from now\n`,
+    });
+    const unnoticed = await cli(["unrestrict", memberId], fixture);
+    expect(unnoticed.code).not.toBe(EXIT_OK);
+    const badNotice = await cli(["unrestrict", memberId, "--notice", "soon"], fixture);
+    expect(badNotice.code).not.toBe(EXIT_OK);
+    expect(badNotice.stderr).toContain('"given"');
+    const noNotice = await cli(["unrestrict", memberId, "--notice", "0s"], fixture);
+    expect(noNotice.code).not.toBe(EXIT_OK);
+    const lifted = await cli(
+      ["unrestrict", memberId, "--notice", " given ", "--ground", "accuracy-contested"],
+      fixture,
+    );
+    expect(lifted.stdout).toBe(`lifted the restriction of ${memberId}\n`);
+    const nothing = await cli(
+      ["unrestrict", memberId, "--notice", "given", "--ground", "accuracy-contested"],
+      fixture,
+    );
+    expect(nothing.stdout).toBe(`${memberId} has no restriction to lift on accuracy-contested\n`);
+    const categoryLifted = await cli(
+      ["unrestrict", memberId, "--notice", "given", "--category", "default"],
+      fixture,
+    );
+    expect(categoryLifted.stdout).toBe(`lifted the restriction of default of ${memberId}\n`);
+    const none = await cli(["unrestrict", memberId, "--notice", "given"], fixture);
+    expect(none.stdout).toBe(`${memberId} has no restriction to lift\n`);
+
+    const after = await open();
+    const changes = (await after.events.read({ limit: 1_000 }))
+      .filter((event) => event.aggregateType === "bounda" && event.aggregateId === memberId)
+      .map(({ type, metadata, payload }) => [
+        type,
+        metadata.actor,
+        (payload as { categories: readonly string[] | null }).categories,
+      ]);
+    await after.stop();
+    expect(changes).toEqual([
+      ["ProcessingRestricted", "operator-1", null],
+      ["ProcessingRestricted", undefined, ["default"]],
+      ["ProcessingRestrictionLiftAnnounced", undefined, null],
+      ["ProcessingRestrictionLifted", undefined, null],
+      ["ProcessingRestrictionLifted", undefined, ["default"]],
+    ]);
+  });
+
   it("refuses a forget that names no one, or both a person and a list", async () => {
     const neither = await cli(["forget"], fixture);
     expect(neither.code).toBe(EXIT_CONVENTION);

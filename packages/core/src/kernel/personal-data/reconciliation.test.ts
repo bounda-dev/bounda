@@ -12,7 +12,7 @@ import { ForgetLedgerUnavailableError, ValidationError } from "../../contracts/e
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import { withoutLedger } from "../test-support.ts";
+import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { boundForgetLedger } from "./forget-ledger.ts";
 import { HOLD_MS } from "./hold.ts";
@@ -1227,5 +1227,58 @@ describe("the reconciliation's status and restores", () => {
         { error: expect.objectContaining({ message: "down" }) },
       ],
     ]);
+  });
+});
+
+describe("the reconciliation of changes of restrictions", () => {
+  const restricted = (
+    personId: string,
+    eventId: string,
+    forgottenAt: string,
+    restrictions: readonly { ground: "legal-claims"; categories: null; since: string }[],
+  ): ForgetLedgerEntry => ({
+    personId,
+    eventId,
+    forgottenAt,
+    categories: null,
+    reason: "requested",
+    restriction: {
+      type: "ProcessingRestricted",
+      payload: { personId, ground: "legal-claims", categories: null, restrictions },
+    },
+  });
+
+  it("commits again a change the store lost, with its id and time, counts it, and logs it", async () => {
+    const at = new Date(NOW.getTime() - 120_000).toISOString();
+    const { logger, entries: logs } = createRecordingLogger();
+    const { storage, reconciliation } = await setUp({
+      entries: [
+        restricted("ana", "019a6b1e-0000-7000-8000-0000000000r1", at, [
+          { ground: "legal-claims", categories: null, since: at },
+        ]),
+      ],
+      logger,
+    });
+    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    expect(await storage.persons.restrictions("ana")).toEqual([
+      { ground: "legal-claims", category: null, since: at },
+    ]);
+    const [event] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(event).toMatchObject({
+      id: "019a6b1e-0000-7000-8000-0000000000r1",
+      type: "ProcessingRestricted",
+      timestamp: at,
+      aggregateId: "ana",
+    });
+    expect(logs).toContainEqual({
+      level: "info",
+      message: "restriction committed again from the forget ledger",
+      fields: {
+        personId: "ana",
+        eventId: "019a6b1e-0000-7000-8000-0000000000r1",
+        eventType: "ProcessingRestricted",
+      },
+    });
+    expect(await reconciliation.reconcile(new Date(NOW.getTime() + EVERY))).toBe(0);
   });
 });

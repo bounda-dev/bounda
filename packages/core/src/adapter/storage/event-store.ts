@@ -1,4 +1,5 @@
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { KeyedPerson } from "./personal-key-store.ts";
 
 /**
@@ -26,9 +27,20 @@ export interface AppendArgs {
   readonly persons?: readonly KeyedPerson[];
   /**
    * The people the events touch: the store refuses the append with `ProcessingRestrictedError`
-   * while the processing of one of them is restricted, checked the same way.
+   * while one of them is restricted as a whole, checked the same way.
    */
   readonly touches?: readonly string[];
+  /**
+   * The keys the events seal new data under: the store refuses the append with
+   * `ProcessingRestrictedError` while the key's category, or its person as a whole, is
+   * restricted, checked the same way. Each is also checked as `persons` is.
+   */
+  readonly seals?: readonly KeyedPerson[];
+  /**
+   * The basis the command processes restricted data on, for the runtime's own event store, which
+   * checks no restriction it opens; a store ignores it.
+   */
+  readonly basis?: RestrictionBasis;
 }
 
 export interface AppendResult {

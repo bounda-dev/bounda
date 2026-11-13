@@ -310,7 +310,11 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
         since: "2026-01-04T00:00:00.000Z",
         lastActiveAt: "2026-01-02T00:00:00.000Z",
       });
-      await persons.restrict("c-6", new Date("2026-01-05T00:00:00.000Z"));
+      await persons.restrict("c-6", {
+        ground: "accuracy-contested",
+        categories: null,
+        since: new Date("2026-01-05T00:00:00.000Z"),
+      });
       const due = (person: string, lastActiveAt: string, retainedSince: string | null = null) => ({
         person,
         category: "profile",
@@ -338,6 +342,22 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
         due("c-2", "2026-01-01T00:00:00.000Z"),
       ]);
       expect(await store.listDue({ category: "invoices", limit: 10 })).toEqual([]);
+      // A restriction of another category leaves this one due; one of this category does not.
+      await persons.restrict("c-2", {
+        ground: "legal-claims",
+        categories: ["invoices"],
+        since: new Date("2026-01-05T00:00:00.000Z"),
+      });
+      expect((await store.listDue({ category: "profile", limit: 10 }))[0]?.person).toBe("c-2");
+      await persons.restrict("c-2", {
+        ground: "legal-claims",
+        categories: ["profile"],
+        since: new Date("2026-01-05T00:00:00.000Z"),
+      });
+      expect(
+        (await store.listDue({ category: "profile", limit: 10 })).map(({ person }) => person),
+      ).toEqual(["c-3", "c-1"]);
+      expect(await store.countDue({ category: "profile" })).toBe(2);
     });
 
     it("holds a due key only while it records the activity it was listed with, and touching it again clears the hold", async () => {
@@ -383,7 +403,11 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       await kept("c-3", "orders", "2026-02-01T00:00:00.000Z");
       await kept("c-4", "billing", "2026-02-01T00:00:00.000Z");
       await store.add("c-5", "billing", stored("5"));
-      await persons.restrict("c-4", new Date("2026-02-05T00:00:00.000Z"));
+      await persons.restrict("c-4", {
+        ground: "accuracy-contested",
+        categories: null,
+        since: new Date("2026-02-05T00:00:00.000Z"),
+      });
       const listed = await store.listRetained({ except: ["invoices"], limit: 10 });
       expect(listed.map(({ person }) => person)).toEqual(["c-3", "c-2"]);
       expect(listed[0]).toEqual({
@@ -430,7 +454,11 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
         since: "2026-02-01T00:00:00.000Z",
         lastActiveAt: "2026-01-01T00:00:00.000Z",
       });
-      await persons.restrict("c-4", new Date("2026-02-05T00:00:00.000Z"));
+      await persons.restrict("c-4", {
+        ground: "accuracy-contested",
+        categories: null,
+        since: new Date("2026-02-05T00:00:00.000Z"),
+      });
       const hold = { until: "2026-03-01T00:00:00.000Z", attempts: 1 };
       await store.holdDue("c-1", "f-1", "2026-01-01T00:00:00.000Z", hold);
       await store.holdDue("c-5", "f-5", "2026-01-01T00:00:00.000Z", hold);

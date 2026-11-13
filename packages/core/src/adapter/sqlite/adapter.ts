@@ -106,7 +106,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
   );
   const scopes: Readonly<Record<SchemaScopeName, SchemaScope>> = {
     storage: sqliteStorageScope(storageTablesFor(tablePrefix)),
-    checkpoints: sqliteCheckpointsScope(storageTablesFor(tablePrefix).checkpoints),
+    checkpoints: sqliteCheckpointsScope(storageTablesFor(tablePrefix)),
     "forget-ledger": sqliteForgetLedgerScope(ledgerTable),
   };
   const versionsOn = (db: SqlDatabase) =>
@@ -149,14 +149,14 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           db,
           isBusy,
           prefix: tablePrefix,
-          scopes: [sqliteStorageScope(tables), sqliteCheckpointsScope(tables.checkpoints)],
+          scopes: [sqliteStorageScope(tables), sqliteCheckpointsScope(tables)],
         });
         const storesOver = (database: SqlDatabase): StorageTransaction => ({
           eventStore: createSqliteEventStore({
             db: database,
             table: tables.events,
             personalKeys: tables.personalKeys,
-            persons: tables.persons,
+            restrictions: tables.restrictions,
           }),
           inboxLedger: createSqliteInboxLedger({ db: database, table: tables.inbox }),
           deadLetterStore: createSqliteDeadLetterStore({
@@ -179,11 +179,13 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             db: database,
             table: tables.personalKeys,
             persons: tables.persons,
+            restrictions: tables.restrictions,
             dialect: sqliteDialect,
           }),
           persons: createSqlPersonStore({
             db: database,
             table: tables.persons,
+            restrictions: tables.restrictions,
             dialect: sqliteDialect,
           }),
           snapshotStore: createSqliteSnapshotStore({

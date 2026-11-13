@@ -11,6 +11,13 @@ import { DEFAULT_TABLE_PREFIX, tableNameFor } from "../adapter/sql/identifiers.t
 import { rebuildTablesFor } from "../adapter/sql/read-model-schema.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { InspectedTable } from "../adapter/storage/inspection.ts";
+import type { StoredRestriction } from "../adapter/storage/person-store.ts";
+import {
+  isLeftOut,
+  type RestrictedReads,
+  type RestrictionView,
+  restrictedFieldsOf,
+} from "../adapter/storage/restricted-persons.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import { RebuildSupersededError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
@@ -24,6 +31,7 @@ import { createKeptInboxLedger } from "./inbox-ledger.ts";
 import { byKey, entriesRows, storageTable } from "./inspection.ts";
 import { createKeptPersonStore } from "./person-store.ts";
 import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
+import { createMemoryRestrictedPersons } from "./restricted-persons.ts";
 import { createKeptScheduler } from "./scheduler.ts";
 import { createMemorySnapshotStore } from "./snapshot-store.ts";
 import { createMemorySubscriberFailureStore } from "./subscriber-failure-store.ts";
@@ -93,6 +101,7 @@ export const memory: MemoryFunction = (options = {}) => {
   const tables = new Map<string, LiveTable>();
   const shadows = new Map<string, MemoryTable<Record<string, unknown>>>();
   const forgetLedgers = createMemoryForgetLedgers();
+  const restrictedPersons = createMemoryRestrictedPersons();
   // What `createStorage` opened, read by `inspect`.
   let storageTables: () => readonly InspectedTable[] = () => [];
 
@@ -101,14 +110,49 @@ export const memory: MemoryFunction = (options = {}) => {
     work: (store: CheckpointStore) => Promise<T>,
   ): Promise<T> => {
     const restore = target.snapshot();
+    const restoreRestricted = restrictedPersons.snapshot();
     const journal = createCheckpointJournal(checkpointStore);
     try {
       return await work(journal.store);
     } catch (error) {
       restore();
+      restoreRestricted();
       await journal.undo();
       throw error;
     }
+  };
+
+  // Each read asks the table live then, so a rebuild that swapped it is read.
+  const restrictedReads = <Row extends object>(
+    target: LiveTable,
+    fields: FieldsRecord,
+  ): RestrictedReads<Row> => {
+    const restricted = restrictedFieldsOf(fields);
+    const leftOut = (person: unknown, view: RestrictionView): boolean =>
+      restricted !== null &&
+      typeof person === "string" &&
+      isLeftOut({
+        restrictions: restrictedPersons.restrictionsOf(person),
+        categories: restricted.categories,
+        view,
+      });
+    const keeping = (view: RestrictionView): Table<Row> => {
+      const current = (): Table<Row> =>
+        target.current.keeping(
+          (row) => restricted === null || !leftOut(row[restricted.person], view),
+        ) as unknown as Table<Row>;
+      return {
+        ...through<Row>(target),
+        findOne: (where) => current().findOne(where),
+        findMany: (args) => current().findMany(args),
+        count: (where) => current().count(where),
+      };
+    };
+    return {
+      unrestricted: keeping("unrestricted"),
+      retained: keeping("retained"),
+      among: async (persons, view) => new Set(persons.filter((person) => leftOut(person, view))),
+    };
   };
 
   const live = (name: string, fields: FieldsRecord): LiveTable => {
@@ -142,7 +186,7 @@ export const memory: MemoryFunction = (options = {}) => {
       const stores = {
         eventStore: createMemoryEventStore({
           onAppend: notifier.notify,
-          checks: { keyOf: personalKeys.keyOf, restricted: persons.restricted },
+          checks: { keyOf: personalKeys.keyOf, restrictionsOf: persons.restrictionsOf },
         }),
         inboxLedger: inboxLedger.store,
         deadLetterStore: deadLetterStore.store,
@@ -190,7 +234,25 @@ export const memory: MemoryFunction = (options = {}) => {
             key: ["person"],
             rows: entriesRows(personalKeys.entries, "person"),
           }),
-          storageTable({ table: "persons", key: ["person"], rows: entriesRows(persons.entries) }),
+          storageTable({
+            table: "persons",
+            key: ["person"],
+            rows: entriesRows(persons.entries).map(({ restrictions: _, ...row }) => row),
+          }),
+          storageTable({
+            table: "restrictions",
+            key: ["person", "ground", "category"],
+            rows: entriesRows(persons.entries).flatMap((row) =>
+              (row.restrictions as readonly StoredRestriction[]).map(
+                ({ ground, category, since }) => ({
+                  person: row.person,
+                  ground,
+                  category: category ?? "",
+                  since,
+                }),
+              ),
+            ),
+          }),
         ];
       }
       storage ??= {
@@ -224,6 +286,7 @@ export const memory: MemoryFunction = (options = {}) => {
       return {
         table,
         client,
+        restricted: restrictedReads<Row>(target, fields),
         checkpointStore,
         transact: async ({ subscriber, wait, work }) => {
           const release = await locks.acquire(subscriber, wait);
@@ -232,7 +295,12 @@ export const memory: MemoryFunction = (options = {}) => {
             return {
               acquired: true,
               value: await inTransaction(target.current, (store) =>
-                work({ table, client, checkpointStore: store }),
+                work({
+                  table,
+                  client,
+                  checkpointStore: store,
+                  restrictedPersons: restrictedPersons.store,
+                }),
               ),
             };
           } finally {
@@ -285,7 +353,14 @@ export const memory: MemoryFunction = (options = {}) => {
         checkpointStore,
         transact: (work) =>
           fenced(() =>
-            inTransaction(shadow, (store) => work({ table, client, checkpointStore: store })),
+            inTransaction(shadow, (store) =>
+              work({
+                table,
+                client,
+                checkpointStore: store,
+                restrictedPersons: restrictedPersons.store,
+              }),
+            ),
           ),
         commit: ({ subscriber, position }) =>
           holding(subscriber, () =>
@@ -311,6 +386,18 @@ export const memory: MemoryFunction = (options = {}) => {
     inspect: async () => [
       ...storageTables(),
       storageTable({ table: "checkpoints", key: ["subscriber"], rows: checkpointStore.rows() }),
+      storageTable({
+        table: "restrictedPersons",
+        key: ["person", "source", "category"],
+        rows: restrictedPersons
+          .rows()
+          .map(({ person, source, category }) => ({ person, source, category: category ?? "" })),
+      }),
+      storageTable({
+        table: "restrictedPositions",
+        key: ["person"],
+        rows: restrictedPersons.positions(),
+      }),
       storageTable({
         table: "forgetLedger",
         key: ["tenant", "eventId"],

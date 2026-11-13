@@ -8,15 +8,19 @@ import {
   columnsOf,
   createSqlCheckpointStore,
   createSqlReadClient,
+  createSqlRestrictedPersonsStore,
+  createSqlRestrictedReads,
   createSqlTable,
   createTableStatements,
   dropShadowTableStatements,
   type ExistingColumn,
   evolveTableStatements,
   postgresqlDialect,
+  quoteIdentifier,
   rebuildTablesFor,
   type SqlExecutor,
   shadowTableStatements,
+  storageTableNameFor,
   swapTableStatements,
   tableNameFor,
 } from "@bounda-dev/core/adapter/sql";
@@ -24,6 +28,12 @@ import type { Sql } from "postgres";
 import type { PostgresqlDatabase } from "./database.ts";
 import { migratePostgresql, postgresqlCheckpointsScope } from "./migrations.ts";
 import { inSchema } from "./schema.ts";
+
+const restrictedPersonsTableOf = (prefix: string): string =>
+  quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPersons" }));
+
+const restrictedPositionsTableOf = (prefix: string): string =>
+  quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPositions" }));
 
 /**
  * The table's columns with what its indexes say of them; none when the table does not exist.
@@ -107,6 +117,8 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
   close,
 }: OpenPostgresqlReadModelArgs): Promise<ReadModelStorage<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
+  const restrictedPersons = restrictedPersonsTableOf(tablePrefix);
+  const restrictedPositions = restrictedPositionsTableOf(tablePrefix);
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
   const plan = async (executor: SqlExecutor) => {
     const existing = await existingColumns(executor, schema, table);
@@ -122,7 +134,7 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
     db,
     schema,
     prefix: tablePrefix,
-    scopes: [postgresqlCheckpointsScope(checkpoints)],
+    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
   });
   if ((await plan(db)).statements.length > 0) {
     await inSchema({
@@ -155,6 +167,14 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
       dialect: postgresqlDialect,
       executor: db,
       raw: sql,
+    }),
+    restricted: createSqlRestrictedReads<Row>({
+      readModel: name,
+      table,
+      fields,
+      dialect: postgresqlDialect,
+      executor: db,
+      restrictedPersons,
     }),
     checkpointStore: createSqlCheckpointStore({
       dialect: postgresqlDialect,
@@ -194,6 +214,12 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
               dialect: postgresqlDialect,
               db: tx,
               table: checkpoints,
+            }),
+            restrictedPersons: createSqlRestrictedPersonsStore({
+              db: tx,
+              table: restrictedPersons,
+              positions: restrictedPositions,
+              dialect: postgresqlDialect,
             }),
           }),
         };
@@ -244,6 +270,8 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
   close,
 }: RebuildPostgresqlReadModelArgs): Promise<ReadModelRebuild<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
+  const restrictedPersons = restrictedPersonsTableOf(tablePrefix);
+  const restrictedPositions = restrictedPositionsTableOf(tablePrefix);
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
   const fencing = rebuildFencing(name);
@@ -258,7 +286,7 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
     db,
     schema,
     prefix: tablePrefix,
-    scopes: [postgresqlCheckpointsScope(checkpoints)],
+    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
   });
   const opened = await db.write(async (tx) => {
     await lock(tx, fencing.lock);
@@ -326,6 +354,12 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
             raw: tx.raw,
           }),
           checkpointStore: checkpointsIn(tx),
+          restrictedPersons: createSqlRestrictedPersonsStore({
+            db: tx,
+            table: restrictedPersons,
+            positions: restrictedPositions,
+            dialect: postgresqlDialect,
+          }),
         });
       }),
     commit: async ({ subscriber, position }) => {

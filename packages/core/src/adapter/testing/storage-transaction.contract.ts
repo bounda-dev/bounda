@@ -304,7 +304,13 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
 
     it("restricts and unrestricts a person with the rest, or not at all", async () => {
       const work = async (tx: StorageTransaction) => {
-        expect(await tx.persons.restrict("c-1", now)).toBe(true);
+        expect(
+          await tx.persons.restrict("c-1", {
+            ground: "accuracy-contested",
+            categories: null,
+            since: now,
+          }),
+        ).toBe(true);
         expect(await tx.persons.get("c-1")).toMatchObject({
           person: "c-1",
           restrictedSince: now.toISOString(),
@@ -323,19 +329,26 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         }),
       ).rejects.toThrow("boom");
       expect(await storage.persons.get("c-1")).toBeNull();
+      expect(await storage.persons.restrictions("c-1")).toEqual([]);
       expect(await storage.eventStore.lastPosition()).toBe(0);
       await storage.transact(work);
       expect((await storage.persons.get("c-1"))?.restrictedSince).toBe(now.toISOString());
       await expect(
         storage.transact(async (tx) => {
-          expect(await tx.persons.unrestrict("c-1")).toBe(true);
+          expect(await tx.persons.unrestrict("c-1", { categories: null })).toEqual([
+            "accuracy-contested",
+          ]);
           throw new Error("boom");
         }),
       ).rejects.toThrow("boom");
       expect((await storage.persons.get("c-1"))?.restrictedSince).toBe(now.toISOString());
+      expect(await storage.persons.restrictions("c-1")).toHaveLength(1);
       await storage.transact(async (tx) => {
-        expect(await tx.persons.unrestrict("c-1")).toBe(true);
+        expect(await tx.persons.unrestrict("c-1", { categories: null })).toEqual([
+          "accuracy-contested",
+        ]);
       });
+      expect(await storage.persons.restrictions("c-1")).toEqual([]);
       expect(await storage.persons.get("c-1")).toMatchObject({
         person: "c-1",
         restrictedSince: null,
@@ -494,7 +507,11 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           touches: ["c-1"],
         });
         await tx.personalKeys.remove("c-1", "f-one");
-        await tx.persons.restrict("c-1", now);
+        await tx.persons.restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: now,
+        });
       });
       expect(await storage.eventStore.lastPosition()).toBe(1);
       expect(await storage.personalKeys.get("c-1", D)).toBeNull();

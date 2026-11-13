@@ -41,7 +41,7 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
 
     const naming = (
       version: number,
-      names: Pick<AppendArgs, "persons" | "touches">,
+      names: Pick<AppendArgs, "persons" | "touches" | "seals">,
       target: EventStore = store,
     ) =>
       target.append({
@@ -104,8 +104,44 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect((await store.load({ aggregateType: "order", aggregateId: "1" })).version).toBe(2);
     });
 
+    it("refuses to seal under a key whose category is restricted, or whose person is as a whole, and lets reads of it through", async () => {
+      await storage.personalKeys.add("c-1", "marketing", testPersonalKey("one"));
+      await storage.personalKeys.add("c-1", "profile", testPersonalKey("two"));
+      const marketing = { person: "c-1", fingerprint: testPersonalKey("one").fingerprint };
+      const profile = { person: "c-1", fingerprint: testPersonalKey("two").fingerprint };
+      await storage.persons.restrict("c-1", {
+        ground: "objection-pending",
+        categories: ["marketing"],
+        since: now,
+      });
+      await expect(naming(1, { seals: [marketing] })).rejects.toMatchObject({
+        code: "PROCESSING_RESTRICTED",
+        personId: "c-1",
+      });
+      await naming(1, { seals: [profile], persons: [marketing], touches: ["c-1"] });
+      await storage.persons.restrict("c-1", {
+        ground: "legal-claims",
+        categories: null,
+        since: now,
+      });
+      await expect(naming(2, { seals: [profile] })).rejects.toBeInstanceOf(
+        ProcessingRestrictedError,
+      );
+      await storage.persons.unrestrict("c-1", { categories: null });
+      await naming(2, { seals: [marketing, profile], touches: ["c-1"] });
+      await storage.personalKeys.remove("c-1", marketing.fingerprint);
+      await expect(naming(3, { seals: [marketing] })).rejects.toBeInstanceOf(
+        ForgottenSinceLoadError,
+      );
+      expect(await store.lastPosition()).toBe(2);
+    });
+
     it("refuses to append while a person it touches is restricted, before any key it names", async () => {
-      await storage.persons.restrict("c-1", now);
+      await storage.persons.restrict("c-1", {
+        ground: "accuracy-contested",
+        categories: null,
+        since: now,
+      });
       const refused = await naming(1, {
         touches: ["c-2", "c-1"],
         persons: [{ person: "c-1", fingerprint: "a key never held" }],
@@ -117,7 +153,7 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       ).rejects.toBeInstanceOf(ProcessingRestrictedError);
       expect(await store.lastPosition()).toBe(0);
       await naming(1, { touches: ["c-2"] });
-      await storage.persons.unrestrict("c-1");
+      await storage.persons.unrestrict("c-1", { categories: null });
       await naming(2, { touches: ["c-1", "c-2"] });
       expect(await store.lastPosition()).toBe(2);
     });
@@ -131,7 +167,11 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
           restricted = resolve;
         });
         const restriction = storage.transact(async (tx) => {
-          await tx.persons.restrict("c-1", now);
+          await tx.persons.restrict("c-1", {
+            ground: "accuracy-contested",
+            categories: null,
+            since: now,
+          });
           restricted();
           await held;
         });

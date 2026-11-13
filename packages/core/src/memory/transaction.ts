@@ -94,6 +94,9 @@ const ownChangesLeftOut = (
     ...batch,
     persons: batch.persons.filter((held) => !removed.has(keyedPersonId(held))),
     touches: batch.touches.filter((person) => !restricted.has(person)),
+    seals: batch.seals.filter(
+      (held) => !removed.has(keyedPersonId(held)) && !restricted.has(held.person),
+    ),
   }));
 
 const isRow = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -197,11 +200,12 @@ const trackedPersons = (
   const tracked = trackedBy(undos, personFields);
   return {
     get: (person) => persons.get(person),
-    restrict: (person, since) => {
+    restrictions: (person) => persons.restrictions(person),
+    restrict: (person, args) => {
       restricted.add(person);
-      return tracked(entries, person, () => persons.restrict(person, since));
+      return tracked(entries, person, () => persons.restrict(person, args));
     },
-    unrestrict: (person) => tracked(entries, person, () => persons.unrestrict(person)),
+    unrestrict: (person, args) => tracked(entries, person, () => persons.unrestrict(person, args)),
     record: async (activity) => {
       recorded.push(activity);
     },

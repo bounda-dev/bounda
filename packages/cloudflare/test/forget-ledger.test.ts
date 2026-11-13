@@ -261,16 +261,25 @@ describe("the KV forget ledger's listing", () => {
       ["p/2:e-2", JSON.stringify({ categories: [1] })],
       ["p/3:e-3", JSON.stringify("text")],
       ["p/5:e-5", JSON.stringify({ categories: null, fingerprints: [2] })],
+      ["p/6:e-6", JSON.stringify({ categories: null, restriction: "restricted" })],
+      ["p/7:e-7", JSON.stringify({ categories: null, restriction: null })],
+      ["p/8:e-8", JSON.stringify({ categories: null, restriction: { payload: {} } })],
+      ["p/9:e-9", JSON.stringify({ categories: null, restriction: { type: "T" } })],
+      ["p/a:e-a", JSON.stringify({ categories: null, restriction: { type: "T", payload: null } })],
+      ["p/b:e-b", JSON.stringify({ categories: null, restriction: { type: "T", payload: "p" } })],
     ]);
     const reading = {
       ...namespace,
       get: async (name: string) => values.get(name) ?? null,
     } as unknown as KVNamespace;
     const ledger = createKvForgetLedger({ namespace: reading, prefix: "p/" });
-    for (const at of ["1:e-1", "2:e-2", "3:e-3", "4:e-4", "5:e-5"]) {
+    for (const at of ["1:e-1", "2:e-2", "3:e-3", "4:e-4", "5:e-5", "6:e-6", "7:e-7"]) {
       keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
     }
-    expect(await ledger.read({ limit: 10 })).toEqual([
+    for (const at of ["8:e-8", "9:e-9", "a:e-a", "b:e-b"]) {
+      keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
+    }
+    expect(await ledger.read({ limit: 20 })).toEqual([
       {
         personId: "c-1",
         categories: null,

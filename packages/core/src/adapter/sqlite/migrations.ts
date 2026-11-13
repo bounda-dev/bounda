@@ -6,6 +6,7 @@ import {
   forgetLedgerCategoriesStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
+  forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
 } from "../sql/forget-ledger.ts";
 import { quoteIdentifier } from "../sql/identifiers.ts";
@@ -19,6 +20,8 @@ import type { SqlExecutor } from "../sql/sql-table.ts";
 import {
   checkpointTableStatement,
   personRowsBackfillStatements,
+  restrictedPersonsTableStatements,
+  restrictionStatements,
   type StorageTables,
   storageSchemaStatements,
   subscriberFailuresTableStatement,
@@ -180,16 +183,33 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
       migrate: (tx) => tx.run(subscriberFailuresTableStatement(tables.subscriberFailures), []),
     },
     { version: 3, migrate: (tx) => adoptCategories(tx, tables) },
+    {
+      version: 4,
+      migrate: async (tx) => {
+        for (const statement of restrictionStatements(tables)) await tx.run(statement, []);
+      },
+    },
   ],
 });
 
 export interface SqliteCheckpointsScopeFunction {
-  (table: string): SchemaScope;
+  (
+    tables: Pick<StorageTables, "checkpoints" | "restrictedPersons" | "restrictedPositions">,
+  ): SchemaScope;
 }
 
-export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (table) => ({
+export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.checkpoints,
-  migrations: [{ version: 1, migrate: (tx) => tx.run(checkpointTableStatement(table), []) }],
+  migrations: [
+    { version: 1, migrate: (tx) => tx.run(checkpointTableStatement(tables.checkpoints), []) },
+    {
+      version: 2,
+      migrate: async (tx) => {
+        for (const statement of restrictedPersonsTableStatements(tables))
+          await tx.run(statement, []);
+      },
+    },
+  ],
 });
 
 export interface SqliteForgetLedgerScopeFunction {
@@ -219,6 +239,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
       migrate: async (tx) => {
         if ((await columnsOf(tx, table)).has("categories")) return;
         await tx.run(forgetLedgerCategoriesStatement(table, sqliteDialect), []);
+      },
+    },
+    {
+      version: 5,
+      migrate: async (tx) => {
+        if ((await columnsOf(tx, table)).has("restriction")) return;
+        await tx.run(forgetLedgerRestrictionStatement(table, sqliteDialect), []);
       },
     },
   ],

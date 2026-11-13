@@ -106,6 +106,13 @@ the process can still be retried, and the stream
 still says it failed. `ProcessFailed` and `ScheduledCommandFailed` name the error
 the same way, `errorName` and `errorCode`, and never carry its text.
 
+While a person a letter names is [restricted](/guides/personal-data/#restricting-processing),
+`list` and `get` keep its message, its stack and its payload's fields sealed, reading as `null`,
+and say `restricted: true`; so does a scheduled command's letter whose fields a forgetting kept under
+a legal obligation. `app.deadLetters.list(args, { includeRestricted: "legal-claims" })` and
+`get(id, { includeRestricted })` open them on a basis of article 18(2), recorded in the access log
+with those persons.
+
 ## A failed process
 
 A process fails when one of its handlers fails for good: the instance records `ProcessFailed`, the

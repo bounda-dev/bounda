@@ -1,3 +1,4 @@
+import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -6,9 +7,12 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import { createReactionCommands } from "../command/reaction-commands.ts";
+import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
-import { openedUnder } from "../personal-data/event-store.ts";
+import { openedUnder, withoutRetained } from "../personal-data/event-store.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
+import { personTouchedByEvent } from "../personal-data/persons.ts";
+import { refuseRestrictedRead } from "../personal-data/refusal.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -55,6 +59,11 @@ export interface CreatePolicyExecutorArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly intentions: ForgetIntentions;
+  /**
+   * The keys a run on restricted data reads the categories of.
+   */
+  readonly keys: Pick<PersonalKeyStore, "find">;
+  readonly recordAccess: RecordAccess;
 }
 
 export interface CreatePolicyExecutorFunction {
@@ -70,9 +79,23 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   clock,
   logger,
   intentions,
+  keys,
+  recordAccess,
 }) => ({
-  run: async ({ policy, event, attempt, retryId, actor, within }) => {
+  run: async ({ policy, event: delivered, attempt, retryId, actor, within }) => {
+    // What a forgetting kept reads as `null` to a policy that declares no basis for it.
+    const event = policy.restricted === null ? withoutRetained(delivered) : delivered;
     within.read(openedUnder(event));
+    // The runtime's own events name no person and carry ids alone: telling those the data went to
+    // of a restriction or a forgetting is what a policy on them is for.
+    const person = personTouchedByEvent({ aggregates, event });
+    const letThrough = await refuseRestrictedRead({
+      persons: within.persons,
+      keys,
+      opened: openedUnder(event),
+      touches: person === null ? [] : [person],
+      basis: policy.restricted ?? undefined,
+    });
     const idempotencyKey = deriveIdempotencyKey({
       kind: "policy",
       handler: policy.name,
@@ -93,6 +116,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       batchSize: config.runtime.dispatcher.batchSize,
       intentions,
       maxChainDepth: config.forAggregate(policy.aggregate).policies.maxChainDepth,
+      restricted: policy.restricted,
     });
     const handled = traced({
       errorText: config.runtime.telemetry.errorText,
@@ -127,8 +151,22 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
         });
       },
     });
+    const basis = policy.restricted;
     try {
-      await handled;
+      await (basis === null || letThrough.length === 0
+        ? handled
+        : recorded(
+            (outcome) =>
+              recordAccess({
+                operation: "policy",
+                detail: { handler: policy.name },
+                actor: context.actor,
+                persons: letThrough,
+                outcome,
+                restricted: { basis, persons: letThrough },
+              }),
+            () => handled,
+          ));
     } catch (error) {
       reaction.abandon(error);
       throw error;

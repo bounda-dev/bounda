@@ -61,6 +61,51 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await readAll(ledger, 10)).toEqual(entries);
     });
 
+    it("keeps the change of restrictions an entry records, in order with the forgettings", async () => {
+      const restrictions = Array.from({ length: 40 }, (_, index) => ({
+        ground: "accuracy-contested" as const,
+        categories: [`category-with-a-long-name-${index}`],
+        since: "2026-11-07T12:00:00.000Z",
+      }));
+      const entries: ForgetLedgerEntry[] = [
+        entry("p-1", "e-1", 1),
+        {
+          personId: "p-2",
+          eventId: "e-2",
+          forgottenAt: new Date(Date.UTC(2026, 10, 7, 12, 2)).toISOString(),
+          categories: null,
+          reason: "requested",
+          restriction: {
+            type: "ProcessingRestricted",
+            payload: {
+              personId: "p-2",
+              ground: "accuracy-contested",
+              categories: restrictions.flatMap(({ categories }) => categories),
+              restrictions,
+            },
+          },
+        },
+        {
+          personId: "p-2",
+          eventId: "e-3",
+          forgottenAt: new Date(Date.UTC(2026, 10, 7, 12, 3)).toISOString(),
+          categories: null,
+          reason: "requested",
+          restriction: {
+            type: "ProcessingRestrictionLiftAnnounced",
+            payload: {
+              personId: "p-2",
+              grounds: ["accuracy-contested"],
+              categories: null,
+              liftsAt: "2026-11-14T12:03:00.000Z",
+            },
+          },
+        },
+      ];
+      await ledger.append(entries);
+      expect(await readAll(ledger, 10)).toEqual(entries);
+    });
+
     it("reads nothing from an empty ledger", async () => {
       expect(await ledger.read({ limit: 10 })).toEqual([]);
       expect(

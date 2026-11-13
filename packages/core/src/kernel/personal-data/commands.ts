@@ -112,6 +112,10 @@ export interface OpenCommandPayloadArgs {
 export interface OpenedPayload {
   readonly payload: unknown;
   readonly forgotten: boolean;
+  /**
+   * Each person whose sealed fields opened, with the key that opened them.
+   */
+  readonly opened: readonly KeyedPerson[];
 }
 
 export interface OpenCommandPayloadFunction {
@@ -128,14 +132,22 @@ export const openCommandPayload: OpenCommandPayloadFunction = async ({
   keys,
   keyOf = sealedKeys(keys),
 }) => {
-  if (!isRecord(payload)) return { payload, forgotten: false };
-  const opened: Record<string, unknown> = { ...payload };
+  if (!isRecord(payload)) return { payload, forgotten: false, opened: [] };
+  const unsealed: Record<string, unknown> = { ...payload };
+  const opened = new Map<string, KeyedPerson>();
   let forgotten = false;
   for (const [field, value] of Object.entries(payload)) {
     if (!isSealed(value)) continue;
-    const key = await keyOf(value.$personal.person, value.$personal.key);
+    const { person } = value.$personal;
+    const key = await keyOf(person, value.$personal.key);
     if (key === null) forgotten = true;
-    opened[field] = await unseal({ key, sealed: value });
+    else {
+      const held: KeyedPerson = key.retained
+        ? { person, fingerprint: key.fingerprint, retained: true }
+        : { person, fingerprint: key.fingerprint };
+      opened.set(keyedPersonId(held), held);
+    }
+    unsealed[field] = await unseal({ key, sealed: value });
   }
-  return { payload: opened, forgotten };
+  return { payload: unsealed, forgotten, opened: [...opened.values()] };
 };

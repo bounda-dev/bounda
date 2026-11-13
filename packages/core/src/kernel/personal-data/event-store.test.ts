@@ -22,7 +22,13 @@ import { withUpcasting } from "../aggregate/upcasting.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { keysOver, newStoredKey, removeKeys } from "../test-support.ts";
 import { isSealed } from "./crypto.ts";
-import { openedUnder, withPersonalData } from "./event-store.ts";
+import {
+  hidingRetained,
+  openedUnder,
+  retainedHidden,
+  withoutRetained,
+  withPersonalData,
+} from "./event-store.ts";
 
 const registry: Registry = {
   aggregates: {
@@ -339,7 +345,11 @@ describe("withPersonalData", () => {
     const restricting: PersonalKeyStore = {
       ...storage.personalKeys,
       get: async (person, category) => {
-        await storage.persons.restrict(person, new Date());
+        await storage.persons.restrict(person, {
+          ground: "accuracy-contested",
+          categories: null,
+          since: new Date(),
+        });
         return storage.personalKeys.get(person, category);
       },
     };
@@ -358,7 +368,11 @@ describe("withPersonalData", () => {
       .catch((error: unknown) => error);
     expect(refused).toBeInstanceOf(ProcessingRestrictedError);
     expect(refused).toMatchObject({ personId: "c-1" });
-    await storage.persons.restrict("c-9", new Date());
+    await storage.persons.restrict("c-9", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date(),
+    });
     await expect(
       store.append({
         aggregateType: "order",
@@ -396,8 +410,10 @@ describe("withPersonalData", () => {
       touches: ["c-4"],
     });
     const key = await storage.personalKeys.get("c-2", DEFAULT_PERSONAL_CATEGORY);
-    expect(appended[0]?.persons).toEqual([read, { person: "c-2", fingerprint: key?.fingerprint }]);
+    expect(appended[0]?.persons).toEqual([read]);
+    expect(appended[0]?.seals).toEqual([{ person: "c-2", fingerprint: key?.fingerprint }]);
     expect(appended[0]?.touches).toEqual(["c-4", "c-2"]);
+    expect(appended[0]).not.toHaveProperty("basis");
     await recording.append({
       aggregateType: "order",
       aggregateId: "o-2",
@@ -409,6 +425,31 @@ describe("withPersonalData", () => {
     });
     expect(appended[1]?.persons).toEqual([]);
     expect(appended[1]?.touches).toEqual(["c-5"]);
+    await recording.append({
+      aggregateType: "order",
+      aggregateId: "o-3",
+      expectedVersion: 0,
+      events: [placed({ customerId: "c-2", address: { street: "Main" }, total: 1 }, "o-3")],
+      touches: ["c-4"],
+      basis: "legal-claims",
+    });
+    expect(appended[2]).toMatchObject({
+      persons: [{ person: "c-2", fingerprint: key?.fingerprint }],
+      seals: [],
+      touches: [],
+    });
+    await recording.append({
+      aggregateType: "order",
+      aggregateId: "o-4",
+      expectedVersion: 0,
+      events: [placed({ customerId: "c-2", address: { street: "Main" }, total: 1 }, "o-4")],
+      basis: "legal-obligation",
+    });
+    expect(appended[3]).toMatchObject({
+      persons: [],
+      seals: [{ person: "c-2", fingerprint: key?.fingerprint }],
+      touches: ["c-2"],
+    });
   });
 
   it("tells the key it opened each event it hands out under, through an upcast too", async () => {
@@ -467,9 +508,109 @@ describe("withPersonalData", () => {
       eventId: registered?.id ?? "",
     });
     expect(openedUnder(one as StoredEvent)).toEqual(read);
+    expect(retainedHidden(registered as StoredEvent)).toBeNull();
+    expect(withoutRetained(registered as StoredEvent)).toBe(registered);
+    // A key a forgetting kept: work that names no basis reads its field as null, upcast or not.
+    await storage.personalKeys.retain("c-1", key?.fingerprint ?? "", {
+      since: "2026-02-01T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    const [kept] = await store.readAll({ afterPosition: 0, limit: 1 });
+    expect(kept?.payload).toEqual({ email: "ana@example.com", plan: "free" });
+    expect(openedUnder(kept as StoredEvent)).toEqual([{ ...read[0], retained: true }]);
+    const hidden = withoutRetained(kept as StoredEvent);
+    expect(hidden.payload).toEqual({ email: null, plan: "free" });
+    expect(hidden.metadata.schemaVersion).toBe(kept?.metadata.schemaVersion);
+    expect(openedUnder(hidden)).toEqual([]);
+    const loaded = await hidingRetained(store).load({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+    });
+    expect(loaded.events.map((event) => event.payload)).toEqual([
+      { email: null, plan: "free" },
+      { name: "Ana" },
+    ]);
+    expect(loaded.opened).toEqual([]);
+    expect((await store.load({ aggregateType: "customer", aggregateId: "c-1" })).opened).toEqual([
+      { ...read[0], retained: true },
+    ]);
     await removeKeys(storage.personalKeys, "c-1");
     const [forgotten] = await store.readAll({ afterPosition: 0, limit: 1 });
     expect(openedUnder(forgotten as StoredEvent)).toEqual([]);
+  });
+
+  it("hides what a forgetting kept in a process's state as in an event's payload", async () => {
+    const storage = await memory().createStorage();
+    const sealing = withPersonalData({
+      eventStore: storage.eventStore,
+      aggregates: buildAggregates({ registry, ports: {} }),
+      processes: {
+        byName: {
+          "signup.onboarding": {
+            personal: {
+              person: "customerId",
+              fields: ["email"],
+              categories: { email: DEFAULT_PERSONAL_CATEGORY },
+            },
+          },
+        } as never,
+      },
+      keys: keysOver(storage.personalKeys),
+    });
+    await sealing.append({
+      aggregateType: "process:signup.onboarding",
+      aggregateId: "s-1",
+      expectedVersion: 0,
+      events: [
+        pendingEvent({
+          aggregateType: "process:signup.onboarding",
+          aggregateId: "s-1",
+          version: 1,
+          type: "ProcessStarted",
+          payload: { state: { customerId: "c-1", email: "ana@example.com" } },
+        }),
+      ],
+    });
+    const key = await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
+    await storage.personalKeys.retain("c-1", key?.fingerprint ?? "", {
+      since: "2026-02-01T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    const [started] = await sealing.readAll({ afterPosition: 0, limit: 1 });
+    expect(withoutRetained(started as StoredEvent).payload).toEqual({
+      state: { customerId: "c-1", email: null },
+    });
+  });
+
+  it("checks the keys an append is given to seal under as those it seals under itself", async () => {
+    const { storage, placed } = await setup();
+    const appended: AppendArgs[] = [];
+    const recording = withPersonalData({
+      eventStore: {
+        ...storage.eventStore,
+        append: (args) => {
+          appended.push(args);
+          return storage.eventStore.append(args);
+        },
+      },
+      aggregates: buildAggregates({ registry, ports: {} }),
+      processes: { byName: {} },
+      keys: keysOver(storage.personalKeys),
+    });
+    const given = { person: "c-9", fingerprint: "f-9" };
+    await recording
+      .append({
+        aggregateType: "order",
+        aggregateId: "o-1",
+        expectedVersion: 0,
+        events: [placed({ customerId: "c-2", total: 1 })].map((event) => ({
+          ...event,
+          payload: { customerId: "c-2", total: 1 },
+        })),
+        seals: [given],
+      })
+      .catch(() => undefined);
+    expect(appended[0]?.seals).toEqual([given]);
   });
 
   it("keeps the key another writer added first", async () => {
@@ -867,7 +1008,11 @@ describe("withPersonalData on a process's lifecycle events", () => {
       append([lifecycle(1, "ProcessHandled", { state: { customerId: null, email: "a@b.c" } })]),
     ).rejects.toThrow(ValidationError);
 
-    await storage.persons.restrict("c-1", new Date(0));
+    await storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date(0),
+    });
     await expect(
       append([lifecycle(1, "ProcessHandled", { state: { customerId: "c-1", email: null } })]),
     ).rejects.toThrow(ProcessingRestrictedError);

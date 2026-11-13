@@ -56,7 +56,7 @@ describe("migrateSqlite", () => {
       },
       isBusy: (error) => error === busy,
       prefix: "app_",
-      scopes: [sqliteCheckpointsScope('"app_checkpoints"')],
+      scopes: [sqliteCheckpointsScope(storageTablesFor("app_"))],
       sleep: async (ms) => {
         slept.push(ms);
       },
@@ -65,7 +65,10 @@ describe("migrateSqlite", () => {
     for (const ms of slept) expect(ms).toBeGreaterThanOrEqual(5);
     expect(
       db.prepare(`SELECT "scope", "version" FROM ${schemaMigrationsTableFor("app_")}`).all(),
-    ).toEqual([{ scope: "checkpoints", version: 1 }]);
+    ).toEqual([
+      { scope: "checkpoints", version: 1 },
+      { scope: "checkpoints", version: 2 },
+    ]);
   });
 
   it("fails at once on any other error, and on a busy database when the connection is the only writer", async () => {
@@ -74,7 +77,7 @@ describe("migrateSqlite", () => {
       ...database,
       write: () => Promise.reject(error),
     });
-    const scopes = [sqliteCheckpointsScope('"app_checkpoints"')];
+    const scopes = [sqliteCheckpointsScope(storageTablesFor("app_"))];
     await expect(
       migrateSqlite({
         db: failing(new Error("disk I/O error")),
@@ -88,7 +91,7 @@ describe("migrateSqlite", () => {
 
   it("reads a missing versions table as an unversioned database, and rethrows any other failure to read it", async () => {
     const { database } = onNodeSqlite();
-    const scopes = [sqliteCheckpointsScope('"app_checkpoints"')];
+    const scopes = [sqliteCheckpointsScope(storageTablesFor("app_"))];
     await expect(
       migrateSqlite({
         db: { ...database, all: () => Promise.reject(new Error("disk I/O error")) },
@@ -131,7 +134,7 @@ describe("the SQLite schema scopes", () => {
   it("number their migrations from 1, with no gap", () => {
     for (const { migrations } of [
       sqliteStorageScope(storageTablesFor("bounda_")),
-      sqliteCheckpointsScope('"bounda_checkpoints"'),
+      sqliteCheckpointsScope(storageTablesFor("bounda_")),
       sqliteForgetLedgerScope('"bounda_forget_ledger"'),
     ]) {
       expect(migrations.map(({ version }) => version)).toEqual(

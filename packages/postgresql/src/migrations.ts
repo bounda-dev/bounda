@@ -4,6 +4,7 @@ import {
   forgetLedgerCategoriesStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
+  forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
   migrateSchemas,
   postgresqlDialect,
@@ -20,6 +21,8 @@ import type { PostgresqlDatabase } from "./database.ts";
 import {
   checkpointTableStatement,
   inSchema,
+  restrictedPersonsTableStatements,
+  restrictionStatements,
   type StorageTables,
   storageSchemaStatements,
   subscriberFailuresTableStatement,
@@ -203,16 +206,33 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
       migrate: (tx) => tx.run(subscriberFailuresTableStatement(tables.subscriberFailures), []),
     },
     { version: 3, migrate: (tx) => adoptCategories(tx, schema, tables) },
+    {
+      version: 4,
+      migrate: async (tx) => {
+        for (const statement of restrictionStatements(tables)) await tx.run(statement, []);
+      },
+    },
   ],
 });
 
 export interface PostgresqlCheckpointsScopeFunction {
-  (table: string): SchemaScope;
+  (
+    tables: Pick<StorageTables, "checkpoints" | "restrictedPersons" | "restrictedPositions">,
+  ): SchemaScope;
 }
 
-export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (table) => ({
+export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.checkpoints,
-  migrations: [{ version: 1, migrate: (tx) => tx.run(checkpointTableStatement(table), []) }],
+  migrations: [
+    { version: 1, migrate: (tx) => tx.run(checkpointTableStatement(tables.checkpoints), []) },
+    {
+      version: 2,
+      migrate: async (tx) => {
+        for (const statement of restrictedPersonsTableStatements(tables))
+          await tx.run(statement, []);
+      },
+    },
+  ],
 });
 
 export interface PostgresqlForgetLedgerScopeFunction {
@@ -240,6 +260,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
     {
       version: 4,
       migrate: (tx) => tx.run(forgetLedgerCategoriesStatement(table, postgresqlDialect), []),
+    },
+    {
+      version: 5,
+      migrate: (tx) => tx.run(forgetLedgerRestrictionStatement(table, postgresqlDialect), []),
     },
   ],
 });

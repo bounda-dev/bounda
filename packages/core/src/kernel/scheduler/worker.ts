@@ -22,9 +22,15 @@ import type { PersonalDataBackfill } from "../personal-data/backfill.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
 import { sealError } from "../personal-data/errors.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
+import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import type { ForgetLedgerReconciliation } from "../personal-data/reconciliation.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
+import {
+  LIFT_RESTRICTION_COMMAND,
+  type LiftRestrictionPayload,
+  liftAnnounced,
+} from "../personal-data/restriction.ts";
 import type { RetentionSweep } from "../personal-data/retention.ts";
 import type { KeyRotation } from "../personal-data/rotation.ts";
 import type { DelayedPolicies } from "../policy/delayed.ts";
@@ -94,6 +100,10 @@ export interface CreateScheduledCommandWorkerArgs {
    * `runtime.personalData.forgetLedger`.
    */
   readonly reconciliation?: ForgetLedgerReconciliation | undefined;
+  /**
+   * Where the lift of an announced restriction is recorded before it commits.
+   */
+  readonly intentions: Pick<ForgetIntentions, "record">;
   /**
    * Swept on every pass; absent when no schema marks personal data.
    */
@@ -181,6 +191,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   letterRetention,
   rotation,
   reconciliation,
+  intentions,
   backfill,
   restores,
   onRestored,
@@ -228,6 +239,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const isRestrictedRetry = (entry: ScheduledCommand): boolean =>
     entry.command.type === RETRY_RESTRICTED_COMMAND;
+
+  const isRestrictionLift = (entry: ScheduledCommand): boolean =>
+    entry.command.type === LIFT_RESTRICTION_COMMAND;
 
   // A deadline waits for the process runner; a restricted retry for every runner, since any of
   // them may still have a refusal to write.
@@ -400,6 +414,15 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     }
     // The runtime's own entry gets no letter: the person's letters are still there, `failed`,
     // for an operator to retry, or for the next lift.
+    if (isRestrictionLift(entry)) {
+      await storage.scheduler.fail({ claim: entry, error: errorLabel(errorIdentity(error)) });
+      logger.error("an announced restriction lift could not run; lift it with unrestrict", {
+        personId: entry.command.aggregateId,
+        attempts,
+        error,
+      });
+      return;
+    }
     if (isRestrictedRetry(entry)) {
       await storage.scheduler.fail({ claim: entry, error: errorLabel(errorIdentity(error)) });
       logger.error("restricted dead letters could not be retried; retry them by hand", {
@@ -442,6 +465,18 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             payload: deadlineOf(entry),
             within: unit,
           });
+        } else if (isRestrictionLift(entry)) {
+          await liftAnnounced({
+            storage,
+            ids,
+            clock,
+            logger,
+            concurrencyRetries: config.runtime.commands.concurrencyRetries,
+            intentions,
+            personId: entry.command.aggregateId,
+            payload: entry.command.payload as LiftRestrictionPayload,
+            context: entry.context,
+          });
         } else if (isRestrictedRetry(entry)) {
           await restrictedRetries.retryAll({
             personId: entry.command.aggregateId,
@@ -450,7 +485,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
             actor: entry.context.actor,
           });
         } else {
-          const { payload, forgotten } = await openCommandPayload({
+          const { payload, forgotten, opened } = await openCommandPayload({
             payload: entry.command.payload,
             keys: storage.personalKeys,
           });
@@ -467,6 +502,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           await pipeline.dispatchUnattended({
             type: entry.command.type,
             payload,
+            opened,
             context: entry.context,
             commandId: scheduledCommandId(entry.dedupeKey),
             within: unit,

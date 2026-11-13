@@ -13,6 +13,7 @@ import type {
   AdapterDefinition,
   ForgetLedger,
   ForgetLedgerEntry,
+  LedgerRestriction,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "@bounda-dev/core/adapter";
@@ -433,7 +434,11 @@ describe("defineConfig", () => {
       readonly forgottenAt: string;
       readonly reason: PersonalDataForgottenReason;
       readonly fingerprints?: readonly string[];
+      readonly restriction?: LedgerRestriction;
     }>();
+    expectTypeOf<LedgerRestriction["type"]>().toEqualTypeOf<
+      "ProcessingRestricted" | "ProcessingRestrictionLiftAnnounced" | "ProcessingRestrictionLifted"
+    >();
     expectTypeOf<PruneForgetLedgerArgs>().toEqualTypeOf<{ readonly before: string }>();
     expectTypeOf<ForgetLedger["visibilityDelayMs"]>().toEqualTypeOf<number | undefined>();
     expectTypeOf<ForgetLedger["prune"]>().toEqualTypeOf<

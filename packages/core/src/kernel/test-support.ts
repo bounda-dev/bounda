@@ -18,6 +18,7 @@ import type { AggregatesRuntime } from "./aggregate/runtime.ts";
 import { createCommandPipeline } from "./command/pipeline.ts";
 import type { AppStorage } from "./events/app-event-store.ts";
 import type { RecordAccess } from "./personal-data/access.ts";
+import { createAccessLog } from "./personal-data/access.ts";
 import {
   fingerprintOf,
   fromBase64,
@@ -350,6 +351,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     ids: createSequentialIdGenerator(),
     clock,
     logger,
+    recordAccess: createAccessLog({ hook: undefined, env: {}, tenant: undefined, logger, clock }),
     onRejection: (rejection) => rejections.push(rejection),
   });
   return { storage, config, aggregates, clock, pipeline, rejections };

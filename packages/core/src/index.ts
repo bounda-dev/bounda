@@ -55,6 +55,7 @@ export type {
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
+  ExportedRestricted,
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
@@ -65,6 +66,7 @@ export type {
   ForgetLedgerReconciliationStatus,
 } from "./kernel/personal-data/reconciliation.ts";
 export { FORGET_LEDGER_GRACE_MS } from "./kernel/personal-data/reconciliation.ts";
+export type { IncludeRestrictedOptions } from "./kernel/personal-data/restricted-reads.ts";
 export type {
   CategoryRetentionStatus,
   RetentionStatus,

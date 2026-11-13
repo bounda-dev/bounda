@@ -388,7 +388,9 @@ describe("createWorker", () => {
       error: { code: "DOMAIN_ERROR", message: "Order already placed", rejected: "AlreadyPlaced" },
     });
 
-    await connect(env.STORE.get(env.STORE.idFromName("errors"))).restrict("bo");
+    await connect(env.STORE.get(env.STORE.idFromName("errors"))).restrict("bo", {
+      ground: "accuracy-contested",
+    });
     const restricted = await post(
       "/commands/placeOrder",
       { orderId: "o-5", total: 1, customer: "bo" },

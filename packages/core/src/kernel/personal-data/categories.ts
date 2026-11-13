@@ -1,6 +1,6 @@
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { parseRetention, type Retention } from "../../contracts/duration.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, ValidationError } from "../../contracts/errors.ts";
 import {
   LEGAL_BASES,
   type LegalBasis,
@@ -115,6 +115,55 @@ export const checkCategory: CheckCategoryFunction = ({ categories, category, at 
   throw new ConfigurationError(
     `${at} is marked personal in the category "${category}", which app/personal-data.ts does not declare`,
   );
+};
+
+/**
+ * What checking the names of categories needs of the app's.
+ */
+export type CategoryNames = Pick<PersonalCategories, "of">;
+
+export interface CheckCategoryNamesArgs {
+  readonly categories: CategoryNames;
+  readonly asked: unknown;
+  /**
+   * The call that names them, as its message says it.
+   */
+  readonly operation: string;
+}
+
+export interface CheckCategoryNamesFunction {
+  (args: CheckCategoryNamesArgs): readonly string[];
+}
+
+/**
+ * The categories a call names, each once. Throws `ValidationError` for none, or for a category the
+ * app does not have.
+ */
+export const checkCategoryNames: CheckCategoryNamesFunction = ({
+  categories,
+  asked,
+  operation,
+}) => {
+  if (!Array.isArray(asked) || asked.length === 0) {
+    throw new ValidationError(`${operation} needs at least one category when it names them`, [
+      { path: ["categories"], message: "Expected a non-empty array of categories" },
+    ]);
+  }
+  const unknown = asked.filter(
+    (category) => typeof category !== "string" || categories.of(category) === undefined,
+  );
+  if (unknown.length > 0) {
+    throw new ValidationError(
+      `${operation} names categories the app does not have: ${unknown.map((category) => JSON.stringify(category)).join(", ")}`,
+      [
+        {
+          path: ["categories"],
+          message: 'Expected categories app/personal-data.ts declares, or "default"',
+        },
+      ],
+    );
+  }
+  return [...new Set(asked as string[])];
 };
 
 export interface FormatRetentionFunction {

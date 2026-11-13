@@ -2,6 +2,7 @@ import { parseDuration } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
 import { policyTrigger } from "../../modules/naming.ts";
+import { RESTRICTION_BASES, type RestrictionBasis } from "../../modules/personal-data.ts";
 import type { PolicyModule } from "../../modules/policy.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { eventTypesOf } from "../../modules/validate.ts";
@@ -25,6 +26,11 @@ export interface PolicyRuntime {
    * `null` for a policy that runs as soon as its event is delivered.
    */
   readonly delayMs: number | null;
+  /**
+   * The basis it processes restricted data on; `null` for a policy whose runs on restricted data
+   * wait for the lift.
+   */
+  readonly restricted: RestrictionBasis | null;
 }
 
 export interface PoliciesRuntime {
@@ -90,6 +96,22 @@ const delayOf = (aggregate: string, key: string, module: PolicyModule): number |
   }
 };
 
+export interface RestrictionBasisOfFunction {
+  (path: string, declared: unknown): RestrictionBasis | null;
+}
+
+/**
+ * What a module's `restricted` declares: `null` without it. Throws `ConfigurationError` for a
+ * value that is not a basis.
+ */
+export const restrictionBasisOf: RestrictionBasisOfFunction = (path, declared) => {
+  if (declared === undefined) return null;
+  if (RESTRICTION_BASES.includes(declared as RestrictionBasis)) return declared as RestrictionBasis;
+  throw new ConfigurationError(
+    `${path}: restricted ${JSON.stringify(declared)} is not a basis of article 18(2); use one of ${RESTRICTION_BASES.map((basis) => JSON.stringify(basis)).join(", ")}`,
+  );
+};
+
 export interface BuildPoliciesArgs {
   readonly registry: Registry;
   readonly aggregates: AggregatesRuntime;
@@ -113,6 +135,10 @@ export const buildPolicies: BuildPoliciesFunction = ({ registry, aggregates }) =
         on: triggersOf(registry, aggregate, key, policy.module, policy.source ?? aggregate),
         handler: policy.module.handler as PolicyRuntime["handler"],
         delayMs: delayOf(aggregate, key, policy.module),
+        restricted: restrictionBasisOf(
+          `aggregates.${aggregate}.policies.${key}`,
+          policy.module.restricted,
+        ),
         ports: aggregates.byName[aggregate]?.ports ?? {},
       }),
     ),

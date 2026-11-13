@@ -32,24 +32,24 @@ describe("connect", () => {
     const soon = connect<typeof registry>(eventual.stub, { consistency: "eventual" });
     await soon.forget("c-1");
     await soon.forget("c-1", { categories: ["default"] });
-    await soon.restrict("c-1");
-    await soon.unrestrict("c-1");
+    await soon.restrict("c-1", { ground: "accuracy-contested" });
+    await soon.unrestrict("c-1", { notice: "given" });
     const byDefault = recordingStub();
     const store = connect<typeof registry>(byDefault.stub);
     await store.forget("c-2");
-    await store.restrict("c-2");
-    await store.unrestrict("c-2");
+    await store.restrict("c-2", { ground: "accuracy-contested" });
+    await store.unrestrict("c-2", { notice: "given" });
     expect([eventual.forgets, byDefault.forgets]).toEqual([
       [
         ["c-1", "eventual", undefined, undefined],
         ["c-1", "eventual", undefined, { categories: ["default"] }],
-        ["restrict", "c-1", "eventual", undefined],
-        ["unrestrict", "c-1", "eventual", undefined],
+        ["restrict", "c-1", "eventual", undefined, { ground: "accuracy-contested" }],
+        ["unrestrict", "c-1", "eventual", undefined, { notice: "given" }],
       ],
       [
         ["c-2", "read-your-writes", undefined, undefined],
-        ["restrict", "c-2", "read-your-writes", undefined],
-        ["unrestrict", "c-2", "read-your-writes", undefined],
+        ["restrict", "c-2", "read-your-writes", undefined, { ground: "accuracy-contested" }],
+        ["unrestrict", "c-2", "read-your-writes", undefined, { notice: "given" }],
       ],
     ]);
   });
@@ -67,8 +67,8 @@ describe("connect", () => {
     await user.commands.payOrder({ orderId: "o-1" });
     await user.queries.getOrder({ orderId: "o-1" });
     await user.forget("c-1");
-    await user.restrict("c-1");
-    await user.unrestrict("c-1");
+    await user.restrict("c-1", { ground: "accuracy-contested" });
+    await user.unrestrict("c-1", { notice: "given" });
     await user.exportPersonalData("c-1");
     await user.deadLetters.list({ status: "failed" });
     await user.deadLetters.retry("l-1");
@@ -79,23 +79,23 @@ describe("connect", () => {
     expect(recorded).toMatchObject({
       commands: [["payOrder", { orderId: "o-1" }, undefined, "eventual", "user-1"]],
       queries: [
-        ["getOrder", { orderId: "o-1" }, "user-1"],
-        ["getOrder", { orderId: "o-1" }, undefined],
+        ["getOrder", { orderId: "o-1" }, "user-1", undefined],
+        ["getOrder", { orderId: "o-1" }, undefined, undefined],
       ],
       forgets: [
         ["c-1", "eventual", "user-1", undefined],
-        ["restrict", "c-1", "eventual", "user-1"],
-        ["unrestrict", "c-1", "eventual", "user-1"],
+        ["restrict", "c-1", "eventual", "user-1", { ground: "accuracy-contested" }],
+        ["unrestrict", "c-1", "eventual", "user-1", { notice: "given" }],
       ],
       exports: [["c-1", "user-1"]],
       deadLetters: [
-        ["list", { status: "failed" }, "user-1"],
+        ["list", { status: "failed" }, "user-1", undefined],
         ["retry", "l-1", "user-1"],
         ["discard", "l-1", "operator-1"],
       ],
       failures: [
-        ["list", "user-1"],
-        ["get", "projection:orders", undefined],
+        ["list", "user-1", undefined],
+        ["get", "projection:orders", undefined, undefined],
       ],
     });
   });

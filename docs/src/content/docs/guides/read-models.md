@@ -165,6 +165,46 @@ The queries a handler composes run as the same actor. A query with a `repository
 payload field `client`, `table` or `actor`, which the repository receives as its own: the app
 refuses to start.
 
+### Restricted rows
+
+A query never reads the rows of a person whose processing is
+[restricted](/guides/personal-data/#restricting-processing): those whose field marked `.person()`
+names someone restricted as a whole, or restricted in a category a field marked `.personal()`
+holds, or whose such category a forgetting kept under a legal obligation. `table` leaves them out
+in its own statement, so `findMany` with a `limit` fills the page with the others and `count`
+counts the others. `client.get` and `client.all` run your SQL as it is and drop those rows from
+what it answers, so a `LIMIT` in it may return fewer rows, and `client.get` answers `null` when
+the one row it read is left out, though others match: read through `table` where paging or the
+first match must be exact. A row your SQL answers with a field marked `.personal()` and without the one marked
+`.person()` cannot be told apart, and the query rejects with `ConfigurationError`: select the person
+field too. What a query reads through `client.raw`, the driver itself, nobody filters. Who is
+restricted is read from a copy each database holding such read models keeps, written from the
+stream as a projection is: until it catches up with a `restrict` or a lift, queries read as
+before it, and `catchUpReadModels({ through })` with what `restrict` resolved to waits for it.
+
+A query that must read restricted rows names the basis it reads them on, which article 18(2)
+allows, and the access log records it with the restricted persons whose rows it read:
+
+```ts
+const invoices = await app.queries.invoicesOf(
+  { customerId: "c-42" },
+  { includeRestricted: "legal-obligation" },
+);
+```
+
+`legal-obligation` reads what a forgetting kept under a legal obligation and still leaves out what
+a person asked to restrict; `consent`, `legal-claims`, `protection-of-rights` and `public-interest`
+read every row. The queries its handler composes read on the same basis unless they pass their
+own.
+
+Each database that holds a read model with a field marked `.person()` keeps a copy of who is
+restricted, `<prefix>restricted_persons`, which the runtime writes from the stream as a projection
+does, so a read model in a database of its own filters the same way, and the position of the last
+event of each person it wrote, `<prefix>restricted_positions`: the copy only goes forward, so
+reading the stream again from the start, as happens when a read model whose name sorts first is
+added and takes the copy over, never shows a restricted person's rows on the way.
+`catchUpReadModels({ through })` of a `restrict`, `unrestrict` or `forget` waits for it.
+
 The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
 any other module or directory the projections and queries share, which the generator leaves
 alone. A projection or a query put in the wrong place gets a

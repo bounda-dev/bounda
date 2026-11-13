@@ -244,11 +244,11 @@ describe("retention", () => {
   it("leaves a restricted person alone, and forgets them once the restriction is lifted", async () => {
     const { app, run, advance, reasons } = await setUp();
     await run("touchCustomer", "c-1");
-    await app.restrict("c-1");
+    await app.restrict("c-1", { ground: "accuracy-contested" });
     await advance(40);
     expect(await reasons()).toEqual([]);
     expect(await app.nextDueAt()).toBeNull();
-    await app.unrestrict("c-1");
+    await app.unrestrict("c-1", { notice: "given" });
     await app.runUntilIdle();
     expect(await reasons()).toEqual([["c-1", "retention"]]);
   });
@@ -277,7 +277,7 @@ describe("retention", () => {
     await run("touchCustomer", "c-2");
     await advance(31);
     await run("touchCustomer", "c-2");
-    await app.restrict("c-3");
+    await app.restrict("c-3", { ground: "accuracy-contested" });
     await app.runUntilIdle();
     const rows = () => Promise.all(["c-1", "c-2", "c-3"].map((id) => storage.persons.get(id)));
     const recorded = await rows();

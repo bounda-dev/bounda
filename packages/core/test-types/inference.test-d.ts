@@ -38,6 +38,7 @@ import type {
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
+  ExportedRestricted,
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
@@ -52,6 +53,7 @@ import type {
   ForgetsPersonalData,
   HasPersonalFields,
   ImplementationModule,
+  IncludeRestrictedOptions,
   Instant,
   KeyRotationStatus,
   LegalBasis,
@@ -72,13 +74,19 @@ import type {
   PersonalFunction,
   PersonalOptions,
   PersonFunction,
+  PolicyModule,
   ProcessCorrelation,
   ProcessingRestrictedEvent,
   ProcessingRestrictedPayload,
+  ProcessingRestriction,
+  ProcessingRestrictionLiftAnnouncedEvent,
+  ProcessingRestrictionLiftAnnouncedPayload,
   ProcessingRestrictionLiftedEvent,
   ProcessingRestrictionLiftedPayload,
+  ProcessModule,
   ProcessStatus,
   QueriesFacade,
+  QueryOptions,
   RangeFilter,
   ReactionDispatchResult,
   ReactionForgetFunction,
@@ -88,6 +96,11 @@ import type {
   RejectFunction,
   RejectionCodeOf,
   RemovedDeadLetter,
+  RestrictedAccess,
+  RestrictedProcessingAccess,
+  RestrictionBasis,
+  RestrictionGround,
+  RestrictOptions,
   RetentionInput,
   RetentionStatus,
   ScheduledDispatch,
@@ -99,6 +112,7 @@ import type {
   SubscriberFailureStatus,
   SubscriberFailures,
   Table,
+  UnrestrictOptions,
   Where,
 } from "@bounda-dev/core";
 import {
@@ -157,6 +171,8 @@ import type { Query as GetOrder } from "./fixtures/order-app/app/read/order-summ
 import type { Query as ListUnpaidOrders } from "./fixtures/order-app/app/read/order-summary/queries/+types/list-unpaid-orders.ts";
 
 type Registry = typeof registry;
+
+declare const app: BoundaApp<Registry>;
 
 declare const commands: Commands;
 declare const reactionCommands: SendReceipt.HandlerArgs["commands"];
@@ -681,6 +697,10 @@ describe("personal data", () => {
     expectTypeOf<OnPersonalDataAccessArgs["logger"]>().toEqualTypeOf<Logger>();
     expectTypeOf<PersonalDataAccess["operation"]>().toEqualTypeOf<
       | "query"
+      | "command"
+      | "policy"
+      | "process"
+      | "scheduledCommand"
       | "exportPersonalData"
       | "deadLetters.list"
       | "deadLetters.get"
@@ -693,6 +713,17 @@ describe("personal data", () => {
     expectTypeOf<PersonalDataAccess["persons"]>().toEqualTypeOf<readonly string[]>();
     expectTypeOf<PersonalDataAccess["personCount"]>().toEqualTypeOf<number>();
     expectTypeOf<PersonalDataAccess["at"]>().toEqualTypeOf<string>();
+    expectTypeOf<PersonalDataAccess["restricted"]>().toEqualTypeOf<RestrictedAccess | null>();
+    expectTypeOf<RestrictedAccess>().toEqualTypeOf<{
+      readonly basis: RestrictionBasis;
+      readonly persons: readonly string[];
+      readonly personCount: number;
+    }>();
+    expectTypeOf<RestrictedProcessingAccess["restricted"]>().toEqualTypeOf<RestrictedAccess>();
+    expectTypeOf<RestrictedProcessingAccess["detail"]>().toEqualTypeOf<{
+      readonly handler: string;
+    }>();
+    expectTypeOf<RestrictedProcessingAccess>().toExtend<PersonalDataAccess>();
     expectTypeOf<Extract<PersonalDataAccess, { operation: "query" }>["detail"]>().toEqualTypeOf<{
       readonly query: string;
       readonly readModel: string;
@@ -836,6 +867,7 @@ describe("personal data", () => {
       readonly personId: string;
       readonly exportedAt: string;
       readonly categories: Readonly<Record<string, ExportedCategory>>;
+      readonly restrictions: readonly ProcessingRestriction[];
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
@@ -848,11 +880,14 @@ describe("personal data", () => {
       readonly eventType: string;
       readonly errorMessage: string | null;
       readonly errorStack?: string | null;
+      readonly restricted: ExportedRestricted;
     }>();
+    expectTypeOf<ExportedRestricted>().toEqualTypeOf<readonly string[]>();
     expectTypeOf<ExportedRow>().toEqualTypeOf<{
       readonly key: unknown;
       readonly data: ExportedData;
       readonly categories: ExportedCategories;
+      readonly restricted: ExportedRestricted;
     }>();
     expectTypeOf<ExportedEvent>().toEqualTypeOf<{
       readonly id: string;
@@ -864,6 +899,7 @@ describe("personal data", () => {
       readonly timestamp: string;
       readonly data: ExportedData;
       readonly categories: ExportedCategories;
+      readonly restricted: ExportedRestricted;
     }>();
     expectTypeOf<ExportedScheduledCommand>().toEqualTypeOf<{
       readonly commandId: string;
@@ -871,6 +907,7 @@ describe("personal data", () => {
       readonly executeAt: string;
       readonly data: ExportedData;
       readonly categories: ExportedCategories;
+      readonly restricted: ExportedRestricted;
     }>();
     expectTypeOf<ExportedDeadLetter>().toEqualTypeOf<{
       readonly id: string;
@@ -880,6 +917,7 @@ describe("personal data", () => {
       readonly errorStack?: string | null;
       readonly data: ExportedData;
       readonly categories: ExportedCategories;
+      readonly restricted: ExportedRestricted;
     }>();
     expectTypeOf<ExportedData>().toEqualTypeOf<Readonly<Record<string, unknown>>>();
     expectTypeOf<ExportedCategories>().toEqualTypeOf<Readonly<Record<string, string>>>();
@@ -890,13 +928,59 @@ describe("personal data", () => {
     }>();
   });
 
-  it("lets every client restrict a person's processing and lift it, answering like a command", () => {
+  it("lets every client restrict a person's processing on a ground of article 18(1) and lift it with a notice, answering like a command", () => {
     expectTypeOf<BoundaClient["restrict"]>().toEqualTypeOf<
-      (personId: string) => Promise<StoredDispatch>
+      (personId: string, options: RestrictOptions) => Promise<StoredDispatch>
     >();
-    expectTypeOf<BoundaClient["unrestrict"]>().toEqualTypeOf<BoundaClient["restrict"]>();
+    expectTypeOf<BoundaClient["unrestrict"]>().toEqualTypeOf<
+      (personId: string, options: UnrestrictOptions) => Promise<StoredDispatch>
+    >();
     expectTypeOf<BoundaApp["restrict"]>().toEqualTypeOf<BoundaClient["restrict"]>();
     expectTypeOf<BoundaApp["unrestrict"]>().toEqualTypeOf<BoundaClient["unrestrict"]>();
+    expectTypeOf<RestrictionGround>().toEqualTypeOf<
+      "accuracy-contested" | "unlawful-processing" | "legal-claims" | "objection-pending"
+    >();
+    expectTypeOf<RestrictionBasis>().toEqualTypeOf<
+      "consent" | "legal-claims" | "protection-of-rights" | "public-interest" | "legal-obligation"
+    >();
+    expectTypeOf<RestrictOptions>().toEqualTypeOf<{
+      readonly ground: RestrictionGround;
+      readonly categories?: readonly PersonalCategoryName[];
+    }>();
+    expectTypeOf<UnrestrictOptions["notice"]>().toEqualTypeOf<DurationInput | "given">();
+    expectTypeOf<UnrestrictOptions["ground"]>().toEqualTypeOf<RestrictionGround | undefined>();
+    expectTypeOf<ProcessingRestriction>().toEqualTypeOf<{
+      readonly ground: RestrictionGround;
+      readonly categories: readonly PersonalCategoryName[] | null;
+      readonly since: string;
+    }>();
+    // @ts-expect-error a restriction needs its ground
+    void app.restrict("c-1", {});
+    // @ts-expect-error not a ground of article 18(1)
+    void app.restrict("c-1", { ground: "annoyed" });
+    // @ts-expect-error a lift needs its notice
+    void app.unrestrict("c-1", {});
+    void app.restrict("c-1", { ground: "legal-claims" });
+    void app.unrestrict("c-1", { notice: "7d", ground: "legal-claims" });
+    void app.unrestrict("c-1", { notice: "given" });
+  });
+
+  it("lets a command, a query, a policy and a process name the basis they process restricted data on", () => {
+    expectTypeOf<DispatchOptions["processRestricted"]>().toEqualTypeOf<
+      RestrictionBasis | undefined
+    >();
+    expectTypeOf<QueryOptions["includeRestricted"]>().toEqualTypeOf<RestrictionBasis | undefined>();
+    expectTypeOf<PolicyModule["restricted"]>().toEqualTypeOf<RestrictionBasis | undefined>();
+    expectTypeOf<ProcessModule["restricted"]>().toEqualTypeOf<RestrictionBasis | undefined>();
+    expectTypeOf<EventMetadata["restrictionBasis"]>().toEqualTypeOf<RestrictionBasis | undefined>();
+    expectTypeOf(app.queries.getOrder).parameter(1).toEqualTypeOf<QueryOptions | undefined>();
+    void app.queries.getOrder({ orderId: "o-1" }, { includeRestricted: "legal-claims" });
+    // @ts-expect-error not a basis of article 18(2)
+    void app.queries.getOrder({ orderId: "o-1" }, { includeRestricted: "curiosity" });
+    void app.commands.cancelOrder(
+      { orderId: "o-1", reason: "asked" },
+      { processRestricted: "consent" },
+    );
   });
 
   it("types the restriction events for the projections and policies that handle them", () => {
@@ -905,7 +989,21 @@ describe("personal data", () => {
     expectTypeOf<
       ProjectRestricted.Args["event"]["payload"]
     >().toEqualTypeOf<ProcessingRestrictedPayload>();
-    expectTypeOf<ProcessingRestrictedPayload>().toEqualTypeOf<{ readonly personId: string }>();
+    expectTypeOf<ProcessingRestrictedPayload>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly ground: RestrictionGround;
+      readonly categories: readonly PersonalCategoryName[] | null;
+      readonly restrictions: readonly ProcessingRestriction[];
+    }>();
+    expectTypeOf<ProcessingRestrictionLiftAnnouncedPayload>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly grounds: readonly RestrictionGround[];
+      readonly categories: readonly PersonalCategoryName[] | null;
+      readonly liftsAt: string;
+    }>();
+    expectTypeOf<
+      ProcessingRestrictionLiftAnnouncedEvent["type"]
+    >().toEqualTypeOf<"ProcessingRestrictionLiftAnnounced">();
     expectTypeOf<ProjectRestricted.Args["table"]>().toEqualTypeOf<Table<OrderSummaryRow>>();
     expectTypeOf<
       AuditOnProcessingRestrictionLifted.HandlerArgs["event"]
@@ -915,6 +1013,9 @@ describe("personal data", () => {
     >().toEqualTypeOf<"ProcessingRestrictionLifted">();
     expectTypeOf<ProcessingRestrictionLiftedPayload>().toEqualTypeOf<{
       readonly personId: string;
+      readonly grounds: readonly RestrictionGround[];
+      readonly categories: readonly PersonalCategoryName[] | null;
+      readonly restrictions: readonly ProcessingRestriction[];
     }>();
     expectTypeOf<AuditOnProcessingRestrictionLifted.HandlerArgs["auditLog"]>().toHaveProperty(
       "record",
@@ -1426,11 +1527,15 @@ describe("operations", () => {
   it("opens a subscriber's last failure only through a recorded call", () => {
     expectTypeOf<BoundaClient["subscriberFailures"]>().toEqualTypeOf<SubscriberFailures>();
     expectTypeOf<SubscriberFailures["list"]>().toEqualTypeOf<
-      () => Promise<readonly SubscriberFailure[]>
+      (options?: IncludeRestrictedOptions) => Promise<readonly SubscriberFailure[]>
     >();
     expectTypeOf<SubscriberFailures["get"]>().toEqualTypeOf<
-      (subscriber: string) => Promise<SubscriberFailure | null>
+      (subscriber: string, options?: IncludeRestrictedOptions) => Promise<SubscriberFailure | null>
     >();
+    expectTypeOf<SubscriberFailure["restricted"]>().toEqualTypeOf<true | undefined>();
+    expectTypeOf<IncludeRestrictedOptions>().toEqualTypeOf<{
+      readonly includeRestricted?: RestrictionBasis;
+    }>();
     expectTypeOf<SubscriberFailure["errorMessage"]>().toEqualTypeOf<string | null>();
     expectTypeOf<SubscriberFailure["errorStack"]>().toEqualTypeOf<string | null | undefined>();
     expectTypeOf<StoredSubscriberFailure["person"]>().toEqualTypeOf<string | null>();

@@ -176,7 +176,7 @@ const registry = {
     customers: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          customerId: f.string().primaryKey(),
+          customerId: f.string().primaryKey().person(),
           email: f.string(),
           name: f.string(),
         }),
@@ -693,6 +693,107 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const restored = await start(storage, definition, BEFORE_ROTATION, clock);
         expect(await forgettings(restored.app, "ana")).toEqual([intention.eventId]);
         await expectForgottenIn(storage, restored, "ana");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "restricts again whoever a restore brings back unrestricted, and lifts again whoever it brings back restricted, each change once, with its id",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        for (const person of ["ana", "bob", "cy"]) await write(first, person);
+        await first.app.restrict("bob", { ground: "objection-pending" });
+        await target.backUp();
+        const anaRestricted = (await first.app.restrict("ana", { ground: "legal-claims" }))
+          .eventIds;
+        const bobLifted = (await first.app.unrestrict("bob", { notice: "given" })).eventIds;
+        const cyAnnounced = (await first.app.unrestrict("cy", { notice: "given" })).eventIds;
+        expect(cyAnnounced).toEqual([]);
+        await first.app.runUntilIdle();
+        await first.app.stop();
+
+        const storage = await target.restore();
+        const restored = await start(storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await restored.app.runUntilIdle();
+        const changes = (await restored.app.events.read({ limit: 1_000 })).filter(
+          (event) => event.aggregateType === "bounda" && event.type !== "PersonalDataForgotten",
+        );
+        expect(changes.map(({ id }) => id)).toEqual([
+          expect.any(String),
+          ...anaRestricted,
+          ...bobLifted,
+        ]);
+        expect(await restored.queries.getCustomer?.({ customerId: "ana" })).toBeNull();
+        await expectReadable(restored, "bob");
+        await expectReadable(restored, "cy");
+        expect((await restored.app.exportPersonalData("ana")).restrictions).toEqual([
+          { ground: "legal-claims", categories: null, since: START.toISOString() },
+        ]);
+        await expect(
+          restored.commands.confirmCustomer?.({ customerId: "ana" }),
+        ).rejects.toMatchObject({ code: "PROCESSING_RESTRICTED" });
+        await restored.app.stop();
+
+        const again = await start(storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await again.app.runUntilIdle();
+        expect(
+          (await again.app.events.read({ limit: 1_000 })).filter(
+            (event) => event.aggregateType === "bounda" && event.type !== "PersonalDataForgotten",
+          ),
+        ).toHaveLength(3);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "commits at the restored start a restriction the ledger recorded before a commit that never happened, and not one a later change superseded",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, opened } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await write(first, "bob");
+        const intention = (personId: string, eventId: string, minute: number) => ({
+          personId,
+          categories: null,
+          eventId,
+          forgottenAt: new Date(START.getTime() + minute * 60_000).toISOString(),
+          reason: "requested" as const,
+          restriction: {
+            type: "ProcessingRestricted" as const,
+            payload: {
+              personId,
+              ground: "accuracy-contested" as const,
+              categories: null,
+              restrictions: [
+                {
+                  ground: "accuracy-contested" as const,
+                  categories: null,
+                  since: new Date(START.getTime() + minute * 60_000).toISOString(),
+                },
+              ],
+            },
+          },
+        });
+        // Ana's was left alone by a process that stopped in between; bob's was superseded by a
+        // restriction and a lift committed after it, which the copy holds.
+        await opened[0]?.append([
+          intention("ana", "019a6b1e-0000-7000-8000-00000000a7a1", -2),
+          intention("bob", "019a6b1e-0000-7000-8000-00000000a7a2", -2),
+        ]);
+        await first.app.restrict("bob", { ground: "objection-pending" });
+        await first.app.unrestrict("bob", { notice: "given" });
+        await target.backUp();
+        await first.app.stop();
+
+        const storage = await target.restore();
+        const restored = await start(storage, definition, BEFORE_ROTATION, clock);
+        await restored.app.runUntilIdle();
+        expect(await restored.queries.getCustomer?.({ customerId: "ana" })).toBeNull();
+        await expectReadable(restored, "bob");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

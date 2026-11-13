@@ -114,7 +114,11 @@ describe("createMemoryStorageTransaction", () => {
     });
     await expect(
       stores.transact(async (tx) => {
-        await tx.persons.restrict("c-1", at(2));
+        await tx.persons.restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: at(2),
+        });
         await stores.persons.record({
           person: "c-1",
           position: 2,
@@ -147,16 +151,28 @@ describe("createMemoryStorageTransaction", () => {
     const day = (n: number) => at(n).toISOString();
     await expect(
       stores.transact(async (tx) => {
-        await tx.persons.restrict("c-1", at(2));
+        await tx.persons.restrict("c-1", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: at(2),
+        });
         await stores.persons.record({
           person: "c-1",
           position: 1,
           lastActiveAt: day(1),
           forgottenAt: null,
         });
-        await tx.persons.restrict("c-2", at(4));
-        await stores.persons.unrestrict("c-2");
-        await stores.persons.restrict("c-2", at(5));
+        await tx.persons.restrict("c-2", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: at(4),
+        });
+        await stores.persons.unrestrict("c-2", { categories: null });
+        await stores.persons.restrict("c-2", {
+          ground: "accuracy-contested",
+          categories: null,
+          since: at(5),
+        });
         await refused(tx);
       }),
     ).rejects.toBeInstanceOf(ScheduledClaimLostError);
@@ -168,7 +184,13 @@ describe("createMemoryStorageTransaction", () => {
       forgottenAt: null,
       hold: null,
     });
-    expect(await stores.persons.restrict("c-1", at(5))).toBe(true);
+    expect(
+      await stores.persons.restrict("c-1", {
+        ground: "accuracy-contested",
+        categories: null,
+        since: at(5),
+      }),
+    ).toBe(true);
     // A field someone wrote over the transaction's write is theirs.
     expect(await stores.persons.get("c-2")).toMatchObject({ restrictedSince: day(5) });
   });

@@ -24,6 +24,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
   storageSchemaContract,
@@ -73,6 +74,7 @@ describe("sqlite adapter in memory, under concurrent use", () => {
     create: async () => sqlite({ memory: true }),
     locking: "single-writer",
   });
+  restrictedReadsContract({ create: async () => sqlite({ memory: true }) });
 
   it("lets a read, its own or a query's on client.raw, wait for a write transaction in flight", async () => {
     const adapter = sqlite({ memory: true });
@@ -360,9 +362,11 @@ describe("sqlite adapter on a file", () => {
     client.close();
     expect(rows.map((row) => [row.scope, Number(row.version)])).toEqual([
       ["checkpoints", 1],
+      ["checkpoints", 2],
       ["storage", 1],
       ["storage", 2],
       ["storage", 3],
+      ["storage", 4],
     ]);
   });
 
@@ -404,6 +408,9 @@ describe("sqlite adapter on a file", () => {
       "app_person_rows",
       "app_personal_keys",
       "app_persons",
+      "app_restricted_persons",
+      "app_restricted_positions",
+      "app_restrictions",
       "app_rm_order_summary",
       "app_scheduled_commands",
       "app_snapshots",

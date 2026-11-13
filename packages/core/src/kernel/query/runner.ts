@@ -1,7 +1,11 @@
+import type { RestrictionView } from "../../adapter/storage/restricted-persons.ts";
 import type { ErrorText } from "../../config/types.ts";
 import { NotFoundError } from "../../contracts/errors.ts";
+import type { RestrictionBasis } from "../../modules/personal-data.ts";
+import type { QueryOptions } from "../../modules/query.ts";
 import { validatePayload } from "../command/validate.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
+import { checkIncludeRestricted, restrictionViewOf } from "../personal-data/restricted-reads.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import type { ReadModelRuntime, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { isRecord } from "../shared/merge-fields.ts";
@@ -15,13 +19,14 @@ import { reading } from "./reading.ts";
  * The untyped shape of `app.queries`. The generated types narrow it per project.
  */
 export type QueriesFacadeRuntime = Readonly<
-  Record<string, (payload?: unknown) => Promise<unknown>>
+  Record<string, (payload?: unknown, options?: QueryOptions) => Promise<unknown>>
 >;
 
 export interface RunQueryArgs {
   readonly type: string;
   readonly payload: unknown;
   readonly actor?: string | undefined;
+  readonly includeRestricted?: RestrictionBasis | undefined;
 }
 
 export interface QueryRunner {
@@ -47,13 +52,18 @@ export interface CreateQueryRunnerFunction {
   (args: CreateQueryRunnerArgs): QueryRunner;
 }
 
-// A query of a read model with personal fields is recorded once its handler settles, before its
-// result or error is handed out, naming the persons of the rows it read: a handler may reshape
-// what it read, so its result cannot tell whose data it holds.
-const personalStores = (readModel: ReadModelRuntime) => {
-  const { personalData, storage } = readModel;
-  if (personalData === null || personalData.personal.length === 0) return null;
-  return reading({ storage, person: personalData.person });
+// The stores of a read model with a field marked `.person()`, which leave out the rows of
+// restricted persons; a read model without one has no row of anyone's.
+const personalStores = (readModel: ReadModelRuntime, view: RestrictionView) => {
+  const { personalData, storage, name } = readModel;
+  if (personalData === null) return null;
+  return reading({
+    storage,
+    readModel: name,
+    person: personalData.person,
+    personal: personalData.personal,
+    view,
+  });
 };
 
 export const createQueryRunner: CreateQueryRunnerFunction = ({
@@ -64,9 +74,10 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
   errorText,
 }) => {
   const runAs = async (
-    { type, payload, actor }: RunQueryArgs,
+    { type, payload, actor, includeRestricted: asked }: RunQueryArgs,
     nested: QueriesFacadeRuntime,
   ): Promise<unknown> => {
+    const includeRestricted = checkIncludeRestricted(`query ${type}`, asked);
     const query = queries.byType[type];
     if (query === undefined) throw runtimeText(new NotFoundError(`Unknown query "${type}"`));
     const readModel = readModels.byName[query.readModel];
@@ -82,7 +93,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
       },
       run: async () => {
         const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
-        const stores = personalStores(readModel);
+        const stores = personalStores(readModel, restrictionViewOf(includeRestricted));
         const { table, client } = stores ?? readModel.storage;
         if (query.repository !== null && isRecord(parsed)) {
           checkPayloadFields(
@@ -112,9 +123,18 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
             Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
           );
         };
-        if (stores === null) return run();
+        // Recorded once its handler settles, before its result or error is handed out, naming
+        // the persons of the rows it read: a handler may reshape what it read, so its result
+        // cannot tell whose data it holds. A read model with no field marked `.personal()` is
+        // recorded only when restricted rows were asked for.
+        if (
+          stores === null ||
+          (includeRestricted === undefined && readModel.personalData?.personal.length === 0)
+        ) {
+          return run();
+        }
         return recorded(
-          (outcome) =>
+          async (outcome) =>
             recordAccess({
               operation: "query",
               detail: { query: query.key, readModel: query.readModel },
@@ -122,6 +142,16 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
               persons: stores.persons,
               outcome,
               unattributed: stores.unattributed,
+              restricted:
+                includeRestricted === undefined
+                  ? null
+                  : {
+                      basis: includeRestricted,
+                      persons: await readModel.storage.restricted.among(
+                        stores.persons,
+                        "unrestricted",
+                      ),
+                    },
             }),
           run,
         );
@@ -129,15 +159,29 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
     });
   };
 
-  const facade = (actor: string | undefined): QueriesFacadeRuntime => {
+  // A query a handler composes reads restricted rows on the basis its caller named, unless it names
+  // its own.
+  const facadeOn = (
+    actor: string | undefined,
+    inherited: RestrictionBasis | undefined,
+  ): QueriesFacadeRuntime => {
     const built: QueriesFacadeRuntime = Object.fromEntries(
       Object.values(queries.byKey).map((query) => [
         query.key,
-        (payload?: unknown) => runAs({ type: query.type, payload, actor }, built),
+        (payload?: unknown, options?: QueryOptions) => {
+          const includeRestricted = options?.includeRestricted ?? inherited;
+          return runAs(
+            { type: query.type, payload, actor, includeRestricted },
+            includeRestricted === inherited ? built : facadeOn(actor, includeRestricted),
+          );
+        },
       ]),
     );
     return built;
   };
 
-  return { run: (args) => runAs(args, facade(args.actor)), facade };
+  return {
+    run: (args) => runAs(args, facadeOn(args.actor, args.includeRestricted)),
+    facade: (actor) => facadeOn(actor, undefined),
+  };
 };

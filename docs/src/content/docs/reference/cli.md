@@ -378,7 +378,38 @@ access log like any export.
 `forgot c-42`; with `--category`, repeated for several, only those categories, as when a consent is
 withdrawn, and prints `forgot marketing of c-42`. A category whose basis is `legal-obligation` is
 kept, restricted, until its retention ends, either way. A category the app does not have fails with
-`VALIDATION_FAILED` and nothing is forgotten.
+`VALIDATION_FAILED` and nothing is forgotten. The export lists the person's restrictions, and marks
+on each record the fields a restriction covers.
+
+## `bounda restrict` and `bounda unrestrict`
+
+Restrict a person's processing, and lift it, from the command line, as `app.restrict` and
+`app.unrestrict` do (see [Restricting processing](/guides/personal-data/#restricting-processing)).
+Both boot the project as `bounda dead-letters` does, and act as `--actor`.
+
+```bash
+bounda restrict c-42 --ground accuracy-contested --actor ops-ana
+bounda restrict c-42 --ground legal-claims --category invoices --actor ops-ana
+bounda unrestrict c-42 --notice 7d --ground accuracy-contested --actor ops-ana
+bounda unrestrict c-42 --notice given --actor ops-ana
+```
+
+`bounda restrict <person> --ground <ground>` restricts the person as a whole on that ground of
+article 18(1), `accuracy-contested`, `unlawful-processing`, `legal-claims` or `objection-pending`,
+and prints `restricted c-42 on accuracy-contested`; with `--category`, repeated for several, only
+those categories, and prints `restricted invoices of c-42 on legal-claims`. A restriction that adds
+nothing prints `c-42 was restricted on accuracy-contested already`. Without `--ground`, or with
+one the article does not name, it fails before booting; a category the app does not have fails
+with `VALIDATION_FAILED`.
+
+`bounda unrestrict <person> --notice <duration|given>` lifts the person's restrictions: with a
+duration, it announces the lift, for the app to tell the person, and lifts it that long after,
+printing `announced the lift of the restriction of c-42, lifted 7d from now`; with `given`, for a
+person told already, it lifts at once and prints `lifted the restriction of c-42`. `--ground`
+lifts only the restrictions on that ground, and `--category`, repeated for several, only those
+categories of restrictions of categories. Nothing to lift prints `c-42 has no restriction to
+lift`. Without `--notice`, or with one that is not a positive duration or `given`, it fails
+before booting.
 
 ## `bounda forgotten` and `bounda forget --from`
 

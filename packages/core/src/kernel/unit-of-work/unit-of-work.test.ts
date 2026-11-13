@@ -554,7 +554,11 @@ describe("createUnitOfWork", () => {
 
   it("throws a commit refused because a person its events touch is restricted as the refusal", async () => {
     const storage = await memory().createStorage();
-    await storage.persons.restrict("c-1", new Date());
+    await storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date(),
+    });
     const refused = await commitAttempt({
       storage,
       concurrencyRetries: 3,

@@ -6,6 +6,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { CommandPipeline } from "../command/pipeline.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
+import type { RecordAccess } from "../personal-data/access.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
@@ -37,6 +38,7 @@ export interface CreateProcessRunnerArgs {
   readonly pendingRetries: PendingRetries;
   readonly logger: Logger;
   readonly intentions: ForgetIntentions;
+  readonly recordAccess: RecordAccess;
 }
 
 export interface CreateProcessRunnerFunction {
@@ -59,6 +61,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   pendingRetries,
   logger,
   intentions,
+  recordAccess,
 }) => {
   const units = createProcessUnits({ storage, config, ids, clock });
   const failures = createProcessFailures({
@@ -77,6 +80,8 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     clock,
     logger,
     intentions,
+    keys: storage.personalKeys,
+    recordAccess,
   });
   const schedule = createDeadlineSchedule({ storage, units });
   const deadlineStep = createDeadlineStep({ units, handlers, ids });

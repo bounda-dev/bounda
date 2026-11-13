@@ -3,6 +3,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError, NotFoundError } from "../../contracts/errors.ts";
 import { type StoredEvent, streamId } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
+import { hidingRetained } from "../personal-data/event-store.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import {
@@ -68,7 +69,11 @@ export const createProcessInstances: CreateProcessInstancesFunction = ({
 
   const load = async (process: ProcessRuntime, instanceId: string): Promise<ProcessInstance> => {
     const stream = { aggregateType: processAggregateType(process.name), aggregateId: instanceId };
-    const { events, opened = [] } = await eventStore.load(stream);
+    // What a forgetting kept reads as `null` to a process that declares no basis for it.
+    const { events, opened = [] } = await (process.restricted === null
+      ? hidingRetained(eventStore)
+      : eventStore
+    ).load(stream);
     const instance: Viewed = {
       ...foldProcess({
         initialState: process.initialState,

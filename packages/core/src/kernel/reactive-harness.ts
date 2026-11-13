@@ -14,9 +14,14 @@ import { createRestrictedRetries } from "./dead-letters/restricted.ts";
 import { createDeadLetterRetry, type DeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
 import type { AppStorage } from "./events/app-event-store.ts";
+import { createAccessLog } from "./personal-data/access.ts";
 import { buildPersonalCategories } from "./personal-data/categories.ts";
 import { createForgetIntentions } from "./personal-data/intention.ts";
 import type { ForgetLedgerReconciliation } from "./personal-data/reconciliation.ts";
+import {
+  createRestrictedPersonsSubscriber,
+  restrictedPersonsHosts,
+} from "./personal-data/restricted-persons.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
@@ -25,7 +30,11 @@ import { createPorts } from "./ports/ports.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner, PROCESSES_SUBSCRIBER, type ProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber } from "./projection/runner.ts";
-import { buildReadModels, type ReadModelsRuntime } from "./read-model/build-read-models.ts";
+import {
+  adapterForReadModel,
+  buildReadModels,
+  type ReadModelsRuntime,
+} from "./read-model/build-read-models.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
@@ -102,6 +111,13 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     strict: true,
   });
   const readModels = await buildReadModels({ registry, config, logger });
+  const recordAccess = createAccessLog({
+    hook: undefined,
+    env: {},
+    tenant: undefined,
+    logger,
+    clock,
+  });
   const pipeline = createCommandPipeline({
     aggregates,
     loader,
@@ -110,6 +126,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     ids,
     clock,
     logger,
+    recordAccess,
   });
   const policies = buildPolicies({ registry, aggregates });
   const personalCategories = buildPersonalCategories({
@@ -126,6 +143,8 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     clock,
     logger,
     intentions,
+    keys: storage.personalKeys,
+    recordAccess,
   });
   const processes = createProcessRunner({
     processes: buildProcesses({ registry, aggregates, config }),
@@ -139,6 +158,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     pendingRetries: ignoredRetries,
     logger,
     intentions,
+    recordAccess,
   });
   const retries = createDeadLetterRetry({
     storage,
@@ -165,6 +185,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
     restores,
     reconciliation,
+    intentions,
     reactive: [POLICIES_SUBSCRIBER, PROCESSES_SUBSCRIBER],
     config,
     ids,
@@ -182,6 +203,16 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
             logger,
             errorText: config.runtime.telemetry.errorText,
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+          }),
+        ),
+        ...restrictedPersonsHosts({
+          readModels: Object.values(readModels.byName),
+          adapterOf: (name) => adapterForReadModel({ name, config }),
+        }).map((readModel) =>
+          createRestrictedPersonsSubscriber({
+            readModel,
+            logger,
+            errorText: config.runtime.telemetry.errorText,
           }),
         ),
         createPolicySubscriber({

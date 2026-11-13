@@ -6,6 +6,7 @@ import {
   type OnPersonalDataAccess,
   type PersonalDataAccess,
 } from "../../modules/audit.ts";
+import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { AppEnv } from "../../register/index.ts";
 
 export const PERSONAL_DATA_ACCESSED = "personal data accessed";
@@ -22,6 +23,13 @@ export interface RecordAccessArgs<Op extends Operation> {
    * For a query only; any other record leaves it out.
    */
   readonly unattributed?: boolean;
+  /**
+   * The restricted persons opened on a basis named explicitly; `null` or absent when it named none.
+   */
+  readonly restricted?: {
+    readonly basis: RestrictionBasis;
+    readonly persons: Iterable<string>;
+  } | null;
 }
 
 /**
@@ -51,8 +59,10 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
     persons,
     outcome,
     unattributed = false,
+    restricted = null,
   }: RecordAccessArgs<Op>): Promise<void> => {
     const distinct = [...new Set(persons)];
+    const restrictedPersons = restricted === null ? [] : [...new Set(restricted.persons)];
     const access = {
       operation,
       actor: actor ?? null,
@@ -60,6 +70,14 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
       personCount: distinct.length,
       at: clock.now().toISOString(),
       outcome,
+      restricted:
+        restricted === null
+          ? null
+          : {
+              basis: restricted.basis,
+              persons: restrictedPersons.slice(0, MAX_ACCESS_PERSONS),
+              personCount: restrictedPersons.length,
+            },
       ...(operation === "query" ? { unattributed } : {}),
       detail,
     } as PersonalDataAccess;

@@ -36,6 +36,7 @@ import type { NewEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import { RESTRICTION_BASES, type RestrictionBasis } from "../../modules/personal-data.ts";
 import {
   type AggregateLoader,
   type LoadedAggregate,
@@ -43,9 +44,11 @@ import {
 } from "../aggregate/load-aggregate.ts";
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
+import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
+import { hidingRetained } from "../personal-data/event-store.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
-import { refuseRestricted } from "../personal-data/refusal.ts";
+import { refuseRestricted, refuseRestrictedRead } from "../personal-data/refusal.ts";
 import { actedBy } from "../shared/causation.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -74,6 +77,11 @@ export interface DispatchArgs {
    * Aborted when the reaction that dispatches the command is abandoned, so the command stops too.
    */
   readonly signal?: AbortSignal | undefined;
+  /**
+   * The persons whose sealed data the payload came with opened, as a stored command's does: a
+   * restriction covers them as it covers what the command loads.
+   */
+  readonly opened?: readonly KeyedPerson[] | undefined;
 }
 
 /**
@@ -108,6 +116,10 @@ export interface CreateCommandPipelineArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
+  /**
+   * Records a dispatch that processed restricted data on its `processRestricted` basis.
+   */
+  readonly recordAccess: RecordAccess;
   /**
    * Told of every rejection of an unattended dispatch whose unit of work commits.
    */
@@ -210,6 +222,33 @@ const resolveAggregateId = (aggregate: AggregateRuntime, payload: unknown): stri
 const asStored = (payload: unknown): unknown =>
   payload === undefined ? payload : JSON.parse(JSON.stringify(payload));
 
+// Checked before anything runs; a delayed command would carry the basis past the moment it was
+// given for.
+const restrictionBasisOf = (
+  type: string,
+  options: DispatchOptions,
+): RestrictionBasis | undefined => {
+  const basis = options.processRestricted;
+  if (basis === undefined) return undefined;
+  if (!RESTRICTION_BASES.includes(basis)) {
+    throw new ValidationError(`command ${type} names a basis restricted data is not processed on`, [
+      {
+        path: ["processRestricted"],
+        message: `Expected one of ${RESTRICTION_BASES.map((name) => JSON.stringify(name)).join(", ")}`,
+      },
+    ]);
+  }
+  if (options.delay !== undefined) {
+    throw new ValidationError(`command ${type} is scheduled with processRestricted`, [
+      {
+        path: ["processRestricted"],
+        message: "A basis holds when it is given; dispatch the command then, without delay",
+      },
+    ]);
+  }
+  return basis;
+};
+
 const toPendingEvents = (
   aggregate: AggregateRuntime,
   command: Command,
@@ -242,6 +281,9 @@ const toPendingEvents = (
         causationId: command.metadata.causationId,
         commandId: command.metadata.commandId,
         ...actedBy(command.metadata.actor),
+        ...(command.metadata.restrictionBasis === undefined
+          ? {}
+          : { restrictionBasis: command.metadata.restrictionBasis }),
         depth: command.metadata.depth,
         schemaVersion: runtime.schemaVersion,
         system: false,
@@ -358,6 +400,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   ids,
   clock,
   logger,
+  recordAccess,
   onRejection,
 }) => {
   // Only streams written before `begin` existed land here, so the set stays small.
@@ -372,17 +415,32 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     signals: readonly AbortSignal[],
     onLoad: (loaded: LoadedAggregate) => void,
     touches: readonly string[],
+    letThrough: Set<string>,
+    carried: readonly KeyedPerson[],
   ): Promise<StoredDispatch | DomainError> => {
+    const basis = command.metadata.restrictionBasis;
     const attempts = config.runtime.commands.concurrencyRetries + 1;
     const { timeoutMs } = config.forAggregate(aggregate.name).commands;
     for (let attempt = 1; ; attempt += 1) {
+      // What a forgetting kept reads as `null` to a command that names no basis for it.
       const loaded = await loader.load({
         aggregate,
         aggregateId: command.aggregateId,
-        eventStore: store,
+        eventStore: basis === undefined ? hidingRetained(store) : store,
       });
       onLoad(loaded);
       const { folded, version, persons } = loaded;
+      // Before the handler, which may hand what it read to a port: the store checks again as the
+      // events are appended.
+      for (const person of await refuseRestrictedRead({
+        persons: storage.persons,
+        keys: storage.personalKeys,
+        opened: [...persons, ...carried],
+        touches,
+        basis,
+      })) {
+        letThrough.add(person);
+      }
       const stream = `${aggregate.name}:${command.aggregateId}`;
       if (folded.openedWithout !== null && !warnedOpenings.has(stream)) {
         warnedOpenings.add(stream);
@@ -440,6 +498,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           events,
           persons,
           touches,
+          ...(basis === undefined ? {} : { basis }),
         });
         return storedDispatch(aggregate, command.aggregateId, appended);
       } catch (error) {
@@ -471,6 +530,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       actor: caller,
       commandId: scheduledId,
       signal: reactionSignal,
+      opened = [],
     }: DispatchArgs,
     within: UnitStores | undefined,
     rejected: (error: DomainError, rejection: CommandRejection) => Rejected,
@@ -497,6 +557,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           };
 
     const scheduled = options.delay !== undefined;
+    const basis = restrictionBasisOf(type, options);
     const input = scheduled ? asStored(payload) : payload;
     const parsed = validatePayload({
       schema: runtime.schema,
@@ -514,6 +575,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         correlationId: options.correlationId ?? context?.correlationId ?? commandId,
         causationId: context?.causationId ?? commandId,
         ...actedBy(actor),
+        ...(basis === undefined ? {} : { restrictionBasis: basis }),
         depth,
         timestamp: clock.now().toISOString(),
       },
@@ -592,10 +654,12 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     // when `restrict` commits stores nothing.
     const person = personOfCommand({ aggregate, command: runtime, payload: parsed, aggregateId });
     const touches = person === null ? [] : [person];
+    // The restricted persons `basis` let the command read, recorded however it settles.
+    const letThrough = new Set<string>();
     const run = (store: EventStore): Promise<StoredDispatch | DomainError> =>
-      execute(aggregate, runtime, command, store, signals, onLoad, touches);
+      execute(aggregate, runtime, command, store, signals, onLoad, touches, letThrough, opened);
     const perform = async (): Promise<DispatchResult | DomainError> => {
-      await refuseRestricted({ persons: stores.persons, person });
+      await refuseRestricted({ persons: stores.persons, person, basis });
       if (options.delay !== undefined) {
         const delay = options.delay;
         // Before any transaction opens, since the key store it may write to is the storage's own.
@@ -685,9 +749,23 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         const describeLoad = (): void => {
           if (lastLoad !== undefined) span.setAttributes(loadAttributes(lastLoad));
         };
+        const performRecorded = (): Promise<DispatchResult | DomainError> =>
+          basis === undefined
+            ? perform()
+            : recorded(async (outcome) => {
+                if (letThrough.size === 0) return;
+                await recordAccess({
+                  operation: "command",
+                  detail: { handler: type },
+                  actor: actor,
+                  persons: letThrough,
+                  outcome,
+                  restricted: { basis, persons: letThrough },
+                });
+              }, perform);
         let answer: DispatchResult | DomainError;
         try {
-          answer = await perform();
+          answer = await performRecorded();
         } catch (error) {
           if (error instanceof IdempotencyKeyTakenError) {
             const taken = await replay();

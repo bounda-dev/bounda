@@ -18,6 +18,7 @@ import {
 } from "./crypto.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf, sealLifecycleEvent } from "./process-state.ts";
+import { opensRequested } from "./refusal.ts";
 import type { PersonalKeys } from "./wrapped-keys.ts";
 
 export interface WithPersonalDataArgs {
@@ -59,15 +60,47 @@ export interface OpenedUnderFunction {
  */
 export const openedUnder: OpenedUnderFunction = (event) => openings.get(event) ?? [];
 
-export interface CarryOpeningFunction {
-  (from: StoredEvent, to: StoredEvent): StoredEvent;
+// Each event handed out with a field opened under a key a forgetting kept, by the event: the same
+// event with those fields `null`, as work that names no basis for them reads it.
+const hiddenRetained = new WeakMap<StoredEvent, StoredEvent>();
+
+export interface RetainedHiddenFunction {
+  (event: StoredEvent): StoredEvent | null;
 }
 
 /**
- * `to`, a copy of `from` made after it was handed out, as an upcast makes, opened as `from` was.
+ * The event with every field opened under a key a forgetting kept read as `null`; `null` for one
+ * that opened none.
  */
-export const carryOpening: CarryOpeningFunction = (from, to) => {
+export const retainedHidden: RetainedHiddenFunction = (event) => hiddenRetained.get(event) ?? null;
+
+export interface WithoutRetainedFunction {
+  (event: StoredEvent): StoredEvent;
+}
+
+/**
+ * The event as work that names no basis for what a forgetting kept reads it: those fields `null`,
+ * as if forgotten, the rest as opened.
+ */
+export const withoutRetained: WithoutRetainedFunction = (event) => retainedHidden(event) ?? event;
+
+export interface CarryOpeningFunction {
+  (from: StoredEvent, to: StoredEvent, hidden?: StoredEvent): StoredEvent;
+}
+
+/**
+ * `to`, a copy of `from` made after it was handed out, as an upcast makes, opened as `from` was;
+ * `hidden`, the same copy made of `from`'s fields kept under a legal obligation read as `null`.
+ */
+export const carryOpening: CarryOpeningFunction = (from, to, hidden) => {
   openings.set(to, openedUnder(from));
+  if (hidden !== undefined) {
+    openings.set(
+      hidden,
+      openedUnder(from).filter(({ retained }) => retained !== true),
+    );
+    hiddenRetained.set(to, hidden);
+  }
   return to;
 };
 
@@ -182,11 +215,13 @@ export const withPersonalData: WithPersonalDataFunction = ({
     return { ...event, payload, person };
   };
 
-  // `read` gets each person whose fields opened, with the key that opened them.
+  // `read` gets each person whose fields opened, with the key that opened them; `kept`, the
+  // fields opened under a key a forgetting kept.
   const openFields = async (
     fields: Readonly<Record<string, unknown>>,
     key: OpeningKey,
     read: Map<string, KeyedPerson>,
+    kept: string[],
   ): Promise<Record<string, unknown>> => {
     const unsealed: Record<string, unknown> = { ...fields };
     for (const field in fields) {
@@ -198,6 +233,7 @@ export const withPersonalData: WithPersonalDataFunction = ({
       if (personal !== null) {
         const held = keyedOf(person, personal);
         read.set(keyedPersonId(held), held);
+        if (personal.retained) kept.push(field);
       }
     }
     return unsealed;
@@ -221,13 +257,29 @@ export const withPersonalData: WithPersonalDataFunction = ({
     opened: Map<string, KeyedPerson>,
   ): Promise<StoredEvent> => {
     const read = new Map<string, KeyedPerson>();
-    const unsealed =
-      where === "state"
-        ? { ...payload, state: await openFields(lifecycleStateOf(payload) ?? {}, key, read) }
-        : await openFields(payload, key, read);
+    const kept: string[] = [];
+    const fields = await openFields(
+      where === "state" ? (lifecycleStateOf(payload) ?? {}) : payload,
+      key,
+      read,
+      kept,
+    );
+    const placed = (open: Record<string, unknown>): Record<string, unknown> =>
+      where === "state" ? { ...payload, state: open } : open;
     for (const [id, held] of read) opened.set(id, held);
-    const result = { ...event, payload: unsealed };
+    const result = { ...event, payload: placed(fields) };
     openings.set(result, [...read.values()]);
+    if (kept.length > 0) {
+      const hidden = {
+        ...event,
+        payload: placed({ ...fields, ...Object.fromEntries(kept.map((field) => [field, null])) }),
+      };
+      openings.set(
+        hidden,
+        [...read.values()].filter(({ retained }) => retained !== true),
+      );
+      hiddenRetained.set(result, hidden);
+    }
     return result;
   };
 
@@ -259,10 +311,12 @@ export const withPersonalData: WithPersonalDataFunction = ({
     // The store checks, as it writes, that each person still holds the key their data was read or
     // is sealed under and is not restricted: either may have changed since this read the key. The
     // result carries the events as given, since the store holds them sealed.
-    append: async (args) => {
+    append: async ({ basis, ...args }) => {
       const cache = keyCache<PersonalKey>();
       const persons = new Map<string, KeyedPerson>();
       for (const held of args.persons ?? []) persons.set(keyedPersonId(held), held);
+      const seals = new Map<string, KeyedPerson>();
+      for (const held of args.seals ?? []) seals.set(keyedPersonId(held), held);
       const touched = new Set(args.touches);
       const checked = new Map<string, Promise<void>>();
       const key: SealingKey = async (person, category) => {
@@ -270,15 +324,18 @@ export const withPersonalData: WithPersonalDataFunction = ({
         await checked.get(person);
         const personal = await cache(person, category, () => keyInForce(person, category));
         const held = { person, fingerprint: personal.fingerprint };
-        persons.set(keyedPersonId(held), held);
+        seals.set(keyedPersonId(held), held);
         return personal;
       };
       const events = await Promise.all(args.events.map((event) => sealed(event, key, touched)));
+      // A basis of article 18(2) opens every restriction, so the store has none to check.
+      const opens = opensRequested(basis);
       const appended = await eventStore.append({
         ...args,
         events,
-        persons: [...persons.values()],
-        touches: [...touched],
+        persons: opens ? [...persons.values(), ...seals.values()] : [...persons.values()],
+        touches: opens ? [] : [...touched],
+        seals: opens ? [] : [...seals.values()],
       });
       return {
         ...appended,
@@ -314,3 +371,25 @@ export const withPersonalData: WithPersonalDataFunction = ({
     reseal: (events) => eventStore.reseal(events),
   };
 };
+
+export interface HidingRetainedFunction {
+  (eventStore: EventStore): EventStore;
+}
+
+/**
+ * The event store as work that names no basis for what a forgetting kept loads from it: those
+ * fields read as `null`, and their keys are not among what it opened.
+ */
+export const hidingRetained: HidingRetainedFunction = (eventStore) => ({
+  ...eventStore,
+  load: async (args) => {
+    const loaded = await eventStore.load(args);
+    return {
+      ...loaded,
+      events: loaded.events.map(withoutRetained),
+      ...(loaded.opened === undefined
+        ? {}
+        : { opened: loaded.opened.filter(({ retained }) => retained !== true) }),
+    };
+  },
+});

@@ -11,7 +11,10 @@ import {
   MAX_ACTOR_LENGTH,
   migrateTables,
   parseDuration,
+  RESTRICTION_GROUNDS,
   type Registry,
+  type RestrictionGround,
+  type RestrictionNotice,
   rebuildReadModel,
   resolveErrorText,
   type SubscriberFailure,
@@ -441,6 +444,81 @@ const runForget = async (
   });
 };
 
+interface RestrictCommandOptions extends ActingOptions {
+  readonly ground: RestrictionGround;
+  readonly category?: readonly string[];
+}
+
+const groundOption = (description: string): Option =>
+  new Option("--ground <ground>", description).choices(RESTRICTION_GROUNDS);
+
+const runRestrict = (
+  personId: string,
+  options: RestrictCommandOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    const { ground, category: categories } = options;
+    const restricted = await actingAs(app, options).restrict(personId, {
+      ground,
+      ...(categories === undefined ? {} : { categories }),
+    });
+    const what = categories === undefined ? personId : `${categories.join(", ")} of ${personId}`;
+    line(
+      stdout,
+      restricted.eventIds.length === 0
+        ? `${what} was restricted on ${ground} already`
+        : `restricted ${what} on ${ground}`,
+    );
+    return EXIT_OK;
+  });
+
+interface UnrestrictCommandOptions extends ActingOptions {
+  readonly notice: RestrictionNotice;
+  readonly ground?: RestrictionGround;
+  readonly category?: readonly string[];
+}
+
+const parseNotice = (value: string): RestrictionNotice => {
+  const notice = value.trim();
+  if (notice === "given") return notice;
+  try {
+    if (parseDuration(notice) > 0) return notice as RestrictionNotice;
+  } catch {}
+  throw new InvalidArgumentError(
+    'expected how long before the lift the person is told, such as 7d, or "given" when they were told already',
+  );
+};
+
+const runUnrestrict = (
+  personId: string,
+  options: UnrestrictCommandOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    const { notice, ground, category: categories } = options;
+    const lifted = await actingAs(app, options).unrestrict(personId, {
+      notice,
+      ...(ground === undefined ? {} : { ground }),
+      ...(categories === undefined ? {} : { categories }),
+    });
+    const what = categories === undefined ? personId : `${categories.join(", ")} of ${personId}`;
+    const [type] = lifted.eventTypes;
+    line(
+      stdout,
+      type === undefined
+        ? `${what} has no restriction to lift${ground === undefined ? "" : ` on ${ground}`}`
+        : type === "ProcessingRestrictionLifted"
+          ? `lifted the restriction of ${what}`
+          : `announced the lift of the restriction of ${what}, lifted ${String(notice)} from now`,
+    );
+    return EXIT_OK;
+  });
+
 interface ExpireOptions {
   readonly root?: string;
   readonly errorText: boolean;
@@ -772,6 +850,45 @@ export const runCli: RunCliFunction = async ({
       .argument("<person>", "the id of the person to export"),
   ).action(async (personId: string, options: ActingOptions) => {
     exitCode = await runExport(personId, options, cwd, stdout, stderr);
+  });
+
+  actingOptions(
+    program
+      .command("restrict")
+      .description(
+        "restrict the processing of a person's data on a ground of article 18(1), or of some categories of theirs: from then on it is only kept",
+      )
+      .argument("<person>", "the id of the person to restrict")
+      .addOption(groundOption("why, as article 18(1) names it").makeOptionMandatory())
+      .option(
+        "--category <name>",
+        "restrict only this category of the person; repeat it for several",
+        collect,
+      ),
+  ).action(async (personId: string, options: RestrictCommandOptions) => {
+    exitCode = await runRestrict(personId, options, cwd, stdout, stderr);
+  });
+
+  actingOptions(
+    program
+      .command("unrestrict")
+      .description(
+        "lift a person's restrictions, telling them first: with a notice, announce the lift and lift it that long after; with given, lift it at once",
+      )
+      .argument("<person>", "the id of the person whose restrictions to lift")
+      .requiredOption(
+        "--notice <duration|given>",
+        'how long before the lift the person is told, such as 7d, or "given" when they were told already',
+        parseNotice,
+      )
+      .addOption(groundOption("lift only the restrictions on this ground"))
+      .option(
+        "--category <name>",
+        "lift only this category from restrictions of categories; repeat it for several",
+        collect,
+      ),
+  ).action(async (personId: string, options: UnrestrictCommandOptions) => {
+    exitCode = await runUnrestrict(personId, options, cwd, stdout, stderr);
   });
 
   program

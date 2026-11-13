@@ -11,10 +11,10 @@ export interface CreateSqliteEventStoreArgs {
   readonly db: SqlDatabase;
   readonly table: string;
   /**
-   * The key and person tables an append checks the persons it names against.
+   * The key and restriction tables an append checks the persons it names against.
    */
   readonly personalKeys: string;
-  readonly persons: string;
+  readonly restrictions: string;
 }
 
 export interface CreateSqliteEventStoreFunction {
@@ -41,7 +41,7 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({
   db,
   table,
   personalKeys,
-  persons,
+  restrictions,
 }) => {
   const currentVersion = async (
     executor: Pick<SqlDatabase, "all">,
@@ -71,7 +71,7 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({
         await checkSqlAppend({
           tx,
           dialect: sqliteDialect,
-          tables: { personalKeys, persons },
+          tables: { personalKeys, restrictions },
           args,
         });
         const rows: Record<string, unknown>[] = [];

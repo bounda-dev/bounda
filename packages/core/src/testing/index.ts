@@ -212,6 +212,12 @@ export type {
   ForgottenValueFound,
 } from "./expect-forgotten.ts";
 export { expectForgotten, NotForgottenError } from "./expect-forgotten.ts";
+export type {
+  ExpectRestrictedFunction,
+  ExpectRestrictedOptions,
+  RestrictedValueFound,
+} from "./expect-restricted.ts";
+export { expectRestricted, NotRestrictedError } from "./expect-restricted.ts";
 export { MIN_SUBSTRING_LENGTH } from "./search.ts";
 export type {
   RecordedSpan,

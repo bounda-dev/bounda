@@ -8,7 +8,7 @@ import { BoundaError, ChainDepthExceededError } from "../../contracts/errors.ts"
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import type { ForgetOptions } from "../../modules/personal-data.ts";
+import type { ForgetOptions, RestrictionBasis } from "../../modules/personal-data.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import {
@@ -114,6 +114,11 @@ export interface CreateReactionCommandsArgs {
    * How many events a `forget` reads at once.
    */
   readonly batchSize: number;
+  /**
+   * The basis the module declares it processes restricted data on, which its commands carry as
+   * `processRestricted` unless a dispatch names its own.
+   */
+  readonly restricted?: RestrictionBasis | null;
 }
 
 export interface CreateReactionCommandsFunction {
@@ -140,6 +145,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   maxChainDepth,
   personalCategories,
   batchSize,
+  restricted,
 }) => {
   const commandIds = createReactionCommandIds(idempotencyKey);
   const forgetting = new Set<string>();
@@ -195,6 +201,12 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
         const result = decided(
           await pipeline.dispatchUnattended({
             ...command,
+            // A delayed command runs later, when the basis given now may no longer hold.
+            ...(restricted === null ||
+            restricted === undefined ||
+            command.options?.delay !== undefined
+              ? {}
+              : { options: { processRestricted: restricted, ...command.options } }),
             context: { ...context, depth: context.depth + 1 },
             commandId: commandIds(command.type),
             within,

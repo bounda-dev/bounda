@@ -4,7 +4,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { personOfCommand, personOfEvent, personsOf } from "./persons.ts";
+import { personOfCommand, personOfEvent, personsOf, personTouchedByEvent } from "./persons.ts";
 
 const registry: Registry = {
   aggregates: {
@@ -184,6 +184,24 @@ describe("personOfEvent", () => {
         event: { ...event(5, "OrderSigned", { signature: "x" }), aggregateType: "bounda" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("personTouchedByEvent", () => {
+  const touched = (type: string, payload: unknown, aggregateType = "order"): string | null =>
+    personTouchedByEvent({ aggregates, event: { ...event(1, type, payload), aggregateType } });
+
+  it("names whom the event is about though its marked fields hold nothing, and nobody otherwise", () => {
+    expect(touched("OrderPlaced", { customerId: "c-1", note: null })).toBe("c-1");
+    expect(touched("OrderPlaced", { customerId: 7 })).toBe("7");
+    expect(touched("OrderPlaced", { note: "n" })).toBeNull();
+    expect(touched("OrderPlaced", "text")).toBeNull();
+    // `OrderSigned` marks a field with no person, so the order is a person too.
+    expect(touched("OrderSigned", { signature: null })).toBe("o-1");
+    expect(touched("OrderPaid", {})).toBe("o-1");
+    expect(touched("CustomerRegistered", {}, "customer")).toBe("o-1");
+    expect(touched("Shipped", {}, "shipment")).toBeNull();
+    expect(touched("OrderPaid", {}, "bounda")).toBeNull();
   });
 });
 

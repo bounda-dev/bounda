@@ -15,6 +15,9 @@ export interface StorageTables {
   readonly idempotencyKeys: string;
   readonly personalKeys: string;
   readonly persons: string;
+  readonly restrictions: string;
+  readonly restrictedPersons: string;
+  readonly restrictedPositions: string;
   readonly snapshots: string;
   readonly subscriberFailures: string;
   // In a database of its own, apart from the other storage tables.
@@ -61,6 +64,11 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
     personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
+    restrictions: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictions" })),
+    restrictedPersons: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPersons" })),
+    restrictedPositions: quoteIdentifier(
+      storageTableNameFor({ prefix, table: "restrictedPositions" }),
+    ),
     snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
     subscriberFailures: quoteIdentifier(
       storageTableNameFor({ prefix, table: "subscriberFailures" }),
@@ -252,3 +260,45 @@ export const inSchema: InSchemaFunction = ({ db, schema, work }) =>
     await tx.run(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}`, []);
     return work(tx);
   });
+
+export interface RestrictionStatementsFunction {
+  (tables: Pick<StorageTables, "events" | "persons" | "restrictions">): readonly string[];
+}
+
+// Migration 4 of the storage tables. A restriction recorded before it had a ground was of the
+// person as a whole, and is taken in as `accuracy-contested`, the first ground of article 18(1);
+// its events say so, and what restrictions the person had after each.
+export const restrictionStatements: RestrictionStatementsFunction = (tables) => [
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictions} (
+    "person" text NOT NULL,
+    "ground" text NOT NULL,
+    "category" text NOT NULL,
+    "since" text NOT NULL,
+    PRIMARY KEY ("person", "ground", "category")
+  )`,
+  `INSERT INTO ${tables.restrictions} ("person", "ground", "category", "since") SELECT "person", 'accuracy-contested', '', "restricted_since" FROM ${tables.persons} WHERE "restricted_since" IS NOT NULL ON CONFLICT DO NOTHING`,
+  `UPDATE ${tables.events} SET "payload" = "payload" || jsonb_build_object('ground', 'accuracy-contested', 'categories', 'null'::jsonb, 'restrictions', jsonb_build_array(jsonb_build_object('ground', 'accuracy-contested', 'categories', 'null'::jsonb, 'since', "timestamp"))) WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestricted' AND "payload"->'ground' IS NULL`,
+  `UPDATE ${tables.events} SET "payload" = "payload" || '{"grounds":["accuracy-contested"],"categories":null,"restrictions":[]}'::jsonb WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestrictionLifted' AND "payload"->'grounds' IS NULL`,
+];
+
+export interface RestrictedPersonsTableStatementsFunction {
+  (tables: Pick<StorageTables, "restrictedPersons" | "restrictedPositions">): readonly string[];
+}
+
+// Migration 2 of the checkpoint tables: the read side's copy of who is restricted, in every
+// database that holds read models, which a query of one of them filters by, and the position of
+// the last event of each person written into it.
+export const restrictedPersonsTableStatements: RestrictedPersonsTableStatementsFunction = (
+  tables,
+) => [
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictedPersons} (
+    "person" text NOT NULL,
+    "source" text NOT NULL,
+    "category" text NOT NULL,
+    PRIMARY KEY ("person", "source", "category")
+  )`,
+  `CREATE TABLE IF NOT EXISTS ${tables.restrictedPositions} (
+    "person" text NOT NULL PRIMARY KEY,
+    "position" bigint NOT NULL
+  )`,
+];
