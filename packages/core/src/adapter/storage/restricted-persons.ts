@@ -32,9 +32,11 @@ export interface RestrictedPerson {
  */
 export interface RestrictedPersonsStore {
   /**
-   * Moves the person to the event at `position`, `false` when one at or after it was written
-   * already: the copy only goes forward, so a subscriber reading the stream again from an
-   * earlier point, under a new name or after a reset, never takes back a later change.
+   * Moves the person to the event at `position`, `false` when a later one was written already,
+   * in this transaction or one committed before it, even one running beside it: the copy only goes
+   * forward, so a subscriber reading the stream again from an earlier point, under a new name or
+   * after a reset, never takes back a later change. The same event again is written again, which
+   * changes nothing.
    */
   advance(person: string, position: number): Promise<boolean>;
   /**

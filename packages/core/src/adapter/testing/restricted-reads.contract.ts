@@ -40,7 +40,10 @@ const SUBSCRIBER = "restrictions:orders";
  * page and a count leave them out first, as each view says. Call it inside a `describe` of the
  * adapter's test file with a factory that returns a fresh adapter.
  */
-export const restrictedReadsContract: RestrictedReadsContractFunction = ({ create }) => {
+export const restrictedReadsContract: RestrictedReadsContractFunction = ({
+  create,
+  concurrent = true,
+}) => {
   describe("restricted reads contract", () => {
     let orders: ReadModelStorage<RestrictedRow>;
     let ids: ReadModelStorage<{ readonly customerId: string; readonly total: number }>;
@@ -206,7 +209,7 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({ creat
       await advance("ana", 3);
       await advance("bo", 1);
       await advance("ana", 4);
-      expect(moved).toEqual([true, false, false, true, true]);
+      expect(moved).toEqual([true, false, true, true, true]);
       await expect(
         write(async (store) => {
           await store.advance("ana", 9);
@@ -216,6 +219,46 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({ creat
       await advance("ana", 5);
       expect(moved.at(-1)).toBe(true);
     });
+
+    it.skipIf(!concurrent)(
+      "leaves an older event out when a transaction beside it moved the person to a newer one",
+      async () => {
+        let release = (): void => {};
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let entered = (): void => {};
+        const newer = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const moved: string[] = [];
+        const first = orders.transact({
+          subscriber: "restrictions:first",
+          wait: true,
+          work: async ({ restrictedPersons }) => {
+            moved.push(`7 ${await restrictedPersons.advance("ana", 7)}`);
+            entered();
+            await held;
+          },
+        });
+        await newer;
+        const second = orders.transact({
+          subscriber: "restrictions:second",
+          wait: true,
+          work: async ({ restrictedPersons }) => {
+            moved.push(`6 ${await restrictedPersons.advance("ana", 6)}`);
+          },
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        release();
+        await Promise.all([first, second]);
+        expect(moved).toEqual(["7 true", "6 false"]);
+        await write(async (store) => {
+          moved.push(`8 ${await store.advance("ana", 8)}`);
+        });
+        expect(moved.at(-1)).toBe("8 true");
+      },
+    );
 
     it("never takes back a later change when the stream is read again from the start, as a subscriber under a new name does", async () => {
       const event = (position: number, type: string, payload: object): StoredEvent => ({

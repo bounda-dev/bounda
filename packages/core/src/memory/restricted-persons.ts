@@ -34,7 +34,7 @@ export const createMemoryRestrictedPersons: CreateMemoryRestrictedPersonsFunctio
   return {
     store: {
       advance: async (person, position) => {
-        if ((positions.get(person) ?? 0) >= position) return false;
+        if ((positions.get(person) ?? 0) > position) return false;
         positions = new Map([...positions, [person, position]]);
         return true;
       },

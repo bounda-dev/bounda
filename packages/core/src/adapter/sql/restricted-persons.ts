@@ -43,18 +43,19 @@ export const createSqlRestrictedPersonsStore: CreateSqlRestrictedPersonsStoreFun
       [person, source, category],
     );
   return {
-    // Two plain statements, as the other stores write: the one CI run that did this in a single
-    // upsert with a condition and `RETURNING` crashed libSQL's native code on Windows (0xC0000005).
+    // The upsert keeps the greater position and locks the row, so a writer of an older event
+    // beside it, in another transaction, waits and then reads the newer one. No `WHERE` or
+    // `RETURNING` on the upsert: the one CI run whose upsert had both crashed libSQL's native code
+    // on Windows (0xC0000005).
     advance: async (person, position) => {
+      await db.run(
+        `INSERT INTO ${positions} ("person", "position") VALUES (${p(1)}, ${p(2)}) ON CONFLICT ("person") DO UPDATE SET "position" = CASE WHEN ${positions}."position" > excluded."position" THEN ${positions}."position" ELSE excluded."position" END`,
+        [person, position],
+      );
       const [held] = await db.all(`SELECT "position" FROM ${positions} WHERE "person" = ${p(1)}`, [
         person,
       ]);
-      if (held !== undefined && Number(held.position) >= position) return false;
-      await db.run(
-        `INSERT INTO ${positions} ("person", "position") VALUES (${p(1)}, ${p(2)}) ON CONFLICT ("person") DO UPDATE SET "position" = excluded."position"`,
-        [person, position],
-      );
-      return true;
+      return Number(held?.position) === position;
     },
     request: async (person, restrictions) => {
       await db.run(`DELETE FROM ${table} WHERE "person" = ${p(1)} AND "source" <> ${p(2)}`, [

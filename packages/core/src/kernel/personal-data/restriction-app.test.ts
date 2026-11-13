@@ -706,7 +706,8 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await before.app.runUntilIdle();
     await before.app.stop();
 
-    // Every write to the copy while the subscriber named after `accounts` catches up.
+    // Every write to the copy while the subscriber named after `accounts` catches up: none takes
+    // back the restriction in force.
     const requested: (readonly unknown[])[] = [];
     const watched: Adapter = {
       ...adapter,
@@ -754,7 +755,10 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
       adapter: watched,
     });
     await app.runUntilIdle();
-    expect(requested).toEqual([]);
+    // Only the last event comes in again, which writes what the copy holds already.
+    expect(requested).toEqual([
+      ["ana", [expect.objectContaining({ ground: "legal-claims", categories: null })]],
+    ]);
     const queries = app.queries as unknown as Record<
       string,
       (payload: unknown) => Promise<unknown>
