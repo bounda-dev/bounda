@@ -139,6 +139,31 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm --filter create-bounda exec vitest run --exclude src/run.e2e.test.ts
 
+  # The SQLite adapter works around a double close in libSQL's native module (src/close-once.ts).
+  # The second close reads freed memory, which faults on Windows only now and then and on Linux
+  # never; under macOS's Guard Malloc it faults every time, so here a regression fails for certain.
+  guard-malloc:
+    name: libSQL closes under Guard Malloc
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.packages), 'sqlite')
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 12.17.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @bounda-dev/core build
+      # The test runs without Guard Malloc where the library is missing or dyld will not load it into
+      # node, which would prove nothing.
+      - run: DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib node -e "" 2>&1 | grep -q GuardMalloc
+      - run: pnpm --filter @bounda-dev/sqlite exec vitest run src/close-once.test.ts
+
   # The timeout fits a full run of a job, not just an incremental one: GitHub evicts a cache nobody
   # has read for a week, and a job the timeout cancels saves none, since Stryker writes its
   # incremental file at the end. A package whose full run would not fit is split into shards, each

@@ -336,9 +336,9 @@ const billOf = (person: string) => ({
 });
 
 // Each case starts and stops apps several times and commits hundreds of write transactions, each
-// synced to disk: a file database on a Windows runner takes some seconds for what takes a few
-// hundred milliseconds elsewhere, waiting on nothing but the disk.
-const RESTORE_CASE_TIMEOUT_MS = 30_000;
+// synced to disk: a file database on a Windows runner took up to about 13 s, and once more than
+// 30 s, for what takes a few hundred milliseconds elsewhere, waiting on nothing but the disk.
+const RESTORE_CASE_TIMEOUT_MS = 60_000;
 
 const START = new Date("2026-11-09T09:00:00.000Z");
 // Longer than the scenario runs for, so no periodic reconciliation hides a restore the app missed.

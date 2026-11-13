@@ -204,10 +204,17 @@ describe("sqlite adapter on a file", () => {
       const path = freshPath();
       const client = createClient({ url: `file:${path}` });
       afterAllClose.push(client);
+      // The earlier tables and their rows go in one statement at a time, each its own commit: left
+      // unsynced, a Windows runner writes them in milliseconds rather than waiting seconds on the
+      // disk, and the file holds the same. Statements run one after another on the client's one
+      // connection, which keeps the setting.
+      let unsynced: Promise<unknown> | undefined;
       return {
         adapter: sqlite({ path }),
         prefix: "bounda_",
         execute: async (statement) => {
+          unsynced ??= client.execute("PRAGMA synchronous = OFF");
+          await unsynced;
           const result = await client.execute(statement);
           return result.rows.map((row) =>
             Object.fromEntries(result.columns.map((column, index) => [column, row[index] ?? null])),

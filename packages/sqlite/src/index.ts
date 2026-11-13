@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { Adapter } from "@bounda-dev/core/adapter";
 import { createSqliteAdapter, SQLITE_BUSY_TIMEOUT_MS } from "@bounda-dev/core/adapter/sqlite";
 import { type Client, createClient } from "@libsql/client";
+import { closeConnectionsOnce } from "./close-once.ts";
 import { createSqliteDatabase, type LibsqlConnection } from "./database.ts";
 import { resolveSqliteOptions, type SqliteOptions } from "./options.ts";
 
@@ -30,6 +31,7 @@ interface Connection extends LibsqlConnection {
  */
 export const sqlite: SqliteFunction = (options) => {
   const { url, authToken, tablePrefix, location } = resolveSqliteOptions(options);
+  if (location !== "remote") closeConnectionsOnce();
   let connection: Connection | null = null;
 
   const open = (): Connection => {
