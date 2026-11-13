@@ -37,7 +37,9 @@ the app writes.
 
 At start, stop the app, put the copy back and start it:
 
-- **SQLite.** Copy the backup to the database's path, or next to it and point `path` at it.
+- **SQLite.** Copy the backup to the database's path, or next to it and point `path` at it. On
+  Windows a libSQL file can stay locked after the adapter closes, until the process exits: replace
+  it only once the app's process has stopped, or restore in place through SQL as below.
 - **PostgreSQL.** `pg_restore`, or a point-in-time restore to another server and `url` pointed at
   it.
 - **Durable Object.** `ctx.storage.onNextSessionRestoreBookmark(bookmark)` with a bookmark from

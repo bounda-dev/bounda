@@ -79,9 +79,7 @@ const closeAfterCollecting = (path: string): Promise<string> =>
   });
 
 describe("closing a libSQL file", () => {
-  it("closes each connection once, closed or dropped, even when nothing but its own handle holds it", {
-    timeout: 60_000,
-  }, async () => {
+  it("closes each connection once, closed or dropped, even when nothing but its own handle holds it", async () => {
     expect(await closeAfterCollecting(join(directory, "closed.db"))).toBe("exited");
   });
 });
