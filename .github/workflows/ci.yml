@@ -57,6 +57,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       packages: ${{ steps.list.outputs.packages }}
+      mutation: ${{ steps.list.outputs.mutation }}
+      sharded: ${{ steps.list.outputs.sharded }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -84,6 +86,17 @@ jobs:
           packages=$(printf '%s\n' $selected | sed '/^$/d' | jq -R . | jq -sc .)
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
           echo "Mutation testing for: $packages"
+          # Core's mutants are too many for one job: they run in shards, each its own job.
+          mutation=$(for package in $selected; do
+            shards=1
+            if [ "$package" = core ]; then shards=8; fi
+            for shard in $(seq 1 "$shards"); do
+              jq -nc --arg package "$package" --argjson shard "$shard" --argjson shards "$shards" \
+                '{package: $package, shard: $shard, shards: $shards}'
+            done
+          done | jq -sc .)
+          echo "mutation=$mutation" >> "$GITHUB_OUTPUT"
+          echo "sharded=$(echo "$mutation" | jq -c '[.[] | select(.shards > 1) | .package] | unique')" >> "$GITHUB_OUTPUT"
 
   # People run Bounda on Windows too, so the packages a project uses there are tested there
   # whenever one changes. Each step runs even if an earlier test step failed, so one run shows
@@ -126,11 +139,13 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: pnpm --filter create-bounda exec vitest run --exclude src/run.e2e.test.ts
 
-  # The timeout fits a full run, not just an incremental one: GitHub evicts a cache nobody has
-  # read for a week, so the first run after a quiet week mutates the whole package, and core
-  # alone then takes about three quarters of an hour.
+  # The timeout fits a full run of a job, not just an incremental one: GitHub evicts a cache nobody
+  # has read for a week, and a job the timeout cancels saves none, since Stryker writes its
+  # incremental file at the end. A package whose full run would not fit is split into shards, each
+  # mutating the files a hash of their path gives it (.github/scripts/mutation-shard.ts), so a file
+  # keeps its shard and each shard its own cache; each shard holds the break threshold on its own.
   mutation:
-    name: Mutation (${{ matrix.package }})
+    name: Mutation (${{ matrix.package }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
     needs: [changes, check]
     if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
@@ -138,9 +153,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+        include: ${{ fromJSON(needs.changes.outputs.mutation) }}
     env:
       BOUNDA_PG_REUSE: "1"
+      SHARD: ${{ matrix.shards > 1 && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -153,40 +169,90 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
-          key: stryker-${{ matrix.package }}-${{ github.sha }}
-          restore-keys: stryker-${{ matrix.package }}-
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental${{ env.SHARD }}.json
+          key: stryker-${{ matrix.package }}${{ env.SHARD }}-${{ github.sha }}
+          restore-keys: stryker-${{ matrix.package }}${{ env.SHARD }}-
       - run: pnpm build
       - shell: bash
         env:
           STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
         run: |
-          reporters=()
-          if [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
-            reporters=(--reporters clear-text,progress,html,dashboard)
+          args=()
+          if [ "${{ matrix.shards }}" -gt 1 ]; then
+            # A shard's report is merged with the others' by the mutation-report job, which sends
+            # the whole to the dashboard.
+            files=$(node .github/scripts/mutation-shard.ts "${{ matrix.package }}" "${{ matrix.shard }}" "${{ matrix.shards }}")
+            args=(--mutate "$files" --incrementalFile ".stryker-tmp/incremental${SHARD}.json" --reporters clear-text,progress,html,json)
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
+            args=(--reporters clear-text,progress,html,dashboard)
           fi
-          pnpm --filter "./packages/${{ matrix.package }}" test:mutation "${reporters[@]}" 2>&1 | tee mutation.log
+          # Vitest adds a job summary on every run Stryker starts, one per mutant, past what GitHub
+          # takes; the step below writes the one that matters.
+          env -u GITHUB_STEP_SUMMARY pnpm --filter "./packages/${{ matrix.package }}" test:mutation "${args[@]}" 2>&1 | tee mutation.log
       - if: always()
         shell: bash
         run: |
           {
-            echo "## Mutation testing: ${{ matrix.package }}"
+            echo "## Mutation testing: ${{ matrix.package }}${SHARD}"
             echo
             echo '```text'
-            awk '/^-*\|/,/^-*\|$/ { if (n++ < 60) print }' mutation.log
-            grep -E "Final mutation score" mutation.log | sed 's/.*INFO MutationTestReportHelper//' || true
+            awk '/^-*\|/,/^-*\|$/ { if (n++ < 60) print substr($0, 1, 200) }' mutation.log
+            grep -E "Final mutation score" mutation.log | sed 's/.*INFO MutationTestReportHelper//' | head -n 1 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
-          key: stryker-${{ matrix.package }}-${{ github.sha }}
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental${{ env.SHARD }}.json
+          key: stryker-${{ matrix.package }}${{ env.SHARD }}-${{ github.sha }}
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: mutation-${{ matrix.package }}
-          path: packages/${{ matrix.package }}/reports/mutation/mutation.html
+          name: mutation-${{ matrix.package }}${{ env.SHARD }}
+          path: |
+            packages/${{ matrix.package }}/reports/mutation/mutation.html
+            packages/${{ matrix.package }}/reports/mutation/mutation.json
           if-no-files-found: ignore
           retention-days: 14
+
+  # The shards of a package add up to the report of a whole run: its score in the summary, and on
+  # main the whole report on the dashboard, as the dashboard reporter sends one.
+  mutation-report:
+    name: Mutation report (${{ matrix.package }})
+    needs: [changes, mutation]
+    if: ${{ !cancelled() && needs.changes.outputs.sharded != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.sharded) }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: mutation-${{ matrix.package }}-*
+          path: shards
+      - shell: bash
+        env:
+          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+        run: |
+          mapfile -t reports < <(find shards -name mutation.json | sort)
+          node .github/scripts/mutation-report.ts merged.json "${reports[@]}" | tee score.txt
+          {
+            echo "## Mutation testing: ${{ matrix.package }}"
+            echo
+            echo '```text'
+            cat score.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
+            curl --fail-with-body --silent --show-error -X PUT \
+              -H "X-Api-Key: $STRYKER_DASHBOARD_API_KEY" -H "Content-Type: application/json" \
+              --data-binary @merged.json \
+              "https://dashboard.stryker-mutator.io/api/reports/github.com/${GITHUB_REPOSITORY}/main?module=${{ matrix.package }}"
+          fi
 
