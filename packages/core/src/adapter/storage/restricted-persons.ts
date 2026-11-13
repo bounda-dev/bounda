@@ -1,5 +1,6 @@
 import type { RestrictionGround } from "../../modules/personal-data.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
+import { RETAINED_KEY_PREFIX, storedPersonalFields } from "./sealed-fields.ts";
 import type { Table } from "./table.ts";
 
 /**
@@ -10,25 +11,19 @@ import type { Table } from "./table.ts";
 export type RestrictionView = "unrestricted" | "retained" | "all";
 
 /**
- * The source of the rows a forgetting kept under a legal obligation, beside the grounds a person
- * asks to be restricted on.
- */
-export const RETAINED_SOURCE: "retained" = "retained";
-
-/**
- * One restriction as the read side keeps it: on a ground a person asked for, or `retained`; of a
- * category or, `null`, of the person as a whole.
+ * One restriction a person asked for, as the read side keeps it: on a ground, of a category or,
+ * `null`, of the person as a whole. What a forgetting kept under a legal obligation is not here:
+ * each row says it, in the key fields of its personal values.
  */
 export interface RestrictedPerson {
   readonly person: string;
-  readonly source: RestrictionGround | typeof RETAINED_SOURCE;
+  readonly source: RestrictionGround;
   readonly category: string | null;
 }
 
 /**
  * The read side's copy of who is restricted, in a database that holds read models, which the
- * runtime keeps from the stream: `bounda:<personId>` says what each person asked to restrict and
- * what each forgetting kept.
+ * runtime keeps from the stream: `bounda:<personId>` says what each person asked to restrict.
  */
 export interface RestrictedPersonsStore {
   /**
@@ -40,7 +35,7 @@ export interface RestrictedPersonsStore {
    */
   advance(person: string, position: number): Promise<boolean>;
   /**
-   * Replaces what the person asked to restrict with `restrictions`, leaving what a forgetting kept.
+   * Replaces what the person asked to restrict with `restrictions`.
    */
   request(
     person: string,
@@ -49,21 +44,14 @@ export interface RestrictedPersonsStore {
       readonly categories: readonly string[] | null;
     }[],
   ): Promise<void>;
-  /**
-   * Records the categories a forgetting kept under a legal obligation.
-   */
-  retain(person: string, categories: readonly string[]): Promise<void>;
-  /**
-   * Forgets the categories a forgetting kept, once their retention ended or they were forgotten.
-   */
-  release(person: string, categories: readonly string[]): Promise<void>;
 }
 
 /**
  * The reads of a read model that leave out the rows of restricted persons: those whose field
  * marked `.person()` names a person restricted as a whole, or in a category a field of the read
- * model marked `.personal()` holds. A read model without a field marked `.person()` has no row of
- * anyone's.
+ * model marked `.personal()` holds, and, for `unrestricted`, those holding a value under a key a
+ * forgetting kept under a legal obligation, as its key field says. A read model without a field
+ * marked `.person()` has no row of anyone's.
  */
 export interface RestrictedReads<Row extends object> {
   /**
@@ -76,18 +64,20 @@ export interface RestrictedReads<Row extends object> {
    */
   readonly retained: Table<Row>;
   /**
-   * Which of `persons` `view` leaves out of this read model.
+   * Which of `persons` a restriction they asked for leaves out of this read model, whatever their
+   * rows hold: none for `all`.
    */
   among(persons: readonly string[], view: RestrictionView): Promise<ReadonlySet<string>>;
 }
 
 /**
- * The fields of a read model a restriction goes by: the one marked `.person()`, and the
- * categories of those marked `.personal()`.
+ * The fields of a read model a restriction goes by: the one marked `.person()`, the categories of
+ * those marked `.personal()`, and the key fields beside them, present in the fields given.
  */
 export interface RestrictedFields {
   readonly person: string;
   readonly categories: readonly string[];
+  readonly keyFields: readonly string[];
 }
 
 export interface RestrictedFieldsOfFunction {
@@ -105,7 +95,10 @@ export const restrictedFieldsOf: RestrictedFieldsOfFunction = (fields) => {
   for (const [, field] of entries) {
     if (field.mark === "personal" && field.category !== null) categories.add(field.category);
   }
-  return { person, categories: [...categories].sort() };
+  const keyFields = storedPersonalFields(fields)
+    .map(({ keyField }) => keyField)
+    .filter((keyField) => fields[keyField] !== undefined);
+  return { person, categories: [...categories].sort(), keyFields };
 };
 
 export interface IsLeftOutArgs {
@@ -124,8 +117,14 @@ export interface IsLeftOutFunction {
  */
 export const isLeftOut: IsLeftOutFunction = ({ restrictions, categories, view }) =>
   view !== "all" &&
-  restrictions.some(
-    ({ source, category }) =>
-      (category === null || categories.includes(category)) &&
-      (view === "unrestricted" || source !== RETAINED_SOURCE),
-  );
+  restrictions.some(({ category }) => category === null || categories.includes(category));
+
+export interface IsRetainedKeyFunction {
+  (key: unknown): boolean;
+}
+
+/**
+ * Whether a key field names a key a forgetting kept under a legal obligation.
+ */
+export const isRetainedKey: IsRetainedKeyFunction = (key) =>
+  typeof key === "string" && key.startsWith(RETAINED_KEY_PREFIX);

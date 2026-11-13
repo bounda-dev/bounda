@@ -29,8 +29,13 @@ import {
   withRawKey,
 } from "./personal-data/crypto.ts";
 import { createForgetIntentions, type ForgetIntentions } from "./personal-data/intention.ts";
-import { createPersonalKeyWrapping, type PersonalKeys } from "./personal-data/wrapped-keys.ts";
+import {
+  type CategoryKey,
+  createPersonalKeyWrapping,
+  type PersonalKeys,
+} from "./personal-data/wrapped-keys.ts";
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
+import type { SealingSource } from "./projection/runner.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 
 interface OrderState {
@@ -514,3 +519,28 @@ export interface WithoutLedgerArgs {
  */
 export const withoutLedger = ({ ids, clock }: WithoutLedgerArgs): ForgetIntentions =>
   createForgetIntentions({ ledger: null, ids, clock, logger: silentLogger });
+
+/**
+ * What read models seal with when no person has a key: what a test of read models without
+ * personal fields runs on.
+ */
+export const keylessSealing: SealingSource = {
+  keys: { heldAllOf: async () => new Map() },
+  indexer: null,
+};
+
+export interface EachPersonFunction {
+  (
+    keysOf: (person: string) => readonly CategoryKey[] | Promise<readonly CategoryKey[]>,
+  ): Pick<PersonalKeys, "heldAllOf">;
+}
+
+/**
+ * Keys read for several persons at once, from what `keysOf` gives each.
+ */
+export const eachPerson: EachPersonFunction = (keysOf) => ({
+  heldAllOf: async (persons) =>
+    new Map(
+      await Promise.all(persons.map(async (person) => [person, await keysOf(person)] as const)),
+    ),
+});

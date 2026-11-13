@@ -35,6 +35,7 @@ export {
   storageTableNameFor,
   tableNameFor,
 } from "./identifiers.ts";
+export { createSqlIndexKeyStore, indexKeysTableStatement } from "./index-key-store.ts";
 export type {
   InspectSqlTableArgs,
   InspectSqlTableFunction,
@@ -86,8 +87,10 @@ export {
   createSqlRestrictedPersonsStore,
   createSqlRestrictedReads,
   restrictedRowsCondition,
+  retainedRowsCondition,
 } from "./restricted-persons.ts";
 export { byExecuteAt, earliestDue } from "./scheduling.ts";
 export type { SqlCondition, SqlExecutor } from "./sql-table.ts";
 export { createSqlReadClient, createSqlTable } from "./sql-table.ts";
 export { createSqlSubscriberFailureStore } from "./subscriber-failure-store.ts";
+export { selectUnsettled } from "./unsettled.ts";

@@ -7,7 +7,8 @@ import {
   type RangeOperator,
 } from "../adapter/sql/query-builder.ts";
 import { type ColumnDefinition, columnsOf } from "../adapter/sql/read-model-schema.ts";
-import type { FindManyArgs, ReadClient, Table, Where } from "../adapter/storage/table.ts";
+import { ENVELOPE_PREFIX, type UnsettledRowsArgs } from "../adapter/storage/sealed-fields.ts";
+import type { FindManyArgs, StoredReadClient, Table, Where } from "../adapter/storage/table.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 
@@ -32,6 +33,7 @@ export interface MemoryTable<Row> extends Table<Row> {
    * condition in SQL would; its writes are the table's.
    */
   keeping(keep: (row: Readonly<Record<string, unknown>>) => boolean): Table<Row>;
+  unsettled(args: UnsettledRowsArgs): Promise<readonly Row[]>;
 }
 
 export interface CreateMemoryTableFunction {
@@ -198,6 +200,20 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
     findMany: async (args) => select(args),
     count: async (where) => [...rows.values()].filter(matcher(where)).length,
     rows: () => [...rows.values()],
+    unsettled: async ({ sealed, keyed, limit }) =>
+      [...rows.values()]
+        .filter(
+          (stored) =>
+            sealed.some((field) => {
+              const value = stored[field];
+              return typeof value === "string" && !value.startsWith(ENVELOPE_PREFIX);
+            }) ||
+            keyed.some(
+              ({ field, keyField }) => stored[field] !== null && stored[keyField] === null,
+            ),
+        )
+        .slice(0, limit)
+        .map(decode),
     key: primaryKey.field,
     snapshot: () => {
       const saved = new Map(rows);
@@ -223,7 +239,7 @@ export interface CreateMemoryReadClientFunction {
   <Row extends object>(args: {
     readonly name: string;
     readonly table: Table<Row>;
-  }): ReadClient<Row, Table<Row>>;
+  }): StoredReadClient<Row, Table<Row>>;
 }
 
 export const createMemoryReadClient: CreateMemoryReadClientFunction = <Row extends object>({
@@ -232,7 +248,7 @@ export const createMemoryReadClient: CreateMemoryReadClientFunction = <Row exten
 }: {
   readonly name: string;
   readonly table: Table<Row>;
-}): ReadClient<Row, Table<Row>> => {
+}): StoredReadClient<Row, Table<Row>> => {
   const unsupported = (): never => {
     throw new ConfigurationError(
       `Read model "${name}" uses the in-memory adapter, which runs no SQL. Use table.findOne / table.findMany in the repository, or configure a SQL adapter.`,

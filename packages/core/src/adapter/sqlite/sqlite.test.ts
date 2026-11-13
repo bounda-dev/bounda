@@ -527,6 +527,7 @@ describe("createSqliteAdapter", () => {
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
+      "app_index_keys",
       "app_migrations",
       "app_person_rows",
       "app_personal_keys",

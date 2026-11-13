@@ -58,8 +58,10 @@ import type {
   KeyRotationStatus,
   LegalBasis,
   Logger,
+  LookupField,
   OnPersonalDataAccess,
   OnPersonalDataAccessArgs,
+  OrderableField,
   PayloadArgs,
   PayloadInputOf,
   PersonalCategoryName,
@@ -103,6 +105,7 @@ import type {
   RestrictOptions,
   RetentionInput,
   RetentionStatus,
+  RowOf,
   ScheduledDispatch,
   SchemaStatus,
   SetFilter,
@@ -643,12 +646,21 @@ describe("personal data", () => {
       Field<string, true, "personal", "string">
     >();
     expectTypeOf(fieldBuilder.json<{ street: string }>().personal().index()).toEqualTypeOf<
-      Field<{ street: string }, false, "personal", "json">
+      Field<{ street: string }, false, "personal", "json", true>
+    >();
+    expectTypeOf(fieldBuilder.string().unique().personal()).toEqualTypeOf<
+      Field<string, false, "personal", "string", true>
+    >();
+    expectTypeOf(fieldBuilder.number().personal({ clear: true })).toEqualTypeOf<
+      Field<number, false, "personal", "number", false, true>
+    >();
+    expectTypeOf(fieldBuilder.number().personal({ clear: false })).toEqualTypeOf<
+      Field<number, false, "personal", "number", false, false>
     >();
     expectTypeOf(fieldBuilder.string().mark).toEqualTypeOf<null>();
     expectTypeOf<CustomerDirectoryRow>().toEqualTypeOf<{
       readonly customerId: string;
-      readonly email?: string;
+      readonly email?: string | null;
       readonly tier?: "regular" | "vip";
       readonly newsletter?: boolean;
     }>();
@@ -658,12 +670,34 @@ describe("personal data", () => {
         email: f.string().personal(),
       }),
     };
+    expectTypeOf<RowOf<typeof view>>().toEqualTypeOf<{
+      readonly customerId: string;
+      readonly email: string | null;
+    }>();
     expectTypeOf<
       ForgetsPersonalData<"customers", never, true, typeof view>
     >().toEqualTypeOf<true>();
     expectTypeOf<
-      ForgetsPersonalData<"customers", never, false, typeof view>
-    >().toEqualTypeOf<"Read model customers has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts">();
+      ForgetsPersonalData<"customers", CustomerRegisteredModule, false, typeof view>
+    >().toEqualTypeOf<true>();
+    const clearView = {
+      fields: ({ f }: FieldsArgs) => ({
+        customerId: f.string().primaryKey().person(),
+        email: f.string().personal(),
+        joined: f.date().personal({ clear: true }),
+      }),
+    };
+    expectTypeOf<RowOf<typeof clearView>>().toEqualTypeOf<{
+      readonly customerId: string;
+      readonly email: string | null;
+      readonly joined: Date;
+    }>();
+    expectTypeOf<
+      ForgetsPersonalData<"customers", never, true, typeof clearView>
+    >().toEqualTypeOf<true>();
+    expectTypeOf<
+      ForgetsPersonalData<"customers", never, false, typeof clearView>
+    >().toEqualTypeOf<"Read model customers keeps fields marked .personal({ clear: true }), so it needs projections/bounda/personal-data-forgotten.ts">();
     const unidentified = {
       fields: ({ f }: FieldsArgs) => ({
         id: f.string().primaryKey(),
@@ -768,7 +802,7 @@ describe("personal data", () => {
     >().toEqualTypeOf<true>();
     expectTypeOf<
       ForgetsPersonalData<"orderSummary", OrderPaidModule | OrderPlacedModule, false>
-    >().toEqualTypeOf<"Read model orderSummary projects personal data, so it needs projections/bounda/personal-data-forgotten.ts">();
+    >().toEqualTypeOf<"Read model orderSummary projects personal data, so it needs fields marked .personal() or projections/bounda/personal-data-forgotten.ts">();
   });
 
   it("types the runtime's event for the projections and policies that handle it", () => {
@@ -1204,7 +1238,7 @@ describe("read models", () => {
   it("type a table from how its view stores each field, not from the values alone", () => {
     expectTypeOf<CustomerDirectoryFieldTypes>().toEqualTypeOf<{
       readonly customerId: "string";
-      readonly email: "string";
+      readonly email: "sealed";
       readonly tier: "json";
       readonly newsletter: "boolean";
     }>();
@@ -1230,9 +1264,7 @@ describe("read models", () => {
     expectTypeOf<CustomerWhere["newsletter"]>().toEqualTypeOf<
       boolean | null | SetFilter<boolean> | undefined
     >();
-    expectTypeOf<CustomerWhere["email"]>().toEqualTypeOf<
-      string | null | RangeFilter<string> | undefined
-    >();
+    expectTypeOf<CustomerWhere["email"]>().toEqualTypeOf<undefined>();
     expectTypeOf<Where<CustomerDirectoryRow>["tier"]>().toEqualTypeOf<
       "regular" | "vip" | null | RangeFilter<"regular" | "vip"> | undefined
     >();
@@ -1240,7 +1272,11 @@ describe("read models", () => {
 
   it("refuse in the types what the runtime refuses: operators on JSON, a range on a boolean", () => {
     const filter = (table: GetCustomer.RepositoryArgs["table"]) => {
-      table.findMany({ where: { tier: "vip", newsletter: { ne: false }, email: { gte: "a" } } });
+      table.findMany({ where: { tier: "vip", newsletter: { ne: false } } });
+      // @ts-expect-error a field sealed at rest without a blind index is never matched
+      table.findMany({ where: { email: "ana@example.com" } });
+      // @ts-expect-error nor sorted by
+      table.findMany({ orderBy: { field: "email", direction: "asc" } });
       table.count({ newsletter: { in: [true] }, customerId: { in: ["c-1"] } });
       table.delete({ tier: null });
       // @ts-expect-error a JSON field takes no range, even one whose values are strings
@@ -1254,7 +1290,7 @@ describe("read models", () => {
       // @ts-expect-error a boolean has no order to range over
       table.delete({ newsletter: { lte: true } });
       // @ts-expect-error an operator the table does not know
-      table.findMany({ where: { email: { like: "a%" } } });
+      table.findMany({ where: { customerId: { like: "a%" } } });
     };
     expectTypeOf(filter).toBeFunction();
   });
@@ -1305,10 +1341,87 @@ describe("read models", () => {
     expectTypeOf<FieldTypesOf<{ fields: string }>>().toBeNever();
   });
 
-  it("let a table typed from its view go where a table typed from its row is expected", () => {
-    expectTypeOf<Table<CustomerDirectoryRow, CustomerDirectoryFieldTypes>>().toExtend<
+  it("let a table typed from its view go where a table typed from its row is expected, unless a field is sealed, which the row's values cannot tell", () => {
+    expectTypeOf<Table<GeneratedOrderSummaryRow, OrderSummaryFieldTypes>>().toExtend<
+      Table<GeneratedOrderSummaryRow>
+    >();
+    expectTypeOf<Table<CustomerDirectoryRow, CustomerDirectoryFieldTypes>>().not.toExtend<
       Table<CustomerDirectoryRow>
     >();
+  });
+
+  it("match a field sealed at rest only through its blind index, by equality, ne or in, and never sort by it", () => {
+    interface Customer {
+      readonly customerId: string;
+      readonly email: string | null;
+      readonly note: string | null;
+      readonly joined: Date;
+    }
+    const view = {
+      fields: ({ f }: FieldsArgs) => ({
+        customerId: f.string().primaryKey().person(),
+        email: f.string().personal().unique(),
+        note: f.string().personal(),
+        joined: f.date().personal({ clear: true }),
+      }),
+    };
+    type Types = FieldTypesOf<typeof view>;
+    expectTypeOf<Types>().toEqualTypeOf<{
+      readonly customerId: "string";
+      readonly email: "lookup";
+      readonly note: "sealed";
+      readonly joined: "date";
+    }>();
+    expectTypeOf<Where<Customer, Types>["email"]>().toEqualTypeOf<
+      string | null | SetFilter<string> | undefined
+    >();
+    expectTypeOf<Where<Customer, Types>["note"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<Where<Customer, Types>["joined"]>().toEqualTypeOf<
+      Date | RangeFilter<Date> | undefined
+    >();
+    expectTypeOf<OrderableField<Customer, Types>>().toEqualTypeOf<"customerId" | "joined">();
+    expectTypeOf<LookupField<Customer, Types>>().toEqualTypeOf<"email">();
+    expectTypeOf<FieldFilter<string | null, "lookup">>().toEqualTypeOf<
+      string | null | SetFilter<string>
+    >();
+    expectTypeOf<FieldFilter<string | null, "sealed">>().toBeNever();
+    const use = async (
+      table: Table<Customer, Types>,
+      client: ReadClient<Customer, unknown, Types>,
+    ) => {
+      await table.findOne({ email: "ana@example.com" });
+      await table.count({ email: { in: ["a@x", "b@x"] } });
+      await table.findMany({
+        where: { email: { ne: null } },
+        orderBy: { field: "joined", direction: "desc" },
+      });
+      expectTypeOf(await client.blindIndex("email", "ana@example.com")).toEqualTypeOf<string>();
+      // @ts-expect-error a blind index matches by equality, never by a range
+      await table.findOne({ email: { gt: "a" } });
+      // @ts-expect-error a field sealed without a blind index is never matched
+      await table.findOne({ note: "x" });
+      // @ts-expect-error nor sorted by, nor is one with a blind index
+      await table.findMany({ orderBy: { field: "email", direction: "asc" } });
+      // @ts-expect-error a field without a blind index has none to compute
+      await client.blindIndex("note", "x");
+      // @ts-expect-error a field in the clear has none either
+      await client.blindIndex("joined", new Date());
+    };
+    expectTypeOf(use).toBeFunction();
+  });
+
+  it("type a query's client from its view, blind indexes included", () => {
+    expectTypeOf<GetCustomer.RepositoryArgs["client"]>().toEqualTypeOf<
+      ReadClient<CustomerDirectoryRow, unknown, CustomerDirectoryFieldTypes>
+    >();
+    expectTypeOf<ProjectCustomerRegistered.Args["client"]>().toEqualTypeOf<
+      ReadClient<CustomerDirectoryRow, unknown, CustomerDirectoryFieldTypes>
+    >();
+    expectTypeOf<
+      Parameters<
+        ReadClient<CustomerDirectoryRow, unknown, CustomerDirectoryFieldTypes>["blindIndex"]
+      >[0]
+    >().toBeNever();
   });
 
   it("let a query compose other queries through the typed facade", () => {

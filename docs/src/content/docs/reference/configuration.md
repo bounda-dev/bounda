@@ -123,7 +123,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   rand -base64 32`), read from the host's environment when the app starts; a variable missing or
   malformed fails the start with `ConfigurationError`. A KMS or a vault is given through
   `defineKeyWrapper`. Keys wrapped under a previous master key, or kept unwrapped from before, are
-  rewrapped by the worker in the background. Without it the keys are kept as they are and the app
+  rewrapped by the worker in the background, as is the database's key of the blind indexes of
+  read models, which it wraps too. Without it the keys are kept as they are and the app
   warns at start when the registry marks personal fields. It is app-wide. See
   [where the keys live](/guides/personal-data/#where-the-keys-live).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the

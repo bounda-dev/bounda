@@ -92,11 +92,14 @@ everything that was built from it. A read model that projected the address has t
 row; a policy that sent it to the shipping provider gave it to a system of its own. Deleting the
 key makes the event unreadable and does nothing to those.
 
-So every read model that projects a personal field must also project `PersonalDataForgotten`,
-and the generator fails the build of one that does not. A read model says which of its columns
-are copies, with `.personal()`, and whose, with `.person()`: the person's export then carries
-those rows too, since the right of access covers everything kept about them and not only the
-log. The runtime's own copies are its job:
+So a read model says which of its columns are copies, with `.personal()`, and whose, with
+`.person()`, and the runtime seals those columns under the person's key as it seals the events:
+the same key deletion that makes the event unreadable makes the row's copy unreadable, in the live
+table and in every backup of it, whatever the read model's projections do. The person's export
+carries those rows too, since the right of access covers everything kept about them and not only
+the log. A column that SQL must sort is kept in the clear on purpose, and then the read model must
+project `PersonalDataForgotten`, as must one that copies a personal field into a column it does not
+mark: the generator fails the build of one that does not. The runtime's own copies are its job:
 [snapshots](/concepts/long-streams/#snapshots), which hold an aggregate's state in the clear,
 go with the key, in the same transaction. A policy on the same event is where the
 outside world gets told: erase the contact at the mailing provider, delete the profile the search
@@ -162,7 +165,8 @@ have work to do when it happens.
 - **Who read what, outside the client.** Every export, dead letter opened and query of a read
   model with personal fields goes to an [access log](/guides/personal-data/#who-opened-what),
   never sampled, and a read whose record cannot be kept fails. Code that reads a read model's
-  tables directly or through `client.raw` goes around it.
+  tables directly or through `client.raw` reads its sealed columns as ciphertext, and only the
+  columns kept in the clear as they are.
 - **Encrypted data under the GDPR.** Whether a ciphertext without a key still counts as personal
   data is a legal question Verraes raises and this page does not answer.
 

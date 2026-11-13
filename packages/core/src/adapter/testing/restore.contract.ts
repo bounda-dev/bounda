@@ -11,10 +11,7 @@ import {
 import type { KeyWrapperDefinition } from "../../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
 import { GENERATION_INTERVAL_MS } from "../../kernel/shared/restores.ts";
-import type {
-  PersonalDataForgottenEvent,
-  PersonalDataForgottenPayload,
-} from "../../modules/bounda-events.ts";
+import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -222,6 +219,54 @@ const registry = {
           repository: ({ table, customerId }: { table: Table<CustomerRow>; customerId: string }) =>
             table.findOne({ customerId }),
           handler: ({ repositoryData }: { repositoryData: CustomerRow | null }) => repositoryData,
+        },
+      },
+    },
+  },
+} as unknown as Registry;
+
+interface SealedRow {
+  readonly customerId: string;
+  readonly email: string | null;
+}
+
+// The customers with their email sealed at rest, found by its blind index, and no projection of
+// the forgetting: nothing but the key forgets them.
+const sealed = {
+  ...registry,
+  readModels: {
+    sealedCustomers: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          email: f.string().personal().unique(),
+        }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: StoredEvent<"CustomerRegistered", { email: string | null }>;
+              table: Table<SealedRow>;
+            }) => table.upsert({ customerId: event.aggregateId, email: event.payload.email }),
+          },
+        },
+      },
+      queries: {
+        sealedCustomer: {
+          payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+          repository: ({ table, customerId }: { table: Table<SealedRow>; customerId: string }) =>
+            table.findOne({ customerId }),
+          handler: ({ repositoryData }: { repositoryData: SealedRow | null }) => repositoryData,
+        },
+        sealedByEmail: {
+          payload: ({ z }: PayloadArgs) => z.object({ email: z.string() }),
+          repository: ({ table, email }: { table: Table<SealedRow>; email: string }) =>
+            table.findOne({ email }),
+          handler: ({ repositoryData }: { repositoryData: SealedRow | null }) => repositoryData,
         },
       },
     },
@@ -887,6 +932,61 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
           values: [ana.newsletter],
         });
         await expectForgotten(storage, "bob", { values: [bob.newsletter, bob.name] });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "keeps a read model restored in its own database from before a forgetting unreadable for that person, with no projection of the forgetting",
+      async () => {
+        const storageTarget = await create();
+        const rowsTarget = await create();
+        const clock = createFixedClock(START);
+        const open = async (rows: Adapter): Promise<BoundaApp> => {
+          const app = await createApp({
+            registry: sealed,
+            config: {
+              storage: storageTarget.storage,
+              readModels: { sealedCustomers: rows },
+              runtime: {
+                personalData: { keyWrapper: BEFORE_ROTATION },
+                policies: { retry: { strategy: "none" } },
+              },
+            },
+            clock,
+            env,
+          });
+          stops.push(() => app.stop());
+          return app;
+        };
+        const { email, name } = valuesOf("ana");
+        const first = await open(rowsTarget.storage);
+        await (first.commands as unknown as Commands).registerCustomer?.({
+          customerId: "ana",
+          email,
+          name,
+        });
+        await first.runUntilIdle();
+        const queries = (app: BoundaApp) => app.queries as unknown as Queries;
+        expect(await queries(first).sealedCustomer?.({ customerId: "ana" })).toEqual({
+          customerId: "ana",
+          email,
+        });
+        await rowsTarget.backUp();
+        await first.forget("ana");
+        await first.runUntilIdle();
+        await first.stop();
+
+        const rows = await rowsTarget.restore();
+        await expectForgotten(rows, "ana", { values: [email] });
+        const restored = await open(rows);
+        await restored.catchUpReadModels();
+        expect(await queries(restored).sealedCustomer?.({ customerId: "ana" })).toEqual({
+          customerId: "ana",
+          email: null,
+        });
+        expect(await queries(restored).sealedByEmail?.({ email })).toBeNull();
+        await expectForgotten(rows, "ana", { values: [email] });
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

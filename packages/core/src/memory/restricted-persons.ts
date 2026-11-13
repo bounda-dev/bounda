@@ -1,7 +1,6 @@
-import {
-  RETAINED_SOURCE,
-  type RestrictedPerson,
-  type RestrictedPersonsStore,
+import type {
+  RestrictedPerson,
+  RestrictedPersonsStore,
 } from "../adapter/storage/restricted-persons.ts";
 
 export interface MemoryRestrictedPersons {
@@ -39,22 +38,10 @@ export const createMemoryRestrictedPersons: CreateMemoryRestrictedPersonsFunctio
         return true;
       },
       request: async (person, restrictions) => {
-        rows = rows.filter((row) => row.person !== person || row.source === RETAINED_SOURCE);
+        rows = rows.filter((row) => row.person !== person);
         for (const { ground, categories } of restrictions) {
           for (const category of categories ?? [null]) add({ person, source: ground, category });
         }
-      },
-      retain: async (person, categories) => {
-        for (const category of categories) add({ person, source: RETAINED_SOURCE, category });
-      },
-      release: async (person, categories) => {
-        rows = rows.filter(
-          (row) =>
-            row.person !== person ||
-            row.source !== RETAINED_SOURCE ||
-            row.category === null ||
-            !categories.includes(row.category),
-        );
       },
     },
     restrictionsOf: (person) =>

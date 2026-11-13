@@ -47,7 +47,13 @@ const keysToSealWith = async (
     held.some(({ key }) => key.fingerprint === fingerprint && (!key.retained || retained === true));
   return held.length > 0 && readUnder.every(holds)
     ? inSealingOrder(held)
-    : [{ category: DEFAULT_PERSONAL_CATEGORY, key: await createDisposableKey() }];
+    : [
+        {
+          category: DEFAULT_PERSONAL_CATEGORY,
+          key: await createDisposableKey(),
+          retainedSince: null,
+        },
+      ];
 };
 
 export interface SealUnderAllFunction {

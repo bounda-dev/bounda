@@ -5,8 +5,6 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import {
   BOUNDA_AGGREGATE,
-  PERSONAL_DATA_FORGOTTEN_EVENT,
-  type PersonalDataForgottenPayload,
   PROCESSING_RESTRICTED_EVENT,
   PROCESSING_RESTRICTION_LIFTED_EVENT,
   type ProcessingRestrictedPayload,
@@ -21,11 +19,9 @@ import type { ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 
 const REACTS_TO: ReadonlySet<string> = new Set(
-  [
-    PROCESSING_RESTRICTED_EVENT,
-    PROCESSING_RESTRICTION_LIFTED_EVENT,
-    PERSONAL_DATA_FORGOTTEN_EVENT,
-  ].map((type) => qualifiedEventType(BOUNDA_AGGREGATE, type)),
+  [PROCESSING_RESTRICTED_EVENT, PROCESSING_RESTRICTION_LIFTED_EVENT].map((type) =>
+    qualifiedEventType(BOUNDA_AGGREGATE, type),
+  ),
 );
 
 export interface RestrictedPersonsSubscriberNameFunction {
@@ -56,13 +52,6 @@ export const applyToRestrictedPersons: ApplyToRestrictedPersonsFunction = async 
       await store.request(personId, restrictions);
       return;
     }
-    case PERSONAL_DATA_FORGOTTEN_EVENT: {
-      const { personId, categories, retained, expired } =
-        event.payload as PersonalDataForgottenPayload;
-      await store.release(personId, [...categories, ...expired]);
-      await store.retain(personId, retained);
-      return;
-    }
     default:
       return;
   }
@@ -88,8 +77,8 @@ export interface CreateRestrictedPersonsSubscriberFunction {
 /**
  * Keeps a database's copy of who is restricted from the stream, in the transaction that moves its
  * checkpoint, as a projection keeps its rows: a query of a read model there leaves out the rows it
- * names. Waited for, as the read models are, by `catchUpReadModels({ through })` of a `restrict`,
- * `unrestrict` or `forget`.
+ * names. Waited for, as the read models are, by `catchUpReadModels({ through })` of a `restrict`
+ * or `unrestrict`.
  */
 export const createRestrictedPersonsSubscriber: CreateRestrictedPersonsSubscriberFunction = ({
   readModel,

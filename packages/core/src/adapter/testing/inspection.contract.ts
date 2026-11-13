@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { silentLogger } from "../../contracts/logger.ts";
+import { fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter } from "../adapter.ts";
 import type { InspectedTable } from "../storage/inspection.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../storage/personal-key-store.ts";
+import { storedFields } from "../storage/sealed-fields.ts";
 import { pendingEvent, testCommand, testContext, testDeadLetter, testOutcome } from "./fixtures.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
@@ -54,6 +56,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         fingerprint: "ZnA=",
         kid: null,
       });
+      await storage.indexKeys.add({ key: "aW5kZXg=", fingerprint: "aWZw", kid: null }, now);
       await storage.checkpointStore.set("orders", 1);
       await storage.inboxLedger.tryClaim({ handler: "order.p", eventId: "e1", now, leaseMs: 1 });
       await storage.scheduler.schedule({
@@ -104,6 +107,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         ["bounda_dead_letters", "deadLetters"],
         ["bounda_idempotency_keys", "idempotencyKeys"],
         ["bounda_personal_keys", "personalKeys"],
+        ["bounda_index_keys", "indexKeys"],
         ["bounda_persons", "persons"],
         ["bounda_snapshots", "snapshots"],
         ["bounda_subscriber_failures", "subscriberFailures"],
@@ -115,7 +119,9 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         for (const row of table.rows) {
           for (const column of table.key) expect(row[column], `${name}.${column}`).toBeDefined();
         }
-        if (name !== "bounda_personal_keys") expect(table.opaque, name).toEqual([]);
+        if (name !== "bounda_personal_keys" && name !== "bounda_index_keys") {
+          expect(table.opaque, name).toEqual([]);
+        }
       }
       // A versioned database keeps its schema's versions too, and names them.
       const versions = tables.find(({ name }) => name === "bounda_migrations");
@@ -127,6 +133,10 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       expect(JSON.stringify(events.rows)).toContain("ring twice");
       const keys = tableOf(tables, "bounda_personal_keys");
       expect([...keys.opaque].sort()).toEqual(["fingerprint", "key"]);
+      expect([...tableOf(tables, "bounda_index_keys").opaque].sort()).toEqual([
+        "fingerprint",
+        "key",
+      ]);
       expect(keys.rows.map((row) => [row.person, row.key])).toEqual([
         ["c-1", "a2V5"],
         ["c-2", "a2V5Mg=="],
@@ -163,6 +173,33 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         "c-2",
       );
       await rebuild.abort();
+      await model.close();
+    });
+
+    it("treats the key and blind index fields beside a read model's personal fields as opaque", async () => {
+      const adapter = await create();
+      const model = await adapter.createReadModel<Record<string, unknown>>({
+        name: "customers",
+        fields: storedFields({
+          readModel: "customers",
+          fields: {
+            customerId: f.string().primaryKey().person(),
+            email: f.string().personal().unique(),
+            phone: f.string().optional().personal({ clear: true }),
+          },
+        }),
+        logger: silentLogger,
+      });
+      await model.table.upsert({
+        customerId: "c-1",
+        email: '{"$personal":{}}',
+        email__key: "a2V5",
+        email__index: "aW5kZXg=",
+        phone: "555",
+        phone__key: "a2V5",
+      });
+      const customers = tableOf(await adapter.inspect(), "bounda_rm_customers");
+      expect([...customers.opaque].sort()).toEqual(["email__index", "email__key", "phone__key"]);
       await model.close();
     });
 

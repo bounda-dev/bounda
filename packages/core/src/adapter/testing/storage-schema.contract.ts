@@ -35,10 +35,12 @@ export interface StorageSchemaContractFunction {
 const LATEST = [
   { scope: "checkpoints", version: 1 },
   { scope: "checkpoints", version: 2 },
+  { scope: "checkpoints", version: 3 },
   { scope: "storage", version: 1 },
   { scope: "storage", version: 2 },
   { scope: "storage", version: 3 },
   { scope: "storage", version: 4 },
+  { scope: "storage", version: 5 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -151,19 +153,19 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 4 },
-        { scope: "checkpoints", version: 0, latest: 2 },
+        { scope: "storage", version: 0, latest: 5 },
+        { scope: "checkpoints", version: 0, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 5 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 4 },
-        { scope: "checkpoints", version: 2, latest: 2 },
+        { scope: "storage", version: 0, latest: 5 },
+        { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 5 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger"])).toEqual([
-        { scope: "storage", version: 4, latest: 4 },
-        { scope: "checkpoints", version: 2, latest: 2 },
+        { scope: "storage", version: 5, latest: 5 },
+        { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 5, latest: 5 },
       ]);
       const shape = await shapeOf(target, dialect);
@@ -187,7 +189,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(await target.adapter.schemaVersions()).toContainEqual({
         scope: "checkpoints",
         version: 999,
-        latest: 2,
+        latest: 3,
       });
     });
 
@@ -218,7 +220,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 4,
+        supported: 5,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -279,7 +281,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         `DROP TABLE "${storageTableNameFor({ prefix: target.prefix, table: "restrictions" })}"`,
       );
       await target.execute(
-        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'storage' AND "version" = 4`,
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'storage' AND "version" >= 4`,
       );
       await opened(target.adapter, async (storage) => {
         expect(await storage.persons.restrictions("c-1")).toEqual([
@@ -416,6 +418,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual([
         { scope: "checkpoints", version: 1 },
         { scope: "checkpoints", version: 2 },
+        { scope: "checkpoints", version: 3 },
       ]);
     });
   });

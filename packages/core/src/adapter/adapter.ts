@@ -8,14 +8,16 @@ import type { EventStore } from "./storage/event-store.ts";
 import type { CreateForgetLedgerArgs, ForgetLedger } from "./storage/forget-ledger.ts";
 import type { IdempotencyStore } from "./storage/idempotency-store.ts";
 import type { InboxLedger } from "./storage/inbox-ledger.ts";
+import type { IndexKeyStore } from "./storage/index-key-store.ts";
 import type { InspectedTable } from "./storage/inspection.ts";
 import type { PersonStore } from "./storage/person-store.ts";
 import type { PersonalKeyStore } from "./storage/personal-key-store.ts";
 import type { RestrictedPersonsStore, RestrictedReads } from "./storage/restricted-persons.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
+import type { UnsettledRowsArgs } from "./storage/sealed-fields.ts";
 import type { SnapshotStore } from "./storage/snapshot-store.ts";
 import type { SubscriberFailureStore } from "./storage/subscriber-failure-store.ts";
-import type { ReadClient, Table } from "./storage/table.ts";
+import type { StoredReadClient, Table } from "./storage/table.ts";
 
 /**
  * The write-side stores bound to one open transaction: what `Storage.transact` runs its
@@ -64,6 +66,10 @@ export interface Storage {
    */
   readonly subscriberFailures: SubscriberFailureStore;
   /**
+   * The key of the blind indexes of every read model, read when the app starts.
+   */
+  readonly indexKeys: IndexKeyStore;
+  /**
    * Only for a backend that can push new events; without it the dispatcher only polls.
    */
   readonly notifier?: EventNotifier;
@@ -84,7 +90,7 @@ export interface Storage {
  */
 export interface ReadModelStorage<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
-  readonly client: ReadClient<Row, Raw>;
+  readonly client: StoredReadClient<Row, Raw>;
   /**
    * The reads a query makes, which leave out the rows of restricted persons as the database's copy
    * of who is restricted says.
@@ -110,13 +116,20 @@ export interface ReadModelStorage<Row extends object = Record<string, unknown>, 
  */
 export interface ReadModelTransaction<Row extends object = Record<string, unknown>> {
   readonly table: Table<Row>;
-  readonly client: ReadClient<Row>;
+  readonly client: StoredReadClient<Row>;
   readonly checkpointStore: CheckpointStore;
   /**
    * The database's copy of who is restricted, shared by every read model in it, which the runtime
    * keeps under its own subscriber.
    */
   readonly restrictedPersons: RestrictedPersonsStore;
+  /**
+   * Up to `limit` rows of the table, as `table` reads them, holding a value in one of `sealed` that
+   * does not start as an envelope's JSON does (`ENVELOPE_PREFIX`), or a value in one of `keyed`
+   * whose key field has none: what a write through `client.raw` left, which the runtime seals
+   * before the transaction commits.
+   */
+  unsettled(args: UnsettledRowsArgs): Promise<readonly Row[]>;
 }
 
 export interface ReadModelTransactArgs<Row extends object, T> {
@@ -139,7 +152,7 @@ export type ReadModelTransacted<T> =
  */
 export interface ReadModelRebuild<Row extends object = Record<string, unknown>, Raw = unknown> {
   readonly table: Table<Row>;
-  readonly client: ReadClient<Row, Raw>;
+  readonly client: StoredReadClient<Row, Raw>;
   /**
    * Whether `table` is the shadow a paused rebuild left under the same `progress`, rows included,
    * rather than a fresh one.

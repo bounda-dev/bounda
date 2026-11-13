@@ -275,7 +275,10 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
         };
       }
       const { key } = await thrownAway(person);
-      return { keys: [{ category: DEFAULT_PERSONAL_CATEGORY, key }], discarded: true };
+      return {
+        keys: [{ category: DEFAULT_PERSONAL_CATEGORY, key, retainedSince: null }],
+        discarded: true,
+      };
     },
   };
 };

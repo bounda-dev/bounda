@@ -1,3 +1,5 @@
+import { isHiddenField } from "./sealed-fields.ts";
+
 /**
  * The stores of the storage a table can hold, by the name `storageTableNameFor` puts after the
  * prefix, and `readModel` for a read model's table or its rebuild's.
@@ -10,6 +12,7 @@ export type InspectedStore =
   | "scheduledCommands"
   | "idempotencyKeys"
   | "personalKeys"
+  | "indexKeys"
   | "persons"
   | "restrictions"
   | "restrictedPersons"
@@ -33,6 +36,7 @@ export const STORAGE_STORES: readonly Exclude<InspectedStore, "readModel">[] = [
   "scheduledCommands",
   "idempotencyKeys",
   "personalKeys",
+  "indexKeys",
   "persons",
   "restrictions",
   "restrictedPersons",
@@ -68,11 +72,14 @@ export interface InspectedTable {
 }
 
 export interface OpaqueColumnsOfFunction {
-  (store: InspectedStore | null): readonly string[];
+  (store: InspectedStore | null, columns: readonly string[]): readonly string[];
 }
 
 /**
- * The key material a store keeps: the personal keys and their fingerprints.
+ * The key material a store keeps: the personal keys, the key of the blind indexes and their
+ * fingerprints, and the key and index fields beside the personal fields of a read model.
  */
-export const opaqueColumnsOf: OpaqueColumnsOfFunction = (store) =>
-  store === "personalKeys" ? ["key", "fingerprint"] : [];
+export const opaqueColumnsOf: OpaqueColumnsOfFunction = (store, columns) => {
+  if (store === "personalKeys" || store === "indexKeys") return ["key", "fingerprint"];
+  return store === "readModel" ? columns.filter(isHiddenField) : [];
+};

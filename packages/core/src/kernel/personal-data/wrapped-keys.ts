@@ -56,6 +56,10 @@ export interface PersonalKeys extends PersonalKeyStore {
    */
   heldAll(person: string): Promise<readonly CategoryKey[]>;
   /**
+   * `heldAll` of each of `persons`, read in one go; a person without a key is left out.
+   */
+  heldAllOf(persons: readonly string[]): Promise<ReadonlyMap<string, readonly CategoryKey[]>>;
+  /**
    * The key `stored` holds, as `get` read it in force for the person.
    */
   open(person: string, stored: StoredPersonalKey): Promise<PersonalKey>;
@@ -67,11 +71,13 @@ export interface PersonalKeys extends PersonalKeyStore {
 }
 
 /**
- * One of a person's keys and the category it seals.
+ * One of a person's keys, the category it seals, and since when a forgetting kept it under a legal
+ * obligation, `null` while it is in force.
  */
 export interface CategoryKey {
   readonly category: string;
   readonly key: PersonalKey;
+  readonly retainedSince: string | null;
 }
 
 export interface InSealingOrderFunction {
@@ -107,11 +113,25 @@ export interface PersonalKeyWrapping {
    * Drops the person's keys, for a forgetting made on the store as written.
    */
   drop(person: string): void;
+  /**
+   * A new key no store holds yet: as a store keeps it, and as it seals.
+   */
+  generate(): Promise<GeneratedKey>;
+  /**
+   * The key `stored` holds, checked against its fingerprint, unwrapped for one use and not kept:
+   * for a key that is no person's.
+   */
+  unwrap(stored: StoredPersonalKey): Promise<CryptoKey>;
   over(keys: PersonalKeyStore): PersonalKeys;
   /**
    * Drops every key kept and the timer that expires them.
    */
   close(): void;
+}
+
+export interface GeneratedKey {
+  readonly stored: StoredPersonalKey;
+  readonly key: PersonalKey;
 }
 
 export interface CreatePersonalKeyWrappingArgs {
@@ -267,7 +287,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
 
   // The new key as the store keeps it, and as it is sealed with. Its raw bytes exist only without
   // a wrapper, to be stored as they are, or for a wrapper of the app's own.
-  const generate = async (): Promise<{ stored: StoredPersonalKey; key: PersonalKey }> => {
+  const generate = async (): Promise<GeneratedKey> => {
     const exportable = await generateWrappableKey();
     const fingerprint = await fingerprintOf(exportable);
     if (wrapper === null) {
@@ -301,10 +321,13 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     wrapper,
     wrapped,
     drop: dropPerson,
+    generate,
+    unwrap: (stored) => unwrap(stored, false),
     over: (keys) => ({
       get: (person, category) => keys.get(person, category),
       find: (person, fingerprint) => keys.find(person, fingerprint),
       list: (person) => keys.list(person),
+      listMany: (persons) => keys.listMany(persons),
       // Wrapped on the way in, as every key the store keeps.
       add: async (person, category, key) =>
         keys.add(
@@ -327,7 +350,26 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
           (await keys.list(person)).map(async (found) => ({
             category: found.category,
             key: await open(person, found.key, found.retainedSince !== null),
+            retainedSince: found.retainedSince,
           })),
+        ),
+      heldAllOf: async (persons) =>
+        new Map(
+          await Promise.all(
+            [...(await keys.listMany(persons))].map(
+              async ([person, listed]) =>
+                [
+                  person,
+                  await Promise.all(
+                    listed.map(async (found) => ({
+                      category: found.category,
+                      key: await open(person, found.key, found.retainedSince !== null),
+                      retainedSince: found.retainedSince,
+                    })),
+                  ),
+                ] as const,
+            ),
+          ),
         ),
       open: (person, stored) => open(person, stored),
       create: async (person, category) => {

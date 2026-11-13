@@ -170,6 +170,50 @@ describe("createKeyRotation", () => {
     );
   });
 
+  it("rewraps the key of the blind indexes with the persons' keys, and completes only once it did", async () => {
+    const storage = await memory().createStorage();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const logger = recordingLogger();
+    const generated = await createPersonalKeyWrapping({
+      wrapper: fakeWrapper("old"),
+      clock,
+    }).generate();
+    await storage.indexKeys.add(generated.stored, clock.now());
+    let failing = true;
+    const rotation = createKeyRotation({
+      keys: storage.personalKeys,
+      indexKeys: {
+        ...storage.indexKeys,
+        rewrap: (from, to) =>
+          failing ? Promise.reject(new Error("index down")) : storage.indexKeys.rewrap(from, to),
+      },
+      checkpoints: storage.checkpointStore,
+      wrapper,
+      wrapping: createPersonalKeyWrapping({ wrapper, clock }),
+      clock,
+      logger,
+    });
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    expect(await rotation.nextDueAt()).toEqual(clock.now());
+    expect(await rotation.status()).toMatchObject({ pending: 1, completeAt: null });
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(logger.logged).toContainEqual({
+      level: "error",
+      message: "the key of the blind indexes could not be rewrapped",
+      context: expect.objectContaining({ kid: "old" }),
+    });
+    expect((await storage.indexKeys.get())?.kid).toBe("old");
+    expect((await rotation.status()).completeAt).toBeNull();
+    failing = false;
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    await rotation.sweep(clock.now());
+    expect((await storage.indexKeys.get())?.kid).toBe("new");
+    expect((await storage.indexKeys.get())?.fingerprint).toBe(generated.stored.fingerprint);
+    expect(await rotation.status()).toMatchObject({ pending: 0 });
+    await rotation.sweep(clock.now());
+    expect((await rotation.status()).completeAt).not.toBeNull();
+  });
+
   it("rewraps at most ROTATION_BATCH keys a pass", async () => {
     const { store, clock, rotation } = await setUp();
     for (let index = 0; index <= ROTATION_BATCH; index += 1) {

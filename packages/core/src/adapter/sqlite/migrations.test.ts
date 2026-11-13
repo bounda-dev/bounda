@@ -68,6 +68,7 @@ describe("migrateSqlite", () => {
     ).toEqual([
       { scope: "checkpoints", version: 1 },
       { scope: "checkpoints", version: 2 },
+      { scope: "checkpoints", version: 3 },
     ]);
   });
 

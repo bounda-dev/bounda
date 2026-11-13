@@ -131,6 +131,13 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
         return kept === undefined ? null : held(kept);
       },
       list: async (person) => of(person).sort(byPerson).map(held),
+      listMany: async (persons) =>
+        new Map(
+          [...new Set(persons)].flatMap((person) => {
+            const listed = of(person).sort(byPerson).map(held);
+            return listed.length === 0 ? [] : [[person, listed] as const];
+          }),
+        ),
       add: async (person, category, key) => {
         const existing = inForce(person, category);
         if (existing !== undefined) return stored(existing);

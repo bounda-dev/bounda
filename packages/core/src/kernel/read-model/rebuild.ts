@@ -18,12 +18,14 @@ import {
   buildPersonalKeyWrapping,
   type PersonalKeyWrapping,
 } from "../personal-data/wrapped-keys.ts";
-import { projectBatch, projectionSubscriberName } from "../projection/runner.ts";
+import { projectBatch, projectionSubscriberName, withKeys } from "../projection/runner.ts";
 import { actedBy } from "../shared/causation.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
+import { sealedLayoutOf } from "./sealed-rows.ts";
+import { openReadModelSealing } from "./sealing.ts";
 
 export interface RebuildReadModelArgs {
   readonly registry: Registry;
@@ -163,16 +165,27 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   try {
     // A rebuild runs no handler, so it builds no implementation, and writes no lifecycle event,
     // whose state opens by its shape: it needs no process.
-    const { eventStore } = appStorage({
+    const { eventStore, personalKeys } = appStorage({
       storage,
       aggregates: buildAggregates({ registry, ports: {} }),
       processes: { byName: {} },
       wrapping,
     });
+    const layout = sealedLayoutOf({
+      readModel: name,
+      fields: entry.view.fields({ f: fieldBuilder }),
+    });
+    const sealing = await openReadModelSealing({
+      layouts: [layout],
+      keys: personalKeys,
+      indexKeys: storage.indexKeys,
+      wrapping,
+      clock: systemClock,
+    });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>
-    >({ name, fields: entry.view.fields({ f: fieldBuilder }), logger, progress });
+    >({ name, fields: layout.stored, logger, progress });
     const { batchSize } = config.runtime.dispatcher;
     let { position } = rebuild;
     const budget = maxEvents ?? Number.POSITIVE_INFINITY;
@@ -197,18 +210,29 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
         }
         const batch = await eventStore.readAll({ afterPosition: position, limit: batchSize });
         if (batch.length === 0) break;
-        const done = await rebuild.transact(async ({ table, client, checkpointStore }) => {
-          const projected = await projectBatch({
-            readModel,
-            events: batch,
-            table,
-            client,
-            logger,
-            errorText,
-            budget: { clock: systemClock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
-          });
-          await checkpointStore.set(progress, batch[projected - 1]?.position ?? position);
-          return projected;
+        const done = await withKeys({
+          keys: sealing.keys,
+          events: batch,
+          run: (keys) =>
+            rebuild.transact(async (transaction) => {
+              const projected = await projectBatch({
+                readModel,
+                events: batch,
+                transaction,
+                sealing: { layout, keys, indexer: sealing.indexer },
+                logger,
+                errorText,
+                budget: {
+                  clock: systemClock,
+                  maxMs: config.runtime.dispatcher.projectionBatchTimeMs,
+                },
+              });
+              await transaction.checkpointStore.set(
+                progress,
+                batch[projected - 1]?.position ?? position,
+              );
+              return projected;
+            }),
         });
         events += done;
         position = batch[done - 1]?.position ?? position;

@@ -939,7 +939,7 @@ describe("restriction of processing in a read model's own database", () => {
 });
 
 describe("restriction of processing through SQL a query writes", () => {
-  it("drops the restricted rows the client reads, and refuses a row with personal fields and no person", async () => {
+  it("drops the restricted rows the client reads, telling whose a row is by its sealed values when the statement left the person out", async () => {
     const { app, queries, register } = await setup({ adapter: createNodeSqliteAdapter().adapter });
     for (const customer of ["ana", "bo"]) await register(customer);
     await app.runUntilIdle();
@@ -950,9 +950,8 @@ describe("restriction of processing through SQL a query writes", () => {
       "ana",
       "bo",
     ]);
-    await expect(queries.emailsBySql?.()).rejects.toThrow(
-      'A query of read model "customers" read a field marked .personal() through client without "customerId"',
-    );
+    expect(await queries.emailsBySql?.()).toBe(1);
+    expect(await queries.emailsBySql?.(undefined, { includeRestricted: "consent" })).toBe(2);
     await app.stop();
   });
 });

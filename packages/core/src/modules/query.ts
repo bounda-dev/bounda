@@ -21,7 +21,7 @@ export type QueryRepositoryArgs<
   Raw = unknown,
   Types extends FieldTypes<Row> = FieldTypesOfRow<Row>,
 > = Readonly<Payload> & {
-  readonly client: ReadClient<Row, Raw>;
+  readonly client: ReadClient<Row, Raw, Types>;
   readonly table: Table<Row, Types>;
   readonly actor: string | undefined;
 };

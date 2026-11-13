@@ -232,8 +232,8 @@ describe("what does not compile", () => {
       events.customerRegistered({ email: null }),
     ];
     void builder;
+    // A field sealed at rest reads as null once its person is forgotten, as the event's does.
     const projection = async ({ event, table }: ProjectCustomerRegistered.Args) => {
-      // @ts-expect-error a personal field reads as null once its person is forgotten
       await table.upsert({ customerId: event.aggregateId, email: event.payload.email });
     };
     void projection;
@@ -323,7 +323,7 @@ describe("what does not compile", () => {
     const marked = {
       fields: ({ f }: FieldsArgs) => ({
         customerId: f.string().primaryKey().person(),
-        email: f.string().personal(),
+        email: f.string().personal({ clear: true }),
       }),
     };
     type NoPerson = Expect<
@@ -332,7 +332,7 @@ describe("what does not compile", () => {
     >;
     // @ts-expect-error a read model has at most one person field
     type TwoPersons = Expect<ForgetsPersonalData<"customers", never, true, typeof twoPersons>>;
-    // @ts-expect-error a read model with personal fields needs projections/bounda/personal-data-forgotten.ts
+    // @ts-expect-error a read model with fields in the clear needs projections/bounda/personal-data-forgotten.ts
     type Unforgotten = Expect<ForgetsPersonalData<"customers", never, false, typeof marked>>;
     type Forgotten = Expect<ForgetsPersonalData<"customers", never, true, typeof marked>>;
     type Unmarked = Expect<

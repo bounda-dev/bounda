@@ -7,7 +7,9 @@ import { validatePayload } from "../command/validate.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { checkIncludeRestricted, restrictionViewOf } from "../personal-data/restricted-reads.ts";
 import type { ModulePorts } from "../ports/ports.ts";
+import type { SealingSource } from "../projection/runner.ts";
 import type { ReadModelRuntime, ReadModelsRuntime } from "../read-model/build-read-models.ts";
+import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { withPorts } from "../shared/with-ports.ts";
@@ -41,6 +43,10 @@ export interface CreateQueryRunnerArgs {
   readonly queries: QueriesRuntime;
   readonly readModels: ReadModelsRuntime;
   /**
+   * The keys and blind indexes the read models' values are opened and looked up with.
+   */
+  readonly sealing: SealingSource;
+  /**
    * What each read model's query handlers receive; `repository` reads the storage and gets none.
    */
   readonly ports: ModulePorts;
@@ -52,27 +58,25 @@ export interface CreateQueryRunnerFunction {
   (args: CreateQueryRunnerArgs): QueryRunner;
 }
 
-// The stores of a read model with a field marked `.person()`, which leave out the rows of
-// restricted persons; a read model without one has no row of anyone's.
-const personalStores = (readModel: ReadModelRuntime, view: RestrictionView) => {
-  const { personalData, storage, name } = readModel;
-  if (personalData === null) return null;
-  return reading({
-    storage,
-    readModel: name,
-    person: personalData.person,
-    personal: personalData.personal,
-    view,
-  });
-};
-
 export const createQueryRunner: CreateQueryRunnerFunction = ({
   queries,
   readModels,
+  sealing,
   ports,
   recordAccess,
   errorText,
 }) => {
+  // The stores of a read model as a query reads them: sealed values opened, with the keys fetched
+  // for this query alone, and, with a field marked `.person()`, the rows of restricted persons
+  // left out.
+  const storesOf = (readModel: ReadModelRuntime, view: RestrictionView) =>
+    reading({
+      storage: readModel.storage,
+      layout: readModel.layout,
+      keys: createSealingKeyRing({ keys: sealing.keys, fetching: true }),
+      indexer: sealing.indexer,
+      view,
+    });
   const runAs = async (
     { type, payload, actor, includeRestricted: asked }: RunQueryArgs,
     nested: QueriesFacadeRuntime,
@@ -93,8 +97,8 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
       },
       run: async () => {
         const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
-        const stores = personalStores(readModel, restrictionViewOf(includeRestricted));
-        const { table, client } = stores ?? readModel.storage;
+        const stores = storesOf(readModel, restrictionViewOf(includeRestricted));
+        const { table, client } = stores;
         if (query.repository !== null && isRecord(parsed)) {
           checkPayloadFields(
             `readModels.${query.readModel}.queries.${query.key}`,
@@ -128,8 +132,8 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
         // cannot tell whose data it holds. A read model with no field marked `.personal()` is
         // recorded only when restricted rows were asked for.
         if (
-          stores === null ||
-          (includeRestricted === undefined && readModel.personalData?.personal.length === 0)
+          readModel.personalData === null ||
+          (includeRestricted === undefined && readModel.personalData.personal.length === 0)
         ) {
           return run();
         }
@@ -147,10 +151,13 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
                   ? null
                   : {
                       basis: includeRestricted,
-                      persons: await readModel.storage.restricted.among(
-                        stores.persons,
-                        "unrestricted",
-                      ),
+                      persons: new Set([
+                        ...(await readModel.storage.restricted.among(
+                          stores.persons,
+                          "unrestricted",
+                        )),
+                        ...stores.retained,
+                      ]),
                     },
             }),
           run,

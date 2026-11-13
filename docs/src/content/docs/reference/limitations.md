@@ -21,22 +21,20 @@ get today. Each item says why, so nobody discovers it the hard way:
 - **Notifications for scheduled commands.** The worker that runs due commands polls at
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
-- **Every read of personal data in the access log.** See [The access log](#the-access-log).
+- **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
 
 ## The access log
 
 The [access log](/guides/personal-data/#who-opened-what) records what Bounda hands out through a
-client, and nothing it does not see:
+client. A read model's fields [sealed at rest](/guides/personal-data/#sealed-at-rest) open for
+nothing else, so whatever goes around a client reads them as ciphertext; what the log does not see
+is what is not sealed:
 
-- **Code that reads a read model directly.** A route that opens the read model's database, or a
-  script on the tables, goes around the queries; only a query through `app.queries` is recorded.
-- **Whose rows `client.raw` read.** A query's `client.get` and `client.all` are watched; the
-  driver behind `client.raw` is not, so a query that takes it is recorded with
-  `unattributed: true`, and the persons of the rows it read there are not in `persons`.
-- **Rows without their person.** A query that selects columns with SQL and leaves out the
-  `person` column reads rows that name no one; one that selects a field marked `.personal()` that
-  way is refused, since its rows' restrictions cannot be told either.
+- **Fields kept in the clear.** A field marked `.personal({ clear: true })` is stored as it is, so
+  a route that opens the read model's database, a script on its tables, or a query's `client.raw`
+  reads it without a record; a query that takes `client.raw` on such a read model is recorded with
+  `unattributed: true`.
 - **Read models without personal fields.** A query of one is not recorded, even when its rows
   hold a person's id: an id alone is what every event already carries.
 - **The global stream.** `app.events.read()` hands out events as stored, personal fields
@@ -48,16 +46,13 @@ client, and nothing it does not see:
 ## Restricted rows
 
 A [restriction](/guides/personal-data/#restricting-processing) leaves a person's rows out of what a
-query reads through its `table` and its `client`, by the field marked `.person()`; read models
-keep their columns in the clear, so what goes around the queries is not filtered:
+query reads through its `table` and its `client`, and nothing opens their sealed values without a
+basis named:
 
-- **Code that reads a read model directly**, and a query's `client.raw`, read restricted rows as
-  any other.
+- **Fields kept in the clear** are read as they are by code that reads a read model directly and by
+  a query's `client.raw`.
 - **SQL a query writes** has its `LIMIT` applied before the restricted rows are dropped, so a page
   may come back short; `table` pages exactly.
-- **A person who comes back after a forgetting** that kept a category under a legal obligation
-  has every row of that category left out until its retention ends, the new ones with the kept:
-  the columns do not say which key a value was written under.
 
 ## What it does get
 
@@ -67,6 +62,8 @@ What a production app does get, and where it is explained:
 [category](/guides/personal-data/#categories) of their data with its basis and retention, what a
 legal obligation keeps kept,
 [exporting their data](/guides/personal-data/#exporting-a-persons-data), read models included,
+their read models' fields [sealed at rest](/guides/personal-data/#sealed-at-rest) with blind indexes
+to look them up,
 [recording who opened it](/guides/personal-data/#who-opened-what) and
 [restricting their processing](/guides/personal-data/#restricting-processing) without losing a
 reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose

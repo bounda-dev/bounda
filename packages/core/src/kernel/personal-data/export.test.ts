@@ -12,6 +12,8 @@ import type { FieldsArgs } from "../../modules/view.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { type AppStorage, appStorage } from "../events/app-event-store.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
+import { sealedTable } from "../read-model/sealed-table.ts";
+import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
 import { keysOver } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
@@ -133,11 +135,6 @@ const setup = async () => {
     config: resolveConfig({ storage: memory(), readModels: { orderNotes: memory() } }),
     logger: silentLogger,
   });
-  const table = (name: string) => {
-    const readModel = readModels.byName[name];
-    if (readModel === undefined) throw new Error(`no read model ${name}`);
-    return readModel.storage.table;
-  };
   const written = await memory().createStorage();
   const storage: AppStorage = appStorage({
     storage: written,
@@ -145,12 +142,27 @@ const setup = async () => {
     processes: { byName: {} },
     wrapping: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }),
   });
+  // Written as a projection writes, sealed under the keys the persons hold.
+  const table = (name: string) => {
+    const readModel = readModels.byName[name];
+    if (readModel === undefined) throw new Error(`no read model ${name}`);
+    return sealedTable({
+      context: {
+        layout: readModel.layout,
+        keys: createSealingKeyRing({ keys: storage.personalKeys, fetching: true }),
+        indexer: null,
+        event: () => null,
+      },
+      table: readModel.storage.table,
+    });
+  };
   const exportOf = (personId: string, batchSize = 2) =>
     exportPersonalData({
       storage,
       aggregates,
       processes: { byName: {} },
       readModels,
+      sealing: { keys: storage.personalKeys, indexer: null },
       clock: createFixedClock(),
       batchSize,
       categories,
@@ -528,8 +540,13 @@ describe("exportPersonalData", () => {
     ]);
   });
 
-  it("includes the rows of every read model with a person field, page by page, with their key and marked fields only", async () => {
-    const { exportOf, table } = await setup();
+  it("includes the rows of every read model with a person field, page by page, with their key and marked fields only, opened", async () => {
+    const { exportOf, table, storage } = await setup();
+    for (const person of ["c-1", "c-2"]) {
+      for (const category of ["default", "invoices"]) {
+        await storage.personalKeys.create(person, category);
+      }
+    }
     await table("customerDirectory").insert({
       customerId: "c-1",
       email: "ana@example.com",
@@ -629,6 +646,7 @@ describe("exportPersonalData", () => {
         aggregates,
         processes: { byName: {} },
         readModels: { ...readModels, byName: { ...readModels.byName, orderNotes: writing } },
+        sealing: { keys: storage.personalKeys, indexer: null },
         clock: createFixedClock(),
         batchSize: 3,
         categories,
@@ -671,6 +689,7 @@ describe("exportPersonalData", () => {
         aggregates,
         processes: { byName: {} },
         readModels: { ...readModels, byName: failing },
+        sealing: { keys: storage.personalKeys, indexer: null },
         clock: createFixedClock(),
         batchSize: 2,
         categories,
@@ -751,6 +770,7 @@ describe("exportPersonalData", () => {
       storage,
       aggregates,
       readModels,
+      sealing: { keys: storage.personalKeys, indexer: null },
       processes: { byName: {} },
       clock: createFixedClock(),
       batchSize: 2,

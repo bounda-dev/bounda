@@ -14,6 +14,26 @@ export type FieldType = "string" | "number" | "boolean" | "date" | "json";
 export type FieldMark = "personal" | "person";
 
 /**
+ * What a table can filter a field by: how it is stored, or, for a field marked `.personal()` and
+ * so sealed at rest, `sealed`, nothing, and `lookup`, equality through its blind index, which
+ * `.index()` or `.unique()` gives it.
+ */
+export type FieldAccess = FieldType | "sealed" | "lookup";
+
+/**
+ * What `.personal()` takes on a read-model field.
+ */
+export interface PersonalFieldOptions extends PersonalOptions {
+  /**
+   * Stores the value in the clear instead of sealed under the person's key, so SQL can sort it and
+   * filter it by range, at the price sealing spares: forgetting the person then depends on the read
+   * model's projection of `PersonalDataForgotten`, which a read model with such a field must have,
+   * and a direct read of the table, or a copy of it, shows the value.
+   */
+  readonly clear?: boolean;
+}
+
+/**
  * A read-model field as the runtime and the adapters see it. `Value` is the TypeScript type of
  * the column; it is carried at the type level only. `Type` is how it is stored, which decides
  * what a table can filter it by.
@@ -23,6 +43,8 @@ export interface FieldDefinition<
   Optional extends boolean = boolean,
   Mark extends FieldMark | null = FieldMark | null,
   Type extends FieldType = FieldType,
+  Indexed extends boolean = boolean,
+  Clear extends boolean = boolean,
 > {
   readonly type: Type;
   readonly isOptional: Optional;
@@ -38,7 +60,16 @@ export interface FieldDefinition<
    * one; `null` for any other field.
    */
   readonly category: string | null;
+  /**
+   * Whether a field marked `personal` is stored in the clear rather than sealed; `false` for any
+   * other field.
+   */
+  readonly clear: Clear;
   readonly _value?: Value;
+  /**
+   * Whether `.index()` or `.unique()` was called, at the type level only.
+   */
+  readonly _indexed?: Indexed;
 }
 
 /**
@@ -49,27 +80,52 @@ export interface Field<
   Optional extends boolean,
   Mark extends FieldMark | null = null,
   Type extends FieldType = FieldType,
-> extends FieldDefinition<Value, Optional, Mark, Type> {
-  optional(): Field<Value, true, Mark, Type>;
-  primaryKey(): Field<Value, Optional, Mark, Type>;
-  unique(): Field<Value, Optional, Mark, Type>;
-  index(): Field<Value, Optional, Mark, Type>;
+  Indexed extends boolean = false,
+  Clear extends boolean = false,
+> extends FieldDefinition<Value, Optional, Mark, Type, Indexed, Clear> {
+  optional(): Field<Value, true, Mark, Type, Indexed, Clear>;
+  primaryKey(): Field<Value, Optional, Mark, Type, Indexed, Clear>;
+  /**
+   * On a field sealed at rest, the uniqueness holds on its blind index, which is what `where`
+   * matches it by.
+   */
+  unique(): Field<Value, Optional, Mark, Type, true, Clear>;
+  /**
+   * On a field sealed at rest, gives it a blind index, so `where` matches it by equality, `ne` or
+   * `in`; it still never sorts or filters by range.
+   */
+  index(): Field<Value, Optional, Mark, Type, true, Clear>;
   /**
    * Marks the field as personal data of the person the row's `person` field names, in the
-   * category given, the default one without: the export of that person carries it with its
+   * category given, the default one without. The value is sealed at rest under that person's key of
+   * the category: the table holds only ciphertext, which the runtime opens for projections and
+   * queries, never for a restricted person without a basis named, and which no one opens once the
+   * category is forgotten, so the field reads as `null` from then on. A sealed field is never
+   * sorted or filtered by range; `.index()` or `.unique()` gives it a blind index for equality.
+   * `clear: true` stores it in the clear instead. The export of that person carries it with its
    * category, and a query that reads rows of the read model is recorded in the access log. A read
-   * model with personal fields needs a `person` field and a projection of `PersonalDataForgotten`,
-   * or `.bounda/types.ts` does not compile.
+   * model with personal fields needs a `person` field, and one with a field in the clear a
+   * projection of `PersonalDataForgotten`, or `.bounda/types.ts` does not compile; a primary key is
+   * never sealed.
    */
-  personal(
-    this: Field<Value, Optional, null, Type>,
-    options?: PersonalOptions,
-  ): Field<Value, Optional, "personal", Type>;
+  personal<const Options extends PersonalFieldOptions = Record<never, never>>(
+    this: Field<Value, Optional, null, Type, Indexed, false>,
+    options?: Options,
+  ): Field<
+    Value,
+    Optional,
+    "personal",
+    Type,
+    Indexed,
+    Options extends { readonly clear: true } ? true : false
+  >;
   /**
    * Marks the field that holds the id of the person the row's personal fields belong to. A read
    * model has at most one; its rows are in that person's export.
    */
-  person(this: Field<string, Optional, null, Type>): Field<Value, Optional, "person", Type>;
+  person(
+    this: Field<string, Optional, null, Type, Indexed, false>,
+  ): Field<Value, Optional, "person", Type, Indexed, false>;
 }
 
 /**
@@ -99,7 +155,16 @@ export interface ViewModule {
   readonly fields: (args: FieldsArgs) => FieldsRecord;
 }
 
-type FieldValue<F> = F extends FieldDefinition<infer Value, boolean> ? Value : never;
+// A field marked `.personal()` without `clear` is sealed at rest.
+type IsSealed<F> = F extends { readonly mark: "personal"; readonly clear: false } ? true : false;
+
+// A sealed field reads as `null` once its category of its person is forgotten.
+type FieldValue<F> =
+  F extends FieldDefinition<infer Value, boolean>
+    ? IsSealed<F> extends true
+      ? Value | null
+      : Value
+    : never;
 
 type RequiredKeys<Fields extends FieldsRecord> = {
   [K in keyof Fields]: Fields[K] extends FieldDefinition<unknown, true> ? never : K;
@@ -111,7 +176,7 @@ type OptionalKeys<Fields extends FieldsRecord> = {
 
 /**
  * The row type of a read model, derived from its field definitions. Optional fields become
- * optional properties.
+ * optional properties, and a field sealed at rest may read as `null`.
  */
 export type InferRow<Fields extends FieldsRecord> = Simplify<
   { readonly [K in RequiredKeys<Fields>]: FieldValue<Fields[K]> } & {
@@ -128,13 +193,21 @@ export type RowOf<Module> = Module extends {
   ? InferRow<Fields>
   : never;
 
+type AccessOf<F extends FieldDefinition> =
+  IsSealed<F> extends true
+    ? F extends { readonly _indexed?: true }
+      ? "lookup"
+      : "sealed"
+    : F["type"];
+
 /**
- * How each field of a view module is stored, which decides what its table can filter it by.
+ * How each field of a view module is stored, or sealed, which decides what its table can filter it
+ * by.
  */
 export type FieldTypesOf<Module> = Module extends {
   readonly fields: (args: FieldsArgs) => infer Fields extends FieldsRecord;
 }
-  ? { readonly [K in keyof Fields]: Fields[K]["type"] }
+  ? { readonly [K in keyof Fields]: AccessOf<Fields[K]> }
   : never;
 
 interface FieldFlags {
@@ -145,38 +218,38 @@ interface FieldFlags {
   readonly isIndexed: boolean;
   readonly mark: FieldMark | null;
   readonly category: string | null;
+  readonly clear: boolean;
 }
 
-const createField = <
-  Value,
-  Optional extends boolean,
-  Mark extends FieldMark | null,
-  Type extends FieldType,
->(
-  flags: FieldFlags,
-): Field<Value, Optional, Mark, Type> => ({
-  type: flags.type as Type,
-  isOptional: flags.isOptional as Optional,
-  isPrimaryKey: flags.isPrimaryKey,
-  isUnique: flags.isUnique,
-  isIndexed: flags.isIndexed,
-  mark: flags.mark as Mark,
-  category: flags.category,
-  optional: () => createField<Value, true, Mark, Type>({ ...flags, isOptional: true }),
-  primaryKey: () => createField<Value, Optional, Mark, Type>({ ...flags, isPrimaryKey: true }),
-  unique: () => createField<Value, Optional, Mark, Type>({ ...flags, isUnique: true }),
-  index: () => createField<Value, Optional, Mark, Type>({ ...flags, isIndexed: true }),
-  personal: (options?: PersonalOptions) =>
-    createField<Value, Optional, "personal", Type>({
-      ...flags,
-      mark: "personal",
-      category: options?.category ?? DEFAULT_PERSONAL_CATEGORY,
-    }),
-  person: () => createField<Value, Optional, "person", Type>({ ...flags, mark: "person" }),
-});
+// The type parameters only exist at the type level; every field is built from its flags.
+type AnyField = Field<never, boolean, FieldMark | null, FieldType, boolean, boolean>;
+
+const createField = (flags: FieldFlags): AnyField =>
+  ({
+    type: flags.type,
+    isOptional: flags.isOptional,
+    isPrimaryKey: flags.isPrimaryKey,
+    isUnique: flags.isUnique,
+    isIndexed: flags.isIndexed,
+    mark: flags.mark,
+    category: flags.category,
+    clear: flags.clear,
+    optional: () => createField({ ...flags, isOptional: true }),
+    primaryKey: () => createField({ ...flags, isPrimaryKey: true }),
+    unique: () => createField({ ...flags, isUnique: true }),
+    index: () => createField({ ...flags, isIndexed: true }),
+    personal: (options?: PersonalFieldOptions) =>
+      createField({
+        ...flags,
+        mark: "personal",
+        category: options?.category ?? DEFAULT_PERSONAL_CATEGORY,
+        clear: options?.clear === true,
+      }),
+    person: () => createField({ ...flags, mark: "person" }),
+  }) as unknown as AnyField;
 
 const field = <Value, Type extends FieldType>(type: Type): Field<Value, false, null, Type> =>
-  createField<Value, false, null, Type>({
+  createField({
     type,
     isOptional: false,
     isPrimaryKey: false,
@@ -184,7 +257,8 @@ const field = <Value, Type extends FieldType>(type: Type): Field<Value, false, n
     isIndexed: false,
     mark: null,
     category: null,
-  });
+    clear: false,
+  }) as unknown as Field<Value, false, null, Type>;
 
 /**
  * The runtime `f` builder.

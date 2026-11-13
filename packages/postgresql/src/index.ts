@@ -8,6 +8,7 @@ import type {
 import {
   createSqlCheckpointStore,
   createSqlForgetLedger,
+  createSqlIndexKeyStore,
   createSqlPersonalKeyStore,
   createSqlPersonStore,
   createSqlSubscriberFailureStore,
@@ -198,6 +199,11 @@ export const postgresql: PostgresqlFunction = (options) => {
           subscriberFailures: createSqlSubscriberFailureStore({
             db,
             table: tables.subscriberFailures,
+            dialect: postgresqlDialect,
+          }),
+          indexKeys: createSqlIndexKeyStore({
+            db,
+            table: tables.indexKeys,
             dialect: postgresqlDialect,
           }),
           // The append lock comes first, before any row the work may lock: two transactions that

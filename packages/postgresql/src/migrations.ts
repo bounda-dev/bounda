@@ -6,6 +6,7 @@ import {
   forgetLedgerReasonStatements,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
+  indexKeysTableStatement,
   migrateSchemas,
   postgresqlDialect,
   quoteIdentifier,
@@ -212,6 +213,7 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
         for (const statement of restrictionStatements(tables)) await tx.run(statement, []);
       },
     },
+    { version: 5, migrate: (tx) => tx.run(indexKeysTableStatement(tables.indexKeys), []) },
   ],
 });
 
@@ -231,6 +233,12 @@ export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (t
         for (const statement of restrictedPersonsTableStatements(tables))
           await tx.run(statement, []);
       },
+    },
+    // What a forgetting kept is told by the key fields of each row now, not by the copy.
+    {
+      version: 3,
+      migrate: (tx) =>
+        tx.run(`DELETE FROM ${tables.restrictedPersons} WHERE "source" = 'retained'`, []),
     },
   ],
 });

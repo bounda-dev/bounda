@@ -1,5 +1,10 @@
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
-import type { PersonalKeyRow, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import type { IndexKeyStore } from "../../adapter/storage/index-key-store.ts";
+import type {
+  PersonalKeyRow,
+  PersonalKeyStore,
+  StoredPersonalKey,
+} from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { digest } from "../read-model/fingerprint.ts";
@@ -79,6 +84,10 @@ export interface CreateKeyRotationArgs {
    * The store as written, whose keys are read and written wrapped.
    */
   readonly keys: PersonalKeyStore;
+  /**
+   * The key of the blind indexes, rewrapped with the persons' keys.
+   */
+  readonly indexKeys?: IndexKeyStore;
   readonly checkpoints: CheckpointStore;
   readonly wrapper: Pick<CryptoKeyWrapper, "kid" | "previous">;
   readonly wrapping: PersonalKeyWrapping;
@@ -108,6 +117,7 @@ interface Answer {
  */
 export const createKeyRotation: CreateKeyRotationFunction = ({
   keys,
+  indexKeys,
   checkpoints,
   wrapper,
   wrapping,
@@ -163,6 +173,26 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     }
   };
 
+  // The key of the blind indexes while it is wrapped under a previous key, `null` once it is not.
+  const indexDue = async (): Promise<StoredPersonalKey | null> => {
+    const key = (await indexKeys?.get()) ?? null;
+    return key !== null && kids.includes(key.kid) ? key : null;
+  };
+
+  // Resolves whether the key of the blind indexes is wrapped under the wrapper's key now; a
+  // failure is logged and pauses the rotation, which does not complete before it is rewrapped.
+  const rewrapIndex = async (): Promise<boolean> => {
+    const due = await indexDue();
+    if (due === null || indexKeys === undefined) return true;
+    try {
+      return await indexKeys.rewrap(due, await wrapping.wrapped(due));
+    } catch (error) {
+      logger.error("the key of the blind indexes could not be rewrapped", { kid: due.kid, error });
+      pause.pause(clock.now().getTime());
+      return false;
+    }
+  };
+
   // Resolves whether the store kept the hold; one it could not keep pauses the rotation.
   const rewrap = async (
     row: PersonalKeyRow,
@@ -203,8 +233,9 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     // While another instance holds the lease, its row is one read, the keys a batch.
     if (at < lease.heldElsewhereUntil() && !(await lease.take(at))) return 0;
     answer = null;
+    const indexed = await rewrapIndex();
     const due = await keys.listWrappedUnder({ kids, releasedBy: now, limit: ROTATION_BATCH });
-    if (due.length === 0) {
+    if (due.length === 0 && indexed) {
       const heldUntil = await keys.nextHoldEnd({ kids, after: now });
       if (heldUntil === null) {
         await complete(markedAt, at);
@@ -233,7 +264,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     const later = at + ROTATION_CHECK_INTERVAL_MS;
     if ((await checkpoints.get(marker)) > 0) return { next: null, until: later };
     const [due] = await keys.listWrappedUnder({ kids, releasedBy: now, limit: 1 });
-    if (due !== undefined) return { next: at, until: later };
+    if (due !== undefined || (await indexDue()) !== null) return { next: at, until: later };
     const heldUntil = (await keys.nextHoldEnd({ kids, after: now }))?.getTime() ?? null;
     return { next: heldUntil, until: Math.min(heldUntil ?? later, later) };
   };
@@ -261,14 +292,15 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
         : new Date(pause.notBefore(Math.max(answer.next, restUntil, lease.heldElsewhereUntil())));
     },
     status: async () => {
-      const [pending, markedAt] = await Promise.all([
+      const [pending, markedAt, index] = await Promise.all([
         keys.countWrappedUnder({ kids }),
         checkpoints.get(marker),
+        indexDue(),
       ]);
       return {
         kid: wrapper.kid,
         previous,
-        pending,
+        pending: pending + (index === null ? 0 : 1),
         completeAt: markedAt === 0 ? null : new Date(markedAt).toISOString(),
       };
     },

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { silentLogger } from "../../contracts/logger.ts";
+import { fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter, ReadModelStorage } from "../adapter.ts";
+import { ENVELOPE_PREFIX, storedFields } from "../storage/sealed-fields.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
 /**
@@ -122,6 +124,71 @@ export const readModelTransactionContract: ReadModelTransactionContractFunction 
       ).rejects.toThrow("projection failed");
       expect(await model.table.findMany()).toEqual([order("1")]);
       expect(await model.checkpointStore.get(SUBSCRIBER)).toBe(3);
+    });
+
+    it("finds the rows a write around the runtime left: a sealed field without an envelope, a personal field without its key", async () => {
+      const adapter = await create();
+      const customers = await adapter.createReadModel<Record<string, unknown>>({
+        name: "customers",
+        fields: storedFields({
+          readModel: "customers",
+          fields: {
+            customerId: f.string().primaryKey().person(),
+            email: f.string().optional().personal(),
+            name: f.string().optional().personal(),
+            phone: f.string().optional().personal({ clear: true }),
+          },
+        }),
+        logger: silentLogger,
+      });
+      const envelope = `${ENVELOPE_PREFIX}{"person":"c"}}`;
+      for (const row of [
+        { customerId: "c-1", email: envelope, email__key: "k", phone: "1", phone__key: "k" },
+        { customerId: "c-2", email: "in the clear", email__key: "k" },
+        { customerId: "c-3", phone: "3" },
+        { customerId: "c-4", email: envelope },
+        { customerId: "c-5" },
+        {
+          customerId: "c-6",
+          email: envelope,
+          email__key: "k",
+          name: "in the clear",
+          name__key: "k",
+        },
+      ]) {
+        await customers.table.upsert(row);
+      }
+      const unsettled = (limit: number) =>
+        customers.transact({
+          subscriber: "projection:customers",
+          wait: true,
+          work: (transaction) =>
+            transaction.unsettled({
+              sealed: ["email", "name"],
+              keyed: [
+                { field: "email", keyField: "email__key" },
+                { field: "name", keyField: "name__key" },
+                { field: "phone", keyField: "phone__key" },
+              ],
+              limit,
+            }),
+        });
+      const found = await unsettled(10);
+      expect(found.acquired && found.value.map((row) => row.customerId).sort()).toEqual([
+        "c-2",
+        "c-3",
+        "c-4",
+        "c-6",
+      ]);
+      const limited = await unsettled(2);
+      expect(limited.acquired && limited.value).toHaveLength(2);
+      const nothing = await customers.transact({
+        subscriber: "projection:customers",
+        wait: true,
+        work: (transaction) => transaction.unsettled({ sealed: [], keyed: [], limit: 10 }),
+      });
+      expect(nothing).toEqual({ acquired: true, value: [] });
+      await customers.close();
     });
 
     it.skipIf(!concurrent)("never runs two transactions of one subscriber at once", async () => {
