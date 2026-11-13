@@ -39,7 +39,6 @@ import {
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp, expectForgotten, NotForgottenError } from "@bounda-dev/core/testing";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import postgres, { type Sql } from "postgres";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createPostgresqlDatabase } from "./database.ts";
@@ -52,20 +51,10 @@ import {
 } from "./migrations.ts";
 import { resolvePostgresqlOptions } from "./options.ts";
 import { storageTablesFor } from "./schema.ts";
+import { startTestDatabase } from "./test-support.ts";
 
-const reuseContainer = process.env.BOUNDA_PG_REUSE === "1";
-
-const startContainer = async (): Promise<StartedPostgreSqlContainer | null> => {
-  try {
-    const definition = new PostgreSqlContainer("postgres:17");
-    return await (reuseContainer ? definition.withReuse() : definition).start();
-  } catch {
-    return null;
-  }
-};
-
-const container = await startContainer();
-const url = container?.getConnectionUri() ?? "";
+const testDatabase = await startTestDatabase();
+const url = testDatabase?.url ?? "";
 const run = Date.now().toString(36);
 const closers: (() => Promise<void>)[] = [];
 let prefixes = 0;
@@ -104,10 +93,10 @@ const openReadModel = async <Row extends object>(
 
 afterAll(async () => {
   await closeOpened();
-  if (!reuseContainer) await container?.stop();
+  await testDatabase?.close();
 });
 
-describe.skipIf(container === null)("postgresql adapter", () => {
+describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   storageSchemaContract({
     create: async () => {
       const adapter = fresh();
@@ -1249,7 +1238,7 @@ const customers = {
   },
 } as const satisfies Registry;
 
-describe.skipIf(container === null)("a person forgotten on PostgreSQL", () => {
+describe.skipIf(testDatabase === null)("a person forgotten on PostgreSQL", () => {
   it("leaves nothing of theirs readable in any table, and expectForgotten names an event that copied it unmarked", async () => {
     const { app } = await createTestApp({
       registry: customers,
@@ -1301,7 +1290,7 @@ const refusingRegistry = (runs: string[]) =>
     readModels: {},
   }) as const satisfies Registry;
 
-describe.skipIf(container === null)("an app on the postgresql adapter", () => {
+describe.skipIf(testDatabase === null)("an app on the postgresql adapter", () => {
   it("hands each policy attempt to one of two instances on the same store, with its give-up written once", async () => {
     const runs: string[] = [];
     const prefix = `two_${run}_`;
@@ -1472,7 +1461,7 @@ const counterRegistry = (failOnce: { failed: boolean }) =>
     },
   }) as const satisfies Registry;
 
-describe.skipIf(container === null)("projections on postgresql", () => {
+describe.skipIf(testDatabase === null)("projections on postgresql", () => {
   it("keeps a read model right when a slower instance applies a batch another already moved past", async () => {
     await closeOpened();
     const tablePrefix = `race_${run}_`;

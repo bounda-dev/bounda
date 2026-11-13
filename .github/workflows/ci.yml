@@ -180,6 +180,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.mutation) }}
     env:
+      # Stryker runs the tests once per mutant: PostgreSQL's keep one container for all of them.
       BOUNDA_PG_REUSE: "1"
       SHARD: ${{ matrix.shards > 1 && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
     steps:
