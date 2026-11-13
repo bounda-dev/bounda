@@ -107,6 +107,10 @@ export type Claimed<T> =
 
 export interface ClaimArgs<Claim extends CheckpointClaim, T> {
   readonly wait: boolean;
+  /**
+   * The batch `work` processes, read before the claim: what a claim may prepare outside it.
+   */
+  readonly events: readonly StoredEvent[];
   readonly work: (claim: Claim) => Promise<T>;
 }
 
@@ -164,6 +168,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
   ) =>
     claim({
       wait,
+      events,
       work: async (held) => {
         if ((await held.get()) !== afterPosition) throw new DeliveryStopped("moved");
         const done = await process(events, held, span);

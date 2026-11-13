@@ -229,6 +229,10 @@ export interface PersonalKeyStore {
   get(person: string, category: string): Promise<StoredPersonalKey | null>;
   find(person: string, fingerprint: string): Promise<HeldPersonalKey | null>;
   list(person: string): Promise<readonly HeldPersonalKey[]>;
+  /**
+   * `list` of each of `persons` at once, by person; a person without a key is left out.
+   */
+  listMany(persons: readonly string[]): Promise<ReadonlyMap<string, readonly HeldPersonalKey[]>>;
   add(person: string, category: string, key: StoredPersonalKey): Promise<StoredPersonalKey>;
   remove(person: string, fingerprint: string): Promise<boolean>;
   retain(person: string, fingerprint: string, args: RetainKeyArgs): Promise<boolean>;

@@ -25,9 +25,9 @@ describe("migrateTables", () => {
       runtime: { personalData: { forgetLedger: { store: ledger.adapter } } },
     };
     expect(await migrateTables({ config })).toEqual([
-      { database: "storage", scope: "storage", version: 4, latest: 4 },
-      { database: "storage", scope: "checkpoints", version: 2, latest: 2 },
-      { database: "readModels.customers", scope: "checkpoints", version: 2, latest: 2 },
+      { database: "storage", scope: "storage", version: 5, latest: 5 },
+      { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
+      { database: "readModels.customers", scope: "checkpoints", version: 3, latest: 3 },
       { database: "forgetLedger", scope: "forget-ledger", version: 5, latest: 5 },
     ]);
     expect(tablesIn(readModels.db)).toEqual([

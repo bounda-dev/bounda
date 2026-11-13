@@ -126,7 +126,7 @@ describe("personalDataOf", () => {
     expect(of({ orderId: f.string().primaryKey(), total: f.number() })).toBeNull();
   });
 
-  it("refuses more than one person field, personal fields without one, and personal fields that are never forgotten", () => {
+  it("refuses more than one person field, personal fields without one, and fields in the clear that are never forgotten", () => {
     expect(() => of({ id: f.string().primaryKey().person(), other: f.string().person() })).toThrow(
       new ConfigurationError(
         'Read model "customers" marks more than one field with .person(): id, other',
@@ -138,24 +138,26 @@ describe("personalDataOf", () => {
       ),
     );
     const unforgotten = new ConfigurationError(
-      'Read model "customers" has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts',
+      'Read model "customers" keeps fields marked .personal({ clear: true }) (email), so it needs projections/bounda/personal-data-forgotten.ts',
     );
-    expect(() =>
+    const clear = {
+      id: f.string().primaryKey().person(),
+      email: f.string().personal({ clear: true }),
+      note: f.string().personal(),
+    };
+    expect(() => of(clear, { view, projections: {}, queries: {} })).toThrow(unforgotten);
+    expect(() => of(clear, { view, projections: { bounda: {} }, queries: {} })).toThrow(
+      unforgotten,
+    );
+  });
+
+  it("needs no projection of PersonalDataForgotten for personal fields that are all sealed", () => {
+    expect(
       of(
         { id: f.string().primaryKey().person(), email: f.string().personal() },
         { view, projections: {}, queries: {} },
       ),
-    ).toThrow(unforgotten);
-    expect(() =>
-      of(
-        { id: f.string().primaryKey().person(), email: f.string().personal() },
-        { view, projections: { bounda: {} }, queries: {} },
-      ),
-    ).toThrow(
-      new ConfigurationError(
-        'Read model "customers" has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts',
-      ),
-    );
+    ).toEqual({ person: "id", personal: ["email"], primaryKey: "id" });
   });
 
   it("fails the start before opening the read model's storage", async () => {

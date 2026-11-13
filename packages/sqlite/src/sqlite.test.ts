@@ -363,10 +363,12 @@ describe("sqlite adapter on a file", () => {
     expect(rows.map((row) => [row.scope, Number(row.version)])).toEqual([
       ["checkpoints", 1],
       ["checkpoints", 2],
+      ["checkpoints", 3],
       ["storage", 1],
       ["storage", 2],
       ["storage", 3],
       ["storage", 4],
+      ["storage", 5],
     ]);
   });
 
@@ -404,6 +406,7 @@ describe("sqlite adapter on a file", () => {
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
+      "app_index_keys",
       "app_migrations",
       "app_person_rows",
       "app_personal_keys",

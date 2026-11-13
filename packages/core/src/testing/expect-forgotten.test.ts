@@ -97,7 +97,7 @@ const registry = {
       view: {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
-          email: f.string().optional().personal(),
+          email: f.string().optional().personal({ clear: true }),
           greeting: f.string().optional(),
         }),
       },
@@ -232,7 +232,7 @@ const deriving = {
       view: {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
-          email: f.string().optional().personal(),
+          email: f.string().optional().personal({ clear: true }),
           greeting: f.string().optional(),
         }),
       },
@@ -666,7 +666,7 @@ describe("expectForgotten", () => {
         'Person "c-1" was not forgotten everywhere: 1 place still holds a value of theirs in the clear.',
         '  - "ana@example.com" in bounda_rm_customer_directory, customerId=c-1, greeting',
         "What to do:",
-        "  - A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.",
+        "  - A read model kept the value: mark the field .personal(), which seals it under the person's key; for a field kept in the clear with .personal({ clear: true }), project PersonalDataForgotten and delete the row or clear the field.",
       ].join("\n"),
     );
     const two = await rejection(

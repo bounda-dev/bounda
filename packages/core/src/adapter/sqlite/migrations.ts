@@ -10,6 +10,7 @@ import {
   forgetLedgerStatements,
 } from "../sql/forget-ledger.ts";
 import { quoteIdentifier } from "../sql/identifiers.ts";
+import { indexKeysTableStatement } from "../sql/index-key-store.ts";
 import {
   migrateSchemas,
   SCHEMA_SCOPES,
@@ -189,6 +190,7 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
         for (const statement of restrictionStatements(tables)) await tx.run(statement, []);
       },
     },
+    { version: 5, migrate: (tx) => tx.run(indexKeysTableStatement(tables.indexKeys), []) },
   ],
 });
 
@@ -208,6 +210,12 @@ export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (tables) =
         for (const statement of restrictedPersonsTableStatements(tables))
           await tx.run(statement, []);
       },
+    },
+    // What a forgetting kept is told by the key fields of each row now, not by the copy.
+    {
+      version: 3,
+      migrate: (tx) =>
+        tx.run(`DELETE FROM ${tables.restrictedPersons} WHERE "source" = 'retained'`, []),
     },
   ],
 });

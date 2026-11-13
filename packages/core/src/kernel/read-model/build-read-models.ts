@@ -9,6 +9,7 @@ import type { QueryModule } from "../../modules/query.ts";
 import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
+import { type SealedLayout, sealedLayoutOf } from "./sealed-rows.ts";
 
 export interface ProjectionRuntime {
   readonly key: string;
@@ -30,6 +31,10 @@ export interface ReadModelPersonalData {
 export interface ReadModelRuntime {
   readonly name: string;
   readonly fields: FieldsRecord;
+  /**
+   * How its rows are stored: `storage` holds them sealed, on `layout.stored`.
+   */
+  readonly layout: SealedLayout;
   /**
    * `null` for a read model without a field marked `.person()`.
    */
@@ -137,12 +142,13 @@ export const personalDataOf: PersonalDataOfFunction = ({ name, entry, fields }) 
       `Read model "${name}" has fields marked .personal() and none marked .person(), the id of the person they belong to`,
     );
   }
+  const clear = personal.filter((field) => fields[field]?.clear === true);
   if (
-    personal.length > 0 &&
+    clear.length > 0 &&
     entry.projections[BOUNDA_AGGREGATE]?.[FORGOTTEN_PROJECTION] === undefined
   ) {
     throw new ConfigurationError(
-      `Read model "${name}" has fields marked .personal(), so it needs projections/bounda/personal-data-forgotten.ts`,
+      `Read model "${name}" keeps fields marked .personal({ clear: true }) (${clear.join(", ")}), so it needs projections/bounda/personal-data-forgotten.ts`,
     );
   }
   if (person === undefined) return null;
@@ -155,6 +161,7 @@ interface CompileReadModelArgs {
   readonly name: string;
   readonly entry: ReadModelEntry;
   readonly fields: FieldsRecord;
+  readonly layout: SealedLayout;
   readonly personalData: ReadModelPersonalData | null;
   readonly storage: ReadModelStorage;
 }
@@ -167,11 +174,13 @@ const compileReadModel: CompileReadModelFunction = ({
   name,
   entry,
   fields,
+  layout,
   personalData,
   storage,
 }) => ({
   ...compileProjections({ name, entry }),
   fields,
+  layout,
   personalData,
   storage,
   queries: entry.queries,
@@ -185,15 +194,16 @@ const buildReadModel = async (
 ): Promise<ReadModelRuntime> => {
   const fields = entry.view.fields({ f: fieldBuilder });
   const personalData = personalDataOf({ name, entry, fields });
+  const layout = sealedLayoutOf({ readModel: name, fields });
   const storage = await adapterForReadModel({ name, config }).createReadModel<
     Record<string, unknown>
   >({
     name,
-    fields,
+    fields: layout.stored,
     logger,
   });
   try {
-    return compileReadModel({ name, entry, fields, personalData, storage });
+    return compileReadModel({ name, entry, fields, layout, personalData, storage });
   } catch (error) {
     await storage.close().catch(() => undefined);
     throw error;

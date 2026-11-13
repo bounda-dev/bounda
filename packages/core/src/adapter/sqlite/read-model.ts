@@ -26,6 +26,7 @@ import {
   createSqlRestrictedReads,
 } from "../sql/restricted-persons.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
+import { selectUnsettled } from "../sql/unsettled.ts";
 import { migrateSqlite, sqliteCheckpointsScope } from "./migrations.ts";
 import { storageTablesFor } from "./schema.ts";
 
@@ -185,6 +186,15 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
             positions: restrictedPositions,
             dialect: sqliteDialect,
           }),
+          unsettled: (args) =>
+            selectUnsettled({
+              ...args,
+              readModel: name,
+              table,
+              fields,
+              dialect: sqliteDialect,
+              executor: tx,
+            }) as Promise<readonly Row[]>,
         }),
       })),
     close,
@@ -305,6 +315,15 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
             positions: restrictedPositions,
             dialect: sqliteDialect,
           }),
+          unsettled: (args) =>
+            selectUnsettled({
+              ...args,
+              readModel: name,
+              table: shadow,
+              fields,
+              dialect: sqliteDialect,
+              executor: tx,
+            }) as Promise<readonly Row[]>,
         });
       }),
     commit: async ({ subscriber, position }) => {

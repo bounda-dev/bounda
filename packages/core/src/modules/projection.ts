@@ -19,7 +19,7 @@ export interface ProjectionArgs<
 > {
   readonly event: Event;
   readonly table: Table<Row, Types>;
-  readonly client: ReadClient<Row, Raw>;
+  readonly client: ReadClient<Row, Raw, Types>;
 }
 
 export interface ProjectionTriggersFunction {

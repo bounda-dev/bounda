@@ -10,6 +10,7 @@ import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import { createSqlForgetLedger } from "../sql/forget-ledger.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
+import { createSqlIndexKeyStore } from "../sql/index-key-store.ts";
 import { inspectSqlTable, quoteName } from "../sql/inspection.ts";
 import {
   readSchemaVersions,
@@ -212,6 +213,11 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           subscriberFailures: createSqlSubscriberFailureStore({
             db,
             table: tables.subscriberFailures,
+            dialect: sqliteDialect,
+          }),
+          indexKeys: createSqlIndexKeyStore({
+            db,
+            table: tables.indexKeys,
             dialect: sqliteDialect,
           }),
           transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),

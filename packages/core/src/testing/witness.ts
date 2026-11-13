@@ -14,6 +14,7 @@ import type { Table } from "../adapter/storage/table.ts";
 import type { LogFields, Logger } from "../contracts/logger.ts";
 import { isSealed, type PersonalKey } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataWitness } from "../kernel/personal-data/witness.ts";
+import { parseEnvelope } from "../kernel/read-model/sealed-rows.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../modules/bounda-events.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 
@@ -180,6 +181,12 @@ const createTestWitness = (): TestWitness => {
     const values = kept.get(person) ?? [];
     for (const { name, category } of marks.personal) {
       if (row[name] === undefined || row[name] === null) continue;
+      // A sealed field holds the JSON of its envelope: known as any other envelope is.
+      const envelope = parseEnvelope(row[name]);
+      if (envelope !== null) {
+        observeArgs([envelope]);
+        continue;
+      }
       values.push({
         value: row[name],
         category,

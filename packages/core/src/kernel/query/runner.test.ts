@@ -9,7 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
-import { unrecordedAccess } from "../test-support.ts";
+import { keylessSealing, unrecordedAccess } from "../test-support.ts";
 import { buildQueries } from "./build-queries.ts";
 import { createQueryRunner } from "./runner.ts";
 
@@ -114,6 +114,7 @@ const setup = async (ports: ModulePorts = {}) => {
   return createQueryRunner({
     queries: buildQueries({ readModels }),
     readModels,
+    sealing: keylessSealing,
     ports,
     recordAccess: unrecordedAccess,
     errorText: "omit",
@@ -297,6 +298,7 @@ describe("buildQueries", () => {
     const runner = createQueryRunner({
       queries: buildQueries({ readModels: transformed }),
       readModels: transformed,
+      sealing: keylessSealing,
       ports: {},
       recordAccess: unrecordedAccess,
       errorText: "omit",
@@ -311,6 +313,7 @@ describe("buildQueries", () => {
     const handlerRunner = createQueryRunner({
       queries: buildQueries({ readModels: handlerOnly }),
       readModels: handlerOnly,
+      sealing: keylessSealing,
       ports: {},
       recordAccess: unrecordedAccess,
       errorText: "omit",

@@ -138,6 +138,7 @@ const trackedPersonalKeys = (
     get: (person, category) => personalKeys.get(person, category),
     find: (person, fingerprint) => personalKeys.find(person, fingerprint),
     list: (person) => personalKeys.list(person),
+    listMany: (persons) => personalKeys.listMany(persons),
     add: (person, category, key) =>
       tracked(entries, id(person, key.fingerprint), () => personalKeys.add(person, category, key)),
     remove: async (person, fingerprint) => {

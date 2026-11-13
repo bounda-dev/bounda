@@ -369,7 +369,7 @@ describe("the access log", () => {
     ]);
   });
 
-  it("records a query that takes the driver through client.raw as unattributed", async () => {
+  it("records a query that takes the driver through client.raw of a read model whose personal fields are all sealed as attributed: the driver reads them as ciphertext", async () => {
     const { app, register, accesses } = await setUp();
     await register("ana");
     await register("bo");
@@ -383,7 +383,7 @@ describe("the access log", () => {
         personCount: 0,
         outcome: "ok",
         restricted: null,
-        unattributed: true,
+        unattributed: false,
         detail: { query: "customersByDriver", readModel: "customerDirectory" },
       }),
     ]);

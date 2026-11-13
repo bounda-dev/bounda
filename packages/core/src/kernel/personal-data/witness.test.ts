@@ -30,14 +30,13 @@ describe("a witnessed key wrapping", () => {
     const opened = await keys.open("c-1", stored);
     const found = await keys.opened("c-1", created.fingerprint);
     const all = await keys.heldAll("c-1");
-    expect([held, opened, found, all[0]?.key].map((key) => key?.fingerprint)).toEqual([
-      created.fingerprint,
-      created.fingerprint,
-      created.fingerprint,
-      created.fingerprint,
-    ]);
+    const many = await keys.heldAllOf(["c-1", "c-2"]);
+    expect(
+      [held, opened, found, all[0]?.key, many.get("c-1")?.[0]?.key].map((key) => key?.fingerprint),
+    ).toEqual(Array.from({ length: 5 }, () => created.fingerprint));
+    expect(many.has("c-2")).toBe(false);
     expect(told.map(([person, key]) => [person, key.fingerprint])).toEqual(
-      Array.from({ length: 5 }, () => ["c-1", created.fingerprint]),
+      Array.from({ length: 6 }, () => ["c-1", created.fingerprint]),
     );
     expect(told[0]?.[1]).toBe(created);
     expect(await keys.remove("c-1", created.fingerprint)).toBe(true);

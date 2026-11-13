@@ -107,6 +107,7 @@ describe("createPersonalKeyWrapping", () => {
       ["nextHoldEnd", [{ kids: [null], after: new Date(0) }]],
       ["countWrappedUnder", [{ kids: [null] }]],
       ["releaseHolds", []],
+      ["listMany", [["c-1", "c-2"]]],
     ];
     for (const [name, args] of passed) {
       const call = keys[name] as (...args: unknown[]) => Promise<unknown>;
@@ -709,6 +710,7 @@ describe("inSealingOrder", () => {
     const key = (category: string, fingerprint: string) => ({
       category,
       key: { fingerprint, cryptoKey: {} as CryptoKey, retained: false },
+      retainedSince: null,
     });
     const ordered = inSealingOrder([
       key("profile", "b"),

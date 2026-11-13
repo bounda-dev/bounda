@@ -42,6 +42,9 @@ const heldOf = (row: Record<string, unknown>): HeldPersonalKey => ({
 
 const HELD = `"category", "key", "fingerprint", "kid", "retained_since", "last_active_at"`;
 
+// Within the hundred parameters a Durable Object's SQLite binds to one statement.
+const PERSONS_PER_STATEMENT = 90;
+
 // The predicate of the unique index that keeps one key in force per person and category, which an
 // `ON CONFLICT` on it repeats.
 const IN_FORCE = `"retained_since" IS NULL`;
@@ -115,6 +118,22 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
           [person],
         )
       ).map(heldOf),
+    listMany: async (persons) => {
+      const listed = new Map<string, HeldPersonalKey[]>();
+      const distinct = [...new Set(persons)];
+      for (let start = 0; start < distinct.length; start += PERSONS_PER_STATEMENT) {
+        const chunk = distinct.slice(start, start + PERSONS_PER_STATEMENT);
+        const rows = await db.all(
+          `SELECT "person", ${HELD} FROM ${table} WHERE "person" IN (${chunk.map((_, index) => p(index + 1)).join(", ")}) ORDER BY "person", "fingerprint"`,
+          chunk,
+        );
+        for (const row of rows) {
+          const person = String(row.person);
+          listed.set(person, [...(listed.get(person) ?? []), heldOf(row)]);
+        }
+      }
+      return listed;
+    },
     // Whichever writer inserted first, every one answers with the key in force. A new key starts
     // from the person's last activity recorded since their last forgetting as a whole, so a key
     // made for an inactive person, as the backfill makes, still comes due.

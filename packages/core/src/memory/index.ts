@@ -10,10 +10,11 @@ import { rebuildFencing } from "../adapter/rebuild-fencing.ts";
 import { DEFAULT_TABLE_PREFIX, tableNameFor } from "../adapter/sql/identifiers.ts";
 import { rebuildTablesFor } from "../adapter/sql/read-model-schema.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
-import type { InspectedTable } from "../adapter/storage/inspection.ts";
+import { type InspectedTable, opaqueColumnsOf } from "../adapter/storage/inspection.ts";
 import type { StoredRestriction } from "../adapter/storage/person-store.ts";
 import {
   isLeftOut,
+  isRetainedKey,
   type RestrictedReads,
   type RestrictionView,
   restrictedFieldsOf,
@@ -28,6 +29,7 @@ import { createMemoryEventStore } from "./event-store.ts";
 import { createMemoryForgetLedgers } from "./forget-ledger.ts";
 import { createKeptIdempotencyStore } from "./idempotency-store.ts";
 import { createKeptInboxLedger } from "./inbox-ledger.ts";
+import { createMemoryIndexKeyStore } from "./index-key-store.ts";
 import { byKey, entriesRows, storageTable } from "./inspection.ts";
 import { createKeptPersonStore } from "./person-store.ts";
 import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
@@ -66,12 +68,13 @@ const readModelTable = (
   shadow = false,
 ): InspectedTable => {
   const live = tableNameFor({ prefix: DEFAULT_TABLE_PREFIX, readModel: name });
+  const rows = byKey(table.rows(), [table.key]);
   return {
     name: shadow ? rebuildTablesFor(live).shadow : live,
     store: "readModel",
     key: [table.key],
-    opaque: [],
-    rows: byKey(table.rows(), [table.key]),
+    opaque: opaqueColumnsOf("readModel", Object.keys(rows[0] ?? {})),
+    rows,
   };
 };
 
@@ -136,10 +139,14 @@ export const memory: MemoryFunction = (options = {}) => {
         categories: restricted.categories,
         view,
       });
+    const retained = (row: Readonly<Record<string, unknown>>): boolean =>
+      (restricted?.keyFields ?? []).some((field) => isRetainedKey(row[field]));
     const keeping = (view: RestrictionView): Table<Row> => {
       const current = (): Table<Row> =>
         target.current.keeping(
-          (row) => restricted === null || !leftOut(row[restricted.person], view),
+          (row) =>
+            restricted === null ||
+            (!leftOut(row[restricted.person], view) && (view !== "unrestricted" || !retained(row))),
         ) as unknown as Table<Row>;
       return {
         ...through<Row>(target),
@@ -183,6 +190,7 @@ export const memory: MemoryFunction = (options = {}) => {
       const idempotencyStore = createKeptIdempotencyStore({ holds: personalKeys.holds });
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
       const subscriberFailures = createMemorySubscriberFailureStore();
+      const indexKeys = createMemoryIndexKeyStore();
       const stores = {
         eventStore: createMemoryEventStore({
           onAppend: notifier.notify,
@@ -234,6 +242,7 @@ export const memory: MemoryFunction = (options = {}) => {
             key: ["person"],
             rows: entriesRows(personalKeys.entries, "person"),
           }),
+          storageTable({ table: "indexKeys", key: ["scope"], rows: indexKeys.rows() }),
           storageTable({
             table: "persons",
             key: ["person"],
@@ -261,6 +270,7 @@ export const memory: MemoryFunction = (options = {}) => {
         checkpointStore,
         snapshotStore,
         subscriberFailures,
+        indexKeys,
         transact: createMemoryStorageTransaction({
           ...stores,
           entries: {
@@ -300,6 +310,7 @@ export const memory: MemoryFunction = (options = {}) => {
                   client,
                   checkpointStore: store,
                   restrictedPersons: restrictedPersons.store,
+                  unsettled: (args) => target.current.unsettled(args) as Promise<readonly Row[]>,
                 }),
               ),
             };
@@ -359,6 +370,7 @@ export const memory: MemoryFunction = (options = {}) => {
                 client,
                 checkpointStore: store,
                 restrictedPersons: restrictedPersons.store,
+                unsettled: (args) => shadow.unsettled(args) as Promise<readonly Row[]>,
               }),
             ),
           ),

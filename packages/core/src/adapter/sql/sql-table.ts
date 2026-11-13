@@ -1,5 +1,5 @@
 import type { FieldsRecord } from "../../modules/view.ts";
-import type { ReadClient, Table, Where } from "../storage/table.ts";
+import type { StoredReadClient, Table, Where } from "../storage/table.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { fromSnakeCase, quoteIdentifier } from "./identifiers.ts";
 import { buildLimit, buildOrderBy, buildWhere, columnFor } from "./query-builder.ts";
@@ -178,11 +178,11 @@ export interface CreateSqlReadClientArgs<Raw> {
 }
 
 export interface CreateSqlReadClientFunction {
-  <Row extends object, Raw>(args: CreateSqlReadClientArgs<Raw>): ReadClient<Row, Raw>;
+  <Row extends object, Raw>(args: CreateSqlReadClientArgs<Raw>): StoredReadClient<Row, Raw>;
 }
 
 /**
- * `ReadClient` for hand-written SQL: rows come back decoded like the table's, `raw` is the driver.
+ * `StoredReadClient` for hand-written SQL: rows come back decoded like the table's, `raw` is the driver.
  */
 export const createSqlReadClient: CreateSqlReadClientFunction = <Row extends object, Raw>({
   readModel,
@@ -190,7 +190,7 @@ export const createSqlReadClient: CreateSqlReadClientFunction = <Row extends obj
   dialect,
   executor,
   raw,
-}: CreateSqlReadClientArgs<Raw>): ReadClient<Row, Raw> => {
+}: CreateSqlReadClientArgs<Raw>): StoredReadClient<Row, Raw> => {
   const columns = columnsOf({ readModel, fields, dialect });
   const all = async (sql: string, params: readonly unknown[] = []): Promise<readonly Row[]> =>
     (await executor.all(sql, params)).map((row) => decodeRow<Row>({ row, columns, dialect }));

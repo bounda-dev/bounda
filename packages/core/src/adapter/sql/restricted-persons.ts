@@ -1,11 +1,10 @@
 import type { FieldsRecord } from "../../modules/view.ts";
 import {
-  RETAINED_SOURCE,
   type RestrictedPersonsStore,
   type RestrictedReads,
-  type RestrictionView,
   restrictedFieldsOf,
 } from "../storage/restricted-persons.ts";
+import { RETAINED_KEY_PREFIX } from "../storage/sealed-fields.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier } from "./identifiers.ts";
 import { WHOLE_PERSON } from "./person-store.ts";
@@ -58,25 +57,11 @@ export const createSqlRestrictedPersonsStore: CreateSqlRestrictedPersonsStoreFun
       return Number(held?.position) === position;
     },
     request: async (person, restrictions) => {
-      await db.run(`DELETE FROM ${table} WHERE "person" = ${p(1)} AND "source" <> ${p(2)}`, [
-        person,
-        RETAINED_SOURCE,
-      ]);
+      await db.run(`DELETE FROM ${table} WHERE "person" = ${p(1)}`, [person]);
       for (const { ground, categories } of restrictions) {
         for (const category of categories ?? [WHOLE_PERSON]) {
           await insert(person, ground, category);
         }
-      }
-    },
-    retain: async (person, categories) => {
-      for (const category of categories) await insert(person, RETAINED_SOURCE, category);
-    },
-    release: async (person, categories) => {
-      for (const category of categories) {
-        await db.run(
-          `DELETE FROM ${table} WHERE "person" = ${p(1)} AND "source" = ${p(2)} AND "category" = ${p(3)}`,
-          [person, RETAINED_SOURCE, category],
-        );
       }
     },
   };
@@ -92,7 +77,6 @@ export interface RestrictedRowsConditionArgs {
    */
   readonly person: string;
   readonly categories: readonly string[];
-  readonly view: Exclude<RestrictionView, "all">;
   readonly dialect: Pick<SqlDialect, "placeholder">;
 }
 
@@ -101,30 +85,60 @@ export interface RestrictedRowsConditionFunction {
 }
 
 /**
- * True for a row whose person `view` does not leave out: restricted neither as a whole nor in a
- * category of the read model, counting what a forgetting kept only for `unrestricted`.
+ * True for a row whose person asked for no restriction that covers it: neither as a whole nor in a
+ * category of the read model.
  */
 export const restrictedRowsCondition: RestrictedRowsConditionFunction = ({
   restrictedPersons,
   person,
   categories,
-  view,
   dialect,
 }) => {
   return (offset) => {
     const params: unknown[] = [WHOLE_PERSON, ...categories];
     const among = params.map((_, index) => dialect.placeholder(offset + index + 1)).join(", ");
-    let source = "";
-    if (view === "retained") {
-      params.push(RETAINED_SOURCE);
-      source = ` AND "r"."source" <> ${dialect.placeholder(offset + params.length)}`;
-    }
     return {
-      sql: `NOT EXISTS (SELECT 1 FROM ${restrictedPersons} AS "r" WHERE "r"."person" = ${person} AND "r"."category" IN (${among})${source})`,
+      sql: `NOT EXISTS (SELECT 1 FROM ${restrictedPersons} AS "r" WHERE "r"."person" = ${person} AND "r"."category" IN (${among}))`,
       params,
     };
   };
 };
+
+export interface RetainedRowsConditionArgs {
+  /**
+   * The key columns of the row, qualified and quoted.
+   */
+  readonly keys: readonly string[];
+  readonly dialect: Pick<SqlDialect, "placeholder">;
+}
+
+export interface RetainedRowsConditionFunction {
+  (args: RetainedRowsConditionArgs): SqlCondition;
+}
+
+/**
+ * True for a row with no value under a key a forgetting kept under a legal obligation.
+ */
+export const retainedRowsCondition: RetainedRowsConditionFunction = ({ keys, dialect }) => {
+  return (offset) => ({
+    sql: keys
+      .map(
+        (key, index) =>
+          `(${key} IS NULL OR ${key} NOT LIKE ${dialect.placeholder(offset + index + 1)})`,
+      )
+      .join(" AND "),
+    params: keys.map(() => `${RETAINED_KEY_PREFIX}%`),
+  });
+};
+
+const both =
+  (first: SqlCondition, second: SqlCondition | null): SqlCondition =>
+  (offset) => {
+    const one = first(offset);
+    if (second === null) return one;
+    const other = second(offset + one.params.length);
+    return { sql: `${one.sql} AND ${other.sql}`, params: [...one.params, ...other.params] };
+  };
 
 export interface CreateSqlRestrictedReadsArgs {
   readonly readModel: string;
@@ -172,27 +186,27 @@ export const createSqlRestrictedReads: CreateSqlRestrictedReadsFunction = <Row e
       ...(reads ? { reads } : {}),
     });
   const plain = tableOf();
-  const condition = (view: Exclude<RestrictionView, "all">, person: string) =>
-    restricted === null
-      ? undefined
-      : restrictedRowsCondition({
-          restrictedPersons,
-          person,
-          categories: restricted.categories,
-          view,
-          dialect,
-        });
-  const personColumn =
+  const columns = columnsOf({ readModel, fields, dialect });
+  const qualified = (field: string) =>
+    `${quoteIdentifier(table)}.${quoteIdentifier(
+      columns.find((column) => column.field === field)?.name ?? field,
+    )}`;
+  const requested =
     restricted === null
       ? null
-      : `${quoteIdentifier(table)}.${quoteIdentifier(
-          columnsOf({ readModel, fields, dialect }).find(
-            (column) => column.field === restricted.person,
-          )?.name ?? restricted.person,
-        )}`;
+      : restrictedRowsCondition({
+          restrictedPersons,
+          person: qualified(restricted.person),
+          categories: restricted.categories,
+          dialect,
+        });
+  const retained =
+    restricted === null || restricted.keyFields.length === 0
+      ? null
+      : retainedRowsCondition({ keys: restricted.keyFields.map(qualified), dialect });
   const tables = {
-    unrestricted: personColumn === null ? plain : tableOf(condition("unrestricted", personColumn)),
-    retained: personColumn === null ? plain : tableOf(condition("retained", personColumn)),
+    unrestricted: requested === null ? plain : tableOf(both(requested, retained)),
+    retained: requested === null ? plain : tableOf(requested),
   };
   return {
     ...tables,
@@ -208,7 +222,6 @@ export const createSqlRestrictedReads: CreateSqlRestrictedReadsFunction = <Row e
           restrictedPersons,
           person: `"p"."person"`,
           categories: restricted.categories,
-          view,
           dialect,
         })(chunk.length);
         const rows = await executor.all(

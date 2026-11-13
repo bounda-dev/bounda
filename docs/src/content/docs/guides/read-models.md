@@ -35,13 +35,17 @@ that holds that person's data:
 // app/read/customer-directory/view.ts
 export const fields = ({ f }: View.FieldsArgs) => ({
   customerId: f.string().primaryKey().person(),
-  email: f.string().optional().personal(),
+  email: f.string().personal().unique(),
   plan: f.string(),
 });
 ```
 
-A person's export then carries their rows, a query of the read model is recorded in the access
-log, and the read model must handle forgetting: see
+A `.personal()` column is sealed at rest under its person's key: the table holds ciphertext, which
+projections and queries read opened, and which reads as `null` once the person is forgotten, so its
+row type is `T | null`. It is never sorted or filtered by range; `.index()` or `.unique()` gives it a
+blind index, which `where` matches by equality, `ne` or `in`. `.personal({ clear: true })` keeps a
+column SQL must sort in the clear, and the read model must then handle forgetting. A person's export
+carries their rows and a query of the read model is recorded in the access log: see
 [Personal data in read models](/guides/personal-data/#personal-data-in-read-models).
 
 ## Projections
@@ -63,9 +67,11 @@ export const project = async ({ event, table }: Projection.Args) => {
 };
 ```
 
-A projection of an event with a field marked `personal` sees it as `T | null`, and the read model
-then projects `PersonalDataForgotten` too, from `projections/bounda/personal-data-forgotten.ts`:
-see [Personal data](/guides/personal-data/#personal-data-in-read-models).
+A projection of an event with a field marked `personal` sees it as `T | null`, and writes it into a
+column marked `.personal()`, which seals it. A read model that keeps such data in a column it does
+not mark, or marks with `.personal({ clear: true })`, projects `PersonalDataForgotten` too, from
+`projections/bounda/personal-data-forgotten.ts`: see
+[Personal data](/guides/personal-data/#personal-data-in-read-models).
 
 ## The table
 
@@ -170,14 +176,17 @@ refuses to start.
 A query never reads the rows of a person whose processing is
 [restricted](/guides/personal-data/#restricting-processing): those whose field marked `.person()`
 names someone restricted as a whole, or restricted in a category a field marked `.personal()`
-holds, or whose such category a forgetting kept under a legal obligation. `table` leaves them out
+holds, and those holding a value under a key a forgetting kept under a legal obligation. `table` leaves them out
 in its own statement, so `findMany` with a `limit` fills the page with the others and `count`
 counts the others. `client.get` and `client.all` run your SQL as it is and drop those rows from
 what it answers, so a `LIMIT` in it may return fewer rows, and `client.get` answers `null` when
 the one row it read is left out, though others match: read through `table` where paging or the
-first match must be exact. A row your SQL answers with a field marked `.personal()` and without the one marked
-`.person()` cannot be told apart, and the query rejects with `ConfigurationError`: select the person
-field too. What a query reads through `client.raw`, the driver itself, nobody filters. Who is
+first match must be exact. A sealed value names its person, so your SQL need not select the person
+field; a row it answers with a field kept in the clear and without the one marked `.person()`
+cannot be told apart, and the query rejects with `ConfigurationError`: select the person field too.
+What a query reads through `client.raw`, the driver itself, nobody filters, and nobody opens: a
+sealed field comes out as ciphertext. A sealed field matches in SQL only through its blind index
+column, `<column>__index`, compared to `await client.blindIndex(field, value)`. Who is
 restricted is read from a copy each database holding such read models keeps, written from the
 stream as a projection is: until it catches up with a `restrict` or a lift, queries read as
 before it, and `catchUpReadModels({ through })` with what `restrict` resolved to waits for it.
@@ -203,7 +212,10 @@ does, so a read model in a database of its own filters the same way, and the pos
 event of each person it wrote, `<prefix>restricted_positions`: the copy only goes forward, so
 reading the stream again from the start, as happens when a read model whose name sorts first is
 added and takes the copy over, never shows a restricted person's rows on the way.
-`catchUpReadModels({ through })` of a `restrict`, `unrestrict` or `forget` waits for it.
+`catchUpReadModels({ through })` of a `restrict` or `unrestrict` waits for it. What a forgetting
+kept is not in that copy: each row says it in the key field beside each personal column, which the
+read model's own projection batch marks, so `catchUpReadModels({ through })` of a `forget` waits for
+the read models themselves.
 
 The root of a read model is read like an aggregate's, without events: `view.ts`, the ports, and
 any other module or directory the projections and queries share, which the generator leaves

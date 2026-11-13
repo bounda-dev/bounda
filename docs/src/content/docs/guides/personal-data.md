@@ -500,24 +500,75 @@ import type { View } from "./+types/view";
 
 export const fields = ({ f }: View.FieldsArgs) => ({
   customerId: f.string().primaryKey().person(),
-  email: f.string().optional().personal(),
+  email: f.string().personal().unique(),
   plan: f.string(),
 });
 ```
 
-`.personal()` marks a column that holds personal data; `.person()` marks the one that holds the
-id of the person the row is about, a `string` column, at most one per read model. They are
-methods of the field, next to `.index()`, because a read model's columns are declared there; a
-person who appears in many rows, such as a customer in an order summary, is marked on that
-foreign column (`customerId: f.string().index().person()`), with its own index if the export of
-a person with many rows must be fast. `.personal({ category: "invoices" })` puts the column in a
-[category](#categories), which the export names; without it the column is in the default one. The
-marks change nothing about how the adapter stores the column. They do three things: the person's [export](#exporting-a-persons-data) includes the rows
-that name them, a [query](#who-opened-what) of a read model with personal fields is recorded in
-the access log, and the generator checks forgetting by them.
+`.person()` marks the column that holds the id of the person the row is about, a `string`
+column, at most one per read model. A person who appears in many rows, such as a customer in an
+order summary, is marked on that foreign column (`customerId: f.string().index().person()`), with
+its own index if the export of a person with many rows must be fast. `.personal()` marks a column
+that holds their personal data, in the default [category](#categories) or the one it names
+(`.personal({ category: "invoices" })`). The person's [export](#exporting-a-persons-data) includes
+the rows that name them, and a [query](#who-opened-what) of a read model with personal fields is
+recorded in the access log.
 
-Every read model that keeps personal data must project `PersonalDataForgotten` from
-`projections/bounda/personal-data-forgotten.ts`:
+### Sealed at rest
+
+A column marked `.personal()` is sealed: the runtime encrypts each value under the key of the
+row's person in the column's category, as it does an event's field, and the table holds only the
+envelope. Projections write the value and read it back as it was; queries read it opened. Whatever
+goes around them sees ciphertext: a statement run on the database, a copy or a backup of it,
+`client.raw`. Beside it the table keeps `<column>__key`, the fingerprint of the key the value went
+in under, which says nothing of the value.
+
+Once the person's category is forgotten its key is gone, so the column reads as `null` from then
+on, in every copy of the table ever made: forgetting does not depend on what the read model's
+projections do, and a read model needs no projection of `PersonalDataForgotten` for a sealed
+column. The row type says so: a sealed column reads `T | null`. A read model that would rather drop
+the rows of a forgotten person still projects the event and deletes them.
+
+Which key a value goes in under is the runtime's to say: the one the event being projected was
+opened under for that person and category, so a rebuild puts every row under the key it was first
+written under; else the one the person holds; else the last a forgetting kept. A row with a
+personal value and no person in its `person` column is refused with `ConfigurationError`. A value
+of a person who holds no key in its category, because the event carried no personal data of theirs
+in it, is written under a key no one keeps and reads as `null`: mark the event's field too, in the
+same category.
+
+A sealed column is never sorted (`orderBy` refuses it) nor filtered by range. `.index()` or
+`.unique()` gives it a blind index instead, `<column>__index`: an HMAC-SHA256 of the value under
+the database's index key, apart for each read model and column, so `where` matches it by equality,
+`ne` or `in`, and `.unique()` holds on it.
+
+```ts
+// app/read/customer-directory/queries/by-email.ts
+export const repository = ({ table, email }: Query.RepositoryArgs) => table.findOne({ email });
+```
+
+Hand-written SQL compares the index column to what `client.blindIndex(field, value)` computes:
+
+```ts
+export const repository = async ({ client, email }: Query.RepositoryArgs) =>
+  client.get('SELECT * FROM "bounda_rm_customer_directory" WHERE "email__index" = ?', [
+    await client.blindIndex("email", email),
+  ]);
+```
+
+The index key is one random key per database, created when the first read model with a blind
+index starts and kept wrapped under the [key wrapper](#where-the-keys-live) as the persons' keys are,
+rewrapped with them when the master key rotates: a copy of the database computes no index without
+it. Forgetting empties the index of each value whose key it destroyed, so a forgotten email no
+longer matches anything, nor tells two forgotten rows apart, and its key field then reads
+`forgotten`.
+
+### In the clear
+
+A column that SQL must sort or filter by range is kept in the clear with
+`.personal({ clear: true })`. It is stored as it is, so the read model must project
+`PersonalDataForgotten` from `projections/bounda/personal-data-forgotten.ts`, or
+`.bounda/types.ts` does not compile and the app does not start:
 
 ```ts
 // app/read/customer-directory/projections/bounda/personal-data-forgotten.ts
@@ -545,9 +596,39 @@ export const project = async ({ event, table }: Projection.Args) => {
 };
 ```
 
-A projection of a personal event handles `null` as well, since a rebuild replays every event, the
-forgotten ones included: a `string` column that is `NOT NULL` takes a `null` email badly, so make
-the column optional and leave it out, as the directory above does.
+A column in the clear is read as it is by a direct read of the table, a copy and `client.raw`, and
+the access log records a query that takes `client.raw` on such a read model as unattributed. A
+projection of a personal event handles `null` as well, since a rebuild replays every event, the
+forgotten ones included: a column in the clear that is `NOT NULL` takes a `null` email badly, so
+make it optional and leave it out. A sealed one takes it: `null` is sealed like any value.
+
+### What a forgetting kept
+
+A category a legal obligation keeps past `forget(person)` is restricted until its retention ends
+(see [Categories](#categories)). The runtime marks the key field of each value written under the
+key it kept, so a query leaves those rows out but on the `legal-obligation` basis or one of article
+18(2), and the export marks those fields restricted. A person who comes back gets a new key: what
+is written of them from then on goes under it and reads as any other row, while the rows from before
+stay out of sight. When the kept key's retention ends the key goes, and the old values read as
+`null`, while the new ones still read: the key, not the text, tells them apart.
+
+### Written around the runtime
+
+A projection that takes `client.raw` writes through the driver, around the runtime. Whatever it
+leaves in a sealed column in the clear, or in a personal column without its key field, is sealed
+before the batch commits, so nothing it wrote in the clear is ever stored. A projection that writes
+a value of another person through the driver still names the row's person in the `person` column.
+
+### Changing a column's mark
+
+A read model whose personal columns change, a column newly sealed, kept in the clear, or given a
+blind index, goes through its rows once when the app starts, before anything reads them, a page per
+transaction: a value in the clear in a column now sealed is sealed, an envelope in a column now kept
+in the clear is opened, a missing key field or blind index is filled. A column whose stored type
+changes needs a rebuild, as any such change does: on SQLite a `number` or `boolean` column newly
+sealed, which becomes text, and on PostgreSQL any but a `string` one. A primary key is never
+sealed, and a field whose name ends in `__key` or `__index` is refused, since the runtime keeps
+those columns.
 
 ## Who opened what
 
@@ -581,9 +662,11 @@ handler that reshapes the rows into another object still handed their data out. 
 reads rows and answers only a count is recorded too, with those persons, and one that only calls
 `table.count()` is recorded with none. A query whose `repository` or `handler` throws is
 recorded as `failed`, with the persons of the rows it read until then. A query that takes
-`client.raw`, the driver itself, reads rows Bounda cannot see: it is recorded with
-`unattributed: true`, which says that `persons` names only those of the rows read through `table`
-and `client`, and whose rows it read through the driver is unknown. A query that composes another
+`client.raw`, the driver itself, reads its fields [sealed at rest](#sealed-at-rest) as ciphertext,
+which opens for no one, but those [kept in the clear](#in-the-clear) as they are: on a read model
+with such a field it is recorded with `unattributed: true`, which says that `persons` names only
+those of the rows read through `table` and `client`, and whose rows it read through the driver is
+unknown. A query that composes another
 records nothing of its own unless its read model has personal fields; the one it calls records
 itself, as the same actor. A query receives that actor too, in its `repository` and its `handler`,
 so it can read only what whoever asks may see: see [Queries](/guides/read-models/#queries). What
@@ -698,11 +781,15 @@ commits:
   ids alone, and telling those the data went to is what such a policy is for.
 - **Queries.** A query leaves out every row of a read model whose field marked
   [`.person()`](#personal-data-in-read-models) names a person restricted as a whole, or restricted
-  in a category a field of the read model marked `.personal()` holds, or whose such category a
-  forgetting kept. `table` leaves them out in the statement itself, so a page and a count are cut
-  after; `client.get` and `client.all` drop them from what their SQL answers, and refuse, with
-  `ConfigurationError`, a row that holds a field marked `.personal()` without the one marked
-  `.person()`, whose person they cannot tell. Queries read who is restricted from a copy kept
+  in a category a field of the read model marked `.personal()` holds, and every row holding a value
+  under a key a forgetting kept ([What a forgetting kept](#what-a-forgetting-kept)). `table` leaves
+  them out in the statement itself, so a page and a count are cut after; `client.get` and
+  `client.all` drop them from what their SQL answers. A sealed value names its person, so a
+  statement need not select the `.person()` field; one that selects a field kept in the clear
+  without it is refused with `ConfigurationError`, as is one that selects such a field of a person
+  a forgetting kept a key of without the primary key, which tells which key the row's value is
+  under. Nothing else opens a value of a restricted person: a direct read of the table and
+  `client.raw` see ciphertext. Queries read who is restricted from a copy kept
   beside the read models, written from the stream as a projection is, so a query right after
   `restrict` may still read the rows until the copy catches up: `restrict` resolves like a
   command, so `catchUpReadModels({ through })` waits for it. See
@@ -1409,7 +1496,7 @@ const { app } = await createTestApp({ registry });
 await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com", plan: "pro" });
 await app.forget("c-1");
 await app.runUntilIdle();
-expect(await app.queries.getCustomer({ customerId: "c-1" })).toEqual({ customerId: "c-1" });
+expect(await app.queries.getCustomer({ customerId: "c-1" })).toMatchObject({ email: null });
 await expectForgotten(app, "c-1");
 ```
 
@@ -1433,7 +1520,7 @@ says what to do about each kind:
 Person "c-1" was not forgotten everywhere: 1 place still holds a value of theirs in the clear.
   - "ana@example.com" in bounda_rm_customer_directory, customer_id=c-1, greeting
 What to do:
-  - A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.
+  - A read model kept the value: mark the field .personal(), which seals it under the person's key; for a field kept in the clear with .personal({ clear: true }), project PersonalDataForgotten and delete the row or clear the field.
 ```
 
 `error.found` holds the same as data: `{ value, store, row, field }` for each. It is a plain

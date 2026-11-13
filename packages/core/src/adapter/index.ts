@@ -81,6 +81,7 @@ export type {
   RenewClaimArgs,
   SettleClaimArgs,
 } from "./storage/inbox-ledger.ts";
+export type { IndexKeyStore } from "./storage/index-key-store.ts";
 export type { InspectedStore, InspectedTable } from "./storage/inspection.ts";
 export type {
   ListIdleArgs,
@@ -120,7 +121,7 @@ export type {
 } from "./storage/restricted-persons.ts";
 export {
   isLeftOut,
-  RETAINED_SOURCE,
+  isRetainedKey,
   restrictedFieldsOf,
 } from "./storage/restricted-persons.ts";
 export type {
@@ -137,6 +138,13 @@ export type {
   ScheduledCommand,
   Scheduler,
 } from "./storage/scheduler.ts";
+export type { UnsettledRowsArgs } from "./storage/sealed-fields.ts";
+export {
+  ENVELOPE_PREFIX,
+  INDEX_FIELD_SUFFIX,
+  KEY_FIELD_SUFFIX,
+  RETAINED_KEY_PREFIX,
+} from "./storage/sealed-fields.ts";
 export type { Snapshot, SnapshotStore } from "./storage/snapshot-store.ts";
 export type {
   NewSubscriberFailure,
@@ -146,9 +154,12 @@ export type {
 export type {
   FieldFilter,
   FindManyArgs,
+  LookupField,
+  OrderableField,
   RangeFilter,
   ReadClient,
   SetFilter,
+  StoredReadClient,
   Table,
   TableOrder,
   Where,

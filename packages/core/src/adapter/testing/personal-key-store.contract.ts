@@ -10,7 +10,7 @@ export interface PersonalKeyStoreContractArgs {
   /**
    * A fresh, empty storage: the keys, and the persons whose restriction `listDue` reads.
    */
-  readonly create: () => Promise<Pick<Storage, "personalKeys" | "persons">>;
+  readonly create: () => Promise<Pick<Storage, "personalKeys" | "persons" | "indexKeys">>;
 }
 
 export interface PersonalKeyStoreContractFunction {
@@ -25,9 +25,28 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
   describe("personal key store contract", () => {
     let store: PersonalKeyStore;
     let persons: Storage["persons"];
+    let indexKeys: Storage["indexKeys"];
 
     beforeEach(async () => {
-      ({ personalKeys: store, persons } = await create());
+      ({ personalKeys: store, persons, indexKeys } = await create());
+    });
+
+    it("keeps the first key of the blind indexes added, and rewraps it only while it is the one read", async () => {
+      const at = new Date("2026-01-01T00:00:00.000Z");
+      expect(await indexKeys.get()).toBeNull();
+      const first = { key: "a2V5", fingerprint: "ZnA=", kid: null };
+      expect(await indexKeys.add(first, at)).toEqual(first);
+      expect(await indexKeys.add({ key: "b3RoZXI=", fingerprint: "b2Zw", kid: "k-1" }, at)).toEqual(
+        first,
+      );
+      expect(
+        await indexKeys.rewrap({ ...first, key: "c3RhbGU=" }, { key: "eA==", kid: "k-2" }),
+      ).toBe(false);
+      expect(
+        await indexKeys.rewrap({ ...first, fingerprint: "b2Zw" }, { key: "eA==", kid: "k-2" }),
+      ).toBe(false);
+      expect(await indexKeys.rewrap(first, { key: "eA==", kid: "k-2" })).toBe(true);
+      expect(await indexKeys.get()).toEqual({ key: "eA==", fingerprint: "ZnA=", kid: "k-2" });
     });
 
     it("has no key for a person it never met", async () => {
@@ -66,6 +85,25 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
     it("keeps the id of the key a key is wrapped under", async () => {
       await store.add("c-1", D, wrapped("first", "kid-1"));
       expect(await store.get("c-1", D)).toEqual(wrapped("first", "kid-1"));
+    });
+
+    it("lists the keys of several persons at once, as list does for each, leaving out a person without one, past what a statement binds", async () => {
+      await store.add("c-1", D, stored("1b"));
+      await store.add("c-1", "profile", stored("1a"));
+      await store.add("c-2", D, stored("2"));
+      // With the three above, exactly two statements' worth.
+      const many = Array.from({ length: 177 }, (_, index) => `m-${index}`);
+      for (const person of many) await store.add(person, D, stored(person));
+      const listed = await store.listMany(["c-1", "c-2", "c-3", "c-1", ...many]);
+      expect([...listed.keys()].sort()).toEqual(["c-1", "c-2", ...many].sort());
+      expect(listed.get("c-1")).toEqual(await store.list("c-1"));
+      expect(listed.get("c-1")?.map(({ category }) => category)).toEqual(
+        (await store.list("c-1")).map(({ category }) => category),
+      );
+      expect(listed.get("c-2")).toEqual(await store.list("c-2"));
+      expect(listed.get("m-176")).toEqual(await store.list("m-176"));
+      expect(listed.has("c-3")).toBe(false);
+      expect(await store.listMany([])).toEqual(new Map());
     });
 
     it("lists the keys wrapped under the ids asked for, unwrapped ones with null, by person and up to the limit", async () => {

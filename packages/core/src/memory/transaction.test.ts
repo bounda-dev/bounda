@@ -27,6 +27,14 @@ describe("createMemoryStorageTransaction", () => {
   const refused = (tx: StorageTransaction) =>
     tx.scheduler.complete({ dedupeKey: "unclaimed", revision: 0, claimId: "lost" });
 
+  it("lists the keys of several persons inside a transaction as outside it", async () => {
+    const storage = await memory().createStorage();
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("one"));
+    const inside = await storage.transact((tx) => tx.personalKeys.listMany(["c-1", "c-2"]));
+    expect(inside).toEqual(await storage.personalKeys.listMany(["c-1", "c-2"]));
+    expect(inside.get("c-1")).toHaveLength(1);
+  });
+
   it("checks at commit a key it gave a person after removing their old one", async () => {
     const storage = await memory().createStorage();
     await storage.personalKeys.add("c-1", "default", testPersonalKey("one"));

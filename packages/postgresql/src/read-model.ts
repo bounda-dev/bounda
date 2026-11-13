@@ -19,6 +19,7 @@ import {
   quoteIdentifier,
   rebuildTablesFor,
   type SqlExecutor,
+  selectUnsettled,
   shadowTableStatements,
   storageTableNameFor,
   swapTableStatements,
@@ -221,6 +222,15 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
               positions: restrictedPositions,
               dialect: postgresqlDialect,
             }),
+            unsettled: (args) =>
+              selectUnsettled({
+                ...args,
+                readModel: name,
+                table,
+                fields,
+                dialect: postgresqlDialect,
+                executor: tx,
+              }) as Promise<readonly Row[]>,
           }),
         };
       }),
@@ -360,6 +370,15 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
             positions: restrictedPositions,
             dialect: postgresqlDialect,
           }),
+          unsettled: (args) =>
+            selectUnsettled({
+              ...args,
+              readModel: name,
+              table: shadow,
+              fields,
+              dialect: postgresqlDialect,
+              executor: tx,
+            }) as Promise<readonly Row[]>,
         });
       }),
     commit: async ({ subscriber, position }) => {

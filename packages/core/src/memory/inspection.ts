@@ -24,7 +24,7 @@ export const storageTable: StorageTableFunction = ({ table, key, rows }) => ({
   name: storageTableNameFor({ prefix: DEFAULT_TABLE_PREFIX, table }),
   store: table,
   key,
-  opaque: opaqueColumnsOf(table),
+  opaque: opaqueColumnsOf(table, []),
   rows: byKey(rows as readonly Readonly<Record<string, unknown>>[], key),
 });
 

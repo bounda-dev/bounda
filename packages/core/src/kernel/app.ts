@@ -92,6 +92,7 @@ import {
   type RebuildReadModelResult,
   rebuildReadModelWith,
 } from "./read-model/rebuild.ts";
+import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
@@ -592,6 +593,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       processes: processDefinitions,
       readModels: readModels.byName,
     });
+    const sealing = await openReadModelSealing({
+      layouts: Object.values(readModels.byName).map(({ layout }) => layout),
+      keys: storage.personalKeys,
+      indexKeys: written.indexKeys,
+      wrapping,
+      clock,
+    });
+    await settleReadModels({ readModels: Object.values(readModels.byName), sealing, logger });
     // One list per `runUntilIdle` under way.
     const observers = new Set<CommandRejection[]>();
     const recordAccess = createAccessLog({
@@ -617,6 +626,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const queryRunner = createQueryRunner({
       queries: buildQueries({ readModels }),
       readModels,
+      sealing,
       ports: ports.byReadModel,
       recordAccess,
       errorText,
@@ -744,6 +754,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ? undefined
         : createKeyRotation({
             keys: written.personalKeys,
+            indexKeys: written.indexKeys,
             checkpoints: written.checkpointStore,
             wrapper: wrapping.wrapper,
             wrapping,
@@ -781,6 +792,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ...Object.values(readModels.byName).map((readModel) =>
           createProjectionSubscriber({
             readModel,
+            sealing,
             logger,
             errorText,
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
@@ -1008,6 +1020,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               aggregates,
               processes: processDefinitions,
               readModels,
+              sealing,
               clock,
               batchSize: config.runtime.dispatcher.batchSize,
               categories: personalCategories,

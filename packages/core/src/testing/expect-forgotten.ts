@@ -226,7 +226,7 @@ const OTHERWISE =
 
 const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
   readModel:
-    "A read model kept the value: project PersonalDataForgotten in it and delete the row or clear the field, and mark the field .personal() so its export and the access log see it.",
+    "A read model kept the value: mark the field .personal(), which seals it under the person's key; for a field kept in the clear with .personal({ clear: true }), project PersonalDataForgotten and delete the row or clear the field.",
   events:
     "An event holds the value in a field left unmarked: mark it personal() in the event's payload, or the process state's.",
   scheduledCommands:

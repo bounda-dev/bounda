@@ -5,6 +5,7 @@ import { applyToRestrictedPersons } from "../../kernel/personal-data/restricted-
 import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import type { Adapter, ReadModelStorage } from "../adapter.ts";
 import type { RestrictedPersonsStore } from "../storage/restricted-persons.ts";
+import { RETAINED_KEY_PREFIX, storedFields } from "../storage/sealed-fields.ts";
 import type { AdapterContractArgs } from "./read-model-transaction.contract.ts";
 
 /**
@@ -15,18 +16,28 @@ export interface RestrictedRow {
   readonly orderId: string;
   readonly customerId: string;
   readonly note?: string;
+  /**
+   * The key the runtime wrote `note` under, as stored beside it.
+   */
+  readonly note__key?: string;
   readonly total: number;
 }
 
 /**
- * Field definitions matching `RestrictedRow`.
+ * Field definitions matching `RestrictedRow`, as the runtime hands them to the adapter: `note`
+ * stored sealed, with its key field beside it.
  */
-export const restrictedFields: FieldsRecord = {
-  orderId: f.string().primaryKey(),
-  customerId: f.string().index().person(),
-  note: f.string().optional().personal({ category: "profile" }),
-  total: f.number(),
-};
+export const restrictedFields: FieldsRecord = storedFields({
+  readModel: "orders",
+  fields: {
+    orderId: f.string().primaryKey(),
+    customerId: f.string().index().person(),
+    note: f.string().optional().personal({ category: "profile" }),
+    total: f.number(),
+  },
+});
+
+const KEPT = `${RETAINED_KEY_PREFIX}f-kept`;
 
 export interface RestrictedReadsContractFunction {
   (args: AdapterContractArgs): void;
@@ -81,7 +92,13 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
         ["o-4", "dan"],
         ["o-5", "ana"],
       ] as const) {
-        await orders.table.upsert({ orderId, customerId, note: `${customerId} note`, total: 1 });
+        await orders.table.upsert({
+          orderId,
+          customerId,
+          note: `${customerId} note`,
+          note__key: "f-1",
+          total: 1,
+        });
       }
       for (const customerId of ["ana", "bo", "cy", "dan"]) {
         await ids.table.upsert({ customerId, total: 1 });
@@ -104,13 +121,13 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       expect(await orders.restricted.among(["ana", "bo"], "unrestricted")).toEqual(new Set());
     });
 
-    it("leaves out a person restricted as a whole, or in a category of the read model, and a category a forgetting kept unless the view reads it", async () => {
+    it("leaves out a person restricted as a whole, or in a category of the read model, and a row a forgetting kept unless the view reads it", async () => {
       await write(async (store) => {
         await store.request("ana", [{ ground: "legal-claims", categories: null }]);
         await store.request("bo", [{ ground: "objection-pending", categories: ["marketing"] }]);
         await store.request("cy", [{ ground: "accuracy-contested", categories: ["profile"] }]);
-        await store.retain("dan", ["profile"]);
       });
+      await orders.table.update({ orderId: "o-4" }, { note__key: KEPT });
       const { unrestricted, retained } = orders.restricted;
       expect(await found(unrestricted)).toEqual(["o-2"]);
       expect(await unrestricted.count()).toBe(1);
@@ -130,7 +147,7 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       expect(await found(orders.table)).toEqual(["o-1", "o-2", "o-3", "o-4", "o-5"]);
       expect(
         await orders.restricted.among(["ana", "bo", "cy", "dan", "eve"], "unrestricted"),
-      ).toEqual(new Set(["ana", "cy", "dan"]));
+      ).toEqual(new Set(["ana", "cy"]));
       expect(await orders.restricted.among(["dan", "cy", "ana"], "retained")).toEqual(
         new Set(["ana", "cy"]),
       );
@@ -138,11 +155,20 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       expect(await orders.restricted.among([], "unrestricted")).toEqual(new Set());
     });
 
+    it("leaves out only the rows whose key field names a key a forgetting kept, not those of the person written under a key given after, nor those without a value", async () => {
+      await orders.table.upsert({ orderId: "o-6", customerId: "dan", total: 1 });
+      await orders.table.update({ orderId: "o-4" }, { note__key: KEPT });
+      const { unrestricted, retained } = orders.restricted;
+      expect(await found(unrestricted)).toEqual(["o-1", "o-2", "o-3", "o-5", "o-6"]);
+      expect(await unrestricted.count({ customerId: "dan" })).toBe(1);
+      expect(await found(retained)).toEqual(["o-1", "o-2", "o-3", "o-4", "o-5", "o-6"]);
+      expect(await orders.restricted.among(["dan"], "unrestricted")).toEqual(new Set());
+    });
+
     it("leaves out of a read model without personal fields only the persons restricted as a whole", async () => {
       await write(async (store) => {
         await store.request("ana", [{ ground: "legal-claims", categories: null }]);
         await store.request("bo", [{ ground: "objection-pending", categories: ["profile"] }]);
-        await store.retain("cy", ["profile"]);
       });
       const rows = await ids.restricted.unrestricted.findMany({
         orderBy: { field: "customerId", direction: "asc" },
@@ -153,18 +179,15 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       );
     });
 
-    it("replaces what a person asked to restrict, keeps what a forgetting kept until released, and leaves writes to the table", async () => {
+    it("replaces what a person asked to restrict, and leaves writes to the table", async () => {
       await write(async (store) => {
         await store.request("ana", [
           { ground: "legal-claims", categories: null },
           { ground: "objection-pending", categories: ["profile"] },
         ]);
-        await store.retain("ana", ["profile", "profile"]);
       });
+      expect(await orders.restricted.among(["ana"], "retained")).toEqual(new Set(["ana"]));
       await write((store) => store.request("ana", []));
-      expect(await orders.restricted.among(["ana"], "unrestricted")).toEqual(new Set(["ana"]));
-      expect(await orders.restricted.among(["ana"], "retained")).toEqual(new Set());
-      await write((store) => store.release("ana", ["marketing", "profile"]));
       expect(await orders.restricted.among(["ana"], "unrestricted")).toEqual(new Set());
       await write((store) => store.request("ana", [{ ground: "legal-claims", categories: null }]));
       await orders.restricted.unrestricted.upsert({ orderId: "o-6", customerId: "ana", total: 2 });
@@ -174,21 +197,14 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       expect(await orders.table.findOne({ orderId: "o-6" })).toBeNull();
     });
 
-    it("releases only the categories named of what a forgetting kept for that person, and replaces only that person's requests", async () => {
+    it("replaces only that person's requests", async () => {
       await write(async (store) => {
-        await store.retain("ana", ["profile"]);
-        await store.retain("bo", ["profile"]);
+        await store.request("bo", [{ ground: "legal-claims", categories: ["profile"] }]);
         await store.request("cy", [{ ground: "legal-claims", categories: ["profile"] }]);
-        await store.retain("dan", ["profile"]);
       });
-      await write(async (store) => {
-        await store.release("ana", ["profile"]);
-        await store.release("cy", ["profile"]);
-        await store.release("dan", ["marketing"]);
-        await store.request("bo", []);
-      });
+      await write((store) => store.request("bo", []));
       expect(await orders.restricted.among(["ana", "bo", "cy", "dan"], "unrestricted")).toEqual(
-        new Set(["bo", "cy", "dan"]),
+        new Set(["cy"]),
       );
     });
 
@@ -286,7 +302,7 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
         event(1, "ProcessingRestricted", { restrictions: whole }),
         event(2, "ProcessingRestrictionLifted", { restrictions: [] }),
         event(3, "ProcessingRestricted", { restrictions: whole }),
-        event(4, "PersonalDataForgotten", { categories: [], retained: ["profile"], expired: [] }),
+        event(4, "ProcessingRestricted", { restrictions: whole }),
       ];
       const play = async (events: readonly StoredEvent[], check: () => Promise<void>) => {
         for (const played of events) {
@@ -312,7 +328,13 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
         ),
       );
       expect(await found(orders.restricted.retained)).toEqual(["o-1", "o-2", "o-3", "o-4", "o-5"]);
-      expect(await found(orders.restricted.unrestricted)).toEqual(["o-2", "o-3", "o-4"]);
+      expect(await found(orders.restricted.unrestricted)).toEqual([
+        "o-1",
+        "o-2",
+        "o-3",
+        "o-4",
+        "o-5",
+      ]);
     });
 
     it("rolls back with the transaction that wrote it", async () => {

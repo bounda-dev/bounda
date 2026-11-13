@@ -1,15 +1,29 @@
-import type { ReadClient, Table } from "../../adapter/storage/table.ts";
+import type { ReadModelTransaction } from "../../adapter/adapter.ts";
 import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import {
   type CheckpointClaim,
   type CheckpointedSubscriber,
   createCheckpointedSubscriber,
   PartialBatchError,
 } from "../dispatch/delivery.ts";
+import type { BlindIndexer } from "../personal-data/blind-index.ts";
+import { openedUnder } from "../personal-data/event-store.ts";
+import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
+import { sealedClient } from "../read-model/sealed-client.ts";
+import { applyForgetting, isForgetting } from "../read-model/sealed-forgetting.ts";
+import type { SealedLayout, SealingContext } from "../read-model/sealed-rows.ts";
+import { settleUnsettled } from "../read-model/sealed-settle.ts";
+import { sealedTable } from "../read-model/sealed-table.ts";
+import {
+  createSealingKeyRing,
+  KeysMissingError,
+  type SealingKeys,
+} from "../read-model/sealing-keys.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 
@@ -18,11 +32,24 @@ export interface ProjectionTarget {
   readonly projectionsByEvent: Readonly<Record<string, readonly ProjectionRuntime[]>>;
 }
 
+/**
+ * How a batch's writes are sealed: the read model's layout, the keys fetched for the batch, and
+ * the database's blind indexes.
+ */
+export interface BatchSealing {
+  readonly layout: SealedLayout;
+  readonly keys: SealingKeys;
+  readonly indexer: BlindIndexer | null;
+}
+
 export interface ProjectBatchArgs {
   readonly readModel: ProjectionTarget;
   readonly events: readonly StoredEvent[];
-  readonly table: Table<Record<string, unknown>>;
-  readonly client: ReadClient<Record<string, unknown>>;
+  /**
+   * The read model's transaction, as its adapter gives it, on the stored fields.
+   */
+  readonly transaction: Pick<ReadModelTransaction, "table" | "client" | "unsettled">;
+  readonly sealing: BatchSealing;
   readonly logger: Logger;
   readonly errorText: ErrorText;
   /**
@@ -40,24 +67,75 @@ export interface ProjectBatchFunction {
   (args: ProjectBatchArgs): Promise<number>;
 }
 
+export interface BatchPersonsFunction {
+  (events: readonly StoredEvent[]): readonly string[];
+}
+
+/**
+ * The persons whose keys a batch is likely to seal or open with: those its events were opened for,
+ * and those a forgetting in it names, whose kept keys say which category each of its fingerprints
+ * is.
+ */
+export const batchPersons: BatchPersonsFunction = (events) => [
+  ...new Set(
+    events.flatMap((event) => [
+      ...openedUnder(event).map(({ person }) => person),
+      ...(isForgetting(event) ? [(event.payload as { personId: string }).personId] : []),
+    ]),
+  ),
+];
+
 /**
  * Resolves to how many events it got through: fewer when the budget ran out, never none. A
- * projection that throws rejects the batch with a `PartialBatchError`.
+ * projection that throws rejects the batch with a `PartialBatchError`, but a `KeysMissingError`,
+ * which names every person of the batch, rejects it as it is. Values written through `client.raw`
+ * into personal fields are sealed before it resolves.
  */
 export const projectBatch: ProjectBatchFunction = async ({
   readModel,
   events,
-  table,
-  client,
+  transaction,
+  sealing,
   logger,
   errorText,
   budget: { clock, maxMs },
 }) => {
   const started = clock.now().getTime();
+  let current: StoredEvent | null = null;
+  let raw = false;
+  const context: SealingContext = { ...sealing, event: () => current };
+  const table = sealedTable({ context, table: transaction.table });
+  const client = sealedClient({
+    context,
+    client: transaction.client,
+    onRaw: () => {
+      raw = true;
+    },
+  });
+  const settled = async (count: number): Promise<number> => {
+    if (raw && sealing.layout.personal.length > 0) await settleUnsettled({ context, transaction });
+    return count;
+  };
   let done = 0;
   for (const event of events) {
-    if (done > 0 && clock.now().getTime() - started >= maxMs) return done;
+    if (done > 0 && clock.now().getTime() - started >= maxMs) return settled(done);
+    current = event;
     const qualified = qualifiedEventType(event.aggregateType, event.type);
+    try {
+      if (isForgetting(event) && sealing.layout.personal.length > 0) {
+        await applyForgetting({
+          layout: sealing.layout,
+          table: transaction.table,
+          keys: sealing.keys,
+          event,
+        });
+      }
+    } catch (error) {
+      if (error instanceof KeysMissingError) {
+        throw new KeysMissingError([...error.persons, ...batchPersons(events)]);
+      }
+      throw new PartialBatchError(done, error);
+    }
     for (const projection of readModel.projectionsByEvent[qualified] ?? []) {
       try {
         await traced({
@@ -78,6 +156,9 @@ export const projectBatch: ProjectBatchFunction = async ({
           },
         });
       } catch (error) {
+        if (error instanceof KeysMissingError) {
+          throw new KeysMissingError([...error.persons, ...batchPersons(events)]);
+        }
         logger.error("projection failed", {
           readModel: readModel.name,
           projection: projection.key,
@@ -90,16 +171,53 @@ export const projectBatch: ProjectBatchFunction = async ({
     }
     done += 1;
   }
-  return done;
+  return settled(done);
 };
 
 interface ProjectionClaim extends CheckpointClaim {
-  readonly table: Table<Record<string, unknown>>;
-  readonly client: ReadClient<Record<string, unknown>>;
+  readonly transaction: Pick<ReadModelTransaction, "table" | "client" | "unsettled">;
+  readonly keys: SealingKeys;
 }
+
+/**
+ * What sealing needs from the app: the persons' keys and the database's blind indexes.
+ */
+export interface SealingSource {
+  readonly keys: Pick<PersonalKeys, "heldAllOf">;
+  readonly indexer: BlindIndexer | null;
+}
+
+export interface WithKeysArgs<T> {
+  readonly keys: SealingSource["keys"];
+  readonly events: readonly StoredEvent[];
+  readonly run: (keys: SealingKeys) => Promise<T>;
+}
+
+export interface WithKeysFunction {
+  <T>(args: WithKeysArgs<T>): Promise<T>;
+}
+
+/**
+ * Runs `run`, which opens a read model's transaction, with the keys of the batch's persons fetched
+ * first; when it needs others, it runs again once they are fetched, outside the transaction it
+ * undid.
+ */
+export const withKeys: WithKeysFunction = async ({ keys, events, run }) => {
+  const ring = createSealingKeyRing({ keys, fetching: false });
+  await ring.fetch(batchPersons(events));
+  for (;;) {
+    try {
+      return await run(ring);
+    } catch (error) {
+      if (!(error instanceof KeysMissingError)) throw error;
+      await ring.fetch(error.persons);
+    }
+  }
+};
 
 export interface CreateProjectionSubscriberArgs {
   readonly readModel: ReadModelRuntime;
+  readonly sealing: SealingSource;
   readonly logger: Logger;
   readonly errorText: ErrorText;
   readonly budget: ProjectionBudget;
@@ -123,36 +241,55 @@ export const projectionSubscriberName: ProjectionSubscriberNameFunction = (readM
  */
 export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   readModel,
+  sealing,
   logger,
   errorText,
   budget,
 }) => {
   const name = projectionSubscriberName(readModel.name);
-  const { storage } = readModel;
+  const { storage, layout } = readModel;
+  const forgets = layout.personal.length > 0;
   const subscriber = createCheckpointedSubscriber<ProjectionClaim>({
     name,
     kind: "projection",
     position: () => storage.checkpointStore.get(name),
-    claim: ({ wait, work }) =>
-      storage.transact({
-        subscriber: name,
-        wait,
-        work: (transaction) =>
-          work({
-            get: () => transaction.checkpointStore.get(name),
-            compareAndSet: (expected, position) =>
-              transaction.checkpointStore.compareAndSet(name, expected, position),
-            table: transaction.table,
-            client: transaction.client,
+    claim: ({ wait, events, work }) =>
+      withKeys({
+        keys: sealing.keys,
+        events,
+        run: (keys) =>
+          storage.transact({
+            subscriber: name,
+            wait,
+            work: (transaction) =>
+              work({
+                get: () => transaction.checkpointStore.get(name),
+                compareAndSet: (expected, position) =>
+                  transaction.checkpointStore.compareAndSet(name, expected, position),
+                transaction,
+                keys,
+              }),
           }),
       }),
-    process: (events, { table, client }) =>
-      projectBatch({ readModel, events, table, client, logger, errorText, budget }),
+    process: (events, { transaction, keys }) =>
+      projectBatch({
+        readModel,
+        events,
+        transaction,
+        sealing: { layout, keys, indexer: sealing.indexer },
+        logger,
+        errorText,
+        budget,
+      }),
     logger,
     errorText,
   });
   return {
     ...subscriber,
-    reactsTo: (qualified) => (readModel.projectionsByEvent[qualified]?.length ?? 0) > 0,
+    reactsTo: (qualified) =>
+      (readModel.projectionsByEvent[qualified]?.length ?? 0) > 0 ||
+      (forgets && qualified === FORGOTTEN),
   };
 };
+
+const FORGOTTEN = qualifiedEventType(BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT);

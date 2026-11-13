@@ -32,7 +32,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis and retention; without it, every personal field is in the default category |
 | `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
-| `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once a projection of the read model sees a field marked `personal` or its view marks a field `.personal()` |
+| `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once its view keeps a field in the clear with `.personal({ clear: true })`, or a projection of the read model sees a field marked `personal` and the view marks no field `.personal()` |
 | `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts`, `processing-restriction-lifted.ts` | `project`, optional |
 | `app/read/<read-model>/queries/<query>.ts` | `payload` (optional), `repository` (optional), `handler` |
 | `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate; only the queries' `handler` receives them |
@@ -71,9 +71,10 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
   named `test` (`TestPorts` is Bounda's own), or `order-created` next to `order`.
 
 Some rules are checked by the compiler rather than the generator, at the `<ReadModel>Forgetting`
-type of `.bounda/types.ts`, which says what to add: a read model that projects an event with a
-field marked `personal`, or marks a field `.personal()`, and has no
-`projections/bounda/personal-data-forgotten.ts`; one that marks a field `.personal()` and none
+type of `.bounda/types.ts`, which says what to add: a read model that keeps a field in the clear
+with `.personal({ clear: true })`, or projects an event with a field marked `personal` and marks no
+field `.personal()`, and has no `projections/bounda/personal-data-forgotten.ts`; one that marks a
+field `.personal()` and none
 `.person()`; one that marks two fields `.person()`. The generated registry is checked against
 `Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
 fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
@@ -96,7 +97,9 @@ Some rules need the modules themselves, so the app checks them when it is create
   id field in its payload or by `correlate`;
 - a policy and a process that share a key;
 - a read model that marks two fields `.person()`, marks a field `.personal()` and none
-  `.person()`, or marks a field `.personal()` and does not project `PersonalDataForgotten`;
+  `.person()`, or keeps a field in the clear with `.personal({ clear: true })` and does not project
+  `PersonalDataForgotten`; one that seals its primary key, or names a field like the columns the
+  runtime keeps beside personal ones, ending in `__key` or `__index`;
 - an `app/audit.ts` that does not export `onPersonalDataAccess` as a function;
 - an `app/personal-data.ts` whose `categories` is not an object, declares `default`, names a
   category with anything but letters, digits, `-` and `_` after a first letter, or gives one a

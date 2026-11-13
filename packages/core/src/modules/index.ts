@@ -153,6 +153,7 @@ export type {
 export type { Upcast, Upcasts } from "./upcast.ts";
 export type {
   Field,
+  FieldAccess,
   FieldBuilder,
   FieldDefinition,
   FieldMark,
@@ -161,6 +162,7 @@ export type {
   FieldType,
   FieldTypesOf,
   InferRow,
+  PersonalFieldOptions,
   RowOf,
 } from "./view.ts";
 export { fieldBuilder } from "./view.ts";

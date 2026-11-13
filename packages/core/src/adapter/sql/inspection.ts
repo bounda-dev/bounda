@@ -56,11 +56,6 @@ export const storeOfTable: StoreOfTableFunction = ({ prefix, name }) => {
 export const inspectSqlTable: InspectSqlTableFunction = async ({ db, prefix, name, from, key }) => {
   const order = key.length === 0 ? "" : ` ORDER BY ${key.map(quoteName).join(", ")}`;
   const store = storeOfTable({ prefix, name });
-  return {
-    name,
-    store,
-    key,
-    opaque: opaqueColumnsOf(store),
-    rows: await db.all(`SELECT * FROM ${from}${order}`, []),
-  };
+  const rows = await db.all(`SELECT * FROM ${from}${order}`, []);
+  return { name, store, key, opaque: opaqueColumnsOf(store, Object.keys(rows[0] ?? {})), rows };
 };

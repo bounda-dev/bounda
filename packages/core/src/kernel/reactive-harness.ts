@@ -22,6 +22,7 @@ import {
   createRestrictedPersonsSubscriber,
   restrictedPersonsHosts,
 } from "./personal-data/restricted-persons.ts";
+import { createPersonalKeyWrapping } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
@@ -35,6 +36,7 @@ import {
   buildReadModels,
   type ReadModelsRuntime,
 } from "./read-model/build-read-models.ts";
+import { openReadModelSealing } from "./read-model/sealing.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
@@ -111,6 +113,13 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     strict: true,
   });
   const readModels = await buildReadModels({ registry, config, logger });
+  const sealing = await openReadModelSealing({
+    layouts: Object.values(readModels.byName).map(({ layout }) => layout),
+    keys: storage.personalKeys,
+    indexKeys: storage.indexKeys,
+    wrapping: createPersonalKeyWrapping({ wrapper: null, clock }),
+    clock,
+  });
   const recordAccess = createAccessLog({
     hook: undefined,
     env: {},
@@ -200,6 +209,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
         ...Object.values(readModels.byName).map((readModel) =>
           createProjectionSubscriber({
             readModel,
+            sealing,
             logger,
             errorText: config.runtime.telemetry.errorText,
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },

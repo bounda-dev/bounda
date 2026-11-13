@@ -5,17 +5,24 @@ import type { Clock } from "../../contracts/clock.ts";
 import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { LegalBasis, ProcessingRestriction } from "../../modules/personal-data.ts";
-import type { FieldsRecord } from "../../modules/view.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
-import type { ReadModelPersonalData, ReadModelsRuntime } from "../read-model/build-read-models.ts";
+import type { SealingSource } from "../projection/runner.ts";
+import type {
+  ReadModelPersonalData,
+  ReadModelRuntime,
+  ReadModelsRuntime,
+} from "../read-model/build-read-models.ts";
+import { openRow } from "../read-model/sealed-rows.ts";
+import { createSealingKeyRing, type SealingKeyRing } from "../read-model/sealing-keys.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { formatRetention, type PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
+import { openedUnder } from "./event-store.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
 import { processingRestrictionsOf } from "./restriction.ts";
@@ -174,6 +181,10 @@ export interface ExportPersonalDataArgs {
    */
   readonly processes: Pick<ProcessesRuntime, "byName">;
   readonly readModels: ReadModelsRuntime;
+  /**
+   * What the read models' values are opened with.
+   */
+  readonly sealing: SealingSource;
   readonly clock: Clock;
   readonly batchSize: number;
   readonly categories: PersonalCategories;
@@ -204,12 +215,14 @@ const markedFields = (marks: PersonalMarks | null, payload: unknown): Marked => 
 const exportedRows = async (
   storage: ReadModelStorage,
   { person, personal, primaryKey }: ReadModelPersonalData,
-  fields: FieldsRecord,
+  { fields, layout }: Pick<ReadModelRuntime, "fields" | "layout">,
+  keys: SealingKeyRing,
   personId: string,
   batchSize: number,
   restricted: (categories: ExportedCategories) => ExportedRestricted,
 ): Promise<readonly ExportedRow[]> => {
   const rows: ExportedRow[] = [];
+  await keys.fetch([personId]);
   let page: readonly Record<string, unknown>[];
   let after: unknown;
   do {
@@ -221,7 +234,13 @@ const exportedRows = async (
       orderBy: { field: primaryKey, direction: "asc" },
       limit: batchSize,
     });
-    for (const row of page) {
+    for (const stored of page) {
+      // Every value opened, what a forgetting kept included: the export marks it restricted.
+      const { row, retainedFields } = await openRow({
+        context: { layout, keys },
+        stored,
+        hideRetained: false,
+      });
       const held = personal.filter((field) => row[field] !== undefined);
       const categories = Object.fromEntries(
         held.map((field) => [field, fields[field]?.category ?? DEFAULT_PERSONAL_CATEGORY]),
@@ -230,7 +249,12 @@ const exportedRows = async (
         key: row[primaryKey],
         data: Object.fromEntries(held.map((field) => [field, row[field]])),
         categories,
-        restricted: restricted(categories),
+        restricted: [
+          ...new Set([
+            ...restricted(categories),
+            ...retainedFields.filter((field) => held.includes(field)),
+          ]),
+        ],
       });
     }
     after = page.at(-1)?.[primaryKey];
@@ -276,6 +300,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   aggregates,
   processes,
   readModels,
+  sealing,
   clock,
   batchSize,
   categories,
@@ -286,33 +311,48 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   const restrictions = processingRestrictionsOf(await storage.persons.restrictions(personId));
   const exportedCategories = await categoriesOf(storage, categories, personId);
   const whole = restrictions.some((restriction) => restriction.categories === null);
-  const covered = new Set<string>([
-    ...restrictions.flatMap((restriction) => restriction.categories ?? []),
-    ...Object.entries(exportedCategories)
+  const requested = new Set<string>(
+    restrictions.flatMap((restriction) => restriction.categories ?? []),
+  );
+  const kept = new Set<string>(
+    Object.entries(exportedCategories)
       .filter(([, category]) => category.restrictedUntil !== null)
       .map(([name]) => name),
-  ]);
-  const restrictedFields = (of: ExportedCategories): ExportedRestricted =>
+  );
+  const fieldsIn = (of: ExportedCategories, covers: (category: string) => boolean) =>
     Object.entries(of)
-      .filter(([, category]) => whole || covered.has(category))
+      .filter(([, category]) => whole || covers(category))
       .map(([field]) => field);
+  // What a restriction the person asked for covers.
+  const requestedFields = (of: ExportedCategories): ExportedRestricted =>
+    fieldsIn(of, (category) => requested.has(category));
+  // And what a forgetting kept, by category, for a record that does not say its key.
+  const restrictedFields = (of: ExportedCategories): ExportedRestricted =>
+    fieldsIn(of, (category) => requested.has(category) || kept.has(category));
+  // An event says the keys it was opened under: what a forgetting kept is restricted only when one
+  // of them is a key it kept, so what the person wrote after they came back is not.
+  const eventRestricted = (event: StoredEvent, of: ExportedCategories): ExportedRestricted =>
+    openedUnder(event).some(({ person, retained }) => person === personId && retained === true)
+      ? restrictedFields(of)
+      : requestedFields(of);
   const textRestricted: ExportedRestricted =
     restrictions.length > 0 ? ["errorMessage", "errorStack"] : [];
   // Independent of the store's records, and often on another adapter, so read meanwhile; a
   // failure of the store's reads first leaves this one handled, the export rejecting with that.
   const rows = Promise.all(
     Object.values(readModels.byName).flatMap(
-      ({ name, storage: rowsStorage, personalData, fields }) =>
+      ({ name, storage: rowsStorage, personalData, fields, layout }) =>
         personalData === null
           ? []
           : [
               exportedRows(
                 rowsStorage,
                 personalData,
-                fields,
+                { fields, layout },
+                createSealingKeyRing({ keys: sealing.keys, fetching: true }),
                 personId,
                 batchSize,
-                restrictedFields,
+                requestedFields,
               ).then((exported) => [name, exported] as const),
             ],
     ),
@@ -384,7 +424,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         position: event.position,
         timestamp: event.timestamp,
         ...data,
-        restricted: restrictedFields(data.categories),
+        restricted: eventRestricted(event, data.categories),
       });
       afterPosition = event.position;
     }

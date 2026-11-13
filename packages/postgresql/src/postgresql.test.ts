@@ -387,6 +387,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
     ).toEqual([
       { scope: "checkpoints", version: 1 },
       { scope: "checkpoints", version: 2 },
+      { scope: "checkpoints", version: 3 },
     ]);
   });
 
@@ -674,6 +675,7 @@ describe.skipIf(container === null)("postgresql adapter", () => {
       "events",
       "idempotency_keys",
       "inbox",
+      "index_keys",
       "migrations",
       "personal_keys",
       "persons",
