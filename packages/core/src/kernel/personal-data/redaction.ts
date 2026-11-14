@@ -504,7 +504,7 @@ export const redactWithin: RedactWithinFunction = async (args) => {
           ...new Set(
             events.map(({ aggregateType, type }) => qualifiedEventType(aggregateType, type)),
           ),
-        ].sort(),
+        ],
       } satisfies RedactionScrubPayload,
     },
     executeAt: new Date(event.timestamp),

@@ -20,6 +20,10 @@ const domainOf = (email: string): string => email.slice(email.indexOf("@") + 1);
 
 // Holds the next projection of a registration into the mailing list until it is opened.
 let gate: { readonly reached: () => void; readonly opened: Promise<void> } | undefined;
+// The notes fail the redaction's batch while they are down; the mailing list fails every
+// registration it projects.
+let notesDown = false;
+let mailingDown = false;
 
 const registry = {
   aggregates: {
@@ -89,6 +93,7 @@ const registry = {
               event: { aggregateId: string; payload: { email: string | null; plan: string } };
               table: Table<{ customerId: string; handle: string | null; plan: string }>;
             }) => {
+              if (mailingDown) throw new Error("the mailing list is down");
               const held = gate;
               gate = undefined;
               held?.reached();
@@ -174,6 +179,41 @@ const registry = {
               }),
           },
         },
+        bounda: {
+          personalDataRedacted: {
+            project: () => {
+              if (notesDown) throw new Error("the notes are down");
+            },
+          },
+        },
+      },
+      queries: {
+        notesOf: {
+          payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+          handler: ({
+            query,
+            table,
+          }: {
+            query: { payload: { customerId: string } };
+            table: Table<{ customerId: string }>;
+          }) => table.findMany({ where: { customerId: query.payload.customerId } }),
+        },
+      },
+    },
+    // Marks nothing personal and projects no event a redaction of the email reaches.
+    tally: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({ kind: f.string().primaryKey(), count: f.number() }),
+      },
+      projections: {
+        customer: {
+          noteAdded: {
+            project: async ({ table }: { table: Table<{ kind: string; count: number }> }) => {
+              const row = await table.findOne({ kind: "note" });
+              await table.upsert({ kind: "note", count: (row?.count ?? 0) + 1 });
+            },
+          },
+        },
       },
       queries: {},
     },
@@ -189,6 +229,8 @@ const stops: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
   gate = undefined;
+  notesDown = false;
+  mailingDown = false;
   for (const stop of stops.splice(0)) await stop();
 });
 
@@ -304,7 +346,7 @@ describe.each(adapters)("redact, rebuilding what was derived, %s", (_, adapterOf
   });
 
   it("leaves a read model that projects no event the redaction reached as it is", async () => {
-    const { app, commands, registered, holding, rebuilt } = await setUp(adapterOf());
+    const { app, commands, queries, registered, holding, rebuilt } = await setUp(adapterOf());
     await registered("ana", "ana@old.example");
     await commands.addNote?.({ customerId: "ana", noteId: "n-1", text: "likes tea" });
     await app.runUntilIdle();
@@ -312,6 +354,58 @@ describe.each(adapters)("redact, rebuilding what was derived, %s", (_, adapterOf
     await app.runUntilIdle();
     expect(rebuilt("notes")).toEqual([]);
     expect(rebuilt("mailing")).not.toEqual([]);
+    expect(await queries.notesOf?.({ customerId: "ana" })).toEqual([
+      { noteId: "n-1", customerId: "ana", text: "likes tea" },
+    ]);
+  });
+
+  it("waits for a read model that fails the redaction before letting the old values go", async () => {
+    const { app, commands, queries, registered, holding, later } = await setUp(adapterOf());
+    await registered("ana", "ana@old.example");
+    await commands.addNote?.({ customerId: "ana", noteId: "n-1", text: "mail ana@old.example" });
+    await app.runUntilIdle();
+    notesDown = true;
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    await app.runUntilIdle();
+    const unsettled = await expectRedacted(app, "ana").catch((error: unknown) => error);
+    expect((unsettled as NotRedactedError).found).toContainEqual(
+      expect.objectContaining({ value: "a copy derived from a redacted value" }),
+    );
+    notesDown = false;
+    later();
+    await app.runUntilIdle();
+    expect(await queries.notesOf?.({ customerId: "ana" })).toEqual([
+      { noteId: "n-1", customerId: "ana", text: null },
+    ]);
+  });
+
+  it("logs a rebuild that fails and tries it again a poll later", async () => {
+    const { app, registered, holding, logged, later } = await setUp(adapterOf());
+    await registered("ana", "ana@old.example");
+    mailingDown = true;
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    await app.runUntilIdle();
+    expect(
+      logged.filter(
+        ({ message }) => message === "a redaction could not be settled; the worker tries again",
+      ),
+    ).not.toEqual([]);
+    mailingDown = false;
+    later();
+    await app.runUntilIdle();
+    await expectRedacted(app, "ana", { values: [reversed("ana@old.example")] });
+  });
+
+  it("waits for no rebuild under way of a read model that marks nothing personal and projects no redacted event", async () => {
+    const { app, commands, registered, holding } = await setUp(adapterOf(), { batchSize: 1 });
+    await registered("ana", "ana@old.example");
+    await commands.addNote?.({ customerId: "ana", noteId: "n-1", text: "likes tea" });
+    await commands.addNote?.({ customerId: "ana", noteId: "n-2", text: "likes coffee" });
+    await app.runUntilIdle();
+    expect(await app.rebuildReadModel("tally", { maxEvents: 1 })).toMatchObject({ done: false });
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    await app.runUntilIdle();
+    await expectRedacted(app, "ana");
   });
 
   it("rejects in expectRedacted until the worker has rebuilt what projects the redacted events", async () => {
