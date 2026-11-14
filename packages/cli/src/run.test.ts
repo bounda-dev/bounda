@@ -868,11 +868,29 @@ describe("bounda forgotten and bounda forget", () => {
       `${JSON.stringify({ aggregateType, aggregateId, type, id, fields: ["name"] })}\n\n`,
     );
 
+    const help = await cli(["redact", "--help"], fixture);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "redact [options] <person> rectify a person's data (article 16)",
+    );
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "Arguments: person the id of the person whose data is wrong",
+    );
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "--from <file> the events, one a line as JSON",
+    );
     const redacted = await cli(
       ["redact", memberId, "--from", list, "--actor", "operator-1"],
       fixture,
     );
     expect(redacted).toMatchObject({ code: EXIT_OK, stdout: `redacted 1 event of ${memberId}\n` });
+    const missing = join(dir, "missing.jsonl");
+    await writeFile(
+      missing,
+      JSON.stringify({ aggregateType, aggregateId, type, id: `${id}-missing`, fields: ["name"] }),
+    );
+    const unknown = await cli(["redact", memberId, "--from", missing], fixture);
+    expect(unknown.code).toBe(EXIT_FAILURE);
+    expect(unknown.stderr).toContain("ValidationError (VALIDATION_FAILED)");
     const again = await cli(["redact", memberId, "--from", list], fixture);
     expect(again.stdout).toBe(
       `nothing of ${memberId} left to redact: what was listed reads as null already\n`,
@@ -883,8 +901,32 @@ describe("bounda forgotten and bounda forget", () => {
     expect(refused.code).toBe(EXIT_FAILURE);
     expect(refused.stderr).toContain("line 1 needs the event's aggregateType");
     expect(refused.stderr).not.toContain("Wrongname");
-    const missing = await cli(["redact", memberId], fixture);
-    expect(missing.code).not.toBe(EXIT_OK);
+    const pairId = `${memberId}-pair`;
+    const pairApp = await open();
+    await pairApp.commands.join({ memberId: pairId, name: "Ivo Wrongname" });
+    await pairApp.commands.join({ memberId: pairId, name: "Ivo Wrongname" });
+    const joins = (await pairApp.exportPersonalData(pairId)).events;
+    await pairApp.stop();
+    const pair = join(dir, "pair.jsonl");
+    await writeFile(
+      pair,
+      [...joins, ...joins]
+        .map((event) =>
+          JSON.stringify({
+            aggregateType: event.aggregateType,
+            aggregateId: event.aggregateId,
+            type: event.type,
+            id: event.id,
+            fields: ["name"],
+          }),
+        )
+        .join("\n"),
+    );
+    expect((await cli(["redact", pairId, "--from", pair], fixture)).stdout).toBe(
+      `redacted 2 events of ${pairId}\n`,
+    );
+    const noList = await cli(["redact", memberId], fixture);
+    expect(noList.code).not.toBe(EXIT_OK);
     await rm(dir, { recursive: true, force: true });
 
     const after = await open();

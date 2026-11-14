@@ -497,11 +497,12 @@ const runRedact = async (
   }
   return withApp(options, cwd, stderr, async (app) => {
     const redacted = await actingAs(app, options).redact(personId, { events });
+    const listed = new Set(events.map(({ id }) => id)).size;
     line(
       stdout,
       redacted.eventIds.length === 0
         ? `nothing of ${personId} left to redact: what was listed reads as null already`
-        : `redacted ${events.length === 1 ? "1 event" : `${events.length} events`} of ${personId}`,
+        : `redacted ${listed === 1 ? "1 event" : `${listed} events`} of ${personId}`,
     );
     return EXIT_OK;
   });
