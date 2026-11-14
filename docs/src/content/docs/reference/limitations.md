@@ -23,6 +23,7 @@ get today. Each item says why, so nobody discovers it the hard way:
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
+- **Telling those a redacted value went to.** See [Redacted values](#redacted-values).
 
 ## The access log
 
@@ -54,6 +55,16 @@ basis named:
 - **SQL a query writes** has its `LIMIT` applied before the restricted rows are dropped, so a page
   may come back short; `table` pages exactly.
 
+## Redacted values
+
+A [redaction](/guides/personal-data/#correcting-a-persons-data) seals the fields it names in the
+events; every read model hides or writes over the person's copies as it projects it, and the worker
+rebuilds every one that projects an event type it reached, unless its view states it holds no
+personal data. What it does not reach:
+
+- **What a policy sent out.** A port that mailed the old value, or indexed it, corrects it itself:
+  a policy on `PersonalDataRedacted` is where to tell it (article 19).
+
 ## What it does get
 
 What a production app does get, and where it is explained:
@@ -66,7 +77,8 @@ their read models' fields [sealed at rest](/guides/personal-data/#sealed-at-rest
 to look them up,
 [recording who opened it](/guides/personal-data/#who-opened-what) and
 [restricting their processing](/guides/personal-data/#restricting-processing) without losing a
-reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
+reaction, [correcting it](/guides/personal-data/#correcting-a-persons-data) so the wrong value is
+read nowhere, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
 ends, their keys [wrapped under a master key](/guides/personal-data/#a-master-key) kept out of
 the database and out of JavaScript memory, their forgetting [applied again](/guides/personal-data/#backups) when a backup is
 restored, and [found](/guides/personal-data/#restores) whether restored under the running app or while it was stopped,

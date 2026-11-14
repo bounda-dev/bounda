@@ -5,6 +5,7 @@ import {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
   forgetLedgerReasonStatements,
+  forgetLedgerRedactionStatement,
   forgetLedgerStatements,
 } from "./forget-ledger.ts";
 
@@ -32,6 +33,15 @@ const entry = (index: number): ForgetLedgerEntry => ({
 });
 
 describe("the SQL forget ledger", () => {
+  it("adds the redaction column, if missing on PostgreSQL, which SQLite checks before", () => {
+    expect(forgetLedgerRedactionStatement(`"t"`, postgresqlDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN IF NOT EXISTS "redaction" TEXT`,
+    );
+    expect(forgetLedgerRedactionStatement(`"t"`, sqliteDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN "redaction" TEXT`,
+    );
+  });
+
   it("orders by code unit in PostgreSQL, as SQLite does by default", () => {
     const [postgresTable] = forgetLedgerStatements(`"t_forget_ledger"`, postgresqlDialect);
     expect(postgresTable).toContain(`"event_id" TEXT COLLATE "C" NOT NULL`);
@@ -59,7 +69,7 @@ describe("the SQL forget ledger", () => {
     );
   });
 
-  it("inserts at most 12 entries a statement, each bound to its own numbered parameters", async () => {
+  it("inserts at most 11 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -69,37 +79,44 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    const { fingerprints: _, ...unrecorded } = entry(12);
+    const { fingerprints: _, ...unrecorded } = entry(11);
+    const redaction = {
+      events: [
+        { id: "e-0", aggregateType: "c", aggregateId: "c-12", type: "T", fields: ["email"] },
+      ],
+    };
     await ledger.append([
-      ...Array.from({ length: 12 }, (_, index) => entry(index)),
+      ...Array.from({ length: 11 }, (_, index) => entry(index)),
       {
         ...unrecorded,
         reason: "retention",
         restriction: {
           type: "ProcessingRestrictionLifted",
           payload: {
-            personId: "c-12",
+            personId: "c-11",
             grounds: ["legal-claims"],
             categories: null,
             restrictions: [],
           },
         },
       },
+      { ...entry(12), redaction },
     ]);
     expect(statements).toHaveLength(2);
     const [first, second] = statements;
     expect(first?.[0]).toContain(
-      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction") VALUES ($1, $2, $3, $4, $5, $6, $7, $8), ($9, $10, $11, $12, $13, $14, $15, $16)`,
+      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9), ($10, $11, $12, $13, $14, $15, $16, $17, $18)`,
     );
-    expect(first?.[0]).toContain("($89, $90, $91, $92, $93, $94, $95, $96) ON CONFLICT");
-    expect(first?.[1]).toHaveLength(96);
-    expect(first?.[1].slice(0, 16)).toEqual([
+    expect(first?.[0]).toContain("($91, $92, $93, $94, $95, $96, $97, $98, $99) ON CONFLICT");
+    expect(first?.[1]).toHaveLength(99);
+    expect(first?.[1].slice(0, 18)).toEqual([
       "",
       "e-0",
       "c-0",
       "2026-01-01T00:00:00.000Z",
       "requested",
       `["k-0"]`,
+      null,
       null,
       null,
       "",
@@ -110,25 +127,38 @@ describe("the SQL forget ledger", () => {
       `["k-1"]`,
       `["profile"]`,
       null,
+      null,
     ]);
-    expect(second?.[0]).toContain(`VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT`);
+    expect(second?.[0]).toContain(
+      `VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9), ($10, $11, $12, $13, $14, $15, $16, $17, $18) ON CONFLICT`,
+    );
     expect(second?.[1]).toEqual([
       "",
-      "e-12",
-      "c-12",
+      "e-11",
+      "c-11",
       "2026-01-01T00:00:00.000Z",
       "retention",
       null,
-      null,
+      `["profile"]`,
       JSON.stringify({
         type: "ProcessingRestrictionLifted",
         payload: {
-          personId: "c-12",
+          personId: "c-11",
           grounds: ["legal-claims"],
           categories: null,
           restrictions: [],
         },
       }),
+      null,
+      "",
+      "e-12",
+      "c-12",
+      "2026-01-01T00:00:00.000Z",
+      "requested",
+      `["k-12"]`,
+      null,
+      null,
+      JSON.stringify(redaction),
     ]);
   });
 

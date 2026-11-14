@@ -18,6 +18,7 @@ import {
   type QueryOptions,
   type ReadEventsArgs,
   type RebuildReadModelResult,
+  type RedactedFields,
   type Registry,
   type RestrictOptions,
   type StoredDispatch,
@@ -82,6 +83,19 @@ export interface BoundaStub {
     actor: string | undefined,
     options: UnrestrictOptions,
   ): PromiseLike<unknown>;
+  redact(
+    personId: string,
+    consistency: Consistency | undefined,
+    actor: string | undefined,
+    options: RedactRequest,
+  ): PromiseLike<unknown>;
+}
+
+/**
+ * What a redaction asks the object, as `BoundaClient.redact` takes it.
+ */
+export interface RedactRequest {
+  readonly events: readonly RedactedFields[];
 }
 
 export interface ConnectOptions {
@@ -172,6 +186,8 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       unwrap<StoredDispatch>(stub.restrict(personId, consistency, actor, options)),
     unrestrict: (personId, options) =>
       unwrap<StoredDispatch>(stub.unrestrict(personId, consistency, actor, options)),
+    redact: (personId, options) =>
+      unwrap<StoredDispatch>(stub.redact(personId, consistency, actor, options)),
     as: (next) => {
       checkActor(next);
       return clientAs(next);

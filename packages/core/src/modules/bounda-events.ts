@@ -174,10 +174,58 @@ export type ProcessingRestrictionLiftedEvent = StoredEvent<
 >;
 
 /**
+ * Appended by `redact(personId, { events })` to the stream `bounda:<personId>` once the fields it
+ * names read as `null` for good, in every event and every copy the runtime keeps: a value the
+ * person said was wrong (article 16) stops being read anywhere. It names the events and fields,
+ * never a value. The read models that hold the person's personal fields write `null` over each
+ * copy of an old value as they project it; a policy may tell those the data went to (article 19).
+ */
+export const PERSONAL_DATA_REDACTED_EVENT: "PersonalDataRedacted" = "PersonalDataRedacted";
+
+/**
+ * An event whose fields a redaction sealed for good, and those fields, by name.
+ */
+export interface RedactedEvent {
+  readonly id: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly type: string;
+  readonly fields: readonly string[];
+}
+
+export interface PersonalDataRedactedPayload {
+  readonly personId: string;
+  /**
+   * The events and fields redacted: those that held a value of the person a key they hold still
+   * opened, which is every one asked for but those already redacted or forgotten.
+   */
+  readonly events: readonly RedactedEvent[];
+  /**
+   * The categories of the values redacted.
+   */
+  readonly categories: readonly PersonalCategoryName[];
+  /**
+   * The scheduled commands whose payload held a value redacted: they would act on it, so they are
+   * cancelled, as `forget` cancels them.
+   */
+  readonly cancelledCommands: readonly CancelledCommand[];
+  /**
+   * The dead letters of scheduled commands whose payload held a value redacted, removed.
+   */
+  readonly removedDeadLetters: readonly RemovedDeadLetter[];
+}
+
+export type PersonalDataRedactedEvent = StoredEvent<
+  typeof PERSONAL_DATA_REDACTED_EVENT,
+  PersonalDataRedactedPayload
+>;
+
+/**
  * The runtime's events, by the key a module's file name gives them.
  */
 export const BOUNDA_EVENTS: Readonly<Record<string, string>> = {
   personalDataForgotten: PERSONAL_DATA_FORGOTTEN_EVENT,
+  personalDataRedacted: PERSONAL_DATA_REDACTED_EVENT,
   processingRestricted: PROCESSING_RESTRICTED_EVENT,
   processingRestrictionLiftAnnounced: PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
   processingRestrictionLifted: PROCESSING_RESTRICTION_LIFTED_EVENT,

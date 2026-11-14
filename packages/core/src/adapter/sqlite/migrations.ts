@@ -6,6 +6,7 @@ import {
   forgetLedgerCategoriesStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
+  forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
 } from "../sql/forget-ledger.ts";
@@ -254,6 +255,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
       migrate: async (tx) => {
         if ((await columnsOf(tx, table)).has("restriction")) return;
         await tx.run(forgetLedgerRestrictionStatement(table, sqliteDialect), []);
+      },
+    },
+    {
+      version: 6,
+      migrate: async (tx) => {
+        if ((await columnsOf(tx, table)).has("redaction")) return;
+        await tx.run(forgetLedgerRedactionStatement(table, sqliteDialect), []);
       },
     },
   ],

@@ -168,3 +168,27 @@ export const matches: MatchesFunction = (needle, { text, lower, opaque }) => {
   if (needle.word !== null) return needle.word.test(text);
   return lower.includes(needle.lower);
 };
+
+export interface CanonicalJsonFunction {
+  (value: unknown): unknown;
+}
+
+// Object keys in code-unit order at every depth, so two equal JSON values compare and index alike.
+export const canonicalJson: CanonicalJsonFunction = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (typeof value !== "object" || value === null || value instanceof Date) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+      .map((key) => [key, canonicalJson(Reflect.get(value, key))]),
+  );
+};
+
+export interface SameValueTextFunction {
+  (value: unknown): string;
+}
+
+// What tells two values apart as JSON keeps them: a date as its ISO string, object keys in any
+// order alike.
+export const sameValueText: SameValueTextFunction = (value) =>
+  JSON.stringify(canonicalJson(value instanceof Date ? value.toISOString() : value)) ?? "undefined";

@@ -1,6 +1,6 @@
 import type { BoundaClient } from "../kernel/app.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
-import { leavesIn, matches, needlesOf } from "./search.ts";
+import { leavesIn, matches, needlesOf } from "../kernel/shared/value-search.ts";
 
 /**
  * One value of a restricted person that something the app handed out holds.

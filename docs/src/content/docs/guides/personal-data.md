@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, sort them in categories with their legal basis and retention, seal what was written before a field was marked, forget a person or export their data with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person is left readable.
+description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, sort them in categories with their legal basis and retention, seal what was written before a field was marked, forget a person, export their data or correct it with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person, nor a value corrected, is left readable.
 sidebar:
   order: 11
 ---
@@ -212,7 +212,8 @@ state marked its fields is sealed in place by the [backfill](#marking-a-field-la
 
 Whoever writes the event, the command handler through `events.customerRegistered({ email })`,
 passes what the schema takes: a `string`. Whoever reads it, `begin`, `evolve`, a policy, a
-projection, a process, sees `string | null`: the value, or `null` once the person is forgotten. So does a process handler that
+projection, a process, sees `string | null`: the value, or `null` once the person is forgotten, or
+once the field is [redacted](#correcting-a-persons-data). So does a process handler that
 reads a personal field of its own state.
 The `null` reaches the state too, so the `begin` above gives the customer an `email` of
 `string | null`, and a command handler that reads `state.email` handles the case. A field
@@ -405,15 +406,19 @@ person, for them to take away, as the right of access and the right to portabili
   restrictions: [
     { ground: "accuracy-contested", categories: ["invoices"], since: "2026-02-20T09:00:00.000Z" },
   ],
+  redactions: [
+    { eventId, at: "2026-02-21T09:00:00.000Z", events: [{ id, fields: ["phone"] }] },
+  ],
   events: [
     { id, type: "CustomerRegistered", aggregateType: "customer", aggregateId: "c-42",
-      version: 1, position: 17, timestamp, data: { email: "ana@example.com" },
-      categories: { email: "default" }, restricted: [] },
+      version: 1, position: 17, timestamp, data: { email: "ana@example.com", phone: null },
+      categories: { email: "default", phone: "default" }, restricted: [],
+      redacted: ["phone"] },
     { id, type: "OrderPlaced", aggregateType: "order", aggregateId: "o-9",
       version: 1, position: 40, timestamp,
       data: { billingAddress: "1 Main St", deliveryNote: "ring twice" },
       categories: { billingAddress: "invoices", deliveryNote: "profile" },
-      restricted: ["billingAddress"] },
+      restricted: ["billingAddress"], redacted: [] },
   ],
   scheduledCommands: [
     { commandId, type: "RemindCustomer", executeAt, data: { email },
@@ -454,6 +459,11 @@ category, or kept under a legal obligation, or every one for a person restricted
 `errorMessage` and `errorStack` while any restriction holds, since an error's text may quote any
 of their data.
 
+`redactions` are the [redactions](#correcting-a-persons-data) of their data, in the order they
+were made, each with the id of its `PersonalDataRedacted`, when, and the events and fields it
+sealed, never a value: every event says in `redacted` which fields of its `data` a redaction
+sealed, and those read `null`.
+
 `events` are every event that names the person, by its field marked `person` or its aggregate's
 id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
 the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
@@ -489,6 +499,113 @@ reading every row: PostgreSQL indexes the `persons` column itself, and SQLite, t
 included, keeps a table of which row names which person, written and removed by the same statement
 as the row.
 
+## Correcting a person's data
+
+A person may ask that data of theirs that is wrong be corrected: the right to rectification,
+article 16. Events are facts, so the corrected value is a new event of the app's own, and the wrong
+one, kept in events that are never deleted, is sealed for good with `redact`, which is on every
+`BoundaClient`, next to `forget`:
+
+```ts
+const exported = await app.exportPersonalData("c-42");
+const wrong = exported.events.flatMap((event) =>
+  event.data.email === "ana@old.example"
+    ? [{ ...event, fields: ["email"] }]
+    : [],
+);
+await app.redact("c-42", { events: wrong });
+await app.commands.correctEmail({ customerId: "c-42", email: "ana@new.example" });
+```
+
+`redact` takes the events whose fields hold the wrong value, each as the person's
+[export](#exporting-a-persons-data) lists it, its `aggregateType`, `aggregateId`, `type` and `id`,
+with the `fields` to seal, so an export record spread with `fields` is a target. The types say which
+fields each event type marks `personal`: a field the type does not mark, or an event type that marks
+none, does not compile, and a process's lifecycle events that carry its state, `ProcessStarted`,
+`ProcessHandled`, `ProcessDeadlineReached` and `ProcessTimedOut` of the stream
+`process:<aggregate>.<process>`, take the fields its [state](#in-a-processs-state) marks. Every
+event named must name the person: one the store does not hold, of another type or about another
+person is refused with `ValidationError`, as are no events, no fields and an empty id, before
+anything is redacted or recorded. Redact before you append the correction, so a copy of the old value a read model
+quotes in a field is never confused with the new one.
+
+In one transaction it opens each field under the person's key and seals the value anew under a key
+made for the redaction and let go at once, in place, so from then on the field reads as `null`, as
+a forgotten one does, in every event, under every key and in every copy of the database restored
+from then on; it appends `PersonalDataRedacted` to the stream `bounda:<personId>`, with the events
+and fields it reached, the categories of the values, and the scheduled commands and dead letters it
+removed, never a value. In the same transaction the
+[snapshots](/concepts/long-streams/#snapshots) of those streams go, as do the person's remembered
+rejections, which may quote the old value; a scheduled command whose payload holds an old value,
+equal to it or quoting it, is cancelled, and a scheduled command's dead letter that holds one is
+removed, as `forget` cancels and removes them; and the error text of a dead letter that quotes one
+is sealed for good, the letter left in place. It resolves like a command, so `catchUpReadModels({
+through })` waits for the read models, and the Durable Object's `redact` and the one in React
+Router's `bounda` context wait for them themselves unless `consistency` is `"eventual"`. A field
+that no key of the person opens any more, redacted or forgotten already, is left as it is, and
+nothing left to redact appends nothing and resolves without events, so redacting the same field
+twice appends once. A field moved to [another category](#changing-a-category) is opened under the
+key it was sealed anew under, and a field a forgetting [kept under a legal
+obligation](#categories) is redacted all the same.
+
+Everything that reads the field reads `null` from then on: `begin` and `evolve`, so the
+aggregate's state has the field `null` until the correction sets it; a policy or process that
+handles the event afterwards; an [upcaster](/guides/changing-events/), which runs on the payload
+opened; a [rebuild](/guides/deployment/#rebuilding-a-read-model), which replays the event as it
+reads now; and the export, which marks the field `redacted` on the event and lists the person's
+`redactions`. The types say so already, `string | null`, as for a forgotten field. The access log
+records nothing of a redaction, which hands nothing out.
+
+A read model holding the person's personal fields writes over its copies when it projects
+`PersonalDataRedacted`, before its own projection of the event, if it has one, runs. One that
+projects an event type the redaction reached may keep what it derived from the old value without
+quoting it, a hash or a value reformatted, so every field marked `.personal()`,
+[sealed](#sealed-at-rest) or [in the clear](#in-the-clear), of the rows whose field marked
+`.person()` names them reads `null` from then on, the values it did not derive from the old one
+too, its blind indexes emptied; the worker then [rebuilds](/guides/deployment/#rebuilding-a-read-model)
+it in the background, a few batches of `dispatcher.batchSize` events a pass, into a shadow table while
+queries read the live one, and once the shadow takes its place the rows read as the events now do:
+the correction's value where a projection wrote it, the rest as before. A rebuild of it under way
+goes on from where it stood, after a restart too: one that started before the redaction, and may
+have copied the old value, hides the person's values in its table as well, and another follows it. Any other read model with personal fields
+writes `null` over each personal field of the person's rows that holds an old value, equal to it or
+quoting it as [`expectRedacted`](#in-tests) finds a value, so a note that quotes the old email reads
+`null` and the rest stays. A field kept in the clear that cannot hold `null`, because it is not
+`.optional()` or it is the primary key, would keep the old value for as long as the row is there,
+so the row is deleted instead, for the rebuild or a projection of the correction to write again. A
+read model that projects such an event says whose its rows are or that it holds no personal data
+([see above](#personal-data-in-read-models)), so none serves what it derived from an old value
+without the app having said so: a field it does not mark `.personal()` is one the app states holds
+nothing of the person's.
+
+The old values wait for this, sealed under the person's keys as the events held them, in an entry of
+the scheduler that names nobody, until every read model with personal fields, and every rebuild of
+one under way, has projected the redaction and every read model to rebuild has been rebuilt from
+after it, each on its own database included; the worker then removes it, and makes unreadable what
+work that read the old value just before the redaction committed wrote of it after: an event of the
+person holding it gets a redaction of its own, a scheduled command or a dead letter goes as above,
+and a subscriber's last failure on an event of theirs, or kept in the clear, that quotes it has its
+text sealed for good. The entry is part of the database, so a crash or a restart only pauses it; a
+read model that fails keeps it, and with it the old values, until it projects the redaction, and a
+rebuild that fails is tried again a poll later: the lag in `getLag` and `bounda status`, and the
+worker's log, show both.
+
+A person who [contested the accuracy](#restricting-processing) of their data is usually restricted
+while it is checked: `redact` is allowed then, as `forget` and the export are, and the command that
+appends the correction names the person's consent, `app.commands.correctEmail(payload, {
+processRestricted: "consent" })`, before the restriction is lifted with `unrestrict`. With a
+[forget ledger](#backups), a redaction is in the ledger before it commits, with the events and
+fields it was asked for, and a restore of a copy taken before it, or a commit that never happened,
+redacts them again at the next reconciliation, under its own id and time; without a ledger,
+`bounda restored` and `redact` again are how an operator puts it back. A redaction racing a
+forgetting is settled by whichever commits first, the other finding nothing left to open. A policy
+reacts to `PersonalDataRedacted` from `policies/bounda/<action>-on-personal-data-redacted.ts`, typed
+`PersonalDataRedactedEvent`, to tell those the data went to (article 19), and a read model may
+project it from `projections/bounda/personal-data-redacted.ts`.
+
+From the command line, `bounda redact <person> --from <file>` reads the events, one a line as JSON
+(see [the CLI reference](/reference/cli/#bounda-redact)).
+
 ## Personal data in read models
 
 A read model that projects an event with personal fields has copies of them in its rows. Its
@@ -513,6 +630,30 @@ that holds their personal data, in the default [category](#categories) or the on
 (`.personal({ category: "invoices" })`). The person's [export](#exporting-a-persons-data) includes
 the rows that name them, and a [query](#who-opened-what) of a read model with personal fields is
 recorded in the access log.
+
+A value derived from a person's data is their data too, a hash of their email as much as the email,
+so a read model that projects an event with personal fields says whose each row is with `.person()`,
+which lets a [redaction](#correcting-a-persons-data) hide the person's values at once, or states in
+its view that it keeps nothing of anyone's data, nor anything derived from it:
+
+```ts
+// app/read/orders-per-day/view.ts
+import type { View } from "./+types/view";
+
+export const fields = ({ f }: View.FieldsArgs) => ({
+  day: f.string().primaryKey(),
+  orders: f.number(),
+  total: f.number(),
+});
+
+// Counts and totals: nothing of the address or the note on an order.
+export const holdsPersonalData = false;
+```
+
+A read model that does neither does not compile in `.bounda/types.ts`, and the app refuses to start
+with `ConfigurationError`, naming the events. One that states it marks no field `.personal()` or
+`.person()`, a redaction neither hides nor rebuilds it and a forgetting leaves it as it is: the
+statement is the app's, and so is anything it keeps that the statement leaves out.
 
 ### Sealed at rest
 
@@ -1201,7 +1342,9 @@ holds no field of theirs; a fingerprint is a check value of a key, which opens n
 nothing once the key is gone. Forgetting someone again forgets what that forgetting asked for: a
 withdrawn consent again, never the person as a whole, nor the invoices a legal obligation keeps,
 and those kept again while their retention runs; a forgetting that only ended what an earlier one
-kept asks for nothing, since the retention ends it again on its own. Give it a store a restore of
+kept asks for nothing, since the retention ends it again on its own. Every change of a person's
+[restrictions](#restrictions-and-restores) and every [redaction](#correcting-a-persons-data) goes
+to it too, with the events and fields asked for, ids and names alone. Give it a store a restore of
 the database does not touch:
 
 ```ts
@@ -1581,6 +1724,33 @@ Durable Object's storage, read from inside the object with `durableObjectAdapter
 the whole database, so point it only at a test's, and call it before `app.stop()`: an
 in-memory database is gone once the app stops. It works on every adapter: the in-memory one,
 SQLite, the Durable Object and PostgreSQL alike, each through its `inspect()`.
+
+`expectRedacted` checks a [rectification](#correcting-a-persons-data): once fields of a person are
+redacted, that what they held can be read nowhere.
+
+```ts
+import { createTestApp, expectRedacted } from "@bounda-dev/core/testing";
+
+const [registered] = (await app.exportPersonalData("c-1")).events;
+await app.redact("c-1", { events: [{ ...registered, fields: ["email"] }] });
+await app.commands.correctEmail({ customerId: "c-1", email: "ana@new.example" });
+await app.runUntilIdle();
+await expectRedacted(app, "c-1");
+```
+
+It looks for every value the test app's redactions of the person made unreadable, as each read
+before, and the `values` the test adds, where `expectForgotten` looks, every table as stored, the
+forget ledger, the logs and, with `telemetry`, the spans, with the same rules and options for
+`values`, `telemetry` and `places`; and since the person still holds their keys, it also opens
+every value stored sealed that a key still held opens, so the old value copied into another event,
+a process's state, a command or a read model and left unredacted is found too. It rejects with
+`NotRedactedError`, whose `found` holds `{ value, store, row, field }` for each, a sealed one's
+field named with `(sealed)`, and whose message says what to do; and with an `Error` when it has
+nothing to look for. Given an adapter instead of the app it searches that adapter's tables as
+stored, for `values` alone. Either way it rejects while the worker has not settled a redaction of
+the person, a `found` of `store` `"readModel"` naming the event types it reached: until then a read
+model that projects one may hold a copy derived from the old value, a hash or a value reformatted,
+that no search finds.
 
 `expectRestricted` checks the other right a person may exercise, the restriction of their
 processing: once they are restricted, that what the app hands out holds nothing the restriction

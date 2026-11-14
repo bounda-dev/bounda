@@ -1,6 +1,7 @@
 import type {
   ForgetLedger,
   ForgetLedgerEntry,
+  LedgerRedaction,
   LedgerRestriction,
 } from "../storage/forget-ledger.ts";
 import type { SqlDialect } from "./dialect.ts";
@@ -16,6 +17,7 @@ const COLUMNS = [
   "fingerprints",
   "categories",
   "restriction",
+  "redaction",
 ] as const;
 // Within the hundred parameters a Durable Object's SQLite binds to one statement.
 const ENTRIES_PER_INSERT = Math.floor(100 / COLUMNS.length);
@@ -130,6 +132,21 @@ export const forgetLedgerRestrictionStatement: ForgetLedgerRestrictionStatementF
 ) =>
   `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"restriction" TEXT`;
 
+export interface ForgetLedgerRedactionStatementFunction {
+  (table: string, dialect: Pick<SqlDialect, "name">): string;
+}
+
+/**
+ * The sixth version: the redaction an entry records instead of a forgetting, as JSON, `NULL` for
+ * anything else, which every entry written before was. SQLite has no `IF NOT EXISTS` there, so
+ * its caller runs it only on a table without the column.
+ */
+export const forgetLedgerRedactionStatement: ForgetLedgerRedactionStatementFunction = (
+  table,
+  { name },
+) =>
+  `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"redaction" TEXT`;
+
 const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
   const categories: unknown = JSON.parse(String(row.categories ?? null));
   const entry: ForgetLedgerEntry = {
@@ -141,14 +158,16 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
   };
   const fingerprints: unknown = JSON.parse(String(row.fingerprints ?? null));
   const restriction = JSON.parse(String(row.restriction ?? null)) as LedgerRestriction | null;
+  const redaction = JSON.parse(String(row.redaction ?? null)) as LedgerRedaction | null;
   return {
     ...entry,
     ...(Array.isArray(fingerprints) ? { fingerprints: fingerprints.map(String) } : {}),
     ...(restriction === null ? {} : { restriction }),
+    ...(redaction === null ? {} : { redaction }),
   };
 };
 
-const SELECTED = `"event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction"`;
+const SELECTED = `"event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction"`;
 
 /**
  * The forget ledger of SQLite and PostgreSQL alike, in a table of its own that holds every
@@ -184,7 +203,16 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
         await db.run(
           `INSERT INTO ${table} (${COLUMNS.map((column) => `"${column}"`).join(", ")}) VALUES ${rows.join(", ")} ON CONFLICT ("tenant", "event_id") DO NOTHING`,
           chunk.flatMap(
-            ({ eventId, personId, forgottenAt, reason, fingerprints, categories, restriction }) => [
+            ({
+              eventId,
+              personId,
+              forgottenAt,
+              reason,
+              fingerprints,
+              categories,
+              restriction,
+              redaction,
+            }) => [
               tenant,
               eventId,
               personId,
@@ -193,6 +221,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
               fingerprints === undefined ? null : JSON.stringify(fingerprints),
               categories === null ? null : JSON.stringify(categories),
               restriction === undefined ? null : JSON.stringify(restriction),
+              redaction === undefined ? null : JSON.stringify(redaction),
             ],
           ),
         );

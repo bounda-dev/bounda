@@ -1,9 +1,15 @@
 import type { ReadModelTransaction } from "../../adapter/adapter.ts";
+import type { SealedValue } from "../../adapter/storage/personal-key-store.ts";
 import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
+import {
+  BOUNDA_AGGREGATE,
+  PERSONAL_DATA_FORGOTTEN_EVENT,
+  PERSONAL_DATA_REDACTED_EVENT,
+  type PersonalDataRedactedPayload,
+} from "../../modules/bounda-events.ts";
 import {
   type CheckpointClaim,
   type CheckpointedSubscriber,
@@ -16,6 +22,7 @@ import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { sealedClient } from "../read-model/sealed-client.ts";
 import { applyForgetting, isForgetting } from "../read-model/sealed-forgetting.ts";
+import { applyRedaction, isRedaction } from "../read-model/sealed-redaction.ts";
 import type { SealedLayout, SealingContext } from "../read-model/sealed-rows.ts";
 import { settleUnsettled } from "../read-model/sealed-settle.ts";
 import { sealedTable } from "../read-model/sealed-table.ts";
@@ -40,7 +47,17 @@ export interface BatchSealing {
   readonly layout: SealedLayout;
   readonly keys: SealingKeys;
   readonly indexer: BlindIndexer | null;
+  /**
+   * The old values each redaction of the batch kept, by the id of its `PersonalDataRedacted`.
+   */
+  readonly redacted?: RedactedValues;
 }
+
+/**
+ * The old values redactions kept, sealed under their persons' keys, by the id of each
+ * `PersonalDataRedacted`.
+ */
+export type RedactedValues = ReadonlyMap<string, readonly SealedValue[]>;
 
 export interface ProjectBatchArgs {
   readonly readModel: ProjectionTarget;
@@ -56,6 +73,13 @@ export interface ProjectBatchArgs {
    * Stop after `maxMs` on `clock`, once the event in hand is projected.
    */
   readonly budget: ProjectionBudget;
+  /**
+   * Where the stream stood when the rebuild whose shadow the batch goes into started. A redaction
+   * committed before then reads as redacted to the whole rebuild, so it only writes over what
+   * quotes an old value; one committed after may find what the shadow derived from an old value
+   * it read before, so it hides the person's values there as in the live table.
+   */
+  readonly rebuilding?: { readonly startedAt: number };
 }
 
 export interface ProjectionBudget {
@@ -66,6 +90,20 @@ export interface ProjectionBudget {
 export interface ProjectBatchFunction {
   (args: ProjectBatchArgs): Promise<number>;
 }
+
+export interface ProjectsRedactedFunction {
+  (readModel: ProjectionTarget, event: StoredEvent): boolean;
+}
+
+/**
+ * Whether the read model projects an event type a redaction reached: what it holds of the person
+ * may derive from an old value without quoting it, so it is rebuilt.
+ */
+export const projectsRedacted: ProjectsRedactedFunction = (readModel, event) =>
+  (event.payload as PersonalDataRedactedPayload).events.some(
+    ({ aggregateType, type }) =>
+      (readModel.projectionsByEvent[qualifiedEventType(aggregateType, type)]?.length ?? 0) > 0,
+  );
 
 export interface BatchPersonsFunction {
   (events: readonly StoredEvent[]): readonly string[];
@@ -80,7 +118,9 @@ export const batchPersons: BatchPersonsFunction = (events) => [
   ...new Set(
     events.flatMap((event) => [
       ...openedUnder(event).map(({ person }) => person),
-      ...(isForgetting(event) ? [(event.payload as { personId: string }).personId] : []),
+      ...(isForgetting(event) || isRedaction(event)
+        ? [(event.payload as { personId: string }).personId]
+        : []),
     ]),
   ),
 ];
@@ -99,6 +139,7 @@ export const projectBatch: ProjectBatchFunction = async ({
   logger,
   errorText,
   budget: { clock, maxMs },
+  rebuilding,
 }) => {
   const started = clock.now().getTime();
   let current: StoredEvent | null = null;
@@ -128,6 +169,17 @@ export const projectBatch: ProjectBatchFunction = async ({
           table: transaction.table,
           keys: sealing.keys,
           event,
+        });
+      }
+      if (isRedaction(event)) {
+        await applyRedaction({
+          context,
+          table: transaction.table,
+          event,
+          values: sealing.redacted?.get(event.id) ?? [],
+          derives:
+            (rebuilding === undefined || event.position > rebuilding.startedAt) &&
+            projectsRedacted(readModel, event),
         });
       }
     } catch (error) {
@@ -177,6 +229,7 @@ export const projectBatch: ProjectBatchFunction = async ({
 interface ProjectionClaim extends CheckpointClaim {
   readonly transaction: Pick<ReadModelTransaction, "table" | "client" | "unsettled">;
   readonly keys: SealingKeys;
+  readonly redacted: RedactedValues;
 }
 
 /**
@@ -185,12 +238,17 @@ interface ProjectionClaim extends CheckpointClaim {
 export interface SealingSource {
   readonly keys: Pick<PersonalKeys, "heldAllOf">;
   readonly indexer: BlindIndexer | null;
+  /**
+   * Where the old values a redaction kept are read, by its event's id.
+   */
+  readonly redactions: (eventId: string) => Promise<readonly SealedValue[]>;
 }
 
 export interface WithKeysArgs<T> {
   readonly keys: SealingSource["keys"];
   readonly events: readonly StoredEvent[];
-  readonly run: (keys: SealingKeys) => Promise<T>;
+  readonly redactions: SealingSource["redactions"];
+  readonly run: (keys: SealingKeys, redacted: RedactedValues) => Promise<T>;
 }
 
 export interface WithKeysFunction {
@@ -202,12 +260,16 @@ export interface WithKeysFunction {
  * first; when it needs others, it runs again once they are fetched, outside the transaction it
  * undid.
  */
-export const withKeys: WithKeysFunction = async ({ keys, events, run }) => {
+export const withKeys: WithKeysFunction = async ({ keys, events, redactions, run }) => {
   const ring = createSealingKeyRing({ keys, fetching: false });
   await ring.fetch(batchPersons(events));
+  const redacted = new Map<string, readonly SealedValue[]>();
+  for (const event of events.filter(isRedaction)) {
+    redacted.set(event.id, await redactions(event.id));
+  }
   for (;;) {
     try {
-      return await run(ring);
+      return await run(ring, redacted);
     } catch (error) {
       if (!(error instanceof KeysMissingError)) throw error;
       await ring.fetch(error.persons);
@@ -257,7 +319,8 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
       withKeys({
         keys: sealing.keys,
         events,
-        run: (keys) =>
+        redactions: sealing.redactions,
+        run: (keys, redacted) =>
           storage.transact({
             subscriber: name,
             wait,
@@ -268,15 +331,16 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
                   transaction.checkpointStore.compareAndSet(name, expected, position),
                 transaction,
                 keys,
+                redacted,
               }),
           }),
       }),
-    process: (events, { transaction, keys }) =>
+    process: (events, { transaction, keys, redacted }) =>
       projectBatch({
         readModel,
         events,
         transaction,
-        sealing: { layout, keys, indexer: sealing.indexer },
+        sealing: { layout, keys, indexer: sealing.indexer, redacted },
         logger,
         errorText,
         budget,
@@ -288,8 +352,9 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
     ...subscriber,
     reactsTo: (qualified) =>
       (readModel.projectionsByEvent[qualified]?.length ?? 0) > 0 ||
-      (forgets && qualified === FORGOTTEN),
+      (forgets && (qualified === FORGOTTEN || qualified === REDACTED)),
   };
 };
 
 const FORGOTTEN = qualifiedEventType(BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT);
+const REDACTED = qualifiedEventType(BOUNDA_AGGREGATE, PERSONAL_DATA_REDACTED_EVENT);

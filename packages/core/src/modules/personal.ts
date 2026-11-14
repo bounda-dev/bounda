@@ -161,6 +161,28 @@ export type HasPersonalFields<Module> = Module extends unknown
     : false
   : never;
 
+type PersonalKeysOf<Schema> =
+  Schema extends z.ZodObject<infer Shape>
+    ? Extract<
+        { [Key in keyof Shape]: IsPersonal<Shape[Key]> extends true ? Key : never }[keyof Shape],
+        string
+      >
+    : never;
+
+/**
+ * The top-level fields an event module's payload marks with `personal`, `never` for none.
+ */
+export type PersonalPayloadFieldsOf<Module> = PersonalKeysOf<SchemaOf<Module>>;
+
+type StateSchemaOf<Module> = Module extends { readonly state: (args: never) => infer Schema }
+  ? Schema
+  : never;
+
+/**
+ * The top-level fields a process module's `state` marks with `personal`, `never` for none.
+ */
+export type PersonalStateFieldsOf<Module> = PersonalKeysOf<StateSchemaOf<Module>>;
+
 type FieldsOf<View> = View extends { readonly fields: (args: never) => infer Fields }
   ? Fields
   : never;
@@ -181,14 +203,22 @@ type IsUnion<Type, All = Type> = Type extends unknown
     : true
   : never;
 
+type DeclaresNoPersonalData<View> = View extends { readonly holdsPersonalData: false }
+  ? true
+  : false;
+
+type ForgettingMessage<Name extends string> =
+  `Read model ${Name} projects personal data, so it needs fields marked .personal() or projections/bounda/personal-data-forgotten.ts`;
+
 /**
  * `true` when the read model `Name`, whose view module is `View`, may project `Modules`: when it
- * marks at most one field with `.person()`, has one as soon as it marks a field with `.personal()`,
- * and projects `PersonalDataForgotten` (`Handles`) as soon as it keeps a field in the clear with
- * `.personal({ clear: true })`, or marks no field `.personal()` while one of `Modules` has a
- * personal field. Fields sealed at rest need no such projection: forgetting leaves them unreadable.
- * Otherwise a message saying what to add, which the generator's `.bounda/types.ts` fails to compile
- * on.
+ * marks at most one field with `.person()`, has one as soon as it marks a field with `.personal()`
+ * or projects one of `Modules` with a personal field, unless its view exports `holdsPersonalData =
+ * false` and marks nothing; and projects `PersonalDataForgotten` (`Handles`) as soon as it keeps a
+ * field in the clear with `.personal({ clear: true })`, or marks no field `.personal()` while one of
+ * `Modules` has a personal field. Fields sealed at rest need no such projection: forgetting leaves
+ * them unreadable. Otherwise a message saying what to add, which the generator's
+ * `.bounda/types.ts` fails to compile on.
  */
 export type ForgetsPersonalData<
   Name extends string,
@@ -198,16 +228,26 @@ export type ForgetsPersonalData<
 > =
   true extends IsUnion<MarkedKeys<FieldsOf<View>, "person">>
     ? `Read model ${Name} marks more than one field with .person(); keep the one that names whose the row is`
-    : [MarkedKeys<FieldsOf<View>, "personal">] extends [never]
-      ? Handles extends true
+    : true extends DeclaresNoPersonalData<View>
+      ? [MarkedKeys<FieldsOf<View>, "person" | "personal">] extends [never]
         ? true
-        : true extends HasPersonalFields<Modules>
-          ? `Read model ${Name} projects personal data, so it needs fields marked .personal() or projections/bounda/personal-data-forgotten.ts`
+        : `Read model ${Name} exports holdsPersonalData = false, so it marks no field with .personal() or .person()`
+      : [MarkedKeys<FieldsOf<View>, "personal">] extends [never]
+        ? true extends HasPersonalFields<Modules>
+          ? [View] extends [never]
+            ? Handles extends true
+              ? true
+              : ForgettingMessage<Name>
+            : [MarkedKeys<FieldsOf<View>, "person">] extends [never]
+              ? `Read model ${Name} projects personal data, so it needs a field marked .person(), the id of the person each row is about, or export const holdsPersonalData = false from its view.ts when it keeps nothing derived from that data`
+              : Handles extends true
+                ? true
+                : ForgettingMessage<Name>
           : true
-      : [MarkedKeys<FieldsOf<View>, "person">] extends [never]
-        ? `Read model ${Name} has fields marked .personal(), so it needs a field marked .person(): the id of the person they belong to`
-        : Handles extends true
-          ? true
-          : [ClearKeys<FieldsOf<View>>] extends [never]
+        : [MarkedKeys<FieldsOf<View>, "person">] extends [never]
+          ? `Read model ${Name} has fields marked .personal(), so it needs a field marked .person(): the id of the person they belong to`
+          : Handles extends true
             ? true
-            : `Read model ${Name} keeps fields marked .personal({ clear: true }), so it needs projections/bounda/personal-data-forgotten.ts`;
+            : [ClearKeys<FieldsOf<View>>] extends [never]
+              ? true
+              : `Read model ${Name} keeps fields marked .personal({ clear: true }), so it needs projections/bounda/personal-data-forgotten.ts`;

@@ -1,6 +1,7 @@
 import type {
   AccessOutcome,
   AfterOptions,
+  Registry as AnyRegistry,
   AppRegistry,
   AppStatus,
   BoundaApp,
@@ -38,6 +39,7 @@ import type {
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
+  ExportedRedaction,
   ExportedRestricted,
   ExportedRow,
   ExportedScheduledCommand,
@@ -73,6 +75,8 @@ import type {
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
   PersonalDataForgottenReason,
+  PersonalDataRedactedEvent,
+  PersonalDataRedactedPayload,
   PersonalFunction,
   PersonalOptions,
   PersonFunction,
@@ -86,6 +90,7 @@ import type {
   ProcessingRestrictionLiftedEvent,
   ProcessingRestrictionLiftedPayload,
   ProcessModule,
+  ProcessStateEventType,
   ProcessStatus,
   QueriesFacade,
   QueryOptions,
@@ -94,6 +99,10 @@ import type {
   ReactionForgetFunction,
   ReadClient,
   ReadEventsArgs,
+  RedactedEvent,
+  RedactedFields,
+  RedactionTarget,
+  RedactOptions,
   RejectedDispatch,
   RejectFunction,
   RejectionCodeOf,
@@ -902,6 +911,7 @@ describe("personal data", () => {
       readonly exportedAt: string;
       readonly categories: Readonly<Record<string, ExportedCategory>>;
       readonly restrictions: readonly ProcessingRestriction[];
+      readonly redactions: readonly ExportedRedaction[];
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
@@ -934,6 +944,12 @@ describe("personal data", () => {
       readonly data: ExportedData;
       readonly categories: ExportedCategories;
       readonly restricted: ExportedRestricted;
+      readonly redacted: readonly string[];
+    }>();
+    expectTypeOf<ExportedRedaction>().toEqualTypeOf<{
+      readonly eventId: string;
+      readonly at: string;
+      readonly events: readonly { readonly id: string; readonly fields: readonly string[] }[];
     }>();
     expectTypeOf<ExportedScheduledCommand>().toEqualTypeOf<{
       readonly commandId: string;
@@ -997,6 +1013,77 @@ describe("personal data", () => {
     void app.restrict("c-1", { ground: "legal-claims" });
     void app.unrestrict("c-1", { notice: "7d", ground: "legal-claims" });
     void app.unrestrict("c-1", { notice: "given" });
+  });
+
+  it("lets every client redact the personal fields of a person's events, typed by event type", () => {
+    expectTypeOf<BoundaApp<Registry>["redact"]>().toEqualTypeOf<
+      (personId: string, options: RedactOptions<Registry>) => Promise<StoredDispatch>
+    >();
+    expectTypeOf<BoundaApp<Registry>["redact"]>().toEqualTypeOf<BoundaClient<Registry>["redact"]>();
+    expectTypeOf<RedactOptions<Registry>>().toEqualTypeOf<{
+      readonly events: readonly RedactionTarget<Registry>[];
+    }>();
+    expectTypeOf<RedactionTarget<Registry>>().toEqualTypeOf<
+      | RedactedFields<"customer", "CustomerRegistered", "email">
+      | RedactedFields<"order", "OrderPlaced", "note">
+      | RedactedFields<"process:order.orderPayment", ProcessStateEventType, "contact">
+    >();
+    expectTypeOf<RedactionTarget<AnyRegistry>>().toEqualTypeOf<RedactedFields>();
+    expectTypeOf<RedactedFields>().toEqualTypeOf<{
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly type: string;
+      readonly id: string;
+      readonly fields: readonly string[];
+    }>();
+    expectTypeOf<ProcessStateEventType>().toEqualTypeOf<
+      "ProcessStarted" | "ProcessHandled" | "ProcessDeadlineReached" | "ProcessTimedOut"
+    >();
+    expectTypeOf<
+      PersonalDataRedactedEvent["payload"]
+    >().toEqualTypeOf<PersonalDataRedactedPayload>();
+    expectTypeOf<PersonalDataRedactedPayload>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly events: readonly RedactedEvent[];
+      readonly categories: readonly PersonalCategoryName[];
+      readonly cancelledCommands: readonly CancelledCommand[];
+      readonly removedDeadLetters: readonly RemovedDeadLetter[];
+    }>();
+    const placed = { aggregateType: "order", aggregateId: "o-1", id: "e-1" } as const;
+    // @ts-expect-error a redaction names the events to reach
+    void app.redact("c-1", {});
+    // @ts-expect-error a field the event does not mark personal
+    void app.redact("c-1", { events: [{ ...placed, type: "OrderPlaced", fields: ["total"] }] });
+    // @ts-expect-error an event type that marks no personal field
+    void app.redact("c-1", { events: [{ ...placed, type: "OrderPaid", fields: ["reference"] }] });
+    const otherField = {
+      ...placed,
+      aggregateType: "customer",
+      type: "CustomerRegistered",
+      fields: ["note"],
+    } as const;
+    // @ts-expect-error a field of another event type
+    void app.redact("c-1", { events: [otherField] });
+    const stateless = {
+      ...placed,
+      aggregateType: "process:order.orderPayment",
+      type: "ProcessCompleted",
+      fields: ["contact"],
+    } as const;
+    // @ts-expect-error a lifecycle event that carries no state
+    void app.redact("c-1", { events: [stateless] });
+    void app.redact("c-1", {
+      events: [
+        { ...placed, type: "OrderPlaced", fields: ["note"] },
+        { ...placed, aggregateType: "customer", type: "CustomerRegistered", fields: ["email"] },
+        {
+          ...placed,
+          aggregateType: "process:order.orderPayment",
+          type: "ProcessHandled",
+          fields: ["contact"],
+        },
+      ],
+    });
   });
 
   it("lets a command, a query, a policy and a process name the basis they process restricted data on", () => {

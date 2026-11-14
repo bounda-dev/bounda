@@ -25,6 +25,7 @@ import { openedUnder } from "../personal-data/event-store.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import type { ForgetLedgerReconciliation } from "../personal-data/reconciliation.ts";
+import { REDACTION_SCRUB_COMMAND, type RedactionScrubPayload } from "../personal-data/redaction.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import {
   LIFT_RESTRICTION_COMMAND,
@@ -109,6 +110,11 @@ export interface CreateScheduledCommandWorkerArgs {
    */
   readonly backfill?: PersonalDataBackfill | undefined;
   /**
+   * What settles the entry a redaction leaves for the read models, once they all passed it and
+   * those it reached were rebuilt.
+   */
+  readonly redactionScrubs?: RedactionScrubs | undefined;
+  /**
    * Checked on every pass: a database found gone back to an earlier copy has every background
    * job start over from what it holds, the attempts the jobs counted with it.
    */
@@ -126,6 +132,19 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
+}
+
+/**
+ * How the worker settles a redaction's scrub entry.
+ */
+export interface RedactionScrubs {
+  /**
+   * Moves the read models toward the redaction: `ready` once each holding personal fields, and
+   * each rebuild of one, is past it, and each projecting an event type it reached was rebuilt from
+   * after it; `progressed` when this call ran a slice of such a rebuild; `waiting` otherwise.
+   */
+  advance(payload: RedactionScrubPayload): Promise<"ready" | "progressed" | "waiting">;
+  settle(entry: ScheduledCommand): Promise<void>;
 }
 
 export interface CreateScheduledCommandWorkerFunction {
@@ -193,6 +212,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   reconciliation,
   intentions,
   backfill,
+  redactionScrubs,
   restores,
   onRestored,
   reactive,
@@ -242,6 +262,34 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const isRestrictionLift = (entry: ScheduledCommand): boolean =>
     entry.command.type === LIFT_RESTRICTION_COMMAND;
+
+  const isRedactionScrub = (entry: ScheduledCommand): boolean =>
+    entry.command.type === REDACTION_SCRUB_COMMAND;
+
+  // A redaction's entry is completed once every read model wrote over the old values it kept,
+  // which then go with it; until then it is handed back, never counting an attempt: due at once
+  // after a slice of a rebuild, so the next pass runs the next one, or a poll later.
+  const settleScrub = async (entry: ClaimedCommand): Promise<void> => {
+    let delayMs = config.runtime.dispatcher.pollIntervalMs;
+    try {
+      const step = await redactionScrubs?.advance(entry.command.payload as RedactionScrubPayload);
+      if (step === "ready") {
+        await redactionScrubs?.settle(entry);
+        await storage.scheduler.complete(entry);
+        return;
+      }
+      if (step === "progressed") delayMs = 0;
+    } catch (error) {
+      logger.error("a redaction could not be settled; the worker tries again", {
+        dedupeKey: entry.dedupeKey,
+        error,
+      });
+    }
+    await storage.scheduler.defer({
+      claim: entry,
+      executeAt: new Date(clock.now().getTime() + delayMs),
+    });
+  };
 
   // A deadline waits for the process runner; a restricted retry for every runner, since any of
   // them may still have a refusal to write.
@@ -650,7 +698,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       for (const entry of due) {
         try {
           const late = clock.now().getTime() - claimedAt.getTime() > startWithinMs;
-          if (!late && ready(entry)) await execute(entry);
+          if (isRedactionScrub(entry)) await settleScrub(entry);
+          else if (!late && ready(entry)) await execute(entry);
           else await deferToItsTime(entry, storage);
         } catch (error) {
           if (error instanceof ScheduledClaimLostError) {

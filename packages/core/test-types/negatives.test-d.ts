@@ -342,6 +342,36 @@ describe("what does not compile", () => {
     void checks;
   });
 
+  it("a read model that projects personal data and says neither whose its rows are nor that it holds none", () => {
+    type Expect<Check extends true> = Check;
+    type Registered =
+      typeof import("./fixtures/order-app/app/domain/customer/customer-registered.ts");
+    const unmapped = {
+      fields: ({ f }: FieldsArgs) => ({ plan: f.string().primaryKey(), customers: f.number() }),
+    };
+    const stated = { ...unmapped, holdsPersonalData: false as const };
+    const statedButMarked = {
+      fields: ({ f }: FieldsArgs) => ({ customerId: f.string().primaryKey().person() }),
+      holdsPersonalData: false as const,
+    };
+    const mapped = {
+      fields: ({ f }: FieldsArgs) => ({ customerId: f.string().primaryKey().person() }),
+    };
+    type Unmapped = Expect<
+      // @ts-expect-error it needs a .person() field or holdsPersonalData = false
+      ForgetsPersonalData<"plans", Registered, true, typeof unmapped>
+    >;
+    type Stated = Expect<ForgetsPersonalData<"plans", Registered, false, typeof stated>>;
+    type StatedButMarked = Expect<
+      // @ts-expect-error a read model that holds no personal data marks no field
+      ForgetsPersonalData<"plans", Registered, true, typeof statedButMarked>
+    >;
+    type Mapped = Expect<ForgetsPersonalData<"plans", Registered, true, typeof mapped>>;
+    type Unprojected = Expect<ForgetsPersonalData<"plans", never, false, typeof unmapped>>;
+    const checks: [Unmapped?, Stated?, StatedButMarked?, Mapped?, Unprojected?] = [];
+    void checks;
+  });
+
   it("marking a field that is not a string as the person, or a field twice", () => {
     const fields = ({ f }: FieldsArgs) => ({
       // @ts-expect-error the person field holds the person's id, a string

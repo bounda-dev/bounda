@@ -853,6 +853,92 @@ describe("bounda forgotten and bounda forget", () => {
     ]);
   });
 
+  it("redacts the fields listed of a person's events, and refuses a list it cannot read", async () => {
+    const memberId = `m-${Date.now()}-redacted`;
+    const app = await open();
+    await app.commands.join({ memberId, name: "Ivo Wrongname" });
+    const [joined] = (await app.exportPersonalData(memberId)).events;
+    await app.stop();
+    if (joined === undefined) throw new Error("not joined");
+    const dir = await mkdtemp(join(tmpdir(), "bounda-cli-redact-"));
+    const list = join(dir, "redact.jsonl");
+    const { aggregateType, aggregateId, type, id } = joined;
+    await writeFile(
+      list,
+      `${JSON.stringify({ aggregateType, aggregateId, type, id, fields: ["name"] })}\n\n`,
+    );
+
+    const help = await cli(["redact", "--help"], fixture);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "redact [options] <person> rectify a person's data (article 16)",
+    );
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "Arguments: person the id of the person whose data is wrong",
+    );
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "--from <file> the events, one a line as JSON",
+    );
+    const redacted = await cli(
+      ["redact", memberId, "--from", list, "--actor", "operator-1"],
+      fixture,
+    );
+    expect(redacted).toMatchObject({ code: EXIT_OK, stdout: `redacted 1 event of ${memberId}\n` });
+    const missing = join(dir, "missing.jsonl");
+    await writeFile(
+      missing,
+      JSON.stringify({ aggregateType, aggregateId, type, id: `${id}-missing`, fields: ["name"] }),
+    );
+    const unknown = await cli(["redact", memberId, "--from", missing], fixture);
+    expect(unknown.code).toBe(EXIT_FAILURE);
+    expect(unknown.stderr).toContain("ValidationError (VALIDATION_FAILED)");
+    const again = await cli(["redact", memberId, "--from", list], fixture);
+    expect(again.stdout).toBe(
+      `nothing of ${memberId} left to redact: what was listed reads as null already\n`,
+    );
+    const broken = join(dir, "broken.jsonl");
+    await writeFile(broken, `${JSON.stringify({ id, fields: ["name"] })}\nIvo Wrongname\n`);
+    const refused = await cli(["redact", memberId, "--from", broken], fixture);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(refused.stderr).toContain("line 1 needs the event's aggregateType");
+    expect(refused.stderr).not.toContain("Wrongname");
+    const pairId = `${memberId}-pair`;
+    const pairApp = await open();
+    await pairApp.commands.join({ memberId: pairId, name: "Ivo Wrongname" });
+    await pairApp.commands.join({ memberId: pairId, name: "Ivo Wrongname" });
+    const joins = (await pairApp.exportPersonalData(pairId)).events;
+    await pairApp.stop();
+    const pair = join(dir, "pair.jsonl");
+    await writeFile(
+      pair,
+      [...joins, ...joins]
+        .map((event) =>
+          JSON.stringify({
+            aggregateType: event.aggregateType,
+            aggregateId: event.aggregateId,
+            type: event.type,
+            id: event.id,
+            fields: ["name"],
+          }),
+        )
+        .join("\n"),
+    );
+    expect((await cli(["redact", pairId, "--from", pair], fixture)).stdout).toBe(
+      `redacted 2 events of ${pairId}\n`,
+    );
+    const noList = await cli(["redact", memberId], fixture);
+    expect(noList.code).not.toBe(EXIT_OK);
+    await rm(dir, { recursive: true, force: true });
+
+    const after = await open();
+    const exported = await after.exportPersonalData(memberId);
+    const redactions = (await after.events.read({ limit: 1_000 }))
+      .filter((event) => event.type === "PersonalDataRedacted" && event.aggregateId === memberId)
+      .map(({ metadata }) => metadata.actor);
+    await after.stop();
+    expect(exported.events[0]).toMatchObject({ data: { name: null }, redacted: ["name"] });
+    expect(redactions).toEqual(["operator-1"]);
+  });
+
   it("refuses a forget that names no one, or both a person and a list", async () => {
     const neither = await cli(["forget"], fixture);
     expect(neither.code).toBe(EXIT_CONVENTION);

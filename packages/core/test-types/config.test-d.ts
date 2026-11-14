@@ -1,4 +1,4 @@
-import type { PersonalDataForgottenReason } from "@bounda-dev/core";
+import type { PersonalDataForgottenReason, RedactedEvent } from "@bounda-dev/core";
 import {
   type DurationInput,
   ERROR_TEXT_VARIABLE,
@@ -13,6 +13,7 @@ import type {
   AdapterDefinition,
   ForgetLedger,
   ForgetLedgerEntry,
+  LedgerRedaction,
   LedgerRestriction,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
@@ -435,6 +436,17 @@ describe("defineConfig", () => {
       readonly reason: PersonalDataForgottenReason;
       readonly fingerprints?: readonly string[];
       readonly restriction?: LedgerRestriction;
+      readonly redaction?: LedgerRedaction;
+    }>();
+    expectTypeOf<LedgerRedaction>().toEqualTypeOf<{
+      readonly events: readonly RedactedEvent[];
+    }>();
+    expectTypeOf<RedactedEvent>().toEqualTypeOf<{
+      readonly id: string;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly type: string;
+      readonly fields: readonly string[];
     }>();
     expectTypeOf<LedgerRestriction["type"]>().toEqualTypeOf<
       "ProcessingRestricted" | "ProcessingRestrictionLiftAnnounced" | "ProcessingRestrictionLifted"

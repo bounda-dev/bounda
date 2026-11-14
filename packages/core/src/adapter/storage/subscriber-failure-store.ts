@@ -42,6 +42,15 @@ export type NewSubscriberFailure = Omit<
 > & { readonly failedAt: string };
 
 /**
+ * What `reseal` writes again of a failure: the text of its error, of the event it names.
+ */
+export interface ResealedSubscriberFailure {
+  readonly eventId: string;
+  readonly errorMessage: string | SealedValue;
+  readonly errorStack?: string | SealedValue;
+}
+
+/**
  * One row per subscriber, which only its last failure replaces.
  */
 export interface SubscriberFailureStore {
@@ -56,6 +65,12 @@ export interface SubscriberFailureStore {
    */
   resolve(subscriber: string, at: Date): Promise<void>;
   get(subscriber: string): Promise<StoredSubscriberFailure | null>;
+  /**
+   * Replaces the text of the subscriber's last failure, and nothing else of it, while that failure
+   * is still on `eventId`: a later failure keeps its own. Only the runtime calls it, to seal for
+   * good text that quotes a value a redaction made unreadable.
+   */
+  reseal(subscriber: string, failure: ResealedSubscriberFailure): Promise<void>;
   /**
    * Every subscriber's last failure, by subscriber.
    */

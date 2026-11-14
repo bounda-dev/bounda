@@ -162,7 +162,7 @@ const setup = async () => {
       aggregates,
       processes: { byName: {} },
       readModels,
-      sealing: { keys: storage.personalKeys, indexer: null },
+      sealing: { keys: storage.personalKeys, indexer: null, redactions: async () => [] },
       clock: createFixedClock(),
       batchSize,
       categories,
@@ -281,6 +281,7 @@ describe("exportPersonalData", () => {
       exportedAt: "2026-01-01T00:00:00.000Z",
       categories: exportedCategories,
       restrictions: [],
+      redactions: [],
       events: [
         {
           id: "customer-c-1-1",
@@ -293,6 +294,7 @@ describe("exportPersonalData", () => {
           data: { email: "ana@example.com" },
           categories: { email: "default" },
           restricted: [],
+          redacted: [],
         },
         {
           id: "order-o-1-1",
@@ -305,6 +307,7 @@ describe("exportPersonalData", () => {
           data: { note: "ring twice" },
           categories: { note: "invoices" },
           restricted: [],
+          redacted: [],
         },
         {
           id: "order-o-2-1",
@@ -317,6 +320,7 @@ describe("exportPersonalData", () => {
           data: {},
           categories: {},
           restricted: [],
+          redacted: [],
         },
         {
           id: "order-o-3-1",
@@ -329,6 +333,7 @@ describe("exportPersonalData", () => {
           data: { note: "leave at door" },
           categories: { note: "invoices" },
           restricted: [],
+          redacted: [],
         },
         {
           id: "customer-c-1-3",
@@ -341,6 +346,7 @@ describe("exportPersonalData", () => {
           data: {},
           categories: {},
           restricted: [],
+          redacted: [],
         },
       ],
       scheduledCommands: [],
@@ -646,7 +652,7 @@ describe("exportPersonalData", () => {
         aggregates,
         processes: { byName: {} },
         readModels: { ...readModels, byName: { ...readModels.byName, orderNotes: writing } },
-        sealing: { keys: storage.personalKeys, indexer: null },
+        sealing: { keys: storage.personalKeys, indexer: null, redactions: async () => [] },
         clock: createFixedClock(),
         batchSize: 3,
         categories,
@@ -689,7 +695,7 @@ describe("exportPersonalData", () => {
         aggregates,
         processes: { byName: {} },
         readModels: { ...readModels, byName: failing },
-        sealing: { keys: storage.personalKeys, indexer: null },
+        sealing: { keys: storage.personalKeys, indexer: null, redactions: async () => [] },
         clock: createFixedClock(),
         batchSize: 2,
         categories,
@@ -770,7 +776,7 @@ describe("exportPersonalData", () => {
       storage,
       aggregates,
       readModels,
-      sealing: { keys: storage.personalKeys, indexer: null },
+      sealing: { keys: storage.personalKeys, indexer: null, redactions: async () => [] },
       processes: { byName: {} },
       clock: createFixedClock(),
       batchSize: 2,

@@ -10,7 +10,11 @@ import type {
 } from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
 import type { CommandRejection, DispatchResult, StoredDispatch } from "../contracts/command.ts";
-import { ConfigurationError, ForgetLedgerUnreconciledError } from "../contracts/errors.ts";
+import {
+  ConfigurationError,
+  ForgetLedgerUnreconciledError,
+  RebuildSupersededError,
+} from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
@@ -20,6 +24,7 @@ import type {
   RestrictOptions,
   UnrestrictOptions,
 } from "../modules/personal-data.ts";
+import type { RedactOptions } from "../modules/redaction.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
 import type { AppEnv, AppRegistry, EnvSection } from "../register/index.ts";
@@ -60,6 +65,7 @@ import {
   forgetAgain,
   NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
+import { type Redactions, redactPersonalData, settleRedaction } from "./personal-data/redact.ts";
 import { marksFingerprint } from "./personal-data/resealing.ts";
 import {
   createRestrictedPersonsSubscriber,
@@ -83,14 +89,21 @@ import { createPolicySubscriber } from "./policy/runner.ts";
 import { createPorts, type TestChoice } from "./ports/ports.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner } from "./process/runner.ts";
-import { createProjectionSubscriber } from "./projection/runner.ts";
+import { createProjectionSubscriber, projectionSubscriberName } from "./projection/runner.ts";
 import { buildQueries } from "./query/build-queries.ts";
 import { createQueryRunner } from "./query/runner.ts";
-import { adapterForReadModel, buildReadModels } from "./read-model/build-read-models.ts";
+import {
+  adapterForReadModel,
+  buildReadModels,
+  checkReadModelPersons,
+} from "./read-model/build-read-models.ts";
 import {
   pendingRebuilds,
+  REDACTION_REBUILD_BATCHES,
   type RebuildReadModelResult,
   rebuildReadModelWith,
+  rebuildsPassed,
+  rebuiltMark,
 } from "./read-model/rebuild.ts";
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
@@ -205,6 +218,26 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * person as a whole.
    */
   unrestrict(personId: string, options: UnrestrictOptions): Promise<StoredDispatch>;
+  /**
+   * Rectification (article 16): seals for good the fields named of the events named, each one an
+   * event of the person's export with the personal fields whose value is wrong, so from then on
+   * they read as `null`, as forgotten ones do, everywhere: every handler, upcaster and rebuild
+   * reads `null`, the export lists the redaction and never the old value, and every read model
+   * that holds the person's personal fields writes `null` over each copy of an old value as it
+   * projects the `PersonalDataRedacted` appended to the stream `bounda:<personId>`, over every
+   * personal value of the person when it projects an event type the redaction reached, until the
+   * worker has rebuilt it in the background so nothing derived from an old value is left. Snapshots of
+   * those streams and the person's remembered rejections go, and so do the scheduled commands and
+   * dead letters whose payload holds an old value; an error text quoting one is sealed for good.
+   * Append the corrected value as an event of the app's own. Resolves like a command, so
+   * `catchUpReadModels({ through })` waits for the read models. A field no key of the person
+   * opens any more, redacted or forgotten already, is left as it is, and nothing left to redact
+   * appends nothing. With `runtime.personalData.forgetLedger`, the redaction is in the ledger
+   * before it commits, and a restore applies it again. Allowed while the person's processing is
+   * restricted. Rejects with `ValidationError` an empty id, no events, a field the event type does
+   * not mark `personal`, and an event the store does not hold or that does not name the person.
+   */
+  redact(personId: string, options: RedactOptions<R>): Promise<StoredDispatch>;
   /**
    * The same client, acting as `actor`: who does what it does, for the audit trail the event
    * store keeps. Every command it dispatches carries the actor in its metadata, and so does every
@@ -560,6 +593,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
     });
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
+    checkReadModelPersons({ registry, aggregates });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const storage = appStorage({
       storage: written,
@@ -599,6 +633,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       indexKeys: written.indexKeys,
       wrapping,
       clock,
+      scheduler: written.scheduler,
     });
     await settleReadModels({ readModels: Object.values(readModels.byName), sealing, logger });
     // One list per `runUntilIdle` under way.
@@ -720,6 +755,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
           });
     const { concurrencyRetries } = config.runtime.commands;
+    const redactions: Redactions = {
+      storage: written,
+      wrapping,
+      intentions,
+      aggregates,
+      processes: processDefinitions,
+      ids,
+      clock,
+      logger,
+      concurrencyRetries,
+      onRedacted: witness?.onRedacted,
+    };
     const retentionDue = recordsActivity
       ? retentionDueOf({
           categories: personalCategories,
@@ -746,6 +793,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               reconcileEveryMs: forgetLedger.config.reconcileEveryMs,
               keepForMs,
               forgotten: wrapping.drop,
+              redactions,
             }),
           };
     const reconciliation = reconciling?.reconciliation;
@@ -862,6 +910,48 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       reconciliation,
       intentions,
       backfill,
+      redactionScrubs: {
+        advance: async ({ position, types }) => {
+          for (const { name, storage: own, layout, projectionsByEvent } of Object.values(
+            readModels.byName,
+          )) {
+            // A read model whose view states it holds no personal data is taken at its word.
+            if (registry.readModels[name]?.view.holdsPersonalData === false) continue;
+            const personal = layout.personal.length > 0;
+            const derives = types.some((type) => (projectionsByEvent[type]?.length ?? 0) > 0);
+            if (!personal && !derives) continue;
+            const checkpoints = await own.checkpointStore.list();
+            const at = (subscriber: string): number =>
+              checkpoints.find((checkpoint) => checkpoint.subscriber === subscriber)?.position ??
+              -1;
+            // The live table hides the person's values once it projected the redaction.
+            if (personal && at(projectionSubscriberName(name)) < position) return "waiting";
+            if (!derives) {
+              if (!rebuildsPassed({ checkpoints, name, position })) return "waiting";
+              continue;
+            }
+            if (at(rebuiltMark(name)) >= position) continue;
+            // A rebuild under way that started before the redaction hides the person's values in its
+            // shadow as it projects it, and another one follows it.
+            try {
+              await rebuild(name, {
+                maxEvents: config.runtime.dispatcher.batchSize * REDACTION_REBUILD_BATCHES,
+              });
+            } catch (error) {
+              // Another instance's slice, or a rebuild run by hand, took over and goes on.
+              if (!(error instanceof RebuildSupersededError)) throw error;
+            }
+            return "progressed";
+          }
+          return "ready";
+        },
+        settle: (entry) =>
+          settleRedaction({
+            redactions,
+            entry,
+            batchSize: config.runtime.dispatcher.batchSize,
+          }),
+      },
       restores,
       onRestored: dispatcher.restored,
       reactive: following.map((subscriber) => subscriber.name),
@@ -1127,6 +1217,19 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 categories: personalCategories,
                 intentions,
                 options,
+              }),
+          }),
+        redact: (personId, options) =>
+          tracedOperation({
+            errorText,
+            operation: "redact",
+            actor,
+            run: () =>
+              redactPersonalData({
+                redactions,
+                personId,
+                options,
+                actor,
               }),
           }),
         as: (next) => {

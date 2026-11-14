@@ -130,6 +130,38 @@ describe.each(adapters)("a field moved to another category, on %s", (_name, adap
     await after.stop();
   });
 
+  it("is redacted under the category it was sealed anew in, and the scheduled command holding it goes", async () => {
+    const adapter = adapterOf();
+    const before = await start(adapter, "marketing");
+    await before.commands.registerCustomer?.({ customerId: "c-1", email: "ada@example.com" });
+    await before.commands.remindCustomer?.(
+      { customerId: "c-1", email: "ada@example.com" },
+      { delay: "1d" },
+    );
+    await before.runUntilIdle();
+    await before.stop();
+
+    const after = await start(adapter, "billing");
+    await after.runUntilIdle();
+    const [registered] = (await after.exportPersonalData("c-1")).events;
+    if (registered === undefined) throw new Error("not registered");
+    const redacted = await after.redact("c-1", { events: [{ ...registered, fields: ["email"] }] });
+    await after.runUntilIdle();
+    const [event] = await after.events.read({ after: redacted.position - 1, limit: 1 });
+    expect(event?.payload).toMatchObject({
+      categories: ["billing"],
+      cancelledCommands: [{ type: "RemindCustomer" }],
+    });
+    expect((await after.exportPersonalData("c-1")).events[0]).toMatchObject({
+      data: { email: null },
+      categories: { email: "billing" },
+      redacted: ["email"],
+    });
+    expect((await sealedEmail(adapter)).event?.category).toBe("billing");
+    expect((await adapter.createStorage().then((s) => s.scheduler.list())).length).toBe(0);
+    await after.stop();
+  });
+
   it("moves to and from the default category, and leaves what no key opens any more as it is", async () => {
     const adapter = adapterOf();
     const before = await start(adapter, undefined);

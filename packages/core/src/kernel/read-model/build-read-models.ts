@@ -8,6 +8,7 @@ import { projectionTriggers } from "../../modules/projection.ts";
 import type { QueryModule } from "../../modules/query.ts";
 import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
+import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { type SealedLayout, sealedLayoutOf } from "./sealed-rows.ts";
 
@@ -155,6 +156,46 @@ export const personalDataOf: PersonalDataOfFunction = ({ name, entry, fields }) 
   // Every adapter refuses a read model without exactly one.
   const primaryKey = Object.keys(fields).find((key) => fields[key]?.isPrimaryKey) as string;
   return { person, personal, primaryKey };
+};
+
+export interface CheckReadModelPersonsArgs {
+  readonly registry: Registry;
+  readonly aggregates: AggregatesRuntime;
+}
+
+export interface CheckReadModelPersonsFunction {
+  (args: CheckReadModelPersonsArgs): void;
+}
+
+// The rule `.bounda/types.ts` also fails to compile on: a read model that projects events with
+// personal fields says whose each row is, or that it keeps nothing derived from them, so a
+// redaction can tell which of its rows to hide.
+export const checkReadModelPersons: CheckReadModelPersonsFunction = ({ registry, aggregates }) => {
+  for (const [name, entry] of Object.entries(registry.readModels)) {
+    const marks = Object.values(entry.view.fields({ f: fieldBuilder })).map(({ mark }) => mark);
+    if (entry.view.holdsPersonalData === false) {
+      if (marks.some((mark) => mark !== null)) {
+        throw new ConfigurationError(
+          `Read model "${name}" exports holdsPersonalData = false, so it marks no field with .personal() or .person()`,
+        );
+      }
+      continue;
+    }
+    if (marks.includes("person")) continue;
+    const personal = Object.entries(entry.projections).flatMap(([aggregate, events]) =>
+      Object.keys(events)
+        .filter(
+          (event) =>
+            (aggregates.byName[aggregate]?.events[event]?.personal?.fields.length ?? 0) > 0,
+        )
+        .map((event) => `${aggregate}.${event}`),
+    );
+    if (personal.length > 0) {
+      throw new ConfigurationError(
+        `Read model "${name}" projects events with personal fields (${personal.join(", ")}), so it needs a field marked .person(), the id of the person each row is about, or export const holdsPersonalData = false from its view.ts when it keeps nothing derived from that data`,
+      );
+    }
+  }
 };
 
 interface CompileReadModelArgs {

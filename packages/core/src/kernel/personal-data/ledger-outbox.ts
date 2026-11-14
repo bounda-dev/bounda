@@ -5,9 +5,11 @@ import type {
 } from "../../adapter/storage/forget-ledger.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { PersonalDataRedactedPayload } from "../../modules/bounda-events.ts";
 import {
   BOUNDA_AGGREGATE,
   PERSONAL_DATA_FORGOTTEN_EVENT,
+  PERSONAL_DATA_REDACTED_EVENT,
   PROCESSING_RESTRICTED_EVENT,
   PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
   PROCESSING_RESTRICTION_LIFTED_EVENT,
@@ -91,6 +93,35 @@ export const restrictionEntry: RestrictionEntryFunction = (event) => ({
   restriction: { type: event.type, payload: event.payload } as LedgerRestriction,
 });
 
+export interface IsRedactionFunction {
+  (event: StoredEvent): boolean;
+}
+
+export const isRedaction: IsRedactionFunction = (event) =>
+  event.aggregateType === BOUNDA_AGGREGATE && event.type === PERSONAL_DATA_REDACTED_EVENT;
+
+export interface RedactionEntryFunction {
+  (event: StoredEvent): ForgetLedgerEntry;
+}
+
+/**
+ * The entry of a redaction, with the events and fields it reached, which a restore that lost it
+ * seals again.
+ */
+export const redactionEntry: RedactionEntryFunction = (event) => ({
+  personId: event.aggregateId,
+  categories: null,
+  eventId: event.id,
+  forgottenAt: event.timestamp,
+  reason: "requested",
+  redaction: { events: (event.payload as PersonalDataRedactedPayload).events },
+});
+
+const entryOf = (event: StoredEvent): ForgetLedgerEntry => {
+  if (isForgetting(event)) return forgettingEntry(event);
+  return isRedaction(event) ? redactionEntry(event) : restrictionEntry(event);
+};
+
 export interface LedgerEntriesArgs {
   readonly events: readonly StoredEvent[];
   /**
@@ -105,16 +136,16 @@ export interface LedgerEntriesFunction {
 }
 
 /**
- * The entries of the forgettings and changes of restrictions among `events`, but those already
- * older than `keepFor`, which a prune would remove anyway.
+ * The entries of the forgettings, changes of restrictions and redactions among `events`, but those
+ * already older than `keepFor`, which a prune would remove anyway.
  */
 export const ledgerEntries: LedgerEntriesFunction = ({ events, keepForMs, now }) =>
   events
-    .filter((event) => isForgetting(event) || isRestrictionChange(event))
+    .filter((event) => isForgetting(event) || isRestrictionChange(event) || isRedaction(event))
     .filter(
       (event) => keepForMs === null || Date.parse(event.timestamp) + keepForMs > now.getTime(),
     )
-    .map((event) => (isForgetting(event) ? forgettingEntry(event) : restrictionEntry(event)));
+    .map(entryOf);
 
 export interface CreateLedgerOutboxArgs {
   readonly ledger: ForgetLedger;
@@ -127,8 +158,8 @@ export interface CreateLedgerOutboxFunction {
 }
 
 /**
- * Follows the global stream from its first event and appends every `PersonalDataForgotten`, and
- * every change of restrictions, to the ledger, a batch at a time: the event store is the outbox, behind the intention each forgetting
+ * Follows the global stream from its first event and appends every `PersonalDataForgotten`, every
+ * change of restrictions and every redaction to the ledger, a batch at a time: the event store is the outbox, behind the intention each forgetting
  * writes before it commits, for the forgettings whose intention a ledger that is not strict did
  * not take. A batch the ledger refuses is delivered again, and so is every batch after a restored
  * database rolls the checkpoint back, which the ledger takes as the entries it holds already.

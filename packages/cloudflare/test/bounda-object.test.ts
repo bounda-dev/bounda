@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
-import { expectForgotten } from "@bounda-dev/core/testing";
+import { expectForgotten, expectRedacted } from "@bounda-dev/core/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
 import { configForObject, createBoundaObject } from "../src/bounda-object.ts";
@@ -161,6 +161,54 @@ describe("a Bounda Durable Object", () => {
     expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
   });
 
+  it("redacts a marked field in its SQLite, so the old value reads nowhere and the export lists the redaction", async () => {
+    const { stub, store } = open();
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "no bell" });
+    const [placed] = (await store.exportPersonalData("ada")).events;
+    if (placed === undefined) throw new Error("not placed");
+    const redacted = await store.redact("ada", {
+      events: [
+        {
+          aggregateType: "order",
+          aggregateId: placed.aggregateId,
+          type: "OrderPlaced",
+          id: placed.id,
+          fields: ["note"],
+        },
+      ],
+    });
+    expect(redacted).toMatchObject({ aggregateId: "ada", eventTypes: ["PersonalDataRedacted"] });
+    const after = await store.exportPersonalData("ada");
+    expect(after.events.map((event) => [event.type, event.data, event.redacted])).toEqual([
+      ["OrderPlaced", { note: null }, ["note"]],
+      ["PersonalDataRedacted", {}, []],
+    ]);
+    expect(after.redactions).toEqual([
+      {
+        eventId: redacted.eventIds[0],
+        at: expect.any(String),
+        events: [{ id: placed.id, fields: ["note"] }],
+      },
+    ]);
+    await runAlarm(stub);
+    const search = () =>
+      runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+        expectRedacted(durableObjectAdapter({ storage: state.storage }), "ada", {
+          values: ["no bell"],
+        }).catch((error: unknown) => error),
+      );
+    // The read model states it holds no personal data, yet keeps the note: the statement is the
+    // app's, so nothing rebuilds it, and the search finds what it left out until a rebuild.
+    expect(await search()).toMatchObject({
+      name: "NotRedactedError",
+      found: [{ value: "no bell", store: "bounda_rm_orders", row: "order_id=o-1", field: "note" }],
+    });
+    expect(await store.rebuildReadModel("orders")).toMatchObject({ done: true });
+    expect(await search()).toBeUndefined();
+    const refused = await rejection(store.redact("ada", { events: [] }));
+    expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
+  });
+
   it("restricts a person's processing, refusing their commands, and lifts it, arming the alarm that retries what was refused", async () => {
     const { stub, store } = open();
     await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada" });
@@ -243,7 +291,20 @@ describe("a Bounda Durable Object", () => {
       },
     });
     expect(forgotten.alarm).toBeLessThanOrEqual(Date.now());
-    await runAlarm(stub);
+    // `customers` marks `.person()`, so it also keeps which of its rows are restricted, through a
+    // subscriber no read-your-writes waits for: three events behind here, at most one event a
+    // subscriber an alarm in this object, each alarm arming the next at once while it lags. The
+    // runtime may run a due alarm on its own as well, so each one leaves it at most that far behind.
+    const restrictions = async () =>
+      (await store.getLag()).subscribers.find(
+        ({ subscriber }) => subscriber === "restrictions:customers",
+      )?.lag ?? 0;
+    expect(await restrictions()).toBeLessThanOrEqual(3);
+    for (const behind of [2, 1, 0]) {
+      if ((await restrictions()) > 0) expect(await alarmOf(stub)).toBeLessThanOrEqual(Date.now());
+      await runAlarm(stub);
+      expect(await restrictions()).toBeLessThanOrEqual(behind);
+    }
     expect((await store.getLag()).maxLag).toBe(0);
     expect(await settledAlarm(stub)).toBeNull();
   });

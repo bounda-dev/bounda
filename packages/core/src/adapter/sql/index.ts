@@ -26,6 +26,7 @@ export {
   forgetLedgerMarksStatement,
   forgetLedgerMarksTableFor,
   forgetLedgerReasonStatements,
+  forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
 } from "./forget-ledger.ts";

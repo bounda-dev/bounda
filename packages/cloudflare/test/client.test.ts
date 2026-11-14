@@ -9,6 +9,14 @@ import { connect } from "../src/client.ts";
 import type { registry } from "./app.ts";
 import { recordingStub } from "./recording-stub.ts";
 
+const redacted = {
+  aggregateType: "order",
+  aggregateId: "o-1",
+  type: "OrderPlaced",
+  id: "e-1",
+  fields: ["note"],
+} as const;
+
 describe("connect", () => {
   it("sends every command with its consistency, read-your-writes unless told otherwise", async () => {
     const eventual = recordingStub();
@@ -27,29 +35,33 @@ describe("connect", () => {
     ]);
   });
 
-  it("forgets a person, restricts their processing and lifts it with the same consistency as its commands", async () => {
+  it("forgets a person, restricts their processing, lifts it and redacts with the same consistency as its commands", async () => {
     const eventual = recordingStub();
     const soon = connect<typeof registry>(eventual.stub, { consistency: "eventual" });
     await soon.forget("c-1");
     await soon.forget("c-1", { categories: ["default"] });
     await soon.restrict("c-1", { ground: "accuracy-contested" });
     await soon.unrestrict("c-1", { notice: "given" });
+    await soon.redact("c-1", { events: [redacted] });
     const byDefault = recordingStub();
     const store = connect<typeof registry>(byDefault.stub);
     await store.forget("c-2");
     await store.restrict("c-2", { ground: "accuracy-contested" });
     await store.unrestrict("c-2", { notice: "given" });
+    await store.redact("c-2", { events: [redacted] });
     expect([eventual.forgets, byDefault.forgets]).toEqual([
       [
         ["c-1", "eventual", undefined, undefined],
         ["c-1", "eventual", undefined, { categories: ["default"] }],
         ["restrict", "c-1", "eventual", undefined, { ground: "accuracy-contested" }],
         ["unrestrict", "c-1", "eventual", undefined, { notice: "given" }],
+        ["redact", "c-1", "eventual", undefined, { events: [redacted] }],
       ],
       [
         ["c-2", "read-your-writes", undefined, undefined],
         ["restrict", "c-2", "read-your-writes", undefined, { ground: "accuracy-contested" }],
         ["unrestrict", "c-2", "read-your-writes", undefined, { notice: "given" }],
+        ["redact", "c-2", "read-your-writes", undefined, { events: [redacted] }],
       ],
     ]);
   });
@@ -69,6 +81,7 @@ describe("connect", () => {
     await user.forget("c-1");
     await user.restrict("c-1", { ground: "accuracy-contested" });
     await user.unrestrict("c-1", { notice: "given" });
+    await user.redact("c-1", { events: [redacted] });
     await user.exportPersonalData("c-1");
     await user.deadLetters.list({ status: "failed" });
     await user.deadLetters.retry("l-1");
@@ -86,6 +99,7 @@ describe("connect", () => {
         ["c-1", "eventual", "user-1", undefined],
         ["restrict", "c-1", "eventual", "user-1", { ground: "accuracy-contested" }],
         ["unrestrict", "c-1", "eventual", "user-1", { notice: "given" }],
+        ["redact", "c-1", "eventual", "user-1", { events: [redacted] }],
       ],
       exports: [["c-1", "user-1"]],
       deadLetters: [

@@ -179,6 +179,12 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
           [limit ?? -1, offset],
         )
       ).map(toScheduled),
+    get: async (dedupeKey) => {
+      const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "dedupe_key" = ?`, [
+        dedupeKey,
+      ]);
+      return row === undefined ? null : toScheduled(row);
+    },
     listByPerson: async (person) =>
       (
         await db.all(

@@ -1,12 +1,13 @@
 import { type Adapter, isAdapter } from "../adapter/adapter.ts";
-import type { ForgetLedger, ForgetLedgerEntry } from "../adapter/storage/forget-ledger.ts";
+import type { ForgetLedger } from "../adapter/storage/forget-ledger.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 import type { BoundaClient } from "../kernel/app.ts";
 import { categoryOf, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
+import { needlesOf } from "../kernel/shared/value-search.ts";
 import type { PersonalCategoryName } from "../modules/personal-data.ts";
-import { type Leaf, leavesIn, matches, needlesOf } from "./search.ts";
+import { findIn, outsidePlaces, type Place, placesOfTable } from "./places.ts";
 import type { TelemetryRecording } from "./telemetry.ts";
 import type { TestWitness } from "./witness.ts";
 
@@ -107,7 +108,7 @@ export interface ExpectForgottenFunction {
 
 const witnessed = new WeakMap<object, TestApps>();
 
-interface TestApps {
+export interface TestApps {
   readonly witness: TestWitness;
   readonly adapters: readonly Adapter[];
   /**
@@ -134,20 +135,14 @@ export const registerTestApp: RegisterTestAppFunction = (app, apps) => {
   witnessed.set(app, apps);
 };
 
-const LEDGER_PAGE = 500;
+export interface TestAppsOfFunction {
+  (target: object): TestApps | undefined;
+}
 
-const ledgerEntries = async (ledger: ForgetLedger): Promise<readonly ForgetLedgerEntry[]> => {
-  const entries: ForgetLedgerEntry[] = [];
-  for (;;) {
-    const last = entries.at(-1);
-    const page = await ledger.read({
-      limit: LEDGER_PAGE,
-      ...(last === undefined ? {} : { after: last }),
-    });
-    entries.push(...page);
-    if (page.length < LEDGER_PAGE) return entries;
-  }
-};
+/**
+ * What the app `createTestApp` returned was seen doing, `undefined` for anything else.
+ */
+export const testAppsOf: TestAppsOfFunction = (target) => witnessed.get(target);
 
 interface ExportedRecord {
   readonly data: Readonly<Record<string, unknown>>;
@@ -176,45 +171,6 @@ const exportedValues = (
   );
 };
 
-const rowOf = (table: InspectedTable, row: Readonly<Record<string, unknown>>, index: number) =>
-  table.key.length === 0
-    ? `row ${index + 1}`
-    : table.key.map((column) => `${column}=${String(row[column])}`).join(", ");
-
-interface Place {
-  readonly store: string;
-  readonly row: string;
-  readonly leaves: readonly Leaf[];
-  /**
-   * What to do about a value found here.
-   */
-  readonly advice: string;
-}
-
-const placesOfTable = (table: InspectedTable): readonly Place[] =>
-  table.rows.map((row, index) => ({
-    store: table.name,
-    row: rowOf(table, row, index),
-    advice: (table.store === null ? undefined : STORE_ADVICE[table.store]) ?? OTHERWISE,
-    leaves: Object.entries(row).flatMap(([column, value]) =>
-      leavesIn(value, table.opaque.includes(column)).map((leaf) => ({
-        ...leaf,
-        path: [column, ...leaf.path],
-      })),
-    ),
-  }));
-
-const pathOf = (path: readonly string[]): string =>
-  path.reduce(
-    (joined, step) => (step.startsWith("[") || joined === "" ? joined + step : `${joined}.${step}`),
-    "",
-  );
-
-// Where the runtime writes the text of an error: the fields of a log entry, and the attributes of a
-// span's exception event under OpenTelemetry's conventions, besides the span's status message.
-const LOG_ERROR_TEXT = new Set(["errorMessage", "errorStack"]);
-const SPAN_ERROR_TEXT = new Set(["exception.message", "exception.stacktrace"]);
-
 const LOGS_ADVICE =
   "A log entry quotes the value, and a log cannot be forgotten: log ids, never the data itself.";
 
@@ -223,6 +179,9 @@ const SPANS_ADVICE =
 
 const OTHERWISE =
   "Find where the value is written in the clear and mark the field it comes from, or remove it when the person is forgotten.";
+
+const adviceOf = (store: InspectedStore | null): string =>
+  (store === null ? undefined : STORE_ADVICE[store]) ?? OTHERWISE;
 
 const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
   readModel:
@@ -354,69 +313,17 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
     );
   }
 
-  const places: Place[] = tables.flatMap(placesOfTable);
-  if (apps !== undefined) {
-    apps.witness.logs.forEach((entry, index) => {
-      places.push({
-        store: "logs",
-        row: `entry ${index + 1} (${entry.level} "${entry.message}")`,
-        leaves: leavesIn({ message: entry.message, fields: entry.fields ?? {} }).filter(
-          (leaf) => apps.errorTextChosen || !LOG_ERROR_TEXT.has(leaf.path[1] ?? ""),
-        ),
-        advice: LOGS_ADVICE,
-      });
-    });
-    for (const ledger of apps.ledgers) {
-      for (const entry of await ledgerEntries(ledger)) {
-        places.push({
-          store: "forget ledger",
-          row: `eventId=${entry.eventId}`,
-          leaves: leavesIn(entry),
-          advice: OTHERWISE,
-        });
-      }
-    }
-  }
-  const errorTextSearched = apps?.errorTextChosen ?? true;
-  options.telemetry?.spans.forEach((span, index) => {
-    places.push({
-      store: "spans",
-      row: `span ${index + 1} ("${span.name}")`,
-      leaves: leavesIn(span).filter(
-        (leaf) => errorTextSearched || !(leaf.path[0] === "status" && leaf.path[1] === "message"),
-      ),
-      advice: SPANS_ADVICE,
-    });
-  });
-  options.telemetry?.spanEvents.forEach((event, index) => {
-    places.push({
-      store: "span events",
-      row: `event ${index + 1} ("${event.name}" of "${event.span}")`,
-      leaves: leavesIn(event).filter(
-        (leaf) => errorTextSearched || !SPAN_ERROR_TEXT.has(leaf.path[1] ?? ""),
-      ),
-      advice: SPANS_ADVICE,
-    });
-  });
-  for (const [store, value] of Object.entries(options.places ?? {})) {
-    places.push({ store, row: "as given", leaves: leavesIn(value), advice: OTHERWISE });
-  }
-
-  const advice = new Set<string>();
-  const found = places.flatMap((place) =>
-    place.leaves.flatMap((leaf) =>
-      needles
-        .filter((needle) => matches(needle, leaf))
-        .map((needle) => {
-          advice.add(place.advice);
-          return {
-            value: needle.value,
-            store: place.store,
-            row: place.row,
-            field: pathOf(leaf.path) || "value",
-          };
-        }),
-    ),
-  );
-  if (found.length > 0) throw new NotForgottenError(personId, found, [...advice]);
+  const places: Place[] = [
+    ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
+    ...(await outsidePlaces({
+      logs: apps?.witness.logs ?? [],
+      ledgers: apps?.ledgers ?? [],
+      telemetry: options.telemetry,
+      places: options.places,
+      errorText: apps?.errorTextChosen ?? true,
+      advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
+    })),
+  ];
+  const { found, advice } = findIn(places, needles);
+  if (found.length > 0) throw new NotForgottenError(personId, found, advice);
 };

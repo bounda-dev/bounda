@@ -145,7 +145,7 @@ const registry = {
     customers: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          customerId: f.string().primaryKey(),
+          customerId: f.string().primaryKey().person(),
         }),
       },
       projections: {

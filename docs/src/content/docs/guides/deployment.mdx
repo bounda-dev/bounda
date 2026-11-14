@@ -292,6 +292,17 @@ is the same, and the older rebuild stops at its next step with `RebuildSupersede
 (`REBUILD_SUPERSEDED`) without writing anything or dropping the table it no longer owns. A rebuild
 whose process died needs no clean-up either: the next one simply takes over.
 
+The worker rebuilds a read model of its own accord after a
+[redaction](/guides/personal-data/#correcting-a-persons-data) reaches an event type it projects, a
+few batches of `dispatcher.batchSize` events a pass, as `rebuildReadModel` does. A rebuild under
+way goes on whenever it started: one that started before the redaction, and may have copied the old
+value, hides the person's values in its table as the live read model does, and another rebuild
+follows it. A rebuild run by hand meanwhile is taken over by the worker's next slice, which goes on
+from where it got: wait for the worker's `read model rebuilt` log line instead. The read
+model's database keeps where the stream stood when its last rebuild started, under
+`read-model:rebuilt:<read model>`, and while one runs, under `read-model:rebuild-started:<read
+model>`.
+
 Two things the rebuild cannot do for you. A projection that writes through `client` with SQL
 naming the table by hand keeps writing to the live table, not to the fresh one — write projections
 through `table`. And a read model with millions of events takes as long as projecting them takes;

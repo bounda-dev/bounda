@@ -35,6 +35,7 @@ import { parseForgetList, parseSince, readForgotten, type Since } from "./forgot
 import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
+import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
 import { formatSchema, formatStatus } from "./status-output.ts";
 
@@ -475,6 +476,38 @@ const runRestrict = (
     return EXIT_OK;
   });
 
+interface RedactCommandOptions extends ActingOptions {
+  readonly from: string;
+}
+
+const runRedact = async (
+  personId: string,
+  options: RedactCommandOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const { from } = options;
+  let events: ReturnType<typeof parseRedactionList>;
+  try {
+    events = parseRedactionList(await readFile(resolve(cwd, from), "utf8"));
+  } catch (error) {
+    line(stderr, `error: ${from}: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  return withApp(options, cwd, stderr, async (app) => {
+    const redacted = await actingAs(app, options).redact(personId, { events });
+    const listed = new Set(events.map(({ id }) => id)).size;
+    line(
+      stdout,
+      redacted.eventIds.length === 0
+        ? `nothing of ${personId} left to redact: what was listed reads as null already`
+        : `redacted ${listed === 1 ? "1 event" : `${listed} events`} of ${personId}`,
+    );
+    return EXIT_OK;
+  });
+};
+
 interface UnrestrictCommandOptions extends ActingOptions {
   readonly notice: RestrictionNotice;
   readonly ground?: RestrictionGround;
@@ -889,6 +922,21 @@ export const runCli: RunCliFunction = async ({
       ),
   ).action(async (personId: string, options: UnrestrictCommandOptions) => {
     exitCode = await runUnrestrict(personId, options, cwd, stdout, stderr);
+  });
+
+  actingOptions(
+    program
+      .command("redact")
+      .description(
+        "rectify a person's data (article 16): seal for good the fields listed of their events, which read as null from then on everywhere, and have every read model write null over its copies",
+      )
+      .argument("<person>", "the id of the person whose data is wrong")
+      .requiredOption(
+        "--from <file>",
+        "the events, one a line as JSON, each as the person's export lists it with the fields to redact: {aggregateType, aggregateId, type, id, fields}",
+      ),
+  ).action(async (personId: string, options: RedactCommandOptions) => {
+    exitCode = await runRedact(personId, options, cwd, stdout, stderr);
   });
 
   program

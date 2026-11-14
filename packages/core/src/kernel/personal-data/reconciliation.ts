@@ -21,6 +21,7 @@ import {
 } from "./forget.ts";
 import { holdAfter } from "./hold.ts";
 import { coveredBy, type ForgetIntention, type ForgetIntentions } from "./intention.ts";
+import { type Redactions, redactIntended } from "./redact.ts";
 import { restrictAgain } from "./restriction.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
@@ -87,6 +88,16 @@ export interface ForgetAgainEntry {
    * Only those are forgotten again, never the person as a whole.
    */
   readonly categories?: readonly string[] | null;
+  /**
+   * Set on a ledger entry that records a change of restrictions rather than a forgetting: such an
+   * entry is not forgotten again, and forgets nobody.
+   */
+  readonly restriction?: unknown;
+  /**
+   * Set on a ledger entry that records a redaction rather than a forgetting, which is left alone
+   * the same way.
+   */
+  readonly redaction?: unknown;
 }
 
 /**
@@ -154,6 +165,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
 }) => {
   const { personId, eventId, forgottenAt, reason, fingerprints, categories: asked = null } = entry;
   checkPersonId(personId, "forgetting again");
+  if (entry.restriction !== undefined || entry.redaction !== undefined) return null;
   const known = asked?.filter((category) => categories.of(category) !== undefined) ?? null;
   if (known !== null && known.length === 0) return null;
   const asScope: ForgetScope =
@@ -311,6 +323,10 @@ export interface CreateForgetLedgerReconciliationArgs {
    * Called with each person forgotten again, once their forgetting is committed.
    */
   readonly forgotten?: (personId: string) => void;
+  /**
+   * What a redaction the ledger holds is committed again with; its entries are skipped without.
+   */
+  readonly redactions?: Redactions | undefined;
 }
 
 export interface CreateForgetLedgerReconciliationFunction {
@@ -342,6 +358,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   keepForMs,
   pageSize = FORGET_LEDGER_PAGE,
   forgotten: onForgotten,
+  redactions,
 }) => {
   const { checkpointStore } = storage;
   let done = false;
@@ -386,6 +403,25 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         if (!restoredSince && time + FORGET_LEDGER_GRACE_MS > at) {
           // Entries come in the order of their time: the last one left is the youngest.
           youngest = time;
+          continue;
+        }
+        if (entry.redaction !== undefined) {
+          if (redactions === undefined) continue;
+          const redacted = await redactIntended({
+            redactions,
+            personId: entry.personId,
+            targets: entry.redaction.events,
+            identity: { id: entry.eventId, timestamp: entry.forgottenAt },
+            context: startedBy(ids.next(), undefined),
+            strict: false,
+            record: false,
+          });
+          if (redacted === null || "held" in redacted) continue;
+          logger.info("redaction committed again from the forget ledger", {
+            personId: entry.personId,
+            eventId: entry.eventId,
+          });
+          forgotten += 1;
           continue;
         }
         if (entry.restriction !== undefined) {

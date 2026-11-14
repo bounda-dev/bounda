@@ -153,6 +153,15 @@ export type FieldsRecord = Readonly<Record<string, FieldDefinition>>;
 
 export interface ViewModule {
   readonly fields: (args: FieldsArgs) => FieldsRecord;
+  /**
+   * `false` states that the read model keeps nothing of a person's data, nor anything derived
+   * from it, though it projects events with personal fields: the total of an order but not the
+   * address on it. Such a read model marks no field `.personal()` or `.person()`, and a redaction or
+   * a forgetting leaves it as it is. A read model that projects events with personal fields needs
+   * either this or a field marked `.person()`, or `.bounda/types.ts` does not compile and the app
+   * refuses to start; what the statement leaves out is the app's to answer for.
+   */
+  readonly holdsPersonalData?: false;
 }
 
 // A field marked `.personal()` without `clear` is sealed at rest.

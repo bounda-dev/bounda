@@ -19,6 +19,14 @@ const requestArgs = (params: Record<string, string> = {}): RequestArgs => {
 
 const byWorkspace: TenantFunction = ({ params }) => params.workspace ?? "default";
 
+const redacted = {
+  aggregateType: "order",
+  aggregateId: "o-1",
+  type: "OrderPlaced",
+  id: "e-1",
+  fields: ["note"],
+};
+
 describe("cloudflareClients", () => {
   it("reaches the store the tenant names, through the binding the config names, only once a request uses it", async () => {
     const store = storeNamespace();
@@ -80,6 +88,7 @@ describe("cloudflareClients", () => {
     await client.exportPersonalData("c-1");
     await client.restrict("c-2", { ground: "accuracy-contested" });
     await client.unrestrict("c-2", { notice: "given" });
+    await client.redact("c-2", { events: [redacted] });
     expect(store.calls).toEqual([
       ["acme", "lag"],
       ["acme", "status"],
@@ -95,6 +104,7 @@ describe("cloudflareClients", () => {
       ["acme", "exportPersonalData", "c-1", undefined],
       ["acme", "restrict", "c-2", "read-your-writes", undefined, { ground: "accuracy-contested" }],
       ["acme", "unrestrict", "c-2", "read-your-writes", undefined, { notice: "given" }],
+      ["acme", "redact", "c-2", "read-your-writes", undefined, { events: [redacted] }],
     ]);
   });
 

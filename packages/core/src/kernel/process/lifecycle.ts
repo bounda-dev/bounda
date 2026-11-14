@@ -2,6 +2,7 @@ import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
+import type { ProcessStateEventType } from "../../modules/redaction.ts";
 import { statePersonOf } from "../personal-data/process-state.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -373,6 +374,15 @@ export interface LifecycleEntries {
     followUps: readonly string[],
   ): LifecycleEntry;
 }
+
+// The entries below that carry the state, which a redaction reaches: one added there that does
+// goes here too.
+export const PROCESS_STATE_EVENTS: readonly ProcessStateEventType[] = [
+  PROCESS_EVENTS.started,
+  PROCESS_EVENTS.handled,
+  PROCESS_EVENTS.deadlineReached,
+  PROCESS_EVENTS.timedOut,
+];
 
 export const lifecycleEntries: LifecycleEntries = {
   started: (event, state, timeoutAt) => ({

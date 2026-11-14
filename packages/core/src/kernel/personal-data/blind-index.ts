@@ -1,6 +1,7 @@
 import type { IndexKeyStore } from "../../adapter/storage/index-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { FieldType } from "../../modules/view.ts";
+import { canonicalJson } from "../shared/value-search.ts";
 import { PERSONAL_KEY_ALGORITHM, toBase64 } from "./crypto.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
@@ -23,17 +24,6 @@ export interface BlindIndexArgs {
   readonly type: FieldType;
   readonly value: unknown;
 }
-
-// Object keys in code-unit order at every depth, so two equal JSON values index alike.
-const canonicalJson = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalJson);
-  if (typeof value !== "object" || value === null || value instanceof Date) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-      .map((key) => [key, canonicalJson(Reflect.get(value, key))]),
-  );
-};
 
 export interface IndexedTextFunction {
   (type: FieldType, value: unknown): string;

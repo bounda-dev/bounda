@@ -168,6 +168,10 @@ export interface Scheduler {
    */
   list(args?: ListScheduledArgs): Promise<readonly ScheduledCommand[]>;
   /**
+   * The command scheduled under `dedupeKey`, claimed or not, `null` when none is.
+   */
+  get(dedupeKey: string): Promise<ScheduledCommand | null>;
+  /**
    * Every command whose `persons` names `person`, claimed or not, in the order of `list`.
    */
   listByPerson(person: string): Promise<readonly ScheduledCommand[]>;

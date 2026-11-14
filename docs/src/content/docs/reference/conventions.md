@@ -30,7 +30,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
 | `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes; without it, the app's logger |
 | `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis and retention; without it, every personal field is in the default category |
-| `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data |
+| `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data; `holdsPersonalData = false` (optional) to state it keeps nothing of anyone's data though it projects events with personal fields |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once its view keeps a field in the clear with `.personal({ clear: true })`, or a projection of the read model sees a field marked `personal` and the view marks no field `.personal()` |
 | `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts`, `processing-restriction-lifted.ts` | `project`, optional |
@@ -75,7 +75,10 @@ type of `.bounda/types.ts`, which says what to add: a read model that keeps a fi
 with `.personal({ clear: true })`, or projects an event with a field marked `personal` and marks no
 field `.personal()`, and has no `projections/bounda/personal-data-forgotten.ts`; one that marks a
 field `.personal()` and none
-`.person()`; one that marks two fields `.person()`. The generated registry is checked against
+`.person()`; one that projects an event with a field marked `personal` and marks no field
+`.person()` without its view exporting `holdsPersonalData = false`, or one that exports it and marks
+a field; one that marks two fields `.person()`. The app refuses to start on the same rules, with
+`ConfigurationError`. The generated registry is checked against
 `Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
 fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
 declares a category named `default`, or one without a basis Bounda knows or a retention, and a

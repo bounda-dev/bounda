@@ -9,7 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { type FieldsArgs, fieldBuilder as f } from "../../modules/view.ts";
 import { createApp } from "../app.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
-import { pendingRebuilds, rebuildReadModel } from "./rebuild.ts";
+import { pendingRebuilds, rebuildReadModel, rebuiltMark, startedMark } from "./rebuild.ts";
 
 interface Row {
   readonly orderId: string;
@@ -78,6 +78,15 @@ const setUp = async () => {
   const rows = () => table.findMany({ orderBy: { field: "orderId", direction: "asc" } });
   return { adapter, app, storage, config, logger, entries, rows };
 };
+
+describe("rebuild marks", () => {
+  it("names each per read model, as the deployment guide documents them", () => {
+    expect([startedMark("orders"), rebuiltMark("orders")]).toEqual([
+      "read-model:rebuild-started:orders",
+      "read-model:rebuilt:orders",
+    ]);
+  });
+});
 
 describe("pendingRebuilds", () => {
   it("names each read model with rebuild progress once, ignoring every other checkpoint", async () => {

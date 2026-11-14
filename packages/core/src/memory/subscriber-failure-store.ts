@@ -38,6 +38,15 @@ export const createMemorySubscriberFailureStore: CreateMemorySubscriberFailureSt
         if (kept === undefined || kept.resolvedAt !== null) return;
         failures.set(subscriber, { ...kept, resolvedAt: at.toISOString() });
       },
+      reseal: async (subscriber, { eventId, errorMessage, errorStack }) => {
+        const kept = failures.get(subscriber);
+        if (kept === undefined || kept.eventId !== eventId) return;
+        const { errorStack: _, ...rest } = kept;
+        failures.set(
+          subscriber,
+          jsonCopy({ ...rest, errorMessage, ...(errorStack === undefined ? {} : { errorStack }) }),
+        );
+      },
       get: async (subscriber) => {
         const kept = failures.get(subscriber);
         return kept === undefined ? null : jsonCopy(kept);

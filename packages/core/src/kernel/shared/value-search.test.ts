@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { leavesIn, MIN_SUBSTRING_LENGTH, matches, needlesOf } from "./search.ts";
+import {
+  canonicalJson,
+  leavesIn,
+  MIN_SUBSTRING_LENGTH,
+  matches,
+  needlesOf,
+  sameValueText,
+} from "./value-search.ts";
 
 const found = (value: unknown, haystack: unknown, opaque = false): boolean => {
   const [needle] = needlesOf({ values: [value], personId: "c-1" });
@@ -104,5 +111,25 @@ describe("matching", () => {
       ["payload", "lines", "[0]", "note"],
     ]);
     expect(leavesIn(self).filter(({ text }) => text === "ana@example.com")).toHaveLength(1);
+  });
+});
+
+describe("canonicalJson and sameValueText", () => {
+  it("orders object keys at every depth and keeps arrays as they are", () => {
+    expect(JSON.stringify(canonicalJson({ c: 1, b: { z: 1, a: [{ y: 2, x: 1 }] }, a: 3 }))).toBe(
+      '{"a":3,"b":{"a":[{"x":1,"y":2}],"z":1},"c":1}',
+    );
+    expect(canonicalJson(["b", "a"])).toEqual(["b", "a"]);
+    const date = new Date("2026-01-01T00:00:00.000Z");
+    expect(canonicalJson(date)).toBe(date);
+    expect(canonicalJson(null)).toBeNull();
+  });
+
+  it("tells values apart as JSON keeps them, a date as its text", () => {
+    expect(sameValueText({ b: 1, a: 2 })).toBe(sameValueText({ a: 2, b: 1 }));
+    expect(sameValueText(new Date("2026-01-01T00:00:00.000Z"))).toBe('"2026-01-01T00:00:00.000Z"');
+    expect(sameValueText("2026-01-01T00:00:00.000Z")).toBe('"2026-01-01T00:00:00.000Z"');
+    expect(sameValueText(undefined)).toBe("undefined");
+    expect(sameValueText([1, 2])).not.toBe(sameValueText([2, 1]));
   });
 });
