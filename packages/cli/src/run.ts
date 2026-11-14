@@ -708,6 +708,7 @@ const DEAD_LETTER_KINDS = Object.keys({
   policy: true,
   process: true,
   scheduled: true,
+  recipient: true,
 } satisfies Record<DeadLetterKind, true>);
 const DEAD_LETTER_STATUSES = Object.keys({
   failed: true,

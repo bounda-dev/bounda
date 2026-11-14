@@ -20,6 +20,9 @@ export type OrderPorts = {
   readonly mailer: import("../app/domain/order/mailer.ts").Mailer;
   readonly reminders: import("../app/domain/order/reminders.ts").Reminders;
 };
+export type OrderRecipients = [
+  Expect<core.NotifiesRecipient<"order.mailer", typeof import("../app/domain/order/mailer.ts"), import("../app/domain/order/mailer.ts").Mailer>>,
+];
 
 export type Events = {
   readonly customer: CustomerEvents;
