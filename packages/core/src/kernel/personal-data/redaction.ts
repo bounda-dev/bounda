@@ -24,6 +24,7 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import { causedBy } from "../shared/causation.ts";
 import { isRecord } from "../shared/merge-fields.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 import {
   leavesIn,
   matches,
@@ -48,9 +49,10 @@ import { redactionMarks } from "./redaction-targets.ts";
 import type { PersonalKeys } from "./wrapped-keys.ts";
 
 // The scheduler command type of the runtime's entry that keeps what a redaction made unreadable,
-// sealed as the events held it, until every read model has written `null` over its copies: the
-// worker completes it once they all passed the redaction. It names no person, so a `forget` leaves
-// it to that end, its values unreadable once their key is gone.
+// sealed as the events held it, until every read model has written `null` over its copies and
+// every one that projects an event type it reached was rebuilt from after it: the worker drives
+// those rebuilds and completes the entry then. It names no person, so a `forget` leaves it to that
+// end, its values unreadable once their key is gone.
 export const REDACTION_SCRUB_COMMAND: "bounda.RedactionScrub" = "bounda.RedactionScrub";
 
 export interface RedactionScrubKeyFunction {
@@ -60,11 +62,13 @@ export interface RedactionScrubKeyFunction {
 export const redactionScrubKey: RedactionScrubKeyFunction = (eventId) => `redaction:${eventId}`;
 
 // The payload of that entry: the old values as the events held them, under the person's keys,
-// and the position of the `PersonalDataRedacted` every read model has to pass first.
+// the position of the `PersonalDataRedacted` every read model has to pass first, and the event
+// types it reached, `<aggregate>.<event>`, which tell the read models to rebuild.
 export interface RedactionScrubPayload {
   readonly personId: string;
   readonly position: number;
   readonly values: readonly SealedValue[];
+  readonly types: readonly string[];
 }
 
 // A value a redaction made unreadable, as it read before.
@@ -487,22 +491,24 @@ export const redactWithin: RedactWithinFunction = async (args) => {
     person: personId,
     identity,
   });
-  const kept = await scrubbed(args.keys, personId, values);
-  if (kept.length > 0) {
-    await transaction.scheduler.schedule({
-      dedupeKey: redactionScrubKey(event.id),
-      command: {
-        type: REDACTION_SCRUB_COMMAND,
-        aggregateId: personId,
-        payload: {
-          personId,
-          position: event.position,
-          values: kept,
-        } satisfies RedactionScrubPayload,
-      },
-      executeAt: new Date(event.timestamp),
-      context: causedBy(event),
-    });
-  }
+  await transaction.scheduler.schedule({
+    dedupeKey: redactionScrubKey(event.id),
+    command: {
+      type: REDACTION_SCRUB_COMMAND,
+      aggregateId: personId,
+      payload: {
+        personId,
+        position: event.position,
+        values: await scrubbed(args.keys, personId, values),
+        types: [
+          ...new Set(
+            events.map(({ aggregateType, type }) => qualifiedEventType(aggregateType, type)),
+          ),
+        ].sort(),
+      } satisfies RedactionScrubPayload,
+    },
+    executeAt: new Date(event.timestamp),
+    context: causedBy(event),
+  });
   return { event, payload, values, disposable };
 };

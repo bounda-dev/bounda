@@ -747,6 +747,12 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     await registered("ana", "ana@old.example");
     const redacted = await app.redact("ana", { events: await holding("ana", "ana@old.example") });
     await app.catchUpReadModels({ through: redacted });
+    // Every personal value of the person reads null until the rebuild takes the table's place.
+    expect(await queries.contact?.({ customerId: "ana" })).toEqual({
+      customerId: "ana",
+      email: null,
+    });
+    await app.runUntilIdle();
     expect(await queries.contact?.({ customerId: "ana" })).toEqual({
       customerId: "ana",
       email: null,
@@ -777,10 +783,15 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
   }, 30_000);
 
   it("keeps what a rebuild under way has to write over until it has projected the redaction", async () => {
-    const { app, clock, queries, registered, holding, scheduled } = await setUp(adapterOf());
+    const { app, clock, commands, queries, registered, holding, scheduled } = await setUp(
+      adapterOf(),
+    );
     await registered("ana", "ana@old.example");
-    await registered("bo", "bo@example.com");
-    expect(await app.rebuildReadModel("contacts", { maxEvents: 1 })).toMatchObject({
+    await commands.addNote?.({ customerId: "ana", noteId: "n-1", text: "write ana@old.example" });
+    await commands.addNote?.({ customerId: "ana", noteId: "n-2", text: "call ana@old.example" });
+    await app.runUntilIdle();
+    // Notes project no event a redaction of the email reaches: only a rebuild under way waits.
+    expect(await app.rebuildReadModel("notes", { maxEvents: 1 })).toMatchObject({
       done: false,
     });
     await app.redact("ana", { events: await holding("ana", "ana@old.example") });
@@ -790,15 +801,14 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
         rows.filter((row) => JSON.stringify(row).includes("RedactionScrub")),
       );
     expect(await kept()).toHaveLength(1);
-    expect(await app.rebuildReadModel("contacts")).toMatchObject({ done: true });
+    expect(await app.rebuildReadModel("notes")).toMatchObject({ done: true });
     // The worker looks again a while after the rounds it waited.
     clock.advance(60_000);
     await app.runUntilIdle();
     expect(await kept()).toEqual([]);
-    expect(await queries.contact?.({ customerId: "ana" })).toEqual({
-      customerId: "ana",
-      email: null,
-      plan: "pro",
-    });
+    expect(await queries.notesOf?.({ customerId: "ana" })).toEqual([
+      { noteId: "n-1", customerId: "ana", text: null },
+      { noteId: "n-2", customerId: "ana", text: null },
+    ]);
   });
 });

@@ -10,7 +10,11 @@ import type {
 } from "../config/types.ts";
 import { type Clock, systemClock } from "../contracts/clock.ts";
 import type { CommandRejection, DispatchResult, StoredDispatch } from "../contracts/command.ts";
-import { ConfigurationError, ForgetLedgerUnreconciledError } from "../contracts/errors.ts";
+import {
+  ConfigurationError,
+  ForgetLedgerUnreconciledError,
+  RebuildSupersededError,
+} from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
@@ -91,9 +95,11 @@ import { createQueryRunner } from "./query/runner.ts";
 import { adapterForReadModel, buildReadModels } from "./read-model/build-read-models.ts";
 import {
   pendingRebuilds,
+  REDACTION_REBUILD_BATCHES,
   type RebuildReadModelResult,
   rebuildReadModelWith,
   rebuildsPassed,
+  rebuiltMark,
 } from "./read-model/rebuild.ts";
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
@@ -214,7 +220,9 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * they read as `null`, as forgotten ones do, everywhere: every handler, upcaster and rebuild
    * reads `null`, the export lists the redaction and never the old value, and every read model
    * that holds the person's personal fields writes `null` over each copy of an old value as it
-   * projects the `PersonalDataRedacted` appended to the stream `bounda:<personId>`. Snapshots of
+   * projects the `PersonalDataRedacted` appended to the stream `bounda:<personId>`, over every
+   * personal value of the person when it projects an event type the redaction reached, until the
+   * worker has rebuilt it in the background so nothing derived from an old value is left. Snapshots of
    * those streams and the person's remembered rejections go, and so do the scheduled commands and
    * dead letters whose payload holds an old value; an error text quoting one is sealed for good.
    * Append the corrected value as an event of the app's own. Resolves like a command, so
@@ -754,9 +762,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       concurrencyRetries,
       onRedacted: witness?.onRedacted,
     };
-    const personalReadModels = Object.values(readModels.byName).filter(
-      ({ layout }) => layout.personal.length > 0,
-    );
     const retentionDue = recordsActivity
       ? retentionDueOf({
           categories: personalCategories,
@@ -901,16 +906,37 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       intentions,
       backfill,
       redactionScrubs: {
-        passed: async (position) => {
-          for (const { name, storage: own } of personalReadModels) {
+        advance: async ({ position, types }) => {
+          for (const { name, storage: own, layout, projectionsByEvent } of Object.values(
+            readModels.byName,
+          )) {
+            const personal = layout.personal.length > 0;
+            const derives = types.some((type) => (projectionsByEvent[type]?.length ?? 0) > 0);
+            if (!personal && !derives) continue;
             const checkpoints = await own.checkpointStore.list();
-            const projected = checkpoints.find(
-              ({ subscriber }) => subscriber === projectionSubscriberName(name),
-            );
-            if ((projected?.position ?? 0) < position) return false;
-            if (!rebuildsPassed({ checkpoints, name, position })) return false;
+            const at = (subscriber: string): number =>
+              checkpoints.find((checkpoint) => checkpoint.subscriber === subscriber)?.position ??
+              -1;
+            // The live table hides the person's values once it projected the redaction.
+            if (personal && at(projectionSubscriberName(name)) < position) return "waiting";
+            if (!derives) {
+              if (!rebuildsPassed({ checkpoints, name, position })) return "waiting";
+              continue;
+            }
+            if (at(rebuiltMark(name)) >= position) continue;
+            // A rebuild under way that started before the redaction hides the person's values in its
+            // shadow as it projects it, and another one follows it.
+            try {
+              await rebuild(name, {
+                maxEvents: config.runtime.dispatcher.batchSize * REDACTION_REBUILD_BATCHES,
+              });
+            } catch (error) {
+              // Another instance's slice, or a rebuild run by hand, took over and goes on.
+              if (!(error instanceof RebuildSupersededError)) throw error;
+            }
+            return "progressed";
           }
-          return true;
+          return "ready";
         },
         settle: (entry) =>
           settleRedaction({

@@ -352,8 +352,10 @@ await app.runUntilIdle();
 await expectRedacted(app, "c-1");
 ```
 
-A read model writes `null` over its copies of an old value as it projects the redaction, so call
-it after `runUntilIdle()`; see [Correcting a person's data](/guides/personal-data/#correcting-a-persons-data)
+A read model writes `null` over its copies of an old value as it projects the redaction, and the
+worker rebuilds every one that projects a redacted event, so call it after `runUntilIdle()`: until
+the worker has, it rejects, naming each redaction a read model may still hold a copy derived from;
+see [Correcting a person's data](/guides/personal-data/#correcting-a-persons-data)
 and [Personal data in tests](/guides/personal-data/#in-tests).
 
 ## Nothing handed out of a restricted person

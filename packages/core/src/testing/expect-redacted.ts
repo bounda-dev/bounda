@@ -3,6 +3,10 @@ import type { InspectedStore, InspectedTable } from "../adapter/storage/inspecti
 import type { SealedValue } from "../adapter/storage/personal-key-store.ts";
 import type { BoundaClient } from "../kernel/app.ts";
 import { isSealed, unseal } from "../kernel/personal-data/crypto.ts";
+import {
+  REDACTION_SCRUB_COMMAND,
+  type RedactionScrubPayload,
+} from "../kernel/personal-data/redaction.ts";
 import { leavesIn, needlesOf } from "../kernel/shared/value-search.ts";
 import { testAppsOf } from "./expect-forgotten.ts";
 import {
@@ -104,6 +108,37 @@ const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
     "A subscriber's last failure quotes the value in the clear: mark the field the value comes from personal(), and keep personal data out of error messages.",
 };
 
+const REBUILD_ADVICE =
+  "A read model that projects an event the redaction reached may keep what it derived from the old value, reformatted or hashed, until the worker has rebuilt it from after the redaction: run the worker (await app.runUntilIdle()) before checking, and keep one running in production.";
+
+// The person's redactions the worker has not settled yet: until it has, a read model that projects
+// an event type one reached may hold a copy derived from an old value that no search finds.
+const unsettled = async (
+  adapters: readonly Adapter[],
+  personId: string,
+): Promise<readonly RedactedValueFound[]> => {
+  const found: RedactedValueFound[] = [];
+  for (const adapter of adapters) {
+    const storage = await adapter.createStorage();
+    try {
+      for (const { dedupeKey, command } of await storage.scheduler.list()) {
+        if (command.type !== REDACTION_SCRUB_COMMAND) continue;
+        const { personId: person, types } = command.payload as RedactionScrubPayload;
+        if (person !== personId) continue;
+        found.push({
+          value: "a copy derived from a redacted value",
+          store: "readModel",
+          row: `projecting ${types.join(", ")}`,
+          field: `not rebuilt since ${dedupeKey}`,
+        });
+      }
+    } finally {
+      await storage.close();
+    }
+  }
+  return found;
+};
+
 const adviceOf = (store: InspectedStore | null): string =>
   (store === null ? undefined : STORE_ADVICE[store]) ?? OTHERWISE;
 
@@ -196,7 +231,9 @@ const sealedPlaces = async (
  * with `telemetry`, every span, as `expectForgotten` does; and it opens every value stored
  * sealed that a key the person, or anyone, still holds opens, so a copy in an event, a command or
  * a read model that was not redacted is found too. Given an adapter, it searches that adapter's
- * tables as stored for `values` alone. A value is matched as `expectForgotten` matches one.
+ * tables as stored for `values` alone. Either way it rejects while the worker has not settled a
+ * redaction of the person, since a read model that projects an event it reached may hold a copy
+ * derived from an old value, reformatted or hashed, until the worker has rebuilt it. A value is matched as `expectForgotten` matches one.
  * Rejects with an `Error` when it has nothing to look for. Works with any test runner.
  */
 export const expectRedacted: ExpectRedactedFunction = async (target, personId, options = {}) => {
@@ -212,7 +249,8 @@ export const expectRedacted: ExpectRedactedFunction = async (target, personId, o
     );
   }
   const adapters = apps?.adapters ?? [target as Adapter];
-  const tables = (await Promise.all(adapters.map((adapter) => adapter.inspect()))).flat();
+  const inspected = await Promise.all(adapters.map((adapter) => adapter.inspect()));
+  const tables = inspected.flat();
   const needles = needlesOf({
     values: [...(apps?.witness.redactedFor(personId) ?? []), ...(options.values ?? [])],
     personId,
@@ -235,5 +273,18 @@ export const expectRedacted: ExpectRedactedFunction = async (target, personId, o
     })),
   ];
   const { found, advice } = findIn(places, needles);
-  if (found.length > 0) throw new NotRedactedError(personId, found, advice);
+  // A read model's own database keeps no scheduler, and opening storage there would create one.
+  const pending = await unsettled(
+    adapters.filter((_, index) =>
+      inspected[index]?.some((table) => table.store === "scheduledCommands"),
+    ),
+    personId,
+  );
+  if (found.length + pending.length > 0) {
+    throw new NotRedactedError(
+      personId,
+      [...pending, ...found],
+      pending.length === 0 ? advice : [REBUILD_ADVICE, ...advice],
+    );
+  }
 };

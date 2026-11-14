@@ -497,6 +497,16 @@ describe("redact, in detail", () => {
     const keyless = await appendRaw("zed", "zed", "zed@clear.example");
     const nothingKept = await app.redact("zed", { events: [target(keyless, ["email"])] });
     expect(nothingKept.eventTypes).toEqual(["PersonalDataRedacted"]);
+    // Still an entry, for the read models to rebuild from after it.
+    expect((await scrubs()).map(({ command }) => command.payload)).toEqual([
+      {
+        personId: "zed",
+        position: nothingKept.position,
+        values: [],
+        types: ["customer.CustomerRegistered"],
+      },
+    ]);
+    await app.runUntilIdle();
     expect(await scrubs()).toEqual([]);
   });
 
@@ -544,7 +554,7 @@ describe("redact, in detail", () => {
     }
   });
 
-  it("writes null over a value of a read model that holds an old one among others, whichever it is", async () => {
+  it("rebuilds a read model that projects a redacted event, so a copy within a value reads as the event now does", async () => {
     const { app, commands, register, target, events } = await setUp();
     const registered = await register("ana", "ana@old.example");
     await commands.correctEmail?.({ customerId: "ana", email: "ana@mid.example" });
@@ -559,7 +569,7 @@ describe("redact, in detail", () => {
       await (app.queries as unknown as Record<string, (p: unknown) => Promise<unknown>>).contact?.({
         customerId: "ana",
       }),
-    ).toEqual({ customerId: "ana" });
+    ).toEqual({ customerId: "ana", profile: { contact: null, plan: "pro" } });
   });
 
   it("cancels a command one of whose fields holds an old value, naming it by its id", async () => {
@@ -678,9 +688,13 @@ describe("redact, in detail", () => {
     expect(appendsOf(followUp?.id)).toHaveLength(2);
     const reached =
       (followUp?.payload as { events: readonly RedactedFields[] } | undefined)?.events ?? [];
+    // The process carried the old value into its state from the late correction on.
     expect(reached.map(({ type, fields }) => [type, fields])).toEqual([
       ["EmailCorrected", ["email"]],
       ["EmailCorrected", ["email"]],
+      ["ProcessHandled", ["contact"]],
+      ["ProcessHandled", ["contact"]],
+      ["ProcessHandled", ["contact"]],
     ]);
     expect(ledgerRedactions()).toHaveLength(2);
     const exported = await app.exportPersonalData("ana");
@@ -932,21 +946,33 @@ describe("redact, in detail", () => {
     });
   });
 
-  it("settles once a rebuild under way has projected the redaction, and no sooner", async () => {
-    const { app, clock, register, target, scrubs } = await setUp(1);
+  it("hides the person in a rebuild that began before the redaction, then rebuilds once more", async () => {
+    const { app, register, target, scrubs, logged } = await setUp(1);
     const registered = await register("ana", "ana@old.example");
-    await app.runUntilIdle();
-    const redacted = await app.redact("ana", { events: [target(registered, ["email"])] });
     await register("bo", "bo@example.com");
-    const paused = await app.rebuildReadModel("contacts", { maxEvents: redacted.position - 1 });
-    expect(paused).toMatchObject({ done: false, position: redacted.position - 1 });
     await app.runUntilIdle();
+    expect(await app.rebuildReadModel("contacts", { maxEvents: 1 })).toMatchObject({
+      done: false,
+    });
+    const redacted = await app.redact("ana", { events: [target(registered, ["email"])] });
+    await app.catchUpReadModels({ through: redacted });
+    const contact = () =>
+      (app.queries as unknown as Record<string, (p: unknown) => Promise<unknown>>).contact?.({
+        customerId: "ana",
+      });
+    // The shadow copied the profile before the redaction: it reads nothing of the person's.
+    expect(await app.rebuildReadModel("contacts")).toMatchObject({ done: true });
+    expect(await contact()).toEqual({ customerId: "ana" });
     expect(await scrubs()).toHaveLength(1);
-    const past = await app.rebuildReadModel("contacts", { maxEvents: 1 });
-    expect(past).toMatchObject({ done: false, position: redacted.position });
-    clock.advance(60_000);
     await app.runUntilIdle();
     expect(await scrubs()).toEqual([]);
+    expect(await contact()).toEqual({ customerId: "ana", profile: { contact: null, plan: "pro" } });
+    expect(
+      logged.filter(
+        ({ message, fields }) =>
+          message === "read model rebuilt" && fields?.readModel === "contacts",
+      ),
+    ).toHaveLength(2);
   });
 
   it("records nothing of a redaction it refuses, so no reconciliation applies part of it", async () => {

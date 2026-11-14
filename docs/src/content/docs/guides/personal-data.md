@@ -557,24 +557,37 @@ reads now; and the export, which marks the field `redacted` on the event and lis
 records nothing of a redaction, which hands nothing out.
 
 A read model holding the person's personal fields writes over its copies when it projects
-`PersonalDataRedacted`, before its own projection of the event, if it has one, runs: every field
-marked `.personal()`, [sealed](#sealed-at-rest) or [in the clear](#in-the-clear), of the rows whose
-field marked `.person()` names them, that holds an old value, equal to it or quoting it as
-[`expectRedacted`](#in-tests) finds a value, reads `null` from then on, its blind index emptied, so
-a greeting that quotes the old email goes with it. A field kept in the clear that cannot hold
-`null`, because it is not `.optional()` or it is the primary key, keeps the old value for as long as
-the row is there, so the row is deleted instead, for a projection of the correction to write
-again. The old values wait for this, sealed under the
-person's keys as the events held them, in an entry of the scheduler that names nobody, until every
-read model with personal fields, and every [rebuild](/guides/deployment/#rebuilding-a-read-model)
-of one under way, has projected the redaction; the worker then removes it, and makes unreadable
-what work that read the old value just before the redaction committed wrote of it after: an event
-of the person holding it gets a redaction of its own, a scheduled command or a dead letter goes as
-above, and a subscriber's last failure on an event of theirs, or kept in the clear, that quotes it
-has its text sealed for good. A read model
-that fails keeps that entry, and with it the old values, until it projects the redaction: its lag
-in `getLag` and `bounda status` shows it. A column that stores a value reformatted so that it no
-longer quotes the old one is the read model's to rewrite: project the correction, or rebuild it.
+`PersonalDataRedacted`, before its own projection of the event, if it has one, runs. One that
+projects an event type the redaction reached may keep what it derived from the old value without
+quoting it, a hash or a value reformatted, so every field marked `.personal()`,
+[sealed](#sealed-at-rest) or [in the clear](#in-the-clear), of the rows whose field marked
+`.person()` names them reads `null` from then on, the values it did not derive from the old one
+too, its blind indexes emptied; the worker then [rebuilds](/guides/deployment/#rebuilding-a-read-model)
+it in the background, a few batches of `dispatcher.batchSize` events a pass, into a shadow table while
+queries read the live one, and once the shadow takes its place the rows read as the events now do:
+the correction's value where a projection wrote it, the rest as before. A rebuild of it under way
+goes on from where it stood, after a restart too: one that started before the redaction, and may
+have copied the old value, hides the person's values in its table as well, and another follows it. Any other read model with personal fields
+writes `null` over each personal field of the person's rows that holds an old value, equal to it or
+quoting it as [`expectRedacted`](#in-tests) finds a value, so a note that quotes the old email reads
+`null` and the rest stays. A field kept in the clear that cannot hold `null`, because it is not
+`.optional()` or it is the primary key, would keep the old value for as long as the row is there,
+so the row is deleted instead, for the rebuild or a projection of the correction to write again. A
+read model that marks nothing personal and projects an event type the redaction reached is rebuilt
+the same way, though what it derived is read until its rebuild takes the table's place: mark what
+comes from a person's data `.personal()`.
+
+The old values wait for this, sealed under the person's keys as the events held them, in an entry of
+the scheduler that names nobody, until every read model with personal fields, and every rebuild of
+one under way, has projected the redaction and every read model to rebuild has been rebuilt from
+after it, each on its own database included; the worker then removes it, and makes unreadable what
+work that read the old value just before the redaction committed wrote of it after: an event of the
+person holding it gets a redaction of its own, a scheduled command or a dead letter goes as above,
+and a subscriber's last failure on an event of theirs, or kept in the clear, that quotes it has its
+text sealed for good. The entry is part of the database, so a crash or a restart only pauses it; a
+read model that fails keeps it, and with it the old values, until it projects the redaction, and a
+rebuild that fails is tried again a poll later: the lag in `getLag` and `bounda status`, and the
+worker's log, show both.
 
 A person who [contested the accuracy](#restricting-processing) of their data is usually restricted
 while it is checked: `redact` is allowed then, as `forget` and the export are, and the command that
@@ -1709,7 +1722,10 @@ a process's state, a command or a read model and left unredacted is found too. I
 `NotRedactedError`, whose `found` holds `{ value, store, row, field }` for each, a sealed one's
 field named with `(sealed)`, and whose message says what to do; and with an `Error` when it has
 nothing to look for. Given an adapter instead of the app it searches that adapter's tables as
-stored, for `values` alone.
+stored, for `values` alone. Either way it rejects while the worker has not settled a redaction of
+the person, a `found` of `store` `"readModel"` naming the event types it reached: until then a read
+model that projects one may hold a copy derived from the old value, a hash or a value reformatted,
+that no search finds.
 
 `expectRestricted` checks the other right a person may exercise, the restriction of their
 processing: once they are restricted, that what the app hands out holds nothing the restriction

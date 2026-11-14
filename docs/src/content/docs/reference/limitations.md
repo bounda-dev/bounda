@@ -23,7 +23,7 @@ get today. Each item says why, so nobody discovers it the hard way:
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
-- **A corrected value reformatted.** See [Redacted values](#redacted-values).
+- **What a read model that marks nothing personal derived from a redacted value, until its rebuild.** See [Redacted values](#redacted-values).
 
 ## The access log
 
@@ -58,14 +58,14 @@ basis named:
 ## Redacted values
 
 A [redaction](/guides/personal-data/#correcting-a-persons-data) seals the fields it names in the
-events, and every read model with personal fields writes `null` over each field of the person's
-rows that equals an old value or quotes it, as `expectRedacted` finds a value. What it does not
-recognise is what no longer quotes the value:
+events; every read model with personal fields hides or writes over the person's copies as it
+projects it, and the worker rebuilds every read model that projects an event type it reached. What
+it does not reach:
 
-- **A value reformatted.** A column that keeps a phone number without its spaces, or a hash of an
-  email, holds nothing a search for the old value finds. The read model rewrites it when it
-  projects the correction, or [a rebuild](/guides/deployment/#rebuilding-a-read-model) replays the
-  events as they read now.
+- **A read model that marks nothing personal.** One that keeps a value derived from a person's
+  data in a field not marked `.personal()`, a count by email domain, serves it until the worker's
+  rebuild takes the table's place, since no row of it names the person to hide. Mark the field
+  `.personal()` and the read model hides it at once.
 - **What a policy sent out.** A port that mailed the old value, or indexed it, corrects it itself:
   a policy on `PersonalDataRedacted` is where to tell it (article 19).
 

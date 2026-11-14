@@ -30,6 +30,10 @@ export interface ApplyRedactionArgs {
   // The old values as the redaction kept them, sealed under the person's keys; none once every
   // read model passed it, or when it kept none.
   readonly values: readonly SealedValue[];
+  // Whether the read model projects an event type the redaction reached, and so may hold what it
+  // derived from an old value without quoting it: every personal value of the person then reads
+  // `null` until the rebuild that follows takes the table's place.
+  readonly derives: boolean;
 }
 
 export interface ApplyRedactionFunction {
@@ -40,7 +44,13 @@ export interface ApplyRedactionFunction {
 // field of the person's rows that holds an old value, equal to it as JSON keeps it or quoting it
 // as `expectRedacted` finds a value, reads `null` from then on, written as a projection would
 // write it, its blind index with it.
-export const applyRedaction: ApplyRedactionFunction = async ({ context, table, event, values }) => {
+export const applyRedaction: ApplyRedactionFunction = async ({
+  context,
+  table,
+  event,
+  values,
+  derives,
+}) => {
   const { layout } = context;
   if (layout.person === null || layout.personal.length === 0) return;
   const { personId } = event.payload as PersonalDataRedactedPayload;
@@ -49,7 +59,7 @@ export const applyRedaction: ApplyRedactionFunction = async ({ context, table, e
     const key = await context.keys.forOpen(personId, sealed.$personal.key);
     if (key !== null) old.push({ category: "", value: await unseal({ key, sealed }), sealed });
   }
-  if (old.length === 0) return;
+  if (old.length === 0 && !derives) return;
   const matcher = redactedMatcher(personId, old);
   const primaryKey = primaryKeyOf(context);
   for (let after: unknown; ; ) {
@@ -66,7 +76,7 @@ export const applyRedaction: ApplyRedactionFunction = async ({ context, table, e
       const patch: Row = {};
       for (const { field, sealed } of layout.personal) {
         const value = sealed ? row[field] : stored[field];
-        if (value !== undefined && value !== null && matcher.holds(value)) {
+        if (value !== undefined && value !== null && (derives || matcher.holds(value))) {
           patch[field] = null;
         }
       }

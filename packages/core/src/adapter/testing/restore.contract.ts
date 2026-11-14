@@ -231,11 +231,53 @@ interface SealedRow {
   readonly email: string | null;
 }
 
+interface HandleRow {
+  readonly customerId: string;
+  readonly handle?: string | null;
+}
+
+// A copy of an email that quotes none of it, as a hash or a reformatted value is.
+const handleOf = (email: string): string => [...email].reverse().join("");
+
 // The customers with their email sealed at rest, found by its blind index, and no projection of
-// the forgetting: nothing but the key forgets them.
+// the forgetting: nothing but the key forgets them; and a handle derived from the email, which
+// only a rebuild takes back once the email is redacted.
 const sealed = {
   ...registry,
   readModels: {
+    handles: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          handle: f.string().optional().personal(),
+        }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: StoredEvent<"CustomerRegistered", { email: string | null }>;
+              table: Table<HandleRow>;
+            }) =>
+              table.upsert({
+                customerId: event.aggregateId,
+                handle: event.payload.email === null ? null : handleOf(event.payload.email),
+              }),
+          },
+        },
+      },
+      queries: {
+        handleOf: {
+          payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+          repository: ({ table, customerId }: { table: Table<HandleRow>; customerId: string }) =>
+            table.findOne({ customerId }),
+          handler: ({ repositoryData }: { repositoryData: HandleRow | null }) => repositoryData,
+        },
+      },
+    },
     sealedCustomers: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
@@ -562,8 +604,10 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         email: null,
       });
       expect(await queries.sealedByEmail?.({ email: value })).toBeNull();
+      const handle = (await queries.handleOf?.({ customerId: person })) as HandleRow | null;
+      expect(handle?.handle ?? null).toBeNull();
       await expectRedacted(storage, person, {
-        values: [value],
+        values: [value, handleOf(value)],
         places: { export: exported, "dead letters": await app.deadLetters.list() },
       });
     };
@@ -1077,6 +1121,10 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         expect(await restored.queries.sealedCustomer?.({ customerId: "bob" })).toEqual({
           customerId: "bob",
           email: valuesOf("bob").email,
+        });
+        expect(await restored.queries.handleOf?.({ customerId: "bob" })).toEqual({
+          customerId: "bob",
+          handle: handleOf(valuesOf("bob").email),
         });
         await restored.app.stop();
 

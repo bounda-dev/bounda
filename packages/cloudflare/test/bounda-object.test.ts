@@ -197,12 +197,8 @@ describe("a Bounda Durable Object", () => {
           values: ["no bell"],
         }).catch((error: unknown) => error),
       );
-    // The read model keeps the note in a column it does not mark: a rebuild reads it redacted.
-    expect(await search()).toMatchObject({
-      name: "NotRedactedError",
-      found: [{ value: "no bell", store: "bounda_rm_orders", row: "order_id=o-1", field: "note" }],
-    });
-    expect(await store.rebuildReadModel("orders")).toMatchObject({ done: true });
+    // The read model kept the note in a column it does not mark: it projects the event redacted,
+    // so the alarm rebuilt it, and reads it redacted.
     expect(await search()).toBeUndefined();
     const refused = await rejection(store.redact("ada", { events: [] }));
     expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });

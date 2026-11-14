@@ -95,6 +95,23 @@ export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) 
   ),
 ];
 
+// How many batches of `dispatcher.batchSize` events a slice of a rebuild the worker runs after a
+// redaction projects: enough to make each slice's setup worth it, few enough to end well within
+// the claim the worker holds on the redaction's entry.
+export const REDACTION_REBUILD_BATCHES = 10;
+
+export interface RebuildMarkFunction {
+  (name: string): string;
+}
+
+// Where the stream stood when the rebuild under way of the read model started from a fresh shadow:
+// a redaction committed after then may find in the shadow what it derived from an old value.
+export const startedMark: RebuildMarkFunction = (name) => `read-model:rebuild-started:${name}`;
+
+// Where the stream stood when the last rebuild of the read model to take the live table's place
+// started: every redaction committed before then reads as redacted in that table.
+export const rebuiltMark: RebuildMarkFunction = (name) => `read-model:rebuilt:${name}`;
+
 export interface RebuildsPassedArgs {
   // Every checkpoint of the read model's database.
   readonly checkpoints: readonly Checkpoint[];
@@ -205,15 +222,25 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>
-    >({ name, fields: layout.stored, logger, progress });
+    >({
+      name,
+      fields: layout.stored,
+      logger,
+      progress,
+    });
     const { batchSize } = config.runtime.dispatcher;
     let { position } = rebuild;
     const budget = maxEvents ?? Number.POSITIVE_INFINITY;
     let events = 0;
     try {
       // Kept from the start, before anything is read, so a redaction that commits while this one
-      // projects what it read before waits for it.
+      // projects what it read before waits for it; and where the stream stood, since everything a
+      // redaction made unreadable before then reads so to this rebuild.
       await rebuild.checkpointStore.set(progress, position);
+      if (!rebuild.resumed) {
+        await rebuild.checkpointStore.set(startedMark(name), await eventStore.lastPosition());
+      }
+      const startedAt = await rebuild.checkpointStore.get(startedMark(name));
       for (const { subscriber } of await rebuild.checkpointStore.list()) {
         if (subscriber.startsWith(progressPrefix(name)) && subscriber !== progress) {
           await rebuild.checkpointStore.remove(subscriber);
@@ -250,6 +277,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
                   clock: systemClock,
                   maxMs: config.runtime.dispatcher.projectionBatchTimeMs,
                 },
+                rebuilding: { startedAt },
               });
               await transaction.checkpointStore.set(
                 progress,
@@ -263,6 +291,11 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
         logger.debug("read model rebuild progressed", { readModel: name, position, events });
       }
       await rebuild.commit({ subscriber: projectionSubscriberName(name), position });
+      await rebuild.checkpointStore.set(
+        rebuiltMark(name),
+        await rebuild.checkpointStore.get(startedMark(name)),
+      );
+      await rebuild.checkpointStore.remove(startedMark(name));
     } catch (error) {
       await rebuild.abort().catch(() => undefined);
       throw error instanceof PartialBatchError ? error.cause : error;

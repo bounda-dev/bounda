@@ -8,6 +8,7 @@ import {
   BOUNDA_AGGREGATE,
   PERSONAL_DATA_FORGOTTEN_EVENT,
   PERSONAL_DATA_REDACTED_EVENT,
+  type PersonalDataRedactedPayload,
 } from "../../modules/bounda-events.ts";
 import {
   type CheckpointClaim,
@@ -72,6 +73,13 @@ export interface ProjectBatchArgs {
    * Stop after `maxMs` on `clock`, once the event in hand is projected.
    */
   readonly budget: ProjectionBudget;
+  /**
+   * Where the stream stood when the rebuild whose shadow the batch goes into started. A redaction
+   * committed before then reads as redacted to the whole rebuild, so it only writes over what
+   * quotes an old value; one committed after may find what the shadow derived from an old value
+   * it read before, so it hides the person's values there as in the live table.
+   */
+  readonly rebuilding?: { readonly startedAt: number };
 }
 
 export interface ProjectionBudget {
@@ -82,6 +90,20 @@ export interface ProjectionBudget {
 export interface ProjectBatchFunction {
   (args: ProjectBatchArgs): Promise<number>;
 }
+
+export interface ProjectsRedactedFunction {
+  (readModel: ProjectionTarget, event: StoredEvent): boolean;
+}
+
+/**
+ * Whether the read model projects an event type a redaction reached: what it holds of the person
+ * may derive from an old value without quoting it, so it is rebuilt.
+ */
+export const projectsRedacted: ProjectsRedactedFunction = (readModel, event) =>
+  (event.payload as PersonalDataRedactedPayload).events.some(
+    ({ aggregateType, type }) =>
+      (readModel.projectionsByEvent[qualifiedEventType(aggregateType, type)]?.length ?? 0) > 0,
+  );
 
 export interface BatchPersonsFunction {
   (events: readonly StoredEvent[]): readonly string[];
@@ -117,6 +139,7 @@ export const projectBatch: ProjectBatchFunction = async ({
   logger,
   errorText,
   budget: { clock, maxMs },
+  rebuilding,
 }) => {
   const started = clock.now().getTime();
   let current: StoredEvent | null = null;
@@ -154,6 +177,9 @@ export const projectBatch: ProjectBatchFunction = async ({
           table: transaction.table,
           event,
           values: sealing.redacted?.get(event.id) ?? [],
+          derives:
+            (rebuilding === undefined || event.position > rebuilding.startedAt) &&
+            projectsRedacted(readModel, event),
         });
       }
     } catch (error) {

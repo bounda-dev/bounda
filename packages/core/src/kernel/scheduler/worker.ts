@@ -110,7 +110,8 @@ export interface CreateScheduledCommandWorkerArgs {
    */
   readonly backfill?: PersonalDataBackfill | undefined;
   /**
-   * What settles the entry a redaction leaves for the read models, once they all passed it.
+   * What settles the entry a redaction leaves for the read models, once they all passed it and
+   * those it reached were rebuilt.
    */
   readonly redactionScrubs?: RedactionScrubs | undefined;
   /**
@@ -138,10 +139,11 @@ export interface CreateScheduledCommandWorkerArgs {
  */
 export interface RedactionScrubs {
   /**
-   * Whether every read model holding personal fields, and every rebuild of one, is past the
-   * position.
+   * Moves the read models toward the redaction: `ready` once each holding personal fields, and
+   * each rebuild of one, is past it, and each projecting an event type it reached was rebuilt from
+   * after it; `progressed` when this call ran a slice of such a rebuild; `waiting` otherwise.
    */
-  passed(position: number): Promise<boolean>;
+  advance(payload: RedactionScrubPayload): Promise<"ready" | "progressed" | "waiting">;
   settle(entry: ScheduledCommand): Promise<void>;
 }
 
@@ -265,16 +267,18 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     entry.command.type === REDACTION_SCRUB_COMMAND;
 
   // A redaction's entry is completed once every read model wrote over the old values it kept,
-  // which then go with it; until then it is handed back for a poll later, never counting an
-  // attempt.
+  // which then go with it; until then it is handed back, never counting an attempt: due at once
+  // after a slice of a rebuild, so the next pass runs the next one, or a poll later.
   const settleScrub = async (entry: ClaimedCommand): Promise<void> => {
-    const { position } = entry.command.payload as RedactionScrubPayload;
+    let delayMs = config.runtime.dispatcher.pollIntervalMs;
     try {
-      if (redactionScrubs !== undefined && (await redactionScrubs.passed(position))) {
-        await redactionScrubs.settle(entry);
+      const step = await redactionScrubs?.advance(entry.command.payload as RedactionScrubPayload);
+      if (step === "ready") {
+        await redactionScrubs?.settle(entry);
         await storage.scheduler.complete(entry);
         return;
       }
+      if (step === "progressed") delayMs = 0;
     } catch (error) {
       logger.error("a redaction could not be settled; the worker tries again", {
         dedupeKey: entry.dedupeKey,
@@ -283,7 +287,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     }
     await storage.scheduler.defer({
       claim: entry,
-      executeAt: new Date(clock.now().getTime() + config.runtime.dispatcher.pollIntervalMs),
+      executeAt: new Date(clock.now().getTime() + delayMs),
     });
   };
 
