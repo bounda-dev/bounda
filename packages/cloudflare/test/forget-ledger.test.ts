@@ -267,6 +267,10 @@ describe("the KV forget ledger's listing", () => {
       ["p/9:e-9", JSON.stringify({ categories: null, restriction: { type: "T" } })],
       ["p/a:e-a", JSON.stringify({ categories: null, restriction: { type: "T", payload: null } })],
       ["p/b:e-b", JSON.stringify({ categories: null, restriction: { type: "T", payload: "p" } })],
+      ["p/c:e-c", JSON.stringify({ categories: null, redaction: "redacted" })],
+      ["p/d:e-d", JSON.stringify({ categories: null, redaction: null })],
+      ["p/e:e-e", JSON.stringify({ categories: null, redaction: { events: "e-1" } })],
+      ["p/f:e-f", JSON.stringify({ categories: null, redaction: {} })],
     ]);
     const reading = {
       ...namespace,
@@ -276,7 +280,7 @@ describe("the KV forget ledger's listing", () => {
     for (const at of ["1:e-1", "2:e-2", "3:e-3", "4:e-4", "5:e-5", "6:e-6", "7:e-7"]) {
       keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
     }
-    for (const at of ["8:e-8", "9:e-9", "a:e-a", "b:e-b"]) {
+    for (const at of ["8:e-8", "9:e-9", "a:e-a", "b:e-b", "c:e-c", "d:e-d", "e:e-e", "f:e-f"]) {
       keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
     }
     expect(await ledger.read({ limit: 20 })).toEqual([
