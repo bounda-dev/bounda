@@ -14,6 +14,7 @@ import {
   type IncludeRestrictedOptions,
   type ListDeadLettersArgs,
   type PersonalDataExport,
+  type PersonRecipient,
   type QueriesFacade,
   type QueryOptions,
   type ReadEventsArgs,
@@ -71,6 +72,7 @@ export interface BoundaStub {
     options?: ForgetOptions,
   ): PromiseLike<unknown>;
   exportPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
+  recipientsOf(personId: string, actor?: string): PromiseLike<unknown>;
   restrict(
     personId: string,
     consistency: Consistency | undefined,
@@ -182,6 +184,8 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       unwrap<StoredDispatch>(stub.forget(personId, consistency, actor, options)),
     exportPersonalData: (personId) =>
       unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor)),
+    recipientsOf: (personId) =>
+      unwrap<readonly PersonRecipient[]>(stub.recipientsOf(personId, actor)),
     restrict: (personId, options) =>
       unwrap<StoredDispatch>(stub.restrict(personId, consistency, actor, options)),
     unrestrict: (personId, options) =>

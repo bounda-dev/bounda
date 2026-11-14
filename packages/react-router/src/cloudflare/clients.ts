@@ -50,6 +50,7 @@ const lazyStub = (stubOf: () => Promise<BoundaStub>): BoundaStub => ({
   rebuildReadModel: async (name) => (await stubOf()).rebuildReadModel(name),
   forget: async (...args) => (await stubOf()).forget(...args),
   exportPersonalData: async (...args) => (await stubOf()).exportPersonalData(...args),
+  recipientsOf: async (...args) => (await stubOf()).recipientsOf(...args),
   restrict: async (...args) => (await stubOf()).restrict(...args),
   unrestrict: async (...args) => (await stubOf()).unrestrict(...args),
   redact: async (...args) => (await stubOf()).redact(...args),

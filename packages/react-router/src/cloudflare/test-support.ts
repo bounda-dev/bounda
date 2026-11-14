@@ -44,6 +44,7 @@ export const storeNamespace = (): FakeStoreNamespace => {
       rebuildReadModel: record("rebuildReadModel"),
       forget: record("forget"),
       exportPersonalData: record("exportPersonalData"),
+      recipientsOf: record("recipientsOf"),
       restrict: record("restrict"),
       unrestrict: record("unrestrict"),
       redact: record("redact"),

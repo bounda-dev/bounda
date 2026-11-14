@@ -19,6 +19,7 @@ import {
   type Logger,
   NotFoundError,
   type PersonalDataExport,
+  type PersonRecipient,
   type QueryOptions,
   type ReadEventsArgs,
   type RebuildReadModelResult,
@@ -138,6 +139,10 @@ export interface BoundaObjectMethods {
    * Exports a person's data, as `BoundaClient.exportPersonalData` does.
    */
   exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>>;
+  /**
+   * The recipients of a person's data, as `BoundaClient.recipientsOf` lists them.
+   */
+  recipientsOf(personId: string, actor?: string): Promise<RpcOutcome<readonly PersonRecipient[]>>;
   /**
    * Restricts the processing of a person's data, as `BoundaClient.restrict` does, waiting for the
    * read models that handle it as `forget` does.
@@ -443,6 +448,13 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>> {
       return settle(() => this.#as(actor).exportPersonalData(personId));
+    }
+
+    recipientsOf(
+      personId: string,
+      actor?: string,
+    ): Promise<RpcOutcome<readonly PersonRecipient[]>> {
+      return settle(() => this.#as(actor).recipientsOf(personId));
     }
 
     forget(
