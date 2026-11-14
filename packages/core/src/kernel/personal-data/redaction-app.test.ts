@@ -239,7 +239,7 @@ const registry = {
       queries: {},
     },
     audit: {
-      view: { fields: ({ f }: FieldsArgs) => ({ customerId: f.string().primaryKey() }) },
+      view: { fields: ({ f }: FieldsArgs) => ({ customerId: f.string().primaryKey().person() }) },
       projections: {
         customer: {
           customerRegistered: {

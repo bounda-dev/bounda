@@ -204,7 +204,7 @@ const registry = {
     customerDirectory: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          customerId: f.string().primaryKey(),
+          customerId: f.string().primaryKey().person(),
           email: f.string().optional(),
           name: f.string(),
         }),

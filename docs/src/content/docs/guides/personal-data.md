@@ -573,9 +573,10 @@ quoting it as [`expectRedacted`](#in-tests) finds a value, so a note that quotes
 `null` and the rest stays. A field kept in the clear that cannot hold `null`, because it is not
 `.optional()` or it is the primary key, would keep the old value for as long as the row is there,
 so the row is deleted instead, for the rebuild or a projection of the correction to write again. A
-read model that marks nothing personal and projects an event type the redaction reached is rebuilt
-the same way, though what it derived is read until its rebuild takes the table's place: mark what
-comes from a person's data `.personal()`.
+read model that projects such an event says whose its rows are or that it holds no personal data
+([see above](#personal-data-in-read-models)), so none serves what it derived from an old value
+without the app having said so: a field it does not mark `.personal()` is one the app states holds
+nothing of the person's.
 
 The old values wait for this, sealed under the person's keys as the events held them, in an entry of
 the scheduler that names nobody, until every read model with personal fields, and every rebuild of
@@ -629,6 +630,30 @@ that holds their personal data, in the default [category](#categories) or the on
 (`.personal({ category: "invoices" })`). The person's [export](#exporting-a-persons-data) includes
 the rows that name them, and a [query](#who-opened-what) of a read model with personal fields is
 recorded in the access log.
+
+A value derived from a person's data is their data too, a hash of their email as much as the email,
+so a read model that projects an event with personal fields says whose each row is with `.person()`,
+which lets a [redaction](#correcting-a-persons-data) hide the person's values at once, or states in
+its view that it keeps nothing of anyone's data, nor anything derived from it:
+
+```ts
+// app/read/orders-per-day/view.ts
+import type { View } from "./+types/view";
+
+export const fields = ({ f }: View.FieldsArgs) => ({
+  day: f.string().primaryKey(),
+  orders: f.number(),
+  total: f.number(),
+});
+
+// Counts and totals: nothing of the address or the note on an order.
+export const holdsPersonalData = false;
+```
+
+A read model that does neither does not compile in `.bounda/types.ts`, and the app refuses to start
+with `ConfigurationError`, naming the events. One that states it marks no field `.personal()` or
+`.person()`, a redaction neither hides nor rebuilds it and a forgetting leaves it as it is: the
+statement is the app's, and so is anything it keeps that the statement leaves out.
 
 ### Sealed at rest
 

@@ -23,7 +23,7 @@ get today. Each item says why, so nobody discovers it the hard way:
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
-- **What a read model that marks nothing personal derived from a redacted value, until its rebuild.** See [Redacted values](#redacted-values).
+- **Telling those a redacted value went to.** See [Redacted values](#redacted-values).
 
 ## The access log
 
@@ -58,14 +58,10 @@ basis named:
 ## Redacted values
 
 A [redaction](/guides/personal-data/#correcting-a-persons-data) seals the fields it names in the
-events; every read model with personal fields hides or writes over the person's copies as it
-projects it, and the worker rebuilds every read model that projects an event type it reached. What
-it does not reach:
+events; every read model hides or writes over the person's copies as it projects it, and the worker
+rebuilds every one that projects an event type it reached, unless its view states it holds no
+personal data. What it does not reach:
 
-- **A read model that marks nothing personal.** One that keeps a value derived from a person's
-  data in a field not marked `.personal()`, a count by email domain, serves it until the worker's
-  rebuild takes the table's place, since no row of it names the person to hide. Mark the field
-  `.personal()` and the read model hides it at once.
 - **What a policy sent out.** A port that mailed the old value, or indexed it, corrects it itself:
   a policy on `PersonalDataRedacted` is where to tell it (article 19).
 

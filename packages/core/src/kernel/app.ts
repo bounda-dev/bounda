@@ -92,7 +92,11 @@ import { createProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber, projectionSubscriberName } from "./projection/runner.ts";
 import { buildQueries } from "./query/build-queries.ts";
 import { createQueryRunner } from "./query/runner.ts";
-import { adapterForReadModel, buildReadModels } from "./read-model/build-read-models.ts";
+import {
+  adapterForReadModel,
+  buildReadModels,
+  checkReadModelPersons,
+} from "./read-model/build-read-models.ts";
 import {
   pendingRebuilds,
   REDACTION_REBUILD_BATCHES,
@@ -589,6 +593,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
     });
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
+    checkReadModelPersons({ registry, aggregates });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     const storage = appStorage({
       storage: written,
@@ -910,6 +915,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           for (const { name, storage: own, layout, projectionsByEvent } of Object.values(
             readModels.byName,
           )) {
+            // A read model whose view states it holds no personal data is taken at its word.
+            if (registry.readModels[name]?.view.holdsPersonalData === false) continue;
             const personal = layout.personal.length > 0;
             const derives = types.some((type) => (projectionsByEvent[type]?.length ?? 0) > 0);
             if (!personal && !derives) continue;

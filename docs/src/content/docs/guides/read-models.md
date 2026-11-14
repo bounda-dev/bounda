@@ -70,7 +70,9 @@ export const project = async ({ event, table }: Projection.Args) => {
 A projection of an event with a field marked `personal` sees it as `T | null`, and writes it into a
 column marked `.personal()`, which seals it. A read model that keeps such data in a column it does
 not mark, or marks with `.personal({ clear: true })`, projects `PersonalDataForgotten` too, from
-`projections/bounda/personal-data-forgotten.ts`: see
+`projections/bounda/personal-data-forgotten.ts`. A read model that projects such an event marks the
+field naming whose each row is with `.person()`, or its view exports `holdsPersonalData = false`
+when it keeps nothing of the person's: see
 [Personal data](/guides/personal-data/#personal-data-in-read-models).
 
 ## The table

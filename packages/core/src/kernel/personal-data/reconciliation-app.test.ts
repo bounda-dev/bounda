@@ -67,7 +67,10 @@ const registry = {
   readModels: {
     customers: {
       view: {
-        fields: ({ f }: FieldsArgs) => ({ customerId: f.string().primaryKey(), name: f.string() }),
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          name: f.string(),
+        }),
       },
       projections: {
         customer: {

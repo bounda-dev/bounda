@@ -16,8 +16,6 @@ type Events = Record<string, (payload: unknown) => unknown>;
 // A copy of the email that quotes none of it, as a hash or a reformatted value is.
 const reversed = (email: string): string => [...email].reverse().join("");
 
-const domainOf = (email: string): string => email.slice(email.indexOf("@") + 1);
-
 // Holds the next projection of a registration into the mailing list until it is opened.
 let gate: { readonly reached: () => void; readonly opened: Promise<void> } | undefined;
 // The notes fail the redaction's batch while they are down; the mailing list fails every
@@ -120,13 +118,14 @@ const registry = {
         },
       },
     },
-    // Marks nothing personal, though what it keeps comes from a personal field.
-    domains: {
+    // Keeps nothing of the person's data, as its view states.
+    plans: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          domain: f.string().primaryKey(),
+          plan: f.string().primaryKey(),
           customers: f.number(),
         }),
+        holdsPersonalData: false,
       },
       projections: {
         customer: {
@@ -135,21 +134,21 @@ const registry = {
               event,
               table,
             }: {
-              event: { payload: { email: string | null } };
-              table: Table<{ domain: string; customers: number }>;
+              event: { payload: { plan: string } };
+              table: Table<{ plan: string; customers: number }>;
             }) => {
-              if (event.payload.email === null) return;
-              const domain = domainOf(event.payload.email);
-              const row = await table.findOne({ domain });
-              await table.upsert({ domain, customers: (row?.customers ?? 0) + 1 });
+              const row = await table.findOne({ plan: event.payload.plan });
+              await table.upsert({
+                plan: event.payload.plan,
+                customers: (row?.customers ?? 0) + 1,
+              });
             },
           },
         },
       },
       queries: {
-        allDomains: {
-          handler: ({ table }: { table: Table<{ domain: string }> }) =>
-            table.findMany({ orderBy: { field: "domain", direction: "asc" } }),
+        allPlans: {
+          handler: ({ table }: { table: Table<{ plan: string }> }) => table.findMany(),
         },
       },
     },
@@ -204,6 +203,7 @@ const registry = {
     tally: {
       view: {
         fields: ({ f }: FieldsArgs) => ({ kind: f.string().primaryKey(), count: f.number() }),
+        holdsPersonalData: false,
       },
       projections: {
         customer: {
@@ -336,13 +336,48 @@ describe.each(adapters)("redact, rebuilding what was derived, %s", (_, adapterOf
     await expectRedacted(app, "ana", { values: [reversed("ana@old.example")] });
   });
 
-  it("rebuilds a read model that marks nothing personal, so what it derived goes too", async () => {
-    const { app, queries, registered, holding } = await setUp(adapterOf());
+  it("leaves a read model whose view states it holds no personal data as it is, rebuilding none", async () => {
+    const { app, queries, registered, holding, rebuilt } = await setUp(adapterOf());
     await registered("ana", "ana@old.example");
     await registered("bo", "bo@example.com");
     await app.redact("ana", { events: await holding("ana", "ana@old.example") });
     await app.runUntilIdle();
-    expect(await queries.allDomains?.()).toEqual([{ domain: "example.com", customers: 1 }]);
+    expect(rebuilt("plans")).toEqual([]);
+    expect(await queries.allPlans?.()).toEqual([{ plan: "pro", customers: 2 }]);
+    await expectRedacted(app, "ana");
+  });
+
+  it("refuses to start a read model that projects personal data and says neither whose its rows are nor that it holds none", async () => {
+    const { holdsPersonalData: _, ...undeclared } = registry.readModels.plans?.view ?? {
+      fields: () => ({}),
+    };
+    const refused = createTestApp({
+      registry: {
+        ...registry,
+        readModels: {
+          ...registry.readModels,
+          plans: { ...registry.readModels.plans, view: undeclared },
+        },
+      } as Registry,
+    });
+    await expect(refused).rejects.toThrow(
+      'Read model "plans" projects events with personal fields (customer.customerRegistered), so it needs a field marked .person()',
+    );
+    const contradicted = createTestApp({
+      registry: {
+        ...registry,
+        readModels: {
+          ...registry.readModels,
+          notes: {
+            ...registry.readModels.notes,
+            view: { ...registry.readModels.notes?.view, holdsPersonalData: false },
+          },
+        },
+      } as Registry,
+    });
+    await expect(contradicted).rejects.toThrow(
+      'Read model "notes" exports holdsPersonalData = false, so it marks no field with .personal() or .person()',
+    );
   });
 
   it("leaves a read model that projects no event the redaction reached as it is", async () => {

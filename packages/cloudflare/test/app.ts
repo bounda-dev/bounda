@@ -163,6 +163,8 @@ export const registry = {
           total: f.number(),
           note: f.string().optional(),
         }),
+        // Wrongly: it keeps the note in the clear, which a test of redaction catches.
+        holdsPersonalData: false,
       },
       projections: {
         order: {
@@ -305,7 +307,7 @@ export const slicedRegistry = {
     customers: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          customer: f.string().primaryKey(),
+          customer: f.string().primaryKey().person(),
           lastOrderId: f.string(),
         }),
       },

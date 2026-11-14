@@ -197,8 +197,13 @@ describe("a Bounda Durable Object", () => {
           values: ["no bell"],
         }).catch((error: unknown) => error),
       );
-    // The read model kept the note in a column it does not mark: it projects the event redacted,
-    // so the alarm rebuilt it, and reads it redacted.
+    // The read model states it holds no personal data, yet keeps the note: the statement is the
+    // app's, so nothing rebuilds it, and the search finds what it left out until a rebuild.
+    expect(await search()).toMatchObject({
+      name: "NotRedactedError",
+      found: [{ value: "no bell", store: "bounda_rm_orders", row: "order_id=o-1", field: "note" }],
+    });
+    expect(await store.rebuildReadModel("orders")).toMatchObject({ done: true });
     expect(await search()).toBeUndefined();
     const refused = await rejection(store.redact("ada", { events: [] }));
     expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
@@ -286,7 +291,20 @@ describe("a Bounda Durable Object", () => {
       },
     });
     expect(forgotten.alarm).toBeLessThanOrEqual(Date.now());
-    await runAlarm(stub);
+    // `customers` marks `.person()`, so it also keeps which of its rows are restricted, through a
+    // subscriber no read-your-writes waits for: three events behind here, at most one event a
+    // subscriber an alarm in this object, each alarm arming the next at once while it lags. The
+    // runtime may run a due alarm on its own as well, so each one leaves it at most that far behind.
+    const restrictions = async () =>
+      (await store.getLag()).subscribers.find(
+        ({ subscriber }) => subscriber === "restrictions:customers",
+      )?.lag ?? 0;
+    expect(await restrictions()).toBeLessThanOrEqual(3);
+    for (const behind of [2, 1, 0]) {
+      if ((await restrictions()) > 0) expect(await alarmOf(stub)).toBeLessThanOrEqual(Date.now());
+      await runAlarm(stub);
+      expect(await restrictions()).toBeLessThanOrEqual(behind);
+    }
     expect((await store.getLag()).maxLag).toBe(0);
     expect(await settledAlarm(stub)).toBeNull();
   });
