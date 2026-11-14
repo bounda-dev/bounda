@@ -10,6 +10,10 @@ export interface AppStorageArgs {
   readonly aggregates: AggregatesRuntime;
   readonly processes: Pick<ProcessesRuntime, "byName">;
   readonly wrapping: PersonalKeyWrapping;
+  /**
+   * Whether the app's ports tell recipients, whose disclosures need each read's fence.
+   */
+  readonly fenced?: boolean;
 }
 
 export interface AppStorageTransaction extends Omit<StorageTransaction, "personalKeys"> {
@@ -31,7 +35,13 @@ export interface AppStorageFunction {
  * personal fields and upcast what they read, so handlers only ever see current, readable
  * payloads. The adapter's own `eventStore` stays as written, for the global stream.
  */
-export const appStorage: AppStorageFunction = ({ storage, aggregates, processes, wrapping }) => {
+export const appStorage: AppStorageFunction = ({
+  storage,
+  aggregates,
+  processes,
+  wrapping,
+  fenced = false,
+}) => {
   const personalKeys = wrapping.over(storage.personalKeys);
   return {
     ...storage,
@@ -42,6 +52,7 @@ export const appStorage: AppStorageFunction = ({ storage, aggregates, processes,
         aggregates,
         processes,
         keys: personalKeys,
+        fenced,
       }),
       aggregates,
     }),

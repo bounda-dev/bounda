@@ -25,6 +25,7 @@ import {
   type UnrestrictOptions,
 } from "../../modules/personal-data.ts";
 import { RETRY_RESTRICTED_COMMAND, retryRestrictedKey } from "../command/pipeline.ts";
+import { addressed } from "../recipients/addressing.ts";
 import { actedBy, causedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { type CategoryNames, checkCategoryNames } from "./categories.ts";
@@ -429,7 +430,7 @@ const change = async ({
           aggregateType: BOUNDA_AGGREGATE,
           aggregateId: personId,
           type: planned.restriction.type,
-          payload: planned.restriction.payload,
+          payload: await addressed(transaction, planned.restriction),
           person: personId,
           context,
           identity: { id, timestamp: at },
@@ -715,7 +716,7 @@ export const restrictAgain: RestrictAgainFunction = ({
         aggregateType: BOUNDA_AGGREGATE,
         aggregateId: personId,
         type: restriction.type,
-        payload: restriction.payload,
+        payload: await addressed(transaction, restriction),
         person: personId,
         context: startedBy(ids.next(), undefined),
         identity: { id: eventId, timestamp: forgottenAt },

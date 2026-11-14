@@ -3,6 +3,7 @@ import {
   byForgetLedgerOrder,
   type ForgetLedger,
   type ForgetLedgerEntry,
+  type LedgerDisclosure,
   type LedgerRedaction,
   type LedgerRestriction,
 } from "@bounda-dev/core/adapter";
@@ -43,6 +44,7 @@ interface SpilledEntry {
   readonly fingerprints?: readonly string[];
   readonly restriction?: LedgerRestriction;
   readonly redaction?: LedgerRedaction;
+  readonly disclosure?: LedgerDisclosure;
 }
 
 interface StoredEntry {
@@ -65,6 +67,7 @@ const storedOf = ({
   fingerprints,
   restriction,
   redaction,
+  disclosure,
 }: ForgetLedgerEntry): StoredEntry => {
   const full: EntryMetadata = {
     personId,
@@ -73,7 +76,12 @@ const storedOf = ({
     reason,
     ...(fingerprints === undefined ? {} : { fingerprints }),
   };
-  if (restriction === undefined && redaction === undefined && sizeOf(full) <= KV_METADATA_BYTES) {
+  if (
+    restriction === undefined &&
+    redaction === undefined &&
+    disclosure === undefined &&
+    sizeOf(full) <= KV_METADATA_BYTES
+  ) {
     return { metadata: full, value: "" };
   }
   const spilled: SpilledEntry = {
@@ -81,6 +89,7 @@ const storedOf = ({
     ...(fingerprints === undefined ? {} : { fingerprints }),
     ...(restriction === undefined ? {} : { restriction }),
     ...(redaction === undefined ? {} : { redaction }),
+    ...(disclosure === undefined ? {} : { disclosure }),
   };
   return {
     metadata: { personId, forgottenAt, reason, inValue: true },
@@ -105,19 +114,29 @@ const spilledIn = (value: string | null): SpilledEntry | null => {
   const fingerprints: unknown = Reflect.get(parsed, "fingerprints");
   const restriction: unknown = Reflect.get(parsed, "restriction");
   const redaction: unknown = Reflect.get(parsed, "redaction");
+  const disclosure: unknown = Reflect.get(parsed, "disclosure");
   if (categories !== null && !isTextList(categories)) return null;
   if (restriction !== undefined && !isRestriction(restriction)) return null;
   if (redaction !== undefined && !isRedaction(redaction)) return null;
+  if (disclosure !== undefined && !isDisclosure(disclosure)) return null;
   return {
     categories,
     ...(isTextList(fingerprints) ? { fingerprints } : {}),
     ...(restriction === undefined ? {} : { restriction }),
     ...(redaction === undefined ? {} : { redaction }),
+    ...(disclosure === undefined ? {} : { disclosure }),
   };
 };
 
 const isRedaction = (value: unknown): value is LedgerRedaction =>
   typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "events"));
+
+const isDisclosure = (value: unknown): value is LedgerDisclosure =>
+  typeof value === "object" &&
+  value !== null &&
+  ["port", "recipient", "kind", "country", "category"].every(
+    (field) => typeof Reflect.get(value, field) === "string",
+  );
 
 const isRestriction = (value: unknown): value is LedgerRestriction =>
   typeof value === "object" &&
@@ -141,7 +160,13 @@ const expirationOf = (forgottenAt: string, keepForMs: number, now: number): numb
 const entryOf = (
   metadata: EntryMetadata,
   eventId: string,
-  { categories, fingerprints, restriction, redaction }: Partial<SpilledEntry> = metadata,
+  {
+    categories,
+    fingerprints,
+    restriction,
+    redaction,
+    disclosure,
+  }: Partial<SpilledEntry> = metadata,
 ): ForgetLedgerEntry => {
   const entry: ForgetLedgerEntry = {
     personId: metadata.personId,
@@ -155,6 +180,7 @@ const entryOf = (
     ...(isTextList(fingerprints) ? { fingerprints: [...fingerprints] } : {}),
     ...(restriction === undefined ? {} : { restriction }),
     ...(redaction === undefined ? {} : { redaction }),
+    ...(disclosure === undefined ? {} : { disclosure }),
   };
 };
 

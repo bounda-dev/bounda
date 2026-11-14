@@ -29,8 +29,20 @@ export interface StoredDisclosure extends Disclosure {
  */
 export interface DeclaredRecipient {
   readonly port: string;
+  /**
+   * The categories its declaration names now.
+   */
+  readonly categories: readonly string[];
   readonly presumedThrough: number;
   readonly declaredAt: string;
+}
+
+/**
+ * A port as the app declares its recipient when it starts.
+ */
+export interface RecipientPort {
+  readonly port: string;
+  readonly categories: readonly string[];
 }
 
 /**
@@ -48,8 +60,8 @@ export interface RecipientSummary {
  * `disclose` records disclosures at `at`: a new one with both times at it, a known one with its
  * last moved forward, never back; it resolves to those it had not recorded before. `forget` removes
  * the person's disclosures of those categories, of every category when `null`. `declare` records
- * each port it has not seen with `presumedThrough` at `position`, leaves the others as they are,
- * and resolves to every port declared; `presumeThrough` moves every port's `presumedThrough` up to
+ * each port it has not seen with `presumedThrough` at `position`, updates the categories of those
+ * it has, and resolves to every port declared; `presumeThrough` moves every port's `presumedThrough` up to
  * `position`, never down, for a database whose disclosures since may have been lost.
  */
 export interface RecipientStore {
@@ -57,7 +69,7 @@ export interface RecipientStore {
   disclosures(person: string): Promise<readonly StoredDisclosure[]>;
   forget(person: string, categories: readonly string[] | null): Promise<void>;
   declare(
-    ports: readonly string[],
+    ports: readonly RecipientPort[],
     position: number,
     at: string,
   ): Promise<readonly DeclaredRecipient[]>;

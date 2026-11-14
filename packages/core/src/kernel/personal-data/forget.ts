@@ -14,6 +14,7 @@ import {
 } from "../../modules/bounda-events.ts";
 import type { ForgetOptions, PersonalCategoryName } from "../../modules/personal-data.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
+import { addressed } from "../recipients/addressing.ts";
 import { actedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { lastActivity } from "./activity.ts";
@@ -199,7 +200,7 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
     aggregateType: BOUNDA_AGGREGATE,
     aggregateId: personId,
     type: PERSONAL_DATA_FORGOTTEN_EVENT,
-    payload,
+    payload: await addressed(transaction, { type: PERSONAL_DATA_FORGOTTEN_EVENT, payload }),
     context,
     person: personId,
     identity: { id: intention.eventId, timestamp: intention.forgottenAt },

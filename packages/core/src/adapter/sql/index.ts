@@ -23,6 +23,7 @@ export type {
 export {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
+  forgetLedgerDisclosureStatement,
   forgetLedgerMarksStatement,
   forgetLedgerMarksTableFor,
   forgetLedgerReasonStatements,

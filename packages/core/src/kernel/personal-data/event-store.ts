@@ -16,6 +16,7 @@ import {
   seal,
   unseal,
 } from "./crypto.ts";
+import { stampFence } from "./fences.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf, sealLifecycleEvent } from "./process-state.ts";
 import { opensRequested } from "./refusal.ts";
@@ -29,6 +30,12 @@ export interface WithPersonalDataArgs {
    */
   readonly processes: Pick<ProcessesRuntime, "byName">;
   readonly keys: PersonalKeys;
+  /**
+   * For an app whose ports tell recipients: each read takes the head of the stream first, and
+   * what it opens carries it, so a disclosure of it can tell whether the person's stream moved
+   * since.
+   */
+  readonly fenced?: boolean;
 }
 
 export interface WithPersonalDataFunction {
@@ -141,6 +148,7 @@ export const withPersonalData: WithPersonalDataFunction = ({
   aggregates,
   processes,
   keys,
+  fenced = false,
 }) => {
   const marksOf = (event: Pick<StoredEvent, "aggregateType" | "type">): PersonalMarks | null =>
     aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal ?? null;
@@ -307,6 +315,18 @@ export const withPersonalData: WithPersonalDataFunction = ({
       cache(person, fingerprint, () => keys.opened(person, fingerprint));
   };
 
+  const fence = async (): Promise<number | undefined> =>
+    fenced ? await eventStore.lastPosition() : undefined;
+
+  const fencing = <Events extends readonly StoredEvent[]>(
+    events: Events,
+    position: number | undefined,
+  ): Events => {
+    if (position !== undefined)
+      for (const event of events) stampFence(openedUnder(event), position);
+    return events;
+  };
+
   return {
     // The store checks, as it writes, that each person still holds the key their data was read or
     // is sealed under and is not restricted: either may have changed since this read the key. The
@@ -346,25 +366,40 @@ export const withPersonalData: WithPersonalDataFunction = ({
       };
     },
     load: async (args) => {
+      const position = await fence();
       const loaded = await eventStore.load(args);
       const key = opening();
       const opened = new Map<string, KeyedPerson>();
-      const events = await settled(loaded.events.map((e) => unsealed(e, key, opened)));
+      const events = fencing(
+        await settled(loaded.events.map((e) => unsealed(e, key, opened))),
+        position,
+      );
       return { ...loaded, events, opened: [...opened.values()] };
     },
     readOne: async (args) => {
+      const position = await fence();
       const event = await eventStore.readOne(args);
-      return event === null ? null : unsealed(event, opening(), new Map());
+      return event === null
+        ? null
+        : (fencing([await unsealed(event, opening(), new Map())], position)[0] as StoredEvent);
     },
     readAll: async (args) => {
+      const position = await fence();
       const key = opening();
       const ignored = new Map<string, KeyedPerson>();
-      return settled((await eventStore.readAll(args)).map((e) => unsealed(e, key, ignored)));
+      return fencing(
+        await settled((await eventStore.readAll(args)).map((e) => unsealed(e, key, ignored))),
+        position,
+      );
     },
     readByPerson: async (args) => {
+      const position = await fence();
       const key = opening();
       const ignored = new Map<string, KeyedPerson>();
-      return settled((await eventStore.readByPerson(args)).map((e) => unsealed(e, key, ignored)));
+      return fencing(
+        await settled((await eventStore.readByPerson(args)).map((e) => unsealed(e, key, ignored))),
+        position,
+      );
     },
     lastPosition: () => eventStore.lastPosition(),
     // Written as given: whoever reseals an event has sealed its payload already.

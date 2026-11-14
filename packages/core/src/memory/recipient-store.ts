@@ -56,10 +56,14 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
         }
       },
       declare: async (ports, position, at) => {
-        for (const port of ports) {
-          if (!recipients.has(port)) {
-            recipients.set(port, { port, presumedThrough: position, declaredAt: at });
-          }
+        for (const { port, categories } of ports) {
+          const held = recipients.get(port);
+          recipients.set(
+            port,
+            held === undefined
+              ? { port, categories, presumedThrough: position, declaredAt: at }
+              : { ...held, categories },
+          );
         }
         return declared();
       },
@@ -105,6 +109,7 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
         .sort((a, b) => byText(a.port, b.port))
         .map((row) => ({
           port: row.port,
+          categories: JSON.stringify(row.categories),
           presumed_through: row.presumedThrough,
           declared_at: row.declaredAt,
         })),

@@ -147,8 +147,54 @@ export interface RestrictedProcessingAccess extends AccessRecord {
   };
 }
 
+/**
+ * Work that called a port whose recipient receives personal data: `persons` are those whose data
+ * of the recipient's categories the work had read, recorded as disclosed to it.
+ */
+export interface DisclosureAccess extends AccessRecord {
+  readonly operation: "disclosure";
+  readonly detail: {
+    /**
+     * The port, `"<aggregate or read model>.<port>"`.
+     */
+    readonly recipient: string;
+    /**
+     * The command's type, the policy's or process's key, or the query's name.
+     */
+    readonly handler: string;
+    readonly categories: readonly string[];
+  };
+}
+
+/**
+ * A recipient told of a forgetting, a restriction, a lift or a redaction (article 19), by its
+ * handler. `superseded` is `true` when the handler did not run because a later forgetting of the
+ * person as a whole was told to the recipient already.
+ */
+export interface RecipientNoticeAccess extends AccessRecord {
+  readonly operation: "recipientNotice";
+  readonly detail: {
+    readonly recipient: string;
+    readonly event: string;
+    readonly eventId: string;
+    readonly categories: readonly string[];
+    readonly superseded: boolean;
+  };
+}
+
+/**
+ * `recipientsOf`, with how many recipients it listed; `null` when it failed.
+ */
+export interface RecipientsOfAccess extends AccessRecord {
+  readonly operation: "recipientsOf";
+  readonly detail: { readonly recipients: number } | null;
+}
+
 export type PersonalDataAccess =
   | QueryAccess
+  | DisclosureAccess
+  | RecipientNoticeAccess
+  | RecipientsOfAccess
   | RestrictedProcessingAccess
   | ExportAccess
   | DeadLettersListAccess

@@ -99,26 +99,62 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       expect(await storage.recipients.disclosures("c-2")).toHaveLength(1);
     });
 
-    it("declares a port once, at the position it was first seen", async () => {
-      expect(await storage.recipients.declare(["order.mailer", "customer.crm"], 4, at(1))).toEqual([
-        { port: "customer.crm", presumedThrough: 4, declaredAt: at(1) },
-        { port: "order.mailer", presumedThrough: 4, declaredAt: at(1) },
+    it("declares a port once, at the position it was first seen, with its categories as now", async () => {
+      expect(
+        await storage.recipients.declare(
+          [
+            { port: "order.mailer", categories: ["contact"] },
+            { port: "customer.crm", categories: ["profile", "contact"] },
+          ],
+          4,
+          at(1),
+        ),
+      ).toEqual([
+        {
+          port: "customer.crm",
+          categories: ["profile", "contact"],
+          presumedThrough: 4,
+          declaredAt: at(1),
+        },
+        { port: "order.mailer", categories: ["contact"], presumedThrough: 4, declaredAt: at(1) },
       ]);
-      expect(await storage.recipients.declare(["order.mailer", "customer.ads"], 9, at(2))).toEqual([
-        { port: "customer.ads", presumedThrough: 9, declaredAt: at(2) },
-        { port: "customer.crm", presumedThrough: 4, declaredAt: at(1) },
-        { port: "order.mailer", presumedThrough: 4, declaredAt: at(1) },
+      expect(
+        await storage.recipients.declare(
+          [
+            { port: "order.mailer", categories: ["invoices"] },
+            { port: "customer.ads", categories: ["marketing"] },
+          ],
+          9,
+          at(2),
+        ),
+      ).toEqual([
+        { port: "customer.ads", categories: ["marketing"], presumedThrough: 9, declaredAt: at(2) },
+        {
+          port: "customer.crm",
+          categories: ["profile", "contact"],
+          presumedThrough: 4,
+          declaredAt: at(1),
+        },
+        { port: "order.mailer", categories: ["invoices"], presumedThrough: 4, declaredAt: at(1) },
       ]);
       expect(await storage.recipients.declared()).toHaveLength(3);
     });
 
     it("presumes every port through a position, never moving one back", async () => {
-      await storage.recipients.declare(["customer.crm"], 4, at(1));
-      await storage.recipients.declare(["customer.ads"], 12, at(2));
+      await storage.recipients.declare(
+        [{ port: "customer.crm", categories: ["contact"] }],
+        4,
+        at(1),
+      );
+      await storage.recipients.declare(
+        [{ port: "customer.ads", categories: ["contact"] }],
+        12,
+        at(2),
+      );
       await storage.recipients.presumeThrough(8);
       expect(await storage.recipients.declared()).toEqual([
-        { port: "customer.ads", presumedThrough: 12, declaredAt: at(2) },
-        { port: "customer.crm", presumedThrough: 8, declaredAt: at(1) },
+        { port: "customer.ads", categories: ["contact"], presumedThrough: 12, declaredAt: at(2) },
+        { port: "customer.crm", categories: ["contact"], presumedThrough: 8, declaredAt: at(1) },
       ]);
     });
 
@@ -126,7 +162,11 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       await expect(
         storage.transact(async (transaction) => {
           await transaction.recipients.disclose([disclosure()], at(1));
-          await transaction.recipients.declare(["customer.mailer"], 2, at(1));
+          await transaction.recipients.declare(
+            [{ port: "customer.mailer", categories: ["contact"] }],
+            2,
+            at(1),
+          );
           throw new Error("rolled back");
         }),
       ).rejects.toThrow("rolled back");

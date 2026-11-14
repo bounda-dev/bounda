@@ -83,7 +83,7 @@ export interface PersonalDataForgottenPayload {
   /**
    * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
    * the person, or may have been, in a category the change touches, as the store recorded it when
-   * the event committed. Absent from an event recorded before Bounda told recipients.
+   * the event committed; absent when there is none to tell.
    */
   readonly recipients?: readonly NotifiedRecipient[];
 }
@@ -134,7 +134,7 @@ export interface ProcessingRestrictedPayload {
   /**
    * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
    * the person, or may have been, in a category the change touches, as the store recorded it when
-   * the event committed. Absent from an event recorded before Bounda told recipients.
+   * the event committed; absent when there is none to tell.
    */
   readonly recipients?: readonly NotifiedRecipient[];
 }
@@ -161,7 +161,7 @@ export interface ProcessingRestrictionLiftAnnouncedPayload {
   /**
    * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
    * the person, or may have been, in a category the change touches, as the store recorded it when
-   * the event committed. Absent from an event recorded before Bounda told recipients.
+   * the event committed; absent when there is none to tell.
    */
   readonly recipients?: readonly NotifiedRecipient[];
 }
@@ -188,7 +188,7 @@ export interface ProcessingRestrictionLiftedPayload {
   /**
    * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
    * the person, or may have been, in a category the change touches, as the store recorded it when
-   * the event committed. Absent from an event recorded before Bounda told recipients.
+   * the event committed; absent when there is none to tell.
    */
   readonly recipients?: readonly NotifiedRecipient[];
 }
@@ -241,7 +241,7 @@ export interface PersonalDataRedactedPayload {
   /**
    * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
    * the person, or may have been, in a category the change touches, as the store recorded it when
-   * the event committed. Absent from an event recorded before Bounda told recipients.
+   * the event committed; absent when there is none to tell.
    */
   readonly recipients?: readonly NotifiedRecipient[];
 }
