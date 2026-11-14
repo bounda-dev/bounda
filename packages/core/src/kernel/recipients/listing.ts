@@ -198,11 +198,14 @@ export const recipientStatuses: RecipientStatusesFunction = async ({ storage, re
               },
         persons: summary.find((each) => each.port === port)?.persons ?? 0,
         catchingUp: row !== undefined && row.caughtUpThrough < row.presumedThrough,
-        failedNotices: await storage.deadLetterStore.count({
-          kind: "recipient",
-          handler: port,
-          status: "failed",
-        }),
+        // A notice of an event that named a former key is filed under that key.
+        failedNotices: (
+          await Promise.all(
+            [port, ...(recipient?.port === port ? recipient.formerly : [])].map((handler) =>
+              storage.deadLetterStore.count({ kind: "recipient", handler, status: "failed" }),
+            ),
+          )
+        ).reduce((sum, count) => sum + count, 0),
       };
     }),
   );

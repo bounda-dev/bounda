@@ -663,6 +663,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     expect(tables.map((row) => String(row.table_name).replace(/^t[a-z0-9]+_\d+_/, ""))).toEqual([
       "checkpoints",
       "dead_letters",
+      "disclosures",
       "events",
       "idempotency_keys",
       "inbox",
@@ -670,6 +671,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       "migrations",
       "personal_keys",
       "persons",
+      "recipients",
       "restricted_persons",
       "restricted_positions",
       "restrictions",

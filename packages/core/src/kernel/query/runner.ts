@@ -121,7 +121,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
         // The rows read reflect the stream through the read model's checkpoint, read first: a
         // change of a person past it, which the rows may not show yet, refuses a disclosure.
         const fence =
-          disclosures === undefined
+          disclosures === undefined || !disclosures.tells(query.readModel)
             ? undefined
             : await readModel.storage.checkpointStore.get(
                 projectionSubscriberName(query.readModel),

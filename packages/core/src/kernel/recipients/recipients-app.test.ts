@@ -873,6 +873,49 @@ describe("recipients of personal data", () => {
     await app.stop();
   });
 
+  it("checks every call of a run again, so a second call after a forgetting is refused", async () => {
+    const told: Notice[] = [];
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const registry = registryWith({ told });
+    const customer = registry.aggregates.customer as unknown as {
+      policies: Record<string, { module: { handler: (args: never) => unknown } }>;
+    };
+    customer.policies.welcomeOnCustomerRegistered = {
+      module: {
+        handler: async ({
+          event,
+          mailer,
+        }: {
+          event: { payload: { email: string | null } };
+          mailer: Sender;
+        }) => {
+          await mailer.send({ to: event.payload.email });
+          calls += 1;
+          if (calls === 1) await held;
+          await mailer.send({ to: event.payload.email });
+        },
+      },
+    };
+    const { app, commands, mailed } = await start({ told, registry });
+    await commands.registerCustomer?.({ customerId: "c-1", email: "c-1@example.com" });
+    const running = app.runUntilIdle();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await app.forget("c-1");
+    release();
+    await running;
+    await app.runUntilIdle();
+    // The first call went before the forgetting, and told it; the second was refused, and the
+    // run tried again on what is left.
+    expect(mailed).toEqual(["c-1@example.com", null, null]);
+    expect(told.map(({ type, person }) => [type, person])).toEqual([
+      ["PersonalDataForgotten", "c-1"],
+    ]);
+  });
+
   it("lists every recipient in the export, with the category's basis and the transfer's safeguard", async () => {
     const { app, register } = await start();
     await register("c-1");
@@ -957,6 +1000,53 @@ describe("recipients and the forget ledger", () => {
     stops.push(() => app.stop());
     return app;
   };
+
+  it("has a disclosure in the ledger before the port is called", async () => {
+    const storage = memory();
+    const ledgerAdapter = memory();
+    const ledger = await ledgerAdapter.createForgetLedger({});
+    const seen: (readonly ForgetLedgerEntry[])[] = [];
+    const registry = registryWithDoubles(
+      registryWith({ told: [] }),
+      {
+        customer: {
+          mailer: {
+            send: async () => {
+              seen.push(await ledger.read({ limit: 10 }));
+            },
+          },
+          crm: sender([]),
+        },
+        customers: { audience: sender([]) },
+      },
+      () => {},
+    );
+    const app = await createApp({
+      registry,
+      config: {
+        storage,
+        ports: {},
+        runtime: { personalData: { forgetLedger: { store: ledgerAdapter } } },
+      } as never,
+      clock: createFixedClock(START),
+      ids: createSequentialIdGenerator({ prefix: "ledgered" }),
+    });
+    stops.push(() => app.stop());
+    const commands = app.commands as unknown as Record<
+      string,
+      (payload: unknown) => Promise<unknown>
+    >;
+    await commands.registerCustomer?.({ customerId: "c-1", email: "c-1@example.com" });
+    await app.runUntilIdle();
+    expect(seen).toEqual([
+      [
+        expect.objectContaining({
+          personId: "c-1",
+          disclosure: expect.objectContaining({ port: "customer.mailer", category: "contact" }),
+        }),
+      ],
+    ]);
+  });
 
   it("keeps each disclosure in the ledger, and records again at start one the store lost", async () => {
     const storage = memory();

@@ -1,5 +1,5 @@
 import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
-import type { Disclosure } from "../../adapter/storage/recipient-store.ts";
+import { type Disclosure, disclosureKey } from "../../adapter/storage/recipient-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError } from "../../contracts/errors.ts";
 import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
@@ -34,6 +34,10 @@ export interface OpenedData {
   readonly person: string;
   readonly fingerprint: string | null;
   readonly category?: string;
+  /**
+   * Read under a key a forgetting kept under a legal obligation.
+   */
+  readonly retained?: boolean;
   readonly fence: number | undefined;
 }
 
@@ -59,10 +63,15 @@ export const openedOf: OpenedOfFunction = (persons) =>
   persons.map((held) => ({
     person: held.person,
     fingerprint: held.fingerprint,
+    ...(held.retained === true ? { retained: true } : {}),
     fence: fenceOf(held),
   }));
 
 export interface Disclosures {
+  /**
+   * Whether a port of the owner tells a recipient.
+   */
+  tells(owner: string): boolean;
   /**
    * The owner's ports with every port that tells a recipient wrapped: before each of its methods
    * runs, what the run read of the categories its recipient receives is recorded as disclosed, in
@@ -79,7 +88,7 @@ export interface Disclosures {
 
 export interface CreateDisclosuresArgs {
   readonly recipients: RecipientsRuntime;
-  readonly storage: Pick<AppStorage, "transact" | "personalKeys">;
+  readonly storage: Pick<AppStorage, "transact" | "personalKeys" | "recipients">;
   readonly intentions: ForgetIntentions;
   readonly recordAccess: RecordAccess;
   readonly clock: Clock;
@@ -123,17 +132,18 @@ export const createDisclosures: CreateDisclosuresFunction = ({
     return known.get(id);
   };
 
+  // Every call checks again, in a transaction of its own, that nothing changed of the persons
+  // since the run read them, and records the disclosure: two calls of one run may straddle a
+  // forgetting.
   const disclose = async (
     recipient: RecipientRuntime,
     run: DisclosingRun,
-    recorded: Set<string>,
     known: Map<string, string | undefined>,
   ): Promise<void> => {
-    const opened = run.opened();
     const fences = new Map<string, number>();
-    const pending = new Map<string, Disclosure>();
+    const rows = new Map<string, Disclosure>();
     const readUnder: KeyedPerson[] = [];
-    for (const data of opened) {
+    for (const data of run.opened()) {
       const category = await categoryOf(storage.personalKeys, known, data);
       if (category === undefined) {
         throw new PersonalDataChangedError(data.person, data.fence ?? 0, 0);
@@ -143,17 +153,30 @@ export const createDisclosures: CreateDisclosuresFunction = ({
         fences.set(data.person, Math.min(fences.get(data.person) ?? data.fence, data.fence));
       }
       if (data.fingerprint !== null) {
-        readUnder.push({ person: data.person, fingerprint: data.fingerprint });
+        readUnder.push({
+          person: data.person,
+          fingerprint: data.fingerprint,
+          ...(data.retained === true ? { retained: true } : {}),
+        });
       }
       const disclosure = disclosureOf(recipient, data.person, category);
-      const id = JSON.stringify([disclosure.person, disclosure.category]);
-      if (!recorded.has(id)) pending.set(id, disclosure);
+      rows.set(JSON.stringify([disclosure.person, disclosure.category]), disclosure);
     }
-    if (pending.size === 0) return;
-    const rows = [...pending.values()];
-    const persons = [...new Set(rows.map(({ person }) => person))];
+    if (rows.size === 0) return;
+    const disclosed = [...rows.values()];
+    const persons = [...new Set(disclosed.map(({ person }) => person))];
     const at = clock.now().toISOString();
-    const { through: letThrough, added } = await storage.transact(async (transaction) => {
+    // What the store has not seen goes to the forget ledger before it is recorded, so a restore
+    // that loses it still tells the recipient, and a call refused below leaves at most a
+    // disclosure that never happened, which only tells the recipient once too often.
+    const stored = new Set(
+      (await Promise.all(persons.map((person) => storage.recipients.disclosures(person))))
+        .flat()
+        .map(disclosureKey),
+    );
+    const fresh = disclosed.filter((row) => !stored.has(disclosureKey(row)));
+    if (fresh.length > 0) await intentions.disclose(fresh, at);
+    const letThrough = await storage.transact(async (transaction) => {
       for (const person of persons) {
         const fence = fences.get(person);
         if (fence === undefined) continue;
@@ -172,18 +195,15 @@ export const createDisclosures: CreateDisclosuresFunction = ({
         touches: [],
         basis: run.basis,
       });
-      return { through, added: await transaction.recipients.disclose(rows, at) };
+      await transaction.recipients.disclose(disclosed, at);
+      return through;
     });
-    // What the store had not seen goes to the forget ledger before the port is called, so a
-    // restore that loses it still tells the recipient.
-    if (added.length > 0) await intentions.disclose(added, at);
-    for (const id of pending.keys()) recorded.add(id);
     await recordAccess({
       operation: "disclosure",
       detail: {
         recipient: recipient.port,
         handler: run.handler,
-        categories: [...new Set(rows.map(({ category }) => category))].sort(),
+        categories: [...new Set(disclosed.map(({ category }) => category))].sort(),
       },
       actor: run.actor,
       persons,
@@ -199,7 +219,6 @@ export const createDisclosures: CreateDisclosuresFunction = ({
     recipient: RecipientRuntime,
     implementation: unknown,
     run: DisclosingRun,
-    recorded: Set<string>,
     known: Map<string, string | undefined>,
   ): unknown => {
     if (
@@ -213,7 +232,7 @@ export const createDisclosures: CreateDisclosuresFunction = ({
     // gated; a property that is no function is read as it is.
     return new Proxy(implementation, {
       apply: async (target, self, args: unknown[]) => {
-        await disclose(recipient, run, recorded, known);
+        await disclose(recipient, run, known);
         return Reflect.apply(target as (...args: unknown[]) => unknown, self, args);
       },
       get: (target, property) => {
@@ -221,7 +240,7 @@ export const createDisclosures: CreateDisclosuresFunction = ({
         if (typeof value !== "function") return value;
         if (!methods.has(property)) {
           methods.set(property, async (...args: unknown[]) => {
-            await disclose(recipient, run, recorded, known);
+            await disclose(recipient, run, known);
             return (value as (...args: unknown[]) => unknown).apply(target, args);
           });
         }
@@ -231,10 +250,10 @@ export const createDisclosures: CreateDisclosuresFunction = ({
   };
 
   return {
+    tells: (owner) => recipients.byOwner[owner] !== undefined,
     bind: (owner, ports, run) => {
       const own = recipients.byOwner[owner];
       if (own === undefined) return ports;
-      const recorded = new Set<string>();
       const known = new Map<string, string | undefined>();
       const bound: Record<string, unknown> = {};
       for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(ports))) {
@@ -248,7 +267,7 @@ export const createDisclosures: CreateDisclosuresFunction = ({
           enumerable: true,
           get: () => {
             built ??= {
-              port: wrapped(recipient, Reflect.get(ports, name), run, recorded, known),
+              port: wrapped(recipient, Reflect.get(ports, name), run, known),
             };
             return built.port;
           },
