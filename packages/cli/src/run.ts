@@ -846,10 +846,7 @@ export const runCli: RunCliFunction = async ({
           .choices(DEAD_LETTER_STATUSES)
           .default("failed"),
       )
-      .option(
-        "--handler <name>",
-        "the policy, process, scheduled command or recipient port that failed",
-      )
+      .option("--handler <name>", "the policy, process, scheduled command or port that failed")
       .option("--limit <n>", "at most this many letters", parseLimit)
       .option("--json", "print the letters as JSON", false),
   ).action(async (options: ListDeadLettersOptions) => {

@@ -642,7 +642,7 @@ describe("bounda dead-letters", () => {
       "--status <status>",
       "only letters in this status",
       "--handler <name>",
-      "the policy, process or scheduled command that failed",
+      "the policy, process, scheduled command or port that failed",
       "--limit <n>",
       "at most this many letters",
       "--json",
@@ -655,7 +655,7 @@ describe("bounda dead-letters", () => {
       expect(list.stdout).toContain(option);
     }
     expect(list.stdout).toMatch(
-      /--kind <kind>.*\(choices:\s+"policy",\s+"process",\s+"scheduled"\)/s,
+      /--kind <kind>.*\(choices:\s+"policy",\s+"process",\s+"scheduled",\s+"recipient"\)/s,
     );
     expect(list.stdout).toMatch(
       /--status <status>.*\(choices:\s+"failed",\s+"retried",\s+"discarded",\s+default:\s+"failed"\)/s,
@@ -1284,14 +1284,15 @@ describe("bounda status", () => {
       /^ {4}failing: Error on Incremented at \d+, \d+ attempts? since \S+$/m,
     );
     // The fixture's other registry marks personal data, and the store is shared by the tests.
-    expect(lines.at(-6)).toMatch(
+    expect(lines.at(-7)).toMatch(
       /^personal data backfill: (no personal data marked|sealed through position \d+, caught up)$/,
     );
-    expect(lines.slice(-5, -1)).toEqual([
+    expect(lines.slice(-6, -1)).toEqual([
       "forget ledger: not configured",
       "key rotation: not configured",
       "retention: not configured",
       "dead letter retention: not configured",
+      "recipients: none declared",
     ]);
     expect(logged(result.stderr, "info", "personal data accessed")).toEqual([]);
   });
