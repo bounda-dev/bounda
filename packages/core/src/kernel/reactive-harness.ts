@@ -119,6 +119,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     indexKeys: storage.indexKeys,
     wrapping: createPersonalKeyWrapping({ wrapper: null, clock }),
     clock,
+    scheduler: storage.scheduler,
   });
   const recordAccess = createAccessLog({
     hook: undefined,

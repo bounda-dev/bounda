@@ -4,6 +4,7 @@ import {
   forgetLedgerCategoriesStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
+  forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
   indexKeysTableStatement,
@@ -272,6 +273,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
     {
       version: 5,
       migrate: (tx) => tx.run(forgetLedgerRestrictionStatement(table, postgresqlDialect), []),
+    },
+    {
+      version: 6,
+      migrate: (tx) => tx.run(forgetLedgerRedactionStatement(table, postgresqlDialect), []),
     },
   ],
 });

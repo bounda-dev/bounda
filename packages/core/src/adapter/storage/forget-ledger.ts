@@ -6,6 +6,7 @@ import type {
   ProcessingRestrictedPayload,
   ProcessingRestrictionLiftAnnouncedPayload,
   ProcessingRestrictionLiftedPayload,
+  RedactedEvent,
 } from "../../modules/bounda-events.ts";
 
 /**
@@ -26,6 +27,14 @@ export type LedgerRestriction =
       readonly type: typeof PROCESSING_RESTRICTION_LIFTED_EVENT;
       readonly payload: ProcessingRestrictionLiftedPayload;
     };
+
+/**
+ * A redaction as the ledger keeps it: the events and fields it was asked for, ids and names
+ * alone, so a restore that lost it seals those fields again.
+ */
+export interface LedgerRedaction {
+  readonly events: readonly RedactedEvent[];
+}
 
 /**
  * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` says so, when, why,
@@ -64,6 +73,12 @@ export interface ForgetLedgerEntry {
    * `categories` `null`: a restriction has to outlive a restore as a forgetting does.
    */
   readonly restriction?: LedgerRestriction;
+  /**
+   * Present on an entry that records a redaction rather than a forgetting, whose `eventId` and
+   * `forgottenAt` are its `PersonalDataRedacted`'s, `reason` `requested` and `categories` `null`:
+   * a value made unreadable has to stay so after a restore as a forgotten one does.
+   */
+  readonly redaction?: LedgerRedaction;
 }
 
 /**

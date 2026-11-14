@@ -125,6 +125,7 @@ export const deferWrites: DeferWritesFunction = ({
         defer: later((target, args) => target.scheduler.defer(args)),
         reseal: later((target, args) => target.scheduler.reseal(args)),
         renew: scheduler.renew,
+        get: scheduler.get,
         listByPerson: scheduler.listByPerson,
         forget: scheduler.forget,
       },

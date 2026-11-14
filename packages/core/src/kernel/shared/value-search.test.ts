@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { leavesIn, MIN_SUBSTRING_LENGTH, matches, needlesOf } from "./search.ts";
+import { leavesIn, MIN_SUBSTRING_LENGTH, matches, needlesOf } from "./value-search.ts";
 
 const found = (value: unknown, haystack: unknown, opaque = false): boolean => {
   const [needle] = needlesOf({ values: [value], personId: "c-1" });

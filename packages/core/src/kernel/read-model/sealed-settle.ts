@@ -101,7 +101,11 @@ export const settledPatch: SettledPatchFunction = async ({ context, stored }) =>
   return Object.keys(patch).length === 0 ? null : patch;
 };
 
-const primaryKeyOf = (context: SealingContext): string =>
+export interface PrimaryKeyOfFunction {
+  (context: Pick<SealingContext, "layout">): string;
+}
+
+export const primaryKeyOf: PrimaryKeyOfFunction = (context) =>
   Object.keys(context.layout.fields).find(
     (field) => context.layout.fields[field]?.isPrimaryKey,
   ) as string;

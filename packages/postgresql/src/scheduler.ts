@@ -186,6 +186,12 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           [limit ?? null, offset],
         )
       ).map(toScheduled),
+    get: async (dedupeKey) => {
+      const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "dedupe_key" = $1`, [
+        dedupeKey,
+      ]);
+      return row === undefined ? null : toScheduled(row);
+    },
     listByPerson: async (person) =>
       (
         await db.all(

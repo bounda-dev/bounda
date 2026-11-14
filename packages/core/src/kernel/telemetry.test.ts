@@ -208,6 +208,7 @@ describe("telemetry", () => {
     await user.forget("p-1");
     await user.restrict("p-2", { ground: "accuracy-contested" });
     await user.unrestrict("p-2", { notice: "given" });
+    await expect(user.redact("p-2", { events: [] })).rejects.toThrow();
     await user.exportPersonalData("p-2");
     await user.deadLetters.list();
     // The bound client's type offers neither, as an operator asks those of the app.
@@ -240,8 +241,18 @@ describe("telemetry", () => {
         { [ATTRIBUTES.queryType]: "GetOrder", [ATTRIBUTES.readModel]: "orderSummary" },
       ],
     ]);
+    // A redaction refused names the error's class, never what it was asked to redact.
+    expect(named(telemetry, "bounda.operation redact").map((span) => span.attributes)).toEqual([
+      {
+        [ATTRIBUTES.operation]: "redact",
+        [ATTRIBUTES.actor]: "user-1",
+        "error.type": "ValidationError",
+      },
+    ]);
     expect(
-      named(telemetry, "bounda.operation").map((span) => [span.name, span.attributes]),
+      named(telemetry, "bounda.operation")
+        .filter((span) => span.name !== "bounda.operation redact")
+        .map((span) => [span.name, span.attributes]),
     ).toEqual([
       ...[
         "forget",

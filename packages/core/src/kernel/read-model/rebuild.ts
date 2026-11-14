@@ -95,6 +95,26 @@ export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) 
   ),
 ];
 
+export interface RebuildsPassedArgs {
+  readonly checkpointStore: CheckpointStore;
+  readonly name: string;
+  readonly position: number;
+}
+
+export interface RebuildsPassedFunction {
+  (args: RebuildsPassedArgs): Promise<boolean>;
+}
+
+/**
+ * Whether every rebuild of the read model under way, paused or running, has projected past the
+ * position: a redaction waits for them, since a rebuild may have copied an old value before it.
+ */
+export const rebuildsPassed: RebuildsPassedFunction = async ({ checkpointStore, name, position }) =>
+  (await checkpointStore.list()).every(
+    (checkpoint) =>
+      !checkpoint.subscriber.startsWith(progressPrefix(name)) || checkpoint.position >= position,
+  );
+
 /**
  * Rebuilds one read model from the whole stream without taking it offline. The projections run
  * into a shadow table with the view's current fields while queries keep reading the live one;
@@ -181,6 +201,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
       indexKeys: storage.indexKeys,
       wrapping,
       clock: systemClock,
+      scheduler: storage.scheduler,
     });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
@@ -191,6 +212,9 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
     const budget = maxEvents ?? Number.POSITIVE_INFINITY;
     let events = 0;
     try {
+      // Kept from the start, before anything is read, so a redaction that commits while this one
+      // projects what it read before waits for it.
+      await rebuild.checkpointStore.set(progress, position);
       for (const { subscriber } of await rebuild.checkpointStore.list()) {
         if (subscriber.startsWith(progressPrefix(name)) && subscriber !== progress) {
           await rebuild.checkpointStore.remove(subscriber);
@@ -213,13 +237,14 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
         const done = await withKeys({
           keys: sealing.keys,
           events: batch,
-          run: (keys) =>
+          redactions: sealing.redactions,
+          run: (keys, redacted) =>
             rebuild.transact(async (transaction) => {
               const projected = await projectBatch({
                 readModel,
                 events: batch,
                 transaction,
-                sealing: { layout, keys, indexer: sealing.indexer },
+                sealing: { layout, keys, indexer: sealing.indexer, redacted },
                 logger,
                 errorText,
                 budget: {

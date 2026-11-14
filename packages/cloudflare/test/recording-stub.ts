@@ -76,6 +76,10 @@ export const recordingStub = (): {
         forgets.push(["unrestrict", ...args]);
         return answer();
       },
+      redact: async (...args) => {
+        forgets.push(["redact", ...args]);
+        return answer();
+      },
     },
   };
 };

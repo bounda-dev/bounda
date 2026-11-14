@@ -111,6 +111,44 @@ export const subscriberFailureStoreContract: SubscriberFailureStoreContractFunct
       });
     });
 
+    it("reseals the text of the failure still on the event, and nothing else of it", async () => {
+      await store.record(failure());
+      await store.record(failure({ failedAt: at(1) }));
+      await store.resolve("projection:orders", new Date(at(2)));
+      const sealed = { $personal: { person: "c-1", key: "gone", iv: "i2", data: "d2" } };
+      await store.reseal("projection:orders", { eventId: "e-7", errorMessage: sealed });
+      const { failedAt: _failedAt, errorStack: _errorStack, ...recorded } = failure();
+      expect(await store.get("projection:orders")).toEqual({
+        ...recorded,
+        errorMessage: sealed,
+        attempts: 2,
+        firstFailedAt: at(0),
+        lastFailedAt: at(1),
+        resolvedAt: at(2),
+      });
+      await store.reseal("projection:orders", {
+        eventId: "e-7",
+        errorMessage: "m",
+        errorStack: sealed,
+      });
+      expect(await store.get("projection:orders")).toMatchObject({
+        errorMessage: "m",
+        errorStack: sealed,
+      });
+    });
+
+    it("leaves a later failure on another event, and a subscriber without one, as they are", async () => {
+      await store.record(failure({ eventId: "e-8", position: 8 }));
+      await store.reseal("projection:orders", { eventId: "e-7", errorMessage: "m" });
+      await store.reseal("projection:other", { eventId: "e-7", errorMessage: "m" });
+      expect(await store.get("projection:orders")).toMatchObject({
+        eventId: "e-8",
+        errorMessage: failure().errorMessage,
+        errorStack: failure().errorStack,
+      });
+      expect(await store.get("projection:other")).toBeNull();
+    });
+
     it("keeps one row per subscriber, listed by subscriber", async () => {
       await store.record(failure({ subscriber: "policies" }));
       await store.record(failure({ subscriber: "Processes" }));

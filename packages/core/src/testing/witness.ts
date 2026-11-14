@@ -48,6 +48,15 @@ type Forgetting = readonly string[] | null;
  */
 export interface TestWitness {
   readonly onPersonalKey: PersonalDataWitness["onPersonalKey"];
+  readonly onRedacted: NonNullable<PersonalDataWitness["onRedacted"]>;
+  /**
+   * The values the person's redactions made unreadable, as they read before.
+   */
+  redactedFor(person: string): readonly unknown[];
+  /**
+   * The person's key of that fingerprint, as the test app held it, `null` when it never did.
+   */
+  keyOf(person: string, fingerprint: string): PersonalKey | null;
   readonly logs: readonly LoggedEntry[];
   /**
    * The envelopes sealed under the person's keys, with the key that opens each when the test app
@@ -104,6 +113,7 @@ const createTestWitness = (): TestWitness => {
   const forgettings = new Map<string, Forgetting[]>();
   const logs: LoggedEntry[] = [];
   const wrapped = new WeakMap<Adapter, Adapter>();
+  const redacted = new Map<string, unknown[]>();
 
   const observe = (value: unknown, field: string | null, seen: WeakSet<object>): void => {
     if (typeof value !== "object" || value === null || seen.has(value)) return;
@@ -248,12 +258,21 @@ const createTestWitness = (): TestWitness => {
       logger[level](message, fields);
     };
 
+  const onPersonalKey = (person: string, key: PersonalKey): void => {
+    const held = keys.get(person) ?? new Map<string, PersonalKey>();
+    held.set(key.fingerprint, key);
+    keys.set(person, held);
+  };
+
   return {
-    onPersonalKey: (person, key) => {
-      const held = keys.get(person) ?? new Map<string, PersonalKey>();
-      held.set(key.fingerprint, key);
-      keys.set(person, held);
+    onPersonalKey,
+    // The key a redaction let go opens what it sealed, as a key a forgetting destroyed does.
+    onRedacted: (person, values, key) => {
+      onPersonalKey(person, key);
+      redacted.set(person, [...(redacted.get(person) ?? []), ...values]);
     },
+    redactedFor: (person) => redacted.get(person) ?? [],
+    keyOf: (person, fingerprint) => keys.get(person)?.get(fingerprint) ?? null,
     logs,
     sealedFor: (person) =>
       [...(envelopes.get(person)?.values() ?? [])].map((envelope) => ({

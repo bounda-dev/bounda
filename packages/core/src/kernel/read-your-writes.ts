@@ -54,7 +54,7 @@ export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
     };
   const waiting = (
     client: BoundaClient<R>,
-  ): Pick<BoundaClient<R>, "commands" | "forget" | "restrict" | "unrestrict" | "as"> => {
+  ): Pick<BoundaClient<R>, "commands" | "forget" | "restrict" | "unrestrict" | "redact" | "as"> => {
     const commands = client.commands as CommandsFacadeRuntime;
     const caughtUp: CommandsFacadeRuntime = Object.fromEntries(
       Object.entries(commands).map(([key, dispatch]) => [
@@ -71,6 +71,7 @@ export const readYourWrites: ReadYourWritesFunction = <R extends Registry>(
       forget: caughtUpOn(client.forget),
       restrict: caughtUpOn(client.restrict),
       unrestrict: caughtUpOn(client.unrestrict),
+      redact: caughtUpOn(client.redact),
       as: (actor) => {
         const bound = client.as(actor);
         return { ...bound, ...waiting(bound) };

@@ -1,7 +1,9 @@
 import type { IndexKeyStore } from "../../adapter/storage/index-key-store.ts";
+import type { Scheduler } from "../../adapter/storage/scheduler.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { openBlindIndexer } from "../personal-data/blind-index.ts";
+import { type RedactionScrubPayload, redactionScrubKey } from "../personal-data/redaction.ts";
 import type { PersonalKeys, PersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
 import { projectionSubscriberName, type SealingSource, withKeys } from "../projection/runner.ts";
 import type { ReadModelRuntime } from "./build-read-models.ts";
@@ -14,6 +16,11 @@ export interface OpenReadModelSealingArgs {
   readonly indexKeys: IndexKeyStore;
   readonly wrapping: Pick<PersonalKeyWrapping, "generate" | "unwrap" | "wrapped" | "wrapper">;
   readonly clock: Clock;
+  /**
+   * Where a redaction's scrub entry is read: the read models write `null` over the old values it
+   * kept.
+   */
+  readonly scheduler: Pick<Scheduler, "get">;
 }
 
 export interface OpenReadModelSealingFunction {
@@ -28,11 +35,16 @@ export const openReadModelSealing: OpenReadModelSealingFunction = async ({
   indexKeys,
   wrapping,
   clock,
+  scheduler,
 }) => ({
   keys,
   indexer: layouts.some(({ indexed }) => indexed)
     ? await openBlindIndexer({ store: indexKeys, wrapping, clock })
     : null,
+  redactions: async (eventId) => {
+    const entry = await scheduler.get(redactionScrubKey(eventId));
+    return entry === null ? [] : (entry.command.payload as RedactionScrubPayload).values;
+  },
 });
 
 export interface SettleReadModelsArgs {

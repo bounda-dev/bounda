@@ -5,7 +5,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
-import { createTestApp, expectForgotten } from "../../testing/index.ts";
+import { createTestApp, expectForgotten, expectRedacted } from "../../testing/index.ts";
 import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { SCHEDULED_COMMAND_FAILED_EVENT } from "../system-events.ts";
 import { isSealed } from "./crypto.ts";
@@ -503,6 +503,43 @@ describe("dead letters of work that names a person", () => {
     expect(isSealed(delayed?.errorMessage)).toBe(true);
     expect(JSON.stringify(delayed)).not.toContain("ana@example.com");
     expect(await storage.personalKeys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
+    await app.stop();
+  });
+});
+
+describe("dead letters of a redaction", () => {
+  it("removes the letter of a scheduled command holding an old value and seals for good the text that quotes one", async () => {
+    const { app, storage, clock } = await setup();
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.commands.remindCustomer(ana, { delay: "1m" });
+    clock.advance(60_000);
+    await app.runUntilIdle();
+    const [registered] = (await app.exportPersonalData("c-1")).events;
+    if (registered === undefined) throw new Error("not registered");
+    expect((await app.deadLetters.list()).map(({ kind }) => kind).sort()).toEqual([
+      "policy",
+      "policy",
+      "process",
+      "scheduled",
+    ]);
+    const redacted = await app.redact("c-1", {
+      events: [{ ...registered, fields: ["email"] }] as never,
+    });
+    await app.runUntilIdle();
+    const [event] = await app.events.read({ after: redacted.position - 1, limit: 1 });
+    expect(event?.payload).toMatchObject({
+      removedDeadLetters: [{ commandType: "RemindCustomer" }],
+      cancelledCommands: [],
+    });
+    const listed = await app.deadLetters.list();
+    expect(listed.map(({ kind, errorMessage }) => [kind, errorMessage])).toEqual([
+      ["policy", null],
+      ["process", null],
+      ["policy", null],
+    ]);
+    expect(await storage.deadLetterStore.count()).toBe(3);
+    await expectRedacted(app, "c-1");
     await app.stop();
   });
 });

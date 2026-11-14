@@ -23,6 +23,7 @@ import {
   type ReadEventsArgs,
   type RebuildReadModelResult,
   RebuildSupersededError,
+  type RedactOptions,
   type Registry,
   type RestrictOptions,
   type StoredDispatch,
@@ -34,6 +35,7 @@ import {
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import { durableObjectAdapter } from "./adapter.ts";
+import type { RedactRequest } from "./client.ts";
 import { cloudflareStorageOf, isCloudflareDefinition } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { objectClock } from "./object-clock.ts";
@@ -156,6 +158,16 @@ export interface BoundaObjectMethods {
     consistency: Consistency | undefined,
     actor: string | undefined,
     options: UnrestrictOptions,
+  ): Promise<RpcOutcome<StoredDispatch>>;
+  /**
+   * Redacts fields of a person's events, as `BoundaClient.redact` does, waiting for the read
+   * models that write over the old values as `forget` does.
+   */
+  redact(
+    personId: string,
+    consistency: Consistency | undefined,
+    actor: string | undefined,
+    options: RedactRequest,
   ): Promise<RpcOutcome<StoredDispatch>>;
   /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
@@ -458,6 +470,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       options: UnrestrictOptions,
     ): Promise<RpcOutcome<StoredDispatch>> {
       return this.#onPerson((client) => client.unrestrict(personId, options), consistency, actor);
+    }
+
+    redact(
+      personId: string,
+      consistency: Consistency | undefined,
+      actor: string | undefined,
+      options: RedactRequest,
+    ): Promise<RpcOutcome<StoredDispatch>> {
+      return this.#onPerson(
+        (client) => client.redact(personId, options as RedactOptions<R>),
+        consistency,
+        actor,
+      );
     }
 
     override async alarm(): Promise<void> {

@@ -7,7 +7,7 @@ export type {
   CreateBoundaObjectFunction,
 } from "./bounda-object.ts";
 export { createBoundaObject } from "./bounda-object.ts";
-export type { BoundaStub, ConnectFunction, ConnectOptions } from "./client.ts";
+export type { BoundaStub, ConnectFunction, ConnectOptions, RedactRequest } from "./client.ts";
 export { connect } from "./client.ts";
 export type {
   CloudflareDefinition,

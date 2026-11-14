@@ -281,6 +281,7 @@ describe("exportPersonalData", () => {
       exportedAt: "2026-01-01T00:00:00.000Z",
       categories: exportedCategories,
       restrictions: [],
+      redactions: [],
       events: [
         {
           id: "customer-c-1-1",
@@ -293,6 +294,7 @@ describe("exportPersonalData", () => {
           data: { email: "ana@example.com" },
           categories: { email: "default" },
           restricted: [],
+          redacted: [],
         },
         {
           id: "order-o-1-1",
@@ -305,6 +307,7 @@ describe("exportPersonalData", () => {
           data: { note: "ring twice" },
           categories: { note: "invoices" },
           restricted: [],
+          redacted: [],
         },
         {
           id: "order-o-2-1",
@@ -317,6 +320,7 @@ describe("exportPersonalData", () => {
           data: {},
           categories: {},
           restricted: [],
+          redacted: [],
         },
         {
           id: "order-o-3-1",
@@ -329,6 +333,7 @@ describe("exportPersonalData", () => {
           data: { note: "leave at door" },
           categories: { note: "invoices" },
           restricted: [],
+          redacted: [],
         },
         {
           id: "customer-c-1-3",
@@ -341,6 +346,7 @@ describe("exportPersonalData", () => {
           data: {},
           categories: {},
           restricted: [],
+          redacted: [],
         },
       ],
       scheduledCommands: [],

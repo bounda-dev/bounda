@@ -16,6 +16,7 @@ import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../mo
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { expectForgotten } from "../../testing/expect-forgotten.ts";
+import { expectRedacted } from "../../testing/expect-redacted.ts";
 import type { Adapter } from "../adapter.ts";
 import type { ForgetLedger } from "../storage/forget-ledger.ts";
 import type { Table } from "../storage/table.ts";
@@ -379,6 +380,7 @@ type Commands = Readonly<
 interface StartOptions {
   readonly role?: RuntimeRole;
   readonly strict?: boolean;
+  readonly registry?: Registry;
 }
 
 type Queries = Readonly<Record<string, (payload: unknown) => Promise<unknown>>>;
@@ -448,10 +450,10 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       forgetLedger: ForgetLedgerSource | null,
       keyWrapper: KeyWrapperDefinition,
       clock: Clock,
-      { role = "all", strict = false }: StartOptions = {},
+      { role = "all", strict = false, registry: chosen = registry }: StartOptions = {},
     ): Promise<Started> => {
       const app = await createApp({
-        registry,
+        registry: chosen,
         config: {
           storage,
           runtime: {
@@ -517,6 +519,52 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
           export: await app.exportPersonalData(person),
           "dead letters": await app.deadLetters.list(),
         },
+      });
+    };
+
+    // Every event of the person whose fields hold the value, as their export lists them.
+    const holding = async (app: BoundaApp, person: string, value: unknown) =>
+      (await app.exportPersonalData(person)).events.flatMap((event) => {
+        const fields = Object.entries(event.data)
+          .filter(([, held]) => held === value)
+          .map(([field]) => field);
+        return fields.length === 0
+          ? []
+          : [
+              {
+                aggregateType: event.aggregateType,
+                aggregateId: event.aggregateId,
+                type: event.type,
+                id: event.id,
+                fields,
+              },
+            ];
+      });
+
+    // The ids of the person's `PersonalDataRedacted`, in order.
+    const redactions = async (app: BoundaApp, person: string): Promise<readonly string[]> =>
+      (await app.events.read({ limit: 1_000 }))
+        .filter((event) => event.type === "PersonalDataRedacted" && event.aggregateId === person)
+        .map((event) => event.id);
+
+    // Nothing the app hands out or stores reads the old value, and the sealed read model finds
+    // nothing by it.
+    const expectRedactedIn = async (
+      storage: Adapter,
+      { app, queries }: Started,
+      person: string,
+      value: string,
+    ): Promise<void> => {
+      const exported = await app.exportPersonalData(person);
+      expect(JSON.stringify(exported)).not.toContain(value);
+      expect(await queries.sealedCustomer?.({ customerId: person })).toEqual({
+        customerId: person,
+        email: null,
+      });
+      expect(await queries.sealedByEmail?.({ email: value })).toBeNull();
+      await expectRedacted(storage, person, {
+        values: [value],
+        places: { export: exported, "dead letters": await app.deadLetters.list() },
       });
     };
 
@@ -993,6 +1041,82 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         });
         expect(await queries(restored).sealedByEmail?.({ email })).toBeNull();
         await expectForgotten(rows, "ana", { values: [email] });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "seals again, with its id, a redaction a restore undid, so the old value reads nowhere once reconciled",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const options = { registry: sealed };
+        const first = await start(
+          target.storage,
+          target.forgetLedger,
+          BEFORE_ROTATION,
+          clock,
+          options,
+        );
+        await write(first, "ana");
+        await write(first, "bob");
+        await target.backUp();
+        const { email } = valuesOf("ana");
+        const wrong = await holding(first.app, "ana", email);
+        expect(wrong.map(({ type }) => type)).toContain("CustomerRegistered");
+        const redacted = (await first.app.redact("ana", { events: wrong })).eventIds;
+        await first.app.runUntilIdle();
+        await expectRedactedIn(target.storage, first, "ana", email);
+        await first.app.stop();
+
+        const storage = await target.restore();
+        const restored = await start(storage, target.forgetLedger, BEFORE_ROTATION, clock, options);
+        await restored.app.runUntilIdle();
+        expect(await redactions(restored.app, "ana")).toEqual(redacted);
+        await expectRedactedIn(storage, restored, "ana", email);
+        expect(await restored.queries.sealedCustomer?.({ customerId: "bob" })).toEqual({
+          customerId: "bob",
+          email: valuesOf("bob").email,
+        });
+        await restored.app.stop();
+
+        const again = await start(storage, target.forgetLedger, BEFORE_ROTATION, clock, options);
+        await again.app.runUntilIdle();
+        expect(await redactions(again.app, "ana")).toEqual(redacted);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "commits at the restored start a redaction the ledger recorded before a commit that never happened",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, opened } = faultyLedger(target.forgetLedger);
+        const options = { registry: sealed };
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock, options);
+        await write(first, "ana");
+        const { email } = valuesOf("ana");
+        const wrong = await holding(first.app, "ana", email);
+        const eventId = "019a6b1e-0000-7000-8000-00000000ad01";
+        await opened[0]?.append([
+          {
+            personId: "ana",
+            categories: null,
+            eventId,
+            forgottenAt: new Date(START.getTime() - 2 * 60_000).toISOString(),
+            reason: "requested",
+            redaction: { events: wrong },
+          },
+        ]);
+        await target.backUp();
+        await first.app.stop();
+
+        const storage = await target.restore();
+        const restored = await start(storage, definition, BEFORE_ROTATION, clock, options);
+        await restored.app.runUntilIdle();
+        expect(await redactions(restored.app, "ana")).toEqual([eventId]);
+        await expectRedactedIn(storage, restored, "ana", email);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

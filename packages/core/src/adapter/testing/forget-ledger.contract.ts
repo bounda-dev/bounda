@@ -106,6 +106,37 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await readAll(ledger, 10)).toEqual(entries);
     });
 
+    it("keeps the redaction an entry records, however many events it names", async () => {
+      const events = Array.from({ length: 40 }, (_, index) => ({
+        id: `event-with-a-long-id-${index}`,
+        aggregateType: "customer",
+        aggregateId: "p-2",
+        type: "CustomerRegistered",
+        fields: ["email", "phone"],
+      }));
+      const entries: ForgetLedgerEntry[] = [
+        entry("p-1", "e-1", 1),
+        {
+          personId: "p-2",
+          eventId: "e-2",
+          forgottenAt: new Date(Date.UTC(2026, 10, 7, 12, 2)).toISOString(),
+          categories: null,
+          reason: "requested",
+          redaction: { events },
+        },
+        {
+          personId: "p-3",
+          eventId: "e-3",
+          forgottenAt: new Date(Date.UTC(2026, 10, 7, 12, 3)).toISOString(),
+          categories: null,
+          reason: "requested",
+          redaction: { events: events.slice(0, 1) },
+        },
+      ];
+      await ledger.append(entries);
+      expect(await readAll(ledger, 10)).toEqual(entries);
+    });
+
     it("reads nothing from an empty ledger", async () => {
       expect(await ledger.read({ limit: 10 })).toEqual([]);
       expect(

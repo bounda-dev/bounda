@@ -161,6 +161,28 @@ export type HasPersonalFields<Module> = Module extends unknown
     : false
   : never;
 
+type PersonalKeysOf<Schema> =
+  Schema extends z.ZodObject<infer Shape>
+    ? Extract<
+        { [Key in keyof Shape]: IsPersonal<Shape[Key]> extends true ? Key : never }[keyof Shape],
+        string
+      >
+    : never;
+
+/**
+ * The top-level fields an event module's payload marks with `personal`, `never` for none.
+ */
+export type PersonalPayloadFieldsOf<Module> = PersonalKeysOf<SchemaOf<Module>>;
+
+type StateSchemaOf<Module> = Module extends { readonly state: (args: never) => infer Schema }
+  ? Schema
+  : never;
+
+/**
+ * The top-level fields a process module's `state` marks with `personal`, `never` for none.
+ */
+export type PersonalStateFieldsOf<Module> = PersonalKeysOf<StateSchemaOf<Module>>;
+
 type FieldsOf<View> = View extends { readonly fields: (args: never) => infer Fields }
   ? Fields
   : never;

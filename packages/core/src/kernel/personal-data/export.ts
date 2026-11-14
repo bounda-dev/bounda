@@ -4,6 +4,11 @@ import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-st
 import type { Clock } from "../../contracts/clock.ts";
 import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import {
+  BOUNDA_AGGREGATE,
+  PERSONAL_DATA_REDACTED_EVENT,
+  type PersonalDataRedactedPayload,
+} from "../../modules/bounda-events.ts";
 import type { LegalBasis, ProcessingRestriction } from "../../modules/personal-data.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
@@ -75,6 +80,21 @@ export interface ExportedEvent {
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
   readonly restricted: ExportedRestricted;
+  /**
+   * The fields of `data` a redaction sealed for good: they read `null`, and their old value is
+   * nowhere to hand out.
+   */
+  readonly redacted: readonly string[];
+}
+
+/**
+ * A redaction of the person's data (article 16): when it was made, by its `PersonalDataRedacted`,
+ * and the events and fields it sealed for good, never a value.
+ */
+export interface ExportedRedaction {
+  readonly eventId: string;
+  readonly at: string;
+  readonly events: readonly { readonly id: string; readonly fields: readonly string[] }[];
 }
 
 /**
@@ -160,6 +180,11 @@ export interface PersonalDataExport {
    * in `events`, as `ProcessingRestrictionLiftAnnounced` with when it comes.
    */
   readonly restrictions: readonly ProcessingRestriction[];
+  /**
+   * The redactions of the person's data, in the order they were made; each event they reached says
+   * which of its fields in `redacted`.
+   */
+  readonly redactions: readonly ExportedRedaction[];
   readonly events: readonly ExportedEvent[];
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
@@ -404,7 +429,8 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     };
   };
 
-  const events: ExportedEvent[] = [];
+  const events: Omit<ExportedEvent, "redacted">[] = [];
+  const redactions: ExportedRedaction[] = [];
   let afterPosition = 0;
   let page: readonly StoredEvent[];
   do {
@@ -426,6 +452,14 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         ...data,
         restricted: eventRestricted(event, data.categories),
       });
+      if (event.aggregateType === BOUNDA_AGGREGATE && event.type === PERSONAL_DATA_REDACTED_EVENT) {
+        const { events: reached } = event.payload as PersonalDataRedactedPayload;
+        redactions.push({
+          eventId: event.id,
+          at: event.timestamp,
+          events: reached.map(({ id, fields }) => ({ id, fields })),
+        });
+      }
       afterPosition = event.position;
     }
   } while (page.length === batchSize);
@@ -462,12 +496,22 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         ),
       })),
   );
+  const redactedOf = new Map<string, Set<string>>();
+  for (const redaction of redactions) {
+    for (const { id, fields } of redaction.events) {
+      redactedOf.set(id, new Set([...(redactedOf.get(id) ?? []), ...fields]));
+    }
+  }
   return {
     personId,
     exportedAt,
     categories: exportedCategories,
     restrictions,
-    events,
+    redactions,
+    events: events.map((event) => ({
+      ...event,
+      redacted: [...(redactedOf.get(event.id) ?? [])].filter((field) => field in event.data),
+    })),
     scheduledCommands,
     deadLetters,
     subscriberFailures,

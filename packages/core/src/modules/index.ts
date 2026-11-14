@@ -27,18 +27,22 @@ export type {
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
   PersonalDataForgottenReason,
+  PersonalDataRedactedEvent,
+  PersonalDataRedactedPayload,
   ProcessingRestrictedEvent,
   ProcessingRestrictedPayload,
   ProcessingRestrictionLiftAnnouncedEvent,
   ProcessingRestrictionLiftAnnouncedPayload,
   ProcessingRestrictionLiftedEvent,
   ProcessingRestrictionLiftedPayload,
+  RedactedEvent,
   RemovedDeadLetter,
 } from "./bounda-events.ts";
 export {
   BOUNDA_AGGREGATE,
   BOUNDA_EVENTS,
   PERSONAL_DATA_FORGOTTEN_EVENT,
+  PERSONAL_DATA_REDACTED_EVENT,
   PROCESSING_RESTRICTED_EVENT,
   PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
   PROCESSING_RESTRICTION_LIFTED_EVENT,
@@ -82,7 +86,9 @@ export type {
   HasPersonalFields,
   PersonalFunction,
   PersonalOptions,
+  PersonalPayloadFieldsOf,
   PersonalSchema,
+  PersonalStateFieldsOf,
   PersonFunction,
   PersonSchema,
 } from "./personal.ts";
@@ -139,6 +145,13 @@ export type {
   QueryResultOf,
   RepositoryDataOf,
 } from "./query.ts";
+export type {
+  ProcessStateEventType,
+  RedactedFields,
+  RedactionTarget,
+  RedactOptions,
+} from "./redaction.ts";
+export { PROCESS_STATE_EVENT_TYPES } from "./redaction.ts";
 export type {
   CommandInvoker,
   CommandsFacade,

@@ -74,6 +74,16 @@ export const createSqlSubscriberFailureStore: CreateSqlSubscriberFailureStoreFun
         `UPDATE ${table} SET "resolved_at" = ${p(1)} WHERE "subscriber" = ${p(2)} AND "resolved_at" IS NULL`,
         [at.toISOString(), subscriber],
       ),
+    reseal: (subscriber, { eventId, errorMessage, errorStack }) =>
+      db.run(
+        `UPDATE ${table} SET "error_message" = ${p(1)}, "error_stack" = ${p(2)} WHERE "subscriber" = ${p(3)} AND "event_id" = ${p(4)}`,
+        [
+          encodeErrorText(errorMessage),
+          errorStack === undefined ? null : encodeErrorText(errorStack),
+          subscriber,
+          eventId,
+        ],
+      ),
     get: async (subscriber) => {
       const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "subscriber" = ${p(1)}`, [
         subscriber,

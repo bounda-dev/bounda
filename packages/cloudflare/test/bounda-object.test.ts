@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
-import { expectForgotten } from "@bounda-dev/core/testing";
+import { expectForgotten, expectRedacted } from "@bounda-dev/core/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
 import { configForObject, createBoundaObject } from "../src/bounda-object.ts";
@@ -158,6 +158,53 @@ describe("a Bounda Durable Object", () => {
       ["PersonalDataForgotten", {}],
     ]);
     const refused = await rejection(store.exportPersonalData(""));
+    expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
+  });
+
+  it("redacts a marked field in its SQLite, so the old value reads nowhere and the export lists the redaction", async () => {
+    const { stub, store } = open();
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "no bell" });
+    const [placed] = (await store.exportPersonalData("ada")).events;
+    if (placed === undefined) throw new Error("not placed");
+    const redacted = await store.redact("ada", {
+      events: [
+        {
+          aggregateType: "order",
+          aggregateId: placed.aggregateId,
+          type: "OrderPlaced",
+          id: placed.id,
+          fields: ["note"],
+        },
+      ],
+    });
+    expect(redacted).toMatchObject({ aggregateId: "ada", eventTypes: ["PersonalDataRedacted"] });
+    const after = await store.exportPersonalData("ada");
+    expect(after.events.map((event) => [event.type, event.data, event.redacted])).toEqual([
+      ["OrderPlaced", { note: null }, ["note"]],
+      ["PersonalDataRedacted", {}, []],
+    ]);
+    expect(after.redactions).toEqual([
+      {
+        eventId: redacted.eventIds[0],
+        at: expect.any(String),
+        events: [{ id: placed.id, fields: ["note"] }],
+      },
+    ]);
+    await runAlarm(stub);
+    const search = () =>
+      runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+        expectRedacted(durableObjectAdapter({ storage: state.storage }), "ada", {
+          values: ["no bell"],
+        }).catch((error: unknown) => error),
+      );
+    // The read model keeps the note in a column it does not mark: a rebuild reads it redacted.
+    expect(await search()).toMatchObject({
+      name: "NotRedactedError",
+      found: [{ value: "no bell", store: "bounda_rm_orders", row: "order_id=o-1", field: "note" }],
+    });
+    expect(await store.rebuildReadModel("orders")).toMatchObject({ done: true });
+    expect(await search()).toBeUndefined();
+    const refused = await rejection(store.redact("ada", { events: [] }));
     expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
   });
 

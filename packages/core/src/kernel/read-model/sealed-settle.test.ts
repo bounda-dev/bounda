@@ -363,6 +363,7 @@ describe("settleReadModels", () => {
           indexKeys: store,
           wrapping,
           clock: { now: () => new Date(), after: () => () => undefined } as never,
+          scheduler: { get: () => Promise.reject(new Error("not asked")) },
         })
       ).indexer,
     ).toBeNull();

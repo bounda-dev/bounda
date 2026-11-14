@@ -154,6 +154,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       onForgetLedger: (opened) => {
         ledgers.push(opened);
       },
+      onRedacted: witness.onRedacted,
     },
     ids,
     clock,
@@ -204,6 +205,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
 export { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 export { createSequentialIdGenerator } from "../contracts/ids.ts";
 export { silentLogger } from "../contracts/logger.ts";
+export { MIN_SUBSTRING_LENGTH } from "../kernel/shared/value-search.ts";
 export { memory } from "../memory/index.ts";
 export type {
   ExpectForgottenFunction,
@@ -213,12 +215,18 @@ export type {
 } from "./expect-forgotten.ts";
 export { expectForgotten, NotForgottenError } from "./expect-forgotten.ts";
 export type {
+  ExpectRedactedFunction,
+  ExpectRedactedOptions,
+  ExpectRedactedTarget,
+  RedactedValueFound,
+} from "./expect-redacted.ts";
+export { expectRedacted, NotRedactedError } from "./expect-redacted.ts";
+export type {
   ExpectRestrictedFunction,
   ExpectRestrictedOptions,
   RestrictedValueFound,
 } from "./expect-restricted.ts";
 export { expectRestricted, NotRestrictedError } from "./expect-restricted.ts";
-export { MIN_SUBSTRING_LENGTH } from "./search.ts";
 export type {
   RecordedSpan,
   RecordedSpanEvent,

@@ -25,6 +25,7 @@ import { openedUnder } from "../personal-data/event-store.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personOfEvent } from "../personal-data/persons.ts";
 import type { ForgetLedgerReconciliation } from "../personal-data/reconciliation.ts";
+import { REDACTION_SCRUB_COMMAND, type RedactionScrubPayload } from "../personal-data/redaction.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import {
   LIFT_RESTRICTION_COMMAND,
@@ -109,6 +110,10 @@ export interface CreateScheduledCommandWorkerArgs {
    */
   readonly backfill?: PersonalDataBackfill | undefined;
   /**
+   * What settles the entry a redaction leaves for the read models, once they all passed it.
+   */
+  readonly redactionScrubs?: RedactionScrubs | undefined;
+  /**
    * Checked on every pass: a database found gone back to an earlier copy has every background
    * job start over from what it holds, the attempts the jobs counted with it.
    */
@@ -127,6 +132,24 @@ export interface CreateScheduledCommandWorkerArgs {
   readonly clock: Clock;
   readonly logger: Logger;
 }
+
+/**
+ * How the worker settles a redaction's scrub entry.
+ */
+export interface RedactionScrubs {
+  /**
+   * Whether every read model holding personal fields, and every rebuild of one, is past the
+   * position.
+   */
+  passed(position: number): Promise<boolean>;
+  settle(entry: ScheduledCommand): Promise<void>;
+}
+
+/**
+ * How long a redaction's scrub entry waits, once the read models took longer than a few rounds,
+ * before the worker looks again.
+ */
+export const REDACTION_SCRUB_RECHECK_MS = 60_000;
 
 export interface CreateScheduledCommandWorkerFunction {
   (args: CreateScheduledCommandWorkerArgs): ScheduledCommandWorker;
@@ -193,6 +216,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   reconciliation,
   intentions,
   backfill,
+  redactionScrubs,
   restores,
   onRestored,
   reactive,
@@ -242,6 +266,39 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const isRestrictionLift = (entry: ScheduledCommand): boolean =>
     entry.command.type === LIFT_RESTRICTION_COMMAND;
+
+  const isRedactionScrub = (entry: ScheduledCommand): boolean =>
+    entry.command.type === REDACTION_SCRUB_COMMAND;
+
+  // A redaction's entry is completed once every read model wrote over the old values it kept,
+  // which then go with it; until then it is handed back, a few rounds at once and then every
+  // `REDACTION_SCRUB_RECHECK_MS`, never counting an attempt.
+  const settleScrub = async (entry: ClaimedCommand): Promise<void> => {
+    const { position } = entry.command.payload as RedactionScrubPayload;
+    const wait = waits.get(entry.dedupeKey) ?? { head: position, rounds: 0 };
+    try {
+      if (redactionScrubs !== undefined && (await redactionScrubs.passed(position))) {
+        await redactionScrubs.settle(entry);
+        waits.delete(entry.dedupeKey);
+        await storage.scheduler.complete(entry);
+        return;
+      }
+    } catch (error) {
+      logger.error("a redaction could not be settled; the worker tries again", {
+        dedupeKey: entry.dedupeKey,
+        error,
+      });
+    }
+    if (wait.rounds < DEADLINE_WAIT_ROUNDS) {
+      waits.set(entry.dedupeKey, { head: position, rounds: wait.rounds + 1 });
+      await deferToItsTime(entry, storage);
+      return;
+    }
+    await storage.scheduler.defer({
+      claim: entry,
+      executeAt: new Date(clock.now().getTime() + REDACTION_SCRUB_RECHECK_MS),
+    });
+  };
 
   // A deadline waits for the process runner; a restricted retry for every runner, since any of
   // them may still have a refusal to write.
@@ -650,7 +707,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       for (const entry of due) {
         try {
           const late = clock.now().getTime() - claimedAt.getTime() > startWithinMs;
-          if (!late && ready(entry)) await execute(entry);
+          if (isRedactionScrub(entry)) await settleScrub(entry);
+          else if (!late && ready(entry)) await execute(entry);
           else await deferToItsTime(entry, storage);
         } catch (error) {
           if (error instanceof ScheduledClaimLostError) {

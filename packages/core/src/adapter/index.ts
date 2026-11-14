@@ -57,6 +57,7 @@ export type {
   ForgetLedger,
   ForgetLedgerEntry,
   ForgetLedgerPosition,
+  LedgerRedaction,
   LedgerRestriction,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,

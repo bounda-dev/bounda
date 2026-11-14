@@ -58,6 +58,7 @@ export type {
   ExportedData,
   ExportedDeadLetter,
   ExportedEvent,
+  ExportedRedaction,
   ExportedRestricted,
   ExportedRow,
   ExportedScheduledCommand,

@@ -47,6 +47,29 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(due.map((entry) => entry.dedupeKey)).toEqual(order);
     });
 
+    it("gets a command by its key, claimed or not, and nothing for a key it does not hold", async () => {
+      const persons: readonly KeyedPerson[] = [held("c-1", "fp-1")];
+      await scheduler.schedule({
+        dedupeKey: "k-1",
+        command: testCommand("1"),
+        executeAt: at(1_000),
+        context: testContext,
+        persons,
+      });
+      expect(await scheduler.get("k-1")).toEqual({
+        dedupeKey: "k-1",
+        command: testCommand("1"),
+        executeAt: at(1_000).toISOString(),
+        context: testContext,
+        attempts: 0,
+        persons,
+      });
+      await scheduler.claimDue({ now: at(5_000), limit: 10, leaseMs: 60_000 });
+      expect(await scheduler.get("k-1")).toMatchObject({ dedupeKey: "k-1", attempts: 0 });
+      expect(await scheduler.get("k-2")).toBeNull();
+      expect(await scheduler.get("k")).toBeNull();
+    });
+
     it("hands out only commands that are due, oldest first, up to the limit", async () => {
       await scheduler.schedule({
         dedupeKey: "later",
