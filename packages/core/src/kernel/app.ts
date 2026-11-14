@@ -110,7 +110,12 @@ import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts"
 import { buildRecipients } from "./recipients/build.ts";
 import { createDisclosures } from "./recipients/gate.ts";
 import { recipientsOf as listRecipientsOf } from "./recipients/listing.ts";
-import { createRecipientNotices, createRecipientSubscriber } from "./recipients/notices.ts";
+import {
+  createRecipientCatchUp,
+  createRecipientDelivery,
+  createRecipientNotices,
+  createRecipientSubscriber,
+} from "./recipients/notices.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
@@ -690,6 +695,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ? undefined
         : createDisclosures({ recipients, storage, intentions, recordAccess, clock });
     const notices = createRecipientNotices({ recipients, storage, config, clock, recordAccess });
+    const delivery = createRecipientDelivery({
+      recipients,
+      notices,
+      storage,
+      config,
+      clock,
+      pendingRetries,
+      logger,
+    });
     const pipeline = createCommandPipeline({
       aggregates,
       loader,
@@ -760,15 +774,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       // Kept while the store remembers any recipient, declared or not: what a port removed is told
       // of still reaches its dead letters.
       {
-        subscriber: createRecipientSubscriber({
-          recipients,
-          notices,
-          storage,
-          config,
-          clock,
-          pendingRetries,
-          logger,
-        }),
+        subscriber: createRecipientSubscriber({ recipients, delivery, storage }),
         following: declaredRecipients.length > 0,
       },
     ];
@@ -979,6 +985,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       reconciliation,
       intentions,
       backfill,
+      recipientCatchUp: createRecipientCatchUp({
+        recipients,
+        delivery,
+        storage: written,
+        batchSize: config.runtime.dispatcher.batchSize,
+      }),
       redactionScrubs: {
         advance: async ({ position, types }) => {
           for (const { name, storage: own, layout, projectionsByEvent } of Object.values(

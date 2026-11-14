@@ -61,7 +61,7 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
           recipients.set(
             port,
             held === undefined
-              ? { port, categories, presumedThrough: position, declaredAt: at }
+              ? { port, categories, presumedThrough: position, caughtUpThrough: 0, declaredAt: at }
               : { ...held, categories },
           );
         }
@@ -100,8 +100,18 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
           to,
           held === undefined
             ? { ...former, port: to }
-            : { ...held, presumedThrough: Math.max(held.presumedThrough, former.presumedThrough) },
+            : {
+                ...held,
+                presumedThrough: Math.max(held.presumedThrough, former.presumedThrough),
+                caughtUpThrough: Math.max(held.caughtUpThrough, former.caughtUpThrough),
+              },
         );
+      },
+      caughtUp: async (port, position) => {
+        const held = recipients.get(port);
+        if (held !== undefined && held.caughtUpThrough < position) {
+          recipients.set(port, { ...held, caughtUpThrough: position });
+        }
       },
       summary: async () => {
         const persons = new Map<string, Set<string>>();
@@ -139,6 +149,7 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
           port: row.port,
           categories: JSON.stringify(row.categories),
           presumed_through: row.presumedThrough,
+          caught_up_through: row.caughtUpThrough,
           declared_at: row.declaredAt,
         })),
   };

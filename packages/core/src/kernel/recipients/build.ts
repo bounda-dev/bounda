@@ -185,8 +185,18 @@ export const buildRecipients: BuildRecipientsFunction = ({ registry, categories,
   const byPort: Record<string, RecipientRuntime> = Object.fromEntries(
     all.map((recipient) => [recipient.port, recipient]),
   );
+  const declaredPorts = new Set(
+    owners.flatMap(([owner, entry]) =>
+      Object.keys(entry.ports ?? {}).map((name) => `${owner}.${name}`),
+    ),
+  );
   for (const recipient of all) {
     for (const former of recipient.formerly) {
+      if (declaredPorts.has(former) && byPort[former] === undefined) {
+        throw new ConfigurationError(
+          `Port ${recipient.port}: recipient.formerly names ${former}, which is a port of the app`,
+        );
+      }
       const claimed = byPort[former];
       if (claimed !== undefined) {
         throw new ConfigurationError(

@@ -51,13 +51,21 @@ export const RECIPIENT_EVENT_TYPES: ReadonlySet<string> = new Set([
   PERSONAL_DATA_REDACTED_EVENT,
 ]);
 
-interface Touched {
+export interface Touched {
   // `null` for every category.
   readonly categories: readonly string[] | null;
   readonly retained: readonly string[];
 }
 
-const touchedBy = (event: RecipientEvent): Touched => {
+export interface TouchedByFunction {
+  (event: RecipientEvent): Touched;
+}
+
+/**
+ * The categories an event of the runtime's touches: those it forgets, restricts, lifts or redacts,
+ * and those a forgetting kept under a legal obligation instead.
+ */
+export const touchedBy: TouchedByFunction = (event) => {
   switch (event.type) {
     case PERSONAL_DATA_FORGOTTEN_EVENT:
       return {
@@ -71,7 +79,10 @@ const touchedBy = (event: RecipientEvent): Touched => {
   }
 };
 
-const within = (received: ReadonlySet<string>, touched: readonly string[] | null): string[] =>
+export const within = (
+  received: ReadonlySet<string>,
+  touched: readonly string[] | null,
+): string[] =>
   [...received].filter((category) => touched === null || touched.includes(category)).sort();
 
 export interface PresumedOfFunction {

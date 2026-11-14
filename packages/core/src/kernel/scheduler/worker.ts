@@ -38,6 +38,7 @@ import type { DelayedPolicies } from "../policy/delayed.ts";
 import { PROCESS_DEADLINE_COMMAND, type ProcessDeadlinePayload } from "../process/deadlines.ts";
 import type { ProcessDeadlines } from "../process/deliver-deadline.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
+import type { RecipientCatchUp } from "../recipients/notices.ts";
 import { createMutex } from "../shared/mutex.ts";
 import type { Restored, RestoreWatch } from "../shared/restores.ts";
 import { classifyFailure, errorIdentity, errorLabel, retryDelayMs } from "../shared/retry.ts";
@@ -109,6 +110,10 @@ export interface CreateScheduledCommandWorkerArgs {
    * Swept on every pass; absent when no schema marks personal data.
    */
   readonly backfill?: PersonalDataBackfill | undefined;
+  /**
+   * Tells each recipient declared late what was recorded before it.
+   */
+  readonly recipientCatchUp?: RecipientCatchUp | undefined;
   /**
    * What settles the entry a redaction leaves for the read models, once they all passed it and
    * those it reached were rebuilt.
@@ -212,6 +217,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   reconciliation,
   intentions,
   backfill,
+  recipientCatchUp,
   redactionScrubs,
   restores,
   onRestored,
@@ -731,6 +737,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       }
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;
+      const caughtUp = (await recipientCatchUp?.sweep()) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
       const done =
         reconciledAtOnce +
@@ -739,7 +746,8 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         rewrapped +
         forgottenAgain +
         purged +
-        backfilled;
+        backfilled +
+        caughtUp;
       worked = done > 0;
       return done;
     });

@@ -39,6 +39,7 @@ const declaredRecipient = (row: Readonly<Record<string, unknown>>): DeclaredReci
   port: String(row.port),
   categories: JSON.parse(String(row.categories)) as readonly string[],
   presumedThrough: Number(row.presumed_through),
+  caughtUpThrough: Number(row.caught_up_through),
   declaredAt: String(row.declared_at),
 });
 
@@ -57,7 +58,7 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
   const declared = async (): Promise<readonly DeclaredRecipient[]> =>
     (
       await db.all(
-        `SELECT "port", "categories", "presumed_through", "declared_at" FROM ${recipients} ORDER BY "port"`,
+        `SELECT "port", "categories", "presumed_through", "caught_up_through", "declared_at" FROM ${recipients} ORDER BY "port"`,
         [],
       )
     ).map(declaredRecipient);
@@ -112,7 +113,7 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
     declare: async (ports, position, at) => {
       for (const { port, categories } of ports) {
         await db.run(
-          `INSERT INTO ${recipients} ("port", "categories", "presumed_through", "declared_at") VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}) ON CONFLICT ("port") DO UPDATE SET "categories" = ${p(5)}`,
+          `INSERT INTO ${recipients} ("port", "categories", "presumed_through", "caught_up_through", "declared_at") VALUES (${p(1)}, ${p(2)}, ${p(3)}, 0, ${p(4)}) ON CONFLICT ("port") DO UPDATE SET "categories" = ${p(5)}`,
           [port, JSON.stringify(categories), position, at, JSON.stringify(categories)],
         );
       }
@@ -136,10 +137,16 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
       );
       await db.run(`DELETE FROM ${disclosures} WHERE "port" = ${p(1)}`, [from]);
       await db.run(
-        `INSERT INTO ${recipients} ("port", "categories", "presumed_through", "declared_at") SELECT ${p(1)}, "categories", "presumed_through", "declared_at" FROM ${recipients} WHERE "port" = ${p(2)} ON CONFLICT ("port") DO UPDATE SET "presumed_through" = ${later("presumed_through", recipients)}`,
+        `INSERT INTO ${recipients} ("port", "categories", "presumed_through", "caught_up_through", "declared_at") SELECT ${p(1)}, "categories", "presumed_through", "caught_up_through", "declared_at" FROM ${recipients} WHERE "port" = ${p(2)} ON CONFLICT ("port") DO UPDATE SET "presumed_through" = ${later("presumed_through", recipients)}, "caught_up_through" = ${later("caught_up_through", recipients)}`,
         [to, from],
       );
       await db.run(`DELETE FROM ${recipients} WHERE "port" = ${p(1)}`, [from]);
+    },
+    caughtUp: async (port, position) => {
+      await db.run(
+        `UPDATE ${recipients} SET "caught_up_through" = ${p(1)} WHERE "port" = ${p(2)} AND "caught_up_through" < ${p(3)}`,
+        [position, port, position],
+      );
     },
     summary: async () =>
       (
@@ -177,6 +184,7 @@ export const recipientTablesStatements: RecipientTablesStatementsFunction = ({
     "port" TEXT NOT NULL PRIMARY KEY,
     "categories" TEXT NOT NULL,
     "presumed_through" BIGINT NOT NULL,
+    "caught_up_through" BIGINT NOT NULL,
     "declared_at" TEXT NOT NULL
   )`,
 ];

@@ -680,6 +680,49 @@ describe("recipients of personal data", () => {
     expect(await after.app.recipientsOf("c-1")).toEqual([]);
   });
 
+  it("tells a recipient declared late, presumed and in order, what was forgotten, restricted or redacted before", async () => {
+    const adapter = memory();
+    const told: Notice[] = [];
+    const before = await start({
+      told,
+      adapter,
+      registry: registryWith({ told, mailer: null, crm: null }),
+    });
+    await before.register("c-1");
+    await before.register("c-2");
+    await before.app.forget("c-1");
+    await before.app.restrict("c-2", { ground: "legal-claims", categories: ["contact"] });
+    await before.app.restrict("c-2", { ground: "objection-pending", categories: ["invoices"] });
+    await before.app.runUntilIdle();
+    await before.app.stop();
+    const failing = new Set(["customer.mailer"]);
+    const after = await start({ told, failing, adapter });
+    await after.app.unrestrict("c-2", { notice: "given" });
+    await after.app.runUntilIdle();
+    // The mailer fails: it holds its catch-up, and every later notice waits behind it.
+    expect(told.map(({ port, type, person }) => [port, type, person])).toEqual([
+      ["customer.crm", "PersonalDataForgotten", "c-1"],
+      ["customer.crm", "ProcessingRestricted", "c-2"],
+      ["customer.crm", "ProcessingRestricted", "c-2"],
+      ["customer.crm", "ProcessingRestrictionLifted", "c-2"],
+    ]);
+    expect(told.slice(0, 3).map(({ presumed, categories }) => [presumed, categories])).toEqual([
+      [true, ["contact", "invoices"]],
+      [true, ["contact"]],
+      [true, ["invoices"]],
+    ]);
+    // Its notices wait for their retry, the later ones behind the first.
+    expect(await after.app.deadLetters.list()).toEqual([]);
+    failing.clear();
+    after.clock.advance(86_400_000);
+    await after.app.runUntilIdle();
+    expect(told.slice(4).map(({ port, type, person }) => [port, type, person])).toEqual([
+      ["customer.mailer", "PersonalDataForgotten", "c-1"],
+      ["customer.mailer", "ProcessingRestricted", "c-2"],
+      ["customer.mailer", "ProcessingRestrictionLifted", "c-2"],
+    ]);
+  });
+
   it("refuses a disclosure of data the person's stream moved past since it was read", async () => {
     const told: Notice[] = [];
     let release: () => void = () => {};
@@ -718,6 +761,62 @@ describe("recipients of personal data", () => {
     await app.runUntilIdle();
     expect(mailed).toEqual([null]);
     expect(await notified("PersonalDataForgotten")).toEqual([]);
+  });
+
+  it("presumes, without a forget ledger, every recipient holds what existed when the database went back", async () => {
+    const { app, register, notified } = await start();
+    await register("c-1");
+    await app.restored();
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    // Presumed, a recipient is told of every category it declares that the change touches.
+    expect(await notified("PersonalDataForgotten")).toEqual([
+      { port: "customer.crm", categories: ["contact", "invoices"], retained: [], presumed: true },
+      { port: "customer.mailer", categories: ["contact"], retained: [], presumed: false },
+      { port: "customers.audience", categories: ["contact"], retained: [], presumed: true },
+    ]);
+  });
+
+  it("records what a process step hands a port from the event and the state it read", async () => {
+    const told: Notice[] = [];
+    const registry = registryWith({ told });
+    const customer = registry.aggregates.customer as unknown as {
+      processes: Record<string, unknown>;
+    };
+    customer.processes.onboarding = {
+      module: {
+        config: ({ events }: { events: { customer: { CustomerRegistered: unknown } } }) => ({
+          startedBy: [events.customer.CustomerRegistered],
+          timeout: "30d",
+        }),
+      },
+      handlers: {
+        customer: {
+          customerRegistered: {
+            handler: async ({
+              event,
+              crm,
+            }: {
+              event: { payload: { address?: string | null } };
+              crm: Sender;
+            }) => {
+              await crm.send({ to: event.payload.address ?? null });
+            },
+          },
+        },
+      },
+    };
+    const { app, register, synced, accesses } = await start({ told, registry });
+    await register("c-1", "1 Main St");
+    expect(synced).toEqual(["1 Main St"]);
+    expect(
+      accesses.filter((access) => access.operation === "disclosure").map(({ detail }) => detail),
+    ).toContainEqual({
+      recipient: "customer.crm",
+      handler: "customer.onboarding",
+      categories: ["contact", "invoices"],
+    });
+    await app.stop();
   });
 
   it("lists every recipient in the export, with the category's basis and the transfer's safeguard", async () => {
@@ -912,6 +1011,10 @@ describe("recipient declarations", () => {
     await failing(
       module({ ...MAILCHIMP, formerly: ["customer.crm"] }),
       "Port customer.mailer: recipient.formerly names customer.crm, which is a port of the app",
+    );
+    await failing(
+      module({ ...MAILCHIMP, formerly: ["customer.mailer"] }),
+      "Port customer.mailer: recipient.formerly names customer.mailer, which is a port of the app",
     );
   });
 

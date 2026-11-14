@@ -34,6 +34,11 @@ export interface DeclaredRecipient {
    */
   readonly categories: readonly string[];
   readonly presumedThrough: number;
+  /**
+   * How far the runtime has told it, presumed, of what the person's streams recorded before it
+   * was declared: the forgettings, restrictions and redactions it could not have been told of.
+   */
+  readonly caughtUpThrough: number;
   readonly declaredAt: string;
 }
 
@@ -65,7 +70,7 @@ export interface RecipientSummary {
  * `position`, never down, for a database whose disclosures since may have been lost. `rename` moves
  * what the store holds under the port `from` to the port `to`, a disclosure held under both kept
  * once, from the first time to the last, and a declaration held under both presumed through the
- * later position.
+ * later position. `caughtUp` moves a port's `caughtUpThrough` up to `position`, never down.
  */
 export interface RecipientStore {
   disclose(disclosures: readonly Disclosure[], at: string): Promise<readonly Disclosure[]>;
@@ -79,6 +84,7 @@ export interface RecipientStore {
   declared(): Promise<readonly DeclaredRecipient[]>;
   presumeThrough(position: number): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  caughtUp(port: string, position: number): Promise<void>;
   summary(): Promise<readonly RecipientSummary[]>;
 }
 

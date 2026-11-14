@@ -114,9 +114,16 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
           port: "customer.crm",
           categories: ["profile", "contact"],
           presumedThrough: 4,
+          caughtUpThrough: 0,
           declaredAt: at(1),
         },
-        { port: "order.mailer", categories: ["contact"], presumedThrough: 4, declaredAt: at(1) },
+        {
+          port: "order.mailer",
+          categories: ["contact"],
+          presumedThrough: 4,
+          caughtUpThrough: 0,
+          declaredAt: at(1),
+        },
       ]);
       expect(
         await storage.recipients.declare(
@@ -128,14 +135,27 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
           at(2),
         ),
       ).toEqual([
-        { port: "customer.ads", categories: ["marketing"], presumedThrough: 9, declaredAt: at(2) },
+        {
+          port: "customer.ads",
+          categories: ["marketing"],
+          presumedThrough: 9,
+          caughtUpThrough: 0,
+          declaredAt: at(2),
+        },
         {
           port: "customer.crm",
           categories: ["profile", "contact"],
           presumedThrough: 4,
+          caughtUpThrough: 0,
           declaredAt: at(1),
         },
-        { port: "order.mailer", categories: ["invoices"], presumedThrough: 4, declaredAt: at(1) },
+        {
+          port: "order.mailer",
+          categories: ["invoices"],
+          presumedThrough: 4,
+          caughtUpThrough: 0,
+          declaredAt: at(1),
+        },
       ]);
       expect(await storage.recipients.declared()).toHaveLength(3);
     });
@@ -153,8 +173,20 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       );
       await storage.recipients.presumeThrough(8);
       expect(await storage.recipients.declared()).toEqual([
-        { port: "customer.ads", categories: ["contact"], presumedThrough: 12, declaredAt: at(2) },
-        { port: "customer.crm", categories: ["contact"], presumedThrough: 8, declaredAt: at(1) },
+        {
+          port: "customer.ads",
+          categories: ["contact"],
+          presumedThrough: 12,
+          caughtUpThrough: 0,
+          declaredAt: at(2),
+        },
+        {
+          port: "customer.crm",
+          categories: ["contact"],
+          presumedThrough: 8,
+          caughtUpThrough: 0,
+          declaredAt: at(1),
+        },
       ]);
     });
 
@@ -185,6 +217,7 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
           port: "customer.newsletter",
           categories: ["contact", "profile"],
           presumedThrough: 7,
+          caughtUpThrough: 0,
           declaredAt: at(2),
         },
       ]);
@@ -194,11 +227,32 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
           port: "customer.mail",
           categories: ["contact", "profile"],
           presumedThrough: 7,
+          caughtUpThrough: 0,
           declaredAt: at(2),
         },
       ]);
       await storage.recipients.rename("customer.gone", "customer.mail");
       expect(await storage.recipients.disclosures("c-1")).toHaveLength(2);
+    });
+
+    it("moves how far a port was caught up forward, never back", async () => {
+      await storage.recipients.declare(
+        [{ port: "customer.crm", categories: ["contact"] }],
+        9,
+        at(1),
+      );
+      await storage.recipients.caughtUp("customer.crm", 5);
+      await storage.recipients.caughtUp("customer.crm", 3);
+      await storage.recipients.caughtUp("customer.gone", 3);
+      expect(await storage.recipients.declared()).toEqual([
+        {
+          port: "customer.crm",
+          categories: ["contact"],
+          presumedThrough: 9,
+          caughtUpThrough: 5,
+          declaredAt: at(1),
+        },
+      ]);
     });
 
     it("keeps nothing a transaction that fails wrote, and what one that commits wrote", async () => {
