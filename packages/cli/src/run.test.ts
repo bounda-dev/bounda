@@ -221,7 +221,7 @@ describe("bounda generate", () => {
     controller.abort();
     expect(await running).not.toBe(EXIT_OK);
     expect(stdout.text()).not.toContain("watching");
-  }, 15_000);
+  });
 
   it("listens for SIGINT and SIGTERM only while a watch runs, and stops it on one", async () => {
     const root = await project();
@@ -243,7 +243,7 @@ describe("bounda generate", () => {
     process.emit("SIGINT", "SIGINT");
     expect(await running).toBe(EXIT_OK);
     expect([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")]).toEqual(before);
-  }, 15_000);
+  });
 
   it("reports a failure of a later generation while watching and goes on", async () => {
     const root = await project();
@@ -285,7 +285,7 @@ describe("bounda generate", () => {
     });
     controller.abort();
     await running;
-  }, 20_000);
+  });
 
   it("regenerates a module saved while the first generation is running, until aborted", async () => {
     const root = await project();
@@ -311,7 +311,7 @@ describe("bounda generate", () => {
     });
     controller.abort();
     expect(await running).toBe(EXIT_OK);
-  }, 15_000);
+  });
 });
 
 describe("bounda rebuild", () => {

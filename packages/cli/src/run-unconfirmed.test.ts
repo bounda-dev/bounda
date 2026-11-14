@@ -59,4 +59,4 @@ it("warns when the file system reports no change, and still generates and watche
   await stat(join(root, ".bounda/registry.ts"));
   controller.abort();
   expect(await running).toBe(EXIT_OK);
-}, 15_000);
+});
