@@ -12,6 +12,7 @@ import type { IndexKeyStore } from "./storage/index-key-store.ts";
 import type { InspectedTable } from "./storage/inspection.ts";
 import type { PersonStore } from "./storage/person-store.ts";
 import type { PersonalKeyStore } from "./storage/personal-key-store.ts";
+import type { RecipientStore } from "./storage/recipient-store.ts";
 import type { RestrictedPersonsStore, RestrictedReads } from "./storage/restricted-persons.ts";
 import type { Scheduler } from "./storage/scheduler.ts";
 import type { UnsettledRowsArgs } from "./storage/sealed-fields.ts";
@@ -35,6 +36,11 @@ export interface StorageTransaction {
   readonly personalKeys: PersonalKeyStore;
   readonly persons: PersonStore;
   /**
+   * What went to which recipient, read and written by the transactions that record a disclosure
+   * and those that append an event recipients are told of, so neither misses the other.
+   */
+  readonly recipients: RecipientStore;
+  /**
    * So forgetting a person removes their snapshots with their key. Snapshots are a cache, so an
    * adapter may remove them at once rather than when the transaction commits.
    */
@@ -56,6 +62,7 @@ export interface Storage {
    * Whose processing is restricted, read by every command that touches a person.
    */
   readonly persons: PersonStore;
+  readonly recipients: RecipientStore;
   /**
    * Written by the snapshot subscriber, outside any command's transaction, and read by every
    * command of an aggregate with snapshots.

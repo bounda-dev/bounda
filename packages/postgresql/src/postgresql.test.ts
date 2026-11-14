@@ -29,6 +29,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  recipientStoreContract,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -121,6 +122,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   storageTransactionContract({ create: () => openStorage() });
   personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
+  recipientStoreContract({ create: openStorage });
   inspectionContract({
     create: async () => {
       await closeOpened();

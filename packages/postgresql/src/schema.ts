@@ -21,6 +21,8 @@ export interface StorageTables {
   readonly restrictedPositions: string;
   readonly snapshots: string;
   readonly subscriberFailures: string;
+  readonly disclosures: string;
+  readonly recipients: string;
   // In a database of its own, apart from the other storage tables.
   readonly forgetLedger: string;
   readonly appendLockKey: string;
@@ -75,6 +77,8 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     subscriberFailures: quoteIdentifier(
       storageTableNameFor({ prefix, table: "subscriberFailures" }),
     ),
+    disclosures: quoteIdentifier(storageTableNameFor({ prefix, table: "disclosures" })),
+    recipients: quoteIdentifier(storageTableNameFor({ prefix, table: "recipients" })),
     forgetLedger: quoteIdentifier(forgetLedger),
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,

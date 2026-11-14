@@ -11,6 +11,7 @@ import {
   createSqlIndexKeyStore,
   createSqlPersonalKeyStore,
   createSqlPersonStore,
+  createSqlRecipientStore,
   createSqlSubscriberFailureStore,
   inspectSqlTable,
   postgresqlDialect,
@@ -176,6 +177,12 @@ export const postgresql: PostgresqlFunction = (options) => {
             db: database,
             table: tables.persons,
             restrictions: tables.restrictions,
+          }),
+          recipients: createSqlRecipientStore({
+            dialect: postgresqlDialect,
+            db: database,
+            disclosures: tables.disclosures,
+            recipients: tables.recipients,
           }),
           snapshotStore: createPostgresqlSnapshotStore({
             db: database,

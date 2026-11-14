@@ -16,6 +16,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  recipientStoreContract,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -65,6 +66,7 @@ describe("the Durable Object adapter", () => {
   storageTransactionContract({ create: freshStorage });
   personalKeyStoreContract({ create: async () => freshStorage() });
   personStoreContract({ create: async () => (await freshStorage()).persons });
+  recipientStoreContract({ create: freshStorage });
   inspectionContract({ create: freshAdapter });
   subscriberFailureStoreContract({ create: async () => (await freshStorage()).subscriberFailures });
   forgetLedgerContract({

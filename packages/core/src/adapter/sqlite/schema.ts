@@ -17,6 +17,8 @@ export interface StorageTables {
   readonly restrictions: string;
   readonly restrictedPersons: string;
   readonly restrictedPositions: string;
+  readonly disclosures: string;
+  readonly recipients: string;
 }
 
 export interface StorageTablesForFunction {
@@ -41,6 +43,8 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   restrictedPositions: quoteIdentifier(
     storageTableNameFor({ prefix, table: "restrictedPositions" }),
   ),
+  disclosures: quoteIdentifier(storageTableNameFor({ prefix, table: "disclosures" })),
+  recipients: quoteIdentifier(storageTableNameFor({ prefix, table: "recipients" })),
 });
 
 /**

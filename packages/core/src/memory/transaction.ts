@@ -16,11 +16,13 @@ import {
   namesPerson,
   type PersonalKeyStore,
 } from "../adapter/storage/personal-key-store.ts";
+import type { RecipientStore } from "../adapter/storage/recipient-store.ts";
 import type { Scheduler } from "../adapter/storage/scheduler.ts";
 import type { SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import type { StoreEntries } from "./entries.ts";
 import type { MemoryEventStore } from "./event-store.ts";
 import { blankPerson } from "./person-store.ts";
+import type { KeptRecipientStore } from "./recipient-store.ts";
 
 export interface CreateMemoryStorageTransactionArgs {
   readonly eventStore: MemoryEventStore;
@@ -31,6 +33,7 @@ export interface CreateMemoryStorageTransactionArgs {
   readonly personalKeys: PersonalKeyStore;
   readonly persons: PersonStore;
   readonly snapshotStore: SnapshotStore;
+  readonly recipients: KeptRecipientStore;
   readonly entries: {
     readonly inboxLedger: StoreEntries<ClaimKey>;
     readonly deadLetterStore: StoreEntries<string>;
@@ -47,7 +50,7 @@ export interface CreateMemoryStorageTransactionFunction {
 
 type CreateUndoLogArgs = Omit<
   CreateMemoryStorageTransactionArgs,
-  "eventStore" | "personalKeys" | "persons" | "snapshotStore"
+  "eventStore" | "personalKeys" | "persons" | "snapshotStore" | "recipients"
 >;
 
 interface UndoLog {
@@ -261,6 +264,53 @@ const trackedForgets = (
   };
 };
 
+interface HeldRecipients {
+  readonly store: RecipientStore;
+  /**
+   * Releases the lock once the transaction is over, putting its rows back first when it failed.
+   */
+  end(failed: boolean): void;
+}
+
+// One transaction at a time reads and writes them, from its first call until it ends, as a
+// database's single writer or its append lock make them: a disclosure checked against a person's
+// stream and the event that reads the disclosures to tell never pass each other.
+const heldRecipients = (kept: KeptRecipientStore, locks: MemoryLocks): HeldRecipients => {
+  let held: { readonly release: () => void; readonly restore: () => void } | undefined;
+  let entering: Promise<void> | undefined;
+  const enter = async (): Promise<void> => {
+    entering ??= (async () => {
+      const release = (await locks.acquire("recipients", true)) as () => void;
+      held = { release, restore: kept.snapshot() };
+    })();
+    await entering;
+  };
+  const through =
+    <Args extends unknown[], Result>(call: (...args: Args) => Promise<Result>) =>
+    async (...args: Args): Promise<Result> => {
+      await enter();
+      return call(...args);
+    };
+  const { store } = kept;
+  return {
+    store: {
+      disclose: through(store.disclose),
+      disclosures: through(store.disclosures),
+      forget: through(store.forget),
+      declare: through(store.declare),
+      declared: through(store.declared),
+      presumeThrough: through(store.presumeThrough),
+      summary: through(store.summary),
+    },
+    end: (failed) => {
+      if (held === undefined) return;
+      if (failed) held.restore();
+      held.release();
+      held = undefined;
+    },
+  };
+};
+
 const createUndoLog = ({
   inboxLedger,
   deadLetterStore,
@@ -327,6 +377,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
   personalKeys,
   persons,
   snapshotStore,
+  recipients,
   ...live
 }) => {
   const commits = createMemoryLocks();
@@ -345,6 +396,8 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
     const removed = new Set<string>();
     const restricted = new Set<string>();
     const recorded: PersonActivity[] = [];
+    const disclosed = heldRecipients(recipients, commits);
+    let failed = true;
     try {
       const result = await work({
         eventStore: staged,
@@ -352,6 +405,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
         ...trackedForgets(deferred, live, atOnce),
         personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce, removed),
         persons: trackedPersons(persons, live.entries.persons, atOnce, restricted, recorded),
+        recipients: disclosed.store,
         snapshotStore,
       });
       // A transaction committed from inside this commit, as from a store write, waits forever.
@@ -370,10 +424,12 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
       }
       reserved.length = 0;
       atOnce.length = 0;
+      failed = false;
       return result;
     } finally {
       eventStore.release(reserved);
       undoAll(atOnce);
+      disclosed.end(failed);
     }
   };
 };

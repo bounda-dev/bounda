@@ -77,6 +77,12 @@ export {
   swapTableStatements,
 } from "./read-model-schema.ts";
 export type {
+  CreateSqlRecipientStoreArgs,
+  CreateSqlRecipientStoreFunction,
+  RecipientTablesStatementsFunction,
+} from "./recipient-store.ts";
+export { createSqlRecipientStore, recipientTablesStatements } from "./recipient-store.ts";
+export type {
   CreateSqlRestrictedPersonsStoreArgs,
   CreateSqlRestrictedPersonsStoreFunction,
   CreateSqlRestrictedReadsArgs,

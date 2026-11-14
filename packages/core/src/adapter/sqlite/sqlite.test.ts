@@ -30,6 +30,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  recipientStoreContract,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -134,6 +135,7 @@ describe("the SQLite stores on node:sqlite", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => storage() });
   personStoreContract({ create: async () => (await storage()).persons });
+  recipientStoreContract({ create: storage });
   inspectionContract({ create: async () => nodeSqlite().adapter });
   subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
   forgetLedgerContract({

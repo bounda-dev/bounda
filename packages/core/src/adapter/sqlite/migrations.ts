@@ -18,6 +18,7 @@ import {
   type SchemaScope,
   schemaMigrationsTableFor,
 } from "../sql/migrations.ts";
+import { recipientTablesStatements } from "../sql/recipient-store.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import {
   checkpointTableStatement,
@@ -192,6 +193,12 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
       },
     },
     { version: 5, migrate: (tx) => tx.run(indexKeysTableStatement(tables.indexKeys), []) },
+    {
+      version: 6,
+      migrate: async (tx) => {
+        for (const statement of recipientTablesStatements(tables)) await tx.run(statement, []);
+      },
+    },
   ],
 });
 

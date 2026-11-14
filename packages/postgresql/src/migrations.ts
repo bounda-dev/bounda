@@ -12,6 +12,7 @@ import {
   postgresqlDialect,
   quoteIdentifier,
   readSchemaVersions,
+  recipientTablesStatements,
   resolvedAtOfEarlierLetters,
   SCHEMA_SCOPES,
   type SchemaScope,
@@ -215,6 +216,12 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
       },
     },
     { version: 5, migrate: (tx) => tx.run(indexKeysTableStatement(tables.indexKeys), []) },
+    {
+      version: 6,
+      migrate: async (tx) => {
+        for (const statement of recipientTablesStatements(tables)) await tx.run(statement, []);
+      },
+    },
   ],
 });
 

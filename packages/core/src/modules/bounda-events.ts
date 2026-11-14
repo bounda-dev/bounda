@@ -4,6 +4,7 @@ import type {
   ProcessingRestriction,
   RestrictionGround,
 } from "./personal-data.ts";
+import type { NotifiedRecipient } from "./recipient.ts";
 
 /**
  * The aggregate the runtime's own events belong to, one stream per subject: a read model
@@ -79,6 +80,12 @@ export interface PersonalDataForgottenPayload {
   readonly fingerprints?: readonly string[];
   readonly cancelledCommands: readonly CancelledCommand[];
   readonly removedDeadLetters: readonly RemovedDeadLetter[];
+  /**
+   * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
+   * the person, or may have been, in a category the change touches, as the store recorded it when
+   * the event committed. Absent from an event recorded before Bounda told recipients.
+   */
+  readonly recipients?: readonly NotifiedRecipient[];
 }
 
 export type PersonalDataForgottenEvent = StoredEvent<
@@ -124,6 +131,12 @@ export interface ProcessingRestrictedPayload {
    * Every restriction the person has once this one is recorded, as `app.restrictions` reads them.
    */
   readonly restrictions: readonly ProcessingRestriction[];
+  /**
+   * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
+   * the person, or may have been, in a category the change touches, as the store recorded it when
+   * the event committed. Absent from an event recorded before Bounda told recipients.
+   */
+  readonly recipients?: readonly NotifiedRecipient[];
 }
 
 export type ProcessingRestrictedEvent = StoredEvent<
@@ -145,6 +158,12 @@ export interface ProcessingRestrictionLiftAnnouncedPayload {
    * When the restriction is lifted, as an ISO timestamp.
    */
   readonly liftsAt: string;
+  /**
+   * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
+   * the person, or may have been, in a category the change touches, as the store recorded it when
+   * the event committed. Absent from an event recorded before Bounda told recipients.
+   */
+  readonly recipients?: readonly NotifiedRecipient[];
 }
 
 export type ProcessingRestrictionLiftAnnouncedEvent = StoredEvent<
@@ -166,6 +185,12 @@ export interface ProcessingRestrictionLiftedPayload {
    * Every restriction the person still has, none once their processing is no longer restricted.
    */
   readonly restrictions: readonly ProcessingRestriction[];
+  /**
+   * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
+   * the person, or may have been, in a category the change touches, as the store recorded it when
+   * the event committed. Absent from an event recorded before Bounda told recipients.
+   */
+  readonly recipients?: readonly NotifiedRecipient[];
 }
 
 export type ProcessingRestrictionLiftedEvent = StoredEvent<
@@ -213,6 +238,12 @@ export interface PersonalDataRedactedPayload {
    * The dead letters of scheduled commands whose payload held a value redacted, removed.
    */
   readonly removedDeadLetters: readonly RemovedDeadLetter[];
+  /**
+   * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
+   * the person, or may have been, in a category the change touches, as the store recorded it when
+   * the event committed. Absent from an event recorded before Bounda told recipients.
+   */
+  readonly recipients?: readonly NotifiedRecipient[];
 }
 
 export type PersonalDataRedactedEvent = StoredEvent<

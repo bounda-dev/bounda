@@ -15,6 +15,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  recipientStoreContract,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -42,6 +43,7 @@ describe("memory adapter", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => storage() });
   personStoreContract({ create: async () => (await storage()).persons });
+  recipientStoreContract({ create: storage });
   inspectionContract({ create: async () => memory() });
   subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
   forgetLedgerContract({

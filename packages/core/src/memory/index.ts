@@ -33,6 +33,7 @@ import { createMemoryIndexKeyStore } from "./index-key-store.ts";
 import { byKey, entriesRows, storageTable } from "./inspection.ts";
 import { createKeptPersonStore } from "./person-store.ts";
 import { createKeptPersonalKeyStore } from "./personal-key-store.ts";
+import { createKeptRecipientStore } from "./recipient-store.ts";
 import { createMemoryRestrictedPersons } from "./restricted-persons.ts";
 import { createKeptScheduler } from "./scheduler.ts";
 import { createMemorySnapshotStore } from "./snapshot-store.ts";
@@ -191,6 +192,7 @@ export const memory: MemoryFunction = (options = {}) => {
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
       const subscriberFailures = createMemorySubscriberFailureStore();
       const indexKeys = createMemoryIndexKeyStore();
+      const recipients = createKeptRecipientStore();
       const stores = {
         eventStore: createMemoryEventStore({
           onAppend: notifier.notify,
@@ -202,6 +204,7 @@ export const memory: MemoryFunction = (options = {}) => {
         idempotencyStore: idempotencyStore.store,
         personalKeys: personalKeys.store,
         persons: persons.store,
+        recipients: recipients.store,
         snapshotStore,
       };
       if (storage === null) {
@@ -244,6 +247,12 @@ export const memory: MemoryFunction = (options = {}) => {
           }),
           storageTable({ table: "indexKeys", key: ["scope"], rows: indexKeys.rows() }),
           storageTable({
+            table: "disclosures",
+            key: ["person", "port", "recipient", "category"],
+            rows: recipients.disclosureRows(),
+          }),
+          storageTable({ table: "recipients", key: ["port"], rows: recipients.recipientRows() }),
+          storageTable({
             table: "persons",
             key: ["person"],
             rows: entriesRows(persons.entries).map(({ restrictions: _, ...row }) => row),
@@ -273,6 +282,7 @@ export const memory: MemoryFunction = (options = {}) => {
         indexKeys,
         transact: createMemoryStorageTransaction({
           ...stores,
+          recipients,
           entries: {
             inboxLedger: inboxLedger.entries,
             deadLetterStore: deadLetterStore.entries,
