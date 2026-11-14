@@ -22,8 +22,16 @@ const stored = (position: number, event: Parameters<typeof pendingEvent>[0]): St
   position,
 });
 
+const reached = {
+  id: "e-1",
+  aggregateType: "customer",
+  aggregateId: "c-4",
+  type: "CustomerRegistered",
+  fields: ["email"],
+};
+
 describe("the forget ledger's outbox", () => {
-  it("appends only the runtime's PersonalDataForgotten and changes of restrictions, and all of a batch at once", async () => {
+  it("appends only the runtime's PersonalDataForgotten, changes of restrictions and redactions, and all of a batch at once", async () => {
     const appended: (readonly ForgetLedgerEntry[])[] = [];
     const outbox = createLedgerOutbox({
       ledger: {
@@ -71,8 +79,23 @@ describe("the forget ledger's outbox", () => {
         id: "f-3",
         payload: { whole: false, categories: [], retained: [], expired: ["invoices"] },
       }),
+      stored(7, {
+        aggregateType: "bounda",
+        aggregateId: "c-4",
+        version: 1,
+        type: "PersonalDataRedacted",
+        id: "d-1",
+        payload: {
+          personId: "c-4",
+          events: [reached],
+          categories: ["default"],
+          cancelledCommands: [],
+          removedDeadLetters: [],
+        },
+      }),
+      stored(8, { aggregateId: "o-3", version: 1, type: "PersonalDataRedacted", id: "x-2" }),
     ];
-    expect(await outbox.process(events, span)).toBe(6);
+    expect(await outbox.process(events, span)).toBe(8);
     expect(appended).toEqual([
       [
         {
@@ -103,6 +126,14 @@ describe("the forget ledger's outbox", () => {
           eventId: "f-3",
           forgottenAt: "2026-01-01T00:00:00.000Z",
           reason: "requested",
+        },
+        {
+          personId: "c-4",
+          categories: null,
+          eventId: "d-1",
+          forgottenAt: "2026-01-01T00:00:00.000Z",
+          reason: "requested",
+          redaction: { events: [reached] },
         },
       ],
     ]);

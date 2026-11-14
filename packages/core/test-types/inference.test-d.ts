@@ -1056,23 +1056,22 @@ describe("personal data", () => {
     void app.redact("c-1", { events: [{ ...placed, type: "OrderPlaced", fields: ["total"] }] });
     // @ts-expect-error an event type that marks no personal field
     void app.redact("c-1", { events: [{ ...placed, type: "OrderPaid", fields: ["reference"] }] });
-    void app.redact("c-1", {
-      // @ts-expect-error a field of another event type
-      events: [
-        { ...placed, aggregateType: "customer", type: "CustomerRegistered", fields: ["note"] },
-      ],
-    });
-    void app.redact("c-1", {
-      // @ts-expect-error a lifecycle event that carries no state
-      events: [
-        {
-          ...placed,
-          aggregateType: "process:order.orderPayment",
-          type: "ProcessCompleted",
-          fields: ["contact"],
-        },
-      ],
-    });
+    const otherField = {
+      ...placed,
+      aggregateType: "customer",
+      type: "CustomerRegistered",
+      fields: ["note"],
+    } as const;
+    // @ts-expect-error a field of another event type
+    void app.redact("c-1", { events: [otherField] });
+    const stateless = {
+      ...placed,
+      aggregateType: "process:order.orderPayment",
+      type: "ProcessCompleted",
+      fields: ["contact"],
+    } as const;
+    // @ts-expect-error a lifecycle event that carries no state
+    void app.redact("c-1", { events: [stateless] });
     void app.redact("c-1", {
       events: [
         { ...placed, type: "OrderPlaced", fields: ["note"] },

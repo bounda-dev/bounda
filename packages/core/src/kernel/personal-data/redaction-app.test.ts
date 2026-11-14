@@ -21,6 +21,11 @@ interface ContactRow {
 
 // The audit read model quotes the email in its error while it is down, as a careless projection does.
 let auditDown = false;
+// What the delayed policy and the upcast read of the email, in order.
+const remembered: unknown[] = [];
+const upcastRead: unknown[] = [];
+// The contacts read model fails every event while it is down.
+let contactsDown = false;
 
 const setEmail = ({ event }: { event: { payload: { email: string | null } } }) => ({
   email: event.payload.email,
@@ -110,7 +115,16 @@ const registry = {
           },
         },
       },
-      policies: {},
+      policies: {
+        rememberOnCustomerRegistered: {
+          module: {
+            delay: "1h",
+            handler: ({ event }: { event: { payload: { email: string | null } } }) => {
+              remembered.push(event.payload.email);
+            },
+          },
+        },
+      },
       processes: {
         contactProcess: {
           module: {
@@ -172,12 +186,14 @@ const registry = {
             }: {
               event: { aggregateId: string; payload: { email: string | null } };
               table: Table<ContactRow>;
-            }) =>
-              table.upsert({
+            }) => {
+              if (contactsDown) throw new Error("contacts are down");
+              return table.upsert({
                 customerId: event.aggregateId,
                 email: event.payload.email,
                 greeting: event.payload.email === null ? null : `Hello ${event.payload.email}`,
-              }),
+              });
+            },
           },
         },
       },
@@ -216,6 +232,9 @@ const stops: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
   auditDown = false;
+  remembered.length = 0;
+  contactsDown = false;
+  upcastRead.length = 0;
   for (const stop of stops.splice(0)) await stop();
 });
 
@@ -263,11 +282,12 @@ const setUp = async (adapter: Adapter) => {
             },
           ];
     });
-  // The scheduled commands but the process's timeout.
+  // The reminders scheduled, and what a redaction keeps for the read models, but neither the
+  // process's timeout nor the delayed policy's run.
   const scheduled = async () =>
     (
       (await adapter.inspect()).find(({ store }) => store === "scheduledCommands")?.rows ?? []
-    ).filter((row) => !JSON.stringify(row).includes("bounda.ProcessDeadline"));
+    ).filter((row) => /RemindCustomer|bounda\.RedactionScrub/.test(JSON.stringify(row)));
   return {
     app,
     clock,
@@ -515,6 +535,89 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     expect(
       (await exported("ana")).events.find(({ type }) => type === "EmailCorrected"),
     ).toMatchObject({ data: { email: null }, redacted: ["email"] });
+    await expectRedacted(app, "ana");
+  });
+
+  it("hands a policy that runs after the redaction null for the field", async () => {
+    const { app, clock, registered, holding } = await setUp(adapterOf());
+    await registered("ana", "ana@old.example");
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    clock.advance(3_600_000);
+    await app.runUntilIdle();
+    expect(remembered).toEqual([null]);
+  });
+
+  it("hands an upcast of an older event null for the field", async () => {
+    const adapter = adapterOf();
+    const before = await createTestApp({ registry, adapter });
+    await (
+      before.app.commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>
+    ).registerCustomer?.({ customerId: "ana", email: "ana@old.example", plan: "pro" });
+    await before.app.runUntilIdle();
+    const [registration] = (await before.app.exportPersonalData("ana")).events;
+    if (registration === undefined) throw new Error("not registered");
+    await before.app.redact("ana", { events: [{ ...registration, fields: ["email"] }] as never });
+    await before.app.runUntilIdle();
+    await before.app.stop();
+    const upcasting = {
+      ...registry,
+      aggregates: {
+        customer: {
+          ...registry.aggregates.customer,
+          upcasts: {
+            customerRegistered: {
+              upcasts: [
+                (payload: { email: string | null }) => {
+                  upcastRead.push(payload.email);
+                  return payload;
+                },
+              ],
+            },
+          },
+        },
+      },
+    } as unknown as Registry;
+    const after = await createTestApp({ registry: upcasting, adapter });
+    stops.push(() => after.app.stop());
+    expect((await after.app.exportPersonalData("ana")).events[0]?.data).toEqual({ email: null });
+    expect(upcastRead).toEqual([null]);
+  });
+
+  it("keeps what a read model has to write over until it has projected the redaction", async () => {
+    const { app, clock, commands, queries, registered, holding, scheduled } = await setUp(
+      adapterOf(),
+    );
+    await registered("ana", "ana@old.example");
+    contactsDown = true;
+    // Bo's registration holds the read model back, before the redaction.
+    await commands.registerCustomer?.({ customerId: "bo", email: "bo@example.com", plan: "pro" });
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    await app.runUntilIdle();
+    expect(
+      (await scheduled()).filter((row) => JSON.stringify(row).includes("RedactionScrub")),
+    ).toHaveLength(1);
+    contactsDown = false;
+    clock.advance(3_600_000);
+    await app.runUntilIdle();
+    expect(await scheduled()).toEqual([]);
+    expect(await queries.contact?.({ customerId: "ana" })).toEqual({
+      customerId: "ana",
+      email: null,
+    });
+    await expectRedacted(app, "ana");
+  });
+
+  it("cancels a command holding an old value that work running at the redaction scheduled after it", async () => {
+    const { app, commands, registered, holding, scheduled } = await setUp(adapterOf());
+    await registered("ana", "ana@old.example");
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    // As a policy that read the old value just before the redaction committed would.
+    await commands.remindCustomer?.(
+      { customerId: "ana", email: "ana@old.example" },
+      { delay: "1d" },
+    );
+    await app.runUntilIdle();
+    expect(await scheduled()).toEqual([]);
     await expectRedacted(app, "ana");
   });
 });

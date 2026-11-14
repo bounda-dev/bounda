@@ -36,8 +36,11 @@ dead letter with `errorType: "retriable_exhausted"`.
   command. The command fails rather than rejects, so `app.commands` and a reaction both get this
   error, never the other command's code. `cause` is that `DomainError`.
 - **`VALIDATION_FAILED`** (`ValidationError`; terminal). A payload, a duration, a returned process
-  state, the `after` and `limit` of a [read of the global stream](/guides/reading-the-stream/) or
-  the actor given to [`as`](/concepts/ids-causation-and-correlation/#who-acts) did not validate. `issues` lists each problem with its `path`.
+  state, the `after` and `limit` of a [read of the global stream](/guides/reading-the-stream/),
+  the actor given to [`as`](/concepts/ids-causation-and-correlation/#who-acts), or what
+  [`redact`](/guides/personal-data/#correcting-a-persons-data) was given, an event the store does
+  not hold, that does not name the person, or a field its type does not mark `personal`, did not
+  validate. `issues` lists each problem with its `path`.
 - **`CONCURRENCY_CONFLICT`** (`ConcurrencyError`; retried). An append found the stream at another
   version, or, with both versions equal, a person whose [personal data](/guides/personal-data/)
   the command loaded, or whose fields its events seal, was forgotten before the append committed,

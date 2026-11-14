@@ -336,6 +336,26 @@ Key and blind index columns are key material, compared whole and never searched 
 [Personal data in tests](/guides/personal-data/#in-tests) says what it looks for and where, and
 how to point it at a Durable Object's storage.
 
+## Nothing left of a value corrected
+
+`expectRedacted` checks, after `redact`, that no value the redaction made unreadable can still be
+read: in any table the app keeps, read as stored, in a value sealed under a key the person still
+holds, as another event that copied it and was left unredacted, in what it logged or in its spans.
+It rejects with `NotRedactedError`, naming each place and what to do:
+
+```ts
+import { createTestApp, expectRedacted } from "@bounda-dev/core/testing";
+
+const [registered] = (await app.exportPersonalData("c-1")).events;
+await app.redact("c-1", { events: [{ ...registered, fields: ["email"] }] });
+await app.runUntilIdle();
+await expectRedacted(app, "c-1");
+```
+
+A read model writes `null` over its copies of an old value as it projects the redaction, so call
+it after `runUntilIdle()`; see [Correcting a person's data](/guides/personal-data/#correcting-a-persons-data)
+and [Personal data in tests](/guides/personal-data/#in-tests).
+
 ## Nothing handed out of a restricted person
 
 `expectRestricted` checks, after `restrict`, that what the app hands out keeps the person's

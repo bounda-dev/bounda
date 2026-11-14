@@ -411,6 +411,28 @@ categories of restrictions of categories. Nothing to lift prints `c-42 has no re
 lift`. Without `--notice`, or with one that is not a positive duration or `given`, it fails
 before booting.
 
+## `bounda redact`
+
+Correct a person's data from the command line, as `app.redact` does (see [Correcting a person's
+data](/guides/personal-data/#correcting-a-persons-data)): it boots the project as `bounda
+dead-letters` does, and acts as `--actor`.
+
+```bash
+bounda export c-42 \
+  | jq -c '.events[] | select(.data.email == "ana@old.example")
+      | {aggregateType, aggregateId, type, id, fields: ["email"]}' > wrong.jsonl
+bounda redact c-42 --from wrong.jsonl --actor ops-ana
+```
+
+`bounda redact <person> --from <file>` reads the events to redact from the file, one a line as
+JSON, each as the person's export lists it, `aggregateType`, `aggregateId`, `type` and `id`, with
+the `fields` to seal, and prints `redacted 2 events of c-42`; blank lines are skipped. When what it
+lists reads as `null` already it prints `nothing of c-42 left to redact: what was listed reads as
+null already`. A line that is not such an object fails before booting, naming the line and never
+what it holds; an event the store does not hold, that does not name the person, or a field its
+type does not mark `personal` fails with `VALIDATION_FAILED` and nothing is redacted. Append the
+corrected value with the app's own command.
+
 ## `bounda forgotten` and `bounda forget --from`
 
 Apply again, by hand, the forgettings a restored backup undid, for an app without a

@@ -32,7 +32,7 @@ Everything is reported under the scope `@bounda-dev/core`. Spans:
 | `bounda.scheduled <Type>` | the worker runs a due command or a process deadline (`bounda.ProcessDeadline`) | `bounda.command.type`, `bounda.aggregate.id`, `bounda.correlation_id`, `bounda.attempt`, `bounda.actor` of whoever scheduled it |
 | `bounda.query <Type>` | a query runs, and each one it composes | `bounda.query.type`, `bounda.read_model`, `bounda.actor` |
 | `bounda.backfill` | the worker seals a batch of events written before the [personal data marks](/guides/personal-data/#marking-a-field-later) of now | `bounda.position.after`, `bounda.event.count` |
-| `bounda.operation <operation>` | the client runs `forget`, `restrict`, `unrestrict`, `exportPersonalData`, `rebuildReadModel`, or `deadLetters.list`, `count`, `get`, `retry` or `discard` | `bounda.operation`, as named here, `bounda.actor` |
+| `bounda.operation <operation>` | the client runs `forget`, `restrict`, `unrestrict`, `redact`, `exportPersonalData`, `rebuildReadModel`, or `deadLetters.list`, `count`, `get`, `retry` or `discard` | `bounda.operation`, as named here, `bounda.actor` |
 
 `bounda.actor` is there only when [someone acts](/concepts/ids-causation-and-correlation/#who-acts):
 a client bound with `as`, and what follows from it. A handler, a query or an operation that throws

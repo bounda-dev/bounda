@@ -324,7 +324,7 @@ export const settleRedaction: SettleRedactionFunction = async ({
       });
     }
     const disposable = await createDisposableKey();
-    await transactRetrying({
+    const late = await transactRetrying({
       storage,
       concurrencyRetries,
       work: (transaction) =>
@@ -337,6 +337,14 @@ export const settleRedaction: SettleRedactionFunction = async ({
           disposable,
         }),
     });
+    // No event names what goes now: the log is its only record, by ids.
+    if (late.cancelledCommands.length + late.removedDeadLetters.length > 0) {
+      redactions.logger.warn("work running at a redaction stored an old value; it is gone", {
+        personId,
+        cancelledCommands: late.cancelledCommands.map(({ commandId }) => commandId),
+        removedDeadLetters: late.removedDeadLetters.map(({ id }) => id),
+      });
+    }
     const open = openTextWith(sealedKeys(outside));
     for (const failure of await storage.subscriberFailures.list()) {
       const text = await quotingText(failure, open, matcher, personId, disposable);

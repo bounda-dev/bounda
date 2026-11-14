@@ -23,6 +23,7 @@ get today. Each item says why, so nobody discovers it the hard way:
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
+- **A corrected value reformatted.** See [Redacted values](#redacted-values).
 
 ## The access log
 
@@ -54,6 +55,20 @@ basis named:
 - **SQL a query writes** has its `LIMIT` applied before the restricted rows are dropped, so a page
   may come back short; `table` pages exactly.
 
+## Redacted values
+
+A [redaction](/guides/personal-data/#correcting-a-persons-data) seals the fields it names in the
+events, and every read model with personal fields writes `null` over each field of the person's
+rows that equals an old value or quotes it, as `expectRedacted` finds a value. What it does not
+recognise is what no longer quotes the value:
+
+- **A value reformatted.** A column that keeps a phone number without its spaces, or a hash of an
+  email, holds nothing a search for the old value finds. The read model rewrites it when it
+  projects the correction, or [a rebuild](/guides/deployment/#rebuilding-a-read-model) replays the
+  events as they read now.
+- **What a policy sent out.** A port that mailed the old value, or indexed it, corrects it itself:
+  a policy on `PersonalDataRedacted` is where to tell it (article 19).
+
 ## What it does get
 
 What a production app does get, and where it is explained:
@@ -66,7 +81,8 @@ their read models' fields [sealed at rest](/guides/personal-data/#sealed-at-rest
 to look them up,
 [recording who opened it](/guides/personal-data/#who-opened-what) and
 [restricting their processing](/guides/personal-data/#restricting-processing) without losing a
-reaction, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
+reaction, [correcting it](/guides/personal-data/#correcting-a-persons-data) so the wrong value is
+read nowhere, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
 ends, their keys [wrapped under a master key](/guides/personal-data/#a-master-key) kept out of
 the database and out of JavaScript memory, their forgetting [applied again](/guides/personal-data/#backups) when a backup is
 restored, and [found](/guides/personal-data/#restores) whether restored under the running app or while it was stopped,
