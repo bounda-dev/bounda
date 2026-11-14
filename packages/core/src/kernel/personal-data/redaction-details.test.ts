@@ -756,6 +756,7 @@ describe("redact, in detail", () => {
     await app.restored();
     await app.runUntilIdle();
     expect((await redactions()).map(({ id }) => id)).toEqual(own.eventIds);
+    expect((await app.getLag()).forgetLedger).toEqual({ reconciled: true });
     expect((await events()).find(({ id }) => id === registered.id)?.payload).toMatchObject({
       plan: "pro",
     });
