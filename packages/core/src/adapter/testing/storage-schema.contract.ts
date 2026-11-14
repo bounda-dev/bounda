@@ -41,6 +41,7 @@ const LATEST = [
   { scope: "storage", version: 3 },
   { scope: "storage", version: 4 },
   { scope: "storage", version: 5 },
+  { scope: "storage", version: 6 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -153,20 +154,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 5 },
+        { scope: "storage", version: 0, latest: 6 },
         { scope: "checkpoints", version: 0, latest: 3 },
-        { scope: "forget-ledger", version: 0, latest: 6 },
+        { scope: "forget-ledger", version: 0, latest: 7 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 5 },
+        { scope: "storage", version: 0, latest: 6 },
         { scope: "checkpoints", version: 3, latest: 3 },
-        { scope: "forget-ledger", version: 0, latest: 6 },
+        { scope: "forget-ledger", version: 0, latest: 7 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger"])).toEqual([
-        { scope: "storage", version: 5, latest: 5 },
+        { scope: "storage", version: 6, latest: 6 },
         { scope: "checkpoints", version: 3, latest: 3 },
-        { scope: "forget-ledger", version: 6, latest: 6 },
+        { scope: "forget-ledger", version: 7, latest: 7 },
       ]);
       const shape = await shapeOf(target, dialect);
       await opened(target.adapter, async () => undefined);
@@ -220,7 +221,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 5,
+        supported: 6,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -405,6 +406,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 4 },
         { scope: "forget-ledger", version: 5 },
         { scope: "forget-ledger", version: 6 },
+        { scope: "forget-ledger", version: 7 },
       ]);
     });
 

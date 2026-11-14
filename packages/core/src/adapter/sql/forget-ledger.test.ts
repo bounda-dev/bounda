@@ -4,6 +4,7 @@ import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
 import {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
+  forgetLedgerDisclosureStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
   forgetLedgerStatements,
@@ -69,7 +70,7 @@ describe("the SQL forget ledger", () => {
     );
   });
 
-  it("inserts at most 11 entries a statement, each bound to its own numbered parameters", async () => {
+  it("inserts at most 10 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -79,43 +80,53 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    const { fingerprints: _, ...unrecorded } = entry(11);
+    const { fingerprints: _, ...unrecorded } = entry(10);
     const redaction = {
       events: [
-        { id: "e-0", aggregateType: "c", aggregateId: "c-12", type: "T", fields: ["email"] },
+        { id: "e-0", aggregateType: "c", aggregateId: "c-11", type: "T", fields: ["email"] },
       ],
     };
+    const disclosure = {
+      port: "customer.mailer",
+      recipient: "Mailchimp",
+      kind: "processor",
+      country: "US",
+      safeguard: "standard-contractual-clauses",
+      category: "contact",
+    };
     await ledger.append([
-      ...Array.from({ length: 11 }, (_, index) => entry(index)),
+      ...Array.from({ length: 10 }, (_, index) => entry(index)),
       {
         ...unrecorded,
         reason: "retention",
         restriction: {
           type: "ProcessingRestrictionLifted",
           payload: {
-            personId: "c-11",
+            personId: "c-10",
             grounds: ["legal-claims"],
             categories: null,
             restrictions: [],
           },
         },
       },
-      { ...entry(12), redaction },
+      { ...entry(11), redaction },
+      { ...entry(12), disclosure },
     ]);
     expect(statements).toHaveLength(2);
     const [first, second] = statements;
     expect(first?.[0]).toContain(
-      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9), ($10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10), ($11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
     );
-    expect(first?.[0]).toContain("($91, $92, $93, $94, $95, $96, $97, $98, $99) ON CONFLICT");
-    expect(first?.[1]).toHaveLength(99);
-    expect(first?.[1].slice(0, 18)).toEqual([
+    expect(first?.[0]).toContain("($91, $92, $93, $94, $95, $96, $97, $98, $99, $100) ON CONFLICT");
+    expect(first?.[1]).toHaveLength(100);
+    expect(first?.[1].slice(0, 20)).toEqual([
       "",
       "e-0",
       "c-0",
       "2026-01-01T00:00:00.000Z",
       "requested",
       `["k-0"]`,
+      null,
       null,
       null,
       null,
@@ -128,27 +139,39 @@ describe("the SQL forget ledger", () => {
       `["profile"]`,
       null,
       null,
+      null,
     ]);
     expect(second?.[0]).toContain(
-      `VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9), ($10, $11, $12, $13, $14, $15, $16, $17, $18) ON CONFLICT`,
+      `VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10), ($11, $12, $13, $14, $15, $16, $17, $18, $19, $20), ($21, $22, $23, $24, $25, $26, $27, $28, $29, $30) ON CONFLICT`,
     );
     expect(second?.[1]).toEqual([
       "",
-      "e-11",
-      "c-11",
+      "e-10",
+      "c-10",
       "2026-01-01T00:00:00.000Z",
       "retention",
       null,
-      `["profile"]`,
+      null,
       JSON.stringify({
         type: "ProcessingRestrictionLifted",
         payload: {
-          personId: "c-11",
+          personId: "c-10",
           grounds: ["legal-claims"],
           categories: null,
           restrictions: [],
         },
       }),
+      null,
+      null,
+      "",
+      "e-11",
+      "c-11",
+      "2026-01-01T00:00:00.000Z",
+      "requested",
+      `["k-11"]`,
+      `["profile"]`,
+      null,
+      JSON.stringify(redaction),
       null,
       "",
       "e-12",
@@ -158,8 +181,18 @@ describe("the SQL forget ledger", () => {
       `["k-12"]`,
       null,
       null,
-      JSON.stringify(redaction),
+      null,
+      JSON.stringify(disclosure),
     ]);
+  });
+
+  it("adds the disclosure column, if missing on PostgreSQL, which SQLite checks before", () => {
+    expect(forgetLedgerDisclosureStatement(`"t"`, postgresqlDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN IF NOT EXISTS "disclosure" TEXT`,
+    );
+    expect(forgetLedgerDisclosureStatement(`"t"`, sqliteDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN "disclosure" TEXT`,
+    );
   });
 
   it("reads the categories of an entry back, null for a forgetting of the person as a whole", async () => {

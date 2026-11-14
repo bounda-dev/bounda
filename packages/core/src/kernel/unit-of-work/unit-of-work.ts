@@ -19,6 +19,7 @@ export type UnitStores = Pick<
   | "atCommit"
   | "afterCommit"
   | "read"
+  | "reads"
 >;
 
 /**

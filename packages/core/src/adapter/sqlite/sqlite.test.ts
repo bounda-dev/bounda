@@ -526,6 +526,7 @@ describe("createSqliteAdapter", () => {
     expect(tableNames(db, "app_")).toEqual([
       "app_checkpoints",
       "app_dead_letters",
+      "app_disclosures",
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
@@ -534,6 +535,7 @@ describe("createSqliteAdapter", () => {
       "app_person_rows",
       "app_personal_keys",
       "app_persons",
+      "app_recipients",
       "app_restricted_persons",
       "app_restricted_positions",
       "app_restrictions",

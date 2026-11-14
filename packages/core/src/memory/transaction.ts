@@ -264,50 +264,28 @@ const trackedForgets = (
   };
 };
 
-interface HeldRecipients {
-  readonly store: RecipientStore;
-  /**
-   * Releases the lock once the transaction is over, putting its rows back first when it failed.
-   */
-  end(failed: boolean): void;
-}
-
-// One transaction at a time reads and writes them, from its first call until it ends, as a
-// database's single writer or its append lock make them: a disclosure checked against a person's
-// stream and the event that reads the disclosures to tell never pass each other.
-const heldRecipients = (kept: KeptRecipientStore, locks: MemoryLocks): HeldRecipients => {
-  let held: { readonly release: () => void; readonly restore: () => void } | undefined;
-  let entering: Promise<void> | undefined;
-  const enter = async (): Promise<void> => {
-    entering ??= (async () => {
-      const release = (await locks.acquire("recipients", true)) as () => void;
-      held = { release, restore: kept.snapshot() };
-    })();
-    await entering;
-  };
+// Written at once, as the keys are, and put back as a whole when the transaction fails: no other
+// transaction writes them meanwhile, since transactions run one at a time.
+const trackedRecipients = (kept: KeptRecipientStore, undos: Undos): RecipientStore => {
+  let restore: (() => void) | undefined;
   const through =
     <Args extends unknown[], Result>(call: (...args: Args) => Promise<Result>) =>
-    async (...args: Args): Promise<Result> => {
-      await enter();
+    (...args: Args): Promise<Result> => {
+      if (restore === undefined) {
+        restore = kept.snapshot();
+        undos.push(restore);
+      }
       return call(...args);
     };
   const { store } = kept;
   return {
-    store: {
-      disclose: through(store.disclose),
-      disclosures: through(store.disclosures),
-      forget: through(store.forget),
-      declare: through(store.declare),
-      declared: through(store.declared),
-      presumeThrough: through(store.presumeThrough),
-      summary: through(store.summary),
-    },
-    end: (failed) => {
-      if (held === undefined) return;
-      if (failed) held.restore();
-      held.release();
-      held = undefined;
-    },
+    disclose: through(store.disclose),
+    disclosures: store.disclosures,
+    forget: through(store.forget),
+    declare: through(store.declare),
+    declared: store.declared,
+    presumeThrough: through(store.presumeThrough),
+    summary: store.summary,
   };
 };
 
@@ -381,6 +359,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
   ...live
 }) => {
   const commits = createMemoryLocks();
+  const writers = createMemoryLocks();
   return async (work) => {
     const reserved: number[] = [];
     const staged = createStagedEventStore(eventStore, {
@@ -396,8 +375,10 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
     const removed = new Set<string>();
     const restricted = new Set<string>();
     const recorded: PersonActivity[] = [];
-    const disclosed = heldRecipients(recipients, commits);
-    let failed = true;
+    // One at a time, as a database's single writer or its append lock run them: a disclosure
+    // checked against a person's stream and the event that reads the disclosures to tell never
+    // pass each other.
+    const release = (await writers.acquire("writer", true)) as () => void;
     try {
       const result = await work({
         eventStore: staged,
@@ -405,7 +386,7 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
         ...trackedForgets(deferred, live, atOnce),
         personalKeys: trackedPersonalKeys(personalKeys, live.entries.personalKeys, atOnce, removed),
         persons: trackedPersons(persons, live.entries.persons, atOnce, restricted, recorded),
-        recipients: disclosed.store,
+        recipients: trackedRecipients(recipients, atOnce),
         snapshotStore,
       });
       // A transaction committed from inside this commit, as from a store write, waits forever.
@@ -424,12 +405,11 @@ export const createMemoryStorageTransaction: CreateMemoryStorageTransactionFunct
       }
       reserved.length = 0;
       atOnce.length = 0;
-      failed = false;
       return result;
     } finally {
       eventStore.release(reserved);
       undoAll(atOnce);
-      disclosed.end(failed);
+      release();
     }
   };
 };

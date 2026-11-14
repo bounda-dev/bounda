@@ -49,6 +49,8 @@ import { type SealedPayload, sealCommandPayload } from "../personal-data/command
 import { hidingRetained } from "../personal-data/event-store.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted, refuseRestrictedRead } from "../personal-data/refusal.ts";
+import type { Disclosures } from "../recipients/gate.ts";
+import { openedOf, PersonalDataChangedError } from "../recipients/gate.ts";
 import { actedBy } from "../shared/causation.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -57,6 +59,9 @@ import { ATTRIBUTES, actorAttribute, METRICS, meter, SPAN_EVENTS, traced } from 
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { fingerprintOf } from "./fingerprint.ts";
 import { validatePayload } from "./validate.ts";
+
+// What a run that has to be decided again answers in place of its events.
+const retried: unique symbol = Symbol("retried");
 
 export interface DispatchArgs {
   readonly type: string;
@@ -124,6 +129,11 @@ export interface CreateCommandPipelineArgs {
    * Told of every rejection of an unattended dispatch whose unit of work commits.
    */
   readonly onRejection?: (rejection: CommandRejection) => void;
+  /**
+   * What the handlers' calls to a port that tells a recipient record; the ports as they are
+   * without it.
+   */
+  readonly disclosures?: Disclosures | undefined;
 }
 
 export interface CreateCommandPipelineFunction {
@@ -402,6 +412,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   logger,
   recordAccess,
   onRejection,
+  disclosures,
 }) => {
   // Only streams written before `begin` existed land here, so the set stays small.
   const warnedOpenings = new Set<string>();
@@ -452,10 +463,17 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       }
       const state = { ...folded.state, id: command.aggregateId, version };
       const issued = new WeakSet<DomainError>();
+      const ports =
+        disclosures?.bind(aggregate.name, aggregate.ports, {
+          opened: () => openedOf([...persons, ...carried]),
+          basis,
+          handler: command.type,
+          actor: command.metadata.actor,
+        }) ?? aggregate.ports;
       const produced = (await withTimeout({
         run: (signal) =>
           runtime.handler(
-            withPorts(aggregate.ports, {
+            withPorts(ports, {
               command,
               state,
               events: aggregate.eventBuilders,
@@ -470,8 +488,17 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         signals,
       }).catch((error: unknown) => {
         if (error instanceof DomainError) return error;
+        // What it read changed under it before a port handed it to a recipient: decided again.
+        if (error instanceof PersonalDataChangedError && attempt < attempts) return retried;
         throw error;
-      })) as readonly NewEvent[] | DomainError | undefined;
+      })) as readonly NewEvent[] | DomainError | typeof retried | undefined;
+      if (produced === retried) {
+        logger.debug("command retried after its person's data changed", {
+          type: command.type,
+          attempt,
+        });
+        continue;
+      }
       for (const signal of signals) signal.throwIfAborted();
       if (produced instanceof DomainError) {
         if (!issued.has(produced)) throw new ForeignRejectionError(command, produced);

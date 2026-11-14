@@ -37,7 +37,7 @@ export const discloseAgain: DiscloseAgainFunction = ({ storage, concurrencyRetri
           return false;
         }
         const { categories, expired } = event.payload as PersonalDataForgottenPayload;
-        return [...categories, ...expired].includes(disclosure.category);
+        return ([...categories, ...expired] as readonly string[]).includes(disclosure.category);
       });
       if (forgottenSince) return false;
       const added = await transaction.recipients.disclose(

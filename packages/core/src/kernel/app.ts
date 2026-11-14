@@ -106,6 +106,9 @@ import {
   rebuiltMark,
 } from "./read-model/rebuild.ts";
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
+import { buildRecipients } from "./recipients/build.ts";
+import { createDisclosures } from "./recipients/gate.ts";
+import { createRecipientNotices, createRecipientSubscriber } from "./recipients/notices.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
@@ -592,6 +595,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         for (const event of events) restores.saw(event);
       },
     });
+    // An app whose ports tell recipients reads the head of the stream before each read that opens
+    // personal data, so a disclosure can tell whether the person's stream moved since.
+    const fenced = [
+      ...Object.values(registry.aggregates),
+      ...Object.values(registry.readModels),
+    ].some((entry) => Object.keys(entry.recipients ?? {}).length > 0);
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     checkReadModelPersons({ registry, aggregates });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
@@ -600,6 +609,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       aggregates,
       processes: processDefinitions,
       wrapping,
+      fenced,
     });
     if (
       wrapping.wrapper === null &&
@@ -614,6 +624,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       snapshotStore: storage.snapshotStore,
       logger,
       strict: test !== undefined,
+      fenced,
     });
     const readModels = await buildReadModels({ registry, config, logger });
     opened.unshift(() => readModels.close());
@@ -645,6 +656,25 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
       clock,
     });
+    const recipients = buildRecipients({ registry, categories: personalCategories, ports });
+    const declaredRecipients = await written.recipients.declare(
+      recipients.all.map(({ port, categories }) => ({ port, categories })),
+      await written.eventStore.lastPosition(),
+      clock.now().toISOString(),
+    );
+    for (const { port, persons } of await written.recipients.summary()) {
+      if (recipients.byPort[port] === undefined) {
+        logger.warn(
+          "a recipient holds personal data and its port is not declared: what it is told of goes to dead letters",
+          { recipient: port, persons },
+        );
+      }
+    }
+    const disclosures =
+      recipients.all.length === 0
+        ? undefined
+        : createDisclosures({ recipients, storage, intentions, recordAccess, clock });
+    const notices = createRecipientNotices({ recipients, storage, config, clock, recordAccess });
     const pipeline = createCommandPipeline({
       aggregates,
       loader,
@@ -654,6 +684,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       logger,
       recordAccess,
+      disclosures,
       onRejection: (rejection) => {
         for (const observed of observers) observed.push(rejection);
       },
@@ -665,6 +696,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ports: ports.byReadModel,
       recordAccess,
       errorText,
+      disclosures,
     });
     const processes = createProcessRunner({
       processes: processDefinitions,
@@ -679,6 +711,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
       intentions,
       recordAccess,
+      disclosures,
     });
     const policies = buildPolicies({ registry, aggregates });
     const policyExecutor = createPolicyExecutor({
@@ -692,6 +725,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       intentions,
       keys: storage.personalKeys,
       recordAccess,
+      disclosures,
     });
     const reactive = [
       {
@@ -708,6 +742,20 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         following: policies.all.length > 0,
       },
       { subscriber: processes, following: processDefinitions.all.length > 0 },
+      // Kept while the store remembers any recipient, declared or not: what a port removed is told
+      // of still reaches its dead letters.
+      {
+        subscriber: createRecipientSubscriber({
+          recipients,
+          notices,
+          storage,
+          config,
+          clock,
+          pendingRetries,
+          logger,
+        }),
+        following: declaredRecipients.length > 0,
+      },
     ];
     const following = reactive.filter((entry) => entry.following).map((entry) => entry.subscriber);
     const retries = createDeadLetterRetry({
@@ -717,6 +765,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       policies,
       policyExecutor,
       processes,
+      notices,
       config,
       ids,
       clock,
@@ -830,6 +879,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // reads the worker, built after the dispatcher, only when called: no pass runs before.
     const restartFound = async (found: Restored): Promise<number> => {
       if (!(await worker.restored(found))) return 0;
+      // Without a ledger, the disclosures the copy lost are gone: every recipient may hold what
+      // existed up to now, and is told as such.
+      if (forgetLedger === null) {
+        await written.recipients.presumeThrough(await written.eventStore.lastPosition());
+      }
       const forgotten = await reconciliation?.reconcile(clock.now());
       return typeof forgotten === "number" ? forgotten : 0;
     };

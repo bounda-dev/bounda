@@ -61,6 +61,7 @@ import type {
   LegalBasis,
   Logger,
   LookupField,
+  NotifiedRecipient,
   OnPersonalDataAccess,
   OnPersonalDataAccessArgs,
   OrderableField,
@@ -751,6 +752,9 @@ describe("personal data", () => {
       | "deadLetters.discard"
       | "subscriberFailures.list"
       | "subscriberFailures.get"
+      | "disclosure"
+      | "recipientNotice"
+      | "recipientsOf"
     >();
     expectTypeOf<PersonalDataAccess["actor"]>().toEqualTypeOf<string | null>();
     expectTypeOf<PersonalDataAccess["persons"]>().toEqualTypeOf<readonly string[]>();
@@ -830,6 +834,13 @@ describe("personal data", () => {
       readonly fingerprints?: readonly string[];
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
+      readonly recipients?: readonly NotifiedRecipient[];
+    }>();
+    expectTypeOf<NotifiedRecipient>().toEqualTypeOf<{
+      readonly port: string;
+      readonly categories: readonly PersonalCategoryName[];
+      readonly retained: readonly PersonalCategoryName[];
+      readonly presumed: boolean;
     }>();
     expectTypeOf<PersonalCategoryName>().toEqualTypeOf<"default" | "delivery" | "invoices">();
     expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
@@ -1048,6 +1059,7 @@ describe("personal data", () => {
       readonly categories: readonly PersonalCategoryName[];
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     const placed = { aggregateType: "order", aggregateId: "o-1", id: "e-1" } as const;
     // @ts-expect-error a redaction names the events to reach
@@ -1115,12 +1127,14 @@ describe("personal data", () => {
       readonly ground: RestrictionGround;
       readonly categories: readonly PersonalCategoryName[] | null;
       readonly restrictions: readonly ProcessingRestriction[];
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     expectTypeOf<ProcessingRestrictionLiftAnnouncedPayload>().toEqualTypeOf<{
       readonly personId: string;
       readonly grounds: readonly RestrictionGround[];
       readonly categories: readonly PersonalCategoryName[] | null;
       readonly liftsAt: string;
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     expectTypeOf<
       ProcessingRestrictionLiftAnnouncedEvent["type"]
@@ -1137,6 +1151,7 @@ describe("personal data", () => {
       readonly grounds: readonly RestrictionGround[];
       readonly categories: readonly PersonalCategoryName[] | null;
       readonly restrictions: readonly ProcessingRestriction[];
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     expectTypeOf<AuditOnProcessingRestrictionLifted.HandlerArgs["auditLog"]>().toHaveProperty(
       "record",

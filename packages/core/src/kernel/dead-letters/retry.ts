@@ -16,6 +16,7 @@ import type { PoliciesRuntime } from "../policy/build-policies.ts";
 import type { PolicyExecutor } from "../policy/executor.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
+import type { RecipientNotices } from "../recipients/notices.ts";
 import { startedBy } from "../shared/causation.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
@@ -40,6 +41,10 @@ export interface CreateDeadLetterRetryArgs {
   readonly policies: PoliciesRuntime;
   readonly policyExecutor: PolicyExecutor;
   readonly processes: ProcessDeadLetters;
+  /**
+   * What tells a recipient again; a letter of a recipient is not retriable without it.
+   */
+  readonly notices?: RecipientNotices | undefined;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -60,6 +65,7 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
   policies,
   policyExecutor,
   processes,
+  notices,
   config,
   ids,
   clock,
@@ -197,6 +203,25 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
       case "scheduled":
         await retryScheduled(letter, actor);
         return false;
+      case "recipient": {
+        if (notices === undefined) {
+          throw runtimeText(
+            new DeadLetterNotRetriableError(`Port ${letter.handler} tells no recipient any more`),
+          );
+        }
+        const event = await eventOf(letter);
+        await settled(letter, (unit) =>
+          notices.run({
+            port: letter.handler,
+            event,
+            attempt: letter.attempts + 1,
+            retryId,
+            actor,
+            within: unit,
+          }),
+        );
+        return false;
+      }
       default:
         // Stores cast the stored kind, so a row no release writes still reaches here.
         throw runtimeText(

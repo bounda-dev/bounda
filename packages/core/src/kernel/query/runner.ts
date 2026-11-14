@@ -8,14 +8,25 @@ import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { checkIncludeRestricted, restrictionViewOf } from "../personal-data/restricted-reads.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import type { SealingSource } from "../projection/runner.ts";
+import { projectionSubscriberName } from "../projection/runner.ts";
 import type { ReadModelRuntime, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
+import type { Disclosures } from "../recipients/gate.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { withPorts } from "../shared/with-ports.ts";
 import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
 import { checkPayloadFields, type QueriesRuntime } from "./build-queries.ts";
 import { reading } from "./reading.ts";
+
+// The categories of the fields a read model marks `.personal()`.
+const categoriesOf = (readModel: ReadModelRuntime): readonly string[] => [
+  ...new Set(
+    Object.values(readModel.fields).flatMap((field) =>
+      field.category === null ? [] : [field.category],
+    ),
+  ),
+];
 
 /**
  * The untyped shape of `app.queries`. The generated types narrow it per project.
@@ -52,6 +63,7 @@ export interface CreateQueryRunnerArgs {
   readonly ports: ModulePorts;
   readonly recordAccess: RecordAccess;
   readonly errorText: ErrorText;
+  readonly disclosures?: Disclosures | undefined;
 }
 
 export interface CreateQueryRunnerFunction {
@@ -65,6 +77,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
   ports,
   recordAccess,
   errorText,
+  disclosures,
 }) => {
   // The stores of a read model as a query reads them: sealed values opened, with the keys fetched
   // for this query alone, and, with a field marked `.person()`, the rows of restricted persons
@@ -105,6 +118,14 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
             Object.keys(parsed),
           );
         }
+        // The rows read reflect the stream through the read model's checkpoint, read first: a
+        // change of a person past it, which the rows may not show yet, refuses a disclosure.
+        const fence =
+          disclosures === undefined
+            ? undefined
+            : await readModel.storage.checkpointStore.get(
+                projectionSubscriberName(query.readModel),
+              );
         const run = async (): Promise<unknown> => {
           const repositoryData =
             query.repository === null
@@ -122,7 +143,23 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
             queries: nested,
             actor,
           };
-          const readModelPorts = ports[query.readModel] ?? {};
+          const readModelPorts =
+            disclosures?.bind(query.readModel, ports[query.readModel] ?? {}, {
+              opened: () =>
+                [...stores.persons].flatMap((person) =>
+                  categoriesOf(readModel).map((category) => ({
+                    person,
+                    fingerprint: null,
+                    category,
+                    fence,
+                  })),
+                ),
+              basis: includeRestricted,
+              handler: query.key,
+              actor,
+            }) ??
+            ports[query.readModel] ??
+            {};
           return query.handler(
             Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
           );

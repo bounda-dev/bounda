@@ -25,10 +25,10 @@ describe("migrateTables", () => {
       runtime: { personalData: { forgetLedger: { store: ledger.adapter } } },
     };
     expect(await migrateTables({ config })).toEqual([
-      { database: "storage", scope: "storage", version: 5, latest: 5 },
+      { database: "storage", scope: "storage", version: 6, latest: 6 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
       { database: "readModels.customers", scope: "checkpoints", version: 3, latest: 3 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 6, latest: 6 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 7, latest: 7 },
     ]);
     expect(tablesIn(readModels.db)).toEqual([
       "bounda_checkpoints",
