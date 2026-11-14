@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { ReadClient, Table } from "../../adapter/storage/table.ts";
+import type { DispatchResult } from "../../contracts/command.ts";
 import { PROCESSING_RESTRICTED } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
@@ -484,6 +485,28 @@ const adapters: readonly (readonly [string, () => Adapter])[] = [
 ];
 
 describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) => {
+  it("waits, through a restriction, for the copy of who is restricted, however far behind other events left it", async () => {
+    const { app, queries, commands, register } = await setup({ adapter: adapterOf() });
+    await register("ana");
+    const registered = (await commands.registerCustomer?.({
+      customerId: "bo",
+      email: "bo@example.com",
+      newsletter: "bo@news.example",
+      plan: "pro",
+    })) as DispatchResult;
+    // Only what reacts to a registration catches up: the copy of who is restricted does not.
+    await app.catchUpReadModels({ through: registered });
+    const copies = (await app.getLag()).subscribers.filter(({ subscriber }) =>
+      subscriber.startsWith("restrictions:"),
+    );
+    expect(copies.length).toBeGreaterThan(0);
+    expect(copies.every(({ lag }) => lag > 0)).toBe(true);
+    const restricted = await app.restrict("ana", { ground: "accuracy-contested" });
+    await app.catchUpReadModels({ through: restricted });
+    expect(await queries.customer?.({ customerId: "ana" })).toBeNull();
+    expect(await queries.customersOnPlan?.({ plan: "pro" })).toEqual(["bo"]);
+  });
+
   it("leaves the rows of a person restricted as a whole out of every query, before a page is cut or counted, and back once lifted", async () => {
     const { app, queries, register } = await setup({ adapter: adapterOf() });
     for (const customer of ["ana", "bo", "cy"]) await register(customer);
