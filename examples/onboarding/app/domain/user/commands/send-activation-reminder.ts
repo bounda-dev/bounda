@@ -18,6 +18,12 @@ export const handler = async ({
 }: Command.HandlerArgs) => {
   if (state.status !== "registered" || state.activationReminderSent !== false) return [];
   const { email, name } = command.payload;
-  await emailSender({ template: "activation-reminder", to: email, name, idempotencyKey });
+  await emailSender.send({
+    template: "activation-reminder",
+    userId: command.payload.userId,
+    to: email,
+    name,
+    idempotencyKey,
+  });
   return [events.activationReminderSent()];
 };

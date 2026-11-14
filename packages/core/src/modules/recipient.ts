@@ -491,13 +491,19 @@ type MissingHandler<Module> = {
     : Name;
 }[RecipientHandlerName];
 
-type SyncMethods<Port> = {
-  [Key in keyof Port]: Port[Key] extends (...args: never) => infer Result
-    ? Result extends PromiseLike<unknown>
-      ? never
-      : Key
-    : never;
-}[keyof Port];
+type SyncMethods<Port> =
+  | (Port extends (...args: never) => infer Result
+      ? Result extends PromiseLike<unknown>
+        ? never
+        : "itself"
+      : never)
+  | {
+      [Key in keyof Port]: Port[Key] extends (...args: never) => infer Result
+        ? Result extends PromiseLike<unknown>
+          ? never
+          : Key
+        : never;
+    }[keyof Port];
 
 /**
  * `true` when the port module `Module` of the port `Name`, whose interface is `Port`, declares no
@@ -511,7 +517,7 @@ export type NotifiesRecipient<Name extends string, Module, Port> = Module extend
   ? [MissingHandler<Module>] extends [never]
     ? [SyncMethods<Port>] extends [never]
       ? true
-      : `Port ${Name} declares a recipient, so its method ${Extract<SyncMethods<Port>, string>} must return a promise`
+      : `Port ${Name} declares a recipient, so ${SyncMethods<Port> extends "itself" ? "it" : `its method ${Extract<SyncMethods<Port>, string>}`} must return a promise`
     : `Port ${Name} declares a recipient, so it exports ${MissingHandler<Module>}, which tells it of ${(typeof RECIPIENT_HANDLERS)[MissingHandler<Module>]}`
   : true;
 

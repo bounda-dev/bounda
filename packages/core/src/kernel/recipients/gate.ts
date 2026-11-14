@@ -202,9 +202,20 @@ export const createDisclosures: CreateDisclosuresFunction = ({
     recorded: Set<string>,
     known: Map<string, string | undefined>,
   ): unknown => {
-    if (typeof implementation !== "object" || implementation === null) return implementation;
+    if (
+      (typeof implementation !== "object" && typeof implementation !== "function") ||
+      implementation === null
+    ) {
+      return implementation;
+    }
     const methods = new Map<PropertyKey, unknown>();
+    // A port may be a function itself, called as it is, or an object of methods, each of them
+    // gated; a property that is no function is read as it is.
     return new Proxy(implementation, {
+      apply: async (target, self, args: unknown[]) => {
+        await disclose(recipient, run, recorded, known);
+        return Reflect.apply(target as (...args: unknown[]) => unknown, self, args);
+      },
       get: (target, property) => {
         const value: unknown = Reflect.get(target, property, target);
         if (typeof value !== "function") return value;

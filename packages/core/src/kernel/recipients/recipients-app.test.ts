@@ -489,6 +489,60 @@ describe("recipients of personal data", () => {
     ]);
   });
 
+  it("records what is handed to a port that is a function itself", async () => {
+    const told: Notice[] = [];
+    const registry = registryWith({ told });
+    const customer = registry.aggregates.customer as unknown as {
+      policies: Record<string, { module: { handler: (args: never) => unknown } }>;
+    };
+    customer.policies.welcomeOnCustomerRegistered = {
+      module: {
+        handler: async ({
+          event,
+          mailer,
+        }: {
+          event: { payload: { email: string | null } };
+          mailer: (to: string | null) => Promise<void>;
+        }) => {
+          await mailer(event.payload.email);
+        },
+      },
+    };
+    const called: (string | null)[] = [];
+    const { app, commands, notified } = await (async () => {
+      const started = await createTestApp({
+        registry,
+        now: START,
+        ports: {
+          customer: {
+            mailer: async (to: string | null) => void called.push(to),
+            crm: sender([]),
+          },
+          customers: { audience: sender([]) },
+        } as never,
+      });
+      return {
+        app: started.app,
+        commands: started.app.commands as unknown as Record<
+          string,
+          (payload: unknown) => Promise<unknown>
+        >,
+        notified: async () =>
+          (
+            (await started.app.events.read({ limit: 100 })).find(
+              (event) => event.type === "PersonalDataForgotten",
+            )?.payload as { recipients?: readonly NotifiedRecipient[] } | undefined
+          )?.recipients ?? [],
+      };
+    })();
+    await commands.registerCustomer?.({ customerId: "c-1", email: "c-1@example.com" });
+    await app.runUntilIdle();
+    expect(called).toEqual(["c-1@example.com"]);
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    expect((await notified()).map(({ port }) => port)).toEqual(["customer.mailer"]);
+  });
+
   it("records what a command hands a port from the state it loaded", async () => {
     const { app, commands, register, notified, synced } = await start();
     await register("c-1", "1 Main St");

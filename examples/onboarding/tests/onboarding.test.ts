@@ -12,15 +12,26 @@ const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
 /**
- * Each test gets its own email sender, which records what it was asked to send.
+ * Each test gets its own email sender, which records what it was asked to send, and whose
+ * contacts it was told to erase.
  */
 const start = async () => {
   const sent: EmailSenderArgs[] = [];
+  const erased: string[] = [];
   const test = await createTestApp({
     registry,
-    ports: { user: { emailSender: async (email) => void sent.push(email) } },
+    ports: {
+      user: {
+        emailSender: {
+          send: async (email) => void sent.push(email),
+          erase: async ({ userId }) => void erased.push(userId),
+          suppress: async () => {},
+          resume: async () => {},
+        },
+      },
+    },
   });
-  return { ...test, sent };
+  return { ...test, sent, erased };
 };
 
 describe("onboarding", () => {
@@ -44,6 +55,7 @@ describe("onboarding", () => {
     expect(sent).toEqual([
       {
         template: "welcome",
+        userId: ADA,
         to: "ada@example.com",
         name: "Ada",
         idempotencyKey: expect.any(String),
@@ -70,6 +82,7 @@ describe("onboarding", () => {
     expect(sent).toEqual([
       {
         template: "welcome",
+        userId: ADA,
         to: "ada@example.com",
         name: "Ada",
         idempotencyKey: expect.any(String),
@@ -113,6 +126,7 @@ describe("onboarding", () => {
     expect(sent.filter((email) => email.template === "activation-reminder")).toEqual([
       {
         template: "activation-reminder",
+        userId: ADA,
         to: "ada@example.com",
         name: "Ada",
         idempotencyKey: expect.any(String),
@@ -121,8 +135,8 @@ describe("onboarding", () => {
     await app.stop();
   });
 
-  it("forgets a user: their rows go, for good, and their reminder is cancelled", async () => {
-    const { app, clock, sent } = await start();
+  it("forgets a user: their rows go, for good, their reminder is cancelled and the email provider erases them", async () => {
+    const { app, clock, sent, erased } = await start();
     await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
     await app.commands.registerUser({ userId: GRACE, email: "grace@example.com", name: "Grace" });
     clock.advance(MINUTE);
@@ -139,7 +153,16 @@ describe("onboarding", () => {
     expect(forgotten?.payload).toMatchObject({
       personId: ADA,
       cancelledCommands: [{ type: "SendActivationReminder" }],
+      recipients: [{ port: "user.emailSender", categories: ["default"], presumed: false }],
     });
+    expect(erased).toEqual([ADA]);
+    expect(await app.recipientsOf(GRACE)).toMatchObject([
+      {
+        name: "Postmark",
+        status: "disclosed",
+        transfer: { safeguard: "standard-contractual-clauses" },
+      },
+    ]);
 
     clock.advance(3 * DAY);
     await app.runUntilIdle();

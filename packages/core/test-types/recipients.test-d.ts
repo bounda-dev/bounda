@@ -106,5 +106,13 @@ describe("recipients", () => {
       NotifiesRecipient<"order.mailer", { recipient: unknown } & typeof handlers, Sync>
     >().toEqualTypeOf<"Port order.mailer declares a recipient, so its method format must return a promise">();
     expectTypeOf<NotifiesRecipient<"order.mailer", object, Sync>>().toEqualTypeOf<true>();
+    type Callable = (to: string) => Promise<void>;
+    type SyncCallable = (to: string) => void;
+    expectTypeOf<
+      NotifiesRecipient<"order.mailer", { recipient: unknown } & typeof handlers, Callable>
+    >().toEqualTypeOf<true>();
+    expectTypeOf<
+      NotifiesRecipient<"order.mailer", { recipient: unknown } & typeof handlers, SyncCallable>
+    >().toEqualTypeOf<"Port order.mailer declares a recipient, so it must return a promise">();
   });
 });
