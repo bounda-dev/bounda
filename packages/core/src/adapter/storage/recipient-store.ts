@@ -62,7 +62,10 @@ export interface RecipientSummary {
  * the person's disclosures of those categories, of every category when `null`. `declare` records
  * each port it has not seen with `presumedThrough` at `position`, updates the categories of those
  * it has, and resolves to every port declared; `presumeThrough` moves every port's `presumedThrough` up to
- * `position`, never down, for a database whose disclosures since may have been lost.
+ * `position`, never down, for a database whose disclosures since may have been lost. `rename` moves
+ * what the store holds under the port `from` to the port `to`, a disclosure held under both kept
+ * once, from the first time to the last, and a declaration held under both presumed through the
+ * later position.
  */
 export interface RecipientStore {
   disclose(disclosures: readonly Disclosure[], at: string): Promise<readonly Disclosure[]>;
@@ -75,6 +78,7 @@ export interface RecipientStore {
   ): Promise<readonly DeclaredRecipient[]>;
   declared(): Promise<readonly DeclaredRecipient[]>;
   presumeThrough(position: number): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
   summary(): Promise<readonly RecipientSummary[]>;
 }
 

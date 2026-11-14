@@ -285,6 +285,7 @@ const trackedRecipients = (kept: KeptRecipientStore, undos: Undos): RecipientSto
     declare: through(store.declare),
     declared: store.declared,
     presumeThrough: through(store.presumeThrough),
+    rename: through(store.rename),
     summary: store.summary,
   };
 };

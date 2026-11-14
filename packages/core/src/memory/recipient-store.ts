@@ -75,6 +75,34 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
           }
         }
       },
+      rename: async (from, to) => {
+        for (const [key, row] of [...disclosures]) {
+          if (row.port !== from) continue;
+          disclosures.delete(key);
+          const moved = { ...row, port: to };
+          const held = disclosures.get(disclosureKey(moved));
+          disclosures.set(
+            disclosureKey(moved),
+            held === undefined
+              ? moved
+              : {
+                  ...held,
+                  firstAt: row.firstAt < held.firstAt ? row.firstAt : held.firstAt,
+                  lastAt: row.lastAt > held.lastAt ? row.lastAt : held.lastAt,
+                },
+          );
+        }
+        const former = recipients.get(from);
+        if (former === undefined) return;
+        recipients.delete(from);
+        const held = recipients.get(to);
+        recipients.set(
+          to,
+          held === undefined
+            ? { ...former, port: to }
+            : { ...held, presumedThrough: Math.max(held.presumedThrough, former.presumedThrough) },
+        );
+      },
       summary: async () => {
         const persons = new Map<string, Set<string>>();
         for (const { port, person } of disclosures.values()) {

@@ -125,6 +125,22 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
         [position, position],
       );
     },
+    rename: async (from, to) => {
+      const later = (column: string, table: string) =>
+        `CASE WHEN excluded."${column}" > ${table}."${column}" THEN excluded."${column}" ELSE ${table}."${column}" END`;
+      const earlier = (column: string, table: string) =>
+        `CASE WHEN excluded."${column}" < ${table}."${column}" THEN excluded."${column}" ELSE ${table}."${column}" END`;
+      await db.run(
+        `INSERT INTO ${disclosures} (${DISCLOSURE_COLUMNS}) SELECT "person", ${p(1)}, "recipient", "kind", "country", "safeguard", "category", "first_at", "last_at" FROM ${disclosures} WHERE "port" = ${p(2)} ON CONFLICT ("person", "port", "recipient", "category") DO UPDATE SET "first_at" = ${earlier("first_at", disclosures)}, "last_at" = ${later("last_at", disclosures)}`,
+        [to, from],
+      );
+      await db.run(`DELETE FROM ${disclosures} WHERE "port" = ${p(1)}`, [from]);
+      await db.run(
+        `INSERT INTO ${recipients} ("port", "categories", "presumed_through", "declared_at") SELECT ${p(1)}, "categories", "presumed_through", "declared_at" FROM ${recipients} WHERE "port" = ${p(2)} ON CONFLICT ("port") DO UPDATE SET "presumed_through" = ${later("presumed_through", recipients)}`,
+        [to, from],
+      );
+      await db.run(`DELETE FROM ${recipients} WHERE "port" = ${p(1)}`, [from]);
+    },
     summary: async () =>
       (
         await db.all(

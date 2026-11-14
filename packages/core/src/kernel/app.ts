@@ -668,6 +668,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
     });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
+    // What was disclosed under a port's former key is the renamed port's, presumption included.
+    for (const { port, formerly } of recipients.all) {
+      for (const former of formerly) await written.recipients.rename(former, port);
+    }
     const declaredRecipients = await written.recipients.declare(
       recipients.all.map(({ port, categories }) => ({ port, categories })),
       await written.eventStore.lastPosition(),

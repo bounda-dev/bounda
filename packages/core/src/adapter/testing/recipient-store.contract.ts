@@ -158,6 +158,49 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       ]);
     });
 
+    it("moves what a port held under its former key, keeping one disclosure from its first time to its last", async () => {
+      await storage.recipients.disclose([disclosure(), disclosure({ category: "profile" })], at(1));
+      await storage.recipients.disclose([disclosure({ port: "customer.newsletter" })], at(3));
+      await storage.recipients.declare(
+        [{ port: "customer.mailer", categories: ["contact"] }],
+        7,
+        at(1),
+      );
+      await storage.recipients.declare(
+        [{ port: "customer.newsletter", categories: ["contact", "profile"] }],
+        2,
+        at(2),
+      );
+      await storage.recipients.rename("customer.mailer", "customer.newsletter");
+      expect(await storage.recipients.disclosures("c-1")).toEqual([
+        { ...disclosure({ port: "customer.newsletter" }), firstAt: at(1), lastAt: at(3) },
+        {
+          ...disclosure({ port: "customer.newsletter", category: "profile" }),
+          firstAt: at(1),
+          lastAt: at(1),
+        },
+      ]);
+      expect(await storage.recipients.declared()).toEqual([
+        {
+          port: "customer.newsletter",
+          categories: ["contact", "profile"],
+          presumedThrough: 7,
+          declaredAt: at(2),
+        },
+      ]);
+      await storage.recipients.rename("customer.newsletter", "customer.mail");
+      expect(await storage.recipients.declared()).toEqual([
+        {
+          port: "customer.mail",
+          categories: ["contact", "profile"],
+          presumedThrough: 7,
+          declaredAt: at(2),
+        },
+      ]);
+      await storage.recipients.rename("customer.gone", "customer.mail");
+      expect(await storage.recipients.disclosures("c-1")).toHaveLength(2);
+    });
+
     it("keeps nothing a transaction that fails wrote, and what one that commits wrote", async () => {
       await expect(
         storage.transact(async (transaction) => {

@@ -124,15 +124,19 @@ export const recipientsOf: RecipientsOfFunction = async ({
           safeguard: recipient.safeguard,
         };
   };
+  // A category the person holds no key of now was never theirs, or was forgotten and its
+  // recipients told.
+  const held = new Set((await storage.personalKeys.list(personId)).map(({ category }) => category));
   for (const [port, names] of await presumedOf(storage, personId)) {
     const identity = identityOf(port);
     if (identity === null) continue;
-    const left = [...names].filter((name) => !covered.get(identity.port)?.has(name));
+    const left = [...names].filter(
+      (name) => held.has(name) && !covered.get(identity.port)?.has(name),
+    );
     if (left.length === 0) continue;
     listed.push(entry(identity, "presumed", left, { first: null, last: null }));
     cover(identity.port, left);
   }
-  const held = new Set((await storage.personalKeys.list(personId)).map(({ category }) => category));
   for (const recipient of recipients.all) {
     const left = recipient.categories.filter(
       (name) => held.has(name) && !covered.get(recipient.port)?.has(name),

@@ -19,6 +19,7 @@ import type {
   CommandPersonalFunction,
   CommandsFacade,
   Consistency,
+  CountryCode,
   CreateArgs,
   CreateImplementation,
   DeadLetter,
@@ -81,6 +82,7 @@ import type {
   PersonalFunction,
   PersonalOptions,
   PersonFunction,
+  PersonRecipient,
   PolicyModule,
   ProcessCorrelation,
   ProcessingRestrictedEvent,
@@ -100,6 +102,7 @@ import type {
   ReactionForgetFunction,
   ReadClient,
   ReadEventsArgs,
+  RecipientKind,
   RedactedEvent,
   RedactedFields,
   RedactionTarget,
@@ -125,6 +128,7 @@ import type {
   SubscriberFailureStatus,
   SubscriberFailures,
   Table,
+  TransferSafeguard,
   UnrestrictOptions,
   Where,
 } from "@bounda-dev/core";
@@ -797,7 +801,27 @@ describe("personal data", () => {
       readonly deadLetters: number;
       readonly subscriberFailures: number;
       readonly readModelRows: number;
+      readonly recipients: number;
     } | null>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "disclosure" }>["detail"]
+    >().toEqualTypeOf<{
+      readonly recipient: string;
+      readonly handler: string;
+      readonly categories: readonly string[];
+    }>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "recipientNotice" }>["detail"]
+    >().toEqualTypeOf<{
+      readonly recipient: string;
+      readonly event: string;
+      readonly eventId: string;
+      readonly categories: readonly string[];
+      readonly superseded: boolean;
+    }>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "recipientsOf" }>["detail"]
+    >().toEqualTypeOf<{ readonly recipients: number } | null>();
     expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<AccessOutcome>();
     expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed">();
     expectTypeOf<
@@ -923,12 +947,42 @@ describe("personal data", () => {
       readonly categories: Readonly<Record<string, ExportedCategory>>;
       readonly restrictions: readonly ProcessingRestriction[];
       readonly redactions: readonly ExportedRedaction[];
+      readonly recipients: readonly PersonRecipient[];
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
       readonly subscriberFailures: readonly ExportedSubscriberFailure[];
       readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
     }>();
+    expectTypeOf<BoundaClient["recipientsOf"]>().toEqualTypeOf<
+      (personId: string) => Promise<readonly PersonRecipient[]>
+    >();
+    expectTypeOf<PersonRecipient>().toEqualTypeOf<{
+      readonly port: string;
+      readonly name: string;
+      readonly kind: RecipientKind;
+      readonly country: CountryCode;
+      readonly transfer: { readonly safeguard: TransferSafeguard } | null;
+      readonly status: "disclosed" | "presumed" | "declared";
+      readonly categories: readonly {
+        readonly name: PersonalCategoryName;
+        readonly basis: LegalBasis | null;
+      }[];
+      readonly firstDisclosedAt: string | null;
+      readonly lastDisclosedAt: string | null;
+      readonly declared: boolean;
+    }>();
+    expectTypeOf<RecipientKind>().toEqualTypeOf<"processor" | "joint-controller" | "third-party">();
+    expectTypeOf<TransferSafeguard>().toEqualTypeOf<
+      | "adequacy"
+      | "standard-contractual-clauses"
+      | "binding-corporate-rules"
+      | "code-of-conduct"
+      | "certification"
+      | "derogation"
+    >();
+    expectTypeOf<"US">().toExtend<CountryCode>();
+    expectTypeOf<"XX">().not.toExtend<CountryCode>();
     expectTypeOf<ExportedSubscriberFailure>().toEqualTypeOf<{
       readonly subscriber: string;
       readonly eventId: string;

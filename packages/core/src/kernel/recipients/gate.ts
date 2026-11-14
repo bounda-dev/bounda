@@ -110,23 +110,24 @@ export const createDisclosures: CreateDisclosuresFunction = ({
   recordAccess,
   clock,
 }) => {
+  // `undefined` when the key the data was read under is gone: the person was forgotten since.
   const categoryOf = async (
     keys: Pick<PersonalKeyStore, "find">,
-    known: Map<string, string | null>,
+    known: Map<string, string | undefined>,
     { person, fingerprint, category }: OpenedData,
-  ): Promise<string | null> => {
+  ): Promise<string | null | undefined> => {
     if (category !== undefined) return category;
     if (fingerprint === null) return null;
     const id = JSON.stringify([person, fingerprint]);
-    if (!known.has(id)) known.set(id, (await keys.find(person, fingerprint))?.category ?? null);
-    return known.get(id) ?? null;
+    if (!known.has(id)) known.set(id, (await keys.find(person, fingerprint))?.category);
+    return known.get(id);
   };
 
   const disclose = async (
     recipient: RecipientRuntime,
     run: DisclosingRun,
     recorded: Set<string>,
-    known: Map<string, string | null>,
+    known: Map<string, string | undefined>,
   ): Promise<void> => {
     const opened = run.opened();
     const fences = new Map<string, number>();
@@ -134,6 +135,9 @@ export const createDisclosures: CreateDisclosuresFunction = ({
     const readUnder: KeyedPerson[] = [];
     for (const data of opened) {
       const category = await categoryOf(storage.personalKeys, known, data);
+      if (category === undefined) {
+        throw new PersonalDataChangedError(data.person, data.fence ?? 0, 0);
+      }
       if (category === null || !recipient.categories.includes(category)) continue;
       if (data.fence !== undefined) {
         fences.set(data.person, Math.min(fences.get(data.person) ?? data.fence, data.fence));
@@ -196,7 +200,7 @@ export const createDisclosures: CreateDisclosuresFunction = ({
     implementation: unknown,
     run: DisclosingRun,
     recorded: Set<string>,
-    known: Map<string, string | null>,
+    known: Map<string, string | undefined>,
   ): unknown => {
     if (typeof implementation !== "object" || implementation === null) return implementation;
     const methods = new Map<PropertyKey, unknown>();
@@ -220,7 +224,7 @@ export const createDisclosures: CreateDisclosuresFunction = ({
       const own = recipients.byOwner[owner];
       if (own === undefined) return ports;
       const recorded = new Set<string>();
-      const known = new Map<string, string | null>();
+      const known = new Map<string, string | undefined>();
       const bound: Record<string, unknown> = {};
       for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(ports))) {
         const recipient = own[name];

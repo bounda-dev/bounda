@@ -224,6 +224,7 @@ describe("the access log", () => {
           deadLetters: 1,
           subscriberFailures: 0,
           readModelRows: 1,
+          recipients: 0,
         },
       },
     ]);
