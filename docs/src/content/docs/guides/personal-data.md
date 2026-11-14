@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, sort them in categories with their legal basis and retention, seal what was written before a field was marked, forget a person, export their data or correct it with one call, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person, nor a value corrected, is left readable.
+description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, sort them in categories with their legal basis and retention, seal what was written before a field was marked, forget a person, export their data or correct it with one call, tell the recipients their data went to, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person, nor a value corrected, is left readable.
 sidebar:
   order: 11
 ---
@@ -409,6 +409,13 @@ person, for them to take away, as the right of access and the right to portabili
   redactions: [
     { eventId, at: "2026-02-21T09:00:00.000Z", events: [{ id, fields: ["phone"] }] },
   ],
+  recipients: [
+    { port: "customer.mailer", name: "Mailchimp", kind: "processor", country: "US",
+      transfer: { safeguard: "standard-contractual-clauses" }, status: "disclosed",
+      categories: [{ name: "profile", basis: "contract" }],
+      firstDisclosedAt: "2026-02-01T09:00:00.000Z", lastDisclosedAt: "2026-02-20T09:00:00.000Z",
+      declared: true },
+  ],
   events: [
     { id, type: "CustomerRegistered", aggregateType: "customer", aggregateId: "c-42",
       version: 1, position: 17, timestamp, data: { email: "ana@example.com", phone: null },
@@ -464,6 +471,11 @@ were made, each with the id of its `PersonalDataRedacted`, when, and the events 
 sealed, never a value: every event says in `redacted` which fields of its `data` a redaction
 sealed, and those read `null`.
 
+`recipients` are the [recipients](#recipients) of their data, as `recipientsOf` lists them: each
+one disclosed data of theirs, presumed to hold it, or declared for a category of theirs, with the
+categories concerned and their basis, its country and the safeguard of a transfer out of the
+European Economic Area, as article 15(1)(c) asks.
+
 `events` are every event that names the person, by its field marked `person` or its aggregate's
 id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
 the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
@@ -486,9 +498,9 @@ another skip or repeat. An empty id is refused with `ValidationError`.
 
 Only what is marked comes out, and that is the limit to know: a field left unmarked is not
 personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
-without a person field is a view Bounda cannot tell is about anyone, and whatever a policy sent
-out is at the mailing provider or the search index. An app that owes a person more than their
-marked fields takes this export and adds what it knows from its ports. An event stored before its
+without a person field is a view Bounda cannot tell is about anyone, and whatever a port sent out
+is at the mailing provider or the search index, which `recipients` names. An app that owes a person
+more than their marked fields takes this export and adds what it knows from its ports. An event stored before its
 type marked its fields is found once the [backfill](#marking-a-field-later) has sealed it.
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
@@ -598,10 +610,10 @@ processRestricted: "consent" })`, before the restriction is lifted with `unrestr
 fields it was asked for, and a restore of a copy taken before it, or a commit that never happened,
 redacts them again at the next reconciliation, under its own id and time; without a ledger,
 `bounda restored` and `redact` again are how an operator puts it back. A redaction racing a
-forgetting is settled by whichever commits first, the other finding nothing left to open. A policy
-reacts to `PersonalDataRedacted` from `policies/bounda/<action>-on-personal-data-redacted.ts`, typed
-`PersonalDataRedactedEvent`, to tell those the data went to (article 19), and a read model may
-project it from `projections/bounda/personal-data-redacted.ts`.
+forgetting is settled by whichever commits first, the other finding nothing left to open. Every
+[recipient](#recipients) that received data of the person in a category redacted is told, and a
+read model may project the event from `projections/bounda/personal-data-redacted.ts`, typed
+`PersonalDataRedactedEvent`.
 
 From the command line, `bounda redact <person> --from <file>` reads the events, one a line as JSON
 (see [the CLI reference](/reference/cli/#bounda-redact)).
@@ -778,7 +790,10 @@ person's data in the clear records it, once per call:
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, readModelRows }`, how many of each; `null` when it failed |
+| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, readModelRows, recipients }`, how many of each; `null` when it failed |
+| `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
+| `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
+| `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
 | `deadLetters.list` | those the letters name | `{ letters }`, how many |
 | `deadLetters.get`, `retry`, `discard` | those the letter names | `{ letter }`, its id |
 | `subscriberFailures.list` | those the failures' events name | `{ failures }`, how many |
@@ -843,22 +858,175 @@ The records are never sampled, unlike a trace, and nothing is written to the sto
 it would be a write on every read, and a record that names a person is personal data that
 `forget` would then have to reach. A logger that drops `info` drops them too.
 
-## Telling the outside world
+## Recipients
 
-What a policy sent out stays out: the mailing provider has the contact, the search index has the
-profile. A policy in `policies/bounda/` reacts to the event:
+What a port sends out stays out: the mailing provider has the contact, the CRM has the address.
+The GDPR calls whoever receives a person's data a recipient, and asks three things of the
+controller about them: to tell each one of a rectification, an erasure or a restriction of the data
+it received (article 19), to tell the person who they are when asked (article 19 and article
+15(1)(c)), and to say where a transfer out of the European Economic Area goes and on what it rests
+(articles 44 to 49). A port says it is a recipient in its own module, next to its interface:
 
 ```ts
-// app/domain/customer/policies/bounda/erase-on-personal-data-forgotten.ts
-import type { Policy } from "./+types/erase-on-personal-data-forgotten";
+// app/domain/customer/mailer.ts
+import type { Port } from "./+types/mailer";
 
-export const handler = async ({ event, mailer, idempotencyKey }: Policy.HandlerArgs) => {
-  await mailer.eraseContact(event.payload.personId, idempotencyKey);
-};
+export interface Mailer {
+  welcome(args: { email: string; idempotencyKey: string }): Promise<void>;
+  erase(args: { personId: string; idempotencyKey: string }): Promise<void>;
+  suppress(args: { personId: string; idempotencyKey: string }): Promise<void>;
+  resume(args: { personId: string; idempotencyKey: string }): Promise<void>;
+}
+
+export const recipient = {
+  name: "Mailchimp",
+  kind: "processor",
+  country: "US",
+  safeguard: "standard-contractual-clauses",
+  categories: ["contact"],
+} satisfies Port.Recipient;
+
+export const onPersonalDataForgotten = ({
+  event,
+  mailer,
+  idempotencyKey,
+}: Port.OnPersonalDataForgottenArgs) =>
+  mailer.erase({ personId: event.payload.personId, idempotencyKey });
+
+export const onProcessingRestricted = ({
+  event,
+  mailer,
+  idempotencyKey,
+}: Port.OnProcessingRestrictedArgs) =>
+  mailer.suppress({ personId: event.payload.personId, idempotencyKey });
+
+// The person is told by the app; the provider has nothing to do until the lift.
+export const onProcessingRestrictionLiftAnnounced = async (
+  _args: Port.OnProcessingRestrictionLiftAnnouncedArgs,
+) => {};
+
+export const onProcessingRestrictionLifted = ({
+  event,
+  mailer,
+  idempotencyKey,
+}: Port.OnProcessingRestrictionLiftedArgs) =>
+  mailer.resume({ personId: event.payload.personId, idempotencyKey });
+
+// The corrected value reaches it as the app's own event does; the old one goes.
+export const onPersonalDataRedacted = ({
+  event,
+  mailer,
+  idempotencyKey,
+}: Port.OnPersonalDataRedactedArgs) =>
+  mailer.erase({ personId: event.payload.personId, idempotencyKey });
 ```
 
-It runs with the aggregate's ports, retries and dead-letters as any policy, and its handler is
-typed with `PersonalDataForgottenEvent`.
+`recipient` names who receives the data, as the person is told; its `kind`, a `processor` that
+processes it on the app's behalf (article 28), a `joint-controller` (article 26) or a `third-party`
+with purposes of its own (article 4(10)); its `country`, as an ISO 3166-1 alpha-2 code; and the
+[categories](#categories) of personal data the port sends it. A country outside the European
+Economic Area takes the `safeguard` its transfer rests on: `adequacy` (article 45),
+`standard-contractual-clauses` (article 46(2)(c)), `binding-corporate-rules` (article 47),
+`code-of-conduct`, `certification` (article 46(2)(e) and (f)) or `derogation` (article 49); one
+inside takes none. A port of a read model may declare one too, for what its queries hand it.
+
+Each of the five handlers tells the recipient of one event of the person's stream `bounda:<personId>`:
+a [forgetting](#forgetting-a-person), a [restriction](#restricting-processing), the announcement of
+its lift, which article 18(3) asks be made before it, the lift, and a
+[redaction](#correcting-a-persons-data). It receives the event, typed; `categories`, of those the
+recipient received, the ones the event touches; for a forgetting, `retained`, those a [legal
+obligation keeps](#categories) instead, which the recipient restricts rather than erases;
+`presumed`, `true` when it is not known to hold the data but cannot be ruled out (see below);
+`idempotencyKey` and `signal`, as a policy's; and the port, under its name. A handler that has
+nothing to do with an event, as one whose provider has no notion of an announced lift, says so by
+doing nothing: the generator types every handler, `.bounda/types.ts` fails to compile while the
+module declares a `recipient` and lacks one of them, or while a method of the port answers
+something other than a promise, naming the port and the event, and the app refuses to start on the
+same, and on a declaration without a name, a kind, an ISO country, the safeguard of a transfer, or
+categories the app has.
+
+### What was disclosed
+
+A recipient is told only of what it received. Each call a command, a policy, a process step or a
+query makes to a recipient's port first records, in its own transaction, as disclosed to it the
+data of the recipient's categories the run had read: the person, the port, the recipient as
+declared then, with its country and safeguard, and the category, ids and names alone, never a
+value. What the run read of other categories is not recorded: the declaration is the app's word for
+what the port sends. A run that read nothing of anyone's, or only the ids, discloses nothing.
+
+The same transaction refuses the call, before the port is reached, when the person's stream moved
+past what the run read: a forgetting, a restriction, a lift or a redaction committed after the read
+throws a `ConcurrencyError`, and the run is tried again on the data as it is now, as a command is
+after a race. A query's data is the read model's, so its read is fenced by the read model's
+checkpoint, and one that lags behind a forgetting refuses the call until it projects it. The
+transaction also refuses, with [`ProcessingRestrictedError`](/reference/errors/), data a
+restriction covers that the run names no [basis](#processing-restricted-data-anyway) for. So a
+disclosure is either recorded before the event that tells its recipient commits, and the event
+names it, or refused, never handed over unseen.
+
+### Who is told, and how
+
+Each of the five events names, in `recipients`, the recipients to tell, read in its own transaction
+from what was disclosed: every port that received data of the person in a category the event
+touches, with those categories, `retained` and `presumed`. The event is the outbox. A subscriber of
+its own, `recipients`, hands each one to the port's handler, once at least and in the order of the
+person's events, with the timeout, retries and back-off of the policies of the port's aggregate,
+[`policies.timeout` and `policies.retry`](/reference/configuration/#policies); a handler that keeps failing is filed as a
+[dead letter](/guides/dead-letters/) of kind `recipient`, its handler the port, which
+`app.deadLetters.retry` tells again and `discard` closes once the recipient was told by hand. A
+recipient whose notice waits for a retry is handed none of its later ones meanwhile. Each notice
+handed out is recorded in the [access log](#who-opened-what), as `recipientNotice`. A forgetting
+removes the disclosures it forgot: its event keeps whom it told.
+
+A notice of a restriction, a lift or a redaction that a later forgetting of the person as a whole
+told the same recipient is superseded: it is not handed over, since it would only bring back what
+the recipient had to erase, and the access log records it with `superseded: true`. So a dead letter
+of a restriction outlives the person's forgetting, and retrying it afterwards changes nothing.
+
+### Recipients declared late, renamed or removed
+
+A port declared after the store already held events may have sent data no one recorded. Its
+recipient is presumed to hold every category it declares of every person whose data existed then:
+each event of theirs names it with `presumed: true`, until a forgetting told it to erase them; and
+the worker tells it, presumed, in order, of every forgetting, restriction, lift and redaction the
+store recorded before it was declared, a batch of events per pass, while its later notices wait.
+`bounda status` says so for as long as it lasts.
+
+A port renamed keeps what its recipient holds when the new one lists the old key, `"<aggregate or
+read model>.<port>"`, in `recipient.formerly`: the app moves its disclosures to the new port when it
+starts, and an event that named the old one tells the new one. A port whose recipient holds data and
+that the app no longer declares is logged at start; whatever it should be told of is filed at once
+as a dead letter with `ConfigurationError`, for an operator to declare it again, or to tell the
+recipient by hand and discard the letter.
+
+### Restores
+
+With a [forget ledger](#backups), the first disclosure of each category of a person to a recipient
+goes to the ledger before the port is called, so a restore that loses it records it again at the
+next reconciliation, unless a forgetting of that category came after it. Without one, once the
+database is known to have gone back, by `bounda restored` or the restore watch, every recipient is
+presumed to hold the data of every person whose data existed then.
+
+### Telling the person
+
+`recipientsOf(personId)` on every `BoundaClient` lists the recipients of the person's data, as the
+person may ask (article 19): those disclosed data of theirs, with the identity the port declared
+then and when it was first and last recorded; those presumed to hold it; and those declared for a
+category the person has data of that received none yet and may (article 15(1)(c) asks for those
+too). Each one with its `port`, `name`, `kind`, `country`, `transfer`, the safeguard of one out of
+the European Economic Area or `null`, its `status`, `disclosed`, `presumed` or `declared`, the
+`categories` concerned with their basis, and `declared`, `false` for a port the app no longer
+declares. The [export](#exporting-a-persons-data) lists the same as `recipients`. Each call is
+recorded in the access log, as `recipientsOf`. From the command line:
+
+```sh
+bounda recipients c-42
+bounda recipients
+```
+
+The first prints the person's as JSON; the second, every recipient, how many persons were disclosed
+to it, whether it is still being told what came before it, and its failed notices (see
+[the CLI reference](/reference/cli/#bounda-recipients)).
 
 ## Restricting processing
 
@@ -919,7 +1087,9 @@ commits:
   whose command is refused, even when the event it handled names nobody: a policy on `Invited`,
   an event of the newsletter, dispatching `registerCustomer` for the restricted customer. A policy
   on the runtime's own events, `PersonalDataForgotten` and the restriction events, runs: they carry
-  ids alone, and telling those the data went to is what such a policy is for.
+  ids alone, and telling the person is what such a policy is for. So are the notices to
+  [recipients](#recipients), and a disclosure to one of data a restriction covers is refused as a
+  command would be.
 - **Queries.** A query leaves out every row of a read model whose field marked
   [`.person()`](#personal-data-in-read-models) names a person restricted as a whole, or restricted
   in a category a field of the read model marked `.personal()` holds, and every row holding a value
@@ -1013,7 +1183,8 @@ The three events are the runtime's own: a read model may project them from
 `projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts` and
 `processing-restriction-lifted.ts`, to show the person as restricted where customer service looks,
 and a policy may react from `policies/bounda/<action>-on-processing-restricted.ts` and the others,
-to tell the person or those the data went to (article 19). They are typed
+to tell the person; every [recipient](#recipients) that received data the change covers is told of
+each of the three by the runtime (article 19). They are typed
 `ProcessingRestrictedEvent`, `ProcessingRestrictionLiftAnnouncedEvent` and
 `ProcessingRestrictionLiftedEvent`.
 
@@ -1704,8 +1875,7 @@ try {
   OpenTelemetry tracer provider until `stop()`, and throws when one is registered already, since
   OpenTelemetry keeps the first.
 - `places`: anything else, under the name the report gives it: what a test double of a port was
-  sent, so a test proves the [policy that tells the outside world](#telling-the-outside-world)
-  erased it there too.
+  sent, so a test proves the [recipient's handler](#recipients) erased it there too.
 - `categories`: the [categories](#categories) to check alone, after
   `forget(personId, { categories })`: what was sealed or kept of the person in them, and the
   fields of `before` in them, are looked for, and the person must hold no key in force of them.

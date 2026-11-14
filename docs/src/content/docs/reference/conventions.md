@@ -19,7 +19,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/state.ts` | optional: `initialState`, and `aggregateId` (the payload field holding the id) |
 | `app/domain/<aggregate>/<event>.ts` | `payload` (optional), and `begin` for the event that opens the aggregate or `evolve`, or both; nothing else at run time |
 | `app/domain/<aggregate>/<event>.upcast.ts` | `upcasts`, oldest version first, next to its event |
-| `app/domain/<aggregate>/<port>.ts` | `interface <Port>`, named after the file; it is a port because `infrastructure/<port>/` exists |
+| `app/domain/<aggregate>/<port>.ts` | `interface <Port>`, named after the file; it is a port because `infrastructure/<port>/` exists. For a port that sends personal data out, `recipient`, `satisfies Port.Recipient`, and the five handlers that tell it: `onPersonalDataForgotten`, `onProcessingRestricted`, `onProcessingRestrictionLiftAnnounced`, `onProcessingRestrictionLifted` and `onPersonalDataRedacted` (see [Recipients](/guides/personal-data/#recipients)) |
 | `app/domain/<aggregate>/infrastructure/<port>/<implementation>.ts` | `export default ... satisfies <Port>`, or `create`, typed as `CreateImplementation<Port>` |
 | `app/domain/<aggregate>/commands/<command>.ts` | `payload` (optional), `rejections` (optional), `handler` |
 | `app/domain/<aggregate>/policies/<action>-on-<event>.ts` | `handler`; `on`, `delay` and `restricted`, the [basis it processes restricted data on](/guides/personal-data/#processing-restricted-data-anyway), optional |
@@ -35,7 +35,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once its view keeps a field in the clear with `.personal({ clear: true })`, or a projection of the read model sees a field marked `personal` and the view marks no field `.personal()` |
 | `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts`, `processing-restriction-lifted.ts` | `project`, optional |
 | `app/read/<read-model>/queries/<query>.ts` | `payload` (optional), `repository` (optional), `handler` |
-| `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate; only the queries' `handler` receives them |
+| `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate, `recipient` and its handlers included; only the queries' `handler` receives them |
 
 Any other module or directory at the root of an aggregate or a read model is yours: a value
 object, a domain service, a helper the handlers import. The generator leaves it alone, and so it
@@ -55,6 +55,7 @@ does files that start with `_` or `.`, tests (`*.test.ts`, `*.test-d.ts`), decla
   aggregate does not have;
 - a module at an aggregate's root that exports an event's function (`payload`, `begin`, `evolve`)
   and something else besides, and an `<event>.upcast.ts` with no event next to it;
+- a port's module that exports a recipient's handler and no `recipient`;
 - a port whose module does not export an interface or a type alias named after it, a port
   directory with no implementation or with subdirectories, an implementation with no port, and a
   port named after an event of its aggregate or after a reserved name: `command`, `state`,
@@ -83,7 +84,12 @@ a field; one that marks two fields `.person()`. The app refuses to start on the 
 fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
 declares a category named `default`, or one without a basis Bounda knows or a retention, and a
 category that `personal({ category })`, `.personal({ category })` or `forget` names and the file
-does not declare does not compile where it is written. See
+does not declare does not compile where it is written. `<Owner>Recipients` fails to compile while a
+port's module declares a `recipient` and lacks one of its five handlers, naming the port and the
+event it tells, or while a method of the port answers something other than a promise; a
+`recipient` whose country is outside the European Economic Area and names no safeguard, or one
+inside that names one, a kind the GDPR does not name, a country that is no ISO 3166-1 code or a
+category the app does not declare does not compile at its `satisfies Port.Recipient`. See
 [Personal data in read models](/guides/personal-data/#personal-data-in-read-models).
 
 ## What boot refuses
@@ -104,6 +110,11 @@ Some rules need the modules themselves, so the app checks them when it is create
   `PersonalDataForgotten`; one that seals its primary key, or names a field like the columns the
   runtime keeps beside personal ones, ending in `__key` or `__index`;
 - an `app/audit.ts` that does not export `onPersonalDataAccess` as a function;
+- a port that declares a `recipient` without a name, a kind the GDPR names, an ISO 3166-1 country,
+  the safeguard a transfer out of the European Economic Area rests on (and none within it) or
+  categories the app has, or without one of its five handlers; one that has no implementation; a
+  `recipient.formerly` key that is not `"<aggregate or read model>.<port>"`, that is a port of the
+  app, or that two ports name;
 - an `app/personal-data.ts` whose `categories` is not an object, declares `default`, names a
   category with anything but letters, digits, `-` and `_` after a first letter, or gives one a
   basis article 6 does not name or a retention that is not a duration longer than none; a field
@@ -136,8 +147,8 @@ and not failed on:
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it, and `app/audit.ts` as `audit` and `app/personal-data.ts` as `personalData` when there are. `boot()` imports it |
 | `.bounda/register.d.ts` | Registers the registry type, the type of the `ports` section and the names of the categories of personal data with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument, `defineConfig` checks the implementation names, and `personal({ category })` and `forget` check the categories |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), one `<ReadModel>Forgetting` check per read model, `PersonalCategory`, the names `app/personal-data.ts` declares, and its `PersonalDataDeclaration` check |
-| `**/+types/<name>.ts` | The argument types each module imports. An implementation has none: it imports its port |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), one `<ReadModel>Forgetting` check per read model, one `<Owner>Recipients` check per aggregate or read model whose ports declare recipients, `PersonalCategory`, the names `app/personal-data.ts` declares, and its `PersonalDataDeclaration` check |
+| `**/+types/<name>.ts` | The argument types each module imports, a port's only when it declares a `recipient`: `Port.Recipient` and its handlers' arguments. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
 `.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);
