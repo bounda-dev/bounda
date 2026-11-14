@@ -351,17 +351,29 @@ describe.each(adapters)("redact, rebuilding what was derived, %s", (_, adapterOf
     const { holdsPersonalData: _, ...undeclared } = registry.readModels.plans?.view ?? {
       fields: () => ({}),
     };
+    const plans = registry.readModels.plans;
     const refused = createTestApp({
       registry: {
         ...registry,
         readModels: {
           ...registry.readModels,
-          plans: { ...registry.readModels.plans, view: undeclared },
+          plans: {
+            ...plans,
+            view: undeclared,
+            projections: {
+              customer: {
+                ...plans?.projections.customer,
+                noteAdded: plans?.projections.customer?.customerRegistered,
+              },
+              // The runtime's own events name no aggregate of the app.
+              bounda: { personalDataRedacted: { project: () => undefined } },
+            },
+          },
         },
       } as Registry,
     });
     await expect(refused).rejects.toThrow(
-      'Read model "plans" projects events with personal fields (customer.customerRegistered), so it needs a field marked .person()',
+      'Read model "plans" projects events with personal fields (customer.customerRegistered, customer.noteAdded), so it needs a field marked .person()',
     );
     const contradicted = createTestApp({
       registry: {
