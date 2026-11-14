@@ -24,6 +24,7 @@ import type {
   RestrictOptions,
   UnrestrictOptions,
 } from "../modules/personal-data.ts";
+import type { PersonRecipient } from "../modules/recipient.ts";
 import type { RedactOptions } from "../modules/redaction.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
@@ -108,6 +109,7 @@ import {
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { buildRecipients } from "./recipients/build.ts";
 import { createDisclosures } from "./recipients/gate.ts";
+import { recipientsOf as listRecipientsOf } from "./recipients/listing.ts";
 import { createRecipientNotices, createRecipientSubscriber } from "./recipients/notices.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
@@ -194,6 +196,15 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * throws. Rejects with `ValidationError` an empty id, recording nothing.
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
+  /**
+   * The recipients of a person's data, as the export lists them, for the person to be told of on
+   * request (article 19): those disclosed data of theirs, recorded as the port called them, with
+   * the identity the port declared then; those presumed to hold it, declared after it existed or
+   * after a restore without a forget ledger; and those declared for a category of theirs that may
+   * still receive it. Recorded in the access log as the export is. Rejects with `ValidationError`
+   * an empty id, recording nothing.
+   */
+  recipientsOf(personId: string): Promise<readonly PersonRecipient[]>;
   /**
    * Restricts the processing of a person's data on a ground of article 18(1), of some categories
    * or of the person as a whole: from then on it is only kept. A command that touches a person
@@ -1153,6 +1164,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                         (sum, rows) => sum + rows.length,
                         0,
                       ),
+                      recipients: exported.recipients.length,
                     },
               actor,
               persons: [personId],
@@ -1168,6 +1180,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               clock,
               batchSize: config.runtime.dispatcher.batchSize,
               categories: personalCategories,
+              recipients,
               personId,
             });
             return exported;
@@ -1227,6 +1240,35 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 options,
                 actor,
               }),
+          }),
+        recipientsOf: (personId) =>
+          tracedOperation({
+            errorText,
+            operation: "recipientsOf",
+            actor,
+            run: async () => {
+              checkPersonId(personId, "recipientsOf");
+              let listed: readonly PersonRecipient[] | undefined;
+              return recorded(
+                (outcome) =>
+                  recordAccess({
+                    operation: "recipientsOf",
+                    detail: listed === undefined ? null : { recipients: listed.length },
+                    actor,
+                    persons: [personId],
+                    outcome,
+                  }),
+                async () => {
+                  listed = await listRecipientsOf({
+                    storage,
+                    recipients,
+                    categories: personalCategories,
+                    personId,
+                  });
+                  return listed;
+                },
+              );
+            },
           }),
         exportPersonalData: (personId) =>
           tracedOperation({

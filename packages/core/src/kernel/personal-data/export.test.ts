@@ -14,12 +14,15 @@ import { type AppStorage, appStorage } from "../events/app-event-store.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
 import { sealedTable } from "../read-model/sealed-table.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
 import { keysOver } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
+
+const NO_RECIPIENTS: RecipientsRuntime = { all: [], byPort: {}, byOwner: {} };
 
 type Table = RowTable<Record<string, unknown>>;
 
@@ -166,6 +169,7 @@ const setup = async () => {
       clock: createFixedClock(),
       batchSize,
       categories,
+      recipients: NO_RECIPIENTS,
       personId,
     });
   const register = (aggregateId: string, email: string) =>
@@ -282,6 +286,7 @@ describe("exportPersonalData", () => {
       categories: exportedCategories,
       restrictions: [],
       redactions: [],
+      recipients: [],
       events: [
         {
           id: "customer-c-1-1",
@@ -656,6 +661,7 @@ describe("exportPersonalData", () => {
         clock: createFixedClock(),
         batchSize: 3,
         categories,
+        recipients: NO_RECIPIENTS,
         personId: "c-1",
       });
       expect(exported.readModels.orderNotes?.map((row) => row.key)).toEqual([
@@ -699,6 +705,7 @@ describe("exportPersonalData", () => {
         clock: createFixedClock(),
         batchSize: 2,
         categories,
+        recipients: NO_RECIPIENTS,
         personId: "c-1",
       }),
     ).rejects.toBe(down);
@@ -781,6 +788,7 @@ describe("exportPersonalData", () => {
       clock: createFixedClock(),
       batchSize: 2,
       categories: buildPersonalCategories({ module: undefined, retention: null }),
+      recipients: NO_RECIPIENTS,
       personId: "c-1",
     });
     expect(exported.categories).toEqual({

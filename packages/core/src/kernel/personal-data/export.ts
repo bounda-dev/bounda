@@ -10,6 +10,7 @@ import {
   type PersonalDataRedactedPayload,
 } from "../../modules/bounda-events.ts";
 import type { LegalBasis, ProcessingRestriction } from "../../modules/personal-data.ts";
+import type { PersonRecipient } from "../../modules/recipient.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
@@ -23,6 +24,8 @@ import type {
 } from "../read-model/build-read-models.ts";
 import { openRow } from "../read-model/sealed-rows.ts";
 import { createSealingKeyRing, type SealingKeyRing } from "../read-model/sealing-keys.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
+import { recipientsOf } from "../recipients/listing.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { formatRetention, type PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
@@ -185,6 +188,13 @@ export interface PersonalDataExport {
    * which of its fields in `redacted`.
    */
   readonly redactions: readonly ExportedRedaction[];
+  /**
+   * The recipients of their data, or the categories of recipients, as article 15(1)(c) asks: each
+   * port's recipient that was disclosed data of theirs, may hold it, or may receive it, with the
+   * categories concerned and their basis, its country and the safeguard of a transfer out of the
+   * European Economic Area. Each event of `bounda:<personId>` names in `recipients` whom it told.
+   */
+  readonly recipients: readonly PersonRecipient[];
   readonly events: readonly ExportedEvent[];
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
@@ -213,6 +223,10 @@ export interface ExportPersonalDataArgs {
   readonly clock: Clock;
   readonly batchSize: number;
   readonly categories: PersonalCategories;
+  /**
+   * The recipients the app declares, which the export lists beside those the store recorded.
+   */
+  readonly recipients: RecipientsRuntime;
   readonly personId: string;
 }
 
@@ -329,6 +343,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   clock,
   batchSize,
   categories,
+  recipients,
   personId,
 }) => {
   checkPersonId(personId, "exportPersonalData");
@@ -508,6 +523,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     categories: exportedCategories,
     restrictions,
     redactions,
+    recipients: await recipientsOf({ storage, recipients, categories, personId }),
     events: events.map((event) => ({
       ...event,
       redacted: [...(redactedOf.get(event.id) ?? [])].filter((field) => field in event.data),

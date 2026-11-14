@@ -74,27 +74,19 @@ const touchedBy = (event: RecipientEvent): Touched => {
 const within = (received: ReadonlySet<string>, touched: readonly string[] | null): string[] =>
   [...received].filter((category) => touched === null || touched.includes(category)).sort();
 
-export interface AddressedFunction {
-  <Event extends RecipientEvent>(
+export interface PresumedOfFunction {
+  (
     transaction: Pick<StorageTransaction, "recipients" | "eventStore">,
-    event: Event,
-  ): Promise<Event["payload"]>;
+    personId: string,
+  ): Promise<Map<string, Set<string>>>;
 }
 
 /**
- * The payload with the recipients to tell of the event, none when there is no one to tell: every port a disclosure of the person was
- * recorded to, and every port declared after the person's data already existed, which may have
- * received it unrecorded, each with the categories it received that the event touches. Read in
- * the transaction that appends the event, so a disclosure recorded meanwhile is either among them
- * or refused for coming after it. A forgetting removes the disclosures of what it forgot: the
- * event keeps who is told.
+ * The categories each port may hold of the person unrecorded: those its declaration names, for a
+ * port declared, or presumed again after a restore, once the person's data already existed, but
+ * those a forgetting told it to erase since.
  */
-export const addressed: AddressedFunction = async (transaction, event) => {
-  const { personId } = event.payload;
-  const recorded = new Map<string, Set<string>>();
-  for (const { port, category } of await transaction.recipients.disclosures(personId)) {
-    recorded.set(port, (recorded.get(port) ?? new Set()).add(category));
-  }
+export const presumedOf: PresumedOfFunction = async (transaction, personId) => {
   const presumed = new Map<string, Set<string>>();
   const declared = (await transaction.recipients.declared()).filter(
     ({ presumedThrough }) => presumedThrough > 0,
@@ -126,6 +118,31 @@ export const addressed: AddressedFunction = async (transaction, event) => {
       }
     }
   }
+  return presumed;
+};
+
+export interface AddressedFunction {
+  <Event extends RecipientEvent>(
+    transaction: Pick<StorageTransaction, "recipients" | "eventStore">,
+    event: Event,
+  ): Promise<Event["payload"]>;
+}
+
+/**
+ * The payload with the recipients to tell of the event, none when there is no one to tell: every port a disclosure of the person was
+ * recorded to, and every port declared after the person's data already existed, which may have
+ * received it unrecorded, each with the categories it received that the event touches. Read in
+ * the transaction that appends the event, so a disclosure recorded meanwhile is either among them
+ * or refused for coming after it. A forgetting removes the disclosures of what it forgot: the
+ * event keeps who is told.
+ */
+export const addressed: AddressedFunction = async (transaction, event) => {
+  const { personId } = event.payload;
+  const recorded = new Map<string, Set<string>>();
+  for (const { port, category } of await transaction.recipients.disclosures(personId)) {
+    recorded.set(port, (recorded.get(port) ?? new Set()).add(category));
+  }
+  const presumed = await presumedOf(transaction, personId);
   const touched = touchedBy(event);
   const recipients: NotifiedRecipient[] = [];
   for (const port of [...new Set([...recorded.keys(), ...presumed.keys()])].sort()) {

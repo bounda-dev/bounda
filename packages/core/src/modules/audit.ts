@@ -82,6 +82,7 @@ export interface ExportAccess extends AccessRecord {
     readonly deadLetters: number;
     readonly subscriberFailures: number;
     readonly readModelRows: number;
+    readonly recipients: number;
   } | null;
 }
 
