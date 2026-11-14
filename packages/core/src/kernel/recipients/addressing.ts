@@ -72,8 +72,6 @@ export const touchedBy: TouchedByFunction = (event) => {
         categories: [...event.payload.categories, ...event.payload.expired],
         retained: event.payload.retained,
       };
-    case PERSONAL_DATA_REDACTED_EVENT:
-      return { categories: event.payload.categories, retained: [] };
     default:
       return { categories: event.payload.categories, retained: [] };
   }
@@ -169,8 +167,11 @@ export const addressed: AddressedFunction = async (transaction, event) => {
       presumed: ![...categories, ...retained].some((category) => known.has(category)),
     });
   }
-  if (event.type === PERSONAL_DATA_FORGOTTEN_EVENT && touched.categories !== null) {
-    await transaction.recipients.forget(personId, touched.categories);
+  if (event.type === PERSONAL_DATA_FORGOTTEN_EVENT) {
+    await transaction.recipients.forget(personId, [
+      ...event.payload.categories,
+      ...event.payload.expired,
+    ]);
   }
   return recipients.length === 0 ? event.payload : { ...event.payload, recipients };
 };

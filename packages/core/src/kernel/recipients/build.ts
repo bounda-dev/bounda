@@ -64,7 +64,7 @@ export interface BuildRecipientsFunction {
   (args: BuildRecipientsArgs): RecipientsRuntime;
 }
 
-const COUNTRIES: ReadonlySet<string> = new Set(COUNTRY_CODES);
+const COUNTRIES: ReadonlySet<unknown> = new Set(COUNTRY_CODES);
 const EEA: ReadonlySet<string> = new Set(EEA_COUNTRIES);
 const PORT_KEY = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
 
@@ -92,7 +92,7 @@ const checked = (
   if (!RECIPIENT_KINDS.includes(kind as RecipientKind)) {
     fail(`recipient.kind ${JSON.stringify(kind)} is none of ${listed(RECIPIENT_KINDS)}`);
   }
-  if (typeof country !== "string" || !COUNTRIES.has(country)) {
+  if (!COUNTRIES.has(country)) {
     fail(`recipient.country ${JSON.stringify(country)} is not an ISO 3166-1 alpha-2 code`);
   }
   const inEea = EEA.has(country as string);
@@ -108,9 +108,9 @@ const checked = (
   if (!Array.isArray(named) || named.length === 0) {
     fail("recipient.categories must list the categories of personal data the port sends it");
   }
-  const known = new Set(categories.all.map((category) => category.name));
+  const known: ReadonlySet<unknown> = new Set(categories.all.map((category) => category.name));
   for (const category of named as readonly unknown[]) {
-    if (typeof category !== "string" || !known.has(category)) {
+    if (!known.has(category)) {
       fail(`recipient.categories names ${JSON.stringify(category)}, which the app does not have`);
     }
   }
@@ -119,8 +119,7 @@ const checked = (
   }
   if (
     formerly !== undefined &&
-    (!Array.isArray(formerly) ||
-      formerly.some((key) => typeof key !== "string" || !PORT_KEY.test(key)))
+    (!Array.isArray(formerly) || formerly.some((key) => !PORT_KEY.test(String(key))))
   ) {
     fail(
       'recipient.formerly must list keys such as "customer.mailer", the port\'s before a rename',
@@ -192,7 +191,7 @@ export const buildRecipients: BuildRecipientsFunction = ({ registry, categories,
   );
   for (const recipient of all) {
     for (const former of recipient.formerly) {
-      if (declaredPorts.has(former) && byPort[former] === undefined) {
+      if (declaredPorts.has(former)) {
         throw new ConfigurationError(
           `Port ${recipient.port}: recipient.formerly names ${former}, which is a port of the app`,
         );
@@ -200,7 +199,7 @@ export const buildRecipients: BuildRecipientsFunction = ({ registry, categories,
       const claimed = byPort[former];
       if (claimed !== undefined) {
         throw new ConfigurationError(
-          `Port ${recipient.port}: recipient.formerly names ${former}, which is ${claimed.port === former ? "a port of the app" : `formerly ${claimed.port} too`}`,
+          `Port ${recipient.port}: recipient.formerly names ${former}, which is formerly ${claimed.port} too`,
         );
       }
       byPort[former] = recipient;
