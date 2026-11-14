@@ -71,6 +71,17 @@ export const applyRedaction: ApplyRedactionFunction = async ({ context, table, e
         }
       }
       if (Object.keys(patch).length === 0) continue;
+      // A field kept in the clear that cannot hold null, the primary key among them, holds the old
+      // value as long as the row is there: the row goes.
+      if (
+        layout.personal.some(
+          ({ field, sealed, definition }) =>
+            !sealed && field in patch && (!definition.isOptional || definition.isPrimaryKey),
+        )
+      ) {
+        await table.delete({ [primaryKey]: stored[primaryKey] });
+        continue;
+      }
       await table.update(
         { [primaryKey]: stored[primaryKey] },
         await sealedValues({ context, values: patch, person: personId, whole: false }),

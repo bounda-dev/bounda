@@ -1,4 +1,5 @@
 import type { StorageTransaction } from "../../adapter/adapter.ts";
+import type { EventStore } from "../../adapter/storage/event-store.ts";
 import {
   DEFAULT_PERSONAL_CATEGORY,
   type SealedValue,
@@ -46,36 +47,27 @@ import { lifecycleStateOf } from "./process-state.ts";
 import { redactionMarks } from "./redaction-targets.ts";
 import type { PersonalKeys } from "./wrapped-keys.ts";
 
-/**
- * The scheduler command type of the runtime's entry that keeps what a redaction made unreadable,
- * sealed as the events held it, until every read model has written `null` over its copies: the
- * worker completes it once they all passed the redaction. It names no person, so a `forget` leaves
- * it to that end, its values unreadable once their key is gone.
- */
+// The scheduler command type of the runtime's entry that keeps what a redaction made unreadable,
+// sealed as the events held it, until every read model has written `null` over its copies: the
+// worker completes it once they all passed the redaction. It names no person, so a `forget` leaves
+// it to that end, its values unreadable once their key is gone.
 export const REDACTION_SCRUB_COMMAND: "bounda.RedactionScrub" = "bounda.RedactionScrub";
 
 export interface RedactionScrubKeyFunction {
   (eventId: string): string;
 }
 
-/**
- * The scheduler's dedupe key of that entry, by the id of the `PersonalDataRedacted` it follows.
- */
 export const redactionScrubKey: RedactionScrubKeyFunction = (eventId) => `redaction:${eventId}`;
 
-/**
- * The payload of that entry: the old values as the events held them, under the person's keys,
- * and the position of the `PersonalDataRedacted` every read model has to pass first.
- */
+// The payload of that entry: the old values as the events held them, under the person's keys,
+// and the position of the `PersonalDataRedacted` every read model has to pass first.
 export interface RedactionScrubPayload {
   readonly personId: string;
   readonly position: number;
   readonly values: readonly SealedValue[];
 }
 
-/**
- * A value a redaction made unreadable, as it read before.
- */
+// A value a redaction made unreadable, as it read before.
 export interface RedactedValue {
   readonly category: string;
   readonly value: unknown;
@@ -85,9 +77,7 @@ export interface RedactedValue {
 
 export interface RedactWithinArgs {
   readonly transaction: StorageTransaction;
-  /**
-   * The transaction's keys, unwrapped.
-   */
+  // The transaction's keys, unwrapped.
   readonly keys: PersonalKeys;
   readonly aggregates: AggregatesRuntime;
   readonly processes: Pick<ProcessesRuntime, "byName">;
@@ -97,11 +87,9 @@ export interface RedactWithinArgs {
   readonly targets: readonly RedactedEvent[];
   readonly identity: { readonly id: string; readonly timestamp: string };
   readonly context: CausationContext;
-  /**
-   * Whether an event the store does not hold, of another type or about another person, is refused
-   * with `ValidationError`, as a client asking for it is; skipped otherwise, as a redaction
-   * applied again to a copy that predates the event is.
-   */
+  // Whether an event the store does not hold, of another type or about another person, is refused
+  // with `ValidationError`, as a client asking for it is; skipped otherwise, as a redaction
+  // applied again to a copy that predates the event is.
   readonly strict: boolean;
 }
 
@@ -113,17 +101,13 @@ export interface Redacted {
   readonly disposable: PersonalKey;
 }
 
-/**
- * The redaction the identity names is in the store already, committed by a reconciliation
- * meanwhile.
- */
+// The redaction the identity names is in the store already, committed by a reconciliation
+// meanwhile.
 export interface HeldRedaction {
   readonly held: StoredEvent;
 }
 
-/**
- * `null` when nothing asked for held a value a key of the person still opened.
- */
+// `null` when nothing asked for held a value a key of the person still opened.
 export type RedactOutcome = Redacted | HeldRedaction | null;
 
 export interface RedactWithinFunction {
@@ -136,11 +120,44 @@ interface Resealed {
   readonly fields: readonly string[];
 }
 
-const refused = (strict: boolean, target: RedactedEvent, why: string): null => {
-  if (!strict) return null;
-  throw new ValidationError(`redact cannot reach the event ${target.id}: ${why}`, [
+// Why the event the target names cannot be redacted for the person, `null` when it can.
+const unreachable = (
+  event: StoredEvent | null,
+  target: RedactedEvent,
+  personId: string,
+): string | null => {
+  if (event === null) return "the store holds no such event";
+  if (event.type !== target.type) return `it is a ${event.type}, not a ${target.type}`;
+  return event.person === personId ? null : `it does not name the person ${personId}`;
+};
+
+const refusal = (target: RedactedEvent, why: string): ValidationError =>
+  new ValidationError(`redact cannot reach the event ${target.id}: ${why}`, [
     { path: ["events"], message: why },
   ]);
+
+export interface CheckReachableArgs {
+  readonly eventStore: Pick<EventStore, "readOne">;
+  readonly personId: string;
+  readonly targets: readonly RedactedEvent[];
+}
+
+export interface CheckReachableFunction {
+  (args: CheckReachableArgs): Promise<void>;
+}
+
+// Throws `ValidationError` for the first target `redactWithin` would refuse, before anything is
+// recorded: a redaction refused never reaches the ledger, whose reconciliation would apply it.
+export const checkReachable: CheckReachableFunction = async ({ eventStore, personId, targets }) => {
+  for (const target of targets) {
+    const event = await eventStore.readOne({
+      aggregateType: target.aggregateType,
+      aggregateId: target.aggregateId,
+      eventId: target.id,
+    });
+    const why = unreachable(event, target, personId);
+    if (why !== null) throw refusal(target, why);
+  }
 };
 
 // The fields of `holder` the target names, and the marks make personal, that hold a value the
@@ -197,13 +214,9 @@ const resealEvent = async (
     aggregateId: target.aggregateId,
     eventId: target.id,
   });
-  if (event === null) return refused(args.strict, target, "the store holds no such event");
-  if (event.type !== target.type) {
-    return refused(args.strict, target, `it is a ${event.type}, not a ${target.type}`);
-  }
-  if (event.person !== args.personId) {
-    return refused(args.strict, target, `it does not name the person ${args.personId}`);
-  }
+  const why = unreachable(event, target, args.personId);
+  if (why !== null && args.strict) throw refusal(target, why);
+  if (why !== null || event === null) return null;
   const marks = redactionMarks({
     aggregates: args.aggregates,
     processes: args.processes,
@@ -334,12 +347,10 @@ const sealLetters = async (
   return removed;
 };
 
-/**
- * What the person's scheduled commands and dead letters hold of the values redacted: a command
- * whose payload holds one is cancelled and a scheduled command's letter is removed, as a
- * forgetting cancels and removes them, and a letter whose error text quotes one has its text
- * sealed for good.
- */
+// What the person's scheduled commands and dead letters hold of the values redacted: a command
+// whose payload holds one is cancelled and a scheduled command's letter is removed, as a
+// forgetting cancels and removes them, and a letter whose error text quotes one has its text
+// sealed for good.
 export const scrubStores: ScrubStoresFunction = async (args) => {
   const keyOf = sealedKeys(args.keys);
   return {
@@ -363,10 +374,8 @@ export interface QuotingTextFunction {
   ): Promise<ErrorText | null>;
 }
 
-/**
- * An error's text sealed for good when its message or its stack, as opened, quotes a redacted
- * value; `null` when neither does.
- */
+// An error's text sealed for good when its message or its stack, as opened, quotes a redacted
+// value; `null` when neither does.
 export const quotingText: QuotingTextFunction = async (
   { errorMessage, errorStack },
   open,
@@ -405,14 +414,12 @@ const scrubbed = async (
   return sealed;
 };
 
-/**
- * Seals for good, in place, the fields the targets name that hold a value the person's keys still
- * open, each under a key made for the redaction and let go at once, and appends
- * `PersonalDataRedacted` with the identity given. In the same transaction the snapshots of those
- * streams and the person's remembered rejections go, the scheduled commands and dead letters whose
- * payload holds an old value go, the letters whose text quotes one are sealed for good, and the
- * old values wait, as the events held them, for the read models to write over their copies.
- */
+// Seals for good, in place, the fields the targets name that hold a value the person's keys still
+// open, each under a key made for the redaction and let go at once, and appends
+// `PersonalDataRedacted` with the identity given. In the same transaction the snapshots of those
+// streams and the person's remembered rejections go, the scheduled commands and dead letters whose
+// payload holds an old value go, the letters whose text quotes one are sealed for good, and the
+// old values wait, as the events held them, for the read models to write over their copies.
 export const redactWithin: RedactWithinFunction = async (args) => {
   const { transaction, ids, clock, personId, identity, context, targets } = args;
   const applied = await transaction.eventStore.readOne({

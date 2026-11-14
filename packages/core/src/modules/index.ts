@@ -151,7 +151,6 @@ export type {
   RedactionTarget,
   RedactOptions,
 } from "./redaction.ts";
-export { PROCESS_STATE_EVENT_TYPES } from "./redaction.ts";
 export type {
   CommandInvoker,
   CommandsFacade,

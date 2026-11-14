@@ -19,6 +19,7 @@ import { openTextWith } from "./errors.ts";
 import type { ForgetIntentions } from "./intention.ts";
 import { lifecycleStateOf } from "./process-state.ts";
 import {
+  checkReachable,
   quotingText,
   type Redacted,
   type RedactedValue,
@@ -32,9 +33,7 @@ import { checkRedactionTargets, redactionMarks } from "./redaction-targets.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 import type { PersonalKeys, PersonalKeyWrapping } from "./wrapped-keys.ts";
 
-/**
- * What a redaction needs of the app, beside what it is asked.
- */
+// What a redaction needs of the app, beside what it is asked.
 export interface Redactions {
   readonly storage: Pick<
     Storage,
@@ -48,9 +47,7 @@ export interface Redactions {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly concurrencyRetries: number;
-  /**
-   * Told every value a redaction made unreadable, as it read before: a test's witness.
-   */
+  // Told every value a redaction made unreadable, as it read before: a test's witness.
   readonly onRedacted?:
     | ((personId: string, values: readonly unknown[], key: PersonalKey) => void)
     | undefined;
@@ -62,13 +59,8 @@ export interface RedactIntendedArgs {
   readonly targets: readonly RedactedEvent[];
   readonly identity: { readonly id: string; readonly timestamp: string };
   readonly context: CausationContext;
-  /**
-   * As `redactWithin` takes it.
-   */
   readonly strict: boolean;
-  /**
-   * Whether the intention goes to the forget ledger first: not for one the ledger holds already.
-   */
+  // Whether the intention goes to the forget ledger first: not for one the ledger holds already.
   readonly record: boolean;
 }
 
@@ -76,11 +68,9 @@ export interface RedactIntendedFunction {
   (args: RedactIntendedArgs): Promise<RedactOutcome>;
 }
 
-/**
- * Records the intention in the forget ledger, when there is one, then redacts in a transaction of
- * its own, with the intention's id and time: the ledger and the store name one redaction by one
- * id, so a reconciliation that finds the event skips the entry.
- */
+// Records the intention in the forget ledger, when there is one, then redacts in a transaction of
+// its own, with the intention's id and time: the ledger and the store name one redaction by one
+// id, so a reconciliation that finds the event skips the entry.
 export const redactIntended: RedactIntendedFunction = async ({
   redactions,
   personId,
@@ -162,9 +152,7 @@ const dispatchOf = (
 export interface RedactPersonalDataArgs {
   readonly redactions: Redactions;
   readonly personId: string;
-  /**
-   * As a client takes it, checked here.
-   */
+  // As a client takes it, checked here.
   readonly options: { readonly events?: unknown } | undefined;
   readonly actor?: string | undefined;
 }
@@ -173,10 +161,8 @@ export interface RedactPersonalDataFunction {
   (args: RedactPersonalDataArgs): Promise<StoredDispatch>;
 }
 
-/**
- * `redact` of a client: `redactIntended`, as a request of the person, refusing what it cannot
- * reach. Nothing left to redact appends nothing, and resolves with the stream's version.
- */
+// `redact` of a client: `redactIntended`, as a request of the person, refusing what it cannot
+// reach. Nothing left to redact appends nothing, and resolves with the stream's version.
 export const redactPersonalData: RedactPersonalDataFunction = async ({
   redactions,
   personId,
@@ -189,6 +175,7 @@ export const redactPersonalData: RedactPersonalDataFunction = async ({
     processes: redactions.processes,
     events: options?.events,
   });
+  await checkReachable({ eventStore: redactions.storage.eventStore, personId, targets });
   const outcome = await redactIntended({
     redactions,
     personId,
@@ -293,12 +280,10 @@ const writtenSince = async (
   }
 };
 
-/**
- * Settles a redaction's scrub entry once every read model passed its `PersonalDataRedacted`: what
- * work running when it committed wrote of the old values after it is made unreadable too, the
- * events with another redaction, the scheduled commands, dead letters and subscribers' last
- * failures as the redaction did, and the entry goes with the old values it kept.
- */
+// Settles a redaction's scrub entry once every read model passed its `PersonalDataRedacted`: what
+// work running when it committed wrote of the old values after it is made unreadable too, the
+// events with another redaction, the scheduled commands, dead letters and subscribers' last
+// failures as the redaction did, and the entry goes with the old values it kept.
 export const settleRedaction: SettleRedactionFunction = async ({
   redactions,
   entry,
@@ -346,7 +331,10 @@ export const settleRedaction: SettleRedactionFunction = async ({
       });
     }
     const open = openTextWith(sealedKeys(outside));
+    // The failures on the person's events, and those kept in the clear: another person's text is
+    // theirs, sealed under their keys.
     for (const failure of await storage.subscriberFailures.list()) {
+      if (failure.person !== personId && failure.person !== null) continue;
       const text = await quotingText(failure, open, matcher, personId, disposable);
       if (text !== null) {
         await storage.subscriberFailures.reseal(failure.subscriber, {

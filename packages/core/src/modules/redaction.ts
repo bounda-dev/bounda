@@ -13,16 +13,6 @@ export type ProcessStateEventType =
   | "ProcessTimedOut";
 
 /**
- * Every lifecycle event that carries a process's state, in the order of `ProcessStateEventType`.
- */
-export const PROCESS_STATE_EVENT_TYPES: readonly ProcessStateEventType[] = [
-  "ProcessStarted",
-  "ProcessHandled",
-  "ProcessDeadlineReached",
-  "ProcessTimedOut",
-];
-
-/**
  * One event `redact` reaches: the event as the person's export lists it, by its stream, type and
  * id, and the fields marked `personal` to seal for good, those of its payload, or of the state a
  * process's lifecycle event carries.

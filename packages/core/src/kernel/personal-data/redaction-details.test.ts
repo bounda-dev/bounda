@@ -142,6 +142,52 @@ const registry = {
     },
   },
   readModels: {
+    directory: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          email: f.string().primaryKey().personal({ clear: true }),
+          customerId: f.string().index().person(),
+          label: f.string().personal({ clear: true }),
+        }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { email: string | null } };
+              table: Table<{ email: string; customerId: string; label: string }>;
+            }) =>
+              event.payload.email === null
+                ? undefined
+                : table.upsert({
+                    email: event.payload.email,
+                    customerId: event.aggregateId,
+                    label: `customer ${event.aggregateId}`,
+                  }),
+          },
+        },
+        bounda: {
+          personalDataForgotten: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: { payload: { personId: string } };
+              table: Table<{ customerId: string }>;
+            }) => table.delete({ customerId: event.payload.personId }),
+          },
+        },
+      },
+      queries: {
+        listed: {
+          handler: ({ table }: { table: Table<{ email: string; customerId: string }> }) =>
+            table.findMany({ orderBy: { field: "customerId", direction: "asc" } }),
+        },
+      },
+    },
     contacts: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
@@ -901,5 +947,59 @@ describe("redact, in detail", () => {
     clock.advance(60_000);
     await app.runUntilIdle();
     expect(await scrubs()).toEqual([]);
+  });
+
+  it("records nothing of a redaction it refuses, so no reconciliation applies part of it", async () => {
+    const { app, clock, register, target, ledgerRedactions, redactions } = await setUp();
+    const registered = await register("ana", "ana@old.example");
+    await expect(
+      app.redact("ana", {
+        events: [target(registered, ["email"]), { ...target(registered, ["email"]), id: "nope" }],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(ledgerRedactions()).toEqual([]);
+    clock.advance(10 * 60_000);
+    await app.runUntilIdle();
+    expect(await redactions()).toEqual([]);
+  });
+
+  it("drops a row whose field kept in the clear cannot hold null, its key among them", async () => {
+    const { app, register, target } = await setUp();
+    const registered = await register("ana", "ana@old.example");
+    await register("bo", "bo@example.com");
+    await app.runUntilIdle();
+    await app.redact("ana", { events: [target(registered, ["email"])] });
+    await app.runUntilIdle();
+    expect(
+      await (app.queries as unknown as Record<string, () => Promise<unknown>>).listed?.(),
+    ).toEqual([{ email: "bo@example.com", customerId: "bo", label: "customer bo" }]);
+  });
+
+  it("forgets nobody again for an entry that records a redaction", async () => {
+    const { app, register, target } = await setUp();
+    const registered = await register("ana", "ana@old.example");
+    expect(
+      await app.forgetAgain([
+        {
+          personId: "ana",
+          categories: null,
+          eventId: "d-1",
+          forgottenAt: "2026-01-01T00:00:00.000Z",
+          reason: "requested",
+          redaction: { events: [target(registered, ["email"])] },
+        },
+        {
+          personId: "ana",
+          categories: null,
+          eventId: "r-1",
+          forgottenAt: "2026-01-01T00:00:00.000Z",
+          reason: "requested",
+          restriction: { type: "ProcessingRestricted" },
+        },
+      ]),
+    ).toEqual([]);
+    expect((await app.exportPersonalData("ana")).events[0]?.data).toMatchObject({
+      email: "ana@old.example",
+    });
   });
 });

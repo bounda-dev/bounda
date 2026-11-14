@@ -88,6 +88,16 @@ export interface ForgetAgainEntry {
    * Only those are forgotten again, never the person as a whole.
    */
   readonly categories?: readonly string[] | null;
+  /**
+   * Set on a ledger entry that records a change of restrictions rather than a forgetting: such an
+   * entry is not forgotten again, and forgets nobody.
+   */
+  readonly restriction?: unknown;
+  /**
+   * Set on a ledger entry that records a redaction rather than a forgetting, which is left alone
+   * the same way.
+   */
+  readonly redaction?: unknown;
 }
 
 /**
@@ -155,6 +165,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
 }) => {
   const { personId, eventId, forgottenAt, reason, fingerprints, categories: asked = null } = entry;
   checkPersonId(personId, "forgetting again");
+  if (entry.restriction !== undefined || entry.redaction !== undefined) return null;
   const known = asked?.filter((category) => categories.of(category) !== undefined) ?? null;
   if (known !== null && known.length === 0) return null;
   const asScope: ForgetScope =

@@ -903,14 +903,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       redactionScrubs: {
         passed: async (position) => {
           for (const { name, storage: own } of personalReadModels) {
-            const at = await own.checkpointStore.get(projectionSubscriberName(name));
-            if (at < position) return false;
-            const rebuilt = await rebuildsPassed({
-              checkpointStore: own.checkpointStore,
-              name,
-              position,
-            });
-            if (!rebuilt) return false;
+            const checkpoints = await own.checkpointStore.list();
+            const projected = checkpoints.find(
+              ({ subscriber }) => subscriber === projectionSubscriberName(name),
+            );
+            if ((projected?.position ?? 0) < position) return false;
+            if (!rebuildsPassed({ checkpoints, name, position })) return false;
           }
           return true;
         },

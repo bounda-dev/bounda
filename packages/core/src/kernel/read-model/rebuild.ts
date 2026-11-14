@@ -1,5 +1,5 @@
 import { isAdapter } from "../../adapter/adapter.ts";
-import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
+import type { Checkpoint, CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import { checkConfigNames } from "../../config/names.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config } from "../../config/types.ts";
@@ -96,21 +96,20 @@ export const pendingRebuilds: PendingRebuildsFunction = async (checkpointStore) 
 ];
 
 export interface RebuildsPassedArgs {
-  readonly checkpointStore: CheckpointStore;
+  // Every checkpoint of the read model's database.
+  readonly checkpoints: readonly Checkpoint[];
   readonly name: string;
   readonly position: number;
 }
 
 export interface RebuildsPassedFunction {
-  (args: RebuildsPassedArgs): Promise<boolean>;
+  (args: RebuildsPassedArgs): boolean;
 }
 
-/**
- * Whether every rebuild of the read model under way, paused or running, has projected past the
- * position: a redaction waits for them, since a rebuild may have copied an old value before it.
- */
-export const rebuildsPassed: RebuildsPassedFunction = async ({ checkpointStore, name, position }) =>
-  (await checkpointStore.list()).every(
+// Whether every rebuild of the read model under way, paused or running, has projected the
+// position: a redaction waits for them, since one may have copied an old value before it.
+export const rebuildsPassed: RebuildsPassedFunction = ({ checkpoints, name, position }) =>
+  checkpoints.every(
     (checkpoint) =>
       !checkpoint.subscriber.startsWith(progressPrefix(name)) || checkpoint.position >= position,
   );

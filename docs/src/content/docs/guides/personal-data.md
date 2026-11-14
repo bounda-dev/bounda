@@ -525,8 +525,8 @@ none, does not compile, and a process's lifecycle events that carry its state, `
 `ProcessHandled`, `ProcessDeadlineReached` and `ProcessTimedOut` of the stream
 `process:<aggregate>.<process>`, take the fields its [state](#in-a-processs-state) marks. Every
 event named must name the person: one the store does not hold, of another type or about another
-person is refused with `ValidationError`, as are no events, no fields and an empty id, and nothing
-is redacted. Redact before you append the correction, so a copy of the old value a read model
+person is refused with `ValidationError`, as are no events, no fields and an empty id, before
+anything is redacted or recorded. Redact before you append the correction, so a copy of the old value a read model
 quotes in a field is never confused with the new one.
 
 In one transaction it opens each field under the person's key and seals the value anew under a key
@@ -561,13 +561,17 @@ A read model holding the person's personal fields writes over its copies when it
 marked `.personal()`, [sealed](#sealed-at-rest) or [in the clear](#in-the-clear), of the rows whose
 field marked `.person()` names them, that holds an old value, equal to it or quoting it as
 [`expectRedacted`](#in-tests) finds a value, reads `null` from then on, its blind index emptied, so
-a greeting that quotes the old email goes with it. The old values wait for this, sealed under the
+a greeting that quotes the old email goes with it. A field kept in the clear that cannot hold
+`null`, because it is not `.optional()` or it is the primary key, keeps the old value for as long as
+the row is there, so the row is deleted instead, for a projection of the correction to write
+again. The old values wait for this, sealed under the
 person's keys as the events held them, in an entry of the scheduler that names nobody, until every
 read model with personal fields, and every [rebuild](/guides/deployment/#rebuilding-a-read-model)
 of one under way, has projected the redaction; the worker then removes it, and makes unreadable
 what work that read the old value just before the redaction committed wrote of it after: an event
 of the person holding it gets a redaction of its own, a scheduled command or a dead letter goes as
-above, and a subscriber's last failure that quotes it has its text sealed for good. A read model
+above, and a subscriber's last failure on an event of theirs, or kept in the clear, that quotes it
+has its text sealed for good. A read model
 that fails keeps that entry, and with it the old values, until it projects the redaction: its lag
 in `getLag` and `bounda status` shows it. A column that stores a value reformatted so that it no
 longer quotes the old one is the read model's to rewrite: project the correction, or rebuild it.

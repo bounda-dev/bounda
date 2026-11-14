@@ -573,6 +573,26 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     await expectRedacted(app, "ana");
   });
 
+  it("leaves the failure of another person's event as it is, whatever it quotes", async () => {
+    const { app, clock, commands, registered, holding } = await setUp(adapterOf());
+    auditDown = true;
+    await commands.registerCustomer?.({
+      customerId: "bo",
+      email: "bo.copies.ana@old.example",
+      plan: "pro",
+    });
+    await app.runUntilIdle();
+    auditDown = false;
+    clock.advance(3_600_000);
+    await app.runUntilIdle();
+    await registered("ana", "ana@old.example");
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    await app.runUntilIdle();
+    expect(await app.subscriberFailures.get("projection:audit")).toMatchObject({
+      errorMessage: "cannot index bo.copies.ana@old.example",
+    });
+  });
+
   it("redacts what a forgetting kept under a legal obligation", async () => {
     const { app, commands, exported } = await setUp(adapterOf());
     await commands.registerCustomer?.({ customerId: "ana", email: "ana@old.example", plan: "pro" });
