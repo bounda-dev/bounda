@@ -109,7 +109,7 @@ import {
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { buildRecipients } from "./recipients/build.ts";
 import { createDisclosures } from "./recipients/gate.ts";
-import { recipientsOf as listRecipientsOf } from "./recipients/listing.ts";
+import { recipientsOf as listRecipientsOf, recipientStatuses } from "./recipients/listing.ts";
 import {
   createRecipientCatchUp,
   createRecipientDelivery,
@@ -1108,6 +1108,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         rotation,
         retention,
         letterRetention,
+        recipients: () => recipientStatuses({ storage: written, recipients }),
       });
     // A copy restored while the app was stopped holds less than the forget ledger's mark: the
     // holds it brought back are cleared before anything runs, and the reconciliation below forgets

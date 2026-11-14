@@ -8,6 +8,7 @@ import type {
   TransferSafeguard,
 } from "../../modules/recipient.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
+import type { RecipientStatus } from "../status.ts";
 import { presumedOf } from "./addressing.ts";
 import type { RecipientsRuntime } from "./build.ts";
 
@@ -151,5 +152,58 @@ export const recipientsOf: RecipientsOfFunction = async ({
       byText(a.port, b.port) ||
       STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
       byText(a.name, b.name),
+  );
+};
+
+export interface RecipientStatusesArgs {
+  readonly storage: Pick<StorageTransaction, "recipients" | "deadLetterStore">;
+  readonly recipients: RecipientsRuntime;
+}
+
+export interface RecipientStatusesFunction {
+  (args: RecipientStatusesArgs): Promise<readonly RecipientStatus[]>;
+}
+
+/**
+ * Every recipient the app declares, and every port the store recorded a disclosure to or a
+ * declaration of, as `status` reports them.
+ */
+export const recipientStatuses: RecipientStatusesFunction = async ({ storage, recipients }) => {
+  const [declared, summary] = await Promise.all([
+    storage.recipients.declared(),
+    storage.recipients.summary(),
+  ]);
+  const ports = [
+    ...new Set([
+      ...recipients.all.map(({ port }) => port),
+      ...declared.map(({ port }) => port),
+      ...summary.map(({ port }) => port),
+    ]),
+  ].sort(byText);
+  return Promise.all(
+    ports.map(async (port): Promise<RecipientStatus> => {
+      const recipient = recipients.byPort[port];
+      const row = declared.find((each) => each.port === port);
+      return {
+        port,
+        declared:
+          recipient === undefined || recipient.port !== port
+            ? null
+            : {
+                name: recipient.recipient,
+                kind: recipient.kind,
+                country: recipient.country,
+                safeguard: recipient.safeguard,
+                categories: recipient.categories,
+              },
+        persons: summary.find((each) => each.port === port)?.persons ?? 0,
+        catchingUp: row !== undefined && row.caughtUpThrough < row.presumedThrough,
+        failedNotices: await storage.deadLetterStore.count({
+          kind: "recipient",
+          handler: port,
+          status: "failed",
+        }),
+      };
+    }),
   );
 };

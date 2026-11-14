@@ -108,6 +108,11 @@ export {
 } from "./kernel/shared/error-text.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
-export type { AppStatus, SchemaStatus, SubscriberFailureStatus } from "./kernel/status.ts";
+export type {
+  AppStatus,
+  RecipientStatus,
+  SchemaStatus,
+  SubscriberFailureStatus,
+} from "./kernel/status.ts";
 export * from "./modules/index.ts";
 export type { AppEnv, AppRegistry, EnvSection, Register } from "./register/index.ts";

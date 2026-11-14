@@ -63,6 +63,41 @@ const status: AppStatus = {
     keptBeyond: 1,
   },
   deadLetterRetention: { retentionMs: 90_000, nextDueAt: null },
+  recipients: [
+    {
+      port: "customer.crm",
+      declared: {
+        name: "Brevo",
+        kind: "third-party",
+        country: "FR",
+        safeguard: null,
+        categories: ["contact", "invoices"],
+      },
+      persons: 1,
+      catchingUp: true,
+      failedNotices: 0,
+    },
+    {
+      port: "customer.mailer",
+      declared: {
+        name: "Mailchimp",
+        kind: "processor",
+        country: "US",
+        safeguard: "standard-contractual-clauses",
+        categories: ["contact"],
+      },
+      persons: 3,
+      catchingUp: false,
+      failedNotices: 2,
+    },
+    {
+      port: "order.sms",
+      declared: null,
+      persons: 4,
+      catchingUp: false,
+      failedNotices: 1,
+    },
+  ],
 };
 
 describe("formatStatus", () => {
@@ -86,6 +121,13 @@ describe("formatStatus", () => {
       "  invoices  6y, 2 keys past it, next due never",
       "  1 key kept past a forgetting that no legal obligation keeps",
       "dead letter retention: 90s, next purge when a letter is resolved",
+      "recipients",
+      "  customer.crm  Brevo, third-party, FR: contact, invoices; 1 person disclosed to it",
+      "    being told what was recorded before it was declared",
+      "  customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 3 persons disclosed to it",
+      "    2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer",
+      "  order.sms  no longer declared, 4 persons disclosed to it",
+      "    1 notice failed: bounda dead-letters list --kind recipient --handler order.sms",
     ]);
   });
 
@@ -113,14 +155,16 @@ describe("formatStatus", () => {
       keyRotation: { kid: "k-1", previous: [], pending: 0, completeAt: "2026-05-01T00:00:00.000Z" },
       retention: null,
       deadLetterRetention: null,
+      recipients: [],
     };
     const lines = formatStatus({ status: bare }).split("\n");
-    expect(lines.slice(-5)).toEqual([
+    expect(lines.slice(-6)).toEqual([
       "personal data backfill: no personal data marked",
       "forget ledger: reconciled, applied through nothing yet, last run 2026-05-01T00:00:00.000Z",
       "key rotation: under k-1, every key wrapped (checked 2026-05-01T00:00:00.000Z)",
       "retention: no personal data marked",
       "dead letter retention: not configured",
+      "recipients: none declared",
     ]);
     expect(
       formatStatus({ status: { ...bare, retention: { categories: [], keptBeyond: 0 } } }),
