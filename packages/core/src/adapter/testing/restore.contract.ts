@@ -339,6 +339,9 @@ const billOf = (person: string) => ({
 // synced to disk: a file database on a Windows runner took up to about 13 s, and once more than
 // 30 s, for what takes a few hundred milliseconds elsewhere, waiting on nothing but the disk.
 const RESTORE_CASE_TIMEOUT_MS = 60_000;
+// How long a case waits for what an instance does behind the clock, on a runner as slow as above
+// or a server other tests share, within the case's own timeout.
+const BACKGROUND_WAIT_MS = 20_000;
 
 const START = new Date("2026-11-09T09:00:00.000Z");
 // Longer than the scenario runs for, so no periodic reconciliation hides a restore the app missed.
@@ -677,10 +680,13 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         await target.restore();
         clock.advance(GENERATION_INTERVAL_MS);
         // Its watch reconciles and catches the read models up by itself.
-        await vi.waitFor(async () => {
-          expect(await forgettings(web.app, "ana")).toEqual(anaForgotten);
-          await expectForgottenIn(target.storage, web, "ana");
-        });
+        await vi.waitFor(
+          async () => {
+            expect(await forgettings(web.app, "ana")).toEqual(anaForgotten);
+            await expectForgottenIn(target.storage, web, "ana");
+          },
+          { timeout: BACKGROUND_WAIT_MS },
+        );
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

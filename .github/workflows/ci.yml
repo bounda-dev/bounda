@@ -86,10 +86,10 @@ jobs:
           packages=$(printf '%s\n' $selected | sed '/^$/d' | jq -R . | jq -sc .)
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
           echo "Mutation testing for: $packages"
-          # Core's mutants are too many for one job: they run in shards, each its own job.
+          # The packages whose mutants are too many for one job, and the shards each runs in.
+          shard_counts='{"core": 8, "cli": 2, "postgresql": 3}'
           mutation=$(for package in $selected; do
-            shards=1
-            if [ "$package" = core ]; then shards=8; fi
+            shards=$(jq -r --arg package "$package" '.[$package] // 1' <<<"$shard_counts")
             for shard in $(seq 1 "$shards"); do
               jq -nc --arg package "$package" --argjson shard "$shard" --argjson shards "$shards" \
                 '{package: $package, shard: $shard, shards: $shards}'
@@ -180,6 +180,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.mutation) }}
     env:
+      # Stryker runs the tests once per mutant: PostgreSQL's keep one container for all of them.
       BOUNDA_PG_REUSE: "1"
       SHARD: ${{ matrix.shards > 1 && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
     steps:

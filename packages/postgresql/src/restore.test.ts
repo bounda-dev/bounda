@@ -1,44 +1,38 @@
 import { restoreContract } from "@bounda-dev/core/adapter/testing";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, describe } from "vitest";
 import { postgresql } from "./index.ts";
+import { startTestDatabase } from "./test-support.ts";
 
-const startContainer = async (): Promise<StartedPostgreSqlContainer | null> => {
-  try {
-    return await new PostgreSqlContainer("postgres:17").start();
-  } catch {
-    return null;
-  }
-};
-
-const container = await startContainer();
-const url = container?.getConnectionUri() ?? "";
+const testDatabase = await startTestDatabase();
+const url = testDatabase?.url ?? "";
 let schemas = 0;
 
 afterAll(async () => {
-  await container?.stop();
+  await testDatabase?.close();
 });
 
 // The server's own tools, run where the server is.
 const tool = async (command: readonly string[]): Promise<void> => {
-  if (container === null) return;
+  if (testDatabase === null) return;
+  const { container, database } = testDatabase;
   const { exitCode, output } = await container.exec([
     ...command,
     "--username",
     container.getUsername(),
     "--dbname",
-    container.getDatabase(),
+    database,
   ]);
   if (exitCode !== 0) throw new Error(`${command[0]} exited with ${exitCode}: ${output}`);
 };
 
-describe.skipIf(container === null)("restoring a PostgreSQL schema", () => {
+describe.skipIf(testDatabase === null)("restoring a PostgreSQL schema", () => {
   restoreContract({
     hot: true,
     create: async () => {
       schemas += 1;
       const schema = `restored_${schemas}`;
-      const file = `/tmp/${schema}.dump`;
+      // Runs can share the container, and its /tmp.
+      const file = `/tmp/${testDatabase?.database}_${schema}.dump`;
       const storage = postgresql({ url, schema, maxConnections: 3 });
       return {
         storage,

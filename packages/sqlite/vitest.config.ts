@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { defineConfig } from "vitest/config";
+import { CheapestFirst } from "../../vitest.sequencer.ts";
 
 // Tests on a file commit many write transactions, each synced to disk: on a Windows runner the
 // slowest took about 8 s, waiting on nothing but the disk, for what takes under 100 ms elsewhere.
@@ -9,6 +10,7 @@ export default defineConfig({
   test: {
     name: "sqlite",
     setupFiles: [join(import.meta.dirname, "../../vitest.trace.ts"), "src/test-setup.ts"],
+    sequence: { sequencer: CheapestFirst },
     include: ["src/**/*.test.ts"],
     testTimeout: TEST_TIMEOUT_MS,
   },

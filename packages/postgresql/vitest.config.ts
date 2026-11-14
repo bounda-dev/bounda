@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { CheapestFirst } from "../../vitest.sequencer.ts";
 
 export default defineConfig({
   test: {
@@ -6,5 +7,6 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     testTimeout: 30_000,
     hookTimeout: 120_000,
+    sequence: { sequencer: CheapestFirst },
   },
 });
