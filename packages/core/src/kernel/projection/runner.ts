@@ -213,15 +213,15 @@ export interface SealingSource {
   readonly keys: Pick<PersonalKeys, "heldAllOf">;
   readonly indexer: BlindIndexer | null;
   /**
-   * Where the old values a redaction kept are read, by its event's id: `null` when nothing does.
+   * Where the old values a redaction kept are read, by its event's id.
    */
-  readonly redactions?: ((eventId: string) => Promise<readonly SealedValue[]>) | null;
+  readonly redactions: (eventId: string) => Promise<readonly SealedValue[]>;
 }
 
 export interface WithKeysArgs<T> {
   readonly keys: SealingSource["keys"];
   readonly events: readonly StoredEvent[];
-  readonly redactions?: SealingSource["redactions"];
+  readonly redactions: SealingSource["redactions"];
   readonly run: (keys: SealingKeys, redacted: RedactedValues) => Promise<T>;
 }
 
@@ -238,10 +238,8 @@ export const withKeys: WithKeysFunction = async ({ keys, events, redactions, run
   const ring = createSealingKeyRing({ keys, fetching: false });
   await ring.fetch(batchPersons(events));
   const redacted = new Map<string, readonly SealedValue[]>();
-  if (redactions !== undefined && redactions !== null) {
-    for (const event of events.filter(isRedaction)) {
-      redacted.set(event.id, await redactions(event.id));
-    }
+  for (const event of events.filter(isRedaction)) {
+    redacted.set(event.id, await redactions(event.id));
   }
   for (;;) {
     try {

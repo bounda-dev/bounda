@@ -17,6 +17,7 @@ interface ContactRow {
   readonly customerId: string;
   readonly email: string | null;
   readonly greeting?: string | null;
+  readonly plan?: string | null;
 }
 
 // The audit read model quotes the email in its error while it is down, as a careless projection does.
@@ -56,6 +57,11 @@ const registry = {
         invoiceIssued: {
           payload: ({ z, personal }: EventPayloadArgs) =>
             z.object({ address: personal(z.string(), { category: "invoices" as never }) }),
+          evolve: ({ state }: { state: object }) => state,
+        },
+        noteAdded: {
+          payload: ({ z, personal }: EventPayloadArgs) =>
+            z.object({ noteId: z.string(), text: personal(z.string()) }),
           evolve: ({ state }: { state: object }) => state,
         },
       },
@@ -107,6 +113,21 @@ const registry = {
             }) => [events.invoiceIssued?.({ address: command.payload.address })],
           },
         },
+        addNote: {
+          module: {
+            payload: ({ z }: PayloadArgs) =>
+              z.object({ customerId: z.string(), noteId: z.string(), text: z.string() }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { noteId: string; text: string } };
+              events: Events;
+            }) => [
+              events.noteAdded?.({ noteId: command.payload.noteId, text: command.payload.text }),
+            ],
+          },
+        },
         remindCustomer: {
           module: {
             payload: ({ z, personal }: PayloadArgs & { personal: (schema: unknown) => never }) =>
@@ -149,6 +170,74 @@ const registry = {
     },
   },
   readModels: {
+    notes: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          noteId: f.string().primaryKey(),
+          customerId: f.string().index().person(),
+          text: f.string().personal(),
+        }),
+      },
+      projections: {
+        customer: {
+          noteAdded: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { noteId: string; text: string | null } };
+              table: Table<{ noteId: string; customerId: string; text: string | null }>;
+            }) =>
+              table.upsert({
+                noteId: event.payload.noteId,
+                customerId: event.aggregateId,
+                text: event.payload.text,
+              }),
+          },
+        },
+      },
+      queries: {
+        notesOf: {
+          payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+          handler: ({
+            query,
+            table,
+          }: {
+            query: { payload: { customerId: string } };
+            table: Table<{ noteId: string; customerId: string; text: string | null }>;
+          }) =>
+            table.findMany({
+              where: { customerId: query.payload.customerId },
+              orderBy: { field: "noteId", direction: "asc" },
+            }),
+        },
+      },
+    },
+    invoices: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          address: f
+            .string()
+            .optional()
+            .personal({ category: "invoices" as never }),
+        }),
+      },
+      projections: {
+        customer: {
+          invoiceIssued: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { address: string | null } };
+              table: Table<{ customerId: string; address?: string | null }>;
+            }) => table.upsert({ customerId: event.aggregateId, address: event.payload.address }),
+          },
+        },
+      },
+      queries: {},
+    },
     audit: {
       view: { fields: ({ f }: FieldsArgs) => ({ customerId: f.string().primaryKey() }) },
       projections: {
@@ -175,6 +264,7 @@ const registry = {
           customerId: f.string().primaryKey().person(),
           email: f.string().personal().unique(),
           greeting: f.string().optional().personal(),
+          plan: f.string().optional().personal(),
         }),
       },
       projections: {
@@ -184,7 +274,7 @@ const registry = {
               event,
               table,
             }: {
-              event: { aggregateId: string; payload: { email: string | null } };
+              event: { aggregateId: string; payload: { email: string | null; plan: string } };
               table: Table<ContactRow>;
             }) => {
               if (contactsDown) throw new Error("contacts are down");
@@ -192,6 +282,7 @@ const registry = {
                 customerId: event.aggregateId,
                 email: event.payload.email,
                 greeting: event.payload.email === null ? null : `Hello ${event.payload.email}`,
+                plan: event.payload.plan,
               });
             },
           },
@@ -339,9 +430,11 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     ]);
     expect(registration.data).toEqual({ email: "ana@old.example" });
     expect(JSON.stringify(after)).not.toContain("ana@old.example");
+    // The plan, which quotes nothing of the old email, stays.
     expect(await queries.contact?.({ customerId: "ana" })).toEqual({
       customerId: "ana",
       email: null,
+      plan: "pro",
     });
     expect(await queries.byEmail?.({ email: "ana@old.example" })).toBeNull();
     expect(await scheduled()).toEqual([]);
@@ -489,11 +582,17 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     const invoice = (await exported("ana")).events.find(({ type }) => type === "InvoiceIssued");
     expect(invoice).toMatchObject({ data: { address: "1 Wrong St" }, restricted: ["address"] });
     if (invoice === undefined) throw new Error("not issued");
+    expect((await exported("ana")).readModels.invoices).toEqual([
+      expect.objectContaining({ data: { address: "1 Wrong St" } }),
+    ]);
     await app.redact("ana", { events: [{ ...invoice, fields: ["address"] }] });
     await app.runUntilIdle();
-    expect(
-      (await exported("ana")).events.find(({ type }) => type === "InvoiceIssued"),
-    ).toMatchObject({ data: { address: null }, redacted: ["address"] });
+    const after = await exported("ana");
+    expect(after.events.find(({ type }) => type === "InvoiceIssued")).toMatchObject({
+      data: { address: null },
+      redacted: ["address"],
+    });
+    expect(after.readModels.invoices).toEqual([expect.objectContaining({ data: {} })]);
     await expectRedacted(app, "ana");
   });
 
@@ -506,6 +605,7 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     expect(await queries.contact?.({ customerId: "ana" })).toEqual({
       customerId: "ana",
       email: null,
+      plan: "pro",
     });
     await expectRedacted(app, "ana");
   });
@@ -603,6 +703,7 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     expect(await queries.contact?.({ customerId: "ana" })).toEqual({
       customerId: "ana",
       email: null,
+      plan: "pro",
     });
     await expectRedacted(app, "ana");
   });
@@ -619,5 +720,65 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     await app.runUntilIdle();
     expect(await scheduled()).toEqual([]);
     await expectRedacted(app, "ana");
+  });
+
+  it("waits for the read models before a client's catch-up through the redaction resolves", async () => {
+    const { app, queries, registered, holding } = await setUp(adapterOf());
+    await registered("ana", "ana@old.example");
+    const redacted = await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    await app.catchUpReadModels({ through: redacted });
+    expect(await queries.contact?.({ customerId: "ana" })).toEqual({
+      customerId: "ana",
+      email: null,
+      plan: "pro",
+    });
+  });
+
+  it("writes over the person's rows alone, every page of them", async () => {
+    const { app, commands, queries, registered, holding } = await setUp(adapterOf());
+    await registered("ana", "shared@old.example");
+    await registered("bo", "bo@example.com");
+    const ids = Array.from({ length: 205 }, (_, index) => `n-${String(index).padStart(3, "0")}`);
+    for (const noteId of ids) {
+      await commands.addNote?.({ customerId: "ana", noteId, text: "write to shared@old.example" });
+    }
+    await commands.addNote?.({ customerId: "bo", noteId: "bo-1", text: "shared@old.example" });
+    await app.runUntilIdle();
+    await app.redact("ana", { events: await holding("ana", "shared@old.example") });
+    await app.runUntilIdle();
+    const notes = (await queries.notesOf?.({ customerId: "ana" })) as readonly {
+      readonly text: string | null;
+    }[];
+    expect(notes).toHaveLength(205);
+    expect(notes.filter(({ text }) => text !== null)).toEqual([]);
+    expect(await queries.notesOf?.({ customerId: "bo" })).toEqual([
+      { noteId: "bo-1", customerId: "bo", text: "shared@old.example" },
+    ]);
+  }, 30_000);
+
+  it("keeps what a rebuild under way has to write over until it has projected the redaction", async () => {
+    const { app, clock, queries, registered, holding, scheduled } = await setUp(adapterOf());
+    await registered("ana", "ana@old.example");
+    await registered("bo", "bo@example.com");
+    expect(await app.rebuildReadModel("contacts", { maxEvents: 1 })).toMatchObject({
+      done: false,
+    });
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    await app.runUntilIdle();
+    const kept = () =>
+      scheduled().then((rows) =>
+        rows.filter((row) => JSON.stringify(row).includes("RedactionScrub")),
+      );
+    expect(await kept()).toHaveLength(1);
+    expect(await app.rebuildReadModel("contacts")).toMatchObject({ done: true });
+    // The worker looks again a while after the rounds it waited.
+    clock.advance(60_000);
+    await app.runUntilIdle();
+    expect(await kept()).toEqual([]);
+    expect(await queries.contact?.({ customerId: "ana" })).toEqual({
+      customerId: "ana",
+      email: null,
+      plan: "pro",
+    });
   });
 });

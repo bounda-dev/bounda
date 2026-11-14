@@ -5,6 +5,7 @@ import {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
   forgetLedgerReasonStatements,
+  forgetLedgerRedactionStatement,
   forgetLedgerStatements,
 } from "./forget-ledger.ts";
 
@@ -32,6 +33,15 @@ const entry = (index: number): ForgetLedgerEntry => ({
 });
 
 describe("the SQL forget ledger", () => {
+  it("adds the redaction column, if missing on PostgreSQL, which SQLite checks before", () => {
+    expect(forgetLedgerRedactionStatement(`"t"`, postgresqlDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN IF NOT EXISTS "redaction" TEXT`,
+    );
+    expect(forgetLedgerRedactionStatement(`"t"`, sqliteDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN "redaction" TEXT`,
+    );
+  });
+
   it("orders by code unit in PostgreSQL, as SQLite does by default", () => {
     const [postgresTable] = forgetLedgerStatements(`"t_forget_ledger"`, postgresqlDialect);
     expect(postgresTable).toContain(`"event_id" TEXT COLLATE "C" NOT NULL`);

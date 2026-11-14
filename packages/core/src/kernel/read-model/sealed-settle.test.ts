@@ -316,6 +316,7 @@ describe("settleReadModels", () => {
         person === "ana" ? [{ category: "default", key: ana, retainedSince: null }] : [],
       ),
       indexer,
+      redactions: async () => [],
     };
     const plain = sealedLayoutOf({ readModel: "plans", fields: { plan: f.string().primaryKey() } });
     await settleReadModels({

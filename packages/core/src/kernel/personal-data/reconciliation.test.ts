@@ -132,6 +132,25 @@ describe("the forget ledger's reconciliation", () => {
     expect(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR)).toBe(Date.parse(at(4)));
   });
 
+  it("skips a redaction the ledger holds when it is given nothing to redact with", async () => {
+    const { reconciliation, storage } = await setUp({
+      entries: [
+        {
+          ...entry("c-1", "d-1", at(1)),
+          redaction: {
+            events: [
+              { id: "e-1", aggregateType: "c", aggregateId: "c-1", type: "T", fields: ["f"] },
+            ],
+          },
+        },
+      ],
+      persons: ["c-1"],
+    });
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR)).toBe(Date.parse(at(1)));
+  });
+
   it("reads a full last page once more, and finds it empty", async () => {
     const { reconciliation, reads } = await setUp({
       entries: [entry("c-1", "e-1", at(1)), entry("c-2", "e-2", at(2))],

@@ -76,6 +76,7 @@ export const settleReadModels: SettleReadModelsFunction = async ({
       const page = await withKeys({
         keys: sealing.keys,
         events: [],
+        redactions: sealing.redactions,
         run: async (keys) => {
           const settled = await storage.transact({
             subscriber: projectionSubscriberName(name),

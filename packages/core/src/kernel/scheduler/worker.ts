@@ -145,12 +145,6 @@ export interface RedactionScrubs {
   settle(entry: ScheduledCommand): Promise<void>;
 }
 
-/**
- * How long a redaction's scrub entry waits, once the read models took longer than a few rounds,
- * before the worker looks again.
- */
-export const REDACTION_SCRUB_RECHECK_MS = 60_000;
-
 export interface CreateScheduledCommandWorkerFunction {
   (args: CreateScheduledCommandWorkerArgs): ScheduledCommandWorker;
 }
@@ -271,15 +265,13 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     entry.command.type === REDACTION_SCRUB_COMMAND;
 
   // A redaction's entry is completed once every read model wrote over the old values it kept,
-  // which then go with it; until then it is handed back, a few rounds at once and then every
-  // `REDACTION_SCRUB_RECHECK_MS`, never counting an attempt.
+  // which then go with it; until then it is handed back for a poll later, never counting an
+  // attempt.
   const settleScrub = async (entry: ClaimedCommand): Promise<void> => {
     const { position } = entry.command.payload as RedactionScrubPayload;
-    const wait = waits.get(entry.dedupeKey) ?? { head: position, rounds: 0 };
     try {
       if (redactionScrubs !== undefined && (await redactionScrubs.passed(position))) {
         await redactionScrubs.settle(entry);
-        waits.delete(entry.dedupeKey);
         await storage.scheduler.complete(entry);
         return;
       }
@@ -289,14 +281,9 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         error,
       });
     }
-    if (wait.rounds < DEADLINE_WAIT_ROUNDS) {
-      waits.set(entry.dedupeKey, { head: position, rounds: wait.rounds + 1 });
-      await deferToItsTime(entry, storage);
-      return;
-    }
     await storage.scheduler.defer({
       claim: entry,
-      executeAt: new Date(clock.now().getTime() + REDACTION_SCRUB_RECHECK_MS),
+      executeAt: new Date(clock.now().getTime() + config.runtime.dispatcher.pollIntervalMs),
     });
   };
 

@@ -527,6 +527,7 @@ export const withoutLedger = ({ ids, clock }: WithoutLedgerArgs): ForgetIntentio
 export const keylessSealing: SealingSource = {
   keys: { heldAllOf: async () => new Map() },
   indexer: null,
+  redactions: async () => [],
 };
 
 export interface EachPersonFunction {

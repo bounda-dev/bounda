@@ -77,6 +77,7 @@ describe("projectBatch with sealed fields", () => {
         budget,
       });
     const done = await withKeys({
+      redactions: async () => [],
       keys: eachPerson(async (person) => {
         fetched.push([person]);
         return [{ category: "default", key, retainedSince: null }];
@@ -222,7 +223,7 @@ describe("createProjectionSubscriber", () => {
           personalData: null,
           queries: {},
         } as ReadModelRuntime,
-        sealing: { keys: eachPerson(() => []), indexer: null },
+        sealing: { keys: eachPerson(() => []), indexer: null, redactions: async () => [] },
         logger: silentLogger,
         errorText: "omit",
         budget,
@@ -270,6 +271,7 @@ describe("the keys of a batch", () => {
     const asked: string[][] = [];
     let runs = 0;
     const opened = await withKeys({
+      redactions: async () => [],
       keys: {
         heldAllOf: async (persons) => {
           asked.push([...persons]);

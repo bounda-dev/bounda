@@ -41,7 +41,7 @@ import {
   unseal,
 } from "./crypto.ts";
 import { openTextWith } from "./errors.ts";
-import { fieldCategory } from "./marks.ts";
+import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
 import { redactionMarks } from "./redaction-targets.ts";
 import type { PersonalKeys } from "./wrapped-keys.ts";
@@ -143,25 +143,22 @@ const refused = (strict: boolean, target: RedactedEvent, why: string): null => {
   ]);
 };
 
-// The fields of `holder` the target names that hold a value the person's keys still open, sealed
-// under `disposable` in place; what they held goes to `values`.
+// The fields of `holder` the target names, and the marks make personal, that hold a value the
+// person's keys still open, sealed under `disposable` in place; what they held goes to `values`. A
+// field the marks do not name is left as it is, whatever a ledger's entry asks.
 const redactFields = async (
   args: RedactWithinArgs,
   target: RedactedEvent,
+  marks: PersonalMarks,
   holder: Readonly<Record<string, unknown>>,
   disposable: PersonalKey,
   values: RedactedValue[],
 ): Promise<{ readonly holder: Record<string, unknown>; readonly fields: readonly string[] }> => {
-  const { personId, keys, aggregates, processes } = args;
-  const marks = redactionMarks({
-    aggregates,
-    processes,
-    aggregateType: target.aggregateType,
-    type: target.type,
-  });
+  const { personId, keys } = args;
   const resealed: Record<string, unknown> = { ...holder };
   const fields: string[] = [];
   for (const field of target.fields) {
+    if (!marks.fields.includes(field)) continue;
     const stored = holder[field];
     if (stored === undefined || stored === null) continue;
     let redacted: RedactedValue;
@@ -175,11 +172,7 @@ const redactFields = async (
         sealed: stored,
       };
     } else {
-      redacted = {
-        category: marks === null ? DEFAULT_PERSONAL_CATEGORY : fieldCategory(marks, field),
-        value: stored,
-        sealed: null,
-      };
+      redacted = { category: fieldCategory(marks, field), value: stored, sealed: null };
     }
     resealed[field] = await seal({
       key: disposable,
@@ -211,10 +204,16 @@ const resealEvent = async (
   if (event.person !== args.personId) {
     return refused(args.strict, target, `it does not name the person ${args.personId}`);
   }
+  const marks = redactionMarks({
+    aggregates: args.aggregates,
+    processes: args.processes,
+    aggregateType: event.aggregateType,
+    type: event.type,
+  });
   const lifecycle = processOfStream(event.aggregateType) !== null;
   const holder = lifecycle ? lifecycleStateOf(event.payload) : event.payload;
-  if (!isRecord(holder)) return null;
-  const done = await redactFields(args, target, holder, disposable, values);
+  if (marks === null || !isRecord(holder)) return null;
+  const done = await redactFields(args, target, marks, holder, disposable, values);
   if (done.fields.length === 0) return null;
   return {
     event,
