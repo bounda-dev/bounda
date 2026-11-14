@@ -398,7 +398,8 @@ describe("redact, in detail", () => {
   });
 
   it("records the redaction in the ledger before it commits, and nothing more when nothing was written after it", async () => {
-    const { app, commands, register, target, ledgerRedactions, appendsOf } = await setUp();
+    const { app, clock, commands, register, target, ledgerRedactions, appendsOf, logged } =
+      await setUp();
     const registered = await register("ana", "ana@old.example");
     const redacted = await app.redact("ana", {
       events: [target(registered, ["email", "note"])],
@@ -416,6 +417,11 @@ describe("redact, in detail", () => {
       redaction: { events: [target(registered, ["email", "note"])] },
     });
     expect(copy?.redaction).toEqual({ events: [target(registered, ["email"])] });
+    // A later round reads the entry again and finds the store holds it: nothing is committed.
+    clock.advance(10 * 60_000);
+    await app.runUntilIdle();
+    expect(logged.filter(({ message }) => message.startsWith("redaction committed"))).toEqual([]);
+    expect((await app.status()).restoresFound).toBe(0);
     expect(ledgerRedactions()).toEqual([
       {
         personId: "ana",
@@ -878,5 +884,22 @@ describe("redact, in detail", () => {
       data: { email: null },
       redacted: ["email"],
     });
+  });
+
+  it("settles once a rebuild under way has projected the redaction, and no sooner", async () => {
+    const { app, clock, register, target, scrubs } = await setUp(1);
+    const registered = await register("ana", "ana@old.example");
+    await app.runUntilIdle();
+    const redacted = await app.redact("ana", { events: [target(registered, ["email"])] });
+    await register("bo", "bo@example.com");
+    const paused = await app.rebuildReadModel("contacts", { maxEvents: redacted.position - 1 });
+    expect(paused).toMatchObject({ done: false, position: redacted.position - 1 });
+    await app.runUntilIdle();
+    expect(await scrubs()).toHaveLength(1);
+    const past = await app.rebuildReadModel("contacts", { maxEvents: 1 });
+    expect(past).toMatchObject({ done: false, position: redacted.position });
+    clock.advance(60_000);
+    await app.runUntilIdle();
+    expect(await scrubs()).toEqual([]);
   });
 });
