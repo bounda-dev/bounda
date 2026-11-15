@@ -102,13 +102,30 @@ describe("projection subscriber", () => {
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
   });
 
-  it("ignores events no projection declares", async () => {
+  it("rests on events no projection declares, writing nothing, and reports them behind it", async () => {
     failProjection = false;
     const harness = await createReactiveHarness({ registry });
     await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-9" } });
     await harness.dispatcher.runUntilIdle();
     expect(await (await table(harness)).count()).toBe(0);
-    expect(await harness.storage.checkpointStore.get("projection:orderSummary")).toBe(1);
+    expect(await harness.storage.checkpointStore.get("projection:orderSummary")).toBe(0);
+    expect(await harness.dispatcher.positionOf("projection:orderSummary")).toBe(1);
+    expect((await harness.dispatcher.getLag()).subscribers).toContainEqual({
+      subscriber: "projection:orderSummary",
+      position: 1,
+      lag: 0,
+    });
+  });
+
+  it("moves past the events it rested on with the next batch it projects", async () => {
+    failProjection = false;
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-9" } });
+    await harness.dispatcher.runUntilIdle();
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 42 } });
+    await harness.dispatcher.runUntilIdle();
+    expect(await (await table(harness)).count()).toBe(1);
+    expect(await harness.storage.checkpointStore.get("projection:orderSummary")).toBe(2);
   });
 
   it("holds the checkpoint while a projection fails and catches up when it recovers", async () => {

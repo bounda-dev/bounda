@@ -9,6 +9,7 @@ import {
 } from "../../config/defaults.ts";
 import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
@@ -18,6 +19,7 @@ import {
   type Delivery,
   type DeliveryFailure,
   type DeliveryOutcome,
+  restsOn,
   type Subscriber,
   type SubscriberKind,
 } from "./delivery.ts";
@@ -39,8 +41,10 @@ export type {
 } from "./delivery.ts";
 
 /**
- * Where one subscriber stands: its checkpoint, how many events it is behind the head of the
- * stream, and, while its batches keep failing, what it is stuck on.
+ * Where one subscriber stands: how far it has handled the stream, how many events it is behind the
+ * head, and, while its batches keep failing, what it is stuck on. `position` is its checkpoint, or
+ * the head when none of the events between them is for it, so a lag of 0 means it has nothing
+ * left to do, not that its checkpoint is at the head.
  */
 export interface SubscriberLag {
   readonly subscriber: string;
@@ -107,6 +111,10 @@ export interface Dispatcher {
    */
   catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
+  /**
+   * The subscriber's `position` as `getLag` reports it.
+   */
+  positionOf(subscriber: string): Promise<number>;
   /**
    * Forgets the failures this instance met, as after the database went back to an earlier copy:
    * every subscriber is tried again at once, its attempts counted from the first.
@@ -242,6 +250,24 @@ export const createDispatcher: CreateDispatcherFunction = ({
     }
   };
 
+  // Subscribers at the same checkpoint share one read.
+  const standing = async (
+    subscriber: CheckpointedSubscriber,
+    reads: Map<number, Promise<readonly StoredEvent[]>>,
+    head = Number.POSITIVE_INFINITY,
+  ): Promise<number> => {
+    const position = await subscriber.position();
+    if (subscriber.handles === undefined || position >= head) return position;
+    let events = reads.get(position);
+    if (events === undefined) {
+      events = read(position);
+      reads.set(position, events);
+    }
+    const pending = await events;
+    if (!restsOn({ handles: subscriber.handles, events: pending, batchSize })) return position;
+    return pending[pending.length - 1]?.position ?? position;
+  };
+
   const backingOff = (subscriber: string): boolean => {
     const current = failing.get(subscriber);
     return current !== undefined && now() < current.retryAt;
@@ -265,7 +291,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
       for (;;) {
         if ((await subscriber.position()) >= position) return true;
         if (now() >= deadline || backingOff(subscriber.name)) return false;
-        const delivery = await subscriber.deliver({ read, wait: false });
+        const delivery = await subscriber.deliver({ read, batchSize, wait: false });
         await record(subscriber.name, delivery);
         if (delivery.outcome === "failed") return false;
         if (!moving.has(delivery.outcome)) await sleep(catchUp.pollIntervalMs);
@@ -285,7 +311,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
     for (const subscriber of delivering) {
       if (only !== undefined && subscriber.kind !== only) continue;
       if (patient && backingOff(subscriber.name)) continue;
-      const delivery = await subscriber.deliver({ read, wait });
+      const delivery = await subscriber.deliver({ read, batchSize, wait });
       await record(subscriber.name, delivery);
       advanced = moving.has(delivery.outcome) || advanced;
     }
@@ -382,16 +408,21 @@ export const createDispatcher: CreateDispatcherFunction = ({
       failing.clear();
       checked.clear();
     },
+    positionOf: async (name) => {
+      const subscriber = delivering.find((each) => each.name === name);
+      return subscriber === undefined ? checkpointStore.get(name) : standing(subscriber, new Map());
+    },
     getLag: async () => {
       const lastPosition = await eventStore.lastPosition();
+      const reads = new Map<number, Promise<readonly StoredEvent[]>>();
       const lags = await Promise.all(
         delivering.map(async (subscriber) => {
-          const position = await subscriber.position();
+          const position = await standing(subscriber, reads, lastPosition);
           const current = failing.get(subscriber.name);
           return {
             subscriber: subscriber.name,
             position,
-            lag: lastPosition - position,
+            lag: Math.max(0, lastPosition - position),
             ...(current === undefined
               ? {}
               : {

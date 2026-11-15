@@ -23,6 +23,13 @@ Everything on the read side, projections, the policy runner and the process runn
 it, and moves the checkpoint past what it has finished. That is the whole delivery mechanism. The
 policy runner and the process runner exist only when the app has a policy or a process.
 
+A subscriber that finds nothing for it after its checkpoint, such as a read model none of whose
+projections handles those events, **rests**: it writes nothing and nothing wakes for it, and the
+checkpoint moves past those events with the next batch that holds one for it, or once a whole
+batch (`runtime.dispatcher.batchSize`) of them is waiting, in one write. The events it rests on
+cost it nothing, which matters where every write is billed, as in a
+[Durable Object](/adapters/cloudflare/#how-it-runs).
+
 Handlers are declared per aggregate: a policy lives under `app/domain/order/policies/`, and its
 types come from that aggregate's events. But it is **fed from the global stream**, not from the
 aggregate. The distinction matters for everything below.
@@ -56,7 +63,9 @@ aggregate. The distinction matters for everything below.
   reason: EventStoreDB's `$all`, Marten's global sequence, Axon's token store.
 - **One checkpoint per read model**, not one per aggregate instance. With a hundred thousand
   orders, a reader per stream would be a hundred thousand checkpoints per read model.
-- **Operations hang off it.** `app.getLag()` is "head of the global stream minus checkpoint".
+- **Operations hang off it.** `app.getLag()` is "head of the global stream minus checkpoint",
+  where a subscriber at rest counts as at the head: its `position` is how far it has handled the
+  stream, so a lag of 0 means nothing is left for it.
   [`bounda rebuild`](/guides/deployment/#rebuilding-a-read-model) is "project the global stream
   again into a fresh table". `runUntilIdle()` is "pass until nobody moves".
   [`app.events.read({ after })`](/guides/reading-the-stream/) is "the next page after a

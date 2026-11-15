@@ -111,6 +111,15 @@ describe("createRetentionSubscriber", () => {
       span,
     );
     expect(done).toBe(9);
+    expect(
+      [
+        activity(1, "c-1"),
+        forgotten(4, "c-2"),
+        restricted(5, "c-3"),
+        activity(6, null),
+        forgotten(9, "c-5", false),
+      ].map((event) => subscriber.handles?.(event)),
+    ).toEqual([true, true, false, false, true]);
     expect(writes.sort()).toEqual(["c-1", "c-2", "c-4"]);
     expect(touches.sort()).toEqual([
       ["c-1", day(3)],

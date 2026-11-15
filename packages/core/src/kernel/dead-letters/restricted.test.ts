@@ -7,13 +7,14 @@ import {
   ProcessingRestrictedError,
 } from "../../contracts/errors.ts";
 import type { RestrictionNotice } from "../../modules/personal-data.ts";
+import type { Registry } from "../../modules/registry.ts";
 import { buildPersonalCategories } from "../personal-data/categories.ts";
 import { unrestrictProcessing } from "../personal-data/restriction.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { DEADLINE_WAIT_ROUNDS } from "../scheduler/worker.ts";
-import { createRecordingLogger, orderRegistry } from "../test-support.ts";
+import { createRecordingLogger, orderAggregateEntry, orderRegistry } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import { createRestrictedRetries } from "./restricted.ts";
 
@@ -40,13 +41,25 @@ const refused = (
   payload: { orderId },
 });
 
+// A policy with a placed order it has yet to see: the work a retry waits for.
+const registry: Registry = {
+  ...orderRegistry,
+  aggregates: {
+    order: {
+      ...orderAggregateEntry(),
+      policies: { noteOnOrderPlaced: { module: { handler: async () => {} } } },
+    },
+  },
+};
+
 const setup = async (config?: Parameters<typeof createReactiveHarness>[0]["config"]) => {
   const { logger, entries } = createRecordingLogger("omit");
   const harness = await createReactiveHarness({
-    registry: orderRegistry,
+    registry,
     logger,
     ...(config === undefined ? {} : { config }),
   });
+  await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-0", total: 1 } });
   const lift = (personId: string, actor?: string, notice: RestrictionNotice = "given") =>
     unrestrictProcessing({
       storage: harness.storage,

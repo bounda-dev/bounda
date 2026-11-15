@@ -494,13 +494,14 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
       newsletter: "bo@news.example",
       plan: "pro",
     })) as DispatchResult;
-    // Only what reacts to a registration catches up: the copy of who is restricted does not.
+    // Only what reacts to a registration catches up: the copy of who is restricted rests behind
+    // it, its checkpoint where it was, with nothing left for it until the restriction.
     await app.catchUpReadModels({ through: registered });
     const copies = (await app.getLag()).subscribers.filter(({ subscriber }) =>
       subscriber.startsWith("restrictions:"),
     );
     expect(copies.length).toBeGreaterThan(0);
-    expect(copies.every(({ lag }) => lag > 0)).toBe(true);
+    expect(copies.every(({ lag }) => lag === 0)).toBe(true);
     const restricted = await app.restrict("ana", { ground: "accuracy-contested" });
     await app.catchUpReadModels({ through: restricted });
     expect(await queries.customer?.({ customerId: "ana" })).toBeNull();

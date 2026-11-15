@@ -4,7 +4,14 @@ import { masterKey } from "@bounda-dev/core/config";
 import { cloudflare } from "../src/definition.ts";
 import { kvForgetLedger } from "../src/forget-ledger.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
-import { processRegistry, quietRegistry, regionRegistry, registry, slicedRegistry } from "./app.ts";
+import {
+  processRegistry,
+  quietRegistry,
+  regionRegistry,
+  registry,
+  SNAPSHOT_EVERY,
+  slicedRegistry,
+} from "./app.ts";
 import { clock } from "./clock.ts";
 import { recordingLogger } from "./logs.ts";
 
@@ -88,6 +95,24 @@ export const SlicedStore = createBoundaObject({
   passesPerAlarm: 1,
   ids: createSequentialIdGenerator({ prefix: "sliced" }),
   logger: recordingLogger,
+});
+
+/**
+ * The same app without policies or processes, snapshotting an order every few events, its state
+ * fingerprinted as the generator would.
+ */
+export const SnapshotStore = createBoundaObject({
+  registry: {
+    ...quietRegistry,
+    aggregates: {
+      order: { ...quietRegistry.aggregates.order, stateFingerprint: "cost" },
+    },
+  },
+  config: {
+    storage: cloudflare(),
+    runtime: { overrides: { order: { snapshot: { every: SNAPSHOT_EVERY } } } },
+  },
+  clock,
 });
 
 /**

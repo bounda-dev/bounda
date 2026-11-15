@@ -11,6 +11,7 @@ import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 import type { ProcessesRuntime } from "./build-processes.ts";
 import { createProcessRetry, type ProcessDeadLetters } from "./dead-letter-retry.ts";
 import { createDeadlineStep } from "./deadline-step.ts";
@@ -120,6 +121,8 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   return {
     name: PROCESSES_SUBSCRIBER,
     kind: "process",
+    handles: (event) =>
+      (processes.byEvent[qualifiedEventType(event.aggregateType, event.type)]?.length ?? 0) > 0,
     process: (batch) =>
       deliverInOrder({ events: batch, byEvent: processes.byEvent, deliver: events.deliver }),
     handleDeadline: deadlines.handleDeadline,

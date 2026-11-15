@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
+import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import { restrictedPersonsHosts, restrictedPersonsSubscriberName } from "./restricted-persons.ts";
+import {
+  createRestrictedPersonsSubscriber,
+  restrictedPersonsHosts,
+  restrictedPersonsSubscriberName,
+} from "./restricted-persons.ts";
 
 describe("restrictedPersonsSubscriberName", () => {
   it("is named after the read model it writes through", () => {
@@ -31,5 +37,25 @@ describe("restrictedPersonsHosts", () => {
         adapterOf: (name) => on[name] as Adapter,
       }).map(({ name }) => name),
     ).toEqual(["b", "d"]);
+  });
+});
+
+describe("createRestrictedPersonsSubscriber", () => {
+  it("is given work by the changes of restrictions alone", () => {
+    const subscriber = createRestrictedPersonsSubscriber({
+      readModel: { name: "orders", storage: {} as never },
+      logger: silentLogger,
+      errorText: "omit",
+    });
+    const event = (aggregateType: string, type: string) =>
+      ({ aggregateType, type }) as unknown as StoredEvent;
+    expect(
+      [
+        event("bounda", "ProcessingRestricted"),
+        event("bounda", "ProcessingRestrictionLifted"),
+        event("bounda", "PersonalDataForgotten"),
+        event("order", "ProcessingRestricted"),
+      ].map((each) => subscriber.handles?.(each)),
+    ).toEqual([true, true, false, false]);
   });
 });

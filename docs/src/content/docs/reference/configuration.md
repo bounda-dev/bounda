@@ -194,8 +194,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
 - **`overrides.<aggregate>.snapshot`**, none by default. Opts the aggregate into
   [snapshots](/concepts/long-streams/#snapshots) of its state, written in the background and loaded
   from instead of the stream's first event:
-  - **`every`**, required. How many events a stream gathers past its last snapshot before the next
-    one is written.
+  - **`every`**, required. A stream is snapshotted each time its version reaches a multiple of
+    `every`.
   - **`verify`**, default `0.01`. The share of the loads from a snapshot, 0 to 1, checked against a
     fold of the whole stream. A snapshot that folds to another state is logged, dropped and not
     used. An app from `createTestApp` checks every load and throws `SnapshotError` instead.

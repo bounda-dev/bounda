@@ -41,8 +41,8 @@ type Events = Record<string, (payload?: unknown) => unknown>;
 export const outage = { archive: true, projection: false };
 
 /**
- * A small order app: place, pay and archive, a note whose handler lets another app's rejection
- * through, a policy that archives paid orders, fails for an order whose id starts with "fail"
+ * A small order app: place, pay and archive, a remark no read model projects, a note whose
+ * handler lets another app's rejection through, a policy that archives paid orders, fails for an order whose id starts with "fail"
  * while the archive is down and times out for one whose id starts with "flaky", which it retries,
  * and a read model with one query.
  */
@@ -65,6 +65,10 @@ export const registry = {
         },
         orderArchived: {
           evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "archived" as const }),
+        },
+        orderRemarked: {
+          payload: ({ z }: EventPayloadArgs) => z.object({ remark: z.string() }),
+          evolve: ({ state }: { state: OrderState }) => state,
         },
       },
       commands: {
@@ -119,6 +123,18 @@ export const registry = {
           module: {
             payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
             handler: ({ events }: { events: Events }) => [events.orderArchived?.()],
+          },
+        },
+        remarkOrder: {
+          module: {
+            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), remark: z.string() }),
+            handler: ({
+              command,
+              events,
+            }: {
+              command: { payload: { remark: string } };
+              events: Events;
+            }) => [events.orderRemarked?.({ remark: command.payload.remark })],
           },
         },
         noteOrder: {
@@ -405,3 +421,8 @@ export const regionRegistry = {
     },
   },
 } satisfies Registry;
+
+/**
+ * How many events of an order `SnapshotStore` lets pass between two snapshots.
+ */
+export const SNAPSHOT_EVERY = 10;

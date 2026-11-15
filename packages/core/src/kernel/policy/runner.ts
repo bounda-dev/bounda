@@ -13,6 +13,7 @@ import { restrictedPersonOf } from "../personal-data/refusal.ts";
 import { deriveDeadLetterId } from "../shared/idempotency-key.ts";
 import { deliverInOrder, type ReactionOutcome } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
+import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { runAttempt } from "../shared/reaction-attempt.ts";
 import { deadLettered } from "../telemetry.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
@@ -141,6 +142,8 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
   return {
     name: POLICIES_SUBSCRIBER,
     kind: "policy",
+    handles: (event) =>
+      (policies.byEvent[qualifiedEventType(event.aggregateType, event.type)]?.length ?? 0) > 0,
     process: (events) =>
       deliverInOrder({
         events,

@@ -311,6 +311,9 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   const name = projectionSubscriberName(readModel.name);
   const { storage, layout } = readModel;
   const forgets = layout.personal.length > 0;
+  const reactsTo = (qualified: string): boolean =>
+    (readModel.projectionsByEvent[qualified]?.length ?? 0) > 0 ||
+    (forgets && (qualified === FORGOTTEN || qualified === REDACTED));
   const subscriber = createCheckpointedSubscriber<ProjectionClaim>({
     name,
     kind: "projection",
@@ -345,15 +348,11 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
         errorText,
         budget,
       }),
+    handles: (event) => reactsTo(qualifiedEventType(event.aggregateType, event.type)),
     logger,
     errorText,
   });
-  return {
-    ...subscriber,
-    reactsTo: (qualified) =>
-      (readModel.projectionsByEvent[qualified]?.length ?? 0) > 0 ||
-      (forgets && (qualified === FORGOTTEN || qualified === REDACTED)),
-  };
+  return { ...subscriber, reactsTo };
 };
 
 const FORGOTTEN = qualifiedEventType(BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT);

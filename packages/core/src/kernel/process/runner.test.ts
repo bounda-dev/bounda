@@ -19,6 +19,7 @@ import {
 import { buildProcesses } from "./build-processes.ts";
 import { PROCESS_DEADLINE_COMMAND } from "./deadlines.ts";
 import { PROCESS_EVENTS } from "./lifecycle.ts";
+import { PROCESSES_SUBSCRIBER } from "./runner.ts";
 
 interface HandlerArgs {
   readonly event: { aggregateId: string; payload: { method?: string } };
@@ -236,6 +237,16 @@ describe("buildProcesses", () => {
 });
 
 describe("process runner", () => {
+  it("rests on the events no process handles, its own lifecycle included", async () => {
+    reset("ok");
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.runUntilIdle();
+    expect((await processStream(harness)).events).toHaveLength(1);
+    expect(await harness.storage.checkpointStore.get(PROCESSES_SUBSCRIBER)).toBe(1);
+    expect(await harness.dispatcher.positionOf(PROCESSES_SUBSCRIBER)).toBe(2);
+  });
+
   it("starts on the starting event, handles, completes and cancels the timeout", async () => {
     reset("ok");
     const harness = await createReactiveHarness({ registry });
@@ -695,7 +706,7 @@ describe("process runner", () => {
     harness.clock.advance(60_001);
     await harness.dispatcher.runUntilIdle();
     expect(calls).toEqual(["paid:o-1"]);
-    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+    expect(await harness.dispatcher.positionOf("processes")).toBe(
       await harness.storage.eventStore.lastPosition(),
     );
   });
@@ -1339,7 +1350,7 @@ describe("processes that listen to other aggregates", () => {
 
     expect(seen).toEqual([]);
     expect(await harness.storage.deadLetterStore.count()).toBe(0);
-    expect(await harness.storage.checkpointStore.get("processes")).toBe(
+    expect(await harness.dispatcher.positionOf("processes")).toBe(
       await harness.storage.eventStore.lastPosition(),
     );
   });

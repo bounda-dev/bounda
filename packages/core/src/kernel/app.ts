@@ -955,6 +955,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       restores,
       onRestored: dispatcher.restored,
       reactive: following.map((subscriber) => subscriber.name),
+      standing: dispatcher.positionOf,
       config,
       ids,
       clock,

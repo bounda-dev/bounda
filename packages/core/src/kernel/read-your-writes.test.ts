@@ -95,9 +95,10 @@ describe("readYourWrites", () => {
     expect(await lagOf("projection:placedOrders")).toBe(0);
     expect(await lagOf("projection:archivedOrders")).toBe(3);
 
+    // The archive is nothing placedOrders projects, so it leaves it with nothing to do.
     await consistent.commands.archiveOrder({ orderId: "o-2" });
     expect(await lagOf("projection:archivedOrders")).toBe(0);
-    expect(await lagOf("projection:placedOrders")).toBe(1);
+    expect(await lagOf("projection:placedOrders")).toBe(0);
     await app.stop();
   });
 
