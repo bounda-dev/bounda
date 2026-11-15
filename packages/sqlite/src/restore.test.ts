@@ -84,7 +84,8 @@ const restoreInPlace = async (client: Client, copy: string): Promise<void> => {
   );
 };
 
-describe("restoring a libSQL file under a running app", () => {
+// A file in the clear, which a backup tool copies through its own connection.
+describe("restoring a libSQL file in the clear under a running app", () => {
   restoreContract({
     hot: true,
     create: async () => {
@@ -92,7 +93,7 @@ describe("restoring a libSQL file under a running app", () => {
       const copy = fresh("backup");
       const client = clientOf(path);
       return {
-        storage: sqlite({ path }),
+        storage: sqlite({ path, encrypt: false }),
         forgetLedger: sqlite({ path: fresh("ledger") }),
         // An online copy, as a backup tool takes it while the app runs.
         backUp: async () => {
@@ -100,21 +101,21 @@ describe("restoring a libSQL file under a running app", () => {
         },
         restore: async () => {
           await restoreInPlace(client, copy);
-          return sqlite({ path });
+          return sqlite({ path, encrypt: false });
         },
       };
     },
   });
 });
 
-describe("restoring a libSQL file beside the lost one", () => {
+describe("restoring a libSQL file in the clear beside the lost one", () => {
   restoreContract({
     hot: false,
     create: async () => {
       let path = fresh("store");
       const copy = fresh("backup");
       return {
-        storage: sqlite({ path }),
+        storage: sqlite({ path, encrypt: false }),
         forgetLedger: sqlite({ path: fresh("ledger") }),
         backUp: async () => {
           await clientOf(path).execute(`VACUUM INTO '${copy}'`);
@@ -124,6 +125,37 @@ describe("restoring a libSQL file beside the lost one", () => {
         restore: async () => {
           path = fresh("restored");
           await copyFile(copy, path);
+          return sqlite({ path, encrypt: false });
+        },
+      };
+    },
+  });
+});
+
+// A copy of the file as it lies on disk, its write-ahead log with it: what a backup of the
+// volume takes, encrypted under the tenant's key as the file is.
+const copyWithLog = async (from: string, to: string): Promise<void> => {
+  await copyFile(from, to);
+  await copyFile(`${from}-wal`, `${to}-wal`).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+};
+
+describe("restoring a libSQL file encrypted under its tenant's key beside the lost one", () => {
+  restoreContract({
+    hot: false,
+    create: async () => {
+      let path = fresh("store");
+      const copy = fresh("backup");
+      return {
+        storage: sqlite({ path }),
+        forgetLedger: sqlite({ path: fresh("ledger") }),
+        backUp: async () => {
+          await copyWithLog(path, copy);
+        },
+        restore: async () => {
+          path = fresh("restored");
+          await copyWithLog(copy, path);
           return sqlite({ path });
         },
       };

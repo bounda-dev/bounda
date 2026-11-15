@@ -9,6 +9,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { ATTRIBUTES } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
+import { testWrapping } from "../test-support.ts";
 import {
   BACKFILL_EXPIRY_MS,
   BACKFILL_FOLLOW_INTERVAL_MS,
@@ -17,7 +18,6 @@ import {
   createPersonalDataBackfill,
 } from "./backfill.ts";
 import { HOLD_MS } from "./hold.ts";
-import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
 const START = new Date("2026-06-01T00:00:00.000Z");
 
@@ -98,7 +98,7 @@ const walker = ({ storage, marks = "m1", batchSize = 10, logger = silentLogger }
     storage,
     aggregates,
     processes,
-    wrapping: createPersonalKeyWrapping({ wrapper: null, clock }),
+    wrapping: testWrapping(clock),
     marks,
     batchSize,
     recordsActivity: false,

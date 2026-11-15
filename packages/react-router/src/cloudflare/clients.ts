@@ -8,13 +8,9 @@ import {
 import type { Config } from "@bounda-dev/core/config";
 import type { RequestArgs } from "../actor.ts";
 
-/**
- * Names the store a request reaches: every tenant is its own Durable Object, with its own events
- * and read models. Called the first time a request uses `bounda`, and once per request.
- */
-export interface TenantFunction {
-  (args: RequestArgs): string | Promise<string>;
-}
+import type { TenantFunction } from "../tenant.ts";
+
+export type { TenantFunction } from "../tenant.ts";
 
 export interface CloudflareClientsArgs {
   readonly env: object;
@@ -54,6 +50,9 @@ const lazyStub = (stubOf: () => Promise<BoundaStub>): BoundaStub => ({
   restrict: async (...args) => (await stubOf()).restrict(...args),
   unrestrict: async (...args) => (await stubOf()).unrestrict(...args),
   redact: async (...args) => (await stubOf()).redact(...args),
+  forgetTenant: async (...args) => (await stubOf()).forgetTenant(...args),
+  rotateTenantKey: async (...args) => (await stubOf()).rotateTenantKey(...args),
+  retireTenantKeys: async (...args) => (await stubOf()).retireTenantKeys(...args),
 });
 
 export const cloudflareClients: CloudflareClientsFunction = <R extends Registry>({

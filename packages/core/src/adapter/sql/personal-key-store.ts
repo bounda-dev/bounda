@@ -144,6 +144,15 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
       );
       return (await get(person, category)) ?? key;
     },
+    kids: async () =>
+      (await db.all(`SELECT DISTINCT "kid" FROM ${table}`, [])).map(({ kid }) =>
+        kid === null ? null : String(kid),
+      ),
+    categories: async () =>
+      (await db.all(`SELECT DISTINCT "category" FROM ${table} ORDER BY "category"`, [])).map(
+        ({ category }) => String(category),
+      ),
+    clear: async () => (await db.all(`DELETE FROM ${table} RETURNING "person"`, [])).length,
     remove: async (person, fingerprint) =>
       (
         await db.all(

@@ -28,6 +28,7 @@ interface Notice {
   readonly retained?: readonly string[];
   readonly presumed: boolean;
   readonly idempotencyKey: string;
+  readonly persons?: readonly string[];
 }
 
 interface Sender {
@@ -51,20 +52,24 @@ const recipientModule = (
 ) => {
   const handler =
     (type: string) =>
-    ({
+    async ({
       event,
       categories,
       retained,
       presumed,
       idempotencyKey,
+      persons,
     }: {
       event: StoredEvent;
       categories: readonly string[];
       retained?: readonly string[];
       presumed: boolean;
       idempotencyKey: string;
+      persons?: () => AsyncIterable<string>;
     }) => {
       if (failing.has(port)) throw new Error(`${port} is down`);
+      const listed: string[] = [];
+      if (persons !== undefined) for await (const person of persons()) listed.push(person);
       told.push({
         port,
         type,
@@ -73,6 +78,7 @@ const recipientModule = (
         ...(retained === undefined ? {} : { retained }),
         presumed,
         idempotencyKey,
+        ...(persons === undefined ? {} : { persons: listed }),
       });
     };
   return {
@@ -82,6 +88,7 @@ const recipientModule = (
     onProcessingRestrictionLiftAnnounced: handler("ProcessingRestrictionLiftAnnounced"),
     onProcessingRestrictionLifted: handler("ProcessingRestrictionLifted"),
     onPersonalDataRedacted: handler("PersonalDataRedacted"),
+    onTenantForgotten: handler("TenantForgotten"),
   };
 };
 
@@ -567,6 +574,48 @@ describe("recipients of personal data", () => {
     ]);
   });
 
+  it("tells every recipient once the tenant is forgotten, with every person disclosed to it, and runs nothing else", async () => {
+    const failing = new Set<string>();
+    const told: Notice[] = [];
+    const { app, register, mailed, synced } = await start({ told, failing });
+    await register("c-1", "1 Main St");
+    await register("c-2");
+    told.length = 0;
+    mailed.length = 0;
+    // The mailer is down: its notice waits as a dead letter of the forgotten app. A forgetting
+    // of a person still to tell goes untold: the tenant's tells the same recipients more.
+    failing.add("customer.mailer");
+    await app.forget("c-2");
+    const { eventId } = await app.forgetTenant("default", { despiteLegalObligations: true });
+    await app.runUntilIdle();
+    expect(mailed).toEqual([]);
+    expect(synced).toEqual([]);
+    expect(told).toEqual([]);
+    const letters = await app.deadLetters.list({ kind: "recipient" });
+    expect(letters).toMatchObject([
+      { handler: "customer.mailer", eventId, eventType: "TenantForgotten", person: null },
+    ]);
+    failing.clear();
+    await app.deadLetters.retry(letters[0]?.id ?? "");
+    // Only the recipients disclosed data are told: the CRM received nothing of the tenant.
+    expect(told).toEqual([
+      {
+        port: "customer.mailer",
+        type: "TenantForgotten",
+        person: "default",
+        categories: ["contact"],
+        presumed: false,
+        idempotencyKey: expect.any(String),
+        persons: ["c-1"],
+      },
+    ]);
+    await expect(app.deadLetters.retry(letters[0]?.id ?? "")).rejects.toMatchObject({
+      code: "DEAD_LETTER_SETTLED",
+    });
+    await app.runUntilIdle();
+    expect((await app.getLag()).maxLag).toBe(0);
+  });
+
   it("tells a recipient of a restriction, of its lift announced and of the lift, and of a redaction", async () => {
     const { app, clock, register, told } = await start();
     await register("c-1");
@@ -743,6 +792,59 @@ describe("recipients of personal data", () => {
       ["customer.mailer", "c-1", true],
     ]);
     expect(await after.app.recipientsOf("c-1")).toEqual([]);
+  });
+
+  it("tells the recipients of a forgotten tenant each port it disclosed to or may have, presumed or not", async () => {
+    const adapter = memory();
+    const told: Notice[] = [];
+    const before = await start({
+      told,
+      adapter,
+      registry: registryWith({ told, mailer: null, crm: null }),
+    });
+    await before.register("c-1");
+    await before.app.stop();
+    const after = await start({ told, adapter });
+    await after.register("c-2");
+    await after.app.runUntilIdle();
+    // More persons than one page of persons() holds.
+    const storage = await adapter.createStorage();
+    const many = Array.from({ length: 600 }, (_, index) => `m-${String(index).padStart(3, "0")}`);
+    await storage.recipients.disclose(
+      many.map((person) => ({
+        person,
+        port: "customer.mailer",
+        recipient: "Mailchimp",
+        kind: "processor",
+        country: "US",
+        safeguard: "standard-contractual-clauses",
+        category: "contact",
+      })),
+      START.toISOString(),
+    );
+    told.length = 0;
+    after.accesses.length = 0;
+    await after.app.forgetTenant("default", { despiteLegalObligations: true });
+    await after.app.runUntilIdle();
+    // The tenant's notice is about no one person.
+    expect(
+      after.accesses
+        .filter(({ operation }) => operation === "recipientNotice")
+        .map(({ persons }) => persons),
+    ).toEqual([[], []]);
+    expect(
+      told.map(({ port, type, categories, presumed, persons }) => [
+        port,
+        type,
+        categories,
+        presumed,
+        persons,
+      ]),
+    ).toEqual([
+      ["customer.crm", "TenantForgotten", ["contact", "invoices"], true, []],
+      // Presumed to hold c-1's, which no disclosure recorded, besides those it was disclosed.
+      ["customer.mailer", "TenantForgotten", ["contact"], true, ["c-2", ...many].sort()],
+    ]);
   });
 
   it("tells a recipient declared late, presumed and in order, what was forgotten, restricted or redacted before", async () => {

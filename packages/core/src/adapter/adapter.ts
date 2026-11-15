@@ -1,8 +1,11 @@
 import type { Logger } from "../contracts/logger.ts";
+import type { KeyWrapperDefinition } from "../kernel/personal-data/key-wrapper.ts";
+import type { TenantKeyStoreDefinition } from "../kernel/personal-data/tenant-key-source.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import type { AdapterDefinition } from "./adapter-definition.ts";
 import type { CheckpointStore } from "./storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "./storage/dead-letter-store.ts";
+import type { EncryptedFile, FileEncryption } from "./storage/encrypted-file.ts";
 import type { EventNotifier } from "./storage/event-notifier.ts";
 import type { EventStore } from "./storage/event-store.ts";
 import type { CreateForgetLedgerArgs, ForgetLedger } from "./storage/forget-ledger.ts";
@@ -19,6 +22,8 @@ import type { UnsettledRowsArgs } from "./storage/sealed-fields.ts";
 import type { SnapshotStore } from "./storage/snapshot-store.ts";
 import type { SubscriberFailureStore } from "./storage/subscriber-failure-store.ts";
 import type { StoredReadClient, Table } from "./storage/table.ts";
+import type { TenancyStore } from "./storage/tenancy-store.ts";
+import type { TenantKeyStore } from "./storage/tenant-key-store.ts";
 
 /**
  * The write-side stores bound to one open transaction: what `Storage.transact` runs its
@@ -73,13 +78,25 @@ export interface Storage {
    */
   readonly subscriberFailures: SubscriberFailureStore;
   /**
-   * The key of the blind indexes of every read model, read when the app starts.
+   * The database's own key, wrapped under the tenant's: the blind indexes of every read model are
+   * computed under it, and snapshots and remembered answers sealed. Read when the app starts.
    */
   readonly indexKeys: IndexKeyStore;
+  /**
+   * Which tenant the database belongs to, read when the app starts and, while it runs, to tell
+   * that the tenant was forgotten.
+   */
+  readonly tenancy: TenancyStore;
   /**
    * Only for a backend that can push new events; without it the dispatcher only polls.
    */
   readonly notifier?: EventNotifier;
+  /**
+   * Removes everything the database holds, its tables included, for an engine that keeps copies
+   * of it no key of the tenant's opens: what an app whose tenant was forgotten runs once its
+   * recipients are told. Nothing uses the storage after it.
+   */
+  discard?(): Promise<void>;
   /**
    * Runs `work` in one transaction over the write-side stores: everything it writes through the
    * transaction's stores lands together or not at all. A stale `expectedVersion` on any append
@@ -242,6 +259,29 @@ export interface Adapter<Name extends string = string, Options = unknown>
    */
   createForgetLedger(args: CreateForgetLedgerArgs): Promise<ForgetLedger>;
   /**
+   * Opens a tenant key store in this database, for apps whose storage is another one, any number of
+   * tenants in one store. Touches the database only when the store is first used, creating its
+   * table then.
+   */
+  createTenantKeyStore(): Promise<TenantKeyStore>;
+  /**
+   * Keys that live as long as this adapter's stores, for an app that sets neither
+   * `runtime.personalData.keyWrapper` nor `runtime.personalData.tenantKeys`: what `memory()`
+   * brings, since nothing it keeps outlives the process. Absent from an adapter whose data does.
+   */
+  readonly ephemeralKeys?: EphemeralKeys;
+  /**
+   * The file this adapter's database lives in, when the adapter encrypts it under a key of the
+   * tenant's: an app with a key wrapper and a tenant key store opens it through it. Absent from
+   * an adapter whose database is no file of its own, or that is told not to encrypt it.
+   */
+  readonly encryptedFile?: EncryptedFile;
+  /**
+   * Where the file stands, on the adapter `encryptedFile.open` returned: the app reports it in its
+   * status and encrypts it once it can.
+   */
+  readonly fileEncryption?: FileEncryption;
+  /**
    * Every table this adapter's database holds under its table prefix, storage, read models and
    * forget ledger alike, each row as stored, without opening anything: what `expectForgotten`
    * searches. It reads the whole database, so it is for tests.
@@ -263,11 +303,20 @@ export interface Adapter<Name extends string = string, Options = unknown>
 }
 
 /**
- * A set of Bounda's tables versioned together: `storage`, the write side; `checkpoints`, the
- * positions of the subscribers, which read models in a database of their own keep there too; and
- * `forget-ledger`, a forget ledger's table, wherever it lives.
+ * A master key and a tenant key store that live in the process alone.
  */
-export type SchemaScopeName = "storage" | "checkpoints" | "forget-ledger";
+export interface EphemeralKeys {
+  readonly keyWrapper: KeyWrapperDefinition;
+  readonly tenantKeys: TenantKeyStoreDefinition;
+}
+
+/**
+ * A set of Bounda's tables versioned together: `storage`, the write side; `checkpoints`, the
+ * positions of the subscribers, which read models in a database of their own keep there too;
+ * `forget-ledger`, a forget ledger's table, wherever it lives; and `tenant-keys`, a tenant key
+ * store's table, wherever it lives.
+ */
+export type SchemaScopeName = "storage" | "checkpoints" | "forget-ledger" | "tenant-keys";
 
 /**
  * Where one scope of Bounda's tables stands in a database, as `Adapter.schemaVersions` reads it.

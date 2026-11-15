@@ -73,6 +73,7 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
         throw new IdempotencyKeyTakenError(key);
       }
     },
+    clear: () => db.run(`DELETE FROM ${table}`, []),
     purge: async ({ now }) => {
       const rows = await db.all(`DELETE FROM ${table} WHERE "expires_at" <= $1 RETURNING "key"`, [
         now.toISOString(),

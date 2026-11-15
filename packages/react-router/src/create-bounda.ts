@@ -2,6 +2,7 @@ import {
   type AppRegistry,
   type BoundaApp,
   type BoundaClient,
+  ConfigurationError,
   type Consistency,
   checkConsistency,
   type Logger,
@@ -14,13 +15,21 @@ import { createContext, type MiddlewareFunction, type RouterContext } from "reac
 import { type ActorFunction, actAs } from "./actor.ts";
 import { createHandleError, type HandleBoundaErrorFunction } from "./handle-error.ts";
 import { withIdempotencyKey } from "./idempotency-key.ts";
+import { type TenantFunction, tenantOfRequest } from "./tenant.ts";
+
+export interface BootBoundaArgs {
+  /**
+   * The tenant the app serves, for a project whose `tenant` names one per request.
+   */
+  readonly tenant?: string;
+}
 
 /**
  * Boots the app the middleware serves. Called on the first request, and again on the next one
  * after a failed boot or a `dispose`.
  */
 export interface BootBoundaFunction<R extends Registry> {
-  (): Promise<BoundaApp<R>>;
+  (args?: BootBoundaArgs): Promise<BoundaApp<R>>;
 }
 
 export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
@@ -57,7 +66,45 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    * booted, `handleError` follows its `runtime.telemetry.errorText`.
    */
   readonly errorText?: ErrorText | undefined;
+  /**
+   * Names the tenant of each request, for a project that serves several, each its own database:
+   * one app is booted for each tenant, `boot` called with it, on its first request, and kept
+   * under `key` and the tenant's name. Left out, one app serves every request.
+   */
+  readonly tenant?: TenantFunction | undefined;
+  /**
+   * How many tenants' apps are kept running at once, and for how long one is kept without a
+   * request, with `tenant`. Past either, an app is stopped once its requests in flight have
+   * ended, and its tenant's next request boots it again. Defaults to `DEFAULT_TENANT_APPS` apps
+   * and `DEFAULT_TENANT_IDLE_MS`.
+   */
+  readonly tenantApps?: TenantAppsOptions | undefined;
 }
+
+/**
+ * How many tenants' apps the middleware keeps running, and for how long without a request.
+ */
+export interface TenantAppsOptions {
+  /**
+   * At least 1. The app of the tenant least recently served goes first.
+   */
+  readonly max?: number;
+  /**
+   * An app without a request for this long is stopped at the next request of any tenant;
+   * `Infinity` keeps it.
+   */
+  readonly idleMs?: number;
+}
+
+/**
+ * How many tenants' apps run at once by default.
+ */
+export const DEFAULT_TENANT_APPS = 100;
+
+/**
+ * How long, in milliseconds, a tenant's app is kept without a request by default.
+ */
+export const DEFAULT_TENANT_IDLE_MS: number = 15 * 60_000;
 
 /**
  * A React Router middleware that boots the app on the first request, starts it and puts it in
@@ -102,6 +149,43 @@ interface Slot<R extends Registry> {
 }
 
 const DEFAULT_KEY = "bounda.app";
+
+// A tenant's app, the requests it serves now, and when it served the last one.
+interface TenantApp {
+  readonly slot: Slot<Registry>;
+  inFlight: number;
+  lastUsed: number;
+  readonly drained: (() => void)[];
+}
+
+// The apps of each tenant under a key, the one served last at the end, kept on `globalThis` as
+// each slot is.
+const tenantAppsFor = (key: string): Map<string, TenantApp> => {
+  const store = globalThis as unknown as Record<symbol, Map<string, TenantApp> | undefined>;
+  const symbol = Symbol.for(`${key}:tenants`);
+  const existing = store[symbol];
+  if (existing !== undefined) return existing;
+  const created = new Map<string, TenantApp>();
+  store[symbol] = created;
+  return created;
+};
+
+// Stops a tenant's app once the requests it serves have ended.
+const retireWhenDrained = async (app: TenantApp): Promise<void> => {
+  if (app.inFlight > 0) await new Promise<void>((resolve) => app.drained.push(resolve));
+  await retire(app.slot);
+};
+
+const checkTenantApps = ({ max, idleMs }: Required<TenantAppsOptions>): void => {
+  if (!Number.isInteger(max) || max < 1) {
+    throw new ConfigurationError(`tenantApps.max must be a whole number of at least 1, got ${max}`);
+  }
+  if (typeof idleMs !== "number" || Number.isNaN(idleMs) || idleMs < 0) {
+    throw new ConfigurationError(
+      `tenantApps.idleMs must be a duration in milliseconds, got ${idleMs}`,
+    );
+  }
+};
 
 const slotFor = <R extends Registry>(key: string): Slot<R> => {
   const store = globalThis as unknown as Record<symbol, Slot<R> | undefined>;
@@ -182,32 +266,92 @@ const load = <R extends Registry>(
  */
 export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegistry>({
   // Imported on demand, so that importing this package does not load Node's modules on Cloudflare.
-  boot: bootApp = async () => (await import("@bounda-dev/core/node")).boot<R>(),
+  boot: bootApp = async (args) => (await import("@bounda-dev/core/node")).boot<R>(args),
   key = DEFAULT_KEY,
   consistency = "read-your-writes",
   actor,
   logger,
   errorText = "omit",
+  tenant,
+  tenantApps: { max = DEFAULT_TENANT_APPS, idleMs = DEFAULT_TENANT_IDLE_MS } = {},
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   checkConsistency(consistency);
+  if (tenant !== undefined && typeof tenant !== "function") {
+    throw new ConfigurationError(
+      'tenant must be a function that names the store of a request, such as () => "default"',
+    );
+  }
+  checkTenantApps({ max, idleMs });
   const bounda = createContext<BoundaClient<R>>();
   const slot = slotFor<R>(key);
   void retire(slot);
+  // Each tenant's app, by the key it is kept under; those of an earlier call under `key` go first.
+  const tenants = tenantAppsFor(key);
+  const stopping = new Set<Promise<void>>();
+  const evict = (name: string, app: TenantApp): void => {
+    if (tenants.get(name) === app) tenants.delete(name);
+    const stopped = retireWhenDrained(app);
+    stopping.add(stopped);
+    void stopped.finally(() => stopping.delete(stopped));
+  };
+  for (const [name, app] of [...tenants]) evict(name, app);
   let consoleLogger: Promise<Logger> | undefined;
 
-  const boundaMiddleware: BoundaMiddleware = async (args, next) => {
-    const client = await actAs(await load(slot, bootApp, consistency), actor, args);
-    args.context.set(bounda, await withIdempotencyKey(client, args.request));
-    return next();
+  // The tenant's app, served last now; the apps past the bound or idle too long go.
+  const tenantApp = (name: string): TenantApp => {
+    const now = Date.now();
+    const known = tenants.get(name);
+    const app = known ?? { slot: {}, inFlight: 0, lastUsed: now, drained: [] };
+    tenants.delete(name);
+    tenants.set(name, app);
+    for (const [other, each] of [...tenants]) {
+      if (each !== app && each.inFlight === 0 && now - each.lastUsed >= idleMs) evict(other, each);
+    }
+    // The one served now is last, and `max` is at least 1: it never goes here.
+    for (const [other, each] of [...tenants]) {
+      if (tenants.size <= max) break;
+      evict(other, each);
+    }
+    return app;
   };
 
-  const dispose: DisposeBoundaFunction = () => retire(slot);
+  const release = (app: TenantApp): void => {
+    app.inFlight -= 1;
+    app.lastUsed = Date.now();
+    if (app.inFlight === 0) for (const resolve of app.drained.splice(0)) resolve();
+  };
+
+  const boundaMiddleware: BoundaMiddleware = async (args, next) => {
+    if (tenant === undefined) {
+      const client = await actAs(await load(slot, () => bootApp(), consistency), actor, args);
+      args.context.set(bounda, await withIdempotencyKey(client, args.request));
+      return next();
+    }
+    const name = await tenantOfRequest(tenant, args);
+    const app = tenantApp(name);
+    app.inFlight += 1;
+    try {
+      const booted = await load(app.slot as Slot<R>, () => bootApp({ tenant: name }), consistency);
+      const client = await actAs(booted, actor, args);
+      args.context.set(bounda, await withIdempotencyKey(client, args.request));
+      return await next();
+    } finally {
+      release(app);
+    }
+  };
+
+  const dispose: DisposeBoundaFunction = async () => {
+    for (const [name, app] of [...tenants]) evict(name, app);
+    await Promise.all([retire(slot), ...stopping]);
+  };
 
   const handleError = createHandleError({
     message: "request failed",
     // Before any app has booted, what `boot()` would resolve without the configuration.
     errorText: () =>
       slot.errorText ??
+      [...tenants.values()].find(({ slot: each }) => each.errorText !== undefined)?.slot
+        .errorText ??
       resolveErrorText({ env: process.env, fallback: errorText, ignoreInvalidEnv: true }),
     logger: () => {
       if (logger !== undefined) return logger;

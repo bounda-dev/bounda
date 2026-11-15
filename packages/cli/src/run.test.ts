@@ -3,6 +3,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createApp, type PersonalDataExport, silentLogger } from "@bounda-dev/core";
+import type { TenantKeyStore } from "@bounda-dev/core/adapter";
 import { loadProject } from "@bounda-dev/core/node";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { registry as failingRegistry } from "./fixtures/rebuild-project/.bounda/failing-registry.ts";
@@ -1294,12 +1295,18 @@ describe("bounda status", () => {
       /^ {4}failing: Error on Incremented at \d+, \d+ attempts? since \S+$/m,
     );
     // The fixture's other registry marks personal data, and the store is shared by the tests.
-    expect(lines.at(-7)).toMatch(
+    const background = lines.slice(
+      lines.findIndex((line) => line.startsWith("personal data backfill: ")),
+    );
+    expect(background[0]).toMatch(
       /^personal data backfill: (no personal data marked|sealed through position \d+, caught up)$/,
     );
-    expect(lines.slice(-6, -1)).toEqual([
+    expect(background.slice(1).filter((line) => line !== "")).toEqual([
       "forget ledger: not configured",
-      "key rotation: not configured",
+      expect.stringMatching(
+        /^tenant: (no keys: no personal data marked|default, key \S+, wrapped under master key ephemeral-\S+)$/,
+      ),
+      expect.stringMatching(/^key rotation: (not configured|under \S+, every key wrapped .*)$/),
       "retention: not configured",
       "dead letter retention: not configured",
       "recipients: none declared",
@@ -1351,7 +1358,7 @@ describe("bounda status", () => {
     const quiet = await cli(["status", ...failing, "--json"], fixture);
     expect(quiet.code).toBe(EXIT_OK);
     const status = JSON.parse(quiet.stdout);
-    expect(status).toMatchObject({ schema: [], forgetLedger: null, keyRotation: null });
+    expect(status).toMatchObject({ schema: [], forgetLedger: null });
     expect(status.subscriberFailures).toContainEqual(
       expect.objectContaining({ subscriber: "projection:failingTotals", errorName: "Error" }),
     );
@@ -1370,6 +1377,287 @@ describe("bounda status", () => {
     );
     for (const option of ["--json", "--error-text", "--actor <id>", "--registry <file>"]) {
       expect(help.stdout).toContain(option);
+    }
+  });
+});
+
+describe("bounda forget-tenant and bounda tenant-key", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+  // A store of its own for each tenant, so forgetting one leaves the other tests' alone.
+  const tenantOf = (name: string): string => `${name}-${Date.now()}`;
+  const config = ["--config", "tenants.config.ts"];
+
+  const joinMember = async (tenant: string, memberId: string): Promise<void> => {
+    const project = await loadProject<typeof fixtureRegistry>({
+      root: fixture,
+      configPath: "tenants.config.ts",
+      tenant,
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.commands.join({ memberId, name: "Ana" });
+    await app.stop();
+  };
+
+  it("asks for --yes before it forgets a tenant", async () => {
+    const tenant = tenantOf("unconfirmed");
+    await joinMember(tenant, "m-1");
+    const refused = await cli(["forget-tenant", tenant, ...config], fixture);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(refused.stderr)).toBe(
+      `error: forgetting tenant ${tenant} destroys its key: nothing personal of it opens again, in the database or in any backup, and the app serves nothing more. Run again with --yes to forget it\n`,
+    );
+    const status = await cli(["status", ...config, "--tenant", tenant, "--json"], fixture);
+    expect(JSON.parse(status.stdout).tenant).toMatchObject({ tenant, forgottenAt: null });
+  });
+
+  it("forgets the tenant it names, which the app then serves no more, and no other", async () => {
+    const tenant = tenantOf("forgotten");
+    await joinMember(tenant, "m-1");
+    const other = await cli(
+      ["forget-tenant", "someone-else", ...config, "--tenant", tenant, "--yes"],
+      fixture,
+    );
+    expect(other.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(other.stderr)).toBe(
+      "error: forgetTenant names tenant someone-else, and the app serves another\n",
+    );
+
+    const forgotten = await cli(
+      ["forget-tenant", tenant, ...config, "--yes", "--actor", "operator-1"],
+      fixture,
+    );
+    expect(besidesLogs(forgotten.stderr)).toBe("");
+    expect(forgotten.code).toBe(EXIT_OK);
+    expect(forgotten.stdout).toMatch(
+      new RegExp(
+        `^forgot tenant ${tenant} at \\S+ \\(event \\S+\\); the app tells its recipients in the background\n$`,
+      ),
+    );
+    const status = await cli(["status", ...config, "--tenant", tenant], fixture);
+    expect(status.stdout).toMatch(new RegExp(`^tenant: ${tenant}, forgotten at \\S+$`, "m"));
+    const again = await cli(["forget-tenant", tenant, ...config, "--yes"], fixture);
+    expect(again.code).toBe(EXIT_OK);
+    const exported = await cli(["export", "m-1", ...config, "--tenant", tenant], fixture);
+    expect(exported.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(exported.stderr)).toMatch(
+      new RegExp(`^error: Tenant ${tenant} was forgotten at \\S+\n$`),
+    );
+  });
+
+  it("rotates the tenant's key, and retires the older versions only once nothing is under them", async () => {
+    const tenant = tenantOf("rotated");
+    await joinMember(tenant, "m-1");
+    const before = JSON.parse(
+      (await cli(["status", ...config, "--tenant", tenant, "--json"], fixture)).stdout,
+    ).tenant.kid as string;
+    const rotated = await cli(["tenant-key", "rotate", ...config, "--tenant", tenant], fixture);
+    expect(besidesLogs(rotated.stderr)).toBe("");
+    expect(rotated.code).toBe(EXIT_OK);
+    const [, kid] = /^tenant key (\S+) in force;/.exec(rotated.stdout) ?? [];
+    expect(kid).not.toBe(before);
+    expect(rotated.stdout).toBe(
+      `tenant key ${kid} in force; the worker rewraps every key under it, then retire ${before} with bounda tenant-key retire\n`,
+    );
+    const status = JSON.parse(
+      (await cli(["status", ...config, "--tenant", tenant, "--json"], fixture)).stdout,
+    );
+    expect(status.tenant).toMatchObject({ kid, previous: [before] });
+    const retired = await cli(["tenant-key", "retire", ...config, "--tenant", tenant], fixture);
+    expect(retired.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(retired.stderr)).toMatch(
+      /^error: The version of the tenant's key in force was created at \S+: older versions can be retired once every instance wraps under it, twice the key cache's time after\n$/,
+    );
+  });
+
+  it("forgets a tenant whose persons hold keys a legal obligation keeps only when told to", async () => {
+    const tenant = tenantOf("invoicing");
+    const invoicing = ["--registry", ".bounda/invoicing-registry.ts", ...config];
+    const project = await loadProject({
+      root: fixture,
+      configPath: "tenants.config.ts",
+      registryPath: ".bounda/invoicing-registry.ts",
+      tenant,
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    const commands = app.commands as unknown as Record<
+      string,
+      (payload: { memberId: string; taxId: string }) => Promise<unknown>
+    >;
+    await commands.join?.({ memberId: "m-1", taxId: "ES-12345678Z" });
+    await app.stop();
+    const kept = await cli(["forget-tenant", tenant, ...invoicing, "--yes"], fixture);
+    expect(kept.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(kept.stderr)).toBe(
+      `error: Tenant ${tenant}'s persons hold keys a legal obligation keeps (invoices): hand the data back first, then forget the tenant with despiteLegalObligations\n`,
+    );
+    const told = await cli(
+      ["forget-tenant", tenant, ...invoicing, "--yes", "--despite-legal-obligations"],
+      fixture,
+    );
+    expect(told.code).toBe(EXIT_OK);
+    expect(told.stdout).toMatch(new RegExp(`^forgot tenant ${tenant} at `));
+  });
+
+  it("names every older version to retire, and retires them once nothing is under them", async () => {
+    const tenant = tenantOf("retired");
+    await joinMember(tenant, "m-1");
+    const none = await cli(["tenant-key", "retire", ...config, "--tenant", tenant], fixture);
+    expect(none).toMatchObject({
+      code: EXIT_OK,
+      stdout: "no older version of the tenant key to retire\n",
+    });
+    const first = JSON.parse(
+      (await cli(["status", ...config, "--tenant", tenant, "--json"], fixture)).stdout,
+    ).tenant.kid as string;
+    await cli(["tenant-key", "rotate", ...config, "--tenant", tenant], fixture);
+    const rotated = await cli(["tenant-key", "rotate", ...config, "--tenant", tenant], fixture);
+    const [, second] = /retire (\S+), /.exec(rotated.stdout) ?? [];
+    expect(rotated.stdout).toContain(
+      `then retire ${second}, ${first} with bounda tenant-key retire`,
+    );
+
+    // The worker rewraps every key under the version in force, which retiring waits for.
+    const project = await loadProject({
+      root: fixture,
+      configPath: "tenants.config.ts",
+      tenant,
+      logger: silentLogger,
+    });
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.runUntilIdle();
+    await app.stop();
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 60 * 60_000 });
+    try {
+      const retired = await cli(["tenant-key", "retire", ...config, "--tenant", tenant], fixture);
+      expect(besidesLogs(retired.stderr)).toBe("");
+      expect(retired.stdout).toBe(
+        `retired ${second}, ${first}: a backup with keys wrapped under them opens nothing personal any more\n`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rebuilds a read model of the tenant it names", async () => {
+    const tenant = tenantOf("rebuilt");
+    await joinMember(tenant, "m-1");
+    const rebuilt = await cli(["rebuild", "counterTotals", ...config, "--tenant", tenant], fixture);
+    expect(besidesLogs(rebuilt.stderr)).not.toContain("error");
+    expect(rebuilt.code).toBe(EXIT_OK);
+  });
+
+  it("rewraps the key of every tenant under the master key in force, their apps running or not", async () => {
+    const key = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
+    process.env.REWRAP_A = key();
+    process.env.REWRAP_B = key();
+    const rewrap = ["--config", "rewrap.config.ts"];
+    try {
+      const joinUnder = async (tenant: string, from: string) => {
+        const was = process.env.REWRAP_FROM;
+        process.env.REWRAP_FROM = from;
+        try {
+          const project = await loadProject<typeof fixtureRegistry>({
+            root: fixture,
+            configPath: "rewrap.config.ts",
+            tenant,
+            logger: silentLogger,
+          });
+          const app = await createApp({ ...project, env: process.env, logger: silentLogger });
+          await app.commands.join({ memberId: "m-1", name: "Ana" });
+          await app.stop();
+        } finally {
+          if (was === undefined) delete process.env.REWRAP_FROM;
+          else process.env.REWRAP_FROM = was;
+        }
+      };
+      const tenants = [tenantOf("rewrap-1"), tenantOf("rewrap-2")];
+      for (const tenant of tenants) await joinUnder(tenant, "REWRAP_A");
+      process.env.REWRAP_FROM = "REWRAP_B";
+      process.env.REWRAP_PREVIOUS = "REWRAP_A";
+      const rewrapped = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(besidesLogs(rewrapped.stderr)).toBe("");
+      expect(rewrapped.code).toBe(EXIT_OK);
+      for (const tenant of tenants) expect(rewrapped.stdout).toContain(`rewrapped ${tenant}\n`);
+      expect(rewrapped.stdout).toMatch(
+        /\d+ tenant key\(s\) rewrapped; none is left under a previous master key: remove them\n$/,
+      );
+      // Without the previous master key, what is under it cannot be rewrapped: it stays, named.
+      delete process.env.REWRAP_PREVIOUS;
+      await joinUnder(tenantOf("rewrap-3"), "REWRAP_A");
+      const left = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(left.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(left.stderr)).toMatch(
+        /^error: rewrap-3-\d+ is still under a previous master key: Tenant rewrap-3-\d+'s key is wrapped under the master key \S+, which is neither the key wrapper's key nor one of its previous ones\n1 tenant key\(s\) left under a previous master key: keep the previous master keys until none is\n$/,
+      );
+      process.env.REWRAP_PREVIOUS = "REWRAP_A";
+      await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      const again = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(again.stdout).toBe(
+        "0 tenant key(s) rewrapped; none is left under a previous master key: remove them\n",
+      );
+      // The previous master key can go: every tenant opens under the one in force alone.
+      delete process.env.REWRAP_PREVIOUS;
+      const status = await cli(
+        ["status", ...rewrap, "--tenant", tenants[0] ?? "", "--json"],
+        fixture,
+      );
+      expect(JSON.parse(status.stdout).tenant).toMatchObject({ master: { pending: 0 } });
+    } finally {
+      for (const name of ["REWRAP_A", "REWRAP_B", "REWRAP_FROM", "REWRAP_PREVIOUS"]) {
+        delete process.env[name];
+      }
+    }
+  });
+
+  it("says why it rewraps nothing for a project without keys, or one it cannot load", async () => {
+    const plain = await cli(["tenant-key", "rewrap-master"], fixture);
+    expect(plain.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(plain.stderr)).toBe(
+      "error: Rewrapping the tenants' keys needs runtime.personalData.keyWrapper and runtime.personalData.tenantKeys\n",
+    );
+    const missing = await cli(
+      ["tenant-key", "rewrap-master", "--config", "nowhere.config.ts"],
+      fixture,
+    );
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(missing.stderr)).toMatch(/^error: .*nowhere\.config\.ts/);
+  });
+
+  it("documents its options in its help", async () => {
+    const forget = await cli(["forget-tenant", "--help"], fixture);
+    for (const text of [
+      "forget a tenant as a whole: destroy its key, so nothing personal of it opens again in the database, its backups or a Durable Object's copies, and the app serves nothing but the notices to its recipients",
+      "<tenant>",
+      "the tenant to forget, the one the app serves",
+      "--yes",
+      "confirm: the tenant's data cannot be read again",
+      "--despite-legal-obligations",
+      "destroy too the keys a legal obligation keeps, once their data was handed back",
+      "--tenant <name>",
+      "the tenant the app serves, for a configuration that is a function of the tenant (default:",
+    ]) {
+      expect(forget.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
+    const keys = await cli(["tenant-key", "--help"], fixture);
+    expect(keys.stdout).toContain("rotate the tenant's key, and retire its older versions");
+    for (const [command, text] of [
+      [
+        "rotate",
+        "put a new version of the tenant's key in force: the worker rewraps every person's key and the database's key under it",
+      ],
+      [
+        "retire",
+        "remove the older versions of the tenant's key once nothing is wrapped under them: backups that need them open nothing personal any more",
+      ],
+      [
+        "rewrap-master",
+        "rewrap under the master key in force the key of every tenant the tenant key store holds, their apps running or not: once none is left under a previous master key, remove those",
+      ],
+    ] as const) {
+      const help = await cli(["tenant-key", command, "--help"], fixture);
+      expect(help.stdout.replace(/\s+/g, " ")).toContain(text);
     }
   });
 });
@@ -1415,6 +1703,75 @@ export default { storage: adapter };
     expect(result.stdout).toBe(
       "migrated\n  storage  storage  2 of 2\n  storage  checkpoints  1 of 1\n",
     );
+  });
+
+  it("opens a file its storage encrypts under the keys of the tenant --tenant names, as forgotten does", async () => {
+    const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+    process.env.ENCRYPTED_MASTER = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
+      "base64",
+    );
+    try {
+      const config = ["--config", "encrypted.config.ts"];
+      const migrated = await cli(["migrate", ...config, "--tenant", "acme"], fixture);
+      expect(besidesLogs(migrated.stderr)).toBe("");
+      expect(migrated.code).toBe(EXIT_OK);
+      const listed = await cli(
+        ["forgotten", "--since", "0", ...config, "--tenant", "globex"],
+        fixture,
+      );
+      expect(listed.code).toBe(EXIT_OK);
+      expect(await cli(["rekey"], fixture)).toMatchObject({
+        code: EXIT_OK,
+        stdout: "no database file is encrypted under the tenant's keys\n",
+      });
+      const missing = await cli(["rekey", "--config", "missing.config.ts"], fixture);
+      expect(missing.code).toBe(EXIT_FAILURE);
+      expect(missing.stderr).toMatch(/^error: /);
+      const held = await cli(["rekey", ...config, "--tenant", "initech"], fixture);
+      expect(held.code).toBe(EXIT_FAILURE);
+      expect(held.stdout).toBe(
+        "database files\n  storage  app.db  still in the clear: bounda rekey\n  readModels.reports  reports.db  encrypted under the tenant's key in force\n",
+      );
+      process.env.ENCRYPTED_FREE = "1";
+      const freed = await cli(["rekey", ...config, "--tenant", "initech"], fixture);
+      expect(freed).toMatchObject({
+        code: EXIT_OK,
+        stdout:
+          "database files\n  storage  app.db  encrypted under the tenant's key in force\n  readModels.reports  reports.db  encrypted under the tenant's key in force\n",
+      });
+      expect(Reflect.get(globalThis, "encryptedOpenedFor")).toEqual([
+        "acme",
+        "globex",
+        "initech",
+        "initech",
+      ]);
+      const keys = (await Reflect.get(globalThis, "encryptedKeys")) as TenantKeyStore;
+      expect((await keys.list({ cursor: null, limit: 10 })).tenants).toEqual([
+        "acme",
+        "globex",
+        "initech",
+      ]);
+    } finally {
+      delete process.env.ENCRYPTED_MASTER;
+      delete process.env.ENCRYPTED_FREE;
+    }
+  });
+
+  it("migrates the databases of the tenant --tenant names, for a configuration of the tenant", async () => {
+    const root = await migrating();
+    const config = join(root, "bounda.config.ts");
+    await writeFile(
+      config,
+      (await readFile(config, "utf8")).replace(
+        "export default { storage: adapter };",
+        "export default ({ tenant }) => { globalThis.migratedTenant = tenant; return { storage: adapter }; };",
+      ),
+    );
+    const result = await cli(["migrate", "--tenant", "acme"], root);
+    expect(result.code).toBe(EXIT_OK);
+    expect(Reflect.get(globalThis, "migratedTenant")).toBe("acme");
+    await cli(["migrate"], root);
+    expect(Reflect.get(globalThis, "migratedTenant")).toBe("default");
   });
 
   it("names the error a migration fails on without its text, and exits 2", async () => {

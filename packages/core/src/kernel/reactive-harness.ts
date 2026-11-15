@@ -15,6 +15,7 @@ import { createDeadLetterRetry, type DeadLetterRetry } from "./dead-letters/retr
 import { createDispatcher, type Dispatcher } from "./dispatch/dispatcher.ts";
 import type { AppStorage } from "./events/app-event-store.ts";
 import { createAccessLog } from "./personal-data/access.ts";
+import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories } from "./personal-data/categories.ts";
 import { createForgetIntentions } from "./personal-data/intention.ts";
 import type { ForgetLedgerReconciliation } from "./personal-data/reconciliation.ts";
@@ -22,7 +23,6 @@ import {
   createRestrictedPersonsSubscriber,
   restrictedPersonsHosts,
 } from "./personal-data/restricted-persons.ts";
-import { createPersonalKeyWrapping } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
@@ -41,7 +41,7 @@ import { createRecipientNotices } from "./recipients/notices.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
-import { defaultPorts, withPersonalKeys } from "./test-support.ts";
+import { defaultPorts, testWrapping, withPersonalKeys } from "./test-support.ts";
 
 export interface ReactiveHarness {
   readonly storage: AppStorage;
@@ -117,9 +117,11 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   const sealing = await openReadModelSealing({
     layouts: Object.values(readModels.byName).map(({ layout }) => layout),
     keys: storage.personalKeys,
-    indexKeys: storage.indexKeys,
-    wrapping: createPersonalKeyWrapping({ wrapper: null, clock }),
-    clock,
+    databaseKey: await openDatabaseKey({
+      store: storage.indexKeys,
+      wrapping: testWrapping(clock),
+      clock,
+    }),
     scheduler: storage.scheduler,
   });
   const recordAccess = createAccessLog({

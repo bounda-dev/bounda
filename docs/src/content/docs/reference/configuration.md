@@ -21,6 +21,12 @@ export default defineConfig({
 });
 ```
 
+A project that serves several tenants, each its own database, exports a function of the tenant
+instead: `defineConfig(({ tenant }) => ({ storage: postgresql({ url, schema: tenant }) }))`.
+`boot()`, the CLI and the React Router host call it with the tenant they serve, `BOUNDA_TENANT` or
+`--tenant` naming it, `default` without either; `configForTenant({ config, tenant })` does the same
+for code of your own. See [tenants](/guides/personal-data/#tenants).
+
 **Durations** are a number of milliseconds or a string: a number followed by `ms`, `s`, `m`, `h`
 or `d` (`"250ms"`, `"1.5s"`, `"7d"`). A duration read from the environment is a `string`, which the
 types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
@@ -116,17 +122,22 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   inactive for that long is forgotten in the first passes. It is app-wide and has no override per aggregate: a person's
   events span aggregates, so their inactivity is one clock, not one per aggregate. See
   [retention](/guides/personal-data/#retention).
-- **`personalData.keyWrapper`**, none by default. Wraps every person's key before the store keeps
-  it, so a copy of the database opens none of their data without the master key:
-  `masterKey({ from: "BOUNDA_MASTER_KEY", previous: [...] })` names the environment variables that
-  hold the current master key and the ones used before, 32 random bytes in base64 each (`openssl
-  rand -base64 32`), read from the host's environment when the app starts; a variable missing or
-  malformed fails the start with `ConfigurationError`. A KMS or a vault is given through
-  `defineKeyWrapper`. Keys wrapped under a previous master key, or kept unwrapped from before, are
-  rewrapped by the worker in the background, as is the database's key of the blind indexes of
-  read models, which it wraps too. Without it the keys are kept as they are and the app
-  warns at start when the registry marks personal fields. It is app-wide. See
+- **`personalData.keyWrapper`**, required when the registry marks a field `personal`, except over
+  `memory()`. Wraps the tenant's key, which wraps every person's key and the database's in turn, so
+  no copy opens a personal field without the master key: `masterKey({ from: "BOUNDA_MASTER_KEY",
+  previous: [...] })` names the environment variables that hold the current master key and the
+  ones used before, 32 random bytes in base64 each (`openssl rand -base64 32`), read from the
+  host's environment when the app starts; a variable missing or malformed fails the start with
+  `ConfigurationError`. A KMS or a vault is given through `defineKeyWrapper`. Versions of the
+  tenant's key wrapped under a previous master key are rewrapped by the worker in the background.
+  `memory()` brings a master key of its own, gone with the process. See
   [where the keys live](/guides/personal-data/#where-the-keys-live).
+- **`personalData.tenantKeys`**, required with `keyWrapper`, except over `memory()`. Where the
+  tenant's key lives, apart from the storage's database: an adapter pointed at another database,
+  such as `sqlite({ path: "./keys/tenant-keys.db" })` or `postgresql({ url: TENANT_KEYS_URL })`, a
+  store from `defineTenantKeyStore`, or `kvTenantKeys({ binding })` on Cloudflare. An adapter that
+  points at the storage's own database fails the start. `forgetTenant` destroys the key there. See
+  [the tenant key store](/guides/personal-data/#the-tenant-key-store).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
   database, before it commits, by person's id, event id, time, reason and the fingerprints of the
   keys it destroys, and how the app reconciles with it. Without it, a

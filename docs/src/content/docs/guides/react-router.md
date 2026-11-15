@@ -279,6 +279,48 @@ right after.
 - Booting fails loudly: the request that triggered it gets the error, and the next request tries
   again. Nothing exits the process.
 
+## Tenants
+
+On Node one app serves every request, for the tenant `BOUNDA_TENANT` names, `default` without it.
+A project that serves several tenants, each with its own database and its own
+[key](/guides/personal-data/#tenants), adds `app/tenant.ts`, as on Cloudflare below, and exports
+its configuration as a function of the tenant:
+
+```ts
+// app/tenant.ts
+import type { TenantFunction } from "@bounda-dev/react-router";
+
+export const tenant: TenantFunction = ({ params }) => params.workspace ?? "default";
+```
+
+```ts
+// bounda.config.ts
+export default defineConfig(({ tenant }) => ({
+  storage: sqlite({ path: `./data/${tenant}.db` }),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: sqlite({ path: "./keys/tenant-keys.db" }),
+    },
+  },
+}));
+```
+
+The host boots one app per tenant, on its first request, with `boot({ tenant })`, and keeps it for
+the next ones, up to `tenantApps.max` apps (`DEFAULT_TENANT_APPS`, 100): past it, the app of the
+tenant served least recently is stopped, once the requests it serves have ended, and so is one
+without a request for `tenantApps.idleMs` (`DEFAULT_TENANT_IDLE_MS`, fifteen minutes), at the next
+request of any tenant. Its tenant's next request boots it again. `dispose()`, or a change to the
+configuration in development, stops them all. Each runs its own dispatcher and worker in the
+process; a deployment with more tenants than one process serves well runs several, each serving
+some, or moves to Cloudflare, where each tenant is its own Durable Object.
+
+```ts
+// vite.config.ts
+bounda({ tenantApps: { max: 20, idleMs: 5 * 60_000 } });
+``` A tenant that was [forgotten](/guides/personal-data/#forgetting-a-tenant)
+answers every call with `TenantForgottenError`, which `failure()` turns into a 410.
+
 ## On Cloudflare
 
 When `bounda.config.ts` sets `storage: cloudflare()`, the app runs in a Durable Object, one per
@@ -376,6 +418,7 @@ processes and scheduled commands run in the object's alarm, as
 |---|---|---|
 | `consistency` | `"read-your-writes"` | `"read-your-writes"` reads its own writes; `"eventual"` serves the app as booted. |
 | `debounceMs` | `100` | Quiet time after a change before regenerating. |
+| `tenantApps` | `{ max: 100, idleMs: 900000 }` | With `app/tenant.ts` on Node: how many tenants' apps run at once, and for how long one is kept without a request. |
 
 ## Without the plugin
 
@@ -398,7 +441,8 @@ build bundles both and a change to either re-evaluates this file in development;
 then stops the app booted before, and the next request boots a new one once that stop has
 finished, so the two never hold the storage at the same time. Its options are `boot` (how to
 create the app, `boot()` by default), `consistency`, `actor` (the function `app/actor.ts` would
-export), `key` (where the running app is kept on `globalThis`, one app per key), and for
+export), `tenant` (the function `app/tenant.ts` would export: one app per tenant, `boot` called
+with `{ tenant }`), `tenantApps` (as the plugin's), `key` (where the running app is kept on `globalThis`, one app per key), and for
 `handleError` a `logger` (`createConsoleLogger()` by default) and the `errorText` it follows before
 an app has booted (`"omit"` by default). `dispose()` stops the running app and forgets it, and resolves
 once every app booted under that key has stopped. Export `handleError` from

@@ -1,3 +1,4 @@
+import { createEphemeralKeys } from "../../kernel/personal-data/ephemeral-keys.ts";
 import type {
   Adapter,
   CreateReadModelArgs,
@@ -21,6 +22,9 @@ import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqlRecipientStore } from "../sql/recipient-store.ts";
 import { createSqlSubscriberFailureStore } from "../sql/subscriber-failure-store.ts";
+import { createSqlTenancyStore } from "../sql/tenancy-store.ts";
+import { createSqlTenantKeyStore } from "../sql/tenant-key-store.ts";
+import type { EncryptedFile, FileEncryption } from "../storage/encrypted-file.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteIdempotencyStore } from "./idempotency-store.ts";
@@ -31,6 +35,7 @@ import {
   sqliteCheckpointsScope,
   sqliteForgetLedgerScope,
   sqliteStorageScope,
+  sqliteTenantKeysScope,
 } from "./migrations.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
@@ -66,6 +71,24 @@ export interface CreateSqliteAdapterArgs<Name extends string, Options, Raw> {
    * fails.
    */
   readonly release: () => Promise<void>;
+  /**
+   * Whether the database lives in the process alone, as `:memory:` does: the adapter then brings
+   * keys gone with the process too, as `memory()` does.
+   */
+  readonly ephemeral?: boolean;
+  /**
+   * Removes everything the database holds, as `Storage.discard`: for an engine whose copies no key
+   * of the tenant's opens, as a Durable Object's.
+   */
+  readonly discard?: () => Promise<void>;
+  /**
+   * The database's file, as `Adapter.encryptedFile`.
+   */
+  readonly encryptedFile?: EncryptedFile;
+  /**
+   * Where the file stands, as `Adapter.fileEncryption`.
+   */
+  readonly fileEncryption?: FileEncryption;
 }
 
 export interface CreateSqliteAdapterFunction {
@@ -89,6 +112,10 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
   tablePrefix,
   acquire,
   release,
+  ephemeral = false,
+  discard,
+  encryptedFile,
+  fileEncryption,
 }: CreateSqliteAdapterArgs<Name, Options, Raw>): Adapter<Name, Options> => {
   /**
    * Opens what `work` builds on an acquired connection, and releases it when `work` throws: the
@@ -106,10 +133,14 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
   const ledgerTable = quoteIdentifier(
     storageTableNameFor({ prefix: tablePrefix, table: "forgetLedger" }),
   );
+  const tenantKeysTable = quoteIdentifier(
+    storageTableNameFor({ prefix: tablePrefix, table: "tenantKeys" }),
+  );
   const scopes: Readonly<Record<SchemaScopeName, SchemaScope>> = {
     storage: sqliteStorageScope(storageTablesFor(tablePrefix)),
     checkpoints: sqliteCheckpointsScope(storageTablesFor(tablePrefix)),
     "forget-ledger": sqliteForgetLedgerScope(ledgerTable),
+    "tenant-keys": sqliteTenantKeysScope(tenantKeysTable),
   };
   const versionsOn = (db: SqlDatabase) =>
     readSchemaVersions({
@@ -129,10 +160,14 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       await release();
     }
   };
+  const ephemeralKeys = ephemeral ? createEphemeralKeys() : undefined;
   return {
     kind: "bounda-adapter",
     name,
     options,
+    ...(ephemeralKeys === undefined ? {} : { ephemeralKeys }),
+    ...(encryptedFile === undefined ? {} : { encryptedFile }),
+    ...(fileEncryption === undefined ? {} : { fileEncryption }),
     schemaVersions: () => briefly(({ db }) => versionsOn(db)),
     migrate: (names) =>
       briefly(async ({ db, isBusy }) => {
@@ -227,6 +262,8 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             table: tables.indexKeys,
             dialect: sqliteDialect,
           }),
+          tenancy: createSqlTenancyStore({ db, table: tables.tenancy, dialect: sqliteDialect }),
+          ...(discard === undefined ? {} : { discard }),
           transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
           close: release,
         };
@@ -299,6 +336,22 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       } finally {
         await release();
       }
+    },
+    createTenantKeyStore: async () => {
+      const { db, isBusy } = acquire();
+      return createSqlTenantKeyStore({
+        db,
+        table: tenantKeysTable,
+        dialect: sqliteDialect,
+        ensureSchema: () =>
+          migrateSqlite({
+            db,
+            isBusy,
+            prefix: tablePrefix,
+            scopes: [sqliteTenantKeysScope(tenantKeysTable)],
+          }),
+        close: release,
+      });
     },
     createForgetLedger: async ({ tenant }) => {
       const table = quoteIdentifier(

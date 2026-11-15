@@ -210,6 +210,44 @@ describe("createHost in Node", () => {
     expect(await served(host)).toEqual({ actedAs: "user-1" });
   });
 
+  it("boots an app for the tenant app/tenant.ts names, importing it once it imports", async () => {
+    let imports = 0;
+    host = createHost({
+      registry,
+      importConfig: async () => ({}),
+      importTenant: async () => {
+        imports += 1;
+        if (imports === 1) throw new Error("tenant.ts does not compile yet");
+        return {
+          tenant: ({ request }: { readonly request: Request }) => new URL(request.url).hostname,
+        };
+      },
+      consistency: "eventual",
+    });
+    await expect(served(host)).rejects.toThrow("tenant.ts does not compile yet");
+    expect(await served(host)).toBe(app);
+    expect(await served(host)).toBe(app);
+    expect(imports).toBe(2);
+    expect(booted.map(({ tenant }) => tenant)).toEqual(["localhost"]);
+  });
+
+  it("bounds the tenants' apps as the plugin says", () => {
+    expect(() =>
+      createHost({
+        registry,
+        importConfig: async () => ({}),
+        consistency: "eventual",
+        tenantApps: { max: 0 },
+      }),
+    ).toThrow("tenantApps.max must be a whole number of at least 1, got 0");
+  });
+
+  it("boots one app for every request without app/tenant.ts", async () => {
+    host = createHost({ registry, importConfig: async () => ({}), consistency: "eventual" });
+    await served(host);
+    expect(booted.map(({ tenant }) => tenant)).toEqual([undefined]);
+  });
+
   it("reads its own writes unless told otherwise", async () => {
     host = createHost({
       registry,

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
-import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -8,9 +7,8 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { appStorage } from "../events/app-event-store.ts";
 import { createDisposableKey, type PersonalKey } from "../personal-data/crypto.ts";
 import type { CategoryKey } from "../personal-data/wrapped-keys.ts";
-import { createPersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
 import { batchPersons } from "../projection/runner.ts";
-import { eachPerson } from "../test-support.ts";
+import { eachPerson, testWrapping } from "../test-support.ts";
 import { createSealingKeyRing, KeysMissingError } from "./sealing-keys.ts";
 
 const key = async (retained = false): Promise<PersonalKey> => ({
@@ -92,7 +90,7 @@ describe("the key an event opened under", () => {
       storage: await memory().createStorage(),
       aggregates: buildAggregates({ registry, ports: {} }),
       processes: { byName: {} },
-      wrapping: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }),
+      wrapping: testWrapping(),
     });
     await storage.eventStore.append({
       aggregateType: "customer",

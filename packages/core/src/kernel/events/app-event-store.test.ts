@@ -3,23 +3,22 @@ import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-st
 import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { cryptoKeyWrapperOver, type KeyWrapper } from "../personal-data/key-wrapper.ts";
 import { createPersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
+import { testMaster, testTenantKeys } from "../test-support.ts";
 import { appStorage } from "./app-event-store.ts";
 
 const setUp = async () => {
   const unwrapped: string[] = [];
-  const wrapper: KeyWrapper = {
-    kid: "kid-1",
-    wrap: async (key) => key,
-    unwrap: async ({ kid, wrapped }) => {
-      unwrapped.push(kid);
-      return wrapped;
-    },
-  };
   const written = await memory().createStorage();
   const wrapping = createPersonalKeyWrapping({
-    wrapper: cryptoKeyWrapperOver(wrapper),
+    tenantKeys: {
+      ...testTenantKeys,
+      keyOf: async (kid) => {
+        unwrapped.push(kid);
+        return testTenantKeys.keyOf(kid);
+      },
+    },
+    master: testMaster,
     clock: createFixedClock(),
   });
   const storage = appStorage({

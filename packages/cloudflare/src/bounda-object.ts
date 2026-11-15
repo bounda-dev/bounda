@@ -13,6 +13,7 @@ import {
   type DispatchResult,
   errorFields,
   type ForgetOptions,
+  type ForgetTenantOptions,
   type IdGenerator,
   type IncludeRestrictedOptions,
   type ListDeadLettersArgs,
@@ -31,6 +32,8 @@ import {
   type StoredEvent,
   type SubscriberFailure,
   systemClock,
+  type TenantForgottenResult,
+  type TenantKeyVersions,
   type UnrestrictOptions,
   withErrorText,
 } from "@bounda-dev/core";
@@ -98,6 +101,12 @@ export interface BoundaObjectMethods {
     options?: QueryOptions,
   ): Promise<RpcOutcome<unknown>>;
   lag(): Promise<RpcOutcome<AppLag>>;
+  /**
+   * Arms the object's alarm at once, so its background work runs now: what `createWorker`'s
+   * `scheduled` calls on an object whose tenant's key is still under a previous master key, which
+   * its rotation then rewraps.
+   */
+  wake(): Promise<RpcOutcome<null>>;
   status(): Promise<RpcOutcome<AppStatus>>;
   /**
    * Each subscriber's last failure with its text opened, recorded in the access log as
@@ -175,6 +184,24 @@ export interface BoundaObjectMethods {
     options: RedactRequest,
   ): Promise<RpcOutcome<StoredDispatch>>;
   /**
+   * Forgets the object's tenant, as `BoundaClient.forgetTenant` does: from then on the object
+   * serves nothing but the notices to the recipients of the tenant's data, which its alarm runs.
+   */
+  forgetTenant(
+    tenant: string,
+    actor?: string,
+    options?: ForgetTenantOptions,
+  ): Promise<RpcOutcome<TenantForgottenResult>>;
+  /**
+   * Puts a new version of the tenant's key in force, as `BoundaClient.rotateTenantKey` does; the
+   * alarm rewraps every key under it.
+   */
+  rotateTenantKey(actor?: string): Promise<RpcOutcome<TenantKeyVersions>>;
+  /**
+   * Retires the older versions of the tenant's key, as `BoundaClient.retireTenantKeys` does.
+   */
+  retireTenantKeys(actor?: string): Promise<RpcOutcome<readonly string[]>>;
+  /**
    * Runs the next slice of every paused rebuild, then policies, processes, due scheduled commands
    * and retries, in bounded slices, and arms the next alarm. Called by the platform.
    */
@@ -197,12 +224,12 @@ const DEFAULT_EVENTS_PER_REBUILD_SLICE = 5_000;
 const MIN_RETRY_MS = 1_000;
 
 export interface ConfigForObjectFunction {
-  (config: Config, storage: DurableSqlStorage): Config;
+  (config: Config, storage: DurableSqlStorage, discard?: () => Promise<void>): Config;
 }
 
-export const configForObject: ConfigForObjectFunction = (config, storage) => {
+export const configForObject: ConfigForObjectFunction = (config, storage, discard) => {
   const own = (options: { readonly tablePrefix?: string }) =>
-    durableObjectAdapter({ storage, options });
+    durableObjectAdapter({ storage, options, ...(discard === undefined ? {} : { discard }) });
   return {
     ...config,
     storage: own(cloudflareStorageOf(config).options),
@@ -237,7 +264,8 @@ const ownFunction = <F extends (...args: never[]) => unknown>(
  * scheduled commands and retries run in the object's alarm, which it arms itself for whatever
  * comes next. One object is one store: give each tenant its own with `idFromName(tenant)`. Port
  * implementations receive the object's `env` in `create`, once per object, and that name as
- * `tenant`, which an object reached through an id without a name does not have. `BOUNDA_ERROR_TEXT`
+ * `tenant`, the id itself for an object reached through an id without a name; the tenant's key,
+ * under `runtime.personalData.tenantKeys`, goes by the same. `BOUNDA_ERROR_TEXT`
  * in that `env`, such as `.dev.vars` sets in development, overrides `runtime.telemetry.errorText`;
  * any value but `"omit"` or `"include"` fails the object's start with `ConfigurationError`.
  */
@@ -255,18 +283,28 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
       super(ctx, env);
-      void ctx.blockConcurrencyWhile(async () => {
-        this.#app = await createApp<R>({
-          registry,
-          // The configuration is one bundle for every environment, so `.dev.vars` decides in
-          // development.
-          config: configForObject(withErrorText({ config, env }), ctx.storage),
-          env,
-          tenant: ctx.id.name,
-          logger,
-          clock: objectClock(clock),
-          ...(ids === undefined ? {} : { ids }),
-        });
+      void ctx.blockConcurrencyWhile(() => this.#open(env));
+    }
+
+    async #open(env: Cloudflare.Env): Promise<void> {
+      this.#app = await createApp<R>({
+        registry,
+        // The configuration is one bundle for every environment, so `.dev.vars` decides in
+        // development.
+        config: configForObject(withErrorText({ config, env }), this.ctx.storage, async () => {
+          await this.ctx.storage.deleteAll();
+          // The app over the storage just emptied is dropped: the next call opens one anew.
+          const discarded = this.#app;
+          void this.ctx.blockConcurrencyWhile(async () => {
+            await discarded?.stop().catch(() => undefined);
+            await this.#open(env);
+          });
+        }),
+        env,
+        tenant: this.ctx.id.name ?? this.ctx.id.toString(),
+        logger,
+        clock: objectClock(clock),
+        ...(ids === undefined ? {} : { ids }),
       });
     }
 
@@ -376,6 +414,13 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     lag(): Promise<RpcOutcome<AppLag>> {
       return settle(() => this.#ready().getLag());
+    }
+
+    wake(): Promise<RpcOutcome<null>> {
+      return settle(async () => {
+        await this.#rearm(false, false);
+        return null;
+      });
     }
 
     status(): Promise<RpcOutcome<AppStatus>> {
@@ -495,6 +540,30 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         consistency,
         actor,
       );
+    }
+
+    forgetTenant(
+      tenant: string,
+      actor?: string,
+      options?: ForgetTenantOptions,
+    ): Promise<RpcOutcome<TenantForgottenResult>> {
+      return settle(async () => {
+        const forgotten = await this.#as(actor).forgetTenant(tenant, options);
+        await this.#rearm(false, true);
+        return forgotten;
+      });
+    }
+
+    rotateTenantKey(actor?: string): Promise<RpcOutcome<TenantKeyVersions>> {
+      return settle(async () => {
+        const versions = await this.#as(actor).rotateTenantKey();
+        await this.#rearm(false, true);
+        return versions;
+      });
+    }
+
+    retireTenantKeys(actor?: string): Promise<RpcOutcome<readonly string[]>> {
+      return settle(() => this.#as(actor).retireTenantKeys());
     }
 
     override async alarm(): Promise<void> {

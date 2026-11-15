@@ -27,6 +27,7 @@ const fields: FieldsRecord = {
 };
 
 const indexer: BlindIndexer = {
+  epoch: "epoch-1",
   index: async ({ field, value }) => `${field}=${JSON.stringify(value)}`,
 };
 
@@ -333,7 +334,7 @@ describe("settleReadModels", () => {
     expect(String(row?.email)).toMatch(/^\{"\$personal":/);
     expect(row?.email__index).toBe('email="a@x"');
     expect(await storage.checkpointStore.get(settledMark("customers"))).toBe(
-      layoutDigest({ layout }),
+      layoutDigest({ layout, epoch: indexer.epoch }),
     );
     await settleReadModels({
       readModels: [{ name: "customers", layout, storage }],
@@ -344,30 +345,35 @@ describe("settleReadModels", () => {
     void keys;
   });
 
-  it("opens the index key only for a read model with a blind index", async () => {
-    const store = (await memory().createStorage()).indexKeys;
-    const wrapping = {
-      wrapper: null,
-      generate: () => Promise.reject(new Error("not asked")),
-      unwrap: () => Promise.reject(new Error("not asked")),
-      wrapped: () => Promise.reject(new Error("not asked")),
+  it("gives an indexer only to read models with a blind index, and refuses one without keys", async () => {
+    const indexer = { epoch: "e", index: () => Promise.reject(new Error("not asked")) };
+    const atRest = {
+      seal: () => Promise.reject(new Error("not asked")),
+      open: () => Promise.reject(new Error("not asked")),
     };
     const unindexed = sealedLayoutOf({
       readModel: "notes",
       fields: { id: f.string().primaryKey().person(), note: f.string().personal() },
     });
-    expect(
-      (
-        await openReadModelSealing({
-          layouts: [unindexed],
-          keys: eachPerson(() => []),
-          indexKeys: store,
-          wrapping,
-          clock: { now: () => new Date(), after: () => () => undefined } as never,
-          scheduler: { get: () => Promise.reject(new Error("not asked")) },
-        })
-      ).indexer,
-    ).toBeNull();
+    const indexed = sealedLayoutOf({
+      readModel: "notes",
+      fields: { id: f.string().primaryKey().person(), note: f.string().personal().index() },
+    });
+    const scheduler = { get: () => Promise.reject(new Error("not asked")) };
+    const sealing = (
+      layout: typeof indexed,
+      databaseKey: { indexer: typeof indexer; atRest: typeof atRest } | null,
+    ) =>
+      openReadModelSealing({
+        layouts: [layout],
+        keys: eachPerson(() => []),
+        databaseKey,
+        scheduler,
+      });
+    expect((await sealing(unindexed, { indexer, atRest })).indexer).toBeNull();
+    expect((await sealing(unindexed, null)).indexer).toBeNull();
+    expect((await sealing(indexed, { indexer, atRest })).indexer).toBe(indexer);
+    await expect(sealing(indexed, null)).rejects.toThrow("A read model keeps a blind index");
   });
 });
 
@@ -379,6 +385,16 @@ describe("layoutDigest", () => {
     });
     expect(layoutDigest({ layout })).not.toBe(layoutDigest({ layout: other }));
     expect(layoutDigest({ layout })).toBeGreaterThan(0);
+    // The key of the blind indexes counts for a read model that keeps them, and only for it.
+    expect(layoutDigest({ layout, epoch: "a" })).not.toBe(layoutDigest({ layout, epoch: "b" }));
+    expect(layoutDigest({ layout, epoch: "a" })).not.toBe(layoutDigest({ layout }));
+    const unindexed = sealedLayoutOf({
+      readModel: "customers",
+      fields: { customerId: f.string().primaryKey().person(), born: f.date().personal() },
+    });
+    expect(layoutDigest({ layout: unindexed, epoch: "a" })).toBe(
+      layoutDigest({ layout: unindexed }),
+    );
     expect(layoutDigest({ layout })).toBe(
       layoutDigest({ layout: sealedLayoutOf({ readModel: "customers", fields }) }),
     );
@@ -415,6 +431,29 @@ describe("settling at its edges", () => {
     ).toEqual({ email__key: ana.fingerprint, born__key: ana.fingerprint });
   });
 
+  it("computes every blind index anew when told to reindex, and patches only one that differs", async () => {
+    const { keys, keyOf } = keysOf();
+    const ana = await keyOf("ana");
+    const email = await sealedFor(ana, "ana", "a@x");
+    const stored = {
+      customerId: "ana",
+      email,
+      email__key: ana.fingerprint,
+      email__index: "under the key before",
+    };
+    expect(await settledPatch({ context: contextOf(keys), stored, reindex: true })).toEqual({
+      email__index: 'email="a@x"',
+    });
+    expect(
+      await settledPatch({
+        context: contextOf(keys),
+        stored: { ...stored, email__index: 'email="a@x"' },
+        reindex: true,
+      }),
+    ).toBeNull();
+    expect(await settledPatch({ context: contextOf(keys), stored })).toBeNull();
+  });
+
   it("seals a value in the clear that has its key field, and keys a value in the clear of a field kept in the clear", async () => {
     const { storage, context } = await (async () => {
       const { keys } = keysOf();
@@ -448,6 +487,26 @@ describe("settling at its edges", () => {
     });
     expect(String(ana?.email)).toMatch(/^\{"\$personal":/);
     expect(bo?.phone__key).toEqual(expect.any(String));
+  });
+
+  it("computes anew, page by page, a blind index computed under the database's key before", async () => {
+    const { keys, keyOf } = keysOf();
+    const ana = await keyOf("ana");
+    const storage = await memory().createReadModel<Record<string, unknown>>({
+      name: "customers",
+      fields: layout.stored,
+      logger: silentLogger,
+    });
+    await storage.table.upsert({
+      customerId: "ana",
+      email: await sealedFor(ana, "ana", "a@x"),
+      email__key: ana.fingerprint,
+      email__index: "under the key before",
+      phone: "1",
+      phone__key: "k",
+    });
+    await settlePage({ context: contextOf(keys), table: storage.table, after: undefined });
+    expect((await storage.table.findOne({ customerId: "ana" }))?.email__index).toBe('email="a@x"');
   });
 
   it("goes through rows already settled without writing them again", async () => {

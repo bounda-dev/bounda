@@ -54,6 +54,13 @@ const status: AppStatus = {
     lastRunAt: null,
     held: { until: "2026-05-01T00:05:00.000Z", attempts: 2 },
   },
+  tenant: {
+    tenant: "acme",
+    forgottenAt: null,
+    kid: "t-2",
+    previous: ["t-1"],
+    master: { kid: "m-2", previous: ["m-1"], pending: 1 },
+  },
   keyRotation: { kid: "k-2", previous: ["k-1"], pending: 1, completeAt: null },
   retention: {
     categories: [
@@ -98,6 +105,11 @@ const status: AppStatus = {
       failedNotices: 1,
     },
   ],
+  files: [
+    { database: "storage", file: "data/acme.db", state: "current" },
+    { database: "readModels.reports", file: "data/reports.db", state: "earlier" },
+    { database: "readModels.audit", file: "data/audit.db", state: "clear" },
+  ],
 };
 
 describe("formatStatus", () => {
@@ -115,6 +127,11 @@ describe("formatStatus", () => {
       "  processes  at 9, 0 behind",
       "personal data backfill: sealed through position 9, not caught up yet",
       "forget ledger: not reconciled since this instance started, applied through 2026-04-30T00:00:00.000Z, last run never, held until 2026-05-01T00:05:00.000Z after 2 failures",
+      "tenant: acme, key t-2 (older t-1), 1 version left to rewrap under master key m-2",
+      "database files",
+      "  storage  data/acme.db  encrypted under the tenant's key in force",
+      "  readModels.reports  data/reports.db  still under an earlier key of the tenant's: bounda rekey",
+      "  readModels.audit  data/audit.db  still in the clear: bounda rekey",
       "key rotation: under k-2 (previous k-1), 1 key left to rewrap",
       "retention",
       "  default  30d, 1 person past it, next due 2026-05-03T00:00:00.000Z",
@@ -152,15 +169,18 @@ describe("formatStatus", () => {
         lastRunAt: "2026-05-01T00:00:00.000Z",
         held: null,
       },
+      tenant: null,
       keyRotation: { kid: "k-1", previous: [], pending: 0, completeAt: "2026-05-01T00:00:00.000Z" },
       retention: null,
       deadLetterRetention: null,
       recipients: [],
+      files: [],
     };
     const lines = formatStatus({ status: bare }).split("\n");
-    expect(lines.slice(-6)).toEqual([
+    expect(lines.slice(-7)).toEqual([
       "personal data backfill: no personal data marked",
       "forget ledger: reconciled, applied through nothing yet, last run 2026-05-01T00:00:00.000Z",
+      "tenant: no keys: no personal data marked",
       "key rotation: under k-1, every key wrapped (checked 2026-05-01T00:00:00.000Z)",
       "retention: no personal data marked",
       "dead letter retention: not configured",
@@ -174,6 +194,21 @@ describe("formatStatus", () => {
         status: { ...bare, keyRotation: { ...bare.keyRotation, completeAt: null } as never },
       }),
     ).toContain("key rotation: under k-1, every key wrapped\n");
+    const tenant = {
+      tenant: "acme",
+      forgottenAt: null,
+      kid: "t-1",
+      previous: [],
+      master: { kid: "m-1", previous: [], pending: 0 },
+    };
+    expect(formatStatus({ status: { ...bare, tenant } })).toContain(
+      "tenant: acme, key t-1, wrapped under master key m-1\n",
+    );
+    expect(
+      formatStatus({
+        status: { ...bare, tenant: { ...tenant, forgottenAt: "2026-05-02T00:00:00.000Z" } },
+      }),
+    ).toContain("tenant: acme, forgotten at 2026-05-02T00:00:00.000Z\n");
   });
 });
 

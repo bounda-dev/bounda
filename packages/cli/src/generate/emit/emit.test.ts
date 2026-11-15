@@ -741,6 +741,7 @@ describe("emitProject with a port that declares a recipient", () => {
         "  type OnProcessingRestrictionLiftAnnouncedArgs = core.RecipientLiftAnnouncedArgs<Ports>;",
         "  type OnProcessingRestrictionLiftedArgs = core.RecipientLiftedArgs<Ports>;",
         "  type OnPersonalDataRedactedArgs = core.RecipientRedactedArgs<Ports>;",
+        "  type OnTenantForgottenArgs = core.RecipientTenantForgottenArgs<Ports>;",
         "}",
         "",
       ].join("\n"),

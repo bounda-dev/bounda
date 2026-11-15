@@ -31,6 +31,9 @@ export const createMemorySnapshotStore: CreateMemorySnapshotStoreFunction = ({ h
         current.version > snapshot.version;
       if (!older && snapshot.persons.every(holds)) snapshots.set(streamId(snapshot), snapshot);
     },
+    clear: async () => {
+      snapshots.clear();
+    },
     remove: async (stream) => {
       snapshots.delete(streamId(stream));
     },

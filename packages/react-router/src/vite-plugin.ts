@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Clock, Consistency } from "@bounda-dev/core";
 import { type Logger, normalizePath, type Plugin } from "vite";
 import { APP_MODULE_ID } from "./app-module.ts";
+import type { TenantAppsOptions } from "./create-bounda.ts";
 import type { BoundaVitePluginOptions } from "./vite.ts";
 
 export interface CreateBoundaPluginArgs extends BoundaVitePluginOptions {
@@ -43,7 +44,18 @@ const EVENTS = ["add", "change", "unlink", "addDir", "unlinkDir"] as const;
  * `app/actor.ts` optional, and Vite serves this module again when either appears or goes. Paths go in with `/`,
  * Vite's form on every platform.
  */
-const serverModule = ({ root, command }: Generation, consistency: Consistency): string =>
+// As JavaScript, so an `idleMs` of `Infinity`, which JSON cannot hold, means never.
+const tenantAppsLiteral = ({ max, idleMs }: TenantAppsOptions): string =>
+  `{ ${[
+    ...(max === undefined ? [] : [`max: ${max}`]),
+    ...(idleMs === undefined ? [] : [`idleMs: ${idleMs}`]),
+  ].join(", ")} }`;
+
+const serverModule = (
+  { root, command }: Generation,
+  consistency: Consistency,
+  tenantApps: TenantAppsOptions | undefined,
+): string =>
   [
     `import { createHost } from ${JSON.stringify(HOST_ID)};`,
     `import { registry } from ${JSON.stringify(normalizePath(join(root, ".bounda/registry.ts")))};`,
@@ -55,6 +67,7 @@ const serverModule = ({ root, command }: Generation, consistency: Consistency): 
     `  importTenant: Object.values(import.meta.glob(${JSON.stringify(`/${APP_DIRECTORY}/${TENANT_FILE}`)}))[0],`,
     `  importActor: Object.values(import.meta.glob(${JSON.stringify(`/${APP_DIRECTORY}/${ACTOR_FILE}`)}))[0],`,
     `  consistency: ${JSON.stringify(consistency)},`,
+    ...(tenantApps === undefined ? [] : [`  tenantApps: ${tenantAppsLiteral(tenantApps)},`]),
     "});",
     `export { failure } from ${JSON.stringify(HOST_ID)};`,
     "",
@@ -117,6 +130,7 @@ const checkEntryServer = async ({ root, logger }: Pick<Generation, "root" | "log
 export const createBoundaPlugin: CreateBoundaPluginFunction = ({
   consistency = "read-your-writes",
   debounceMs = 100,
+  tenantApps,
   clock,
 }) => {
   let generation: Generation | undefined;
@@ -198,7 +212,7 @@ export const createBoundaPlugin: CreateBoundaPluginFunction = ({
       if (id !== RESOLVED_ID || generation === undefined) return null;
       return this.environment.config.consumer === "client"
         ? clientModule()
-        : serverModule(generation, consistency);
+        : serverModule(generation, consistency, tenantApps);
     },
   };
 };

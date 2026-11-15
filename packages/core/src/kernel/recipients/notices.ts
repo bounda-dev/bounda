@@ -8,6 +8,7 @@ import {
   BOUNDA_AGGREGATE,
   PERSONAL_DATA_FORGOTTEN_EVENT,
   type PersonalDataForgottenPayload,
+  TENANT_FORGOTTEN_EVENT,
 } from "../../modules/bounda-events.ts";
 import type { PersonalCategoryName } from "../../modules/personal-data.ts";
 import {
@@ -48,10 +49,12 @@ export interface NoticesOfFunction {
 }
 
 /**
- * The recipients an event of the runtime's names to tell, none for any other event.
+ * The recipients an event of the runtime's names to tell, a tenant's forgetting included, none for
+ * any other event.
  */
 export const noticesOf: NoticesOfFunction = (event) =>
-  event.aggregateType === BOUNDA_AGGREGATE && RECIPIENT_EVENT_TYPES.has(event.type)
+  event.aggregateType === BOUNDA_AGGREGATE &&
+  (RECIPIENT_EVENT_TYPES.has(event.type) || event.type === TENANT_FORGOTTEN_EVENT)
     ? ((event.payload as { readonly recipients?: readonly NotifiedRecipient[] }).recipients ?? [])
     : [];
 
@@ -106,7 +109,7 @@ export interface RecipientNotices {
 
 export interface CreateRecipientNoticesArgs {
   readonly recipients: RecipientsRuntime;
-  readonly storage: Pick<AppStorage, "eventStore">;
+  readonly storage: Pick<AppStorage, "eventStore" | "recipients">;
   readonly config: ResolvedConfig;
   readonly clock: Clock;
   readonly recordAccess: RecordAccess;
@@ -124,7 +127,9 @@ const superseded = async (
   recipient: RecipientRuntime,
   event: StoredEvent,
 ): Promise<boolean> => {
-  if (event.type === PERSONAL_DATA_FORGOTTEN_EVENT) return false;
+  if (event.type === PERSONAL_DATA_FORGOTTEN_EVENT || event.type === TENANT_FORGOTTEN_EVENT) {
+    return false;
+  }
   const { events } = await storage.eventStore.load({
     aggregateType: BOUNDA_AGGREGATE,
     aggregateId: event.aggregateId,
@@ -137,6 +142,24 @@ const superseded = async (
       noticesOf(later).some(({ port }) => portOf(recipients, port) === recipient.port),
   );
 };
+
+// How many persons a page of `onTenantForgotten`'s `persons` reads at once.
+const PERSONS_PAGE = 500;
+
+// The persons the store recorded as disclosed to the port, page by page, in order.
+const disclosedTo = (
+  storage: Pick<AppStorage, "recipients">,
+  port: string,
+): (() => AsyncIterable<string>) =>
+  async function* persons() {
+    let after: string | null = null;
+    for (;;) {
+      const page = await storage.recipients.personsOf({ port, after, limit: PERSONS_PAGE });
+      yield* page;
+      if (page.length < PERSONS_PAGE) return;
+      after = page.at(-1) ?? null;
+    }
+  };
 
 export const createRecipientNotices: CreateRecipientNoticesFunction = ({
   recipients,
@@ -161,6 +184,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
       );
     }
     const context = { ...causedBy(event), ...actedBy(actor) };
+    const tenantWide = event.type === TENANT_FORGOTTEN_EVENT;
     const record = (outcome: "ok" | "failed", skipped: boolean) =>
       recordAccess({
         operation: "recipientNotice",
@@ -172,7 +196,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
           superseded: skipped,
         },
         actor: context.actor,
-        persons: [event.aggregateId],
+        persons: tenantWide ? [] : [event.aggregateId],
         outcome,
       });
     if (await superseded(storage, recipients, recipient, event)) {
@@ -209,6 +233,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
                   ...(event.type === PERSONAL_DATA_FORGOTTEN_EVENT
                     ? { retained: told.retained }
                     : {}),
+                  ...(tenantWide ? { persons: disclosedTo(storage, recipient.port) } : {}),
                   presumed: told.presumed,
                   idempotencyKey,
                   signal,
@@ -241,6 +266,10 @@ export interface CreateRecipientDeliveryArgs {
   readonly pendingRetries: PendingRetries;
   readonly logger: Logger;
 }
+
+// A tenant's forgetting names no person: its letter names none, and its text names none either.
+const personOf = (event: StoredEvent): string | null =>
+  event.type === TENANT_FORGOTTEN_EVENT ? null : event.aggregateId;
 
 export interface CreateRecipientDeliveryFunction {
   (args: CreateRecipientDeliveryArgs): RecipientDelivery;
@@ -283,13 +312,9 @@ export const createRecipientDelivery: CreateRecipientDeliveryFunction = ({
             eventType: event.type,
             aggregateType: event.aggregateType,
             aggregateId: event.aggregateId,
-            person: event.aggregateId,
+            person: personOf(event),
             errorType,
-            ...(await sealError({
-              error,
-              person: event.aggregateId,
-              keys: storage.personalKeys,
-            })),
+            ...(await sealError({ error, person: personOf(event), keys: storage.personalKeys })),
             attempts,
             firstFailedAt: now,
             lastFailedAt: now,

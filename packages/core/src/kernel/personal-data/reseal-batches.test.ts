@@ -3,15 +3,13 @@ import type { Storage } from "../../adapter/adapter.ts";
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import type { SealedValue } from "../../adapter/storage/personal-key-store.ts";
-import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { newStoredKey, openedKey } from "../test-support.ts";
+import { newStoredKey, openedKey, testWrapping } from "../test-support.ts";
 import { isSealed, seal, unseal } from "./crypto.ts";
 import { createResealBatches } from "./reseal-batches.ts";
-import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
 const metadata = {
   correlationId: "c",
@@ -96,7 +94,7 @@ const forgotten = (person: string, version = 1, payload: object = {}): PendingEv
 
 const setup = async (recordsActivity = true) => {
   const storage: Storage = await memory().createStorage();
-  const wrapping = createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() });
+  const wrapping = testWrapping();
   const reseal = createResealBatches({
     storage,
     aggregates,

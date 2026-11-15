@@ -2,20 +2,22 @@ import type { IndexKeyStore } from "../../adapter/storage/index-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { FieldType } from "../../modules/view.ts";
 import { canonicalJson } from "../shared/value-search.ts";
-import { PERSONAL_KEY_ALGORITHM, toBase64 } from "./crypto.ts";
+import { type AtRestSealer, createAtRestSealer } from "./at-rest.ts";
+import { toBase64 } from "./crypto.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
-// The nonce the index key is derived under: its top bit is clear, so `seal` never draws it, and it
-// is not the fingerprint's, all zeroes. Encrypting one fixed block under it yields the same secret
-// bytes every time, and nothing else is ever encrypted under it.
-const DERIVATION_IV = Uint8Array.from({ length: 12 }, (_, index) => (index === 11 ? 1 : 0));
-const HMAC_KEY_BYTES = 32;
+const INDEX_INFO = new TextEncoder().encode("bounda:blind-index");
 
-// Computes the blind index of a value: an HMAC-SHA256 under the database's index key, of the value
-// as its field stores it, apart for each read model and field, so one person's email in two read
-// models indexes differently.
+// Computes the blind index of a value: an HMAC-SHA256 under a key derived from the database's key,
+// of the value as its field stores it, apart for each read model and field, so one person's email
+// in two read models indexes differently.
 export interface BlindIndexer {
   index(args: BlindIndexArgs): Promise<string>;
+  /**
+   * The fingerprint of the database's key the indexes are computed under: indexes of another
+   * epoch compare to nothing.
+   */
+  readonly epoch: string;
 }
 
 export interface BlindIndexArgs {
@@ -38,48 +40,60 @@ export const indexedText: IndexedTextFunction = (type, value) => {
   return JSON.stringify(type === "json" ? canonicalJson(value) : value);
 };
 
-const deriveHmacKey = async (key: CryptoKey): Promise<CryptoKey> => {
-  const derived = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { name: PERSONAL_KEY_ALGORITHM, iv: DERIVATION_IV },
-      key,
-      new Uint8Array(HMAC_KEY_BYTES),
-    ),
-  ).slice(0, HMAC_KEY_BYTES);
-  try {
-    return await crypto.subtle.importKey("raw", derived, { name: "HMAC", hash: "SHA-256" }, false, [
-      "sign",
-    ]);
-  } finally {
-    derived.fill(0);
-  }
-};
+// Derived by WebCrypto from a base the database's key was unwrapped into: no byte of either
+// reaches JavaScript.
+const deriveHmacKey = (base: CryptoKey): Promise<CryptoKey> =>
+  crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(), info: INDEX_INFO },
+    base,
+    { name: "HMAC", hash: "SHA-256", length: 256 },
+    false,
+    ["sign"],
+  );
 
-export interface OpenBlindIndexerArgs {
+export interface DatabaseKey {
+  readonly indexer: BlindIndexer;
+  readonly atRest: AtRestSealer;
+}
+
+export interface OpenDatabaseKeyArgs {
   readonly store: IndexKeyStore;
-  readonly wrapping: Pick<PersonalKeyWrapping, "generate" | "unwrap" | "wrapped" | "wrapper">;
+  readonly wrapping: Pick<
+    PersonalKeyWrapping,
+    "generate" | "wrapped" | "isTenantWrapped" | "derivationBase"
+  >;
   readonly clock: Clock;
 }
 
-export interface OpenBlindIndexerFunction {
-  (args: OpenBlindIndexerArgs): Promise<BlindIndexer>;
+export interface OpenDatabaseKeyFunction {
+  (args: OpenDatabaseKeyArgs): Promise<DatabaseKey>;
 }
 
-// The database's index key, created on first use and kept wrapped as a person's key is, so a copy
-// of the database computes no index without the key wrapper; a key wrapped under a previous key of
-// the wrapper is rewrapped at once.
-export const openBlindIndexer: OpenBlindIndexerFunction = async ({ store, wrapping, clock }) => {
+// The database's key, created on first use and kept wrapped under the tenant's key as a person's
+// key is, so a copy of the database computes no index and opens nothing sealed at rest without
+// it; a key wrapped under an older version is rewrapped at once. One a version of Bounda before
+// tenant keys created is replaced by a new one: the indexes it computed are computed anew, by the
+// read models' settling, since the derivation changed with it.
+export const openDatabaseKey: OpenDatabaseKeyFunction = async ({ store, wrapping, clock }) => {
   let stored = await store.get();
-  if (stored === null) {
-    const generated = await wrapping.generate();
-    stored = await store.add(generated.stored, clock.now());
+  for (;;) {
+    if (stored === null) {
+      const generated = await wrapping.generate();
+      stored = await store.add(generated.stored, clock.now());
+    }
+    if (wrapping.isTenantWrapped(stored)) break;
+    const replacement = (await wrapping.generate()).stored;
+    stored = (await store.replace(stored, replacement)) ? replacement : await store.get();
   }
-  if (wrapping.wrapper !== null && stored.kid !== wrapping.wrapper.kid) {
-    const rewrapped = await wrapping.wrapped(stored);
-    if (await store.rewrap(stored, rewrapped)) stored = { ...stored, ...rewrapped };
+  const rewrapped = await wrapping.wrapped(stored);
+  if (rewrapped.kid !== stored.kid && (await store.rewrap(stored, rewrapped))) {
+    stored = { ...stored, ...rewrapped };
   }
-  const key = await deriveHmacKey(await wrapping.unwrap(stored));
-  return {
+  const base = await wrapping.derivationBase(stored);
+  const key = await deriveHmacKey(base);
+  const atRest = createAtRestSealer(base);
+  const indexer: BlindIndexer = {
+    epoch: stored.fingerprint,
     index: async ({ readModel, field, type, value }) =>
       toBase64(
         new Uint8Array(
@@ -91,4 +105,5 @@ export const openBlindIndexer: OpenBlindIndexerFunction = async ({ store, wrappi
         ),
       ),
   };
+  return { indexer, atRest };
 };

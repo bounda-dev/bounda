@@ -6,7 +6,7 @@ import {
 } from "@bounda-dev/core";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
-import { createBounda } from "./create-bounda.ts";
+import { createBounda, DEFAULT_TENANT_APPS, DEFAULT_TENANT_IDLE_MS } from "./create-bounda.ts";
 
 interface FakeApp {
   readonly app: BoundaApp;
@@ -609,6 +609,313 @@ describe("createBounda", () => {
     release(new Error("boom"));
     await expect(pending).rejects.toThrow("boom");
     await expect(disposing).resolves.toBeUndefined();
+  });
+});
+
+describe("createBounda with a tenant per request", () => {
+  const requestFor = (tenant: string) => {
+    const context = new RouterContextProvider();
+    const request = new Request(url, { headers: { "x-tenant": tenant } });
+    return { context, args: { request, url, pattern: "/", params: {}, context } };
+  };
+  const tenantOfHeader = ({ request }: { readonly request: Request }) =>
+    request.headers.get("x-tenant") ?? "default";
+
+  it("boots one app for each tenant, with its name, and serves each request its tenant's", async () => {
+    const booted: (string | undefined)[] = [];
+    const apps = new Map<string, FakeApp>();
+    const { bounda, boundaMiddleware } = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      tenant: tenantOfHeader,
+      boot: async (args) => {
+        booted.push(args?.tenant);
+        const app = fakeApp(args?.tenant ?? "none");
+        apps.set(args?.tenant ?? "none", app);
+        return app.app;
+      },
+    });
+    const acme = requestFor("acme");
+    const globex = requestFor("globex");
+    const again = requestFor("acme");
+    await Promise.all([
+      boundaMiddleware(acme.args, async () => undefined),
+      boundaMiddleware(globex.args, async () => undefined),
+    ]);
+    await boundaMiddleware(again.args, async () => undefined);
+    expect(booted.sort()).toEqual(["acme", "globex"]);
+    expect(acme.context.get(bounda)).toBe(apps.get("acme")?.app);
+    expect(again.context.get(bounda)).toBe(apps.get("acme")?.app);
+    expect(globex.context.get(bounda)).toBe(apps.get("globex")?.app);
+  });
+
+  it("stops every tenant's app on dispose, and on a declaration again under the same key", async () => {
+    const key = uniqueKey();
+    const apps: FakeApp[] = [];
+    const declare = () =>
+      createBounda({
+        consistency: "eventual",
+        key,
+        tenant: tenantOfHeader,
+        boot: async (args) => {
+          const app = fakeApp(args?.tenant ?? "none");
+          apps.push(app);
+          return app.app;
+        },
+      });
+    const first = declare();
+    await first.boundaMiddleware(requestFor("acme").args, async () => undefined);
+    await first.boundaMiddleware(requestFor("globex").args, async () => undefined);
+    await first.dispose();
+    expect(apps.map(({ calls }) => calls)).toEqual([
+      ["start", "stop"],
+      ["start", "stop"],
+    ]);
+    await first.boundaMiddleware(requestFor("acme").args, async () => undefined);
+    const second = declare();
+    await second.boundaMiddleware(requestFor("acme").args, async () => undefined);
+    expect(apps.map(({ calls }) => calls)).toEqual([
+      ["start", "stop"],
+      ["start", "stop"],
+      ["start", "stop"],
+      ["start"],
+    ]);
+  });
+
+  it("keeps the tenants of every key apart, and forgets those it disposed", async () => {
+    const stopped: string[] = [];
+    const declare = (key: string) =>
+      createBounda({
+        consistency: "eventual",
+        key,
+        tenant: tenantOfHeader,
+        boot: async (args) => {
+          const app = fakeApp(`${key}/${args?.tenant}`);
+          return { ...app.app, stop: async () => void stopped.push(`${key}/${args?.tenant}`) };
+        },
+      });
+    const [first, second] = [uniqueKey(), uniqueKey()];
+    const one = declare(first);
+    const other = declare(second);
+    await one.boundaMiddleware(requestFor("acme").args, async () => undefined);
+    await other.boundaMiddleware(requestFor("acme").args, async () => undefined);
+    const again = declare(first);
+    await drained();
+    expect(stopped).toEqual([`${first}/acme`]);
+    await again.dispose();
+    await again.dispose();
+    expect(stopped).toEqual([`${first}/acme`]);
+    await other.dispose();
+    expect(stopped).toEqual([`${first}/acme`, `${second}/acme`]);
+  });
+
+  it("logs as the errorText of a tenant's app once one has booted", async () => {
+    const lines: unknown[][] = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: (...entry: unknown[]) => void lines.push(entry),
+    };
+    const { boundaMiddleware, dispose, handleError } = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      tenant: tenantOfHeader,
+      logger,
+      errorText: "omit",
+      boot: async (args) => {
+        if (args?.tenant === "broken") throw new Error("broken does not boot");
+        return {
+          ...fakeApp("acme").app,
+          config: { runtime: { telemetry: { errorText: "include" } } },
+        } as unknown as BoundaApp;
+      },
+    });
+    const failed = new Error("no account for ana@example.com");
+    const request = new Request("http://localhost/accounts");
+    await handleError(failed, { request });
+    expect(lines.at(-1)?.[1]).not.toHaveProperty("errorMessage");
+    // A tenant whose app did not boot has no rule: the one that booted gives it.
+    await expect(
+      boundaMiddleware(requestFor("broken").args, async () => undefined),
+    ).rejects.toThrow("broken does not boot");
+    await boundaMiddleware(requestFor("acme").args, async () => undefined);
+    await handleError(failed, { request });
+    expect(lines.at(-1)?.[1]).toMatchObject({ errorMessage: "no account for ana@example.com" });
+    await dispose();
+    await handleError(failed, { request });
+    expect(lines.at(-1)?.[1]).not.toHaveProperty("errorMessage");
+  });
+
+  // Apps by tenant, recording when each stops.
+  const pooled = (tenantApps: { readonly max?: number; readonly idleMs?: number }) => {
+    const stopped: string[] = [];
+    const booted: string[] = [];
+    const { boundaMiddleware, dispose } = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      tenant: tenantOfHeader,
+      tenantApps,
+      boot: async (args) => {
+        const name = args?.tenant ?? "none";
+        booted.push(name);
+        return { ...fakeApp(name).app, stop: async () => void stopped.push(name) };
+      },
+    });
+    const serve = (name: string, next: () => Promise<unknown> = async () => undefined) =>
+      boundaMiddleware(requestFor(name).args, next);
+    return { serve, dispose, stopped, booted };
+  };
+
+  it("keeps at most tenantApps.max apps, stopping the one served least recently", async () => {
+    const pool = pooled({ max: 2 });
+    await pool.serve("acme");
+    await pool.serve("globex");
+    await pool.serve("acme");
+    await pool.serve("initech");
+    await drained();
+    expect(pool.stopped).toEqual(["globex"]);
+    await pool.serve("globex");
+    await drained();
+    expect(pool.stopped).toEqual(["globex", "acme"]);
+    expect(pool.booted).toEqual(["acme", "globex", "initech", "globex"]);
+    await pool.dispose();
+    expect([...pool.stopped].sort()).toEqual(["acme", "globex", "globex", "initech"]);
+  });
+
+  it("stops an app it lets go only once the requests it serves have ended", async () => {
+    const pool = pooled({ max: 1 });
+    let finish = (): void => {};
+    const holding = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const serving = pool.serve("acme", () => holding);
+    await drained();
+    await pool.serve("globex");
+    await drained();
+    expect(pool.stopped).toEqual([]);
+    finish();
+    await serving;
+    await drained();
+    expect(pool.stopped).toEqual(["acme"]);
+    await pool.dispose();
+  });
+
+  it("stops an app two requests share only once both have ended, and dispose waits for it", async () => {
+    const pool = pooled({ max: 1 });
+    const holds: (() => void)[] = [];
+    const held = () =>
+      new Promise<void>((resolve) => {
+        holds.push(resolve);
+      });
+    const first = pool.serve("acme", held);
+    const second = pool.serve("acme", held);
+    await drained();
+    await pool.serve("globex");
+    holds[0]?.();
+    await first;
+    await drained();
+    expect(pool.stopped).toEqual([]);
+    const disposing = pool.dispose();
+    await drained();
+    expect(pool.stopped).toEqual(["globex"]);
+    holds[1]?.();
+    await second;
+    await disposing;
+    expect(pool.stopped).toEqual(["globex", "acme"]);
+  });
+
+  it("stops an app idle for tenantApps.idleMs at the next request of any tenant", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00.000Z") });
+    try {
+      const pool = pooled({ idleMs: 60_000 });
+      await pool.serve("acme");
+      vi.setSystemTime(new Date("2026-01-01T00:00:59.999Z"));
+      await pool.serve("globex");
+      await drained();
+      expect(pool.stopped).toEqual([]);
+      vi.setSystemTime(new Date("2026-01-01T00:01:00.000Z"));
+      await pool.serve("globex");
+      await drained();
+      expect(pool.stopped).toEqual(["acme"]);
+      // The tenant served now stays, however long it went without a request.
+      vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+      await pool.serve("globex");
+      await drained();
+      expect(pool.stopped).toEqual(["acme"]);
+      expect(pool.booted).toEqual(["acme", "globex"]);
+      await pool.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps an app serving a request past its idle time, as long as the request runs", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:00:00.000Z") });
+    try {
+      const pool = pooled({ idleMs: 60_000 });
+      let finish = (): void => {};
+      const serving = pool.serve(
+        "acme",
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      await drained();
+      vi.setSystemTime(new Date("2026-01-01T00:02:00.000Z"));
+      await pool.serve("globex");
+      await pool.serve("acme");
+      finish();
+      await serving;
+      await drained();
+      expect(pool.stopped).toEqual([]);
+      expect(pool.booted).toEqual(["acme", "globex"]);
+      await pool.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses a bound of less than one app, or an idle time that is no duration", () => {
+    expect(() =>
+      createBounda({ key: uniqueKey(), tenant: tenantOfHeader, tenantApps: { idleMs: 0 } }),
+    ).not.toThrow();
+    expect(() =>
+      createBounda({
+        key: uniqueKey(),
+        tenant: tenantOfHeader,
+        tenantApps: { idleMs: "1m" as unknown as number },
+      }),
+    ).toThrow(
+      new ConfigurationError("tenantApps.idleMs must be a duration in milliseconds, got 1m"),
+    );
+    for (const tenantApps of [{ max: 0 }, { max: 1.5 }, { idleMs: -1 }, { idleMs: Number.NaN }]) {
+      expect(() => createBounda({ key: uniqueKey(), tenant: tenantOfHeader, tenantApps })).toThrow(
+        ConfigurationError,
+      );
+    }
+    expect(DEFAULT_TENANT_APPS).toBe(100);
+    expect(DEFAULT_TENANT_IDLE_MS).toBe(15 * 60_000);
+  });
+
+  it("refuses a tenant that is no function, and a name that is no string", async () => {
+    expect(() =>
+      createBounda({ key: uniqueKey(), tenant: "acme" as unknown as () => string }),
+    ).toThrow(
+      new ConfigurationError(
+        'tenant must be a function that names the store of a request, such as () => "default"',
+      ),
+    );
+    const { boundaMiddleware } = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      tenant: () => 42 as unknown as string,
+      boot: async () => fakeApp("never").app,
+    });
+    await expect(boundaMiddleware(middlewareArgs().args, async () => undefined)).rejects.toThrow(
+      new ConfigurationError("tenant must name the store of a request with a string, got 42"),
+    );
   });
 });
 

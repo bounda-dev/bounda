@@ -755,6 +755,20 @@ projection of a personal event handles `null` as well, since a rebuild replays e
 forgotten ones included: a column in the clear that is `NOT NULL` takes a `null` email badly, so
 make it optional and leave it out. A sealed one takes it: `null` is sealed like any value.
 
+A copy keeps a column in the clear as it was, a forgotten person's included: that is what `clear`
+costs. Once the tenant is forgotten, how long a copy keeps it depends on the engine. SQLite through
+libSQL [encrypts the file](#encrypted-database-files) under the tenant's key, so no copy opens.
+PostgreSQL has no encryption of its own under a key per tenant ([PostgreSQL
+wiki](https://wiki.postgresql.org/wiki/Transparent_Data_Encryption)), so a copy keeps the column
+for as long as you keep the copy. A Durable Object empties its storage, but Cloudflare keeps its
+[point-in-time history](https://developers.cloudflare.com/durable-objects/api/storage-api/) for 30
+days, encrypted under [keys of its
+own](https://developers.cloudflare.com/durable-objects/reference/data-security/), not the
+tenant's. Wherever a copy is restored under the app, the tenant is forgotten in it again before it
+serves anything, and an app names, once as it starts, the fields kept in the clear in a database not
+encrypted under the tenant's key. To keep a column readable in no copy, seal it: `.personal()`
+without `clear`, found by equality through its blind index, never sorted or filtered by range.
+
 ### What a forgetting kept
 
 A category a legal obligation keeps past `forget(person)` is restricted until its retention ends
@@ -919,6 +933,11 @@ export const onPersonalDataRedacted = ({
   idempotencyKey,
 }: Port.OnPersonalDataRedactedArgs) =>
   mailer.erase({ personId: event.payload.personId, idempotencyKey });
+
+// The tenant was forgotten: every person whose data the port sent goes.
+export const onTenantForgotten = async ({ persons, mailer }: Port.OnTenantForgottenArgs) => {
+  for await (const personId of persons()) await mailer.erase({ personId });
+};
 ```
 
 `recipient` names who receives the data, as the person is told; its `kind`, a `processor` that
@@ -930,10 +949,11 @@ Economic Area takes the `safeguard` its transfer rests on: `adequacy` (article 4
 `code-of-conduct`, `certification` (article 46(2)(e) and (f)) or `derogation` (article 49); one
 inside takes none. A port of a read model may declare one too, for what its queries hand it.
 
-Each of the five handlers tells the recipient of one event of the person's stream `bounda:<personId>`:
+Five of the six handlers tell the recipient of one event of the person's stream `bounda:<personId>`:
 a [forgetting](#forgetting-a-person), a [restriction](#restricting-processing), the announcement of
 its lift, which article 18(3) asks be made before it, the lift, and a
-[redaction](#correcting-a-persons-data). It receives the event, typed; `categories`, of those the
+[redaction](#correcting-a-persons-data). The sixth, `onTenantForgotten`, tells it the whole tenant
+was [forgotten](#forgetting-a-tenant), with `persons()` in place of a person. It receives the event, typed; `categories`, of those the
 recipient received, the ones the event touches; for a forgetting, `retained`, those a [legal
 obligation keeps](#categories) instead, which the recipient restricts rather than erases;
 `presumed`, `true` when it is not known to hold the data but cannot be ruled out (see below);
@@ -968,7 +988,7 @@ names it, or refused, never handed over unseen.
 
 ### Who is told, and how
 
-Each of the five events names, in `recipients`, the recipients to tell, read in its own transaction
+Each of the six events names, in `recipients`, the recipients to tell, read in its own transaction
 from what was disclosed: every port that received data of the person in a category the event
 touches, with those categories, `retained` and `presumed`. The event is the outbox. A subscriber of
 its own, `recipients`, hands each one to the port's handler, once at least and in the order of the
@@ -1325,7 +1345,8 @@ kept.
 ## Where the keys live
 
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
-key with the person, the category, the key, the id of the key it is wrapped under, its
+key with the person, the category, the key, the id of the version of the tenant's key it is
+wrapped under, its
 fingerprint, the person's last activity and, for one a legal obligation kept past a forgetting,
 since when: at most one key in force per person and category. Each key is named by the person and
 its fingerprint: the memory adapter
@@ -1345,14 +1366,35 @@ that shape, whatever the schema marks, so an event or a delayed command whose ha
 writes an envelope itself, in any field, is refused with a `ValidationError`: it could only read
 back as `null`, or not at all.
 
-### A master key
+### Three keys deep
 
 A key kept next to the data opens it for whoever reads the database: a dump, a backup, a replica,
-a support session. So the runtime wraps every person's key before the store keeps it, under a
-master key that never enters the database: envelope encryption, what a cloud KMS does. The
-fingerprint stays that of the key, whatever it is wrapped under, so `forget` is still one
-transaction and nothing else changes; a copy of the database without the master key opens
-nothing.
+a support session. So no key the database holds opens anything on its own. Every key stands in a
+hierarchy, envelope encryption as a cloud KMS does it:
+
+- the **master key**, which never enters the database nor the tenant key store: an environment
+  variable, a Worker's secret, or a KMS;
+- the **tenant's key**, one per tenant, wrapped under the master key and kept in a **tenant key
+  store** apart from the tenant's database: another database, a KV namespace, a vault;
+- the **persons' keys**, one per person and category, and the **database's key**, which derives
+  the [blind indexes](#sealed-at-rest) and seals what the runtime keeps of
+  several persons at once (a snapshot's state, a remembered answer), all wrapped under the
+  tenant's key and kept in the database;
+- on an engine that encrypts its database files, libSQL's, **each file's key**, random, wrapped
+  under the tenant's key and kept with it in the tenant key store, so the file itself opens only
+  through the hierarchy (see [Encrypted database files](#encrypted-database-files)).
+
+A copy of the database opens nothing without the tenant key store and the master key; a copy of
+the tenant key store opens nothing without the master key. Destroying a person's key forgets the
+person, in every copy; destroying the tenant's key [forgets the tenant](#forgetting-a-tenant), in
+every copy too, which is what makes a backup or a Durable Object's point-in-time restore safe to
+keep after a tenant leaves. The fingerprint of every key stays that of the key, whatever it is
+wrapped under, so rotating any level rewrites wrappings and nothing else.
+
+Every app has a tenant, and every tenant has its key, a single-tenant app as much as one of many:
+the tenant is `default` unless something names another (see [Tenants](#tenants)).
+
+### A master key
 
 ```ts
 import { defineConfig, masterKey } from "@bounda-dev/core/config";
@@ -1361,7 +1403,10 @@ import { sqlite } from "@bounda-dev/sqlite";
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),
   runtime: {
-    personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) },
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: sqlite({ path: "./keys/tenant-keys.db" }),
+    },
   },
 });
 ```
@@ -1379,37 +1424,123 @@ that names the variable, never its value. The keys are wrapped with AES-KW; each
 derived from it, so a wrong master key is told apart from the right one: reading a key it did not
 wrap fails with a `ConfigurationError` saying under which id that key is.
 
-A project from `create-bounda` comes with one: a key generated for it in `.env` on Node, or in
-`.dev.vars` on Cloudflare, both left out of Git, and the configuration above. In production, set
-the variable the way the host keeps secrets. On Cloudflare that is a secret of the Worker:
+An app whose registry marks a field `personal` needs both `keyWrapper` and `tenantKeys`: without
+either it does not start, and the `ConfigurationError` says what to set. The one exception is
+`memory()`, whose data goes with the process: it brings a master key WebCrypto generates and that
+can never be exported, and a tenant key store in memory, both gone with the process too. A test app
+over any adapter gets the same (see [In tests](#in-tests)).
+
+A project from `create-bounda` comes with both: a master key generated for it in `.env` on Node, or
+in `.dev.vars` on Cloudflare, both left out of Git, and a tenant key store where each runtime keeps
+one (`./keys/tenant-keys.db` with SQLite, a second PostgreSQL database in `TENANT_KEYS_URL`, the
+`TENANT_KEYS` KV namespace on Cloudflare). In production, set the variable the way the host keeps
+secrets. On Cloudflare that is a secret of the Worker:
 
 ```sh
 npx wrangler secret put BOUNDA_MASTER_KEY
 ```
 
-Keep the master key as you keep the database's backups, for as long as they are kept: lost, it
-takes every person's data with it, as if each had been forgotten. `bounda rebuild` reads it from
-`.env` like `boot()`; `rebuildReadModel` takes the environment as `env`.
+Keep the master key and the tenant key store as you keep the database's backups, for as long as
+they are kept: lost, either takes every person's data with it, as if each had been forgotten.
+`bounda rebuild` reads the master key from `.env` like `boot()`; `rebuildReadModel` takes the
+environment as `env`.
 
-Under a master key, a person's key exists in the app only as a WebCrypto key that can never be
-exported. WebCrypto generates it, wraps it under the master key and unwraps it straight into a key
-it seals and opens with, so its raw bytes never reach JavaScript memory, where nothing could erase
-them: no string, no buffer, on Node, in `workerd` or in a test app given the master key. The bytes read from the master key's variable
-are zeroed once imported; the variable itself is the one copy the host keeps.
+Every key exists in the app only as a WebCrypto key that can never be exported. WebCrypto
+generates it, wraps it under the key above it and unwraps it straight into a key it seals and opens
+with, so its raw bytes never reach JavaScript memory, where nothing could erase them: no string, no
+buffer, on Node, in `workerd` or in a test app. The bytes read from the master key's variable are
+zeroed once imported; the variable itself is the one copy the host keeps.
 
-Unwrapped keys are kept in memory, by fingerprint, up to ten thousand per app and for five
-minutes from the moment each was unwrapped, so a command does not pay for unwrapping on every
-read, and the key of someone no longer active does not stay usable in the process: keys past their
-time go at the next read of any key, and a timer drops them when no key is read, without keeping
-a Node process alive. A Durable Object arms no such timer, which would keep it from sleeping: there
-they go at the next read, or with the object when the platform evicts it. A forgotten person's key
-goes once the forget commits, and the keys the rotation unwraps are not kept. The person's row is
-still read first every time: a person forgotten on another instance is forgotten here at once.
+One key leaves WebCrypto, because its engine takes nothing else: an [encrypted database
+file](#encrypted-database-files)'s key, which libSQL takes as text when it opens the file. The app
+exports it at that moment alone, hands it straight to `@libsql/client` and keeps it in no variable,
+log or error, zeroing the bytes it came from; libSQL holds it while the file is open, as any engine
+that encrypts a file holds its key.
 
-Without `keyWrapper` the keys are kept as they are, next to the data, and the app logs a warning
-when it starts if the registry marks any field `personal`; an app from `createTestApp` warns
-nothing. Then the key's text is what the store holds, read back as a string: the runtime exports a
-new key once, to store it, imports what it reads at once, and zeroes the bytes either way. Setting one later wraps the keys kept so far in the background, as a rotation does.
+Unwrapped keys are kept in memory: the tenant's versions, and the persons' keys by fingerprint, up
+to `UNWRAPPED_KEYS_KEPT` per app, each for `UNWRAPPED_KEY_TTL_MS` (five minutes) from the moment it
+was unwrapped, so a command does not pay for unwrapping on every read, and the key of someone no
+longer active does not stay usable in the process: keys past their time go at the next read of any
+key, and a timer drops them when no key is read, without keeping a Node process alive. A Durable
+Object arms no such timer, which would keep it from sleeping: there they go at the next read, or
+with the object when the platform evicts it. A forgotten person's key goes once the forget commits,
+and the keys the rotation unwraps are not kept. The person's row is still read first every time: a
+person forgotten on another instance is forgotten here at once.
+
+### The tenant key store
+
+`runtime.personalData.tenantKeys` takes an adapter pointed at another database than the storage's,
+which creates its table there (`bounda_tenant_keys`), or a store of your own from
+`defineTenantKeyStore`; on Cloudflare, `kvTenantKeys({ binding })` keeps each tenant's record in a
+KV namespace (see [Cloudflare](/adapters/cloudflare/#tenant-keys)). One store serves any number of
+tenants, one record each, and an adapter that points at the storage's own database is refused at
+the start: every copy of the database would carry the key that unlocks it.
+
+```ts
+import { defineConfig, masterKey } from "@bounda-dev/core/config";
+import { postgresql } from "@bounda-dev/postgresql";
+
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL }),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: postgresql({ url: process.env.TENANT_KEYS_URL }),
+    },
+  },
+});
+```
+
+Put it where the database's backups are not: another database whose backups are kept apart, or
+apart for less time, another server, a managed KV or secret store. A store whose backups you keep
+as long as the database's is still a second thing an attacker must get, but a tenant's forgetting
+then reaches its copies only through the master key, which is in every one of them.
+
+A tenant's record holds every version of its key, each wrapped under the master key with the
+master key's id and the version's fingerprint, the random id of the database the key belongs to,
+and, once the tenant is forgotten, when and under which event. A store written by several
+instances compares the record's revision and writes it in one step, so two instances never put two
+first versions in force; `defineTenantKeyStore` documents what a store of your own must do: get
+and put a tenant's record, and list its tenants in pages, from a cursor, which a rotation of the
+master key goes through. A store that cannot compare and set says `oneWriterPerTenant: true`, as
+KV's does, and nothing but each tenant's own writer then rewraps a record there.
+
+The database keeps its half of the binding in `bounda_tenancy`: the tenant it belongs to, the same
+random id and when it was bound. An app that serves another tenant than the database's is refused,
+and so is a database whose tenant's record belongs to another database, as two databases given the
+same tenant name would be: give each database its own tenant, or its own store. A database that
+lost its tenant's record while keeping keys wrapped under it is refused too, since starting afresh
+would leave those keys unopenable; point `tenantKeys` at the store that holds it.
+
+### Tenants
+
+A tenant is a database with its own key: its events, read models and persons, nothing shared with
+another tenant's. Which tenant an app serves depends on the host:
+
+- In a **Durable Object**, the object is the tenant: its name, as `idFromName` gave it, or its id
+  when it has none. Every tenant's key lives in one store, under that name.
+- In **Node**, `boot({ tenant })`, `BOUNDA_TENANT`, or `--tenant` on the CLI names it; without any,
+  the app serves `default`, and its ports receive no tenant. A project that serves several from one
+  deployment exports its configuration as a function of the tenant, so each gets its own database:
+
+  ```ts
+  export default defineConfig(({ tenant }) => ({
+    storage: postgresql({ url: process.env.DATABASE_URL, schema: `tenant_${tenant}` }),
+    runtime: {
+      personalData: {
+        keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+        tenantKeys: postgresql({ url: process.env.TENANT_KEYS_URL }),
+      },
+    },
+  }));
+  ```
+
+  `boot()`, the CLI and the React Router host call it with the tenant they serve; the React Router
+  host boots one app per tenant its `app/tenant.ts` names (see
+  [React Router](/guides/react-router/#tenants)). `configForTenant` gives the configuration of one
+  tenant, for code of your own.
+
+A tenant whose name changes is another tenant: its database is refused with the old name's record.
 
 ### Rotating the master key
 
@@ -1420,28 +1551,99 @@ Generate a new key, give it the variable the configuration reads, and move the o
 keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", previous: ["BOUNDA_MASTER_KEY_OLD"] }),
 ```
 
-A key wrapped under a previous master key still opens; the worker rewraps them under the current
-one in batches, on every pass, as the retention sweep runs, one instance at a time under a lease
-of its own for each set of master keys, as the retention's. A key that fails to rewrap waits on its
-row, as a person the retention could not forget does, while the others go on. Once none is left
-the worker marks the rotation complete for this set of master keys, in `bounda_checkpoints`, and
-logs it once:
+The master key wraps the tenant's key alone, so a rotation rewrites one record per tenant and
+nothing in any database. Each running app rewraps its own tenant's record on the worker's next
+pass, and `status` shows how many versions are left. A tenant whose app does not run, a Durable
+Object that sleeps or a tenant no process serves, is reached from the tenant key store itself:
+
+- In Node, `bounda tenant-key rewrap-master` rewraps every tenant the store holds, their apps
+  running or not, over each record's revision, so it runs safely beside the apps. It exits with
+  `2` while any tenant is left under a previous master key, naming each; `rewrapTenantKeys({
+  config, env })` from `@bounda-dev/core` does the same in code, and
+  `listTenantsUnderPreviousMaster` names those left.
+- On Cloudflare each tenant's record is written by its own object alone, which KV needs: the
+  `scheduled` of `createWorker` wakes every object still under a previous master key, which
+  rewraps its own (see [Cloudflare](/adapters/cloudflare/#rotating-the-master-key)).
+
+Each app logs once its own tenant's key is rewrapped:
 
 ```
-no personal key is wrapped under a previous key any more; remove them
+this tenant's key is wrapped under the master key in force; remove the previous ones once bounda tenant-key rewrap-master, or the Worker's schedule, finds no tenant left under them
 ```
 
-Then remove the old variable and `previous`. Rewrapping changes no event and no fingerprint, so it
-runs while the app serves. A Durable Object wakes for it as for a deadline. While the mark stands,
-`nextDueAt()` never reads the key table, and the passes read it once a minute across every
-instance, dropping the mark if they find a key to rewrap: an instance still on the old
-configuration, in a rolling deploy, may wrap a new key under the old master key, and the next
-pass after that minute finds it. Changing the master keys, `previous` included, reads the table
-again; the old configuration's mark stays while instances on it may still run, and goes once none
-has renewed it for ten minutes.
+Whether another tenant is left is the store's to say: `bounda tenant-key rewrap-master` exits with
+`0` only once none is, and on Cloudflare the schedule logs `bounda worker found no tenant left
+under a previous master key`. Then remove the old variable and
+`previous`. A tenant left under a key the wrapper no longer knows fails to start, saying which,
+until the variable is given back.
 
-Destroying the old master key once the backups taken before the rotation have expired is what
-makes those backups unreadable as a whole.
+Destroying the old master key once the backups of the tenant key store taken before the rotation
+have expired is what makes those copies unreadable as a whole.
+
+### Rotating the tenant's key
+
+`rotateTenantKey()`, or `bounda tenant-key rotate`, puts a new version of the tenant's key in
+force. New keys are wrapped under it at once; the worker rewraps every person's key and the
+database's key under it in batches, on every pass, one instance at a time under a lease, and logs
+once none is left under an older version:
+
+```
+no key is wrapped under an older version of the tenant's key any more; retire them
+```
+
+Then `retireTenantKeys()`, or `bounda tenant-key retire`, removes the older versions from the
+record: a backup of the database whose keys are wrapped under them opens nothing personal any
+more. It refuses while a key is still wrapped under one, and until twice `UNWRAPPED_KEY_TTL_MS`
+after the version in force was created, since an instance that read the record before the rotation
+wraps under the older version until it reads it again.
+
+### Encrypted database files
+
+In an app with a key wrapper and a tenant key store, `sqlite({ path })` encrypts its file under a
+key of the tenant's own: a random key per file, wrapped under the tenant's key and kept in the
+tenant's record. The file, its write-ahead log and every copy of them open only through the master
+key and the tenant key store, so once the tenant is [forgotten](#forgetting-a-tenant) none of them
+opens, its read models' columns [in the clear](#in-the-clear) included. `encrypt: false` keeps a
+file in the clear; a libSQL server, such as Turso, encrypts by its own means and is left as it is.
+
+The record keeps each file's key under the path the adapter is given, so keep the path as it is. A
+file in the clear, or under an earlier key, is encrypted under the key in force, in place, when the
+app starts with the file to itself. While another connection has it open, another process's or one
+this process closed and libSQL has not let go of yet, it opens as it is and the app logs that it
+left it so; from then on the worker tries again through the app's own connection every
+`FILE_ENCRYPTION_RETRY_MS` (a minute) and encrypts it as soon as no other connection has it open,
+as the next start does. Until then `app.status().files` and `bounda status` say which file is still
+`"clear"` or under an `"earlier"` key, `bounda rekey` encrypts it once the other processes have let
+go, exiting with `2` while one still holds it, and `forgetTenant` refuses while a file is in the
+clear, since forgetting would leave it readable. A start that stops halfway leaves
+`<file>.bounda-encrypting` beside the file, naming the key it was encrypting from: leave it, and the
+next start opens the file under that key, which rolls back what was half written, and finishes. A copy restored under
+another path opens under the key of the file it copies, and is encrypted under its own. A file in
+the clear that another tenant's database is bound to is left as it is, and the start fails; so does
+a new file whose tenant's record keeps another database's keys alone.
+
+[Rotating the tenant's key](#rotating-the-tenants-key) gives each file a new key too: the app that
+rotates moves the file under it as soon as no other connection holds the file, and the others
+within `FILE_ENCRYPTION_RETRY_MS` or at their next start. Retiring the older versions destroys a
+file's earlier keys only once the file is recorded under its new one, never before: a backup taken
+earlier opens no more from then on.
+
+Only what holds the keys opens such a file: the app; `bounda migrate`, `bounda forgotten` and
+`bounda rebuild`, which read the master key from the environment as the app does; and a script of
+yours through `withEncryptedFiles` from `@bounda-dev/core`, which runs on the configuration with
+every file opened under the tenant's keys. A backup tool copies the file, and its `-wal`, as they
+are.
+
+### Upgrading from a version before tenant keys
+
+A database written by a version of Bounda that wrapped the persons' keys under the master key, or
+kept them as they were, opens as it is: the first start creates the tenant's key and binds the
+database, and the worker rewraps every key under the tenant's, as a tenant key rotation does,
+reading each raw key once, the only time a key's bytes reach JavaScript. The database's key of such
+a version is replaced by one wrapped under the tenant's key, and the blind indexes are computed
+again under it. The migration deletes the snapshots, whose states were kept in the clear, and the
+answers remembered for rejections, whose messages may quote what a caller sent: the streams fold
+from their events, and a command sent again after the upgrade runs again.
 
 ### A KMS or a vault
 
@@ -1479,24 +1681,100 @@ const kms = defineKeyWrapper(({ env }) => {
 
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),
-  runtime: { personalData: { keyWrapper: kms } },
+  runtime: {
+    personalData: { keyWrapper: kms, tenantKeys: sqlite({ path: "./keys/tenant-keys.db" }) },
+  },
 });
 ```
 
-`kid` is stored next to every key the wrapper wraps; `unwrap` receives it back, with what `wrap`
-returned. A KMS needs the key's raw bytes, so they exist while `wrap` and `unwrap` run, and only
-then: the runtime zeroes the array it gives `wrap` once it settles, and imports what `unwrap`
-resolves as a key that can never be exported and zeroes that array at once. So resolve a
-`Uint8Array` of your own, as the SDK hands it, and keep no copy of either. The runtime checks the
-key `unwrap` answers against its fingerprint, so a wrapper that answers with another key fails
-loudly instead of sealing data under it. Creating a key takes one call to `wrap` and none to
-`unwrap`. KMS rotates a key's material itself and keeps decrypting under the old one with the
-same ARN, so `kid` does not change; moving to another KMS key is a rotation as above, with the old
-ARN in `previous`. Each instance asks KMS once per person it creates, and once per person it reads
-in every five minutes they are active, thanks to the cache.
+`kid` is stored next to every version of the tenant's key the wrapper wraps; `unwrap` receives it
+back, with what `wrap` returned. A KMS needs the key's raw bytes, so the tenant's key exists as bytes
+while `wrap` and `unwrap` run, and only then: the runtime zeroes the array it gives `wrap` once it
+settles, and imports what `unwrap` resolves as a key that can never be exported and zeroes that
+array at once. So resolve a `Uint8Array` of your own, as the SDK hands it, and keep no copy of
+either. The persons' keys never reach the KMS: the tenant's key wraps them inside WebCrypto. The
+runtime checks the key `unwrap` answers against its fingerprint, so a wrapper that answers with
+another key fails loudly instead of sealing data under it. KMS rotates a key's material itself and
+keeps decrypting under the old one with the same ARN, so `kid` does not change; moving to another
+KMS key is a rotation as above, with the old ARN in `previous`. Each instance asks KMS once for each
+version of its tenant's key, and once more every five minutes while it runs.
 
-A wrapper that fails, because KMS is unreachable, fails the command that needed the key, which
-the caller or the reaction's retry sees; the person's data is not touched.
+A wrapper that fails, because KMS is unreachable, fails the command that needed the tenant's key,
+which the caller or the reaction's retry sees; the person's data is not touched.
+
+## Forgetting a tenant
+
+When a customer of yours leaves, every person of theirs goes with them. `forgetTenant` destroys the
+tenant's key, so nothing personal of the tenant opens again: not in the database, not in any of its
+backups, not in a Durable Object's point-in-time restore.
+
+```ts
+await app.forgetTenant("acme");
+```
+
+The name must be the tenant the app serves: a `ValidationError` otherwise. While a person of the
+tenant holds a key a legal obligation keeps (see [Categories](#categories)), it refuses, since that
+data must stay: hand it back first, then pass `{ despiteLegalObligations: true }`. It resolves to
+`{ tenant, forgottenAt, eventId }`; `bounda forget-tenant <tenant> --yes` does the same from a
+terminal.
+
+It runs in this order, every step safe to run again:
+
+1. The tenant's record in the tenant key store loses every version of its key and records the
+   forgetting, when and under which event id. This is the step that cannot be undone, and the only
+   one needed: from here on nothing personal of the tenant opens anywhere.
+2. The database marks the tenant forgotten, and `TenantForgotten` is appended to the stream
+   `bounda:<tenant>`, with the categories the tenant's persons held keys of and the
+   [recipients](#recipients) to tell.
+3. Every person's key, the database's key, every snapshot and every remembered answer are deleted,
+   and every read model's rows, but those of a read model whose view says it holds no personal data
+   (`holdsPersonalData: false`): what another instance would still open with a key it keeps in
+   memory, or a projection kept in the clear, is gone.
+
+Once every recipient is told, its notice delivered or its dead letter resolved, what the engine
+keeps beyond the tenant's key goes too: an [encrypted file](#encrypted-database-files)'s keys,
+which the record kept under the master key so the notices could still read the file, are
+destroyed, and the file and its copies open no more, the app running on an empty database in
+memory; a Durable Object empties its storage. A PostgreSQL database stays, every read model's rows
+deleted.
+
+From then on the app serves nothing: every command, query, export and other call rejects with
+`TenantForgottenError` (`TENANT_FORGOTTEN`), and a Worker from `createWorker` answers `410`. Another
+instance sees it within `TENANT_CHECK_INTERVAL_MS` or at its first key it can no longer read, and
+does the same. The worker only tells the recipients: each port that was disclosed data of any of the
+tenant's persons, or may have been, gets its `onTenantForgotten`. An app that starts for a forgotten
+tenant runs steps 2 and 3 again, so a forgetting cut short by a crash finishes, and a database
+restored from a copy taken before it is forgotten again, `TenantForgotten` included, with the id
+and time the record keeps.
+
+What stays is what was never personal: the events' types, ids, streams and times, the ids of the
+persons, and every field the registry does not mark `personal()`, as it is, since Bounda does not
+know it describes anyone; personal fields stay as ciphertext no key opens. Mark everything that
+describes a person, or a field kept in the clear stays readable after the tenant is gone. A read
+model's rows go with the forgetting, but a backup of a read model's database taken before keeps
+fields not marked `.personal()` in the clear until it is restored and an app starts on it (see
+[Limitations](/reference/limitations/)). What your app does next is yours: delete the database once
+nothing needs its skeleton, the tenant's Durable Object with `deleteAll()`, its PostgreSQL schema,
+its SQLite file; the tenant key store keeps the record of the forgetting, which is what tells a
+restored copy to forget again, so keep it at least as long as any backup of the tenant.
+
+### Telling the recipients
+
+A recipient's port module exports `onTenantForgotten`, beside its other handlers, and receives the
+event and `persons()`, which lists in pages the ids of the persons whose data its port disclosed:
+erase every one of them. With `presumed`, the port was declared after data existed, so it may
+hold data no disclosure recorded, sent by a version of the port from before its declaration: erase
+whatever it holds of the tenant, not only the persons listed.
+
+```ts
+export const onTenantForgotten = async ({ persons, mailer }: Port.OnTenantForgottenArgs) => {
+  for await (const personId of persons()) await mailer.erase(personId);
+};
+```
+
+The notice follows the rules of every other (see [Who is told, and how](#who-is-told-and-how)): retried
+on failure, held in a dead letter when it gives up, which `retry` sends again even though the
+tenant is forgotten.
 
 ## Backups
 
@@ -1529,6 +1807,7 @@ export default defineConfig({
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: sqlite({ path: "./keys/tenant-keys.db" }),
       forgetLedger: { store: sqlite({ path: "./ledger/forget-ledger.db" }) },
     },
   },
@@ -1548,7 +1827,7 @@ On Cloudflare a restore of a Durable Object's storage goes back to a point in ti
 with it if it lived there, so the ledger is a KV namespace:
 
 ```ts
-import { cloudflare, kvForgetLedger } from "@bounda-dev/cloudflare";
+import { cloudflare, kvForgetLedger, kvTenantKeys } from "@bounda-dev/cloudflare";
 import { defineConfig, masterKey } from "@bounda-dev/core/config";
 
 export default defineConfig({
@@ -1556,6 +1835,7 @@ export default defineConfig({
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
       forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) },
     },
   },
@@ -1796,11 +2076,26 @@ too, clears the waits, and reconciles the ledger at once when there is one.
 
 ### Old backups
 
-The ledger handles a backup once it is restored. Rotating the [master key](#rotating-the-master-key)
-handles the others: destroying the old key once every backup it covers has expired leaves those
-backups unreadable as a whole, the forgotten persons with everyone else.
+The ledger handles a backup once it is restored. Rotating the [tenant's key](#rotating-the-tenants-key)
+handles the others: retiring the older version once every backup it covers has expired leaves those
+backups unreadable as a whole, the forgotten persons with everyone else. A tenant's backups need
+nothing of the kind once the tenant is [forgotten](#forgetting-a-tenant): its key is gone, and with
+it every copy.
 
 ## In tests
+
+A test app needs no master key nor tenant key store: without them, `createTestApp` keeps keys of
+its own in memory for each adapter it is given, the same for every test app over that adapter, so
+one opens what another sealed. Tests that open one database through adapters of their own, as two
+instances of the app would, pass the same `createTestKeys()` to each:
+
+```ts
+import { createTestApp, createTestKeys } from "@bounda-dev/core/testing";
+
+const runtime = { personalData: createTestKeys() };
+const first = await createTestApp({ registry, adapter: postgresql({ url }), config: { runtime } });
+const second = await createTestApp({ registry, adapter: postgresql({ url }), config: { runtime } });
+```
 
 `createTestApp` forgets like any app, and `expectForgotten` checks that nothing of the person is
 left readable:
@@ -1895,7 +2190,9 @@ Durable Object's storage, read from inside the object with `durableObjectAdapter
 `@bounda-dev/cloudflare` (see [Testing on Cloudflare](/adapters/cloudflare/#testing)). It reads
 the whole database, so point it only at a test's, and call it before `app.stop()`: an
 in-memory database is gone once the app stops. It works on every adapter: the in-memory one,
-SQLite, the Durable Object and PostgreSQL alike, each through its `inspect()`.
+SQLite, the Durable Object and PostgreSQL alike, each through its `inspect()`. A SQLite file
+[encrypted under the tenant's key](#encrypted-database-files) opens only through the adapter the
+app opened it with, `app.config.storage`.
 
 `expectRedacted` checks a [rectification](#correcting-a-persons-data): once fields of a person are
 redacted, that what they held can be read nowhere.
@@ -1948,6 +2245,27 @@ what a test double of a port was sent, and in the app's dead letters and subscri
 rejects with `NotRestrictedError`, whose `found` holds `{ value, place, field }` for each and whose
 message says what to do. A person with no restriction, or none of whose values a restriction
 covers, rejects with an `Error` saying so.
+
+`expectTenantForgotten` checks a [tenant's forgetting](#forgetting-a-tenant): that the app refuses
+every call, that its database holds no key, no snapshot and no remembered answer, that the tenant
+key store holds no version of its key, and that no value of any of its persons turns up in the
+clear wherever `expectForgotten` searches:
+
+```ts
+import { createTestApp, expectTenantForgotten } from "@bounda-dev/core/testing";
+
+const { app } = await createTestApp({ registry, tenant: "acme" });
+await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com", plan: "pro" });
+await app.runUntilIdle();
+await app.forgetTenant("acme");
+await expectTenantForgotten(app);
+```
+
+Given the test app, it looks for every value of every person the app sealed or a read model kept,
+and the `values` the test adds; given an adapter, such as one over a database restored from a copy,
+it checks that adapter's tables for `values` alone. It rejects with `TenantNotForgottenError`, whose
+`problems` list what is left beside values, and `found` the values, as `{ value, store, row,
+field }`.
 
 `app.runUntilIdle()` never moves a test's clock to a retention deadline, or every person the test
 created would be forgotten; a test reaches it by moving the clock itself:

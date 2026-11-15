@@ -15,12 +15,11 @@ import { buildReadModels } from "../read-model/build-read-models.ts";
 import { sealedTable } from "../read-model/sealed-table.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
-import { keysOver } from "../test-support.ts";
+import { keysOver, testWrapping } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
-import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
 const NO_RECIPIENTS: RecipientsRuntime = { all: [], byPort: {}, byOwner: {} };
 
@@ -143,7 +142,7 @@ const setup = async () => {
     storage: written,
     aggregates,
     processes: { byName: {} },
-    wrapping: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }),
+    wrapping: testWrapping(),
   });
   // Written as a projection writes, sealed under the keys the persons hold.
   const table = (name: string) => {

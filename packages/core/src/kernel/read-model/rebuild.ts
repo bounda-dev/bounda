@@ -1,10 +1,10 @@
-import { isAdapter } from "../../adapter/adapter.ts";
+import { isAdapter, type Storage } from "../../adapter/adapter.ts";
 import type { Checkpoint, CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import { checkConfigNames } from "../../config/names.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config } from "../../config/types.ts";
 import { systemClock } from "../../contracts/clock.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, TenantForgottenError } from "../../contracts/errors.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { checkActor } from "../../contracts/metadata.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -14,15 +14,23 @@ import type { AppEnv } from "../../register/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { appStorage } from "../events/app-event-store.ts";
-import {
-  buildPersonalKeyWrapping,
-  type PersonalKeyWrapping,
-} from "../personal-data/wrapped-keys.ts";
+import { openDatabaseKey } from "../personal-data/blind-index.ts";
+import { openEncryptedFiles } from "../personal-data/encrypted-files.ts";
+import { keySourcesOf, openKeyHierarchy } from "../personal-data/key-hierarchy.ts";
+import { buildKeyWrapper } from "../personal-data/key-wrapper.ts";
+import { marksPersonalFields } from "../personal-data/marks.ts";
+import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
+import { keylessWrapping, type PersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
+import { buildProcesses } from "../process/build-processes.ts";
 import { projectBatch, projectionSubscriberName, withKeys } from "../projection/runner.ts";
 import { actedBy } from "../shared/causation.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
-import { adapterForReadModel, compileProjections } from "./build-read-models.ts";
+import {
+  adapterForReadModel,
+  compileProjections,
+  readModelsMarkPersonal,
+} from "./build-read-models.ts";
 import { fingerprintReadModel } from "./fingerprint.ts";
 import { sealedLayoutOf } from "./sealed-rows.ts";
 import { openReadModelSealing } from "./sealing.ts";
@@ -36,10 +44,16 @@ export interface RebuildReadModelArgs {
   readonly name: string;
   readonly logger?: Logger;
   /**
-   * The host's environment, which `runtime.personalData.keyWrapper` is built from, so the
-   * projections read the personal fields: `process.env` in Node. Defaults to an empty object.
+   * The host's environment, which `runtime.personalData.keyWrapper` and
+   * `runtime.personalData.tenantKeys` are built from, so the projections read the personal fields:
+   * `process.env` in Node. Defaults to an empty object.
    */
   readonly env?: AppEnv;
+  /**
+   * The tenant the database serves, whose key opens its persons' keys, as the app's `tenant`.
+   * Defaults to `DEFAULT_TENANT`.
+   */
+  readonly tenant?: string;
   /**
    * Project at most about this many events, a batch more at most, then pause: the shadow table
    * and the position it reached are kept, and the next call for the same read model resumes from
@@ -144,21 +158,87 @@ export const rebuildsPassed: RebuildsPassedFunction = ({ checkpoints, name, posi
  * the next call, unless the read model's fields or projections changed meanwhile: then it starts
  * again from a fresh shadow.
  */
-export const rebuildReadModel: RebuildReadModelFunction = async ({ env = {}, ...args }) => {
-  const wrapping = await buildPersonalKeyWrapping({
-    definition: resolveConfig(args.config).runtime.personalData.keyWrapper,
+export const rebuildReadModel: RebuildReadModelFunction = async ({
+  env = {},
+  tenant = DEFAULT_TENANT,
+  ...args
+}) => {
+  const config = resolveConfig(args.config);
+  const adapter = config.storage;
+  if (!isAdapter(adapter)) {
+    throw new ConfigurationError(
+      `storage "${adapter.name}" is a definition without factories. Import the adapter package's factory.`,
+    );
+  }
+  const sources = keySourcesOf({ storage: adapter, personalData: config.runtime.personalData });
+  const master =
+    sources.keyWrapper === null
+      ? null
+      : await buildKeyWrapper({ definition: sources.keyWrapper, env });
+  const aggregates = buildAggregates({ registry: args.registry, ports: {} });
+  const files = await openEncryptedFiles({
+    config: args.config,
+    master,
+    tenantKeys: sources.tenantKeys,
+    tenant,
     env,
     clock: systemClock,
+    logger: args.logger ?? silentLogger,
   });
+  const keyed = files.store === null ? adapter : resolveConfig(files.config).storage;
+  let storage: Storage;
   try {
-    return await rebuildReadModelWith({ ...args, wrapping });
+    if (!isAdapter(keyed)) {
+      throw new ConfigurationError(
+        `storage "${keyed.name}" is a definition without factories. Import the adapter package's factory.`,
+      );
+    }
+    storage = await keyed.createStorage();
+  } catch (error) {
+    await files.store?.close?.().catch(() => undefined);
+    throw error;
+  }
+  try {
+    const hierarchy = await openKeyHierarchy({
+      storage: adapter,
+      master,
+      tenantKeys: sources.tenantKeys,
+      ephemeral: sources.ephemeral ?? false,
+      opened: storage,
+      store: files.store,
+      claims: files.claims,
+      tenant,
+      personal:
+        marksPersonalFields({
+          aggregates,
+          processes: buildProcesses({ registry: args.registry, aggregates, config }),
+        }) || readModelsMarkPersonal(args.registry),
+      env,
+      clock: systemClock,
+    });
+    try {
+      const forgotten = hierarchy?.tenantKeys.forgotten() ?? null;
+      if (forgotten !== null) throw new TenantForgottenError(tenant, forgotten.at);
+      return await rebuildReadModelWith({
+        ...args,
+        config: files.config,
+        wrapping: hierarchy?.wrapping ?? keylessWrapping(),
+        storage,
+      });
+    } finally {
+      await hierarchy?.close();
+    }
   } finally {
-    wrapping.close();
+    await storage.close();
   }
 };
 
-export interface RebuildReadModelWithArgs extends Omit<RebuildReadModelArgs, "env"> {
+export interface RebuildReadModelWithArgs extends Omit<RebuildReadModelArgs, "env" | "tenant"> {
   readonly wrapping: PersonalKeyWrapping;
+  /**
+   * The storage, open already, which the caller closes; opened and closed here when omitted.
+   */
+  readonly storage?: Storage;
 }
 
 export interface RebuildReadModelWithFunction {
@@ -174,6 +254,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   wrapping,
   maxEvents,
   actor,
+  storage: given,
 }) => {
   if (actor !== undefined) checkActor(actor);
   validateRegistry(registry);
@@ -197,7 +278,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
       `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
   }
-  const storage = await config.storage.createStorage();
+  const storage = given ?? (await config.storage.createStorage());
   try {
     // A rebuild runs no handler, so it builds no implementation, and writes no lifecycle event,
     // whose state opens by its shape: it needs no process.
@@ -214,9 +295,9 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
     const sealing = await openReadModelSealing({
       layouts: [layout],
       keys: personalKeys,
-      indexKeys: storage.indexKeys,
-      wrapping,
-      clock: systemClock,
+      databaseKey: layout.indexed
+        ? await openDatabaseKey({ store: storage.indexKeys, wrapping, clock: systemClock })
+        : null,
       scheduler: storage.scheduler,
     });
     const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
@@ -303,6 +384,6 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
     logger.info("read model rebuilt", { readModel: name, events, position, ...actedBy(actor) });
     return { events, position, done: true };
   } finally {
-    await storage.close();
+    if (given === undefined) await storage.close();
   }
 };

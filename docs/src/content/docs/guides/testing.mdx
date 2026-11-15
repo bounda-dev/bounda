@@ -210,6 +210,12 @@ See [testing on Cloudflare](/adapters/cloudflare/#testing).
 </TabItem>
 </Tabs>
 
+A test app needs no master key nor tenant key store: given neither, it keeps keys of its own in
+memory for each adapter, so every test app over the same adapter opens what another sealed. Tests
+that open one database through two adapters, as two instances would, pass the same
+`createTestKeys()` from `@bounda-dev/core/testing` to each as `runtime.personalData` (see
+[Personal data in tests](/guides/personal-data/#in-tests)).
+
 ## Doubles
 
 A test passes what each port of each aggregate or read model receives, by module and port. Pass a double
@@ -335,6 +341,26 @@ did not mark, is found until the read model's projection of `PersonalDataForgott
 Key and blind index columns are key material, compared whole and never searched inside.
 [Personal data in tests](/guides/personal-data/#in-tests) says what it looks for and where, and
 how to point it at a Durable Object's storage.
+
+## Nothing left of a forgotten tenant
+
+`expectTenantForgotten` checks, after `forgetTenant`, that the app serves nothing, that no key,
+snapshot or remembered answer of the tenant is left, that the tenant key store holds no version of
+its key, and that no value of any of its persons is left readable:
+
+```ts
+import { createTestApp, expectTenantForgotten } from "@bounda-dev/core/testing";
+
+const { app } = await createTestApp({ registry, tenant: "acme" });
+// ...
+await app.forgetTenant("acme");
+await expectTenantForgotten(app);
+```
+
+It rejects with `TenantNotForgottenError`, whose `problems` and `found` say what is left. Given an
+adapter instead, such as one over a copy restored from before the forgetting, it checks that
+adapter's tables for the `values` the test passes. See
+[Forgetting a tenant](/guides/personal-data/#forgetting-a-tenant).
 
 ## Nothing left of a value corrected
 

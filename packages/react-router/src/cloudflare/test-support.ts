@@ -48,6 +48,9 @@ export const storeNamespace = (): FakeStoreNamespace => {
       restrict: record("restrict"),
       unrestrict: record("unrestrict"),
       redact: record("redact"),
+      forgetTenant: record("forgetTenant"),
+      rotateTenantKey: record("rotateTenantKey"),
+      retireTenantKeys: record("retireTenantKeys"),
     };
   };
   return { calls, namespace: { idFromName: (name) => name, get: stubOf } };

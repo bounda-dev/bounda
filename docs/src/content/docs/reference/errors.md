@@ -49,6 +49,11 @@ dead letter with `errorType: "retriable_exhausted"`.
   of data whose person was forgotten, restricted, lifted or redacted since it was read, before the
   port is reached, its `streamId` the person's stream `bounda:<personId>`. `streamId`,
   `expectedVersion`, `actualVersion`.
+- **`TENANT_FORGOTTEN`** (`TenantForgottenError`). The app's tenant was
+  [forgotten](/guides/personal-data/#forgetting-a-tenant): every command, query, export and other
+  call of its app rejects with it, here or on any instance once it has seen the forgetting, and the
+  app runs no reaction any more, but the notices to the tenant's recipients. `tenant`,
+  `forgottenAt`.
 - **`HANDLER_TIMEOUT`** (no exported class; retried). A command, policy or process handler ran out
   of time (`runtime.commands.timeout`, `runtime.policies.timeout`,
   `runtime.processes.handlerTimeout`).
@@ -140,6 +145,7 @@ The hosts map the codes a client can cause to a status:
 | `VALIDATION_FAILED` | 400, with `issues` | 400, with `issues` |
 | `DOMAIN_ERROR` | 409, with `rejected` | 409, with `rejected` |
 | `PROCESSING_RESTRICTED` | 409 | 409 |
+| `TENANT_FORGOTTEN` | 410 | 410 |
 | `IDEMPOTENCY_KEY_CONFLICT` | 500, code `INTERNAL`, logged | 422 |
 | `CONCURRENCY_CONFLICT` | 409 | rethrown |
 | `CHAIN_DEPTH_EXCEEDED` | 409 | rethrown |

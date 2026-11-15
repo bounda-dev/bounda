@@ -156,6 +156,46 @@ npx wrangler secret put BOUNDA_MASTER_KEY
 Deploy to Cloudflare asks for it from `.dev.vars.example`. An object started without it fails to
 start, with a `ConfigurationError` that names the variable.
 
+## Tenant keys
+
+Each object is a [tenant](/guides/personal-data/#tenants), named by the name it was reached
+through, `idFromName`'s, or by its id when it has none; its key wraps the keys of its persons and of
+its database, and lives outside the object, so that [forgetting the
+tenant](/guides/personal-data/#forgetting-a-tenant) reaches every point-in-time restore of its
+storage too. `kvTenantKeys({ binding })` keeps every tenant's key in a KV namespace, one key each
+under `bounda/tenant-keys/` and the tenant's name, wrapped under the master key:
+
+```ts
+import { cloudflare, kvTenantKeys } from "@bounda-dev/cloudflare";
+import { defineConfig, masterKey } from "@bounda-dev/core/config";
+
+export default defineConfig({
+  storage: cloudflare(),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+    },
+  },
+});
+```
+
+```jsonc
+// wrangler.jsonc
+"kv_namespaces": [{ "binding": "TENANT_KEYS" }]
+```
+
+`wrangler deploy` creates the namespace when the binding has no id. An object whose `env` lacks the
+binding fails to start with a `ConfigurationError` that names it. KV has no compare-and-set, which a
+store written by several writers needs; each tenant's record is written by its own object alone,
+one at a time, so none is needed. `prefix` keeps the records under another root, for two apps on one
+namespace. The object answers `forgetTenant`, `rotateTenantKey` and `retireTenantKeys` through its
+stub, and `connect(stub)` types them; once forgotten, every call rejects with
+`TenantForgottenError`, which `createWorker` answers with `410`. Once its recipients are told, the
+object empties its storage with `deleteAll()` and holds nothing but the forgetting; Cloudflare
+keeps the storage's point-in-time history for 30 days, where what was not sealed under the tenant's
+key, a read model's column [in the clear](/guides/personal-data/#in-the-clear), stays until then.
+
 ## The forget ledger
 
 Cloudflare restores a Durable Object's storage to a point in time, which brings back the keys of
@@ -176,11 +216,31 @@ there, some thirty, go to the key's value, which a read fetches for the entries 
 and `bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile. See
 [backups](/guides/personal-data/#backups).
 
+## Rotating the master key
+
+A rotation of the [master key](/guides/personal-data/#rotating-the-master-key) rewraps each
+tenant's key in the tenant key store, and on Cloudflare the tenant's own object does it, KV's one
+writer of its record: an object that sleeps through the rotation would keep its key under the
+previous master key. The `scheduled` of `createWorker` reaches them: it lists the tenants of the
+store still under a previous master key and calls `wake()` on each one's object, which arms its
+alarm at once and rewraps its record there. Give the Worker a cron trigger while a rotation is under
+way:
+
+```jsonc
+// wrangler.jsonc
+"triggers": { "crons": ["*/30 * * * *"] }
+```
+
+A Worker of your own exports `scheduled` the same way, from the handler `createWorker` returns.
+Each run logs how many it woke, and how many failed to wake, each named in its own error line;
+remove `previous` once a run logs `bounda worker found no tenant left under a previous master
+key`.
+
 ## One object per tenant
 
 `createWorker` addresses the object by the tenant `tenantOf` names for each request: in the
 project above, the `x-bounda-tenant` header, `default` without it. Each tenant is its own object,
-with its own events and read models, and nothing is shared between them. That is also how a
+with its own events, read models and key, and nothing is shared between them. That is also how a
 Cloudflare app scales: one object handles in the order of a thousand requests a second, and
 [How Bounda runs](/concepts/how-it-runs/) explains why the way out is more stores, not a split
 global stream.

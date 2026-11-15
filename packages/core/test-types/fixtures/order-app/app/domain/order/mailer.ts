@@ -49,3 +49,14 @@ export const onPersonalDataRedacted = async ({
 }: Port.OnPersonalDataRedactedArgs) => {
   await mailer.send(event.payload.personId, `redacted, presumed ${String(presumed)}`);
 };
+
+export const onTenantForgotten = async ({
+  event,
+  categories,
+  persons,
+  mailer,
+}: Port.OnTenantForgottenArgs) => {
+  for await (const person of persons()) {
+    await mailer.send(person, `${event.payload.tenant} forgot ${categories.join(", ")}`);
+  }
+};

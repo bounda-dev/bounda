@@ -2,6 +2,7 @@ import { type Adapter, isAdapter } from "../adapter/adapter.ts";
 import type { ForgetLedger } from "../adapter/storage/forget-ledger.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
+import { TenantForgottenError } from "../contracts/errors.ts";
 import type { BoundaClient } from "../kernel/app.ts";
 import { categoryOf, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
@@ -326,4 +327,162 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
   ];
   const { found, advice } = findIn(places, needles);
   if (found.length > 0) throw new NotForgottenError(personId, found, advice);
+};
+
+/**
+ * What `expectTenantForgotten` rejects with: where a value of the tenant's persons turned up, and
+ * what of the tenant's keys is left.
+ */
+export class TenantNotForgottenError extends Error {
+  readonly found: readonly ForgottenValueFound[];
+  readonly problems: readonly string[];
+
+  constructor(
+    found: readonly ForgottenValueFound[],
+    problems: readonly string[],
+    advice: readonly string[],
+  ) {
+    super(
+      [
+        `The tenant was not forgotten everywhere: ${problems.length + found.length} ${problems.length + found.length === 1 ? "thing is" : "things are"} left.`,
+        ...problems.map((problem) => `  - ${problem}`),
+        ...found.map(
+          ({ value, store, row, field }) => `  - "${value}" in ${store}, ${row}, ${field}`,
+        ),
+        ...(advice.length === 0 ? [] : ["What to do:", ...advice.map((line) => `  - ${line}`)]),
+      ].join("\n"),
+    );
+    this.name = "TenantNotForgottenError";
+    this.found = found;
+    this.problems = problems;
+  }
+}
+
+/**
+ * What `expectTenantForgotten` searches for beyond what it finds on its own.
+ */
+export type ExpectTenantForgottenOptions = Pick<
+  ExpectForgottenOptions,
+  "values" | "telemetry" | "places"
+>;
+
+export interface ExpectTenantForgottenFunction {
+  (
+    target: Pick<BoundaClient, "forgetTenant"> | Adapter,
+    options?: ExpectTenantForgottenOptions,
+  ): Promise<void>;
+}
+
+// The tables a forgotten tenant's database keeps nothing in: keys, and what was sealed under them
+// whole, which a copy could open while a key lived.
+const EMPTIED: readonly InspectedStore[] = [
+  "personalKeys",
+  "indexKeys",
+  "snapshots",
+  "idempotencyKeys",
+];
+
+const tenantProblems = (tables: readonly InspectedTable[]): string[] => {
+  const problems: string[] = [];
+  for (const table of tables) {
+    if (table.store !== null && EMPTIED.includes(table.store) && table.rows.length > 0) {
+      problems.push(`${table.name} still holds ${table.rows.length} row(s)`);
+    }
+  }
+  const tenancy = tables.find((table) => table.store === "tenancy")?.rows[0];
+  if (tenancy === undefined) {
+    problems.push("the database names no tenant: it was never bound to one");
+  } else if (tenancy.forgotten_at === null || tenancy.forgotten_at === undefined) {
+    problems.push(`tenant ${String(tenancy.tenant)} is not marked forgotten in its database`);
+  }
+  for (const table of tables.filter(({ store }) => store === "tenantKeys")) {
+    for (const row of table.rows) {
+      const record = JSON.parse(String(row.record)) as {
+        readonly store?: unknown;
+        readonly keys?: readonly unknown[];
+      };
+      if (tenancy !== undefined && record.store !== tenancy.store) continue;
+      if ((record.keys?.length ?? 0) > 0) {
+        problems.push(`the tenant key store still holds a version of ${String(row.tenant)}'s key`);
+      }
+    }
+  }
+  return problems;
+};
+
+/**
+ * Checks that nothing personal of a tenant is left readable once `forgetTenant` forgot it: the
+ * app refuses every call, its database holds no key, no snapshot and no remembered answer, the
+ * tenant key store holds no version of its key, and no value of any of its persons turns up in the
+ * clear anywhere `expectForgotten` searches. Rejects with a `TenantNotForgottenError` that lists
+ * what is left, and resolves when nothing is.
+ *
+ * Given the app `createTestApp` returned, it looks for every value of a field marked `personal()`
+ * the app sealed and every value a read model kept in a field marked `.personal()`, of every
+ * person, and adds `values`. Given an adapter, such as one over a database restored from a copy,
+ * it checks that adapter's tables and searches them for `values` alone. Works with any test
+ * runner.
+ */
+export const expectTenantForgotten: ExpectTenantForgottenFunction = async (
+  target,
+  options = {},
+) => {
+  const apps = witnessed.get(target);
+  if (apps === undefined && !isAdapter(target)) {
+    throw new TypeError(
+      "expectTenantForgotten takes the app createTestApp returned, or an adapter: for an app built otherwise, pass its storage adapter with the values to look for",
+    );
+  }
+  if (apps?.stopped() === true) {
+    throw new Error(
+      "expectTenantForgotten reads what the app keeps, so call it before app.stop(): an in-memory database is gone once the app stops",
+    );
+  }
+  const problems: string[] = [];
+  if (apps !== undefined) {
+    const refused = await (target as BoundaClient)
+      .exportPersonalData("expect-tenant-forgotten")
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    if (!(refused instanceof TenantForgottenError)) {
+      problems.push("the app still serves calls: forget the tenant with forgetTenant first");
+    }
+  }
+  const adapters = apps?.adapters ?? [target as Adapter];
+  const tables = (await Promise.all(adapters.map((adapter) => adapter.inspect()))).flat();
+  problems.push(...tenantProblems(tables));
+  const values: unknown[] = [...(options.values ?? [])];
+  if (apps !== undefined) {
+    for (const person of apps.witness.persons()) {
+      values.push(...(await opened(apps.witness, person, new Set(), undefined)));
+      values.push(...apps.witness.allKeptFor(person));
+    }
+  }
+  const needles = needlesOf({
+    values,
+    personId: apps?.witness.persons() ?? [],
+  });
+  if (needles.length === 0 && problems.length === 0) {
+    throw new Error(
+      "expectTenantForgotten found no value of the tenant's persons to look for: pass the ones the test gave them as values",
+    );
+  }
+  const places: Place[] = [
+    ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
+    ...(await outsidePlaces({
+      logs: apps?.witness.logs ?? [],
+      ledgers: apps?.ledgers ?? [],
+      telemetry: options.telemetry,
+      places: options.places,
+      errorText: apps?.errorTextChosen ?? true,
+      advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
+    })),
+  ];
+  const { found, advice } =
+    needles.length === 0 ? { found: [], advice: [] } : findIn(places, needles);
+  if (found.length > 0 || problems.length > 0) {
+    throw new TenantNotForgottenError(found, problems, advice);
+  }
 };

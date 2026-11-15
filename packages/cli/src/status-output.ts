@@ -75,6 +75,38 @@ const ledgerOf = ({ forgetLedger: ledger }: AppStatus): string => {
   ].join(", ");
 };
 
+const tenantOf = ({ tenant }: AppStatus): string => {
+  if (tenant === null) return "no keys: no personal data marked";
+  if (tenant.forgottenAt !== null) return `${tenant.tenant}, forgotten at ${tenant.forgottenAt}`;
+  const { master } = tenant;
+  const wrapped =
+    master.pending === 0
+      ? `wrapped under master key ${master.kid}`
+      : `${plural(master.pending, "version")} left to rewrap under master key ${master.kid}`;
+  return `${tenant.tenant}, key ${tenant.kid}${tenant.previous.length === 0 ? "" : ` (older ${tenant.previous.join(", ")})`}, ${wrapped}`;
+};
+
+const FILE_STATES: Readonly<Record<AppStatus["files"][number]["state"], string>> = {
+  current: "encrypted under the tenant's key in force",
+  earlier: "still under an earlier key of the tenant's: bounda rekey",
+  clear: "still in the clear: bounda rekey",
+};
+
+export interface FormatFilesFunction {
+  (files: AppStatus["files"]): readonly string[];
+}
+
+// Every file the app opened under the tenant's keys, and where its encryption stands.
+export const formatFiles: FormatFilesFunction = (files) =>
+  files.length === 0
+    ? []
+    : [
+        "database files",
+        ...files.map(
+          ({ database, file, state }) => `  ${database}  ${file}  ${FILE_STATES[state]}`,
+        ),
+      ];
+
 const rotationOf = ({ keyRotation: rotation }: AppStatus): string => {
   if (rotation === null) return "not configured";
   const left =
@@ -145,6 +177,8 @@ export const formatStatus: FormatStatusFunction = (args) => {
     ...subscribersOf(args),
     `personal data backfill: ${backfillOf(status)}`,
     `forget ledger: ${ledgerOf(status)}`,
+    `tenant: ${tenantOf(status)}`,
+    ...formatFiles(status.files),
     `key rotation: ${rotationOf(status)}`,
     ...retentionOf(status),
     `dead letter retention: ${purgeOf(status)}`,

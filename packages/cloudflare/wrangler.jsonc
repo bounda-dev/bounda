@@ -7,7 +7,10 @@
     "STORE_REGION": "eu-test",
     "BOUNDA_MASTER_KEY": "5hmVukCECFtCyFw3rgVhT/y8hR2OrZBY5JonQlvHN1U="
   },
-  "kv_namespaces": [{ "binding": "FORGET_LEDGER", "id": "forget-ledger" }],
+  "kv_namespaces": [
+    { "binding": "FORGET_LEDGER", "id": "forget-ledger" },
+    { "binding": "TENANT_KEYS", "id": "tenant-keys" }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "STORE", "class_name": "Store" },

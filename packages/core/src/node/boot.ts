@@ -2,12 +2,14 @@
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Config, ErrorText } from "../config/types.ts";
+import { configForTenant } from "../config/define-config.ts";
+import type { Config, ErrorText, ProjectConfig } from "../config/types.ts";
 import type { Clock } from "../contracts/clock.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { Logger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
+import { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 import { withErrorText } from "../kernel/shared/error-text.ts";
 import { guardedLogger } from "../kernel/shared/guarded-logger.ts";
 import type { Registry } from "../modules/registry.ts";
@@ -35,7 +37,7 @@ export interface BootArgs<R extends Registry = AppRegistry> {
   /**
    * Used instead of importing `configPath`.
    */
-  readonly config?: Config;
+  readonly config?: ProjectConfig;
   /**
    * Imports the configuration module instead of `configPath`, after `.env` is loaded; its
    * default export is the configuration. For a bundler that has to see the import to include the
@@ -72,6 +74,12 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    * Defaults to `systemClock`.
    */
   readonly clock?: Clock;
+  /**
+   * The tenant the app serves, which a configuration that is a function of the tenant is called
+   * with and the app's keys belong to. Defaults to `BOUNDA_TENANT` once `.env` is loaded; without
+   * either the app serves `DEFAULT_TENANT` and its ports receive no tenant.
+   */
+  readonly tenant?: string;
 }
 
 /**
@@ -95,11 +103,17 @@ export type LoadProjectArgs<R extends Registry = AppRegistry> = Pick<
   | "registry"
   | "loadEnv"
   | "logger"
+  | "tenant"
 >;
 
 export interface LoadedProject<R extends Registry = AppRegistry> {
   readonly config: Config;
   readonly registry: R;
+  /**
+   * The tenant `tenant` or `BOUNDA_TENANT` names, `undefined` when neither does: the app then
+   * serves `DEFAULT_TENANT`, and its ports receive no tenant.
+   */
+  readonly tenant: string | undefined;
 }
 
 export interface LoadProjectFunction {
@@ -138,6 +152,11 @@ const importExport = async <T>(
 };
 
 const CONFIG = "the configuration (default export)";
+
+const tenantOfEnv = (): string | undefined => {
+  const named = process.env.BOUNDA_TENANT?.trim();
+  return named === undefined || named === "" ? undefined : named;
+};
 const REGISTRY = 'the registry (export "registry")';
 
 const loadEnvFile = (root: string, logger: Logger): void => {
@@ -164,19 +183,23 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   registry,
   loadEnv = true,
   logger = createConsoleLogger(),
+  tenant: named,
 }: LoadProjectArgs<R> = {}): Promise<LoadedProject<R>> => {
   if (loadEnv) loadEnvFile(root, guardedLogger(logger, "omit"));
   const configFile = resolve(root, configPath);
   const registryFile = resolve(root, registryPath);
+  const tenant = named ?? tenantOfEnv();
+  const project =
+    config ??
+    (await importExport<ProjectConfig>(
+      importConfig ?? importFile(configFile, CONFIG),
+      importConfig === undefined ? configFile : "The imported configuration module",
+      CONFIG,
+      (module) => module.default as ProjectConfig | undefined,
+    ));
   return {
-    config:
-      config ??
-      (await importExport<Config>(
-        importConfig ?? importFile(configFile, CONFIG),
-        importConfig === undefined ? configFile : "The imported configuration module",
-        CONFIG,
-        (module) => module.default as Config | undefined,
-      )),
+    config: configForTenant({ config: project, tenant: tenant ?? DEFAULT_TENANT }),
+    tenant,
     registry:
       registry ??
       (await importExport<R>(
@@ -190,8 +213,9 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
 
 /**
  * Boots a Bounda app in Node: loads `.env`, imports the configuration and the generated registry,
- * creates the app with `process.env` as the environment implementations' `create` receives, and
- * stops it on `SIGINT` or `SIGTERM`; stopping the app removes those listeners again. Throws
+ * creates the app, for the tenant `tenant` or `BOUNDA_TENANT` names, with `process.env` as the
+ * environment implementations' `create` receives, and stops it on `SIGINT` or `SIGTERM`; stopping
+ * the app removes those listeners again. Throws
  * `ConfigurationError` when a module is missing or lacks its export, or for a `BOUNDA_ERROR_TEXT`
  * other than `"omit"` or `"include"`.
  */
@@ -208,6 +232,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   errorText,
   ids,
   clock,
+  tenant,
 }: BootArgs<R> = {}): Promise<BoundaApp<R>> => {
   // What boot logs itself carries no error; the app logs under the rule its configuration sets.
   const logger = guardedLogger(rawLogger, "omit");
@@ -220,6 +245,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     ...(registry === undefined ? {} : { registry }),
     loadEnv,
     logger,
+    ...(tenant === undefined ? {} : { tenant }),
   });
 
   const app = await createApp<R>({
@@ -230,6 +256,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     env: process.env,
     ...(ids === undefined ? {} : { ids }),
     ...(clock === undefined ? {} : { clock }),
+    ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
   });
 
   if (!signals) return app;

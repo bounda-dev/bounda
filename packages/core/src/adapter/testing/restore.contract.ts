@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeRole } from "../../config/types.ts";
 import { type Clock, createFixedClock } from "../../contracts/clock.ts";
-import { ForgetLedgerUnreconciledError, ValidationError } from "../../contracts/errors.ts";
+import {
+  ForgetLedgerUnreconciledError,
+  TenantForgottenError,
+  ValidationError,
+} from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
 import {
@@ -10,14 +14,25 @@ import {
 } from "../../kernel/personal-data/forget-ledger.ts";
 import type { KeyWrapperDefinition } from "../../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
+import {
+  defineTenantKeyStore,
+  type TenantKeySource,
+} from "../../kernel/personal-data/tenant-key-source.ts";
+import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
 import { GENERATION_INTERVAL_MS } from "../../kernel/shared/restores.ts";
+import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
-import { expectForgotten } from "../../testing/expect-forgotten.ts";
+import {
+  expectForgotten,
+  expectTenantForgotten,
+  TenantNotForgottenError,
+} from "../../testing/expect-forgotten.ts";
 import { expectRedacted } from "../../testing/expect-redacted.ts";
-import type { Adapter } from "../adapter.ts";
+import { type Adapter, isAdapter } from "../adapter.ts";
+import type { AdapterDefinition } from "../adapter-definition.ts";
 import type { ForgetLedger } from "../storage/forget-ledger.ts";
 import type { Table } from "../storage/table.ts";
 
@@ -238,6 +253,58 @@ interface HandleRow {
 
 // A copy of an email that quotes none of it, as a hash or a reformatted value is.
 const handleOf = (email: string): string => [...email].reverse().join("");
+
+interface ContactRow {
+  readonly customerId: string;
+  readonly email: string | null;
+}
+
+// The customers with their email kept in the clear, for SQL to sort and filter by.
+const clear = {
+  ...registry,
+  readModels: {
+    contacts: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          email: f.string().optional().personal({ clear: true }),
+        }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: StoredEvent<"CustomerRegistered", { email: string | null }>;
+              table: Table<ContactRow>;
+            }) => table.upsert({ customerId: event.aggregateId, email: event.payload.email }),
+          },
+        },
+        bounda: {
+          personalDataForgotten: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: PersonalDataForgottenEvent;
+              table: Table<ContactRow>;
+            }) => table.delete({ customerId: event.payload.personId }),
+          },
+        },
+      },
+      queries: {
+        contactOf: {
+          payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+          repository: ({ table, customerId }: { table: Table<ContactRow>; customerId: string }) =>
+            table.findOne({ customerId }),
+          handler: ({ repositoryData }: { repositoryData: ContactRow | null }) => repositoryData,
+        },
+      },
+    },
+  },
+} as unknown as Registry;
 
 // The customers with their email sealed at rest, found by its blind index, and no projection of
 // the forgetting: nothing but the key forgets them; and a handle derived from the email, which
@@ -479,9 +546,26 @@ const faultyLedger = (source: ForgetLedgerSource) => {
  * process state, export, the database's own rows), and the app goes on working. Call it inside a
  * `describe` of the adapter's test file.
  */
+// The adapter the app opened: a file its adapter encrypts under the tenant's keys opens only
+// through them, as the app holds them.
+const openedAs = (definition: AdapterDefinition | undefined): Adapter => {
+  if (definition === undefined || !isAdapter(definition)) {
+    throw new Error("The app holds no adapter there");
+  }
+  return definition;
+};
+
 export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
   describe("restore contract", () => {
     const stops: (() => Promise<void>)[] = [];
+    // Where the tenant's key lives, apart from the database: a restore of it leaves the store as
+    // it is, as one of another database, a KV namespace or a KMS does.
+    let tenantKeys: TenantKeySource = defineTenantKeyStore(() => createMemoryTenantKeyStore());
+
+    beforeEach(() => {
+      const store = createMemoryTenantKeyStore();
+      tenantKeys = defineTenantKeyStore(() => store);
+    });
 
     afterEach(async () => {
       for (const stop of stops.splice(0).reverse()) await stop();
@@ -502,6 +586,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
             role,
             personalData: {
               keyWrapper,
+              tenantKeys,
               ...(forgetLedger === null
                 ? {}
                 : {
@@ -549,12 +634,8 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         .map((event) => event.id);
 
     // Every table of the storage, and what the app reads back of the person.
-    const expectForgottenIn = async (
-      storage: Adapter,
-      { app, queries }: Started,
-      person: string,
-    ): Promise<void> => {
-      await expectForgotten(storage, person, {
+    const expectForgottenIn = async ({ app, queries }: Started, person: string): Promise<void> => {
+      await expectForgotten(openedAs(app.config.storage), person, {
         values: Object.values(valuesOf(person)),
         places: {
           query: await queries.getCustomer?.({ customerId: person }),
@@ -592,7 +673,6 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
     // Nothing the app hands out or stores reads the old value, and the sealed read model finds
     // nothing by it.
     const expectRedactedIn = async (
-      storage: Adapter,
       { app, queries }: Started,
       person: string,
       value: string,
@@ -606,7 +686,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       expect(await queries.sealedByEmail?.({ email: value })).toBeNull();
       const handle = (await queries.handleOf?.({ customerId: person })) as HandleRow | null;
       expect(handle?.handle ?? null).toBeNull();
-      await expectRedacted(storage, person, {
+      await expectRedacted(openedAs(app.config.storage), person, {
         values: [value, handleOf(value)],
         places: { export: exported, "dead letters": await app.deadLetters.list() },
       });
@@ -646,7 +726,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       await rotated.app.forget("eve");
       await rotated.app.runUntilIdle();
       for (const person of ["ana", "bob", "cy", "eve"]) {
-        await expectForgottenIn(target.storage, rotated, person);
+        await expectForgottenIn(rotated, person);
       }
 
       let storage: Adapter;
@@ -673,12 +753,12 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
       expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
       for (const person of ["ana", "bob"]) {
-        await expectForgottenIn(storage, restored, person);
+        await expectForgottenIn(restored, person);
       }
       expect(await forgettings(restored.app, "cy")).toEqual(cyForgotten);
       expect(await forgettings(restored.app, "eve")).toEqual([]);
-      await expectForgottenIn(storage, restored, "cy");
-      await expectForgottenIn(storage, restored, "eve");
+      await expectForgottenIn(restored, "cy");
+      await expectForgottenIn(restored, "eve");
       expect(await restored.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
       // Found by the newest event this instance saw under a running app, by the ledger's mark at
       // start.
@@ -699,7 +779,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       await expectReadable(restored, "fay");
       await restored.app.forget("dan");
       await restored.app.runUntilIdle();
-      await expectForgottenIn(storage, restored, "dan");
+      await expectForgottenIn(restored, "dan");
       await restored.app.stop();
 
       // A normal start forgets nobody again, and opens fay's key without the old master key.
@@ -728,6 +808,94 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
     );
 
     it(
+      "deletes, from a copy restored from before forgetTenant, the fields kept in the clear before anything reads them",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock, {
+          registry: clear,
+        });
+        await write(first, "ana");
+        expect(
+          await (
+            first.queries as unknown as Record<string, (payload: unknown) => unknown>
+          ).contactOf?.({ customerId: "ana" }),
+        ).toEqual({ customerId: "ana", email: valuesOf("ana").email });
+        await target.backUp();
+        await first.app.forgetTenant(DEFAULT_TENANT);
+        await expectTenantForgotten(openedAs(first.app.config.storage), {
+          values: [valuesOf("ana").email],
+        });
+        await first.app.stop();
+
+        const storage = await target.restore();
+        clock.advance(60_000);
+        const restored = await start(storage, target.forgetLedger, BEFORE_ROTATION, clock, {
+          registry: clear,
+        });
+        await expect(
+          (
+            restored.queries as unknown as Record<string, (payload: unknown) => unknown>
+          ).contactOf?.({ customerId: "ana" }),
+        ).rejects.toThrow(TenantForgottenError);
+        await expectTenantForgotten(openedAs(restored.app.config.storage), {
+          values: [valuesOf("ana").email],
+        });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "keeps a copy restored from before forgetTenant unreadable, and forgets the tenant again in it at the start",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await write(first, "bob");
+        await target.backUp();
+        await first.app.forgetTenant(DEFAULT_TENANT);
+        await first.app.stop();
+
+        const storage = await target.restore();
+        const values = ["ana", "bob"].flatMap((person) => Object.values(valuesOf(person)));
+        // The copy still holds the persons' keys, wrapped under a tenant key that no longer exists,
+        // and the read model's fields not marked personal, in the clear until the next start.
+        // A file encrypted under the tenant's keys opens to nothing but the app.
+        if (storage.encryptedFile === undefined) {
+          const before = await expectTenantForgotten(storage, { values }).catch(
+            (error: unknown) => error,
+          );
+          expect(before).toBeInstanceOf(TenantNotForgottenError);
+          const { found, problems } = before as TenantNotForgottenError;
+          expect(problems).toEqual(
+            expect.arrayContaining([expect.stringContaining("is not marked forgotten")]),
+          );
+          expect(found.map(({ value }) => value).sort()).toEqual(
+            ["ana", "bob"]
+              .flatMap((person) => [valuesOf(person).email, valuesOf(person).name])
+              .sort(),
+          );
+          expect(new Set(found.map(({ store }) => store)).size).toBe(1);
+          expect(found[0]?.store).toMatch(/rm_customers$/);
+        }
+
+        clock.advance(60_000);
+        const restored = await start(storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await expect(
+          restored.commands.registerCustomer?.({
+            customerId: "cy",
+            email: valuesOf("cy").email,
+            name: valuesOf("cy").name,
+          }),
+        ).rejects.toThrow(TenantForgottenError);
+        await expect(restored.app.exportPersonalData("ana")).rejects.toThrow(TenantForgottenError);
+        await expectTenantForgotten(openedAs(restored.app.config.storage), { values });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
       "reconciles at the start after a restore whatever the copy says of a failed reconciliation",
       async () => {
         const target = await create();
@@ -750,7 +918,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const restored = await start(storage, definition, BEFORE_ROTATION, clock);
         expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
         expect(await restored.app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
-        await expectForgottenIn(storage, restored, "ana");
+        await expectForgottenIn(restored, "ana");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -768,14 +936,14 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         await target.backUp();
         const anaForgotten = (await web.app.forget("ana")).eventIds;
         await web.app.catchUpReadModels();
-        await expectForgottenIn(target.storage, web, "ana");
+        await expectForgottenIn(web, "ana");
         await target.restore();
         clock.advance(GENERATION_INTERVAL_MS);
         // Its watch reconciles and catches the read models up by itself.
         await vi.waitFor(
           async () => {
             expect(await forgettings(web.app, "ana")).toEqual(anaForgotten);
-            await expectForgottenIn(target.storage, web, "ana");
+            await expectForgottenIn(web, "ana");
           },
           { timeout: BACKGROUND_WAIT_MS },
         );
@@ -803,7 +971,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         expect((await restored.app.status()).restoresFound).toBe(1);
         expect(await restored.app.forgetAgain([{ personId: "ana" }])).toEqual(["ana"]);
         await restored.app.runUntilIdle();
-        await expectForgottenIn(storage, restored, "ana");
+        await expectForgottenIn(restored, "ana");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -817,7 +985,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
         await write(first, "ana");
         await target.backUp();
-        const written = await target.storage.createStorage();
+        const written = await openedAs(first.app.config.storage).createStorage();
         const key = await written.personalKeys.get("ana", "default");
         await written.close();
         // What a forget records before it commits, left alone by a process that stopped in between.
@@ -835,7 +1003,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const storage = await target.restore();
         const restored = await start(storage, definition, BEFORE_ROTATION, clock);
         expect(await forgettings(restored.app, "ana")).toEqual([intention.eventId]);
-        await expectForgottenIn(storage, restored, "ana");
+        await expectForgottenIn(restored, "ana");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -966,8 +1134,8 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const restored = await start(storage, definition, BEFORE_ROTATION, clock, strict);
         expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
         expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
-        await expectForgottenIn(storage, restored, "ana");
-        await expectForgottenIn(storage, restored, "bob");
+        await expectForgottenIn(restored, "ana");
+        await expectForgottenIn(restored, "bob");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -985,6 +1153,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
               runtime: {
                 personalData: {
                   keyWrapper: BEFORE_ROTATION,
+                  tenantKeys,
                   forgetLedger: { store: target.forgetLedger, reconcileEvery: RECONCILE_EVERY_MS },
                 },
               },
@@ -1025,11 +1194,13 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
           taxId: bob.taxId,
           name: null,
         });
-        await expectForgotten(storage, "ana", {
+        await expectForgotten(openedAs(restored.config.storage), "ana", {
           categories: ["marketing"],
           values: [ana.newsletter],
         });
-        await expectForgotten(storage, "bob", { values: [bob.newsletter, bob.name] });
+        await expectForgotten(openedAs(restored.config.storage), "bob", {
+          values: [bob.newsletter, bob.name],
+        });
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -1047,7 +1218,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
               storage: storageTarget.storage,
               readModels: { sealedCustomers: rows },
               runtime: {
-                personalData: { keyWrapper: BEFORE_ROTATION },
+                personalData: { keyWrapper: BEFORE_ROTATION, tenantKeys },
                 policies: { retry: { strategy: "none" } },
               },
             },
@@ -1076,7 +1247,8 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         await first.stop();
 
         const rows = await rowsTarget.restore();
-        await expectForgotten(rows, "ana", { values: [email] });
+        if (rows.encryptedFile === undefined)
+          await expectForgotten(rows, "ana", { values: [email] });
         const restored = await open(rows);
         await restored.catchUpReadModels();
         expect(await queries(restored).sealedCustomer?.({ customerId: "ana" })).toEqual({
@@ -1084,7 +1256,9 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
           email: null,
         });
         expect(await queries(restored).sealedByEmail?.({ email })).toBeNull();
-        await expectForgotten(rows, "ana", { values: [email] });
+        await expectForgotten(openedAs(restored.config.readModels.sealedCustomers), "ana", {
+          values: [email],
+        });
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -1110,14 +1284,14 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         expect(wrong.map(({ type }) => type)).toContain("CustomerRegistered");
         const redacted = (await first.app.redact("ana", { events: wrong })).eventIds;
         await first.app.runUntilIdle();
-        await expectRedactedIn(target.storage, first, "ana", email);
+        await expectRedactedIn(first, "ana", email);
         await first.app.stop();
 
         const storage = await target.restore();
         const restored = await start(storage, target.forgetLedger, BEFORE_ROTATION, clock, options);
         await restored.app.runUntilIdle();
         expect(await redactions(restored.app, "ana")).toEqual(redacted);
-        await expectRedactedIn(storage, restored, "ana", email);
+        await expectRedactedIn(restored, "ana", email);
         expect(await restored.queries.sealedCustomer?.({ customerId: "bob" })).toEqual({
           customerId: "bob",
           email: valuesOf("bob").email,
@@ -1164,7 +1338,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const restored = await start(storage, definition, BEFORE_ROTATION, clock, options);
         await restored.app.runUntilIdle();
         expect(await redactions(restored.app, "ana")).toEqual([eventId]);
-        await expectRedactedIn(storage, restored, "ana", email);
+        await expectRedactedIn(restored, "ana", email);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

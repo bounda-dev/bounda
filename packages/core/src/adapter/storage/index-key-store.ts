@@ -19,4 +19,13 @@ export interface IndexKeyStore {
    * Replaces how the key is wrapped, `false` when it is no longer `from`.
    */
   rewrap(from: StoredPersonalKey, to: RewrappedKey): Promise<boolean>;
+  /**
+   * Puts `to` in the place of `from`, another key, `false` when the database no longer holds
+   * `from`: of two instances replacing it at once, one wins and the other reads again.
+   */
+  replace(from: StoredPersonalKey, to: StoredPersonalKey): Promise<boolean>;
+  /**
+   * Removes the key: what forgetting the tenant does, once its own key is gone.
+   */
+  clear(): Promise<void>;
 }

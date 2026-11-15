@@ -50,6 +50,16 @@ export const createSqlIndexKeyStore: CreateSqlIndexKeyStoreFunction = ({ db, tab
       );
       return (await get()) ?? key;
     },
+    replace: async (from, to) =>
+      (
+        await db.all(
+          `UPDATE ${table} SET "key" = ${p(1)}, "fingerprint" = ${p(2)}, "kid" = ${p(3)} WHERE "scope" = ${p(4)} AND "fingerprint" = ${p(5)} AND "key" = ${p(6)} RETURNING "scope"`,
+          [to.key, to.fingerprint, to.kid, SCOPE, from.fingerprint, from.key],
+        )
+      ).length === 1,
+    clear: async () => {
+      await db.run(`DELETE FROM ${table} WHERE "scope" = ${p(1)}`, [SCOPE]);
+    },
     rewrap: async (from, to) =>
       (
         await db.all(

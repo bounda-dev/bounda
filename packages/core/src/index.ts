@@ -35,6 +35,7 @@ export type {
   RebuildReadModelOptions,
   RunUntilIdleOptions,
   RunUntilIdleResult,
+  TenantKeyVersions,
 } from "./kernel/app.ts";
 export { createApp } from "./kernel/app.ts";
 export type { DeadLetters } from "./kernel/dead-letters/dead-letters.ts";
@@ -53,6 +54,11 @@ export type { GlobalStream, ReadEventsArgs } from "./kernel/events/global-stream
 export type { MigrateTablesArgs, MigrateTablesFunction } from "./kernel/migrate.ts";
 export { migrateTables } from "./kernel/migrate.ts";
 export type {
+  WithEncryptedFilesArgs,
+  WithEncryptedFilesFunction,
+} from "./kernel/personal-data/encrypted-files.ts";
+export { withEncryptedFiles } from "./kernel/personal-data/encrypted-files.ts";
+export type {
   ExportedCategories,
   ExportedCategory,
   ExportedData,
@@ -65,6 +71,25 @@ export type {
   ExportedSubscriberFailure,
   PersonalDataExport,
 } from "./kernel/personal-data/export.ts";
+export { FILE_ENCRYPTION_RETRY_MS } from "./kernel/personal-data/file-encryption.ts";
+export type {
+  ForgetTenantOptions,
+  TenantForgottenResult,
+} from "./kernel/personal-data/forgotten-tenant.ts";
+export { TENANT_CHECK_INTERVAL_MS } from "./kernel/personal-data/forgotten-tenant.ts";
+export type {
+  ListTenantsUnderPreviousMasterFunction,
+  RewrappedTenantKeys,
+  RewrapTenantKeysArgs,
+  RewrapTenantKeysFunction,
+  TenantsUnderPreviousMasterArgs,
+  TenantsUnderPreviousMasterFunction,
+} from "./kernel/personal-data/master-rotation.ts";
+export {
+  listTenantsUnderPreviousMaster,
+  rewrapTenantKeys,
+  tenantsUnderPreviousMaster,
+} from "./kernel/personal-data/master-rotation.ts";
 export type {
   ForgetAgainEntry,
   ForgetLedgerReconciliationStatus,
@@ -76,6 +101,12 @@ export type {
   RetentionStatus,
 } from "./kernel/personal-data/retention.ts";
 export type { KeyRotationStatus } from "./kernel/personal-data/rotation.ts";
+export type { TenantKeyStatus } from "./kernel/personal-data/tenant-keys.ts";
+export { DEFAULT_TENANT } from "./kernel/personal-data/tenant-keys.ts";
+export {
+  UNWRAPPED_KEY_TTL_MS,
+  UNWRAPPED_KEYS_KEPT,
+} from "./kernel/personal-data/wrapped-keys.ts";
 export type { ProcessStatus } from "./kernel/process/lifecycle.ts";
 export type {
   RebuildReadModelArgs,
@@ -110,6 +141,7 @@ export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
 export type {
   AppStatus,
+  EncryptedFileStatus,
   RecipientStatus,
   SchemaStatus,
   SubscriberFailureStatus,

@@ -9,7 +9,7 @@ import type { AppStorage } from "../events/app-event-store.ts";
 import type { RecordAccess } from "../personal-data/access.ts";
 import { fenceOf, stampFence } from "../personal-data/fences.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
-import { withPersonalKeys } from "../test-support.ts";
+import { TEST_TENANT_KID, withPersonalKeys } from "../test-support.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
 import {
   createDisclosures,
@@ -77,7 +77,7 @@ const run = (
 });
 
 const key = async (person: string, category: string, fingerprint: string): Promise<void> => {
-  await storage.personalKeys.add(person, category, { key: "k", fingerprint, kid: null });
+  await storage.personalKeys.add(person, category, { key: "k", fingerprint, kid: TEST_TENANT_KID });
 };
 
 const boundaEvent = async (person: string): Promise<number> =>

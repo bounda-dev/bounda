@@ -155,6 +155,26 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
           [],
         )
       ).map((row) => ({ port: String(row.port), persons: Number(row.persons) })),
+    received: async () => {
+      const received = new Map<string, string[]>();
+      for (const row of await db.all(
+        `SELECT DISTINCT "port", "category" FROM ${disclosures} ORDER BY "port", "category"`,
+        [],
+      )) {
+        const port = String(row.port);
+        received.set(port, [...(received.get(port) ?? []), String(row.category)]);
+      }
+      return received;
+    },
+    // The limit is written out: a Durable Object's SQLite binds a number as a real, which LIMIT
+    // refuses.
+    personsOf: async ({ port, after, limit }) =>
+      (
+        await db.all(
+          `SELECT DISTINCT "person" FROM ${disclosures} WHERE "port" = ${p(1)}${after === null ? "" : ` AND "person" > ${p(2)}`} ORDER BY "person" LIMIT ${Math.max(0, Math.trunc(limit))}`,
+          after === null ? [port] : [port, after],
+        )
+      ).map((row) => String(row.person)),
   };
 };
 

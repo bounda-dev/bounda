@@ -67,4 +67,8 @@ export interface IdempotencyStore {
    */
   purge(args: PurgeIdempotencyRecordsArgs): Promise<number>;
   forget(person: string, keep?: readonly string[]): Promise<void>;
+  /**
+   * Removes every record: what forgetting the tenant does.
+   */
+  clear(): Promise<void>;
 }

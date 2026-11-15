@@ -1752,7 +1752,9 @@ describe("operations", () => {
       readonly version: number;
       readonly latest: number;
     }>();
-    expectTypeOf<SchemaScopeName>().toEqualTypeOf<"storage" | "checkpoints" | "forget-ledger">();
+    expectTypeOf<SchemaScopeName>().toEqualTypeOf<
+      "storage" | "checkpoints" | "forget-ledger" | "tenant-keys"
+    >();
     expectTypeOf<Adapter["schemaVersions"]>().toEqualTypeOf<
       () => Promise<readonly SchemaVersion[]>
     >();

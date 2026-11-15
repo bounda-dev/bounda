@@ -181,6 +181,10 @@ const trackedPersonalKeys = (
       tracked(entries, id(person, from.fingerprint), () => personalKeys.hold(person, from, hold)),
     nextHoldEnd: (args) => personalKeys.nextHoldEnd(args),
     countWrappedUnder: (args) => personalKeys.countWrappedUnder(args),
+    kids: () => personalKeys.kids(),
+    categories: () => personalKeys.categories(),
+    // Only once the tenant is forgotten, never inside a transaction.
+    clear: () => personalKeys.clear(),
     // Only after a restore, never inside a transaction.
     releaseHolds: () => personalKeys.releaseHolds(),
     countDue: (args) => personalKeys.countDue(args),
@@ -288,6 +292,8 @@ const trackedRecipients = (kept: KeptRecipientStore, undos: Undos): RecipientSto
     rename: through(store.rename),
     caughtUp: through(store.caughtUp),
     summary: store.summary,
+    received: store.received,
+    personsOf: store.personsOf,
   };
 };
 

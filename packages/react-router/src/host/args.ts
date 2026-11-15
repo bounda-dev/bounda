@@ -1,7 +1,7 @@
 import type { AppRegistry, Consistency, Registry } from "@bounda-dev/core";
 import type { ErrorText } from "@bounda-dev/core/config";
 import type { ImportModuleFunction } from "@bounda-dev/core/node";
-import type { Bounda } from "../create-bounda.ts";
+import type { Bounda, TenantAppsOptions } from "../create-bounda.ts";
 
 /**
  * What the module the `bounda()` Vite plugin serves hands to `createHost`.
@@ -33,6 +33,11 @@ export interface CreateHostArgs<R extends Registry = AppRegistry> {
    * `.dev.vars` sets in development.
    */
   readonly errorText?: ErrorText;
+  /**
+   * How many tenants' apps the Node host keeps running, as `createBounda` takes it. On Cloudflare
+   * every tenant is its own Durable Object, which the platform evicts.
+   */
+  readonly tenantApps?: TenantAppsOptions | undefined;
 }
 
 export interface CreateHostFunction {

@@ -21,6 +21,7 @@ const handlers = {
   onProcessingRestrictionLiftAnnounced: () => {},
   onProcessingRestrictionLifted: () => {},
   onPersonalDataRedacted: () => {},
+  onTenantForgotten: () => {},
 };
 
 const MAILCHIMP: RecipientDeclaration<string> = {

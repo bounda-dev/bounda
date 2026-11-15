@@ -27,13 +27,14 @@ export interface SchemaScope {
 
 /**
  * The scopes Bounda versions, as `bounda_migrations` names them: the storage tables, the
- * checkpoints, apart because read models in a database of their own keep them there too, and a
- * forget ledger's table, wherever it lives.
+ * checkpoints, apart because read models in a database of their own keep them there too, a
+ * forget ledger's table and a tenant key store's, wherever they live.
  */
 export const SCHEMA_SCOPES = {
   storage: "storage",
   checkpoints: "checkpoints",
   forgetLedger: "forget-ledger",
+  tenantKeys: "tenant-keys",
 } as const;
 
 export const SCHEMA_MIGRATIONS_TABLE = "migrations";

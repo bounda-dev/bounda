@@ -4,6 +4,7 @@ import type {
   ProcessingRestrictedEvent,
   ProcessingRestrictionLiftAnnouncedEvent,
   ProcessingRestrictionLiftedEvent,
+  TenantForgottenEvent,
 } from "./bounda-events.ts";
 import type { LegalBasis, PersonalCategoryName } from "./personal-data.ts";
 
@@ -463,6 +464,17 @@ export type RecipientRedactedArgs<Ports extends object> = RecipientNoticeArgs<
 >;
 
 /**
+ * `onTenantForgotten`'s arguments: `categories` are every category disclosed to the recipient, and
+ * `persons` lists, in pages, the ids of the persons whose data its port disclosed, as the store
+ * recorded them: erase every one; with `presumed`, it may hold others' too.
+ */
+export type RecipientTenantForgottenArgs<Ports extends object> = RecipientNoticeArgs<
+  TenantForgottenEvent,
+  Ports,
+  { readonly persons: () => AsyncIterable<string> }
+>;
+
+/**
  * The handlers a recipient's port module exports, by the event each tells it of.
  */
 export const RECIPIENT_HANDLERS = {
@@ -471,6 +483,7 @@ export const RECIPIENT_HANDLERS = {
   onProcessingRestrictionLiftAnnounced: "ProcessingRestrictionLiftAnnounced",
   onProcessingRestrictionLifted: "ProcessingRestrictionLifted",
   onPersonalDataRedacted: "PersonalDataRedacted",
+  onTenantForgotten: "TenantForgotten",
 } as const;
 
 export type RecipientHandlerName = keyof typeof RECIPIENT_HANDLERS;

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
-import { createPersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
+import { testWrapping } from "../test-support.ts";
 import { createSubscriberFailures } from "./subscriber-failures.ts";
 
 describe("createSubscriberFailures", () => {
@@ -20,9 +19,7 @@ describe("createSubscriberFailures", () => {
     const records: { readonly operation: string; readonly persons: Iterable<string> }[] = [];
     const failures = createSubscriberFailures({
       store: storage.subscriberFailures,
-      keys: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }).over(
-        storage.personalKeys,
-      ),
+      keys: testWrapping().over(storage.personalKeys),
       persons: storage.persons,
       actor: "ops-1",
       recordAccess: async ({ operation, persons }) => {
@@ -55,9 +52,7 @@ describe("createSubscriberFailures", () => {
     const records: unknown[] = [];
     const failures = createSubscriberFailures({
       store: storage.subscriberFailures,
-      keys: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }).over(
-        storage.personalKeys,
-      ),
+      keys: testWrapping().over(storage.personalKeys),
       persons: {
         restrictions: async () => {
           throw new Error("down");
@@ -109,9 +104,7 @@ describe("createSubscriberFailures", () => {
     const records: { readonly persons: readonly string[]; readonly restricted: unknown }[] = [];
     const failures = createSubscriberFailures({
       store: storage.subscriberFailures,
-      keys: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }).over(
-        storage.personalKeys,
-      ),
+      keys: testWrapping().over(storage.personalKeys),
       persons: storage.persons,
       actor: undefined,
       recordAccess: async ({ persons, restricted = null }) => {

@@ -21,6 +21,8 @@ import {
 } from "../sql/migrations.ts";
 import { recipientTablesStatements } from "../sql/recipient-store.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
+import { tenancyTableStatement } from "../sql/tenancy-store.ts";
+import { tenantKeysTableStatement } from "../sql/tenant-key-store.ts";
 import {
   checkpointTableStatement,
   personRowsBackfillStatements,
@@ -200,6 +202,20 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
         for (const statement of recipientTablesStatements(tables)) await tx.run(statement, []);
       },
     },
+    {
+      version: 7,
+      migrate: async (tx) => {
+        await tx.run(tenancyTableStatement(tables.tenancy), []);
+        // Snapshots and remembered rejections are sealed at rest from now on. Those kept in the clear
+        // go: a snapshot is only a cache, and a rejection sent again is decided again, as after
+        // a forgetting; a stored result holds ids alone, and stays until it expires.
+        await tx.run(`DELETE FROM ${tables.snapshots}`, []);
+        await tx.run(
+          `DELETE FROM ${tables.idempotencyKeys} WHERE json_type("outcome", '$.rejected') = 'text'`,
+          [],
+        );
+      },
+    },
   ],
 });
 
@@ -280,6 +296,15 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
       },
     },
   ],
+});
+
+export interface SqliteTenantKeysScopeFunction {
+  (table: string): SchemaScope;
+}
+
+export const sqliteTenantKeysScope: SqliteTenantKeysScopeFunction = (table) => ({
+  scope: SCHEMA_SCOPES.tenantKeys,
+  migrations: [{ version: 1, migrate: (tx) => tx.run(tenantKeysTableStatement(table), []) }],
 });
 
 export interface IsMissingSqliteTableFunction {

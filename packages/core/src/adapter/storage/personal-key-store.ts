@@ -251,6 +251,20 @@ export interface PersonalKeyStore {
    */
   countWrappedUnder(args: Pick<ListWrappedUnderArgs, "kids">): Promise<number>;
   /**
+   * The ids of the keys every key is wrapped under, each once, `null` among them while a key is
+   * kept unwrapped.
+   */
+  kids(): Promise<readonly (string | null)[]>;
+  /**
+   * The categories of every key, in force or retained, each once, in order.
+   */
+  categories(): Promise<readonly string[]>;
+  /**
+   * Removes every key of every person, and resolves to how many it removed: what forgetting the
+   * tenant does, once its own key is gone.
+   */
+  clear(): Promise<number>;
+  /**
    * Clears every key's hold, and resolves to how many it cleared: what the runtime does once the
    * database went back to a copy, whose holds count failures the copy undid.
    */

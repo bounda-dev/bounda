@@ -40,6 +40,8 @@ export type {
   ProcessingRestrictionLiftedPayload,
   RedactedEvent,
   RemovedDeadLetter,
+  TenantForgottenEvent,
+  TenantForgottenPayload,
 } from "./bounda-events.ts";
 export {
   BOUNDA_AGGREGATE,
@@ -49,6 +51,7 @@ export {
   PROCESSING_RESTRICTED_EVENT,
   PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
   PROCESSING_RESTRICTION_LIFTED_EVENT,
+  TENANT_FORGOTTEN_EVENT,
 } from "./bounda-events.ts";
 export type {
   CommandHandlerArgs,
@@ -164,6 +167,7 @@ export type {
   RecipientNoticeArgs,
   RecipientRedactedArgs,
   RecipientRestrictedArgs,
+  RecipientTenantForgottenArgs,
   TransferSafeguard,
 } from "./recipient.ts";
 export {

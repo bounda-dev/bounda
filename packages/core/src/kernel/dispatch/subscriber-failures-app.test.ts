@@ -16,6 +16,7 @@ import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { masterKey } from "../personal-data/master-key.ts";
 
 // The projection quotes the personal field it read, as a careless one does, while `failing.on`.
 const failing = { on: false };
@@ -358,7 +359,7 @@ describe("the status of the app", () => {
     const { adapter } = createNodeSqliteAdapter();
     const { app } = await start(adapter);
     expect((await app.status()).schema).toEqual([
-      { database: "storage", scope: "storage", version: 6, latest: 6 },
+      { database: "storage", scope: "storage", version: 7, latest: 7 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
     ]);
     const inMemory = await start(memory());
@@ -368,7 +369,8 @@ describe("the status of the app", () => {
       subscriberFailures: [],
       personalDataBackfill: { caughtUp: false },
       forgetLedger: null,
-      keyRotation: null,
+      tenant: { tenant: "default", forgottenAt: null, previous: [] },
+      keyRotation: { previous: [], pending: 0 },
       retention: { categories: [], keptBeyond: 0 },
       deadLetterRetention: null,
     });
@@ -380,16 +382,23 @@ describe("the status of the app", () => {
     const storage = createNodeSqliteAdapter(join(directory, "storage.db")).adapter;
     const readModels = createNodeSqliteAdapter(join(directory, "read-models.db")).adapter;
     const ledger = createNodeSqliteAdapter(join(directory, "ledger.db")).adapter;
+    const keys = createNodeSqliteAdapter(join(directory, "keys.db")).adapter;
     const app = await createApp<Registry>({
       registry,
       config: {
         storage,
         readModels: { customers: readModels },
         runtime: {
-          personalData: { forgetLedger: { store: ledger }, retention: "30d" },
+          personalData: {
+            forgetLedger: { store: ledger },
+            retention: "30d",
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            tenantKeys: keys,
+          },
           deadLetters: { retention: "7d" },
         },
       },
+      env: { BOUNDA_MASTER_KEY: Buffer.from(new Uint8Array(32).fill(7)).toString("base64") },
       clock: createFixedClock(new Date("2026-05-01T00:00:00.000Z")),
     });
     stops.push(() => app.stop());
@@ -397,10 +406,11 @@ describe("the status of the app", () => {
     await app.runUntilIdle();
     const status = await app.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 6, latest: 6 },
+      { database: "storage", scope: "storage", version: 7, latest: 7 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
       { database: "readModels.customers", scope: "checkpoints", version: 3, latest: 3 },
       { database: "forgetLedger", scope: "forget-ledger", version: 7, latest: 7 },
+      { database: "tenantKeys", scope: "tenant-keys", version: 1, latest: 1 },
     ]);
     expect(status).toMatchObject({
       forgetLedger: { reconciled: true, held: null },

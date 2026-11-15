@@ -81,6 +81,7 @@ export const createNodeSqliteAdapter: CreateNodeSqliteAdapterFunction = (path = 
     tablePrefix: "bounda_",
     acquire: () => ({ db: database, raw: db, isBusy }),
     release: async () => {},
+    ephemeral: path === ":memory:",
   });
   return { adapter, db, transactions: () => opened };
 };

@@ -13,9 +13,9 @@ export interface Needle {
 export interface NeedlesOfArgs {
   readonly values: readonly unknown[];
   /**
-   * Never searched: ids stay by design, so a value equal to the person's id is everywhere.
+   * Never searched: ids stay by design, so a value equal to a person's id is everywhere.
    */
-  readonly personId: string;
+  readonly personId: string | readonly string[];
 }
 
 export interface NeedlesOfFunction {
@@ -40,10 +40,13 @@ const leavesOf = (value: unknown, into: string[]): void => {
 export const needlesOf: NeedlesOfFunction = ({ values, personId }) => {
   const leaves: string[] = [];
   for (const value of values) leavesOf(value, leaves);
+  const ids = new Set(
+    (typeof personId === "string" ? [personId] : personId).map((id) => id.toLowerCase()),
+  );
   const byLower = new Map<string, Needle>();
   for (const value of leaves) {
     const lower = value.toLowerCase();
-    if (lower.trim() === "" || lower === personId.toLowerCase() || byLower.has(lower)) continue;
+    if (lower.trim() === "" || ids.has(lower) || byLower.has(lower)) continue;
     byLower.set(lower, {
       value,
       lower,

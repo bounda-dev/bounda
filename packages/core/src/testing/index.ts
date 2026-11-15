@@ -1,4 +1,4 @@
-import { type Adapter, isAdapter } from "../adapter/adapter.ts";
+import { type Adapter, type EphemeralKeys, isAdapter } from "../adapter/adapter.ts";
 import type { ForgetLedger } from "../adapter/storage/forget-ledger.ts";
 import type { Config } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
@@ -6,6 +6,7 @@ import type { ConfigurationError, SnapshotError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator, type IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { assembleApp, type BoundaApp } from "../kernel/app.ts";
+import { createEphemeralKeys } from "../kernel/personal-data/ephemeral-keys.ts";
 import { createPendingRetries } from "../kernel/shared/pending-retries.ts";
 import { memory } from "../memory/index.ts";
 import type { OnPersonalDataAccess } from "../modules/audit.ts";
@@ -36,7 +37,9 @@ export type CreateTestAppArgs<R extends Registry> = {
    */
   readonly ports?: AppTestPorts;
   /**
-   * Defaults to the in-memory adapter.
+   * Defaults to the in-memory adapter. Without `runtime.personalData.keyWrapper` and
+   * `runtime.personalData.tenantKeys`, the app holds its keys in memory, the same for every test
+   * app over the same adapter, so one opens what another sealed.
    */
   readonly adapter?: Adapter;
   readonly logger?: Logger;
@@ -83,6 +86,29 @@ export interface CreateTestAppFunction {
   <R extends Registry>(args: CreateTestAppArgs<R>): Promise<TestApp<R>>;
 }
 
+export interface CreateTestKeysFunction {
+  (): EphemeralKeys;
+}
+
+/**
+ * A master key and a tenant key store in memory, for test apps that open one database through
+ * adapters of their own, as two instances of the app would: pass both to each app's
+ * `runtime.personalData`, and each opens what the others sealed. An app given one adapter needs
+ * none of this, as `createTestApp` keeps the keys of each adapter it was given.
+ */
+export const createTestKeys: CreateTestKeysFunction = () => createEphemeralKeys();
+
+// The keys of each adapter a test app was given without any, the same for every app over it.
+const testKeys = new WeakMap<Adapter, EphemeralKeys>();
+
+const testKeysOf = (adapter: Adapter): EphemeralKeys => {
+  const known = testKeys.get(adapter);
+  if (known !== undefined) return known;
+  const created = createTestKeys();
+  testKeys.set(adapter, created);
+  return created;
+};
+
 /**
  * Creates an app for tests: in-memory storage, a clock that only moves when told to and
  * sequential ids (`id-1`, `id-2`, ...), so assertions are deterministic. Ports get only what
@@ -103,18 +129,24 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
 }: CreateTestAppArgs<R>): Promise<TestApp<R>> => {
   const clock = createFixedClock(now);
   const ids = createSequentialIdGenerator();
-  // What `expectForgotten` searches once a person is forgotten: every adapter's tables, and what
-  // the witness saw on the way in, which their tables no longer show.
+  // What the witness saw on the way in, which the tables no longer show once a person is
+  // forgotten: `expectForgotten` searches it beside every table the app opened.
   const witness = testWitnessOf(adapter);
   const readModels = Object.entries(config.readModels ?? {});
-  const adapters = [adapter, ...readModels.map(([, store]) => store)]
-    .filter(isAdapter)
-    .filter((store, index, all) => all.indexOf(store) === index);
   // A reaction's failure stays in its dead letter, so the first port read without a value is
   // kept here for `runUntilIdle` to throw: the test fails saying what to pass.
   let missing: ConfigurationError | SnapshotError | undefined;
   const ledgers: ForgetLedger[] = [];
   const ledger = config.runtime?.personalData?.forgetLedger;
+  const named = config.runtime?.personalData;
+  // An adapter whose data outlives the process, given without keys, gets keys of its own in
+  // memory: every app the test builds over it opens what an earlier one sealed.
+  const keys =
+    named?.keyWrapper === undefined &&
+    named?.tenantKeys === undefined &&
+    adapter.ephemeralKeys === undefined
+      ? testKeysOf(adapter)
+      : undefined;
   const app = await assembleApp<R>({
     registry,
     // Required by the `Config` of a project whose ports need a choice, and never read here:
@@ -124,16 +156,15 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       runtime: {
         ...config.runtime,
         telemetry: { errorText: "include", ...config.runtime?.telemetry },
-        // The same observed adapter as the storage's when it is the storage's, which the app
-        // refuses.
-        ...(ledger === undefined || !isAdapter(ledger.store)
-          ? {}
-          : {
-              personalData: {
-                ...config.runtime?.personalData,
-                forgetLedger: { ...ledger, store: witness.storage(ledger.store) },
-              },
-            }),
+        personalData: {
+          ...named,
+          ...(keys ?? {}),
+          // The same observed adapter as the storage's when it is the storage's, which the app
+          // refuses.
+          ...(ledger === undefined || !isAdapter(ledger.store)
+            ? {}
+            : { forgetLedger: { ...ledger, store: witness.storage(ledger.store) } }),
+        },
       },
       storage: witness.storage(adapter),
       ...(config.readModels === undefined
@@ -173,9 +204,14 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
     },
   });
   let stopped = false;
+  // The adapters the app opened, whose tables `expectForgotten` searches: a file encrypted under
+  // the tenant's keys opens only through them.
+  const opened = [app.config.storage, ...Object.values(app.config.readModels)]
+    .filter(isAdapter)
+    .filter((store, index, all) => all.indexOf(store) === index);
   const apps = {
     witness,
-    adapters,
+    adapters: opened,
     ledgers,
     stopped: () => stopped,
     errorTextChosen: config.runtime?.telemetry?.errorText !== undefined,
@@ -202,6 +238,7 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   return { app: tested, clock, ids };
 };
 
+export type { EphemeralKeys } from "../adapter/adapter.ts";
 export { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 export { createSequentialIdGenerator } from "../contracts/ids.ts";
 export { silentLogger } from "../contracts/logger.ts";
@@ -211,9 +248,16 @@ export type {
   ExpectForgottenFunction,
   ExpectForgottenOptions,
   ExpectForgottenTarget,
+  ExpectTenantForgottenFunction,
+  ExpectTenantForgottenOptions,
   ForgottenValueFound,
 } from "./expect-forgotten.ts";
-export { expectForgotten, NotForgottenError } from "./expect-forgotten.ts";
+export {
+  expectForgotten,
+  expectTenantForgotten,
+  NotForgottenError,
+  TenantNotForgottenError,
+} from "./expect-forgotten.ts";
 export type {
   ExpectRedactedFunction,
   ExpectRedactedOptions,

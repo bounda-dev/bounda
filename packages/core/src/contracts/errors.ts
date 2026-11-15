@@ -388,3 +388,23 @@ export class RebuildSupersededError extends BoundaError {
     this.readModel = readModel;
   }
 }
+
+/**
+ * Thrown by every call to an app whose tenant was forgotten with `forgetTenant`: the tenant's key
+ * is destroyed, so nothing personal of it opens anywhere, and the app serves nothing more. Only the
+ * notices to the recipients of the tenant's data still go out, in the background. Terminal: no
+ * retry makes the tenant come back.
+ */
+export class TenantForgottenError extends BoundaError {
+  readonly tenant: string;
+  /**
+   * When the tenant was forgotten, as an ISO timestamp.
+   */
+  readonly forgottenAt: string;
+
+  constructor(tenant: string, forgottenAt: string) {
+    super("TENANT_FORGOTTEN", `Tenant ${tenant} was forgotten at ${forgottenAt}`);
+    this.tenant = tenant;
+    this.forgottenAt = forgottenAt;
+  }
+}

@@ -395,7 +395,10 @@ describe("personal data in an app", () => {
       version: 1,
       persons: [{ person: "c-1", fingerprint: key?.fingerprint }],
     });
-    expect((await storage.snapshotStore.get(stream))?.state).toContain("ana@example.com");
+    // Sealed at rest whole, under the database's key: no copy of the store reads it.
+    const sealed = (await storage.snapshotStore.get(stream))?.state ?? "";
+    expect(sealed).not.toContain("ana@example.com");
+    expect(Object.keys(JSON.parse(sealed) as object)).toEqual(["$sealed"]);
 
     await app.forget("c-1");
     expect(await storage.snapshotStore.get(stream)).toBeNull();

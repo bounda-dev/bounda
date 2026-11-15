@@ -31,6 +31,19 @@ that yourself, as a script would.
 A secret such as an API key reaches the implementation that needs it through its `create`, whose
 `env` is `process.env` with `.env` already loaded ([Ports](/guides/project-layout/#ports-portts)).
 
+## Tenants
+
+Every app serves one [tenant](/guides/personal-data/#tenants), whose key lives in the [tenant key
+store](/guides/personal-data/#the-tenant-key-store), apart from its database. `boot({ tenant })`
+or `BOUNDA_TENANT` names it, `default` without either. To serve several tenants from one
+deployment, each with its own database, export the configuration as a function of the tenant and
+boot an app for each: one process per tenant, or several apps in one, each with its own
+`boot({ tenant })`. The React Router host does the latter when the project has `app/tenant.ts`
+([React Router](/guides/react-router/#tenants)); on Cloudflare every tenant is its own Durable
+Object. Give every database its own tenant name: a second database that claims a tenant whose key
+belongs to another is refused at the start. Run `bounda migrate --tenant <name>` once per tenant's
+database.
+
 ## Roles
 
 `runtime.role` decides what a process does. The default is `all`, which is one process doing
@@ -367,8 +380,12 @@ any other.
 
 Back up the database as the engine recommends: a copy of the SQLite file taken online, with
 `VACUUM INTO` or the `.backup` command, or PostgreSQL's own tools. A backup holds every person's
-key, wrapped under the [master key](/guides/personal-data/#a-master-key): keep the master key for
-as long as the backups. Restoring one taken before someone was forgotten brings them back, unless
+key, wrapped under the tenant's key, which lives in the [tenant key
+store](/guides/personal-data/#the-tenant-key-store) under the [master
+key](/guides/personal-data/#a-master-key): keep both for as long as the backups, and back the
+tenant key store up apart from the database. [Forgetting a
+tenant](/guides/personal-data/#forgetting-a-tenant) destroys its key there, which leaves every
+backup of its database unreadable at once. Restoring one taken before someone was forgotten brings them back, unless
 the app has a [forget ledger](/guides/personal-data/#backups) in another database, which forgets
 them again when the app starts on the restored copy, or at once when the copy is restored under the
 running app: every running instance finds that the database went back, and its background jobs

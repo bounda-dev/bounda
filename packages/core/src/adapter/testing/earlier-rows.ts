@@ -101,6 +101,7 @@ export const earlierRowsFor: EarlierRowsForFunction = (version, t) => {
     ...(named
       ? [
           `INSERT INTO ${t.idempotencyKeys} ("key", "fingerprint", "outcome", "expires_at", "persons") VALUES ('k-1', 'fp', ${json(testOutcome("1"))}, '2099-01-01T00:00:00.000Z', ${persons})`,
+          `INSERT INTO ${t.idempotencyKeys} ("key", "fingerprint", "outcome", "expires_at", "persons") VALUES ('k-2', 'fp', ${json({ rejected: "OUT_OF_STOCK", message: "order of Ada", aggregateType: "order", aggregateId: "2" })}, '2099-01-01T00:00:00.000Z', ${persons})`,
           `INSERT INTO ${t.personalKeys} ("person", "key", "fingerprint") VALUES ('p-2', '${testPersonalKey("1").key}', '${testPersonalKey("1").fingerprint}')`,
           `INSERT INTO ${t.snapshots} ("aggregate_type", "aggregate_id", "version", "fingerprint", "state", "persons") VALUES ('order', '1', 1, 'fp', '{}', ${persons})`,
         ]
@@ -221,11 +222,15 @@ export const expectEarlierRowsTakenIn: ExpectEarlierRowsTakenInFunction = async 
     retainedSince: null,
     lastActiveAt: null,
   });
-  expect(
-    await storage.snapshotStore.get({ aggregateType: "order", aggregateId: "1" }),
-  ).not.toBeNull();
-  await storage.snapshotStore.forget("p-2");
+  // Kept in the clear: the snapshot, a cache, and the rejection, which may quote what it was
+  // decided on, go; the result, ids alone, stays.
   expect(await storage.snapshotStore.get({ aggregateType: "order", aggregateId: "1" })).toBeNull();
+  const now = new Date("2026-01-01T00:00:00.000Z");
+  expect(await storage.idempotencyStore.get({ key: "k-2", now })).toBeNull();
+  expect((await storage.idempotencyStore.get({ key: "k-1", now }))?.outcome).toEqual(
+    testOutcome("1"),
+  );
+  expect(await storage.tenancy.get()).toBeNull();
   await storage.idempotencyStore.forget("p-2");
   expect(
     await execute(`SELECT count(*) AS "left" FROM ${tables.idempotencyKeys}`).then(([row]) =>

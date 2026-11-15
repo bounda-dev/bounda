@@ -6,6 +6,7 @@ import {
   ProcessingRestrictedError,
   type RejectFunction,
   type Rejection,
+  TenantForgottenError,
   ValidationError,
 } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
@@ -82,6 +83,17 @@ describe("failure", () => {
       issues: [],
     });
     expect(answer.init).toEqual({ status: 422 });
+  });
+
+  it("answers a forgotten tenant with a 410, whether the error comes as a class or a code", () => {
+    const answer = failure(new TenantForgottenError("acme", "2026-01-01T00:00:00.000Z"));
+    expect(answer.data).toEqual({
+      error: "Tenant acme was forgotten at 2026-01-01T00:00:00.000Z",
+      issues: [],
+    });
+    expect(answer.init).toEqual({ status: 410 });
+    const plain = failure(Object.assign(new Error("gone"), { code: "TENANT_FORGOTTEN" }));
+    expect(plain.init).toEqual({ status: 410 });
   });
 
   it("answers the refusals a Durable Object sends back, which arrive as plain errors with their code", () => {

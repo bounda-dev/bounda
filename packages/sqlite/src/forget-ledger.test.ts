@@ -14,6 +14,7 @@ import {
 } from "@bounda-dev/core";
 import type { Adapter, ForgetLedger } from "@bounda-dev/core/adapter";
 import { forgetLedgerContract } from "@bounda-dev/core/adapter/testing";
+import { masterKey } from "@bounda-dev/core/config";
 import { createClient } from "@libsql/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sqlite } from "./index.ts";
@@ -73,8 +74,21 @@ const pathOf = (name: string): string => join(directory, `${name}.db`);
 
 const fresh = () => {
   databases += 1;
-  return { store: pathOf(`store-${databases}`), ledger: pathOf(`ledger-${databases}`) };
+  return {
+    store: pathOf(`store-${databases}`),
+    ledger: pathOf(`ledger-${databases}`),
+    keys: pathOf(`keys-${databases}`),
+  };
 };
+
+// The master key every app here reads from its `env`.
+const env = { BOUNDA_MASTER_KEY: "5hmVukCECFtCyFw3rgVhT/y8hR2OrZBY5JonQlvHN1U=" };
+
+// Where an app's keys live: the master key in `env`, the tenant's key in a file of its own.
+const keysOf = (path: string) => ({
+  keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+  tenantKeys: sqlite({ path }),
+});
 
 describe("the forget ledger in a SQLite file", () => {
   forgetLedgerContract({
@@ -92,6 +106,7 @@ describe("the forget ledger in a SQLite file", () => {
 interface Paths {
   readonly store: string;
   readonly ledger: string;
+  readonly keys: string;
 }
 
 // How far ahead a start after a restore runs: past the grace a reconciliation gives an intention,
@@ -108,9 +123,15 @@ const boot = (paths: Paths, clock: Clock = systemClock): Promise<BoundaApp> =>
   createApp({
     registry,
     config: {
-      storage: sqlite({ path: paths.store }),
-      runtime: { personalData: { forgetLedger: { store: sqlite({ path: paths.ledger }) } } },
+      storage: sqlite({ path: paths.store, encrypt: false }),
+      runtime: {
+        personalData: {
+          ...keysOf(paths.keys),
+          forgetLedger: { store: sqlite({ path: paths.ledger }) },
+        },
+      },
     },
+    env,
     clock,
   });
 
@@ -143,13 +164,21 @@ const startElsewhere = (paths: Paths): Promise<void> =>
         "--input-type=module",
         "-e",
         `import { createApp, systemClock } from "@bounda-dev/core";
+        import { masterKey } from "@bounda-dev/core/config";
         import { sqlite } from "./index.ts";
         const app = await createApp({
           registry: { aggregates: {}, readModels: {} },
           config: {
-            storage: sqlite({ path: ${JSON.stringify(paths.store)} }),
-            runtime: { personalData: { forgetLedger: { store: sqlite({ path: ${JSON.stringify(paths.ledger)} }) } } },
+            storage: sqlite({ path: ${JSON.stringify(paths.store)}, encrypt: false }),
+            runtime: {
+              personalData: {
+                keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+                tenantKeys: sqlite({ path: ${JSON.stringify(paths.keys)} }),
+                forgetLedger: { store: sqlite({ path: ${JSON.stringify(paths.ledger)} }) },
+              },
+            },
           },
+          env: ${JSON.stringify(env)},
           clock: {
             now: () => new Date(Date.now() + ${LATER_MS}),
             after: (milliseconds, callback, options) => systemClock.after(milliseconds, callback, options),
@@ -244,7 +273,7 @@ describe("restoring a backup with a forget ledger", () => {
     await before.stop();
     // The process stops between the intention and the commit of c-2's forgetting.
     let crashing = true;
-    const store = sqlite({ path: paths.store });
+    const store = sqlite({ path: paths.store, encrypt: false });
     const stopped: Adapter = {
       ...store,
       createStorage: async () => {
@@ -260,8 +289,14 @@ describe("restoring a backup with a forget ledger", () => {
       registry,
       config: {
         storage: stopped,
-        runtime: { personalData: { forgetLedger: { store: sqlite({ path: paths.ledger }) } } },
+        runtime: {
+          personalData: {
+            ...keysOf(paths.keys),
+            forgetLedger: { store: sqlite({ path: paths.ledger }) },
+          },
+        },
       },
+      env,
     });
     await expect(stopping.forget("c-2")).rejects.toThrow("the process stopped");
     crashing = false;
@@ -287,9 +322,17 @@ describe("restoring a backup with a forget ledger", () => {
   });
 
   it("brings the person back without a ledger, which bounda forget --from then forgets again", async () => {
-    const store = fresh().store;
+    const { store, keys } = fresh();
     const backup = pathOf(`backup-${databases}`);
-    const plain = (path: string) => createApp({ registry, config: { storage: sqlite({ path }) } });
+    const plain = (path: string) =>
+      createApp({
+        registry,
+        config: {
+          storage: sqlite({ path, encrypt: false }),
+          runtime: { personalData: keysOf(keys) },
+        },
+        env,
+      });
     const before = await plain(store);
     await register(before, "c-1");
     await backUp(store, backup);

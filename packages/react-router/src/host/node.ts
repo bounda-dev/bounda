@@ -8,6 +8,7 @@ import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, type ImportModuleFunction } from "@bounda-dev/core/node";
 import { actorOfModule } from "../actor.ts";
 import { type Bounda, createBounda } from "../create-bounda.ts";
+import { type TenantFunction, tenantOfModule } from "../tenant.ts";
 import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 export { failure } from "../failure.ts";
@@ -45,7 +46,8 @@ const explainWorkers =
 
 /**
  * The host the `bounda()` Vite plugin serves the app from: in Node, `createBounda` booting the
- * project and acting as the `actor` of its `app/actor.ts`, when it has one; under the `workerd`
+ * project, an app for each tenant its `app/tenant.ts` names when it has one, and acting as the
+ * `actor` of its `app/actor.ts`, when it has one; under the `workerd`
  * condition, the one of `@bounda-dev/react-router/cloudflare`. Not
  * meant to be called by hand: call either `createBounda` instead. In Node the boot rejects with
  * `ConfigurationError` when the configuration needs the Workers runtime, as `cloudflare()` does;
@@ -55,18 +57,38 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
   root,
   registry,
   importConfig,
+  importTenant,
   importActor,
   consistency,
   errorText,
-}: CreateHostArgs<R>): Bounda<R> =>
-  createBounda<R>({
-    boot: () =>
+  tenantApps,
+}: CreateHostArgs<R>): Bounda<R> => {
+  let tenantFunction: Promise<TenantFunction> | undefined;
+  return createBounda<R>({
+    boot: (args) =>
       boot<R>({
         ...(root === undefined ? {} : { root }),
         registry,
         importConfig: explainWorkers(importConfig, errorText),
+        ...(args?.tenant === undefined ? {} : { tenant: args.tenant }),
       }),
     consistency,
     ...(importActor === undefined ? {} : { actor: actorOfModule(importActor) }),
+    ...(importTenant === undefined
+      ? {}
+      : {
+          tenant: async (args) => {
+            // A module that failed to import is imported again on the next request.
+            tenantFunction ??= importTenant()
+              .then(tenantOfModule)
+              .catch((error: unknown) => {
+                tenantFunction = undefined;
+                throw error;
+              });
+            return (await tenantFunction)(args);
+          },
+        }),
     errorText,
+    ...(tenantApps === undefined ? {} : { tenantApps }),
   });
+};

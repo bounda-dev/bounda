@@ -4,9 +4,9 @@ User registration and activation on Bounda inside a React Router app. One `user`
 process that expires registrations nobody activates within a week, a policy that sends a welcome
 email a minute after registering, a reminder scheduled three days ahead, and two read models
 behind the pages. The user's email and name are personal data: "Delete my data" on their page
-forgets them, which also cancels the reminder; their keys are wrapped under the master key in
-`.env`, so `data/onboarding.db` alone opens nothing of theirs. Every form carries an idempotency key, so one sent
-twice runs once.
+forgets them, which also cancels the reminder; their keys are wrapped under the tenant's key in
+`keys/tenant-keys.db`, itself wrapped under the master key in `.env`, so `data/onboarding.db`
+alone opens nothing of theirs. Every form carries an idempotency key, so one sent twice runs once.
 
 ```bash
 pnpm install
@@ -16,11 +16,14 @@ pnpm test            # the domain on the in-memory adapter
 pnpm dev             # http://localhost:5173 on SQLite (data/onboarding.db)
 ```
 
-To run on PostgreSQL, point `DATABASE_URL` at a database (see `.env.example`):
+To run on PostgreSQL, point `DATABASE_URL` at a database and `TENANT_KEYS_URL` at another one
+(see `.env.example`):
 
 ```bash
 docker run --rm -d --name onboarding-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=onboarding -p 5432:5432 postgres:17
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/onboarding pnpm dev
+docker exec onboarding-pg createdb -U postgres onboarding_keys
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/onboarding \
+  TENANT_KEYS_URL=postgres://postgres:postgres@localhost:5432/onboarding_keys pnpm dev
 ```
 
 `pnpm build && pnpm start` serves the production build with `react-router-serve`.

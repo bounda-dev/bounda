@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ConfigurationError } from "../../contracts/errors.ts";
-import { fingerprintOf, generateWrappableKey } from "./crypto.ts";
+import {
+  fingerprintOf,
+  generateWrappableKey,
+  generateWrappableTenantKey,
+  tenantFingerprintOf,
+} from "./crypto.ts";
 import {
   buildKeyWrapper,
   cryptoKeyWrapperOver,
@@ -32,11 +37,11 @@ const carelessWrapper = () => {
 };
 
 describe("cryptoKeyWrapperOver", () => {
-  it("wraps a key's raw bytes with the app's wrapper and answers the key as one that cannot be exported", async () => {
+  it("wraps a tenant key's raw bytes with the app's wrapper and answers the key as one that cannot be exported", async () => {
     const { wrapper, given } = carelessWrapper();
     const over = cryptoKeyWrapperOver(wrapper);
     expect(over).toMatchObject({ kid: "kid-1", previous: [] });
-    const key = await generateWrappableKey();
+    const key = await generateWrappableTenantKey();
     const raw = await rawOf(key);
     const { wrapped, key: sealed } = await over.wrap(key);
     // A copy of what the wrapper answered: the array it was given is zeroed.
@@ -44,7 +49,8 @@ describe("cryptoKeyWrapperOver", () => {
     expect(given).toHaveLength(1);
     expect(given[0]).toEqual(new Uint8Array(32));
     expect(sealed.extractable).toBe(false);
-    expect(await fingerprintOf(sealed)).toBe(await fingerprintOf(key));
+    expect(sealed.algorithm).toEqual({ name: "AES-KW", length: 256 });
+    expect(await tenantFingerprintOf(sealed)).toBe(await tenantFingerprintOf(key));
   });
 
   it("zeroes the raw bytes it gave a wrapper that fails", async () => {
@@ -57,7 +63,7 @@ describe("cryptoKeyWrapperOver", () => {
       },
       unwrap: async () => new Uint8Array(32),
     });
-    await expect(over.wrap(await generateWrappableKey())).rejects.toThrow("KMS unavailable");
+    await expect(over.wrap(await generateWrappableTenantKey())).rejects.toThrow("KMS unavailable");
     expect(given[0]).toEqual(new Uint8Array(32));
   });
 
@@ -67,12 +73,29 @@ describe("cryptoKeyWrapperOver", () => {
     expect(over.previous).toEqual(["kid-0"]);
     const key = await generateWrappableKey();
     const raw = await rawOf(key);
-    const sealed = await over.unwrap({ kid: "kid-1", wrapped: raw, extractable: false });
+    const sealed = await over.unwrap({
+      kid: "kid-1",
+      wrapped: raw,
+      extractable: false,
+      kind: "personal",
+    });
     expect(sealed.extractable).toBe(false);
     expect(await fingerprintOf(sealed)).toBe(await fingerprintOf(key));
-    const exportable = await over.unwrap({ kid: "kid-1", wrapped: raw, extractable: true });
+    const tenant = await over.unwrap({
+      kid: "kid-1",
+      wrapped: raw,
+      extractable: false,
+      kind: "tenant",
+    });
+    expect(tenant.algorithm).toEqual({ name: "AES-KW", length: 256 });
+    const exportable = await over.unwrap({
+      kid: "kid-1",
+      wrapped: raw,
+      extractable: true,
+      kind: "personal",
+    });
     expect(await rawOf(exportable)).toEqual(raw);
-    expect(returned).toHaveLength(2);
+    expect(returned).toHaveLength(3);
     for (const answered of returned) expect(answered).toEqual(new Uint8Array(32));
   });
 
@@ -84,7 +107,12 @@ describe("cryptoKeyWrapperOver", () => {
       unwrap: async () => answered,
     });
     await expect(
-      over.unwrap({ kid: "kid-1", wrapped: new Uint8Array(40), extractable: false }),
+      over.unwrap({
+        kid: "kid-1",
+        wrapped: new Uint8Array(40),
+        extractable: false,
+        kind: "tenant",
+      }),
     ).rejects.toThrow();
     expect(answered).toEqual(new Uint8Array(3));
   });
@@ -96,7 +124,12 @@ describe("cryptoKeyWrapperOver", () => {
       unwrap: async () => new ArrayBuffer(32) as unknown as Uint8Array,
     });
     await expect(
-      over.unwrap({ kid: "kid-1", wrapped: new Uint8Array(40), extractable: false }),
+      over.unwrap({
+        kid: "kid-1",
+        wrapped: new Uint8Array(40),
+        extractable: false,
+        kind: "tenant",
+      }),
     ).rejects.toThrow(
       new ConfigurationError(
         "The key wrapper's unwrap resolved no Uint8Array for a key wrapped under kid-1",

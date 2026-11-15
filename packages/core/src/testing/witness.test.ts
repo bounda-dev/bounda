@@ -57,6 +57,27 @@ describe("the witness of a test app's storage", () => {
     expect(witness.storage(adapter).inspect).toBe(adapter.inspect);
   });
 
+  it("observes the adapter an encrypted file opens as, in its place", async () => {
+    const opened = memory();
+    const adapter = {
+      ...memory(),
+      encryptedFile: { database: "app.db", open: async () => opened },
+    };
+    const witness = testWitnessOf(adapter);
+    const observed = witness.storage(adapter);
+    const keyed = await observed.encryptedFile?.open({
+      keys: {} as never,
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      },
+    });
+    expect(keyed).toBe(witness.storage(opened));
+    expect(witness.storage(memory()).encryptedFile).toBeUndefined();
+  });
+
   it("keeps every envelope a store is handed, however deep, but no error text, with the key that opens it", async () => {
     const adapter = memory();
     const witness = testWitnessOf(adapter);

@@ -4,6 +4,7 @@ import { masterKey } from "@bounda-dev/core/config";
 import { cloudflare } from "../src/definition.ts";
 import { kvForgetLedger } from "../src/forget-ledger.ts";
 import { createBoundaObject, createWorker } from "../src/index.ts";
+import { kvTenantKeys } from "../src/tenant-keys.ts";
 import {
   processRegistry,
   quietRegistry,
@@ -15,12 +16,19 @@ import {
 import { clock } from "./clock.ts";
 import { recordingLogger } from "./logs.ts";
 
+// Every object's keys: the master key in the Worker's `BOUNDA_MASTER_KEY`, each tenant's key in
+// the `TENANT_KEYS` KV namespace, under the object's name or id.
+const keys = {
+  keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+  tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+};
+
 /**
  * The object under test: the order app on the Durable Object's own SQLite.
  */
 export const Store = createBoundaObject({
   registry,
-  config: { storage: cloudflare() },
+  config: { storage: cloudflare(), runtime: { personalData: keys } },
   clock,
   passesPerAlarm: 20,
 });
@@ -30,7 +38,7 @@ export const Store = createBoundaObject({
  */
 export const ProcessStore = createBoundaObject({
   registry: processRegistry,
-  config: { storage: cloudflare() },
+  config: { storage: cloudflare(), runtime: { personalData: keys } },
   clock,
   passesPerAlarm: 20,
 });
@@ -40,7 +48,7 @@ export const ProcessStore = createBoundaObject({
  */
 export const QuietStore = createBoundaObject({
   registry: quietRegistry,
-  config: { storage: cloudflare() },
+  config: { storage: cloudflare(), runtime: { personalData: keys } },
   clock,
 });
 
@@ -50,20 +58,16 @@ export const QuietStore = createBoundaObject({
  */
 export const RetainedStore = createBoundaObject({
   registry: quietRegistry,
-  config: { storage: cloudflare(), runtime: { personalData: { retention: "1h" } } },
+  config: { storage: cloudflare(), runtime: { personalData: { ...keys, retention: "1h" } } },
   clock,
 });
 
 /**
- * The same app without policies or processes, its personal keys wrapped under the master key in
- * the Worker's `BOUNDA_MASTER_KEY`.
+ * The same app without policies or processes, whose tenant's key a test forgets or rotates.
  */
 export const WrappedStore = createBoundaObject({
   registry: quietRegistry,
-  config: {
-    storage: cloudflare(),
-    runtime: { personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) } },
-  },
+  config: { storage: cloudflare(), runtime: { personalData: keys } },
   clock,
 });
 
@@ -76,7 +80,10 @@ export const LedgerStore = createBoundaObject({
   config: {
     storage: cloudflare(),
     runtime: {
-      personalData: { forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) } },
+      personalData: {
+        ...keys,
+        forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) },
+      },
     },
   },
   clock,
@@ -89,7 +96,10 @@ export const LedgerStore = createBoundaObject({
  */
 export const SlicedStore = createBoundaObject({
   registry: slicedRegistry,
-  config: { storage: cloudflare(), runtime: { dispatcher: { batchSize: 1 } } },
+  config: {
+    storage: cloudflare(),
+    runtime: { dispatcher: { batchSize: 1 }, personalData: keys },
+  },
   clock,
   eventsPerRebuildSlice: 1,
   passesPerAlarm: 1,
@@ -110,7 +120,10 @@ export const SnapshotStore = createBoundaObject({
   },
   config: {
     storage: cloudflare(),
-    runtime: { overrides: { order: { snapshot: { every: SNAPSHOT_EVERY } } } },
+    runtime: {
+      overrides: { order: { snapshot: { every: SNAPSHOT_EVERY } } },
+      personalData: keys,
+    },
   },
   clock,
 });
@@ -120,7 +133,7 @@ export const SnapshotStore = createBoundaObject({
  */
 export const RegionStore = createBoundaObject({
   registry: regionRegistry,
-  config: { storage: cloudflare() },
+  config: { storage: cloudflare(), runtime: { personalData: keys } },
   clock,
 });
 
@@ -130,6 +143,6 @@ export const RegionStore = createBoundaObject({
 export class Bare extends DurableObject {}
 
 export default createWorker({
-  config: { storage: cloudflare() },
+  config: { storage: cloudflare(), runtime: { personalData: keys } },
   tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
 });

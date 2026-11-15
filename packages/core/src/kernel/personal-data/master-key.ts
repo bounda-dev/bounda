@@ -1,7 +1,7 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
-import { fromBase64, PERSONAL_KEY_ALGORITHM, PERSONAL_KEY_USAGES, toBase64 } from "./crypto.ts";
+import { fromBase64, type KeyKind, keyAlgorithmOf, toBase64 } from "./crypto.ts";
 import {
   type CryptoKeyWrapper,
   defineCryptoKeyWrapper,
@@ -88,16 +88,49 @@ const unwrapUnder = (
   wrapping: CryptoKey,
   wrapped: Uint8Array,
   extractable: boolean,
-): Promise<CryptoKey> =>
-  crypto.subtle.unwrapKey(
+  kind: KeyKind,
+): Promise<CryptoKey> => {
+  const { name, usages } = keyAlgorithmOf(kind);
+  return crypto.subtle.unwrapKey(
     "raw",
     Uint8Array.from(wrapped),
     wrapping,
     WRAP_ALGORITHM,
-    PERSONAL_KEY_ALGORITHM,
+    name,
     extractable,
-    [...PERSONAL_KEY_USAGES],
+    [...usages],
   );
+};
+
+const wrapperOver = (current: MasterKey, older: readonly MasterKey[]): CryptoKeyWrapper => {
+  const byKid = new Map([current, ...older].map((key) => [key.kid, key.key]));
+  return {
+    kid: current.kid,
+    previous: [...new Set(older.map(({ kid }) => kid))],
+    wrap: async (key) => {
+      const wrapped = new Uint8Array(
+        await crypto.subtle.wrapKey("raw", key, current.key, WRAP_ALGORITHM),
+      );
+      return { wrapped, key: await unwrapUnder(current.key, wrapped, false, "tenant") };
+    },
+    unwrap: async ({ kid, wrapped, extractable, kind }) => {
+      const wrapping = byKid.get(kid);
+      if (wrapping === undefined) {
+        throw runtimeText(new ConfigurationError(`No master key configured has the id ${kid}`));
+      }
+      try {
+        return await unwrapUnder(wrapping, wrapped, extractable, kind);
+      } catch (error) {
+        throw runtimeText(
+          new ConfigurationError(
+            `A ${kind} key does not unwrap under the master key ${kid}: the key was altered in the store`,
+            { cause: error },
+          ),
+        );
+      }
+    },
+  };
+};
 
 /**
  * The key wrapper Bounda brings: AES-KW under a master key read from the host's environment when
@@ -106,7 +139,7 @@ const unwrapUnder = (
  * missing or holds anything else fails the start with `ConfigurationError`, naming the variable,
  * never its value. Each key's id is derived from the key, so a wrong master key is told apart
  * from the right one, and rotating takes only moving the old variable to `previous`. WebCrypto
- * wraps and unwraps the keys itself: a person's raw key never reaches JavaScript memory.
+ * wraps and unwraps the keys itself: a tenant's raw key never reaches JavaScript memory.
  */
 export const masterKey: MasterKeyFunction = ({ from, previous = [] }) =>
   defineCryptoKeyWrapper(async ({ env }): Promise<CryptoKeyWrapper> => {
@@ -114,31 +147,28 @@ export const masterKey: MasterKeyFunction = ({ from, previous = [] }) =>
     const older = (
       await Promise.all(previous.map((name) => importMasterKey(read(env, name))))
     ).filter(({ kid }) => kid !== current.kid);
-    const byKid = new Map([current, ...older].map((key) => [key.kid, key.key]));
-    return {
-      kid: current.kid,
-      previous: [...new Set(older.map(({ kid }) => kid))],
-      wrap: async (key) => {
-        const wrapped = new Uint8Array(
-          await crypto.subtle.wrapKey("raw", key, current.key, WRAP_ALGORITHM),
-        );
-        return { wrapped, key: await unwrapUnder(current.key, wrapped, false) };
-      },
-      unwrap: async ({ kid, wrapped, extractable }) => {
-        const wrapping = byKid.get(kid);
-        if (wrapping === undefined) {
-          throw runtimeText(new ConfigurationError(`No master key configured has the id ${kid}`));
-        }
-        try {
-          return await unwrapUnder(wrapping, wrapped, extractable);
-        } catch (error) {
-          throw runtimeText(
-            new ConfigurationError(
-              `A personal key does not unwrap under the master key ${kid}: the key was altered in the store`,
-              { cause: error },
-            ),
-          );
-        }
-      },
-    };
+    return wrapperOver(current, older);
   });
+
+export interface EphemeralMasterKeyFunction {
+  (): KeyWrapperDefinition;
+}
+
+/**
+ * A master key WebCrypto generates and that can never be exported, the same for every app built
+ * from this definition, and gone with the process: what `memory()` brings, whose data goes with
+ * the process too.
+ */
+export const ephemeralMasterKey: EphemeralMasterKeyFunction = () => {
+  let generated: Promise<MasterKey> | null = null;
+  return defineCryptoKeyWrapper(async () => {
+    generated ??= (async () => ({
+      kid: `ephemeral-${base64Url(crypto.getRandomValues(new Uint8Array(KID_BYTES)))}`,
+      key: await crypto.subtle.generateKey({ name: WRAP_ALGORITHM, length: 256 }, false, [
+        "wrapKey",
+        "unwrapKey",
+      ]),
+    }))();
+    return wrapperOver(await generated, []);
+  });
+};

@@ -31,6 +31,8 @@ import {
   storageTransactionContract,
   subscriberFailureStoreContract,
   tableContract,
+  tenancyContract,
+  tenantKeyStoreContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
@@ -52,6 +54,8 @@ describe("sqlite adapter in memory", () => {
   storageTransactionContract({ create: () => openStorage() });
   personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
+  tenancyContract({ create: () => openStorage() });
+  tenantKeyStoreContract({ create: () => sqlite({ memory: true }).createTenantKeyStore() });
   subscriberFailureStoreContract({ create: async () => (await openStorage()).subscriberFailures });
   tableContract({
     create: async () =>
@@ -377,6 +381,7 @@ describe("sqlite adapter on a file", () => {
       ["storage", 4],
       ["storage", 5],
       ["storage", 6],
+      ["storage", 7],
     ]);
   });
 
@@ -428,6 +433,7 @@ describe("sqlite adapter on a file", () => {
       "app_scheduled_commands",
       "app_snapshots",
       "app_subscriber_failures",
+      "app_tenancy",
     ]);
     await readModel.close();
     await second.close();

@@ -1,5 +1,5 @@
-import { DomainError, ValidationError } from "@bounda-dev/core";
-import { createTestApp, expectForgotten } from "@bounda-dev/core/testing";
+import { DomainError, TenantForgottenError, ValidationError } from "@bounda-dev/core";
+import { createTestApp, expectForgotten, expectTenantForgotten } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 import { registry } from "../.bounda/registry.ts";
 import type { EmailSenderArgs } from "../app/domain/user/email-sender.ts";
@@ -133,6 +133,20 @@ describe("onboarding", () => {
       },
     ]);
     await app.stop();
+  });
+
+  it("forgets the whole tenant: nothing of any user reads again, and the email provider erases every one", async () => {
+    const { app, clock, erased } = await start();
+    await app.commands.registerUser({ userId: ADA, email: "ada@example.com", name: "Ada" });
+    await app.commands.registerUser({ userId: GRACE, email: "grace@example.com", name: "Grace" });
+    clock.advance(MINUTE);
+    await app.runUntilIdle();
+
+    await app.forgetTenant("default");
+    await app.runUntilIdle();
+    expect([...erased].sort()).toEqual([ADA, GRACE].sort());
+    await expect(app.queries.listUsers({})).rejects.toThrow(TenantForgottenError);
+    await expectTenantForgotten(app);
   });
 
   it("forgets a user: their rows go, for good, their reminder is cancelled and the email provider erases them", async () => {

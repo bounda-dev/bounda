@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import type { EphemeralKeys } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
@@ -13,9 +14,9 @@ import type { PersonalDataForgottenPayload } from "../../modules/bounda-events.t
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { createEphemeralKeys } from "../personal-data/ephemeral-keys.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
 import { HOLD_MAX_MS } from "../personal-data/hold.ts";
-import { masterKey } from "../personal-data/master-key.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
 import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
 import { advanceUntilWaiting } from "../test-support.ts";
@@ -53,9 +54,6 @@ const registry = {
   },
   readModels: {},
 } as unknown as Registry;
-
-const randomKey = (): string =>
-  Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
 
 type Copy = ReadonlyMap<string, readonly Record<string, SQLInputValue>[]>;
 
@@ -111,6 +109,18 @@ afterEach(async () => {
 
 let started = 0;
 
+// The keys of each database, the same for every app the test starts over it, by its file.
+const keysOf = new Map<unknown, EphemeralKeys>();
+const keysFor = (adapter: { readonly options: unknown }): EphemeralKeys => {
+  const { path } = adapter.options as { readonly path: string };
+  const database = path === ":memory:" ? adapter : path;
+  const known = keysOf.get(database);
+  if (known !== undefined) return known;
+  const created = createEphemeralKeys();
+  keysOf.set(database, created);
+  return created;
+};
+
 const start = async (args: {
   readonly adapter: ReturnType<typeof createNodeSqliteAdapter>["adapter"];
   readonly runtime?: RuntimeConfig;
@@ -120,11 +130,15 @@ const start = async (args: {
 }): Promise<{ app: BoundaApp<Registry>; clock: ReturnType<typeof createFixedClock> }> => {
   started += 1;
   const clock = createFixedClock(args.now ?? START);
+  const { keyWrapper, tenantKeys } = keysFor(args.adapter);
   const app = await createApp<Registry>({
     registry,
     config: {
       storage: args.adapter,
-      ...(args.runtime === undefined ? {} : { runtime: args.runtime }),
+      runtime: {
+        ...args.runtime,
+        personalData: { keyWrapper, tenantKeys, ...args.runtime?.personalData },
+      },
     },
     env: args.env ?? {},
     ids: createSequentialIdGenerator({ prefix: `app-${started}` }),
@@ -149,37 +163,21 @@ const keyRows = (db: DatabaseSync) =>
 describe("a database restored while the app runs", () => {
   it("has the rotation start over at once, without the holds the copy brought back", async () => {
     const { adapter, db } = createNodeSqliteAdapter();
-    const old = randomKey();
-    const before = await start({
-      adapter,
-      env: { BOUNDA_MASTER_KEY: old },
-      runtime: { personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) } },
-    });
+    const before = await start({ adapter });
     await register(before.app, "c-1");
     await register(before.app, "c-2");
     await before.app.stop();
 
     const logger = recordingLogger();
-    const { app, clock } = await start({
-      adapter,
-      env: { BOUNDA_MASTER_KEY: randomKey(), BOUNDA_MASTER_KEY_PREVIOUS: old },
-      runtime: {
-        personalData: {
-          keyWrapper: masterKey({
-            from: "BOUNDA_MASTER_KEY",
-            previous: ["BOUNDA_MASTER_KEY_PREVIOUS"],
-          }),
-        },
-      },
-      logger,
-    });
+    const { app, clock } = await start({ adapter, logger });
+    const [oldKid] = keyRows(db).map(({ kid }) => kid);
+    await app.rotateTenantKey();
     // A key that failed to rewrap for a while: held for long, with its attempts counted.
     db.prepare(
       `UPDATE "bounda_personal_keys" SET "held_until" = ?, "attempts" = 9 WHERE "person" = 'c-2'`,
     ).run(new Date(START.getTime() + HOLD_MAX_MS).toISOString());
     await app.runUntilIdle();
-    const [, oldKid] = keyRows(db).map(({ kid }) => kid);
-    // The backup: c-1 rewrapped, c-2 still under the old key and held.
+    // The backup: c-1 rewrapped, c-2 still under the old version and held.
     const copy = copyOf(db);
     db.prepare(
       `UPDATE "bounda_personal_keys" SET "held_until" = NULL WHERE "person" = 'c-2'`,
@@ -187,6 +185,7 @@ describe("a database restored while the app runs", () => {
     clock.advance(ROTATION_CHECK_INTERVAL_MS);
     await app.runUntilIdle();
     const newKid = keyRows(db)[0]?.kid;
+    expect(newKid).not.toBe(oldKid);
     expect(keyRows(db).map(({ kid }) => kid)).toEqual([newKid, newKid]);
     expect(await app.nextDueAt()).toBeNull();
 
@@ -207,26 +206,11 @@ describe("a database restored while the app runs", () => {
 
   it("moves the generation after a pass that wrote no event, as a key rewrapped, and not while idle", async () => {
     const { adapter, db } = createNodeSqliteAdapter();
-    const old = randomKey();
-    const before = await start({
-      adapter,
-      env: { BOUNDA_MASTER_KEY: old },
-      runtime: { personalData: { keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) } },
-    });
+    const before = await start({ adapter });
     await register(before.app, "c-1");
     await before.app.stop();
-    const { app, clock } = await start({
-      adapter,
-      env: { BOUNDA_MASTER_KEY: randomKey(), BOUNDA_MASTER_KEY_PREVIOUS: old },
-      runtime: {
-        personalData: {
-          keyWrapper: masterKey({
-            from: "BOUNDA_MASTER_KEY",
-            previous: ["BOUNDA_MASTER_KEY_PREVIOUS"],
-          }),
-        },
-      },
-    });
+    const { app, clock } = await start({ adapter });
+    await app.rotateTenantKey();
     const generation = () =>
       (
         db

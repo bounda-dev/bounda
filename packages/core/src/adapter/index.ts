@@ -3,6 +3,7 @@ export type {
   CommitReadModelRebuildArgs,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
+  EphemeralKeys,
   IsAdapterFunction,
   ReadModelRebuild,
   ReadModelStorage,
@@ -39,6 +40,14 @@ export type {
   ResealedDeadLetter,
   StoredDeadLetter,
 } from "./storage/dead-letter-store.ts";
+export type {
+  EncryptedFile,
+  FileEncryption,
+  FileEncryptionState,
+  FileKey,
+  FileKeyAccess,
+  OpenEncryptedFileArgs,
+} from "./storage/encrypted-file.ts";
 export type { EventListener, EventNotifier, Unsubscribe } from "./storage/event-notifier.ts";
 export type {
   AppendArgs,
@@ -166,3 +175,14 @@ export type {
   TableOrder,
   Where,
 } from "./storage/table.ts";
+export type { Tenancy, TenancyStore } from "./storage/tenancy-store.ts";
+export type {
+  ListTenantKeysArgs,
+  StoredFileKey,
+  StoredTenantKey,
+  TenantForgetting,
+  TenantKeyRecord,
+  TenantKeyStore,
+  TenantKeysPage,
+  VersionedTenantKeyRecord,
+} from "./storage/tenant-key-store.ts";

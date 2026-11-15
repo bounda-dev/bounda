@@ -34,4 +34,8 @@ export interface SnapshotStore {
   put(snapshot: Snapshot): Promise<void>;
   remove(stream: StreamIdentity): Promise<void>;
   forget(person: string, keep?: readonly string[]): Promise<void>;
+  /**
+   * Removes every snapshot: what forgetting the tenant does.
+   */
+  clear(): Promise<void>;
 }

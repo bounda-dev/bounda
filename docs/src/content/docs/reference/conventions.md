@@ -19,7 +19,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/state.ts` | optional: `initialState`, and `aggregateId` (the payload field holding the id) |
 | `app/domain/<aggregate>/<event>.ts` | `payload` (optional), and `begin` for the event that opens the aggregate or `evolve`, or both; nothing else at run time |
 | `app/domain/<aggregate>/<event>.upcast.ts` | `upcasts`, oldest version first, next to its event |
-| `app/domain/<aggregate>/<port>.ts` | `interface <Port>`, named after the file; it is a port because `infrastructure/<port>/` exists. For a port that sends personal data out, `recipient`, `satisfies Port.Recipient`, and the five handlers that tell it: `onPersonalDataForgotten`, `onProcessingRestricted`, `onProcessingRestrictionLiftAnnounced`, `onProcessingRestrictionLifted` and `onPersonalDataRedacted` (see [Recipients](/guides/personal-data/#recipients)) |
+| `app/domain/<aggregate>/<port>.ts` | `interface <Port>`, named after the file; it is a port because `infrastructure/<port>/` exists. For a port that sends personal data out, `recipient`, `satisfies Port.Recipient`, and the six handlers that tell it: `onPersonalDataForgotten`, `onProcessingRestricted`, `onProcessingRestrictionLiftAnnounced`, `onProcessingRestrictionLifted`, `onPersonalDataRedacted` and `onTenantForgotten` (see [Recipients](/guides/personal-data/#recipients)) |
 | `app/domain/<aggregate>/infrastructure/<port>/<implementation>.ts` | `export default ... satisfies <Port>`, or `create`, typed as `CreateImplementation<Port>` |
 | `app/domain/<aggregate>/commands/<command>.ts` | `payload` (optional), `rejections` (optional), `handler` |
 | `app/domain/<aggregate>/policies/<action>-on-<event>.ts` | `handler`; `on`, `delay` and `restricted`, the [basis it processes restricted data on](/guides/personal-data/#processing-restricted-data-anyway), optional |
@@ -85,7 +85,7 @@ fails to compile there. `PersonalDataDeclaration` fails to compile while `app/pe
 declares a category named `default`, or one without a basis Bounda knows or a retention, and a
 category that `personal({ category })`, `.personal({ category })` or `forget` names and the file
 does not declare does not compile where it is written. `<Owner>Recipients` fails to compile while a
-port's module declares a `recipient` and lacks one of its five handlers, naming the port and the
+port's module declares a `recipient` and lacks one of its six handlers, naming the port and the
 event it tells, or while a method of the port answers something other than a promise; a
 `recipient` whose country is outside the European Economic Area and names no safeguard, or one
 inside that names one, a kind the GDPR does not name, a country that is no ISO 3166-1 code or a
@@ -112,7 +112,7 @@ Some rules need the modules themselves, so the app checks them when it is create
 - an `app/audit.ts` that does not export `onPersonalDataAccess` as a function;
 - a port that declares a `recipient` without a name, a kind the GDPR names, an ISO 3166-1 country,
   the safeguard a transfer out of the European Economic Area rests on (and none within it) or
-  categories the app has, or without one of its five handlers; one that has no implementation; a
+  categories the app has, or without one of its six handlers; one that has no implementation; a
   `recipient.formerly` key that is not `"<aggregate or read model>.<port>"`, that is a port of the
   app, or that two ports name;
 - an `app/personal-data.ts` whose `categories` is not an object, declares `default`, names a

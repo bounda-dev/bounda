@@ -24,6 +24,7 @@ declare global {
       readonly LEDGER_STORE: DurableObjectNamespace<InstanceType<typeof LedgerStore>>;
       readonly SNAPSHOT_STORE: DurableObjectNamespace<InstanceType<typeof SnapshotStore>>;
       readonly FORGET_LEDGER: KVNamespace;
+      readonly TENANT_KEYS: KVNamespace;
       readonly BARE: DurableObjectNamespace<Bare>;
       readonly STORE_REGION: string;
       readonly BOUNDA_MASTER_KEY: string;

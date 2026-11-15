@@ -38,6 +38,8 @@ import {
   storageTransactionContract,
   subscriberFailureStoreContract,
   tableContract,
+  tenancyContract,
+  tenantKeyStoreContract,
   viewContract,
 } from "../testing/index.ts";
 import { createSqliteEventStore } from "./event-store.ts";
@@ -136,6 +138,8 @@ describe("the SQLite stores on node:sqlite", () => {
   personalKeyStoreContract({ create: async () => storage() });
   personStoreContract({ create: async () => (await storage()).persons });
   recipientStoreContract({ create: storage });
+  tenancyContract({ create: storage });
+  tenantKeyStoreContract({ create: () => nodeSqlite().adapter.createTenantKeyStore() });
   inspectionContract({ create: async () => nodeSqlite().adapter });
   subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
   forgetLedgerContract({
@@ -543,6 +547,7 @@ describe("createSqliteAdapter", () => {
       "app_scheduled_commands",
       "app_snapshots",
       "app_subscriber_failures",
+      "app_tenancy",
     ]);
   });
 

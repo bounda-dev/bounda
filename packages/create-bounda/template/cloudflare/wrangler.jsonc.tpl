@@ -15,6 +15,9 @@
   },
   // The object keeps its events and read models in SQLite, so the class is created as a SQLite class.
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
+  // Each tenant's key, apart from its object, so forgetting the tenant reaches every restore of it.
+  // Deploying creates the namespace.
+  "kv_namespaces": [{ "binding": "TENANT_KEYS" }],
   "observability": { "enabled": true },
   "upload_source_maps": true
 }

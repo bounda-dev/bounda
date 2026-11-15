@@ -53,6 +53,7 @@ export const createSqliteSnapshotStore: CreateSqliteSnapshotStoreFunction = ({
         JSON.stringify(persons),
       ],
     ),
+  clear: () => db.run(`DELETE FROM ${table}`, []),
   remove: ({ aggregateType, aggregateId }) =>
     db.run(`DELETE FROM ${table} WHERE "aggregate_type" = ? AND "aggregate_id" = ?`, [
       aggregateType,
