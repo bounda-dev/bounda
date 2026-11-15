@@ -708,6 +708,19 @@ describe("emitProject with a port that declares a recipient", () => {
       emitTypes({ model: { ...withPorts, readModels: [] }, path: "/project/.bounda/types.ts" })
         .content,
     ).not.toContain("Expect");
+    expect(
+      emitTypes({
+        model: {
+          ...withPorts,
+          readModels: [],
+          personalData: {
+            path: "/project/app/personal-data.ts",
+            relativePath: "app/personal-data.ts",
+          },
+        },
+        path: "/project/.bounda/types.ts",
+      }).content,
+    ).toContain("type Expect<Check extends true> = Check;");
   });
 
   it("types its declaration and every handler, which receives the port under its name", () => {

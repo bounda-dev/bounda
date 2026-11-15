@@ -1080,6 +1080,16 @@ describe("bounda forgotten and bounda forget", () => {
     }
   });
 
+  it("documents bounda recipients in its help", async () => {
+    const help = (await cli(["recipients", "--help"], fixture)).stdout.replace(/\s+/g, " ");
+    expect(help).toContain(
+      "print every recipient a port sends personal data to, how many persons were disclosed to it and its failed notices; with a person, print as JSON the recipients of their data, recorded in the access log",
+    );
+    expect(help).toContain("person the id of the person whose recipients to print");
+    expect(help).toContain("--json print every recipient as JSON");
+    expect(help).toContain("--actor <id>");
+  });
+
   it("documents both commands in their help", async () => {
     const help = async (command: string) =>
       (await cli([command, "--help"], fixture)).stdout.replace(/\s+/g, " ");

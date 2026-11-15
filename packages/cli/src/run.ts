@@ -676,10 +676,8 @@ const runRecipients = (
       return EXIT_OK;
     }
     const { recipients } = await app.status();
-    line(
-      stdout,
-      options.json ? JSON.stringify(recipients, null, 2) : formatRecipients(recipients).join("\n"),
-    );
+    if (options.json) line(stdout, JSON.stringify(recipients, null, 2));
+    else for (const text of formatRecipients(recipients)) line(stdout, text);
     return EXIT_OK;
   });
 
