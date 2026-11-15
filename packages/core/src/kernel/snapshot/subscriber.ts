@@ -57,7 +57,8 @@ export interface CreateSnapshotSubscriberFunction {
  * reached a multiple of `every` since its last valid one, at the head the load finds: the write is
  * outside any command and idempotent, so two instances taking the same batch do no harm. Only an
  * event at such a multiple gives it work, so it rests, writing nothing, between two. A state that
- * cannot be serialized is logged and left for the next batch of that stream.
+ * cannot be serialized is logged and tried again with the next batch the subscriber takes that holds
+ * an event of that stream: one with an event at a multiple of `every`, of any stream, or a full one.
  */
 export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
   aggregate,

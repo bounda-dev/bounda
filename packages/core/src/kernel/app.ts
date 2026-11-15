@@ -137,6 +137,11 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * rejects.
    */
   readonly queries: QueriesFacade<R>;
+  /**
+   * How far each subscriber is behind the head of the global stream. To tell a subscriber at rest
+   * from one behind, it reads the events after each checkpoint, less than one batch, once per
+   * distinct checkpoint: on a Durable Object those are rows read, billed on every call.
+   */
   getLag(): Promise<AppLag>;
   /**
    * Where the runtime's background work stands, as the database says: the versions of its tables,
