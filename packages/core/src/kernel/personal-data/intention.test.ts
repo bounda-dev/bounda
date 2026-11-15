@@ -244,6 +244,7 @@ describe("the intentions of forgetting", () => {
         disclosure: ledgered,
       },
     ]);
+    expect(disclosureEntryId(disclosure)).toBe("f8d89ec8-eb75-5ec1-8312-46f9fc212492");
     expect(disclosureEntryId(disclosure)).not.toBe(
       disclosureEntryId({ ...disclosure, category: "profile" }),
     );

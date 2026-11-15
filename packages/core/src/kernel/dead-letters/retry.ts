@@ -42,9 +42,9 @@ export interface CreateDeadLetterRetryArgs {
   readonly policyExecutor: PolicyExecutor;
   readonly processes: ProcessDeadLetters;
   /**
-   * What tells a recipient again; a letter of a recipient is not retriable without it.
+   * What tells a recipient again.
    */
-  readonly notices?: RecipientNotices | undefined;
+  readonly notices: RecipientNotices;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -204,11 +204,6 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
         await retryScheduled(letter, actor);
         return false;
       case "recipient": {
-        if (notices === undefined) {
-          throw runtimeText(
-            new DeadLetterNotRetriableError(`Port ${letter.handler} tells no recipient any more`),
-          );
-        }
         const event = await eventOf(letter);
         await settled(letter, (unit) =>
           notices.run({

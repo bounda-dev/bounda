@@ -12,6 +12,7 @@ import { SnapshotError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { fenceOf } from "../personal-data/fences.ts";
 import { ATTRIBUTES, METRICS } from "../telemetry.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
 import { choosePorts, createRecordingLogger, orderAggregate } from "../test-support.ts";
@@ -31,6 +32,7 @@ interface SetUpArgs {
   readonly verify?: number;
   readonly strict?: boolean;
   readonly snapshots?: boolean;
+  readonly fenced?: boolean;
 }
 
 const stream = { aggregateType: "order", aggregateId: "1" };
@@ -41,6 +43,7 @@ const setUp = async ({
   verify = 0,
   strict = false,
   snapshots = true,
+  fenced = false,
 }: SetUpArgs = {}) => {
   telemetry = installFakeTelemetry();
   const evolves = {
@@ -84,7 +87,7 @@ const setUp = async ({
     forget: vi.fn(storage.snapshotStore.forget),
   };
   const { logger, entries } = createRecordingLogger();
-  const loader = createAggregateLoader({ snapshotStore, logger, strict });
+  const loader = createAggregateLoader({ snapshotStore, logger, strict, fenced });
   const append = async (...events: readonly (readonly [number, string, unknown])[]) => {
     await storage.eventStore.append({
       ...stream,
@@ -120,6 +123,25 @@ const setUp = async ({
 };
 
 describe("createAggregateLoader", () => {
+  it("stamps the persons a snapshot names with the head read before it, only when fenced", async () => {
+    const fencedSetUp = await setUp({ fenced: true });
+    const named = held("c-1", "1");
+    await fencedSetUp.storage.personalKeys.add(
+      "c-1",
+      DEFAULT_PERSONAL_CATEGORY,
+      testPersonalKey("1"),
+    );
+    await fencedSetUp.storage.snapshotStore.put(fencedSetUp.snapshot({ persons: [named] }));
+    const { persons } = await fencedSetUp.load();
+    expect(persons.map((person) => fenceOf(person))).toEqual([2]);
+    const plain = await setUp();
+    await plain.storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, testPersonalKey("1"));
+    await plain.storage.snapshotStore.put(plain.snapshot({ persons: [held("c-1", "1")] }));
+    expect((await plain.load()).persons.map((person) => fenceOf(person))).toEqual([undefined]);
+    const missing = await setUp({ fenced: true });
+    expect((await missing.load()).persons).toEqual([]);
+  });
+
   it("folds an aggregate without snapshots from its first event, asking no store", async () => {
     const { snapshotStore, load, outcomes, folds } = await setUp({ snapshots: false });
     expect(await load()).toEqual({

@@ -916,6 +916,119 @@ describe("recipients of personal data", () => {
     ]);
   });
 
+  it("decides a command again when what it read changed before its port was called", async () => {
+    const told: Notice[] = [];
+    const registry = registryWith({ told });
+    let app: Awaited<ReturnType<typeof start>>["app"] | undefined;
+    let changes = 0;
+    const customer = registry.aggregates.customer as unknown as {
+      commands: Record<string, { module: Record<string, unknown> }>;
+    };
+    const sync = customer.commands.syncCustomer?.module ?? {};
+    customer.commands.syncCustomer = {
+      module: {
+        ...sync,
+        handler: async ({
+          state,
+          events,
+          crm,
+        }: {
+          state: { address?: string | null };
+          events: Events;
+          crm: Sender;
+        }) => {
+          if (changes === 0) {
+            changes += 1;
+            await app?.restrict("c-1", { ground: "legal-claims", categories: ["invoices"] });
+          }
+          await crm.send({ to: state.address ?? null });
+          return [events.customerSynced?.({})];
+        },
+      },
+    };
+    const started = await start({ told, registry });
+    app = started.app;
+    await started.register("c-1");
+    await started.commands.syncCustomer?.({ customerId: "c-1" });
+    expect(started.synced).toEqual([null]);
+  });
+
+  it("lets a policy or a process that names a basis disclose restricted data, recorded with it", async () => {
+    const told: Notice[] = [];
+    const registry = registryWith({ told });
+    const customer = registry.aggregates.customer as unknown as {
+      policies: Record<string, { module: Record<string, unknown> }>;
+      processes: Record<string, unknown>;
+    };
+    const sendAddress = async ({
+      event,
+      crm,
+    }: {
+      event: { payload: { address?: string | null } };
+      crm: Sender;
+    }) => {
+      await crm.send({ to: event.payload.address ?? null });
+    };
+    customer.policies.welcomeOnCustomerRegistered = { module: { handler: async () => {} } };
+    customer.policies.syncOnCustomerRegistered = {
+      module: { restricted: "legal-claims", handler: sendAddress },
+    };
+    customer.processes.archive = {
+      module: {
+        config: ({ events }: { events: { customer: { CustomerRegistered: unknown } } }) => ({
+          startedBy: [events.customer.CustomerRegistered],
+          timeout: "30d",
+        }),
+        restricted: "legal-claims",
+      },
+      handlers: { customer: { customerRegistered: { handler: sendAddress } } },
+    };
+    const { app, commands, synced, accesses } = await start({ told, registry });
+    await commands.registerCustomer?.({
+      customerId: "c-1",
+      email: "c-1@example.com",
+      address: "1 Main St",
+    });
+    await app.restrict("c-1", { ground: "legal-claims" });
+    await app.runUntilIdle();
+    expect(synced).toEqual(["1 Main St", "1 Main St"]);
+    expect(
+      accesses
+        .filter((access) => access.operation === "disclosure")
+        .map(({ detail, restricted }) => [(detail as { handler: string }).handler, restricted]),
+    ).toEqual([
+      [
+        "customer.syncOnCustomerRegistered",
+        { basis: "legal-claims", persons: ["c-1"], personCount: 1 },
+      ],
+      ["customer.archive", { basis: "legal-claims", persons: ["c-1"], personCount: 1 }],
+    ]);
+  });
+
+  it("refuses what a query hands a port while its read model has not caught up with a change of the person", async () => {
+    const { app, queries, register, shared } = await start();
+    await register("c-1");
+    await app.restrict("c-1", { ground: "objection-pending", categories: ["invoices"] });
+    await expect(queries.shareCustomer?.({ customerId: "c-1" })).rejects.toMatchObject({
+      code: "CONCURRENCY_CONFLICT",
+      streamId: "bounda:c-1",
+    });
+    expect(shared).toEqual([]);
+    await app.runUntilIdle();
+    await queries.shareCustomer?.({ customerId: "c-1" });
+    expect(shared).toEqual(["c-1@example.com"]);
+  });
+
+  it("reports every recipient in the app's status", async () => {
+    const { app, register } = await start();
+    await register("c-1");
+    expect((await app.status()).recipients.map(({ port, persons }) => [port, persons])).toEqual([
+      ["customer.crm", 0],
+      ["customer.mailer", 1],
+      ["customers.audience", 0],
+    ]);
+  });
+
   it("lists every recipient in the export, with the category's basis and the transfer's safeguard", async () => {
     const { app, register } = await start();
     await register("c-1");
@@ -1093,6 +1206,18 @@ describe("recipients and the forget ledger", () => {
     await app.runUntilIdle();
     expect(told.map(({ port, person }) => [port, person])).toEqual([["customer.mailer", "c-9"]]);
   });
+
+  it("presumes nothing after a restore when the ledger keeps every disclosure", async () => {
+    const app = await startWithLedger(memory(), memory(), []);
+    const commands = app.commands as unknown as Record<
+      string,
+      (payload: unknown) => Promise<unknown>
+    >;
+    await commands.registerCustomer?.({ customerId: "c-1", email: "c-1@example.com" });
+    await app.runUntilIdle();
+    await app.restored();
+    expect((await app.recipientsOf("c-1")).map(({ status }) => status)).not.toContain("presumed");
+  });
 });
 
 describe("recipient declarations", () => {
@@ -1204,9 +1329,17 @@ describe("recipient declarations", () => {
       logger,
     });
     await app.stop();
-    expect(warnings).toContainEqual([
-      "a recipient holds personal data and its port is not declared: what it is told of goes to dead letters",
-      { recipient: "customer.mailer", persons: 1 },
+    expect(
+      warnings.filter(
+        ([message]) =>
+          message ===
+          "a recipient holds personal data and its port is not declared: what it is told of goes to dead letters",
+      ),
+    ).toEqual([
+      [
+        "a recipient holds personal data and its port is not declared: what it is told of goes to dead letters",
+        { recipient: "customer.mailer", persons: 1 },
+      ],
     ]);
   });
 });
