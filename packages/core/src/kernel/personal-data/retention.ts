@@ -166,6 +166,9 @@ export const createRetentionSubscriber: CreateRetentionSubscriberFunction = ({
 }) => ({
   name: RETENTION_SUBSCRIBER,
   kind: "retention",
+  // What `rowIsCurrent` looks for past the checkpoint, so a checkpoint at rest never holds back
+  // the retention of a person.
+  handles: (event) => event.person !== null && (isActivity(event) || isForget(event)),
   process: async (events) => {
     const recorded = new Map<string, PersonActivity>();
     for (const event of events) {

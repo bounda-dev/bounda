@@ -27,6 +27,10 @@ export interface Subscriber {
   readonly name: string;
   readonly kind: SubscriberKind;
   /**
+   * Whether the event gives the subscriber work. Without it, every event does. See `restsOn`.
+   */
+  readonly handles?: (event: StoredEvent) => boolean;
+  /**
    * `span` is the batch's `bounda.subscriber` span.
    */
   process(events: readonly StoredEvent[], span: Span): Promise<number>;
@@ -80,9 +84,36 @@ export class PartialBatchError extends Error {
 }
 
 export interface DeliverArgs {
+  /**
+   * Reads at most `batchSize` events.
+   */
   readonly read: (afterPosition: number) => Promise<readonly StoredEvent[]>;
+  readonly batchSize: number;
   readonly wait: boolean;
 }
+
+export interface RestsOnArgs {
+  readonly handles: ((event: StoredEvent) => boolean) | undefined;
+  /**
+   * What a delivery from the subscriber's checkpoint reads.
+   */
+  readonly events: readonly StoredEvent[];
+  readonly batchSize: number;
+}
+
+export interface RestsOnFunction {
+  (args: RestsOnArgs): boolean;
+}
+
+/**
+ * A subscriber rests while nothing between its checkpoint and the head is for it: its checkpoint
+ * stays put, with no write and nothing to wake for, and moves past those events with the next
+ * batch it handles. A full batch is never rested on, so what lies behind a checkpoint at rest is
+ * always less than one read. The dispatcher's deliveries, its lag and the deadlines that wait for
+ * the reactive runners all ask this, so they agree on when a subscriber has nothing left to do.
+ */
+export const restsOn: RestsOnFunction = ({ handles, events, batchSize }) =>
+  handles !== undefined && events.length < batchSize && !events.some(handles);
 
 export interface CheckpointedSubscriber {
   readonly name: string;
@@ -92,6 +123,7 @@ export interface CheckpointedSubscriber {
    * behalf of a command.
    */
   readonly reactsTo?: (qualifiedEventType: string) => boolean;
+  readonly handles?: (event: StoredEvent) => boolean;
   position(): Promise<number>;
   deliver(args: DeliverArgs): Promise<Delivery>;
 }
@@ -127,6 +159,7 @@ export interface CreateCheckpointedSubscriberArgs<Claim extends CheckpointClaim>
    */
   readonly claim: ClaimFunction<Claim>;
   readonly process: (events: readonly StoredEvent[], claim: Claim, span: Span) => Promise<number>;
+  readonly handles?: (event: StoredEvent) => boolean;
   readonly logger: Logger;
   readonly errorText: ErrorText;
 }
@@ -157,6 +190,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
   position,
   claim,
   process,
+  handles,
   logger,
   errorText,
 }) => {
@@ -246,12 +280,14 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
   return {
     name,
     kind,
+    ...(handles === undefined ? {} : { handles }),
     position,
-    deliver: async ({ read, wait }) => {
+    deliver: async ({ read, batchSize, wait }) => {
       const afterPosition = await position();
       const events = await read(afterPosition);
       const [first] = events;
-      if (first === undefined) return { outcome: "idle" };
+      if (first === undefined || restsOn({ handles, events, batchSize }))
+        return { outcome: "idle" };
       return traced({
         name: `bounda.subscriber ${name}`,
         attributes: {
@@ -312,6 +348,7 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
       }),
     }),
     process: (events, _claim, span) => subscriber.process(events, span),
+    ...(subscriber.handles === undefined ? {} : { handles: subscriber.handles }),
     logger,
     errorText,
   });

@@ -53,10 +53,11 @@ export interface CreateSnapshotSubscriberFunction {
 }
 
 /**
- * Follows the global stream for one aggregate and writes a snapshot of every stream that gathered
- * `every` events since its last valid one, at the head the load finds: the write is outside any
- * command and idempotent, so two instances taking the same batch do no harm. A state that cannot
- * be serialized is logged and left for the next batch of that stream.
+ * Follows the global stream for one aggregate and writes a snapshot of every stream whose version
+ * reached a multiple of `every` since its last valid one, at the head the load finds: the write is
+ * outside any command and idempotent, so two instances taking the same batch do no harm. Only an
+ * event at such a multiple gives it work, so it rests, writing nothing, between two. A state that
+ * cannot be serialized is logged and left for the next batch of that stream.
  */
 export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
   aggregate,
@@ -97,13 +98,16 @@ export const createSnapshotSubscriber: CreateSnapshotSubscriberFunction = ({
       if (head < every) continue;
       const current = await snapshotStore.get({ aggregateType: aggregate.name, aggregateId });
       const since = current !== null && current.fingerprint === fingerprint ? current.version : 0;
-      if (head - since >= every) await snapshot(aggregateId, noteWritten);
+      if (Math.floor(head / every) > Math.floor(since / every)) {
+        await snapshot(aggregateId, noteWritten);
+      }
     }
   };
 
   return {
     name: snapshotSubscriberName(aggregate.name),
     kind: "snapshot",
+    handles: (event) => event.aggregateType === aggregate.name && event.version % every === 0,
     process: async (events, span) => {
       // Events of one stream come in version order, so the last one seen is its head.
       const heads = new Map<string, number>();

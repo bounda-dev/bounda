@@ -81,9 +81,10 @@ Object has no loop running between requests:
 - **Policies, processes, scheduled commands and retries** run in the object's **alarm**, right
   after the command answers, in their own event. A policy that calls a slow service never slows
   the command down.
-- **The object arms its own alarm**: at once when work is left or new events arrived, after a
-  retry interval when a retry back-off is holding events, at the due time of the next scheduled
-  command or process timeout, whichever comes first. Nothing is armed when nothing is pending.
+- **The object arms its own alarm**: at once when work is left or new events arrived that a
+  subscriber handles, after a retry interval when a retry back-off is holding events, at the due
+  time of the next scheduled command or process timeout, whichever comes first. Nothing is armed
+  when nothing is pending.
 - **The alarm never throws.** Cloudflare retries a failing alarm six times and then drops it;
   the object catches every failure, logs it and arms itself again.
 
@@ -321,6 +322,11 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   four for the event, three for the read-model row (the row, its primary key and the index), one
   for the checkpoint. On the free plan's 100,000 row writes a day that is about 12,500 commands,
   when the app has no policies or processes and so no alarm to run after each one.
+  An event that no read model, policy or process handles costs only its own rows: every
+  subscriber [rests](/concepts/how-it-runs/) on it and the object arms no alarm for it, until a
+  whole batch of such events is waiting and one alarm moves the checkpoints past them in one write
+  each. A [snapshot](/concepts/long-streams/#snapshots) subscriber likewise wakes the object only
+  for the event that brings a snapshot.
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
   request. A scheduled command, dead letter, snapshot or remembered rejection that holds personal
   data writes two more rows for each person it names, and as many again when it goes: the entry

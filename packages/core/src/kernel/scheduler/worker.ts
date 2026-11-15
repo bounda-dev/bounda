@@ -128,6 +128,11 @@ export interface CreateScheduledCommandWorkerArgs {
    * retry wait for before they run.
    */
   readonly reactive: readonly string[];
+  /**
+   * Where one of them stands, as the dispatcher's lag says, so one resting behind events it does
+   * not handle holds nothing up.
+   */
+  readonly standing: (subscriber: string) => Promise<number>;
   readonly config: ResolvedConfig;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -216,6 +221,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   restores,
   onRestored,
   reactive,
+  standing,
   config,
   ids,
   clock,
@@ -619,7 +625,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     if (runners.length === 0) return () => true;
     const [head, ...positions] = await Promise.all([
       storage.eventStore.lastPosition(),
-      ...runners.map((name) => storage.checkpointStore.get(name)),
+      ...runners.map((name) => standing(name)),
     ]);
     const positionOf = (entry: ClaimedCommand): number =>
       Math.min(...runnersOf(entry).map((name) => positions[runners.indexOf(name)] ?? 0));

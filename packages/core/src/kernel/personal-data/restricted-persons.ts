@@ -107,6 +107,7 @@ export const createRestrictedPersonsSubscriber: CreateRestrictedPersonsSubscribe
       for (const event of events) await applyToRestrictedPersons(restrictedPersons, event);
       return events.length;
     },
+    handles: (event) => REACTS_TO.has(qualifiedEventType(event.aggregateType, event.type)),
     logger,
     errorText,
   });

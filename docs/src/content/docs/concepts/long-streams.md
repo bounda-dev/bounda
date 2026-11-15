@@ -115,7 +115,9 @@ runtime: {
 },
 ```
 
-`every` is how many events a stream gathers past its last snapshot before the next one is written.
+`every` sets how often a stream is snapshotted: each time its version reaches a multiple of
+`every`, the subscriber writes a snapshot at the head it finds, and between two it rests, writing
+nothing, [like any subscriber](/concepts/how-it-runs/).
 A subscriber named `snapshot:account` follows the global stream like a projection does and writes
 the snapshots in the background, in the `worker` role or an app from `createTestApp` after
 `runUntilIdle()`, so no command ever waits for one: a command loads the snapshot, folds the events
@@ -132,8 +134,8 @@ The generator computes a fingerprint of every aggregate's state and writes it to
 those reach through relative imports, and of the state type it inferred. A snapshot is written
 under that fingerprint and used only under the same one, so a change to any of those files, a
 reformat or a comment included, retires every snapshot of the aggregate at the next deploy: each
-stream is folded from its first event once, and the subscriber writes a fresh snapshot at its next
-event. Nobody decides when; the cost is one slow load per stream, and a wrong state is never
+stream is folded from its first event once, and the subscriber writes a fresh snapshot the next
+time it reads that stream, at the latest when the stream reaches its next multiple of `every`. Nobody decides when; the cost is one slow load per stream, and a wrong state is never
 decided from.
 
 What the fingerprint cannot see is a module reached through a package or a path alias such as

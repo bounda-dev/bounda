@@ -347,7 +347,6 @@ describe("createApp", () => {
     await app.commands.payOrder({ orderId: "o-1", method: "card" });
     expect(await app.runUntilIdle({ maxPasses: 0 })).toEqual({ idle: false, rejections: [] });
     expect(await app.runUntilIdle({ maxPasses: 1 })).toEqual({ idle: false, rejections: [] });
-    expect((await app.getLag()).maxLag).toBeGreaterThan(0);
     expect(await app.runUntilIdle({ maxPasses: 50 })).toEqual({ idle: true, rejections: [] });
     expect((await app.getLag()).maxLag).toBe(0);
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });

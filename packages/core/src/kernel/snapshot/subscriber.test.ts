@@ -186,6 +186,47 @@ describe("createSnapshotSubscriber", () => {
     expect(await stored("1")).toMatchObject({ version: 5, fingerprint: "fp:1" });
   });
 
+  it("writes the next snapshot once the stream reaches the next multiple of `every`", async () => {
+    const { append, deliver, stored } = await setUp();
+    await append(
+      "order",
+      "1",
+      [1, "OrderPlaced", { total: 10 }],
+      [2, "OrderPaid", { method: "card" }],
+      [3, "OrderArchived", {}],
+    );
+    await deliver();
+    expect(await stored()).toMatchObject({ version: 3 });
+    await append("order", "1", [4, "OrderArchived", {}]);
+    await deliver(3);
+    expect(await stored()).toMatchObject({ version: 4 });
+    await append("order", "1", [5, "OrderArchived", {}]);
+    await deliver(4);
+    expect(await stored()).toMatchObject({ version: 4 });
+  });
+
+  it("is given work only by an event of its aggregate at a multiple of `every`", async () => {
+    const { subscriber, storage, append } = await setUp();
+    await append(
+      "order",
+      "1",
+      [1, "OrderPlaced", { total: 10 }],
+      [2, "OrderPaid", { method: "card" }],
+      [3, "OrderArchived", {}],
+      [4, "OrderArchived", {}],
+    );
+    await append("customer", "9", [1, "CustomerRegistered", {}], [2, "CustomerRegistered", {}]);
+    const events = await storage.eventStore.readAll({ afterPosition: 0, limit: 100 });
+    expect(events.map((event) => subscriber.handles?.(event))).toEqual([
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
   it("logs a state it cannot keep and goes on", async () => {
     const { append, deliver, stored, entries } = await setUp({ aggregate: "ticker" });
     await append("ticker", "1", [1, "Ticked", {}]);

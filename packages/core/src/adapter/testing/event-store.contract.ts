@@ -505,6 +505,31 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect(await store.lastPosition()).toBe(4);
     });
 
+    // A subscriber rests on a page shorter than `limit` with nothing for it, so a short page must
+    // mean the head was reached, whatever holes a failed append left in the positions.
+    it("fills a page of the global stream to its limit while events follow, across a failed append", async () => {
+      const append = (aggregateId: string, expectedVersion: number, count: number) =>
+        store.append({
+          aggregateType: "order",
+          aggregateId,
+          expectedVersion,
+          events: Array.from({ length: count }, (_, index) =>
+            pendingEvent({ aggregateId, version: expectedVersion + index + 1 }),
+          ),
+        });
+      await append("1", 0, 2);
+      await expect(append("1", 0, 2)).rejects.toThrow();
+      await append("2", 0, 2);
+      expect(await store.readAll({ afterPosition: 0, limit: 3 })).toHaveLength(3);
+      const [, second] = await store.readAll({ afterPosition: 0, limit: 4 });
+      expect(await store.readAll({ afterPosition: second?.position ?? 0, limit: 2 })).toHaveLength(
+        2,
+      );
+      expect(await store.readAll({ afterPosition: second?.position ?? 0, limit: 3 })).toHaveLength(
+        2,
+      );
+    });
+
     it("keeps the person an event names, and reads a person's events in position order, committed only", async () => {
       await store.append({
         aggregateType: "customer",

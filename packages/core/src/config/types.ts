@@ -268,7 +268,7 @@ export interface CatchUpConfig {
  */
 export interface SnapshotConfig {
   /**
-   * How many events a stream gathers past its last snapshot before the next one is written.
+   * A stream is snapshotted each time its version reaches a multiple of `every`.
    */
   readonly every: number;
   /**

@@ -167,6 +167,7 @@ export interface CreateLedgerOutboxFunction {
 export const createLedgerOutbox: CreateLedgerOutboxFunction = ({ ledger, keepForMs, clock }) => ({
   name: FORGET_LEDGER_SUBSCRIBER,
   kind: "forget-ledger",
+  handles: (event) => isForgetting(event) || isRestrictionChange(event) || isRedaction(event),
   process: async (events) => {
     const entries = ledgerEntries({ events, keepForMs, now: clock.now() });
     if (entries.length > 0) await ledger.append(entries);

@@ -18,6 +18,7 @@
       { "name": "RETAINED_STORE", "class_name": "RetainedStore" },
       { "name": "WRAPPED_STORE", "class_name": "WrappedStore" },
       { "name": "LEDGER_STORE", "class_name": "LedgerStore" },
+      { "name": "SNAPSHOT_STORE", "class_name": "SnapshotStore" },
       { "name": "BARE", "class_name": "Bare" }
     ]
   },
@@ -27,6 +28,7 @@
     { "tag": "v3", "new_sqlite_classes": ["RegionStore"] },
     { "tag": "v4", "new_sqlite_classes": ["RetainedStore"] },
     { "tag": "v5", "new_sqlite_classes": ["WrappedStore"] },
-    { "tag": "v6", "new_sqlite_classes": ["LedgerStore"] }
+    { "tag": "v6", "new_sqlite_classes": ["LedgerStore"] },
+    { "tag": "v7", "new_sqlite_classes": ["SnapshotStore"] }
   ]
 }

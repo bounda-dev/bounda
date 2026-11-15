@@ -197,6 +197,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     reconciliation,
     intentions,
     reactive: [POLICIES_SUBSCRIBER, PROCESSES_SUBSCRIBER],
+    standing: (subscriber) => dispatcher.positionOf(subscriber),
     config,
     ids,
     clock,
@@ -245,6 +246,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
       logger,
       errorText: config.runtime.telemetry.errorText,
     });
+  const dispatcher = makeDispatcher();
   return {
     storage,
     config,
@@ -257,7 +259,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
     clock,
     createDispatcher: makeDispatcher,
-    dispatcher: makeDispatcher(),
+    dispatcher,
     processes,
     retries,
     worker,

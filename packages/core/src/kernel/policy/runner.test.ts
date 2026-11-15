@@ -16,6 +16,7 @@ import {
   slowJob,
 } from "../test-support.ts";
 import { buildPolicies } from "./build-policies.ts";
+import { POLICIES_SUBSCRIBER } from "./runner.ts";
 
 interface PolicyArgs {
   readonly event: { aggregateId: string; metadata: { correlationId: string; depth: number } };
@@ -179,6 +180,18 @@ describe("policy subscriber", () => {
     expect(loaded.events[1]?.metadata.commandId).not.toBe(loaded.events[0]?.metadata.commandId);
     expect(await harness.storage.deadLetterStore.count()).toBe(0);
     expect((await harness.dispatcher.getLag()).maxLag).toBe(0);
+  });
+
+  it("rests on the events no policy reacts to", async () => {
+    reset("ok");
+    const harness = await createReactiveHarness({ registry });
+    await harness.pipeline.dispatch({ type: "PlaceOrder", payload: { orderId: "o-1", total: 10 } });
+    await harness.dispatcher.runUntilIdle();
+    expect(await harness.storage.checkpointStore.get(POLICIES_SUBSCRIBER)).toBe(2);
+    await harness.pipeline.dispatch({ type: "ArchiveOrder", payload: { orderId: "o-1" } });
+    await harness.dispatcher.runUntilIdle();
+    expect(await harness.storage.checkpointStore.get(POLICIES_SUBSCRIBER)).toBe(2);
+    expect(await harness.dispatcher.positionOf(POLICIES_SUBSCRIBER)).toBe(3);
   });
 
   it("runs each policy exactly once even with two dispatchers over the same storage", async () => {

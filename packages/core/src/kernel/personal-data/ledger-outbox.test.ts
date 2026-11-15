@@ -95,6 +95,16 @@ describe("the forget ledger's outbox", () => {
       }),
       stored(8, { aggregateId: "o-3", version: 1, type: "PersonalDataRedacted", id: "x-2" }),
     ];
+    expect(events.map((event) => outbox.handles?.(event))).toEqual([
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+    ]);
     expect(await outbox.process(events, span)).toBe(8);
     expect(appended).toEqual([
       [
