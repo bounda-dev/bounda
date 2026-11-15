@@ -19,6 +19,7 @@ import type {
   CommandPersonalFunction,
   CommandsFacade,
   Consistency,
+  CountryCode,
   CreateArgs,
   CreateImplementation,
   DeadLetter,
@@ -61,6 +62,7 @@ import type {
   LegalBasis,
   Logger,
   LookupField,
+  NotifiedRecipient,
   OnPersonalDataAccess,
   OnPersonalDataAccessArgs,
   OrderableField,
@@ -80,6 +82,7 @@ import type {
   PersonalFunction,
   PersonalOptions,
   PersonFunction,
+  PersonRecipient,
   PolicyModule,
   ProcessCorrelation,
   ProcessingRestrictedEvent,
@@ -99,6 +102,7 @@ import type {
   ReactionForgetFunction,
   ReadClient,
   ReadEventsArgs,
+  RecipientKind,
   RedactedEvent,
   RedactedFields,
   RedactionTarget,
@@ -124,6 +128,7 @@ import type {
   SubscriberFailureStatus,
   SubscriberFailures,
   Table,
+  TransferSafeguard,
   UnrestrictOptions,
   Where,
 } from "@bounda-dev/core";
@@ -751,6 +756,9 @@ describe("personal data", () => {
       | "deadLetters.discard"
       | "subscriberFailures.list"
       | "subscriberFailures.get"
+      | "disclosure"
+      | "recipientNotice"
+      | "recipientsOf"
     >();
     expectTypeOf<PersonalDataAccess["actor"]>().toEqualTypeOf<string | null>();
     expectTypeOf<PersonalDataAccess["persons"]>().toEqualTypeOf<readonly string[]>();
@@ -793,7 +801,27 @@ describe("personal data", () => {
       readonly deadLetters: number;
       readonly subscriberFailures: number;
       readonly readModelRows: number;
+      readonly recipients: number;
     } | null>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "disclosure" }>["detail"]
+    >().toEqualTypeOf<{
+      readonly recipient: string;
+      readonly handler: string;
+      readonly categories: readonly string[];
+    }>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "recipientNotice" }>["detail"]
+    >().toEqualTypeOf<{
+      readonly recipient: string;
+      readonly event: string;
+      readonly eventId: string;
+      readonly categories: readonly string[];
+      readonly superseded: boolean;
+    }>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "recipientsOf" }>["detail"]
+    >().toEqualTypeOf<{ readonly recipients: number } | null>();
     expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<AccessOutcome>();
     expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed">();
     expectTypeOf<
@@ -830,6 +858,13 @@ describe("personal data", () => {
       readonly fingerprints?: readonly string[];
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
+      readonly recipients?: readonly NotifiedRecipient[];
+    }>();
+    expectTypeOf<NotifiedRecipient>().toEqualTypeOf<{
+      readonly port: string;
+      readonly categories: readonly PersonalCategoryName[];
+      readonly retained: readonly PersonalCategoryName[];
+      readonly presumed: boolean;
     }>();
     expectTypeOf<PersonalCategoryName>().toEqualTypeOf<"default" | "delivery" | "invoices">();
     expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
@@ -912,12 +947,42 @@ describe("personal data", () => {
       readonly categories: Readonly<Record<string, ExportedCategory>>;
       readonly restrictions: readonly ProcessingRestriction[];
       readonly redactions: readonly ExportedRedaction[];
+      readonly recipients: readonly PersonRecipient[];
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
       readonly subscriberFailures: readonly ExportedSubscriberFailure[];
       readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
     }>();
+    expectTypeOf<BoundaClient["recipientsOf"]>().toEqualTypeOf<
+      (personId: string) => Promise<readonly PersonRecipient[]>
+    >();
+    expectTypeOf<PersonRecipient>().toEqualTypeOf<{
+      readonly port: string;
+      readonly name: string;
+      readonly kind: RecipientKind;
+      readonly country: CountryCode;
+      readonly transfer: { readonly safeguard: TransferSafeguard } | null;
+      readonly status: "disclosed" | "presumed" | "declared";
+      readonly categories: readonly {
+        readonly name: PersonalCategoryName;
+        readonly basis: LegalBasis | null;
+      }[];
+      readonly firstDisclosedAt: string | null;
+      readonly lastDisclosedAt: string | null;
+      readonly declared: boolean;
+    }>();
+    expectTypeOf<RecipientKind>().toEqualTypeOf<"processor" | "joint-controller" | "third-party">();
+    expectTypeOf<TransferSafeguard>().toEqualTypeOf<
+      | "adequacy"
+      | "standard-contractual-clauses"
+      | "binding-corporate-rules"
+      | "code-of-conduct"
+      | "certification"
+      | "derogation"
+    >();
+    expectTypeOf<"US">().toExtend<CountryCode>();
+    expectTypeOf<"XX">().not.toExtend<CountryCode>();
     expectTypeOf<ExportedSubscriberFailure>().toEqualTypeOf<{
       readonly subscriber: string;
       readonly eventId: string;
@@ -1048,6 +1113,7 @@ describe("personal data", () => {
       readonly categories: readonly PersonalCategoryName[];
       readonly cancelledCommands: readonly CancelledCommand[];
       readonly removedDeadLetters: readonly RemovedDeadLetter[];
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     const placed = { aggregateType: "order", aggregateId: "o-1", id: "e-1" } as const;
     // @ts-expect-error a redaction names the events to reach
@@ -1115,12 +1181,14 @@ describe("personal data", () => {
       readonly ground: RestrictionGround;
       readonly categories: readonly PersonalCategoryName[] | null;
       readonly restrictions: readonly ProcessingRestriction[];
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     expectTypeOf<ProcessingRestrictionLiftAnnouncedPayload>().toEqualTypeOf<{
       readonly personId: string;
       readonly grounds: readonly RestrictionGround[];
       readonly categories: readonly PersonalCategoryName[] | null;
       readonly liftsAt: string;
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     expectTypeOf<
       ProcessingRestrictionLiftAnnouncedEvent["type"]
@@ -1137,6 +1205,7 @@ describe("personal data", () => {
       readonly grounds: readonly RestrictionGround[];
       readonly categories: readonly PersonalCategoryName[] | null;
       readonly restrictions: readonly ProcessingRestriction[];
+      readonly recipients?: readonly NotifiedRecipient[];
     }>();
     expectTypeOf<AuditOnProcessingRestrictionLifted.HandlerArgs["auditLog"]>().toHaveProperty(
       "record",

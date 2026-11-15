@@ -45,7 +45,10 @@ dead letter with `errorType: "retriable_exhausted"`.
   version, or, with both versions equal, a person whose [personal data](/guides/personal-data/)
   the command loaded, or whose fields its events seal, was forgotten before the append committed,
   whether or not they hold a new key by then; after `runtime.commands.concurrencyRetries` runs of
-  the command. `streamId`, `expectedVersion`, `actualVersion`.
+  the command. Also a call to a port that tells a [recipient](/guides/personal-data/#recipients)
+  of data whose person was forgotten, restricted, lifted or redacted since it was read, before the
+  port is reached, its `streamId` the person's stream `bounda:<personId>`. `streamId`,
+  `expectedVersion`, `actualVersion`.
 - **`HANDLER_TIMEOUT`** (no exported class; retried). A command, policy or process handler ran out
   of time (`runtime.commands.timeout`, `runtime.policies.timeout`,
   `runtime.processes.handlerTimeout`).

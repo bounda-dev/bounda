@@ -19,6 +19,7 @@ export type UnitStores = Pick<
   | "atCommit"
   | "afterCommit"
   | "read"
+  | "reads"
 >;
 
 /**
@@ -31,7 +32,8 @@ export type UnitStores = Pick<
  * store as it is, plus the unit's own events; `add` answers the letter as filed, whatever the
  * store holds under that id already.
  */
-export interface UnitOfWork extends Omit<StorageTransaction, "personalKeys" | "snapshotStore"> {
+export interface UnitOfWork
+  extends Omit<StorageTransaction, "personalKeys" | "snapshotStore" | "recipients"> {
   commit(): Promise<void>;
   /**
    * Runs `step` before the commit's transaction opens, in the order given, for what has to happen

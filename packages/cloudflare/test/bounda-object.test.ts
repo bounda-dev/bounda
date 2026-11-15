@@ -157,6 +157,8 @@ describe("a Bounda Durable Object", () => {
       ["OrderPlaced", { note: null }],
       ["PersonalDataForgotten", {}],
     ]);
+    expect(await store.recipientsOf("ada")).toEqual([]);
+    expect(await rejection(store.recipientsOf(""))).toMatchObject({ name: "ValidationError" });
     const refused = await rejection(store.exportPersonalData(""));
     expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
   });
@@ -590,7 +592,7 @@ describe("a Bounda Durable Object", () => {
     outage.projection = false;
     const status = await store.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 5, latest: 5 },
+      { database: "storage", scope: "storage", version: 6, latest: 6 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
     ]);
     expect(status.subscriberFailures).toContainEqual(

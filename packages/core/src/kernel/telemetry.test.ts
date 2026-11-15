@@ -210,6 +210,7 @@ describe("telemetry", () => {
     await user.unrestrict("p-2", { notice: "given" });
     await expect(user.redact("p-2", { events: [] })).rejects.toThrow();
     await user.exportPersonalData("p-2");
+    await user.recipientsOf("p-2");
     await user.deadLetters.list();
     // The bound client's type offers neither, as an operator asks those of the app.
     const letters = user.deadLetters as DeadLetters;
@@ -259,6 +260,7 @@ describe("telemetry", () => {
         "restrict",
         "unrestrict",
         "exportPersonalData",
+        "recipientsOf",
         "deadLetters.list",
         "deadLetters.count",
         "deadLetters.get",

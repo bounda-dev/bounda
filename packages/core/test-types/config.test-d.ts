@@ -13,6 +13,7 @@ import type {
   AdapterDefinition,
   ForgetLedger,
   ForgetLedgerEntry,
+  LedgerDisclosure,
   LedgerRedaction,
   LedgerRestriction,
   PruneForgetLedgerArgs,
@@ -437,6 +438,15 @@ describe("defineConfig", () => {
       readonly fingerprints?: readonly string[];
       readonly restriction?: LedgerRestriction;
       readonly redaction?: LedgerRedaction;
+      readonly disclosure?: LedgerDisclosure;
+    }>();
+    expectTypeOf<LedgerDisclosure>().toEqualTypeOf<{
+      readonly port: string;
+      readonly recipient: string;
+      readonly kind: string;
+      readonly country: string;
+      readonly safeguard: string | null;
+      readonly category: string;
     }>();
     expectTypeOf<LedgerRedaction>().toEqualTypeOf<{
       readonly events: readonly RedactedEvent[];

@@ -37,6 +37,19 @@ export interface LedgerRedaction {
 }
 
 /**
+ * A disclosure as the ledger keeps it: the port and its recipient's identity then, and the category
+ * of what it received, ids and names alone, so a restore that lost it still tells the recipient.
+ */
+export interface LedgerDisclosure {
+  readonly port: string;
+  readonly recipient: string;
+  readonly kind: string;
+  readonly country: string;
+  readonly safeguard: string | null;
+  readonly category: string;
+}
+
+/**
  * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` says so, when, why,
  * which of their categories it was asked for, and which keys it covers. Ids, names, a time and
  * fingerprints, nothing else: the ledger is a suppression list, the one thing about a forgotten
@@ -79,6 +92,13 @@ export interface ForgetLedgerEntry {
    * a value made unreadable has to stay so after a restore as a forgotten one does.
    */
   readonly redaction?: LedgerRedaction;
+  /**
+   * Present on an entry that records a disclosure to a recipient rather than a forgetting, whose
+   * `eventId` is derived from the person, the port, the recipient and the category, `forgottenAt`
+   * is when it was first recorded, `reason` `requested` and `categories` `null`: whom a recipient
+   * holds data of has to outlive a restore, so it is told when they are forgotten.
+   */
+  readonly disclosure?: LedgerDisclosure;
 }
 
 /**

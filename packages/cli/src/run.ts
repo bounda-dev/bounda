@@ -37,7 +37,7 @@ import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
 import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
-import { formatSchema, formatStatus } from "./status-output.ts";
+import { formatRecipients, formatSchema, formatStatus } from "./status-output.ts";
 
 export interface Output {
   write(text: string): void;
@@ -657,6 +657,30 @@ const runStatus = (
     return EXIT_OK;
   });
 
+interface RecipientsOptions extends ActingOptions {
+  readonly json: boolean;
+}
+
+// With a person, what they may ask for (article 19), as JSON, recorded in the access log; without
+// one, every recipient and what waits on it.
+const runRecipients = (
+  personId: string | undefined,
+  options: RecipientsOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    if (personId !== undefined) {
+      line(stdout, JSON.stringify(await actingAs(app, options).recipientsOf(personId), null, 2));
+      return EXIT_OK;
+    }
+    const { recipients } = await app.status();
+    if (options.json) line(stdout, JSON.stringify(recipients, null, 2));
+    else for (const text of formatRecipients(recipients)) line(stdout, text);
+    return EXIT_OK;
+  });
+
 const runRestored = (
   options: ProjectOptions,
   cwd: string,
@@ -708,6 +732,7 @@ const DEAD_LETTER_KINDS = Object.keys({
   policy: true,
   process: true,
   scheduled: true,
+  recipient: true,
 } satisfies Record<DeadLetterKind, true>);
 const DEAD_LETTER_STATUSES = Object.keys({
   failed: true,
@@ -819,7 +844,7 @@ export const runCli: RunCliFunction = async ({
           .choices(DEAD_LETTER_STATUSES)
           .default("failed"),
       )
-      .option("--handler <name>", "the policy, process or scheduled command that failed")
+      .option("--handler <name>", "the policy, process, scheduled command or port that failed")
       .option("--limit <n>", "at most this many letters", parseLimit)
       .option("--json", "print the letters as JSON", false),
   ).action(async (options: ListDeadLettersOptions) => {
@@ -937,6 +962,18 @@ export const runCli: RunCliFunction = async ({
       ),
   ).action(async (personId: string, options: RedactCommandOptions) => {
     exitCode = await runRedact(personId, options, cwd, stdout, stderr);
+  });
+
+  actingOptions(
+    program
+      .command("recipients")
+      .description(
+        "print every recipient a port sends personal data to, how many persons were disclosed to it and its failed notices; with a person, print as JSON the recipients of their data, recorded in the access log",
+      )
+      .argument("[person]", "the id of the person whose recipients to print")
+      .option("--json", "print every recipient as JSON", false),
+  ).action(async (personId: string | undefined, options: RecipientsOptions) => {
+    exitCode = await runRecipients(personId, options, cwd, stdout, stderr);
   });
 
   program

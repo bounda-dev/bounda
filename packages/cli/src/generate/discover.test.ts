@@ -722,6 +722,47 @@ describe("discoverProject convention problems", () => {
     expect(model.aggregates[0]?.events.map((event) => event.key)).toEqual(["orderPlaced"]);
   });
 
+  it("tells a port that declares a recipient, which imports its own types without being taken for an event", async () => {
+    const root = await project([
+      [
+        "app/domain/order/mailer.ts",
+        [
+          'import type { Port } from "./+types/mailer";',
+          "export interface Mailer {}",
+          "export const recipient = {} satisfies Port.Recipient;",
+          "export const onPersonalDataForgotten = () => {};",
+          "",
+        ].join("\n"),
+      ],
+      "app/domain/order/infrastructure/mailer/memory.ts",
+      [
+        "app/domain/order/sms.ts",
+        "export interface Sms {}\nexport { onPersonalDataRedacted, onProcessingRestricted };\n",
+      ],
+      "app/domain/order/infrastructure/sms/fake.ts",
+      ["app/domain/order/audit-log.ts", "export interface AuditLog {}\n"],
+      "app/domain/order/infrastructure/audit-log/memory.ts",
+    ]);
+    expect(await problemsOf(root)).toEqual([
+      'app/domain/order/sms.ts: exports "onPersonalDataRedacted", "onProcessingRestricted", a recipient\'s handlers, and no recipient: export const recipient, who the port sends personal data to',
+    ]);
+    const fixed = await project([
+      [
+        "app/domain/order/mailer.ts",
+        'import type { Port } from "./+types/mailer";\nexport interface Mailer {}\nexport const recipient = {};\n',
+      ],
+      "app/domain/order/infrastructure/mailer/memory.ts",
+      ["app/domain/order/audit-log.ts", "export interface AuditLog {}\n"],
+      "app/domain/order/infrastructure/audit-log/memory.ts",
+    ]);
+    const found = await discoverProject({ root: fixed });
+    expect(found.aggregates[0]?.ports.map(({ key, recipient }) => [key, recipient])).toEqual([
+      ["auditLog", false],
+      ["mailer", true],
+    ]);
+    expect(found.warnings).toEqual([]);
+  });
+
   it("rejects a port without a module, interface or implementations, with extra entries, reserved or named like an event", async () => {
     const infrastructure = "app/domain/order/infrastructure";
     const root = await project([

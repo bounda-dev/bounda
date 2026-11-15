@@ -13,6 +13,7 @@ import { openedUnder, withoutRetained } from "../personal-data/event-store.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personTouchedByEvent } from "../personal-data/persons.ts";
 import { refuseRestrictedRead } from "../personal-data/refusal.ts";
+import { type Disclosures, openedOf } from "../recipients/gate.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
@@ -64,6 +65,7 @@ export interface CreatePolicyExecutorArgs {
    */
   readonly keys: Pick<PersonalKeyStore, "find">;
   readonly recordAccess: RecordAccess;
+  readonly disclosures?: Disclosures | undefined;
 }
 
 export interface CreatePolicyExecutorFunction {
@@ -81,6 +83,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   intentions,
   keys,
   recordAccess,
+  disclosures,
 }) => ({
   run: async ({ policy, event: delivered, attempt, retryId, actor, within }) => {
     // What a forgetting kept reads as `null` to a policy that declares no basis for it.
@@ -135,13 +138,21 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
         await withTimeout({
           run: async () => {
             await policy.handler(
-              withPorts(policy.ports, {
-                event,
-                commands: reaction.commands,
-                idempotencyKey,
-                signal: reaction.signal,
-                forget: reaction.forget,
-              }),
+              withPorts(
+                disclosures?.bind(policy.aggregate, policy.ports, {
+                  opened: () => openedOf(within.reads()),
+                  basis: policy.restricted ?? undefined,
+                  handler: policy.name,
+                  actor: context.actor,
+                }) ?? policy.ports,
+                {
+                  event,
+                  commands: reaction.commands,
+                  idempotencyKey,
+                  signal: reaction.signal,
+                  forget: reaction.forget,
+                },
+              ),
             );
             await reaction.decided();
           },

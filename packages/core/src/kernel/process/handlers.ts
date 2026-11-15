@@ -17,6 +17,7 @@ import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personTouchedByEvent } from "../personal-data/persons.ts";
 import { checkStatePerson } from "../personal-data/process-state.ts";
 import { refuseRestrictedRead } from "../personal-data/refusal.ts";
+import { type Disclosures, openedOf } from "../recipients/gate.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
@@ -102,6 +103,7 @@ export interface CreateProcessHandlersArgs {
    */
   readonly keys: Pick<PersonalKeyStore, "find">;
   readonly recordAccess: RecordAccess;
+  readonly disclosures?: Disclosures | undefined;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -119,6 +121,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   intentions,
   keys,
   recordAccess,
+  disclosures,
 }) => {
   // Refused before the handler runs, unless the process declares the basis it runs on: then run,
   // and recorded however it settles when it let restricted data through.
@@ -179,15 +182,25 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     idempotencyKey: string,
     triggeredAt: string,
     own: Readonly<Record<string, unknown>>,
+    within: UnitStores,
+    actor: string | undefined,
   ): Record<string, unknown> =>
-    withPorts(process.ports, {
-      commands: reaction.commands,
-      signal: reaction.signal,
-      forget: reaction.forget,
-      idempotencyKey,
-      after: afterFrom(triggeredAt),
-      ...own,
-    });
+    withPorts(
+      disclosures?.bind(process.aggregate, process.ports, {
+        opened: () => openedOf(within.reads()),
+        basis: process.restricted ?? undefined,
+        handler: process.name,
+        actor,
+      }) ?? process.ports,
+      {
+        commands: reaction.commands,
+        signal: reaction.signal,
+        forget: reaction.forget,
+        idempotencyKey,
+        after: afterFrom(triggeredAt),
+        ...own,
+      },
+    );
 
   const runOf = async <Result>(
     reaction: Pick<ReactionCommands, "abandon">,
@@ -268,11 +281,15 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
                       process,
                       event,
                     )?.(
-                      handlerArgs(process, reaction, idempotencyKey, event.timestamp, {
-                        event,
-                        state: instance.state,
-                        aggregateId: instanceId,
-                      }),
+                      handlerArgs(
+                        process,
+                        reaction,
+                        idempotencyKey,
+                        event.timestamp,
+                        { event, state: instance.state, aggregateId: instanceId },
+                        within,
+                        context.actor,
+                      ),
                     ),
                   ),
                 timeoutMs: process.handlerTimeoutMs,
@@ -338,10 +355,15 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
               run: () =>
                 settled(reaction, () =>
                   handler(
-                    handlerArgs(process, reaction, idempotencyKey, due.at, {
-                      state: instance.state,
-                      aggregateId: instanceId,
-                    }),
+                    handlerArgs(
+                      process,
+                      reaction,
+                      idempotencyKey,
+                      due.at,
+                      { state: instance.state, aggregateId: instanceId },
+                      within,
+                      context.actor,
+                    ),
                   ),
                 ),
               timeoutMs: process.handlerTimeoutMs,

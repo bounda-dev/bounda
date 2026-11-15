@@ -22,6 +22,9 @@ export interface PortModel extends ModuleRef {
   readonly typeName: string;
   // Never empty.
   readonly implementations: readonly ImplementationModel[];
+  // Whether its module exports `recipient`: the port sends personal data out, and the module
+  // exports the handlers that tell its recipient of a forgetting, a restriction or a redaction.
+  readonly recipient: boolean;
 }
 
 export interface CommandModel extends ModuleRef {

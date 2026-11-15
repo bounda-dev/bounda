@@ -61,6 +61,11 @@ export type {
 } from "./read-model-transaction.contract.ts";
 export { readModelTransactionContract } from "./read-model-transaction.contract.ts";
 export type {
+  RecipientStoreContractArgs,
+  RecipientStoreContractFunction,
+} from "./recipient-store.contract.ts";
+export { recipientStoreContract } from "./recipient-store.contract.ts";
+export type {
   RestoreContractArgs,
   RestoreContractFunction,
   RestoreTarget,

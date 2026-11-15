@@ -66,10 +66,14 @@ describe("connect", () => {
     ]);
   });
 
-  it("exports a person's data through the stub", async () => {
+  it("exports a person's data, and lists its recipients, through the stub", async () => {
     const { stub, exports } = recordingStub();
     await connect<typeof registry>(stub).exportPersonalData("c-1");
-    expect(exports).toEqual([["c-1", undefined]]);
+    await connect<typeof registry>(stub).as("dpo").recipientsOf("c-1");
+    expect(exports).toEqual([
+      ["c-1", undefined],
+      ["c-1", "dpo"],
+    ]);
   });
 
   it("sends the actor of as with every call that acts, and none before it", async () => {

@@ -1,4 +1,4 @@
-import type { AppStatus, SchemaStatus, SubscriberFailure } from "@bounda-dev/core";
+import type { AppStatus, RecipientStatus, SchemaStatus, SubscriberFailure } from "@bounda-dev/core";
 import { DEFAULT_PERSONAL_CATEGORY } from "@bounda-dev/core/adapter";
 
 export interface FormatStatusArgs {
@@ -106,6 +106,32 @@ const purgeOf = ({ deadLetterRetention: purge }: AppStatus): string =>
     ? "not configured"
     : `${days(purge.retentionMs)}, next purge ${purge.nextDueAt ?? "when a letter is resolved"}`;
 
+export interface FormatRecipientsFunction {
+  (recipients: readonly RecipientStatus[]): readonly string[];
+}
+
+/**
+ * Every recipient, one line each, and what of it needs an operator, as `bounda status` and
+ * `bounda recipients` print them.
+ */
+export const formatRecipients: FormatRecipientsFunction = (recipients) =>
+  recipients.length === 0
+    ? ["recipients: none declared"]
+    : [
+        "recipients",
+        ...recipients.flatMap(({ port, declared, persons, catchingUp, failedNotices }) => [
+          declared === null
+            ? `  ${port}  no longer declared, ${plural(persons, "person")} disclosed to it`
+            : `  ${port}  ${declared.name}, ${declared.kind}, ${declared.country}${declared.safeguard === null ? "" : ` on ${declared.safeguard}`}: ${declared.categories.join(", ")}; ${plural(persons, "person")} disclosed to it`,
+          ...(catchingUp ? ["    being told what was recorded before it was declared"] : []),
+          ...(failedNotices === 0
+            ? []
+            : [
+                `    ${plural(failedNotices, "notice")} failed: bounda dead-letters list --kind recipient --handler ${port}`,
+              ]),
+        ]),
+      ];
+
 /**
  * Where the runtime's background work stands, as `bounda status` prints it.
  */
@@ -122,5 +148,6 @@ export const formatStatus: FormatStatusFunction = (args) => {
     `key rotation: ${rotationOf(status)}`,
     ...retentionOf(status),
     `dead letter retention: ${purgeOf(status)}`,
+    ...formatRecipients(status.recipients),
   ].join("\n");
 };

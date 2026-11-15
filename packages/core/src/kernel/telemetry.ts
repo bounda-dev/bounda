@@ -40,6 +40,7 @@ export const ATTRIBUTES: {
   readonly projection: "bounda.projection";
   readonly policy: "bounda.policy";
   readonly process: "bounda.process";
+  readonly recipient: "bounda.recipient";
   readonly attempt: "bounda.attempt";
   readonly outcome: "bounda.outcome";
   readonly rejected: "bounda.rejected";
@@ -69,6 +70,7 @@ export const ATTRIBUTES: {
   projection: "bounda.projection",
   policy: "bounda.policy",
   process: "bounda.process",
+  recipient: "bounda.recipient",
   attempt: "bounda.attempt",
   outcome: "bounda.outcome",
   rejected: "bounda.rejected",

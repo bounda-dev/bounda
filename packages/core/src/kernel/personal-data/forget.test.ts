@@ -506,7 +506,11 @@ describe("forgetIntended", () => {
     });
     const dispatch = await forgetPersonalData({
       storage,
-      intentions: { intend: async () => intended, record: async () => undefined },
+      intentions: {
+        intend: async () => intended,
+        record: async () => undefined,
+        disclose: async () => undefined,
+      },
       ids: createSequentialIdGenerator({ prefix: "other" }),
       clock: createFixedClock(),
       logger: createRecordingLogger().logger,

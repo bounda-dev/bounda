@@ -30,6 +30,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  recipientStoreContract,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -134,6 +135,7 @@ describe("the SQLite stores on node:sqlite", () => {
   storageTransactionContract({ create: storage });
   personalKeyStoreContract({ create: async () => storage() });
   personStoreContract({ create: async () => (await storage()).persons });
+  recipientStoreContract({ create: storage });
   inspectionContract({ create: async () => nodeSqlite().adapter });
   subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
   forgetLedgerContract({
@@ -524,6 +526,7 @@ describe("createSqliteAdapter", () => {
     expect(tableNames(db, "app_")).toEqual([
       "app_checkpoints",
       "app_dead_letters",
+      "app_disclosures",
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
@@ -532,6 +535,7 @@ describe("createSqliteAdapter", () => {
       "app_person_rows",
       "app_personal_keys",
       "app_persons",
+      "app_recipients",
       "app_restricted_persons",
       "app_restricted_positions",
       "app_restrictions",

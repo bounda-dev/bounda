@@ -145,8 +145,14 @@ const model: ProjectModel = {
   ],
 };
 
-const port = (name: string, typeName: string, implementations: readonly string[]) => ({
+const port = (
+  name: string,
+  typeName: string,
+  implementations: readonly string[],
+  recipient = false,
+) => ({
   key: name,
+  recipient,
   typeName,
   path: `/project/app/domain/order/${name}.ts`,
   relativePath: `app/domain/order/${name}.ts`,
@@ -593,6 +599,7 @@ describe("emitProject with a read model's ports", () => {
     const shipments = model.readModels[0] as ProjectModel["readModels"][number];
     const rates = {
       key: "rates",
+      recipient: false,
       typeName: "Rates",
       path: "/project/app/read/shipments/rates.ts",
       relativePath: "app/read/shipments/rates.ts",
@@ -658,6 +665,87 @@ describe("emitProject with ports", () => {
       "generated.OrderPorts",
     );
     expect(files.filter((file) => slashed(file.path).includes("/infrastructure/"))).toEqual([]);
+  });
+});
+
+describe("emitProject with a port that declares a recipient", () => {
+  const withRecipient: ProjectModel = {
+    ...model,
+    aggregates: [
+      {
+        ...(model.aggregates[0] as ProjectModel["aggregates"][number]),
+        ports: [port("mailer", "Mailer", ["smtp"], true), port("sms", "Sms", ["fake"])],
+      },
+      ...model.aggregates.slice(1),
+    ],
+  };
+
+  it("imports its module for the run, lists it under recipients and checks it in .bounda/types.ts", () => {
+    const registry = emitRegistry({ model: withRecipient, path: "/project/.bounda/registry.ts" });
+    expect(registry.content).toContain(
+      'import * as orderMailer from "../app/domain/order/mailer.ts";',
+    );
+    expect(registry.content).toContain(
+      'import type * as orderSms from "../app/domain/order/sms.ts";',
+    );
+    expect(registry.content).toContain("      recipients: { mailer: orderMailer },\n");
+    expect(
+      emitRegistry({ model: withPorts, path: "/project/.bounda/registry.ts" }).content,
+    ).not.toContain("recipients");
+    const types = emitTypes({
+      model: { ...withRecipient, readModels: [] },
+      path: "/project/.bounda/types.ts",
+    });
+    expect(types.content).toContain(
+      [
+        "export type OrderRecipients = [",
+        '  Expect<core.NotifiesRecipient<"order.mailer", typeof import("../app/domain/order/mailer.ts"), import("../app/domain/order/mailer.ts").Mailer>>,',
+        "];",
+      ].join("\n"),
+    );
+    expect(types.content).toContain("type Expect<Check extends true> = Check;");
+    expect(
+      emitTypes({ model: { ...withPorts, readModels: [] }, path: "/project/.bounda/types.ts" })
+        .content,
+    ).not.toContain("Expect");
+    expect(
+      emitTypes({
+        model: {
+          ...withPorts,
+          readModels: [],
+          personalData: {
+            path: "/project/app/personal-data.ts",
+            relativePath: "app/personal-data.ts",
+          },
+        },
+        path: "/project/.bounda/types.ts",
+      }).content,
+    ).toContain("type Expect<Check extends true> = Check;");
+  });
+
+  it("types its declaration and every handler, which receives the port under its name", () => {
+    const files = emitProject({ model: withRecipient });
+    const contentOf = (suffix: string) =>
+      files.find((file) => slashed(file.path).endsWith(suffix))?.content;
+    expect(contentOf("order/+types/mailer.ts")).toBe(
+      [
+        'import type * as core from "@bounda-dev/core";',
+        'import type * as generated from "../../../../.bounda/types.ts";',
+        "",
+        'type Ports = { readonly mailer: generated.OrderPorts["mailer"] };',
+        "",
+        "export declare namespace Port {",
+        "  type Recipient = core.RecipientDeclaration;",
+        "  type OnPersonalDataForgottenArgs = core.RecipientForgottenArgs<Ports>;",
+        "  type OnProcessingRestrictedArgs = core.RecipientRestrictedArgs<Ports>;",
+        "  type OnProcessingRestrictionLiftAnnouncedArgs = core.RecipientLiftAnnouncedArgs<Ports>;",
+        "  type OnProcessingRestrictionLiftedArgs = core.RecipientLiftedArgs<Ports>;",
+        "  type OnPersonalDataRedactedArgs = core.RecipientRedactedArgs<Ports>;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    expect(contentOf("order/+types/sms.ts")).toBeUndefined();
   });
 });
 

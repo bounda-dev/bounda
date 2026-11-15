@@ -29,6 +29,7 @@ import {
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  recipientStoreContract,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -121,6 +122,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   storageTransactionContract({ create: () => openStorage() });
   personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
+  recipientStoreContract({ create: openStorage });
   inspectionContract({
     create: async () => {
       await closeOpened();
@@ -661,6 +663,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     expect(tables.map((row) => String(row.table_name).replace(/^t[a-z0-9]+_\d+_/, ""))).toEqual([
       "checkpoints",
       "dead_letters",
+      "disclosures",
       "events",
       "idempotency_keys",
       "inbox",
@@ -668,6 +671,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       "migrations",
       "personal_keys",
       "persons",
+      "recipients",
       "restricted_persons",
       "restricted_positions",
       "restrictions",

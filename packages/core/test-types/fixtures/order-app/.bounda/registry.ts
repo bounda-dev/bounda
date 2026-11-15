@@ -14,7 +14,7 @@ import * as orderInventoryMemory from "../app/domain/order/infrastructure/invent
 import * as orderMailerMemory from "../app/domain/order/infrastructure/mailer/memory.ts";
 import * as orderRemindersFake from "../app/domain/order/infrastructure/reminders/fake.ts";
 import type * as orderInventory from "../app/domain/order/inventory.ts";
-import type * as orderMailer from "../app/domain/order/mailer.ts";
+import * as orderMailer from "../app/domain/order/mailer.ts";
 import * as orderCancelled from "../app/domain/order/order-cancelled.ts";
 import * as orderPaid from "../app/domain/order/order-paid.ts";
 import * as orderPlaced from "../app/domain/order/order-placed.ts";
@@ -78,6 +78,7 @@ export const registry = {
           fake: orderRemindersFake satisfies ImplementationModule<orderReminders.Reminders>,
         },
       },
+      recipients: { mailer: orderMailer },
       commands: { cancelOrder: { module: cancelOrder }, payOrder: { module: payOrder }, placeOrder: { module: placeOrder } },
       policies: { boundaAuditOnPersonalDataForgotten: { module: boundaAuditOnPersonalDataForgotten, source: "bounda" }, boundaAuditOnProcessingRestrictionLifted: { module: boundaAuditOnProcessingRestrictionLifted, source: "bounda" }, customerGreetOnCustomerRegistered: { module: customerGreetOnCustomerRegistered, source: "customer" }, notifyOnOrderPlaced: { module: notifyOnOrderPlaced }, sendReceiptOnOrderPaid: { module: sendReceiptOnOrderPaid } },
       processes: {

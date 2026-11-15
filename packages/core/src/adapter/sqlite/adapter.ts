@@ -19,6 +19,7 @@ import {
 } from "../sql/migrations.ts";
 import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
+import { createSqlRecipientStore } from "../sql/recipient-store.ts";
 import { createSqlSubscriberFailureStore } from "../sql/subscriber-failure-store.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
@@ -187,6 +188,12 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             db: database,
             table: tables.persons,
             restrictions: tables.restrictions,
+            dialect: sqliteDialect,
+          }),
+          recipients: createSqlRecipientStore({
+            db: database,
+            disclosures: tables.disclosures,
+            recipients: tables.recipients,
             dialect: sqliteDialect,
           }),
           snapshotStore: createSqliteSnapshotStore({

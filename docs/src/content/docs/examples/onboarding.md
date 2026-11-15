@@ -34,8 +34,9 @@ pnpm dev
 5. Two read models follow along: `users-directory`, paginated by `listUsers`, and `user-details`,
    with the timestamps of every step.
 6. "Delete my data" on the user's page calls `forget`: the email and the name become unreadable in
-   every event, the reminder still waiting is cancelled, and both read models delete the user's row
-   before the redirect to `/users`, which reads its own writes after `forget` too.
+   every event, the reminder still waiting is cancelled, both read models delete the user's row
+   before the redirect to `/users`, which reads its own writes after `forget` too, and the email
+   provider, which received them, is told to erase the contact.
 
 ## Things worth copying
 
@@ -68,11 +69,24 @@ import type { EmailSender } from "../../email-sender.ts";
 
 export const create: CreateImplementation<EmailSender> = ({ env, logger }) => {
   const from = env.EMAIL_FROM ?? "welcome@onboarding.localhost";
-  return async ({ to, name, idempotencyKey }) => {
-    logger.info("welcome email", { from, to, name, idempotencyKey });
+  return {
+    send: async ({ template, userId, to, name, idempotencyKey }) => {
+      logger.info(`${template} email`, { from, userId, to, name, idempotencyKey });
+    },
+    erase: async ({ userId, idempotencyKey }) => {
+      logger.info("contact erased", { userId, idempotencyKey });
+    },
+    // suppress and resume log the same way
   };
 };
 ```
+
+**A port that is a recipient.** The email provider receives the user's address and name, so
+`email-sender.ts` declares it, `Postmark`, a processor in the United States on standard
+contractual clauses, and exports the handlers that tell it when a user is forgotten, restricted,
+lifted or corrected: forgetting a user erases the contact the provider keeps under their id. The
+runtime records whose data each email handed it, and `recipientsOf` lists it for a user who asks
+who has their data (see [Recipients](/guides/personal-data/#recipients)).
 
 **A delayed effect.** The policy exports `delay`, read from `WELCOME_EMAIL_DELAY`, so the runtime
 runs it a minute after `UserRegistered` was stored, with an `idempotencyKey` that survives its

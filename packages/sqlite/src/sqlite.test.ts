@@ -376,6 +376,7 @@ describe("sqlite adapter on a file", () => {
       ["storage", 3],
       ["storage", 4],
       ["storage", 5],
+      ["storage", 6],
     ]);
   });
 
@@ -410,6 +411,7 @@ describe("sqlite adapter on a file", () => {
     expect(tables.rows.map((row) => row.name)).toEqual([
       "app_checkpoints",
       "app_dead_letters",
+      "app_disclosures",
       "app_events",
       "app_idempotency_keys",
       "app_inbox",
@@ -418,6 +420,7 @@ describe("sqlite adapter on a file", () => {
       "app_person_rows",
       "app_personal_keys",
       "app_persons",
+      "app_recipients",
       "app_restricted_persons",
       "app_restricted_positions",
       "app_restrictions",

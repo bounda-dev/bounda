@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, migrate its tables and declare a restore."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, list the recipients of personal data, migrate its tables and declare a restore."
 sidebar:
   order: 0
 ---
@@ -215,9 +215,9 @@ bounda dead-letters discard <id>
 
 | Option | Applies to | Meaning |
 | --- | --- | --- |
-| `--kind <kind>` | `list` | `policy`, `process` or `scheduled` |
+| `--kind <kind>` | `list` | `policy`, `process`, `scheduled` or `recipient` |
 | `--status <status>` | `list` | `failed` (default), `retried` or `discarded` |
-| `--handler <name>` | `list` | The policy or process name as the letter records it, e.g. `order.notifyOnOrderPlaced`, or the scheduled command's type, e.g. `PlaceOrder` |
+| `--handler <name>` | `list` | The policy or process name as the letter records it, e.g. `order.notifyOnOrderPlaced`, the scheduled command's type, e.g. `PlaceOrder`, or the port of a [recipient](/guides/personal-data/#recipients), e.g. `customer.mailer` |
 | `--limit <n>` | `list` | At most this many letters: a whole number, 0 or more |
 | `--json` | `list` | Print the letters as JSON |
 | `--root`, `--config`, `--registry`, `--error-text` | all | As for `bounda rebuild` |
@@ -274,6 +274,9 @@ retention
   marketing  18mo, 3 keys past it, next due 2026-11-09T11:40:00.000Z
   invoices  6y, 0 keys past it, next due 2031-02-12T16:20:00.000Z
 dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
+recipients
+  customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 812 persons disclosed to it
+    2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer
 ```
 
 - `tables`: each scope of Bounda's tables, in each database the configuration names (`storage`,
@@ -294,6 +297,8 @@ dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
   one for each category of `app/personal-data.ts`, which [forgets its
   keys](/guides/personal-data/#each-category-for-its-own-time), with how many are past it now and
   when the next comes due, and the keys a forgetting kept that no legal obligation keeps any more.
+- every [recipient](/guides/personal-data/#recipients), as [`bounda recipients`](#bounda-recipients)
+  prints them.
 
 Under the rule of [error text](#error-text) set to `"include"`, by `--error-text`,
 `BOUNDA_ERROR_TEXT=include` or the configuration, it also prints, under each failure, the text it
@@ -380,6 +385,42 @@ withdrawn, and prints `forgot marketing of c-42`. A category whose basis is `leg
 kept, restricted, until its retention ends, either way. A category the app does not have fails with
 `VALIDATION_FAILED` and nothing is forgotten. The export lists the person's restrictions, and marks
 on each record the fields a restriction covers.
+
+## `bounda recipients`
+
+Lists the recipients of personal data: every port that declares one, and every one the store
+remembers data went to. With a person, prints as JSON what `app.recipientsOf` answers, the
+recipients of their data as they may ask for them (article 19); it is recorded in the access log,
+as `recipientsOf`, with `--actor`. It boots the project as `bounda dead-letters` does.
+
+```bash
+bounda recipients
+bounda recipients --json
+bounda recipients c-42 --actor ops-ana
+```
+
+```
+recipients
+  customer.crm  Brevo, third-party, FR: contact, invoices; 37 persons disclosed to it
+    being told what was recorded before it was declared
+  customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 812 persons disclosed to it
+    2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer
+  order.sms  no longer declared, 4 persons disclosed to it
+```
+
+Each line names the port, its recipient as the port declares it now, with its kind, country, the
+safeguard of a transfer out of the European Economic Area and the categories it receives, and how
+many persons the store recorded as disclosed to it; under it, whether the worker is still telling
+it, presumed, what was recorded before it was declared, and how many of its notices wait as failed
+[dead letters](#bounda-dead-letters). A port the app no longer declares says so: its notices wait as
+dead letters until it is declared again or an operator tells its recipient and discards them. With
+no recipient it prints `recipients: none declared`.
+
+| Option | Meaning |
+| --- | --- |
+| `--json` | Print every recipient as JSON, as `app.status()` lists them under `recipients` |
+| `--root`, `--config`, `--registry`, `--error-text` | As for `bounda rebuild` |
+| `--actor <id>` | Who lists a person's recipients, named in the access log |
 
 ## `bounda restrict` and `bounda unrestrict`
 

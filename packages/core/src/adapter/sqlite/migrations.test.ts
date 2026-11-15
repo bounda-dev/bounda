@@ -143,4 +143,26 @@ describe("the SQLite schema scopes", () => {
       );
     }
   });
+
+  it("takes the forget ledger's disclosure column as there already, from a migration that stopped before recording its version", async () => {
+    const { database, db } = onNodeSqlite();
+    const migrate = () =>
+      migrateSqlite({
+        db: database,
+        prefix: "app_",
+        scopes: [sqliteForgetLedgerScope(`"app_forget_ledger"`)],
+      });
+    await migrate();
+    db.prepare(
+      `DELETE FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' AND "version" = 7`,
+    ).run();
+    await migrate();
+    expect(
+      db
+        .prepare(
+          `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
+        )
+        .get(),
+    ).toEqual({ version: 7 });
+  });
 });

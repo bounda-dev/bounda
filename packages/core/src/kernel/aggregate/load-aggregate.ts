@@ -5,6 +5,7 @@ import type { SnapshotStore } from "../../adapter/storage/snapshot-store.ts";
 import { SnapshotError } from "../../contracts/errors.ts";
 import type { StreamIdentity } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { stampFence } from "../personal-data/fences.ts";
 import { personsOf } from "../personal-data/persons.ts";
 import { ATTRIBUTES, METRICS, meter } from "../telemetry.ts";
 import { type FoldedState, foldState } from "./fold-state.ts";
@@ -65,6 +66,11 @@ export interface CreateAggregateLoaderArgs {
    * to a different state throws `SnapshotError` instead of being dropped.
    */
   readonly strict: boolean;
+  /**
+   * For an app whose ports tell recipients: the persons a snapshot names carry the head of the
+   * stream taken before it was read, as what the event store opens does.
+   */
+  readonly fenced?: boolean;
 }
 
 export interface CreateAggregateLoaderFunction {
@@ -94,6 +100,7 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
   snapshotStore,
   logger,
   strict,
+  fenced = false,
 }) => {
   const counter = meter().createCounter(METRICS.snapshots, {
     description: "Loads of an aggregate with snapshots, by what its snapshot was worth",
@@ -158,7 +165,9 @@ export const createAggregateLoader: CreateAggregateLoaderFunction = ({
     const stream = { aggregateType: aggregate.name, aggregateId };
     const settings = aggregate.snapshot;
     if (settings === null) return fromStart(aggregate, stream, eventStore);
+    const fence = fenced ? await eventStore.lastPosition() : undefined;
     const snapshot = await snapshotStore.get(stream);
+    if (snapshot !== null && fence !== undefined) stampFence(snapshot.persons, fence);
     if (snapshot === null) {
       count(aggregate, "missing");
       return judged(await fromStart(aggregate, stream, eventStore), "missing");

@@ -100,6 +100,11 @@ restored.
   rows leave the queries, their commands are refused, and a lift announced is scheduled again. A
   change whose commit never happened is committed at the restored start too, unless a later change
   of that person's restrictions is in the copy.
+- **What a port disclosed after the copy is recorded again,** from the first disclosure of each
+  category of a person to a [recipient](/guides/personal-data/#recipients) the ledger holds, unless
+  a forgetting of that category came after it: a later forgetting tells that recipient. Without a
+  ledger, every recipient is presumed to hold the data of every person whose data existed when the
+  restore was found.
 - **Whoever was forgotten before the copy stays forgotten,** once: the copy holds their forgetting.
   Someone who registered after the copy is gone with it, and their entry in the ledger finds no
   key to remove.

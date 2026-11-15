@@ -2,6 +2,7 @@ import { ConfigurationError } from "@bounda-dev/core";
 import type { SchemaVersion } from "@bounda-dev/core/adapter";
 import {
   forgetLedgerCategoriesStatement,
+  forgetLedgerDisclosureStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
@@ -12,6 +13,7 @@ import {
   postgresqlDialect,
   quoteIdentifier,
   readSchemaVersions,
+  recipientTablesStatements,
   resolvedAtOfEarlierLetters,
   SCHEMA_SCOPES,
   type SchemaScope,
@@ -215,6 +217,12 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
       },
     },
     { version: 5, migrate: (tx) => tx.run(indexKeysTableStatement(tables.indexKeys), []) },
+    {
+      version: 6,
+      migrate: async (tx) => {
+        for (const statement of recipientTablesStatements(tables)) await tx.run(statement, []);
+      },
+    },
   ],
 });
 
@@ -277,6 +285,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
     {
       version: 6,
       migrate: (tx) => tx.run(forgetLedgerRedactionStatement(table, postgresqlDialect), []),
+    },
+    {
+      version: 7,
+      migrate: (tx) => tx.run(forgetLedgerDisclosureStatement(table, postgresqlDialect), []),
     },
   ],
 });

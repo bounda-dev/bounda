@@ -23,7 +23,6 @@ get today. Each item says why, so nobody discovers it the hard way:
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
-- **Telling those a redacted value went to.** See [Redacted values](#redacted-values).
 
 ## The access log
 
@@ -41,8 +40,9 @@ is what is not sealed:
 - **The global stream.** `app.events.read()` hands out events as stored, personal fields
   encrypted, so it opens nothing and is not recorded; what decrypts them, such as a projection,
   is the runtime's own work.
-- **What a policy sends out.** A port that mails a person their data, or a search index, records
-  what it does itself.
+- **What a port that declares no recipient sends out.** A port that declares a
+  [recipient](/guides/personal-data/#recipients) has each disclosure recorded, as `disclosure`;
+  one that declares none is, to Bounda, a port that sends no personal data out.
 
 ## Restricted rows
 
@@ -54,16 +54,6 @@ basis named:
   a query's `client.raw`.
 - **SQL a query writes** has its `LIMIT` applied before the restricted rows are dropped, so a page
   may come back short; `table` pages exactly.
-
-## Redacted values
-
-A [redaction](/guides/personal-data/#correcting-a-persons-data) seals the fields it names in the
-events; every read model hides or writes over the person's copies as it projects it, and the worker
-rebuilds every one that projects an event type it reached, unless its view states it holds no
-personal data. What it does not reach:
-
-- **What a policy sent out.** A port that mailed the old value, or indexed it, corrects it itself:
-  a policy on `PersonalDataRedacted` is where to tell it (article 19).
 
 ## What it does get
 

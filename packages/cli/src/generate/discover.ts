@@ -1,13 +1,19 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
-import { BOUNDA_AGGREGATE, BOUNDA_EVENTS, policyTrigger } from "@bounda-dev/core";
+import {
+  BOUNDA_AGGREGATE,
+  BOUNDA_EVENTS,
+  policyTrigger,
+  RECIPIENT_HANDLERS,
+} from "@bounda-dev/core";
 import {
   APP_TYPE_NAMES,
   createdStateTypeName,
   eventsTypeName,
   forgettingTypeName,
   portsTypeName,
+  recipientsTypeName,
   rowTypeName,
   stateTypeName,
 } from "./emit/types.ts";
@@ -494,6 +500,9 @@ const PORT_DECLARATION = (typeName: string): RegExp =>
 // makes one.
 const EVENT_EXPORTS: ReadonlySet<string> = new Set(["payload", "begin", "evolve"]);
 
+// What makes a port's module declare a recipient.
+const RECIPIENT_EXPORT = "recipient";
+
 const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
 
 const DECLARED_EXPORT =
@@ -550,6 +559,15 @@ const discoverPort = async (
 ): Promise<PortModel | null> => {
   const key = keyOf(name);
   const typeName = typeNameOf(key);
+  const exported = runtimeExportsOf(text);
+  const recipient = exported.includes(RECIPIENT_EXPORT);
+  const handlers = exported.filter((name) => Object.hasOwn(RECIPIENT_HANDLERS, name));
+  if (!recipient && handlers.length > 0) {
+    context.problems.add(
+      path,
+      `exports ${quoted(handlers)}, a recipient's handlers, and no recipient: export const recipient, who the port sends personal data to`,
+    );
+  }
   if (!PORT_DECLARATION(typeName).test(text)) {
     context.problems.add(
       path,
@@ -578,7 +596,7 @@ const discoverPort = async (
     );
     return null;
   }
-  return { ...moduleRef(context, path), key, typeName, implementations };
+  return { ...moduleRef(context, path), key, typeName, implementations, recipient };
 };
 
 interface RootModule {
@@ -658,7 +676,11 @@ const discoverAggregate = async (
     const path = join(directory, `${module}.ts`);
     const text = texts[index] ?? "";
     if (!isEvent(context, path, text)) {
-      if (OWN_TYPES_IMPORT(module).test(text)) {
+      // A port that declares a recipient imports its own types for it.
+      if (
+        OWN_TYPES_IMPORT(module).test(text) &&
+        !runtimeExportsOf(text).includes(RECIPIENT_EXPORT)
+      ) {
         warnAbout(
           context,
           name,
@@ -951,6 +973,7 @@ const checkTypeNames = (
         createdStateTypeName(aggregate.name),
         eventsTypeName(aggregate.name),
         portsTypeName(aggregate.name),
+        recipientsTypeName(aggregate.name),
       ],
       aggregate.directory,
     );
@@ -964,6 +987,7 @@ const checkTypeNames = (
         rowTypeName(readModel.name),
         portsTypeName(readModel.name),
         forgettingTypeName(readModel.name),
+        recipientsTypeName(readModel.name),
       ],
       readModel.directory,
     );

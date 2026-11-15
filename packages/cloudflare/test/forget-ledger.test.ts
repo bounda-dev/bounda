@@ -271,6 +271,22 @@ describe("the KV forget ledger's listing", () => {
       ["p/d:e-d", JSON.stringify({ categories: null, redaction: null })],
       ["p/e:e-e", JSON.stringify({ categories: null, redaction: { events: "e-1" } })],
       ["p/f:e-f", JSON.stringify({ categories: null, redaction: {} })],
+      ["p/g:e-g", JSON.stringify({ categories: null, disclosure: "disclosed" })],
+      ["p/h:e-h", JSON.stringify({ categories: null, disclosure: null })],
+      [
+        "p/i:e-i",
+        JSON.stringify({
+          categories: null,
+          disclosure: { port: "p", recipient: "R", kind: "processor", country: "DE" },
+        }),
+      ],
+      [
+        "p/j:e-j",
+        JSON.stringify({
+          categories: null,
+          disclosure: { port: "p", recipient: "R", kind: "processor", country: 1, category: "c" },
+        }),
+      ],
     ]);
     const reading = {
       ...namespace,
@@ -280,10 +296,24 @@ describe("the KV forget ledger's listing", () => {
     for (const at of ["1:e-1", "2:e-2", "3:e-3", "4:e-4", "5:e-5", "6:e-6", "7:e-7"]) {
       keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
     }
-    for (const at of ["8:e-8", "9:e-9", "a:e-a", "b:e-b", "c:e-c", "d:e-d", "e:e-e", "f:e-f"]) {
+    for (const at of [
+      "8:e-8",
+      "9:e-9",
+      "a:e-a",
+      "b:e-b",
+      "c:e-c",
+      "d:e-d",
+      "e:e-e",
+      "f:e-f",
+      "g:e-g",
+      "h:e-h",
+      "i:e-i",
+      "j:e-j",
+    ]) {
       keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(0), inValue: true });
     }
-    expect(await ledger.read({ limit: 20 })).toEqual([
+    const read = await ledger.read({ limit: 20 });
+    expect(read).toEqual([
       {
         personId: "c-1",
         categories: null,
@@ -292,6 +322,7 @@ describe("the KV forget ledger's listing", () => {
         reason: "requested",
       },
     ]);
+    expect(read[0]).not.toHaveProperty("disclosure");
   });
 
   it("reads a key written before entries kept their reason and keys as a request naming none", async () => {
@@ -317,6 +348,7 @@ describe("the KV forget ledger's listing", () => {
       },
     ]);
     expect(read[0]).not.toHaveProperty("fingerprints");
+    expect(read[0]).not.toHaveProperty("disclosure");
   });
 
   it("refuses an object without a name, whose entries it could not keep apart", async () => {

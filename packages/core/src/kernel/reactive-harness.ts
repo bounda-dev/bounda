@@ -37,6 +37,7 @@ import {
   type ReadModelsRuntime,
 } from "./read-model/build-read-models.ts";
 import { openReadModelSealing } from "./read-model/sealing.ts";
+import { createRecipientNotices } from "./recipients/notices.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
@@ -177,6 +178,13 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     policies,
     policyExecutor,
     processes,
+    notices: createRecipientNotices({
+      recipients: { all: [], byPort: {}, byOwner: {} },
+      storage,
+      config,
+      clock,
+      recordAccess,
+    }),
     config,
     ids,
     clock,

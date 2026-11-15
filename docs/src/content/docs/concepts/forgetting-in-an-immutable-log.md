@@ -101,9 +101,10 @@ the log. A column that SQL must sort is kept in the clear on purpose, and then t
 project `PersonalDataForgotten`, as must one that copies a personal field into a column it does not
 mark: the generator fails the build of one that does not. The runtime's own copies are its job:
 [snapshots](/concepts/long-streams/#snapshots), which hold an aggregate's state in the clear,
-go with the key, in the same transaction. A policy on the same event is where the
-outside world gets told: erase the contact at the mailing provider, delete the profile the search
-index holds, as [keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index)
+go with the key, in the same transaction. The outside world is told too: a port that sends personal
+data out declares its [recipient](/guides/personal-data/#recipients), the runtime records whose data
+each call hands it, and tells it, through the port, to erase the contact at the mailing provider or
+the profile the search index holds, as [keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index)
 does on the way in.
 
 And every handler that reads a personal field reads it as `T | null`. The `null` is not a style

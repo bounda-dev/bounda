@@ -22,6 +22,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
+import { addressed } from "../recipients/addressing.ts";
 import { causedBy } from "../shared/causation.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
@@ -486,7 +487,7 @@ export const redactWithin: RedactWithinFunction = async (args) => {
     aggregateType: BOUNDA_AGGREGATE,
     aggregateId: personId,
     type: PERSONAL_DATA_REDACTED_EVENT,
-    payload,
+    payload: await addressed(transaction, { type: PERSONAL_DATA_REDACTED_EVENT, payload }),
     context,
     person: personId,
     identity,

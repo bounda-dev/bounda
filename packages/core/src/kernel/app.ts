@@ -24,6 +24,7 @@ import type {
   RestrictOptions,
   UnrestrictOptions,
 } from "../modules/personal-data.ts";
+import type { PersonRecipient } from "../modules/recipient.ts";
 import type { RedactOptions } from "../modules/redaction.ts";
 import type { CommandsFacade, QueriesFacade, Registry } from "../modules/registry.ts";
 import { validateRegistry } from "../modules/validate.ts";
@@ -106,6 +107,15 @@ import {
   rebuiltMark,
 } from "./read-model/rebuild.ts";
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
+import { buildRecipients } from "./recipients/build.ts";
+import { createDisclosures } from "./recipients/gate.ts";
+import { recipientsOf as listRecipientsOf, recipientStatuses } from "./recipients/listing.ts";
+import {
+  createRecipientCatchUp,
+  createRecipientDelivery,
+  createRecipientNotices,
+  createRecipientSubscriber,
+} from "./recipients/notices.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
@@ -196,6 +206,15 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * throws. Rejects with `ValidationError` an empty id, recording nothing.
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
+  /**
+   * The recipients of a person's data, as the export lists them, for the person to be told of on
+   * request (article 19): those disclosed data of theirs, recorded as the port called them, with
+   * the identity the port declared then; those presumed to hold it, declared after it existed or
+   * after a restore without a forget ledger; and those declared for a category of theirs that may
+   * still receive it. Recorded in the access log as the export is. Rejects with `ValidationError`
+   * an empty id, recording nothing.
+   */
+  recipientsOf(personId: string): Promise<readonly PersonRecipient[]>;
   /**
    * Restricts the processing of a person's data on a ground of article 18(1), of some categories
    * or of the person as a whole: from then on it is only kept. A command that touches a person
@@ -597,6 +616,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         for (const event of events) restores.saw(event);
       },
     });
+    // An app whose ports tell recipients reads the head of the stream before each read that opens
+    // personal data, so a disclosure can tell whether the person's stream moved since.
+    const fenced = [
+      ...Object.values(registry.aggregates),
+      ...Object.values(registry.readModels),
+    ].some((entry) => Object.keys(entry.recipients ?? {}).length > 0);
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     checkReadModelPersons({ registry, aggregates });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
@@ -605,6 +630,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       aggregates,
       processes: processDefinitions,
       wrapping,
+      fenced,
     });
     if (
       wrapping.wrapper === null &&
@@ -619,6 +645,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       snapshotStore: storage.snapshotStore,
       logger,
       strict: test !== undefined,
+      fenced,
     });
     const readModels = await buildReadModels({ registry, config, logger });
     opened.unshift(() => readModels.close());
@@ -650,6 +677,38 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
       clock,
     });
+    const recipients = buildRecipients({ registry, categories: personalCategories, ports });
+    // What was disclosed under a port's former key is the renamed port's, presumption included.
+    for (const { port, formerly } of recipients.all) {
+      for (const former of formerly) await written.recipients.rename(former, port);
+    }
+    const declaredRecipients = await written.recipients.declare(
+      recipients.all.map(({ port, categories }) => ({ port, categories })),
+      await written.eventStore.lastPosition(),
+      clock.now().toISOString(),
+    );
+    for (const { port, persons } of await written.recipients.summary()) {
+      if (recipients.byPort[port] === undefined) {
+        logger.warn(
+          "a recipient holds personal data and its port is not declared: what it is told of goes to dead letters",
+          { recipient: port, persons },
+        );
+      }
+    }
+    const disclosures =
+      recipients.all.length === 0
+        ? undefined
+        : createDisclosures({ recipients, storage, intentions, recordAccess, clock });
+    const notices = createRecipientNotices({ recipients, storage, config, clock, recordAccess });
+    const delivery = createRecipientDelivery({
+      recipients,
+      notices,
+      storage,
+      config,
+      clock,
+      pendingRetries,
+      logger,
+    });
     const pipeline = createCommandPipeline({
       aggregates,
       loader,
@@ -659,6 +718,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       logger,
       recordAccess,
+      disclosures,
       onRejection: (rejection) => {
         for (const observed of observers) observed.push(rejection);
       },
@@ -670,6 +730,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ports: ports.byReadModel,
       recordAccess,
       errorText,
+      disclosures,
     });
     const processes = createProcessRunner({
       processes: processDefinitions,
@@ -684,6 +745,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
       intentions,
       recordAccess,
+      disclosures,
     });
     const policies = buildPolicies({ registry, aggregates });
     const policyExecutor = createPolicyExecutor({
@@ -697,6 +759,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       intentions,
       keys: storage.personalKeys,
       recordAccess,
+      disclosures,
     });
     const reactive = [
       {
@@ -713,6 +776,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         following: policies.all.length > 0,
       },
       { subscriber: processes, following: processDefinitions.all.length > 0 },
+      // Kept while the store remembers any recipient, declared or not: what a port removed is told
+      // of still reaches its dead letters.
+      {
+        subscriber: createRecipientSubscriber({ recipients, delivery, storage }),
+        following: declaredRecipients.length > 0,
+      },
     ];
     const following = reactive.filter((entry) => entry.following).map((entry) => entry.subscriber);
     const retries = createDeadLetterRetry({
@@ -722,6 +791,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       policies,
       policyExecutor,
       processes,
+      notices,
       config,
       ids,
       clock,
@@ -835,6 +905,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // reads the worker, built after the dispatcher, only when called: no pass runs before.
     const restartFound = async (found: Restored): Promise<number> => {
       if (!(await worker.restored(found))) return 0;
+      // Without a ledger, the disclosures the copy lost are gone: every recipient may hold what
+      // existed up to now, and is told as such.
+      if (forgetLedger === null) {
+        await written.recipients.presumeThrough(await written.eventStore.lastPosition());
+      }
       const forgotten = await reconciliation?.reconcile(clock.now());
       return typeof forgotten === "number" ? forgotten : 0;
     };
@@ -915,6 +990,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       reconciliation,
       intentions,
       backfill,
+      recipientCatchUp: createRecipientCatchUp({
+        recipients,
+        delivery,
+        storage: written,
+        batchSize: config.runtime.dispatcher.batchSize,
+      }),
       redactionScrubs: {
         advance: async ({ position, types }) => {
           for (const { name, storage: own, layout, projectionsByEvent } of Object.values(
@@ -1033,6 +1114,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         rotation,
         retention,
         letterRetention,
+        recipients: () => recipientStatuses({ storage: written, recipients }),
       });
     // A copy restored while the app was stopped holds less than the forget ledger's mark: the
     // holds it brought back are cleared before anything runs, and the reconciliation below forgets
@@ -1105,6 +1187,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                         (sum, rows) => sum + rows.length,
                         0,
                       ),
+                      recipients: exported.recipients.length,
                     },
               actor,
               persons: [personId],
@@ -1120,6 +1203,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               clock,
               batchSize: config.runtime.dispatcher.batchSize,
               categories: personalCategories,
+              recipients,
               personId,
             });
             return exported;
@@ -1179,6 +1263,35 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 options,
                 actor,
               }),
+          }),
+        recipientsOf: (personId) =>
+          tracedOperation({
+            errorText,
+            operation: "recipientsOf",
+            actor,
+            run: async () => {
+              checkPersonId(personId, "recipientsOf");
+              let listed: readonly PersonRecipient[] | undefined;
+              return recorded(
+                (outcome) =>
+                  recordAccess({
+                    operation: "recipientsOf",
+                    detail: listed === undefined ? null : { recipients: listed.length },
+                    actor,
+                    persons: [personId],
+                    outcome,
+                  }),
+                async () => {
+                  listed = await listRecipientsOf({
+                    storage,
+                    recipients,
+                    categories: personalCategories,
+                    personId,
+                  });
+                  return listed;
+                },
+              );
+            },
           }),
         exportPersonalData: (personId) =>
           tracedOperation({

@@ -4,7 +4,7 @@ import type { KeyedPerson, SealedValue } from "./personal-key-store.ts";
  * What gave up: a policy or process handler (a delayed policy run included), or a scheduled
  * command, one dispatched with `delay`.
  */
-export type DeadLetterKind = "policy" | "process" | "scheduled";
+export type DeadLetterKind = "policy" | "process" | "scheduled" | "recipient";
 
 export type DeadLetterErrorType = "terminal" | "retriable_exhausted";
 

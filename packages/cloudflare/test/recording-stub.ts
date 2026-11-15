@@ -68,6 +68,10 @@ export const recordingStub = (): {
         exports.push(args);
         return answer();
       },
+      recipientsOf: async (...args) => {
+        exports.push(args);
+        return answer();
+      },
       restrict: async (...args) => {
         forgets.push(["restrict", ...args]);
         return answer();

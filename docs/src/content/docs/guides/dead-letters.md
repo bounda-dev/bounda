@@ -36,6 +36,7 @@ What a retry runs, and when it marks the letter, depends on the kind:
 | Process | The handler again for the stored event, with the instance's current state, or for a deadline's letter (`deadline:<field>`) the handler of that deadline, with a new `idempotencyKey`; an event that completes the process completes it. Then the events parked behind the failure, in order, and the process is `started` again, its deadlines scheduled at their moments (one already past runs at once); see [a failed process](#a-failed-process). | Once the instance has drained what was parked; a retry cut short is taken up by retrying the same letter |
 | Follow-up of a timed-out process | Its handler and nothing else: the process stays timed out, and a handler a deploy removed lets the event through. | In the same transaction as what the run writes |
 | Scheduled command | The dropped command again, with the payload the letter recorded, its [personal fields](/guides/personal-data/#in-a-commands-payload) opened. A rejection settles the letter too: it is the aggregate's answer, logged as `command rejected`. | In the same transaction as what the run writes |
+| Recipient | The [recipient's](/guides/personal-data/#recipients) handler again, `handler` naming its port, for the stored event, with a new `idempotencyKey`; a notice a later forgetting of the person as a whole superseded is settled without running it. A port no longer declared is refused with the error that filed it, until it is declared again or named in `recipient.formerly`. | Once the handler resolves |
 
 Two retries of one letter, or a retry and a discard, never both settle it, even when they run at
 once: whichever gets there second is refused with `DeadLetterSettledError`
@@ -90,7 +91,7 @@ the error itself as `errorName` (its class, `ValidationError`) and `errorCode` (
 
 The message of an error a handler throws may quote what the handler read of a person: `cannot mail
 ana@example.com`. So a letter also names the `person` its work was about, the one the event names
-for a policy or process letter and the one the command's payload names for a scheduled command,
+for a policy, process or recipient letter and the one the command's payload names for a scheduled command,
 and stores the message and the stack encrypted with that person's key, as a
 [personal field](/guides/personal-data/) is. A letter that names nobody keeps them in the clear:
 a process deadline's, a policy's or process's for an event without personal fields, or whose

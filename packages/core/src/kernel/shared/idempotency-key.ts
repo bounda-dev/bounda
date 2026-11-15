@@ -3,7 +3,7 @@ import { v5 as uuidV5 } from "uuid";
 const NAMESPACE = "55684f7b-5682-4a97-837e-a64a7c205ba5";
 
 interface ReactionIdentity {
-  readonly kind: "policy" | "process";
+  readonly kind: "policy" | "process" | "recipient";
   /**
    * A policy or process name, e.g. `order.chargeOnOrderPlaced`.
    */
@@ -92,3 +92,25 @@ export interface IdempotencyKeyForFunction {
 export const idempotencyKeyFor: IdempotencyKeyForFunction = (idempotencyKey, effect) =>
   // JSON keeps a separator inside the key or the name from making two pairs hash alike.
   uuidV5(JSON.stringify([idempotencyKey, "effect", effect]), NAMESPACE);
+
+export interface DisclosureEntryIdArgs {
+  readonly person: string;
+  readonly port: string;
+  readonly recipient: string;
+  readonly category: string;
+}
+
+export interface DisclosureEntryIdFunction {
+  (args: DisclosureEntryIdArgs): string;
+}
+
+/**
+ * The id of a disclosure's entry in the forget ledger: a UUID v5 of what tells one disclosure from
+ * another, so recording it again, from another run or after a restore, adds nothing.
+ */
+export const disclosureEntryId: DisclosureEntryIdFunction = ({
+  person,
+  port,
+  recipient,
+  category,
+}) => uuidV5(JSON.stringify(["disclosure", person, port, recipient, category]), NAMESPACE);

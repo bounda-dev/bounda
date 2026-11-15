@@ -5,6 +5,7 @@ import type {
   SubscriberFailureStore,
 } from "../adapter/storage/subscriber-failure-store.ts";
 import type { ResolvedConfig } from "../config/types.ts";
+import type { CountryCode, RecipientKind, TransferSafeguard } from "../modules/recipient.ts";
 import type { AppLag } from "./app.ts";
 import type { DeadLetterRetention, DeadLetterRetentionStatus } from "./dead-letters/retention.ts";
 import { sharesStorage } from "./personal-data/forget-ledger.ts";
@@ -71,6 +72,30 @@ export interface AppStatus {
    * `null` without `runtime.deadLetters.retention`.
    */
   readonly deadLetterRetention: DeadLetterRetentionStatus | null;
+  /**
+   * Every recipient the app declares or the store remembers data went to, by port.
+   */
+  readonly recipients: readonly RecipientStatus[];
+}
+
+/**
+ * Where a recipient stands: who it is, as its port declares it now, `null` for a port the app no
+ * longer declares; how many persons the store recorded as disclosed to it; whether it is still
+ * being told what was recorded before it was declared; and how many of its notices wait as failed
+ * dead letters.
+ */
+export interface RecipientStatus {
+  readonly port: string;
+  readonly declared: {
+    readonly name: string;
+    readonly kind: RecipientKind;
+    readonly country: CountryCode;
+    readonly safeguard: TransferSafeguard | null;
+    readonly categories: readonly string[];
+  } | null;
+  readonly persons: number;
+  readonly catchingUp: boolean;
+  readonly failedNotices: number;
 }
 
 export interface ReadAppStatusArgs {
@@ -82,6 +107,7 @@ export interface ReadAppStatusArgs {
   readonly rotation?: KeyRotation | undefined;
   readonly retention?: RetentionSweep | undefined;
   readonly letterRetention?: DeadLetterRetention | undefined;
+  readonly recipients?: (() => Promise<readonly RecipientStatus[]>) | undefined;
 }
 
 export interface ReadAppStatusFunction {
@@ -140,22 +166,33 @@ export const readAppStatus: ReadAppStatusFunction = async ({
   rotation,
   retention,
   letterRetention,
+  recipients,
 }) => {
-  const [schema, restoresFound, current, stored, forgetLedger, keyRotation, retained, purged] =
-    await Promise.all([
-      Promise.all(
-        databasesOf(config).map(async (database) =>
-          schemaOf(database, await database.adapter.schemaVersions()),
-        ),
-      ).then((all) => all.flat()),
-      restores.found(),
-      lag(),
-      failures.list(),
-      reconciliation?.status() ?? null,
-      rotation?.status() ?? null,
-      retention?.status() ?? null,
-      letterRetention?.status() ?? null,
-    ]);
+  const [
+    schema,
+    restoresFound,
+    current,
+    stored,
+    forgetLedger,
+    keyRotation,
+    retained,
+    purged,
+    told,
+  ] = await Promise.all([
+    Promise.all(
+      databasesOf(config).map(async (database) =>
+        schemaOf(database, await database.adapter.schemaVersions()),
+      ),
+    ).then((all) => all.flat()),
+    restores.found(),
+    lag(),
+    failures.list(),
+    reconciliation?.status() ?? null,
+    rotation?.status() ?? null,
+    retention?.status() ?? null,
+    letterRetention?.status() ?? null,
+    recipients?.() ?? [],
+  ]);
   const positions = new Map(current.subscribers.map((each) => [each.subscriber, each.position]));
   return {
     schema,
@@ -175,5 +212,6 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     keyRotation,
     retention: retained,
     deadLetterRetention: purged,
+    recipients: told,
   };
 };

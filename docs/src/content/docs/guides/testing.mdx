@@ -378,6 +378,42 @@ await expectRestricted(app, "c-1", {
 It looks for every value the person's export marks restricted, and the `values` the test adds;
 see [Personal data in tests](/guides/personal-data/#in-tests).
 
+## Recipients told
+
+A port that declares a [recipient](/guides/personal-data/#recipients) takes a double as any port
+does, and its handlers receive it: after `forget`, `restrict`, `unrestrict` or `redact`,
+`runUntilIdle()` hands each notice to the recipients that received the person's data, so the test
+reads what the double was told. `app.recipientsOf` says what was recorded as disclosed:
+
+```ts
+const told: string[] = [];
+const { app } = await createTestApp({
+  registry,
+  ports: {
+    customer: {
+      mailer: {
+        welcome: async () => {},
+        erase: async ({ personId }) => void told.push(personId),
+        suppress: async () => {},
+        resume: async () => {},
+      },
+    },
+  },
+});
+await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com" });
+await app.runUntilIdle();
+expect((await app.recipientsOf("c-1")).map(({ port, status }) => [port, status])).toEqual([
+  ["customer.mailer", "disclosed"],
+]);
+await app.forget("c-1");
+await app.runUntilIdle();
+expect(told).toEqual(["c-1"]);
+```
+
+A handler that throws is retried, its back-off moved through by `runUntilIdle()`, and filed as a
+dead letter of kind `recipient` once its attempts run out, which the test retries with
+`app.deadLetters.retry`.
+
 ## Snapshots are checked
 
 An aggregate configured with [`snapshot`](/concepts/long-streams/#snapshots) gets them in a test

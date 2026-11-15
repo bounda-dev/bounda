@@ -306,6 +306,34 @@ const readModelFiles = (
   ];
 };
 
+const RECIPIENT_ARGS: readonly (readonly [string, string])[] = [
+  ["OnPersonalDataForgottenArgs", "core.RecipientForgottenArgs"],
+  ["OnProcessingRestrictedArgs", "core.RecipientRestrictedArgs"],
+  ["OnProcessingRestrictionLiftAnnouncedArgs", "core.RecipientLiftAnnouncedArgs"],
+  ["OnProcessingRestrictionLiftedArgs", "core.RecipientLiftedArgs"],
+  ["OnPersonalDataRedactedArgs", "core.RecipientRedactedArgs"],
+];
+
+// A port module that declares a recipient: its declaration, and what each handler receives, the
+// port itself under its name.
+const recipientFiles = (
+  owner: AggregateModel | ReadModelModel,
+  typesPath: string,
+): GeneratedFile[] =>
+  owner.ports
+    .filter((port) => port.recipient)
+    .map((port) =>
+      render(plusTypesPath(port.path), typesPath, {
+        imports: { generated: true, module: null },
+        extraTypes: [`type Ports = { readonly ${port.key}: ${portsType(owner)}["${port.key}"] };`],
+        namespace: "Port",
+        members: [
+          ["Recipient", "core.RecipientDeclaration"],
+          ...RECIPIENT_ARGS.map(([name, type]) => [name, `${type}<Ports>`] as const),
+        ],
+      }),
+    );
+
 /**
  * One `+types/<name>.ts` next to every user module, instantiating the generic argument types of
  * core with the maps from `.bounda/types.ts`. The same template always renders the same way:
@@ -328,7 +356,11 @@ export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
     ...commandFiles(aggregate, typesPath),
     ...policyFiles(model, aggregate, typesPath),
     ...processFiles(model, aggregate, typesPath),
+    ...recipientFiles(aggregate, typesPath),
   ]),
-  ...model.readModels.flatMap((readModel) => readModelFiles(model, readModel, typesPath)),
+  ...model.readModels.flatMap((readModel) => [
+    ...readModelFiles(model, readModel, typesPath),
+    ...recipientFiles(readModel, typesPath),
+  ]),
   ...personalDataFiles(model, typesPath),
 ];

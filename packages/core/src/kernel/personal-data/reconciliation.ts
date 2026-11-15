@@ -10,6 +10,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
+import { discloseAgain } from "../recipients/again.ts";
 import { startedBy } from "../shared/causation.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
@@ -98,6 +99,11 @@ export interface ForgetAgainEntry {
    * the same way.
    */
   readonly redaction?: unknown;
+  /**
+   * Set on a ledger entry that records a disclosure to a recipient, which is left alone the same
+   * way.
+   */
+  readonly disclosure?: unknown;
 }
 
 /**
@@ -165,7 +171,13 @@ export const forgetAgain: ForgetAgainFunction = async ({
 }) => {
   const { personId, eventId, forgottenAt, reason, fingerprints, categories: asked = null } = entry;
   checkPersonId(personId, "forgetting again");
-  if (entry.restriction !== undefined || entry.redaction !== undefined) return null;
+  if (
+    entry.restriction !== undefined ||
+    entry.redaction !== undefined ||
+    entry.disclosure !== undefined
+  ) {
+    return null;
+  }
   const known = asked?.filter((category) => categories.of(category) !== undefined) ?? null;
   if (known !== null && known.length === 0) return null;
   const asScope: ForgetScope =
@@ -422,6 +434,21 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
             eventId: entry.eventId,
           });
           forgotten += 1;
+          continue;
+        }
+        if (entry.disclosure !== undefined) {
+          if (
+            await discloseAgain({
+              storage,
+              concurrencyRetries,
+              entry: { ...entry, disclosure: entry.disclosure },
+            })
+          ) {
+            logger.info("disclosure recorded again from the forget ledger", {
+              personId: entry.personId,
+              port: entry.disclosure.port,
+            });
+          }
           continue;
         }
         if (entry.restriction !== undefined) {

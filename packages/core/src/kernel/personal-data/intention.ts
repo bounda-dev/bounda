@@ -3,11 +3,13 @@ import type {
   HeldPersonalKey,
   PersonalKeyStore,
 } from "../../adapter/storage/personal-key-store.ts";
+import type { Disclosure } from "../../adapter/storage/recipient-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ForgetLedgerUnavailableError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
+import { disclosureEntryId } from "../shared/idempotency-key.ts";
 import type { ForgetScope } from "./forget.ts";
 import type { BoundedForgetLedger } from "./forget-ledger.ts";
 
@@ -49,6 +51,12 @@ export interface ForgetIntentions {
    * forgetting once it commits.
    */
   record(entry: ForgetLedgerEntry): Promise<void>;
+  /**
+   * Records each disclosure in the ledger, under an id derived from what tells it apart, so
+   * recording it again changes nothing. A strict ledger that does not take them rejects with
+   * `ForgetLedgerUnavailableError`, before the port is called; any other failure is logged.
+   */
+  disclose(disclosures: readonly Disclosure[], at: string): Promise<void>;
 }
 
 export interface CoveredByFunction {
@@ -113,22 +121,22 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
   clock,
   logger,
 }) => {
-  const record = async (entry: ForgetLedgerEntry): Promise<void> => {
+  const append = async (entries: readonly ForgetLedgerEntry[], lost: string): Promise<void> => {
     if (ledger === null) return;
     const { store, strict } = ledger;
     if (!strict && store.late()) return;
     try {
-      await store.append([entry]);
+      await store.append(entries);
     } catch (error) {
       if (strict) throw new ForgetLedgerUnavailableError(error);
-      logger.warn(
-        "forget ledger did not take the forgetting; it commits, and the stream copies it",
-        {
-          error,
-        },
-      );
+      logger.warn(lost, { error });
     }
   };
+  const record = (entry: ForgetLedgerEntry): Promise<void> =>
+    append(
+      [entry],
+      "forget ledger did not take the forgetting; it commits, and the stream copies it",
+    );
   return {
     intend: async ({ personId, reason, scope, keys }) => {
       const eventId = ids.next();
@@ -147,5 +155,17 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
       return { eventId, forgottenAt, reason, fingerprints };
     },
     record,
+    disclose: (disclosures, at) =>
+      append(
+        disclosures.map(({ person, ...disclosure }) => ({
+          personId: person,
+          categories: null,
+          eventId: disclosureEntryId({ person, ...disclosure }),
+          forgottenAt: at,
+          reason: "requested",
+          disclosure,
+        })),
+        "forget ledger did not take the disclosure; a restore that loses it would not tell its recipient",
+      ),
   };
 };

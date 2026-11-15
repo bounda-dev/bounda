@@ -4,6 +4,7 @@ import { resolvedAtOfEarlierLetters } from "../sql/dead-letters.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import {
   forgetLedgerCategoriesStatement,
+  forgetLedgerDisclosureStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
@@ -18,6 +19,7 @@ import {
   type SchemaScope,
   schemaMigrationsTableFor,
 } from "../sql/migrations.ts";
+import { recipientTablesStatements } from "../sql/recipient-store.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import {
   checkpointTableStatement,
@@ -192,6 +194,12 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
       },
     },
     { version: 5, migrate: (tx) => tx.run(indexKeysTableStatement(tables.indexKeys), []) },
+    {
+      version: 6,
+      migrate: async (tx) => {
+        for (const statement of recipientTablesStatements(tables)) await tx.run(statement, []);
+      },
+    },
   ],
 });
 
@@ -262,6 +270,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
       migrate: async (tx) => {
         if ((await columnsOf(tx, table)).has("redaction")) return;
         await tx.run(forgetLedgerRedactionStatement(table, sqliteDialect), []);
+      },
+    },
+    {
+      version: 7,
+      migrate: async (tx) => {
+        if ((await columnsOf(tx, table)).has("disclosure")) return;
+        await tx.run(forgetLedgerDisclosureStatement(table, sqliteDialect), []);
       },
     },
   ],

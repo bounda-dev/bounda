@@ -108,6 +108,14 @@ A few rules keep it correct:
 - **A run that fails leaves no command behind**, so a retry that decides differently starts from
   nothing ([what the runtime promises](/guides/reacting-to-events/#what-the-runtime-promises)).
 
+## Personal data sent out
+
+A port that hands a person's data to a provider, a mailing list, a CRM, an index, makes the provider
+a recipient of it, and the GDPR asks that it be told when the data is erased, restricted or
+corrected. The port declares it in its own module, with the handlers that tell it, and the runtime
+records whose data each call hands it and tells it when it has to know: see
+[Recipients](/guides/personal-data/#recipients).
+
 ## An account per tenant
 
 Some providers differ by tenant: each venue charges through its own Stripe account, each customer

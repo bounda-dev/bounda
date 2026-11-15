@@ -17,6 +17,7 @@ import type { PortModules } from "./port.ts";
 import type { ProcessEntry } from "./process.ts";
 import type { ProjectionModule } from "./projection.ts";
 import type { QueryModule, QueryOptions, QueryResultOf } from "./query.ts";
+import type { RecipientModule } from "./recipient.ts";
 import type { UpcastsModule } from "./upcast.ts";
 import type { ViewModule } from "./view.ts";
 
@@ -32,6 +33,10 @@ export interface AggregateEntry {
   // Keyed like `events`; only events whose payload has changed shape have one.
   readonly upcasts?: Readonly<Record<string, UpcastsModule>>;
   readonly ports?: PortModules;
+  /**
+   * The modules of the ports that declare a recipient, by port.
+   */
+  readonly recipients?: Readonly<Record<string, RecipientModule>>;
   readonly commands: Readonly<Record<string, CommandEntry>>;
   readonly policies: Readonly<Record<string, PolicyEntry>>;
   readonly processes: Readonly<Record<string, ProcessEntry>>;
@@ -40,6 +45,7 @@ export interface AggregateEntry {
 export interface ReadModelEntry {
   readonly view: ViewModule;
   readonly ports?: PortModules;
+  readonly recipients?: Readonly<Record<string, RecipientModule>>;
   // By the aggregate whose events they project, then by event: `projections.order.orderPlaced`.
   readonly projections: Readonly<Record<string, Readonly<Record<string, ProjectionModule>>>>;
   readonly queries: Readonly<Record<string, QueryModule>>;

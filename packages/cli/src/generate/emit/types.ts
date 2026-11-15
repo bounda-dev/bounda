@@ -75,6 +75,13 @@ export interface ForgettingTypeNameFunction {
 export const forgettingTypeName: ForgettingTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Forgetting`;
 
+export interface RecipientsTypeNameFunction {
+  (moduleName: string): string;
+}
+
+export const recipientsTypeName: RecipientsTypeNameFunction = (moduleName) =>
+  `${typeNameOf(moduleName)}Recipients`;
+
 export interface PortsTypeNameFunction {
   (moduleName: string): string;
 }
@@ -162,6 +169,25 @@ const emitPorts = (owner: PortsOwner, path: string): string =>
         ),
         "};",
       ].join("\n");
+
+/**
+ * One check per port whose module declares a recipient, failing to compile while the module lacks
+ * a handler or the port a method that answers a promise; nothing for an owner without one.
+ */
+const emitRecipients = (owner: PortsOwner, path: string): readonly string[] => {
+  const ports = owner.ports.filter((port) => port.recipient);
+  if (ports.length === 0) return [];
+  return [
+    [
+      `export type ${recipientsTypeName(owner.name)} = [`,
+      ...ports.map((port) => {
+        const specifier = importPath({ from: path, to: port.path });
+        return `  ${EXPECT_TYPE_NAME}<core.NotifiesRecipient<"${owner.name}.${port.key}", typeof import("${specifier}"), import("${specifier}").${port.typeName}>>,`;
+      }),
+      "];",
+    ].join("\n"),
+  ];
+};
 
 const implementationNames = (names: readonly string[]): string =>
   names.map((name) => JSON.stringify(name)).join(" | ");
@@ -309,6 +335,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
         emitState(aggregate, path, inferredStates[aggregate.name]),
         emitEvents(aggregate, path),
         emitPorts(aggregate, path),
+        ...emitRecipients(aggregate, path),
       ].join("\n"),
     );
   }
@@ -330,7 +357,11 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   );
   sections.push(emitMap(COMMANDS_TYPE_NAME, "CommandsFacadeOf", commandModules));
   sections.push(emitMap(REACTION_COMMANDS_TYPE_NAME, "ReactionCommandsFacadeOf", commandModules));
-  if (model.readModels.length > 0 || model.personalData !== undefined) {
+  if (
+    model.readModels.length > 0 ||
+    model.personalData !== undefined ||
+    portsOwners(model).some((owner) => owner.ports.some((port) => port.recipient))
+  ) {
     sections.push(`type ${EXPECT_TYPE_NAME}<Check extends true> = Check;`);
   }
   sections.push(emitPersonalData(model, path));
@@ -341,6 +372,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
         `export type ${fieldTypesTypeName(readModel.name)} = core.FieldTypesOf<${typeofImport(path, readModel.view.path)}>;`,
         emitPorts(readModel, path),
         emitForgetting(model, readModel, path),
+        ...emitRecipients(readModel, path),
       ].join("\n"),
     );
   }
