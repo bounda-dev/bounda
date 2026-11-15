@@ -523,6 +523,25 @@ describe("createRecipientDelivery", () => {
     ).toMatchObject({ errorType: "terminal", errorName: "ConfigurationError" });
   });
 
+  it("retries as the policies of the port's owner are set", async () => {
+    failing.add("customer.mailer");
+    const event = await append("ProcessingRestricted", { recipients: [notice("customer.mailer")] });
+    const owned = createRecipientDelivery({
+      recipients: runtime,
+      notices: notices(),
+      storage,
+      config: resolveConfig({
+        storage: memory(),
+        runtime: { overrides: { customer: { policies: { retry: { strategy: "none" } } } } },
+      }),
+      clock,
+      pendingRetries: ignoredRetries,
+      logger: createRecordingLogger().logger,
+    });
+    expect(await owned.deliver("customer.mailer", event)).toBe("done");
+    expect(await storage.deadLetterStore.count({ kind: "recipient" })).toBe(1);
+  });
+
   it("says when a failed notice will be retried", async () => {
     failing.add("customer.mailer");
     const recording = createRecordingLogger("omit");
