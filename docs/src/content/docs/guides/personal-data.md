@@ -957,8 +957,10 @@ what the port sends. A run that read nothing of anyone's, or only the ids, discl
 The same transaction refuses the call, before the port is reached, when the person's stream moved
 past what the run read: a forgetting, a restriction, a lift or a redaction committed after the read
 throws a `ConcurrencyError`, and the run is tried again on the data as it is now, as a command is
-after a race. A query's data is the read model's, so its read is fenced by the read model's
-checkpoint, and one that lags behind a forgetting refuses the call until it projects it. The
+after a race. A query's data is the read model's, so its read is fenced by where the read model
+stands: its checkpoint, or past the events after it that it does not project. One that lags behind
+a forgetting or a redaction refuses the call until it projects it; a change it does not project,
+such as a restriction, holds nothing up. The
 transaction also refuses, with [`ProcessingRestrictedError`](/reference/errors/), data a
 restriction covers that the run names no [basis](#processing-restricted-data-anyway) for. So a
 disclosure is either recorded before the event that tells its recipient commits, and the event

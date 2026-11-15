@@ -731,6 +731,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       recordAccess,
       errorText,
       disclosures,
+      // The dispatcher is built further down; a query only asks once the app is assembled.
+      standing: (subscriber) => dispatcher.positionOf(subscriber),
     });
     const processes = createProcessRunner({
       processes: processDefinitions,
