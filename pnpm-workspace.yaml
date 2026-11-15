@@ -52,6 +52,9 @@ catalogs:
   # astro check accepts TypeScript up to 6, so the docs check their types with their own.
   docs:
     "@astrojs/check": 0.9.12
+    # astro check's compiler pairs `@emnapi/core` 1 with whichever `@emnapi/runtime` it is offered;
+    # without this, it gets rolldown's 2.0 beta, fails to load, and astro check checks nothing.
+    "@emnapi/runtime": 1.11.3
     # The social card of every page, drawn at build: Satori lays it out, resvg rasterises it.
     "@fontsource/ibm-plex-sans": 5.3.0
     "@fontsource/red-hat-mono": 5.3.0
