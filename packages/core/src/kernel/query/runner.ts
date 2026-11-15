@@ -64,6 +64,11 @@ export interface CreateQueryRunnerArgs {
   readonly recordAccess: RecordAccess;
   readonly errorText: ErrorText;
   readonly disclosures?: Disclosures | undefined;
+  /**
+   * Where a read model's projection stands, as the dispatcher's lag says: its checkpoint, or past
+   * the events after it that it does not handle, which its rows reflect as they are.
+   */
+  readonly standing: (subscriber: string) => Promise<number>;
 }
 
 export interface CreateQueryRunnerFunction {
@@ -78,6 +83,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
   recordAccess,
   errorText,
   disclosures,
+  standing,
 }) => {
   // The stores of a read model as a query reads them: sealed values opened, with the keys fetched
   // for this query alone, and, with a field marked `.person()`, the rows of restricted persons
@@ -118,14 +124,12 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
             Object.keys(parsed),
           );
         }
-        // The rows read reflect the stream through the read model's checkpoint, read first: a
+        // The rows read reflect the stream through where the projection stands, read first: a
         // change of a person past it, which the rows may not show yet, refuses a disclosure.
         const fence =
           disclosures === undefined || !disclosures.tells(query.readModel)
             ? undefined
-            : await readModel.storage.checkpointStore.get(
-                projectionSubscriberName(query.readModel),
-              );
+            : await standing(projectionSubscriberName(query.readModel));
         const run = async (): Promise<unknown> => {
           const repositoryData =
             query.repository === null

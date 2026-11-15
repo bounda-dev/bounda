@@ -1031,13 +1031,24 @@ describe("recipients of personal data", () => {
   it("refuses what a query hands a port while its read model has not caught up with a change of the person", async () => {
     const { app, queries, register, shared } = await start();
     await register("c-1");
-    await app.restrict("c-1", { ground: "objection-pending", categories: ["invoices"] });
+    const [registered] = (await app.exportPersonalData("c-1")).events;
+    await app.redact("c-1", {
+      events: [{ ...(registered as object), fields: ["email"] }],
+    } as never);
     await expect(queries.shareCustomer?.({ customerId: "c-1" })).rejects.toMatchObject({
       code: "CONCURRENCY_CONFLICT",
       streamId: "bounda:c-1",
     });
     expect(shared).toEqual([]);
     await app.runUntilIdle();
+    await queries.shareCustomer?.({ customerId: "c-1" });
+    expect(shared).toEqual([null]);
+  });
+
+  it("hands what a query reads while its read model rests behind a change of the person it does not handle", async () => {
+    const { app, queries, register, shared } = await start();
+    await register("c-1");
+    await app.restrict("c-1", { ground: "objection-pending", categories: ["invoices"] });
     await queries.shareCustomer?.({ customerId: "c-1" });
     expect(shared).toEqual(["c-1@example.com"]);
   });
