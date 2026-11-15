@@ -29,7 +29,7 @@ const storedDisclosure = (row: Readonly<Record<string, unknown>>): StoredDisclos
   recipient: String(row.recipient),
   kind: String(row.kind),
   country: String(row.country),
-  safeguard: row.safeguard === null || row.safeguard === undefined ? null : String(row.safeguard),
+  safeguard: row.safeguard === null ? null : String(row.safeguard),
   category: String(row.category),
   firstAt: String(row.first_at),
   lastAt: String(row.last_at),
