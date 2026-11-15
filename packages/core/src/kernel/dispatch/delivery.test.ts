@@ -532,6 +532,42 @@ describe("the dispatcher with a subscriber at rest", () => {
     expect((await full.dispatcher.getLag()).maxLag).toBe(0);
   });
 
+  it("reads the stream once for the subscribers at one checkpoint, and not for one at the head or one that handles everything", async () => {
+    const { eventStore, checkpointStore } = await setup(3);
+    const reads: number[] = [];
+    const subscriber = (name: string) => ({
+      name,
+      kind: "policy" as const,
+      handles: () => false,
+      process: async (events: readonly StoredEvent[]) => events.length,
+    });
+    const dispatcher = createDispatcher({
+      clock: createFixedClock(),
+      eventStore: {
+        ...eventStore,
+        readAll: (args) => {
+          reads.push(args.afterPosition);
+          return eventStore.readAll(args);
+        },
+      },
+      checkpointStore,
+      subscribers: [
+        subscriber("first"),
+        subscriber("second"),
+        subscriber("done"),
+        { name: "eager", kind: "policy", process: async (events) => events.length },
+      ],
+      batchSize: 4,
+      pollIntervalMs: 100,
+      logger: silentLogger,
+      errorText: "omit",
+    });
+    await checkpointStore.set("done", 3);
+    await checkpointStore.set("eager", 1);
+    expect((await dispatcher.getLag()).maxLag).toBe(2);
+    expect(reads).toEqual([0]);
+  });
+
   it("answers the checkpoint of a subscriber it does not run", async () => {
     const { dispatcher, checkpointStore } = await start(3, () => false);
     await checkpointStore.set("elsewhere", 2);
