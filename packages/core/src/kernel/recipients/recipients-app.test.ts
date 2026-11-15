@@ -16,6 +16,7 @@ import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 
 type Events = Record<string, (payload?: unknown) => unknown>;
 
@@ -640,7 +641,17 @@ describe("recipients of personal data", () => {
       status: "failed",
     });
     failing.clear();
-    await app.deadLetters.retry(letter?.id as string);
+    const telemetry = installFakeTelemetry();
+    try {
+      await app.deadLetters.retry(letter?.id as string);
+      expect(
+        telemetry.spans.find(({ name }) => name === "bounda.recipient customer.mailer")?.attributes[
+          "bounda.attempt"
+        ],
+      ).toBe((letter?.attempts ?? 0) + 1);
+    } finally {
+      telemetry.restore();
+    }
     expect(told.map(({ type }) => type)).toEqual(["ProcessingRestricted"]);
   });
 
