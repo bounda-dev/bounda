@@ -59,6 +59,7 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
 
     it("keeps a disclosure apart by port, recipient and category, and a person's to them", async () => {
       const rows = [
+        disclosure({ port: "order.mailer", person: "c-9" }),
         disclosure({ category: "profile" }),
         disclosure({ recipient: "Brevo", country: "FR", safeguard: null }),
         disclosure({ port: "order.mailer" }),
@@ -76,7 +77,7 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       );
       expect(await storage.recipients.summary()).toEqual([
         { port: "customer.mailer", persons: 2 },
-        { port: "order.mailer", persons: 1 },
+        { port: "order.mailer", persons: 2 },
       ]);
     });
 
@@ -191,13 +192,16 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
     });
 
     it("moves what a port held under its former key, keeping one disclosure from its first time to its last", async () => {
-      await storage.recipients.disclose([disclosure(), disclosure({ category: "profile" })], at(1));
-      await storage.recipients.disclose([disclosure({ port: "customer.newsletter" })], at(3));
+      await storage.recipients.disclose([disclosure({ port: "customer.newsletter" })], at(1));
+      await storage.recipients.disclose([disclosure({ port: "customer.newsletter" })], at(2));
+      await storage.recipients.disclose([disclosure(), disclosure({ category: "profile" })], at(3));
+      await storage.recipients.disclose([disclosure()], at(5));
       await storage.recipients.declare(
         [{ port: "customer.mailer", categories: ["contact"] }],
         7,
         at(1),
       );
+      await storage.recipients.caughtUp("customer.mailer", 6);
       await storage.recipients.declare(
         [{ port: "customer.newsletter", categories: ["contact", "profile"] }],
         2,
@@ -205,11 +209,11 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       );
       await storage.recipients.rename("customer.mailer", "customer.newsletter");
       expect(await storage.recipients.disclosures("c-1")).toEqual([
-        { ...disclosure({ port: "customer.newsletter" }), firstAt: at(1), lastAt: at(3) },
+        { ...disclosure({ port: "customer.newsletter" }), firstAt: at(1), lastAt: at(5) },
         {
           ...disclosure({ port: "customer.newsletter", category: "profile" }),
-          firstAt: at(1),
-          lastAt: at(1),
+          firstAt: at(3),
+          lastAt: at(3),
         },
       ]);
       expect(await storage.recipients.declared()).toEqual([
@@ -217,7 +221,7 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
           port: "customer.newsletter",
           categories: ["contact", "profile"],
           presumedThrough: 7,
-          caughtUpThrough: 0,
+          caughtUpThrough: 6,
           declaredAt: at(2),
         },
       ]);
@@ -227,7 +231,7 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
           port: "customer.mail",
           categories: ["contact", "profile"],
           presumedThrough: 7,
-          caughtUpThrough: 0,
+          caughtUpThrough: 6,
           declaredAt: at(2),
         },
       ]);

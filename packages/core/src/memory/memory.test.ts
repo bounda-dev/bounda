@@ -577,4 +577,59 @@ describe("memory adapter", () => {
     expect(await ids("asc")).toEqual(["3", "2", "4", "1"]);
     expect(await ids("desc")).toEqual(["1", "4", "2", "3"]);
   });
+
+  describe("the memory adapter's recipients, as inspected", () => {
+    it("shows every disclosure and declared recipient as the SQL adapters' tables hold them", async () => {
+      const adapter = memory();
+      const storage = await adapter.createStorage();
+      const disclosure = {
+        port: "customer.mailer",
+        recipient: "Mailchimp",
+        kind: "processor",
+        country: "US",
+        safeguard: null,
+        category: "contact",
+      };
+      await storage.recipients.disclose(
+        [
+          { ...disclosure, person: "c-2" },
+          { ...disclosure, person: "c-1" },
+        ],
+        "2026-03-01T00:00:00.000Z",
+      );
+      await storage.recipients.declare(
+        [
+          { port: "order.sms", categories: ["contact"] },
+          { port: "customer.mailer", categories: ["contact", "profile"] },
+        ],
+        3,
+        "2026-03-01T00:00:00.000Z",
+      );
+      const tables = await adapter.inspect();
+      expect(tables.find(({ store }) => store === "disclosures")?.rows).toEqual(
+        ["c-1", "c-2"].map((person) => ({
+          person,
+          ...disclosure,
+          first_at: "2026-03-01T00:00:00.000Z",
+          last_at: "2026-03-01T00:00:00.000Z",
+        })),
+      );
+      expect(tables.find(({ store }) => store === "recipients")?.rows).toEqual([
+        {
+          port: "customer.mailer",
+          categories: JSON.stringify(["contact", "profile"]),
+          presumed_through: 3,
+          caught_up_through: 0,
+          declared_at: "2026-03-01T00:00:00.000Z",
+        },
+        {
+          port: "order.sms",
+          categories: JSON.stringify(["contact"]),
+          presumed_through: 3,
+          caught_up_through: 0,
+          declared_at: "2026-03-01T00:00:00.000Z",
+        },
+      ]);
+    });
+  });
 });

@@ -5,6 +5,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import { ForgetLedgerUnavailableError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
+import { disclosureEntryId } from "../shared/idempotency-key.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import type { ForgetScope } from "./forget.ts";
 import { type BoundedForgetLedger, boundForgetLedger } from "./forget-ledger.ts";
@@ -213,5 +214,60 @@ describe("the intentions of forgetting", () => {
       keys: loose.storage.personalKeys,
     });
     expect(appends).toBe(2);
+  });
+
+  it("record disclosures in the ledger under an id each, and only log a failure of a ledger that is not strict", async () => {
+    const appended: ForgetLedgerEntry[] = [];
+    const disclosure = {
+      person: "c-1",
+      port: "customer.mailer",
+      recipient: "Mailchimp",
+      kind: "processor",
+      country: "US",
+      safeguard: null,
+      category: "contact",
+    };
+    const { intentions } = await setUp({
+      ledger: recordingLedger(async (entries) => {
+        appended.push(...entries);
+      }),
+    });
+    await intentions.disclose([disclosure], NOW.toISOString());
+    const { person: _, ...ledgered } = disclosure;
+    expect(appended).toEqual([
+      {
+        personId: "c-1",
+        categories: null,
+        eventId: disclosureEntryId(disclosure),
+        forgottenAt: NOW.toISOString(),
+        reason: "requested",
+        disclosure: ledgered,
+      },
+    ]);
+    expect(disclosureEntryId(disclosure)).not.toBe(
+      disclosureEntryId({ ...disclosure, category: "profile" }),
+    );
+    const failing = await setUp({
+      ledger: recordingLedger(async () => {
+        throw new Error("down");
+      }),
+    });
+    await failing.intentions.disclose([disclosure], NOW.toISOString());
+    expect(failing.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message:
+          "forget ledger did not take the disclosure; a restore that loses it would not tell its recipient",
+      }),
+    );
+    const strict = await setUp({
+      ledger: recordingLedger(async () => {
+        throw new Error("down");
+      }),
+      strict: true,
+    });
+    await expect(
+      strict.intentions.disclose([disclosure], NOW.toISOString()),
+    ).rejects.toBeInstanceOf(ForgetLedgerUnavailableError);
   });
 });

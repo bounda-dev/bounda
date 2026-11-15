@@ -131,7 +131,7 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
       };
     },
     disclosureRows: () =>
-      [...disclosures.values()].sort(byDisclosure).map((row) => ({
+      [...disclosures.values()].map((row) => ({
         person: row.person,
         port: row.port,
         recipient: row.recipient,
@@ -143,14 +143,12 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
         last_at: row.lastAt,
       })),
     recipientRows: () =>
-      [...recipients.values()]
-        .sort((a, b) => byText(a.port, b.port))
-        .map((row) => ({
-          port: row.port,
-          categories: JSON.stringify(row.categories),
-          presumed_through: row.presumedThrough,
-          caught_up_through: row.caughtUpThrough,
-          declared_at: row.declaredAt,
-        })),
+      [...recipients.values()].map((row) => ({
+        port: row.port,
+        categories: JSON.stringify(row.categories),
+        presumed_through: row.presumedThrough,
+        caught_up_through: row.caughtUpThrough,
+        declared_at: row.declaredAt,
+      })),
   };
 };

@@ -1070,7 +1070,18 @@ describe("recipients and the forget ledger", () => {
       },
     };
     await ledger.append([entry]);
-    const app = await startWithLedger(storage, ledgerAdapter, told);
+    const logged: unknown[] = [];
+    const app = await startWithLedger(storage, ledgerAdapter, told, {
+      ...silentLogger,
+      info: (message, fields) => {
+        logged.push([message, fields]);
+      },
+    });
+    expect(logged).toContainEqual([
+      "disclosure recorded again from the forget ledger",
+      { personId: "c-9", port: "customer.mailer" },
+    ]);
+    expect(await app.forgetAgain([entry])).toEqual([]);
     expect(
       (await app.recipientsOf("c-9")).map(({ port, status, firstDisclosedAt }) => [
         port,
