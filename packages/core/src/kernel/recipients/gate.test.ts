@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Storage } from "../../adapter/adapter.ts";
 import type { Disclosure } from "../../adapter/storage/recipient-store.ts";
 import { testMetadata } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConcurrencyError, ProcessingRestrictedError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
+import type { AppStorage } from "../events/app-event-store.ts";
 import type { RecordAccess } from "../personal-data/access.ts";
 import { fenceOf, stampFence } from "../personal-data/fences.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
+import { withPersonalKeys } from "../test-support.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
 import {
   createDisclosures,
@@ -41,7 +42,7 @@ const runtimeOf = (...all: RecipientRuntime[]): RecipientsRuntime => ({
   byOwner: Object.fromEntries(all.map((each) => [each.owner, { [each.name]: each }])),
 });
 
-let storage: Storage;
+let storage: AppStorage;
 let accesses: PersonalDataAccess[];
 let ledgered: (readonly Disclosure[])[];
 
@@ -120,7 +121,7 @@ const mailer = (sent: string[]): Mailer => ({
 });
 
 beforeEach(async () => {
-  storage = await memory().createStorage();
+  storage = withPersonalKeys(await memory().createStorage());
   accesses = [];
   ledgered = [];
 });
@@ -171,7 +172,8 @@ describe("createDisclosures", () => {
     const bound = disclosures.bind("customer", lazy, run([]));
     expect(reads).toBe(0);
     expect(Reflect.get(bound, "sms")).toBe("sms port");
-    expect(reads).toBe(1);
+    expect(Reflect.get(bound, "sms")).toBe("sms port");
+    expect(reads).toBe(2);
   });
 
   it("builds a recipient's port once, when first read, and hands a value that is no port as it is", async () => {
@@ -328,6 +330,32 @@ describe("createDisclosures", () => {
       new PersonalDataChangedError("c-1", early, 2),
     );
     expect(sent).toEqual(["ana"]);
+  });
+
+  it("names the categories recorded in order, and fences a person by the earliest read that has a fence", async () => {
+    await key("c-1", "profile", "f-profile");
+    await key("c-1", "contact", "f-contact");
+    const sent: string[] = [];
+    const sorted = disclosuresOf().bind(
+      "customer",
+      { mailer: mailer(sent) },
+      run([
+        { person: "c-1", fingerprint: "f-profile", fence: undefined },
+        { person: "c-1", fingerprint: "f-contact", fence: undefined },
+      ]),
+    ) as { mailer: Mailer };
+    await sorted.mailer.send("ana");
+    expect(accesses.at(-1)?.detail).toMatchObject({ categories: ["contact", "profile"] });
+    const moved = await boundaEvent("c-1");
+    const stale = disclosuresOf().bind(
+      "customer",
+      { mailer: mailer(sent) },
+      run([
+        { person: "c-1", fingerprint: "f-profile", fence: undefined },
+        { person: "c-1", fingerprint: "f-contact", fence: moved - 1 },
+      ]),
+    ) as { mailer: Mailer };
+    await expect(stale.mailer.send("ana")).rejects.toBeInstanceOf(PersonalDataChangedError);
   });
 
   it("refuses restricted data the run names no basis for, and records the basis that lets it through", async () => {

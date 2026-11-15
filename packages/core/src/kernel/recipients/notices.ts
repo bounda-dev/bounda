@@ -262,8 +262,8 @@ export const createRecipientDelivery: CreateRecipientDeliveryFunction = ({
     deriveDeadLetterId({ kind: "recipient", handler: port, subject: event.id });
   return {
     deliver: (port, event, told) => {
-      const owner = recipients.byPort[port]?.owner ?? port.split(".")[0] ?? port;
-      const { policies } = config.forAggregate(owner);
+      // A port no longer declared gives up at once, on the app's own settings.
+      const { policies } = config.forAggregate(recipients.byPort[port]?.owner ?? "");
       return runAttempt({
         storage,
         key: { handler: `recipient:${port}`, eventId: event.id },
@@ -410,8 +410,9 @@ export const createRecipientCatchUp: CreateRecipientCatchUpFunction = ({
         afterPosition: declared.caughtUpThrough,
         limit: batchSize,
       });
-      // Past the last event read when the stream ends before the position presumed through.
-      let through = events.length < batchSize ? declared.presumedThrough : declared.caughtUpThrough;
+      // Done through the position presumed when the stream ends before it; a full batch is done
+      // through its last event.
+      let through = declared.presumedThrough;
       for (const event of events) {
         if (event.position > declared.presumedThrough) {
           through = declared.presumedThrough;

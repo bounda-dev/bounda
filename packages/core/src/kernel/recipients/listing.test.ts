@@ -231,6 +231,116 @@ describe("recipientsOf", () => {
   });
 });
 
+describe("recipientsOf, merged and ordered", () => {
+  it("merges a recipient's rows from the first time to the last, names a category gone without a basis, and orders by port, status and name", async () => {
+    await key("c-1", "contact");
+    await key("c-1", "invoices");
+    await storage.recipients.disclose(
+      [disclosure({ port: "customer.newsletter", recipient: "Alpha", category: "marketing" })],
+      "2026-02-07T00:00:00.000Z",
+    );
+    await storage.recipients.disclose(
+      [disclosure({ port: "customer.crm", recipient: "Brevo", category: "contact" })],
+      "2026-02-05T00:00:00.000Z",
+    );
+    await storage.recipients.disclose(
+      [disclosure({ port: "customer.crm", recipient: "Brevo", category: "contact" })],
+      "2026-02-06T00:00:00.000Z",
+    );
+    await storage.recipients.disclose(
+      [disclosure({ port: "customer.crm", recipient: "Brevo", category: "invoices" })],
+      "2026-02-01T00:00:00.000Z",
+    );
+    await storage.recipients.disclose(
+      [disclosure({ port: "customer.crm", recipient: "Brevo", category: "invoices" })],
+      "2026-02-03T00:00:00.000Z",
+    );
+    await storage.recipients.disclose(
+      [disclosure({ port: "customer.mailer", recipient: "Mandrill", category: "contact" })],
+      "2026-02-02T00:00:00.000Z",
+    );
+    const listed = await recipientsOf({
+      storage,
+      recipients: runtime,
+      categories,
+      personId: "c-1",
+    });
+    expect(
+      listed.map(({ port, name, status, firstDisclosedAt, lastDisclosedAt, categories: names }) => [
+        port,
+        name,
+        status,
+        firstDisclosedAt,
+        lastDisclosedAt,
+        names,
+      ]),
+    ).toEqual([
+      [
+        "customer.crm",
+        "Brevo",
+        "disclosed",
+        "2026-02-01T00:00:00.000Z",
+        "2026-02-06T00:00:00.000Z",
+        [
+          { name: "contact", basis: "consent" },
+          { name: "invoices", basis: "legal-obligation" },
+        ],
+      ],
+      [
+        "customer.mailer",
+        "Alpha",
+        "disclosed",
+        "2026-02-07T00:00:00.000Z",
+        "2026-02-07T00:00:00.000Z",
+        [{ name: "marketing", basis: null }],
+      ],
+      [
+        "customer.mailer",
+        "Mandrill",
+        "disclosed",
+        "2026-02-02T00:00:00.000Z",
+        "2026-02-02T00:00:00.000Z",
+        [{ name: "contact", basis: "consent" }],
+      ],
+    ]);
+  });
+
+  it("orders a port's statuses disclosed, presumed, declared", async () => {
+    await key("c-1", "contact");
+    await key("c-1", "invoices");
+    await storage.transact(async (transaction) => {
+      await transaction.eventStore.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          {
+            id: "e-1",
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 1,
+            type: "CustomerRegistered",
+            payload: {},
+            timestamp: "2026-01-01T00:00:00.000Z",
+            metadata: testMetadata,
+            person: "c-1",
+          },
+        ],
+      });
+    });
+    await storage.recipients.declare([{ port: "customer.crm", categories: ["contact"] }], 1, "t");
+    await storage.recipients.disclose(
+      [disclosure({ port: "customer.crm", recipient: "Brevo", category: "marketing" })],
+      "2026-02-01T00:00:00.000Z",
+    );
+    expect(
+      (await recipientsOf({ storage, recipients: runtime, categories, personId: "c-1" }))
+        .filter(({ port }) => port === "customer.crm")
+        .map(({ status }) => status),
+    ).toEqual(["disclosed", "presumed", "declared"]);
+  });
+});
+
 describe("recipientStatuses", () => {
   it("lists every recipient declared or remembered, with its persons, whether it catches up, and its failed notices under any key", async () => {
     await storage.recipients.disclose(
@@ -238,6 +348,7 @@ describe("recipientStatuses", () => {
         disclosure({}),
         disclosure({ person: "c-2" }),
         disclosure({ port: "order.sms", recipient: "Twilio" }),
+        disclosure({ port: "customer.newsletter", person: "c-3" }),
       ],
       "2026-02-01T00:00:00.000Z",
     );
@@ -324,6 +435,13 @@ describe("recipientStatuses", () => {
         persons: 2,
         catchingUp: false,
         failedNotices: 2,
+      },
+      {
+        port: "customer.newsletter",
+        declared: null,
+        persons: 1,
+        catchingUp: false,
+        failedNotices: 1,
       },
       { port: "order.gone", declared: null, persons: 0, catchingUp: false, failedNotices: 0 },
       { port: "order.sms", declared: null, persons: 1, catchingUp: false, failedNotices: 1 },

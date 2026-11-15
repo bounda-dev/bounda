@@ -11,6 +11,7 @@ import type { AppStorage } from "../events/app-event-store.ts";
 import type { RecordAccess } from "../personal-data/access.ts";
 import { deriveDeadLetterId, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { ignoredRetries } from "../shared/pending-retries.ts";
+import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger, withPersonalKeys } from "../test-support.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
 import {
@@ -126,6 +127,8 @@ const notices = () =>
   createRecipientNotices({ recipients: runtime, storage, config, clock, recordAccess });
 
 const unit = () => ({}) as never;
+
+const span = {} as never;
 
 beforeEach(async () => {
   told = [];
@@ -335,6 +338,77 @@ describe("createRecipientNotices", () => {
   });
 });
 
+describe("createRecipientNotices, superseded", () => {
+  it("is superseded by a later forgetting as a whole that told it among others, and by no other event", async () => {
+    const recipients = [notice("customer.mailer")];
+    const restricted = await append("ProcessingRestricted", { recipients });
+    await append("ProcessingRestricted", { whole: true, recipients });
+    await notices().run({ port: "customer.mailer", event: restricted, attempt: 1, within: unit() });
+    expect(told).toHaveLength(1);
+    await append("PersonalDataForgotten", {
+      whole: true,
+      recipients: [notice("customer.crm"), notice("customer.mailer")],
+    });
+    await notices().run({ port: "customer.mailer", event: restricted, attempt: 1, within: unit() });
+    expect(told).toHaveLength(1);
+    expect(accesses.at(-1)).toMatchObject({ outcome: "ok", detail: { superseded: true } });
+  });
+
+  it("runs the handler within its time, in a span named after the port", async () => {
+    const telemetry = installFakeTelemetry();
+    try {
+      const event = await append("ProcessingRestricted", {
+        recipients: [notice("customer.mailer")],
+      });
+      await notices().run({
+        port: "customer.mailer",
+        event,
+        attempt: 3,
+        actor: "ops-1",
+        within: unit(),
+      });
+      expect(telemetry.spans).toContainEqual(
+        expect.objectContaining({
+          name: "bounda.recipient customer.mailer",
+          attributes: expect.objectContaining({
+            "bounda.recipient": "customer.mailer",
+            "bounda.event.id": event.id,
+            "bounda.event.type": "ProcessingRestricted",
+            "bounda.correlation_id": testMetadata.correlationId,
+            "bounda.attempt": 3,
+            "bounda.actor": "ops-1",
+          }),
+        }),
+      );
+    } finally {
+      telemetry.restore();
+    }
+    const slow = {
+      ...runtime,
+      byPort: {
+        ...runtime.byPort,
+        "customer.mailer": {
+          ...MAILER,
+          handlers: { ...MAILER.handlers, onProcessingRestricted: () => new Promise(() => {}) },
+        } as unknown as RecipientRuntime,
+      },
+    };
+    const event = await append("ProcessingRestricted", { recipients: [notice("customer.mailer")] });
+    const running = createRecipientNotices({
+      recipients: slow,
+      storage,
+      config,
+      clock,
+      recordAccess,
+    }).run({ port: "customer.mailer", event, attempt: 1, within: unit() });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    clock.advance(config.forAggregate("customer").policies.timeoutMs);
+    await expect(running).rejects.toThrow(
+      `recipient customer.mailer did not finish within ${config.forAggregate("customer").policies.timeoutMs}ms`,
+    );
+  });
+});
+
 describe("createRecipientDelivery", () => {
   const deliveryOf = (logger = createRecordingLogger().logger) =>
     createRecipientDelivery({
@@ -360,7 +434,37 @@ describe("createRecipientDelivery", () => {
     });
   });
 
+  it("holds an event another delivery claimed, for as long as twice the handler's time", async () => {
+    const slow = {
+      ...runtime,
+      byPort: {
+        ...runtime.byPort,
+        "customer.mailer": {
+          ...MAILER,
+          handlers: { ...MAILER.handlers, onProcessingRestricted: () => new Promise(() => {}) },
+        } as unknown as RecipientRuntime,
+      },
+    };
+    const event = await append("ProcessingRestricted", { recipients: [notice("customer.mailer")] });
+    const deliveryOn = () =>
+      createRecipientDelivery({
+        recipients: slow,
+        notices: createRecipientNotices({ recipients: slow, storage, config, clock, recordAccess }),
+        storage,
+        config,
+        clock,
+        pendingRetries: ignoredRetries,
+        logger: createRecordingLogger().logger,
+      });
+    void deliveryOn().deliver("customer.mailer", event);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const { timeoutMs } = config.forAggregate("customer").policies;
+    clock.advance(timeoutMs * 2 - 1);
+    expect(await deliveryOn().deliver("customer.mailer", event)).toBe("hold");
+  });
+
   it("files a dead letter of a recipient once its attempts run out, and says so", async () => {
+    const telemetry = installFakeTelemetry();
     failing.add("customer.mailer");
     const recording = createRecordingLogger("omit");
     const event = await append("ProcessingRestricted", { recipients: [notice("customer.mailer")] });
@@ -386,6 +490,16 @@ describe("createRecipientDelivery", () => {
       lastFailedAt: "2026-03-01T00:00:00.000Z",
       status: "failed",
     });
+    expect(telemetry.counts).toContainEqual({
+      metric: "bounda.dead_letters",
+      value: 1,
+      attributes: {
+        "bounda.handler.kind": "recipient",
+        "bounda.handler": "customer.mailer",
+        "bounda.outcome": "retriable_exhausted",
+      },
+    });
+    telemetry.restore();
     expect(recording.entries).toContainEqual({
       level: "warn",
       message: "recipient notice dead-lettered",
@@ -458,7 +572,7 @@ describe("createRecipientSubscriber", () => {
     const { delivered, delivery } = recordingDelivery(new Set(["customer.newsletter"]));
     const subscriber = createRecipientSubscriber({ recipients: runtime, delivery, storage });
     expect(subscriber).toMatchObject({ name: "recipients", kind: "policy" });
-    expect(await subscriber.process([one, other, two])).toBe(0);
+    expect(await subscriber.process([one, other, two], span)).toBe(0);
     expect(delivered).toEqual([
       ["customer.newsletter", one.id],
       ["customer.crm", one.id],
@@ -470,7 +584,7 @@ describe("createRecipientSubscriber", () => {
         recipients: runtime,
         delivery: all.delivery,
         storage,
-      }).process([one, other, two]),
+      }).process([one, other, two], span),
     ).toBe(3);
   });
 
@@ -487,7 +601,10 @@ describe("createRecipientSubscriber", () => {
     await storage.recipients.caughtUp("customer.crm", 2);
     const { delivered, delivery } = recordingDelivery();
     expect(
-      await createRecipientSubscriber({ recipients: runtime, delivery, storage }).process([one]),
+      await createRecipientSubscriber({ recipients: runtime, delivery, storage }).process(
+        [one],
+        span,
+      ),
     ).toBe(0);
     expect(delivered).toEqual([["customer.crm", one.id]]);
   });
@@ -558,6 +675,21 @@ describe("createRecipientCatchUp", () => {
     expect(await catchUpOf(rest.delivery, 5).sweep()).toBe(1);
     expect(await caughtUp("customer.mailer")).toBe(9);
     expect(rest.delivered).toEqual([["customer.mailer", "ProcessingRestricted", true]]);
+  });
+
+  it("tells nothing past the position it was declared at, nor an event of the app's named like the runtime's", async () => {
+    await append("ProcessingRestricted", { categories: ["contact"] });
+    await append("ProcessingRestricted", { categories: ["contact"] }, "c-1", "customer");
+    await append("ProcessingRestricted", { categories: ["contact"] });
+    await storage.recipients.declare(
+      [{ port: "customer.mailer", categories: ["contact"] }],
+      2,
+      "t",
+    );
+    const { delivered, delivery } = recorded();
+    expect(await catchUpOf(delivery, 5).sweep()).toBe(1);
+    expect(delivered).toHaveLength(1);
+    expect(await caughtUp("customer.mailer")).toBe(2);
   });
 
   it("stops before the first event it holds in a full batch", async () => {
