@@ -1096,6 +1096,35 @@ describe("recipients of personal data", () => {
     });
     await expect(app.recipientsOf("")).rejects.toThrow("recipientsOf needs the id of the person");
   });
+
+  it("records a recipientsOf that fails with no count", async () => {
+    const base = memory();
+    const down = new Error("disclosures unavailable");
+    const adapter: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        return {
+          ...storage,
+          recipients: {
+            ...storage.recipients,
+            disclosures: async () => {
+              throw down;
+            },
+          },
+        };
+      },
+    };
+    const { app, accesses } = await start({ adapter });
+    await expect(app.recipientsOf("c-1")).rejects.toBe(down);
+    expect(accesses.at(-1)).toMatchObject({
+      operation: "recipientsOf",
+      persons: ["c-1"],
+      detail: null,
+      outcome: "failed",
+    });
+    await app.stop();
+  });
 });
 
 describe("recipients and the forget ledger", () => {
@@ -1326,6 +1355,8 @@ describe("recipient declarations", () => {
     const told: Notice[] = [];
     const first = await start({ told, adapter });
     await first.register("c-1");
+    // The audience, still declared, holds c-1's data too and is not warned of.
+    await first.queries.shareCustomer?.({ customerId: "c-1" });
     await first.app.stop();
     const warnings: unknown[] = [];
     const logger: Logger = {

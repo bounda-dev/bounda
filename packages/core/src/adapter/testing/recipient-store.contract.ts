@@ -196,6 +196,17 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       await storage.recipients.disclose([disclosure({ port: "customer.newsletter" })], at(2));
       await storage.recipients.disclose([disclosure(), disclosure({ category: "profile" })], at(3));
       await storage.recipients.disclose([disclosure()], at(5));
+      await storage.recipients.disclose(
+        [disclosure({ port: "customer.newsletter", category: "invoices" })],
+        at(3),
+      );
+      await storage.recipients.disclose(
+        [disclosure({ port: "customer.newsletter", category: "invoices" })],
+        at(5),
+      );
+      await storage.recipients.disclose([disclosure({ category: "invoices" })], at(1));
+      await storage.recipients.disclose([disclosure({ category: "invoices" })], at(2));
+      await storage.recipients.disclose([disclosure({ port: "customer.crm" })], at(4));
       await storage.recipients.declare(
         [{ port: "customer.mailer", categories: ["contact"] }],
         7,
@@ -209,7 +220,13 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       );
       await storage.recipients.rename("customer.mailer", "customer.newsletter");
       expect(await storage.recipients.disclosures("c-1")).toEqual([
+        { ...disclosure({ port: "customer.crm" }), firstAt: at(4), lastAt: at(4) },
         { ...disclosure({ port: "customer.newsletter" }), firstAt: at(1), lastAt: at(5) },
+        {
+          ...disclosure({ port: "customer.newsletter", category: "invoices" }),
+          firstAt: at(1),
+          lastAt: at(5),
+        },
         {
           ...disclosure({ port: "customer.newsletter", category: "profile" }),
           firstAt: at(3),
@@ -236,7 +253,7 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
         },
       ]);
       await storage.recipients.rename("customer.gone", "customer.mail");
-      expect(await storage.recipients.disclosures("c-1")).toHaveLength(2);
+      expect(await storage.recipients.disclosures("c-1")).toHaveLength(4);
     });
 
     it("moves how far a port was caught up forward, never back", async () => {

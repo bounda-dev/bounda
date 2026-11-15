@@ -824,6 +824,11 @@ describe("forgetAgain", () => {
     expect(await run({ personId: "c-1", eventId: "e-1" })).toBeNull();
     expect(transactions).toBe(0);
     await keyed(storage, ["c-1"]);
+    // An entry that records a disclosure forgets nothing, though the person has keys.
+    expect(
+      await run({ personId: "c-1", eventId: "e-1", disclosure: { port: "customer.mailer" } }),
+    ).toBeNull();
+    expect(transactions).toBe(0);
     expect(await run({ personId: "c-1", eventId: "e-1" })).not.toBeNull();
     expect(transactions).toBe(1);
   });
