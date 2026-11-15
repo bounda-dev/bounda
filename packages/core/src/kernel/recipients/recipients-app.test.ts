@@ -794,6 +794,10 @@ describe("recipients of personal data", () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let reach: () => void = () => {};
+    const reached = new Promise<void>((resolve) => {
+      reach = resolve;
+    });
     let waited = false;
     const registry = registryWith({ told });
     const customer = registry.aggregates.customer as unknown as {
@@ -810,6 +814,7 @@ describe("recipients of personal data", () => {
         }) => {
           if (!waited) {
             waited = true;
+            reach();
             await held;
           }
           await mailer.send({ to: event.payload.email });
@@ -819,7 +824,7 @@ describe("recipients of personal data", () => {
     const { app, commands, mailed, notified } = await start({ told, registry });
     await commands.registerCustomer?.({ customerId: "c-1", email: "c-1@example.com" });
     const running = app.runUntilIdle();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await reached;
     await app.forget("c-1");
     release();
     await running;
@@ -890,6 +895,10 @@ describe("recipients of personal data", () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let reach: () => void = () => {};
+    const reached = new Promise<void>((resolve) => {
+      reach = resolve;
+    });
     let calls = 0;
     const registry = registryWith({ told });
     const customer = registry.aggregates.customer as unknown as {
@@ -906,7 +915,10 @@ describe("recipients of personal data", () => {
         }) => {
           await mailer.send({ to: event.payload.email });
           calls += 1;
-          if (calls === 1) await held;
+          if (calls === 1) {
+            reach();
+            await held;
+          }
           await mailer.send({ to: event.payload.email });
         },
       },
@@ -914,7 +926,7 @@ describe("recipients of personal data", () => {
     const { app, commands, mailed } = await start({ told, registry });
     await commands.registerCustomer?.({ customerId: "c-1", email: "c-1@example.com" });
     const running = app.runUntilIdle();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await reached;
     await app.forget("c-1");
     release();
     await running;

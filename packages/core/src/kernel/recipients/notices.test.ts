@@ -383,13 +383,23 @@ describe("createRecipientNotices, superseded", () => {
     } finally {
       telemetry.restore();
     }
+    let reach: () => void = () => {};
+    const reached = new Promise<void>((resolve) => {
+      reach = resolve;
+    });
     const slow = {
       ...runtime,
       byPort: {
         ...runtime.byPort,
         "customer.mailer": {
           ...MAILER,
-          handlers: { ...MAILER.handlers, onProcessingRestricted: () => new Promise(() => {}) },
+          handlers: {
+            ...MAILER.handlers,
+            onProcessingRestricted: () => {
+              reach();
+              return new Promise(() => {});
+            },
+          },
         } as unknown as RecipientRuntime,
       },
     };
@@ -401,7 +411,7 @@ describe("createRecipientNotices, superseded", () => {
       clock,
       recordAccess,
     }).run({ port: "customer.mailer", event, attempt: 1, within: unit() });
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await reached;
     clock.advance(config.forAggregate("customer").policies.timeoutMs);
     await expect(running).rejects.toThrow(
       `recipient customer.mailer did not finish within ${config.forAggregate("customer").policies.timeoutMs}ms`,
@@ -435,13 +445,23 @@ describe("createRecipientDelivery", () => {
   });
 
   it("holds an event another delivery claimed, for as long as twice the handler's time", async () => {
+    let reach: () => void = () => {};
+    const reached = new Promise<void>((resolve) => {
+      reach = resolve;
+    });
     const slow = {
       ...runtime,
       byPort: {
         ...runtime.byPort,
         "customer.mailer": {
           ...MAILER,
-          handlers: { ...MAILER.handlers, onProcessingRestricted: () => new Promise(() => {}) },
+          handlers: {
+            ...MAILER.handlers,
+            onProcessingRestricted: () => {
+              reach();
+              return new Promise(() => {});
+            },
+          },
         } as unknown as RecipientRuntime,
       },
     };
@@ -457,7 +477,7 @@ describe("createRecipientDelivery", () => {
         logger: createRecordingLogger().logger,
       });
     void deliveryOn().deliver("customer.mailer", event);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await reached;
     const { timeoutMs } = config.forAggregate("customer").policies;
     clock.advance(timeoutMs * 2 - 1);
     expect(await deliveryOn().deliver("customer.mailer", event)).toBe("hold");
