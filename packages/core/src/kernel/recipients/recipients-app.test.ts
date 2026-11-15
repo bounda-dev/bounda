@@ -1358,7 +1358,7 @@ describe("recipient declarations", () => {
     // The audience, still declared, holds c-1's data too and is not warned of.
     await first.queries.shareCustomer?.({ customerId: "c-1" });
     await first.app.stop();
-    const warnings: unknown[] = [];
+    const warnings: [string, unknown][] = [];
     const logger: Logger = {
       ...silentLogger,
       warn: (message, fields) => {
