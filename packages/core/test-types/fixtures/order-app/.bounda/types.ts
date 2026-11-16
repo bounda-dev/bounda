@@ -6,6 +6,10 @@ export type CustomerEvents = {
   readonly customerRegistered: typeof import("../app/domain/customer/customer-registered.ts");
 };
 export type CustomerPorts = core.EmptyPayload;
+export type CustomerClassification = [
+  Expect<core.ClassifiesPayload<"customer.CustomerRegistered", typeof import("../app/domain/customer/customer-registered.ts")>>,
+  Expect<core.ClassifiesPayload<"customer.registerCustomer", typeof import("../app/domain/customer/commands/register-customer.ts")>>,
+];
 
 export type OrderState = core.StateOf<typeof import("../app/domain/order/state.ts")>;
 export type OrderCreatedState = OrderState;
@@ -20,6 +24,15 @@ export type OrderPorts = {
   readonly mailer: import("../app/domain/order/mailer.ts").Mailer;
   readonly reminders: import("../app/domain/order/reminders.ts").Reminders;
 };
+export type OrderClassification = [
+  Expect<core.ClassifiesPayload<"order.OrderCancelled", typeof import("../app/domain/order/order-cancelled.ts")>>,
+  Expect<core.ClassifiesPayload<"order.OrderPaid", typeof import("../app/domain/order/order-paid.ts")>>,
+  Expect<core.ClassifiesPayload<"order.OrderPlaced", typeof import("../app/domain/order/order-placed.ts")>>,
+  Expect<core.ClassifiesPayload<"order.cancelOrder", typeof import("../app/domain/order/commands/cancel-order.ts")>>,
+  Expect<core.ClassifiesPayload<"order.payOrder", typeof import("../app/domain/order/commands/pay-order.ts")>>,
+  Expect<core.ClassifiesPayload<"order.placeOrder", typeof import("../app/domain/order/commands/place-order.ts")>>,
+  Expect<core.ClassifiesState<"order.orderPayment", typeof import("../app/domain/order/processes/order-payment/index.ts")>>,
+];
 export type OrderRecipients = [
   Expect<core.NotifiesRecipient<"order.mailer", typeof import("../app/domain/order/mailer.ts"), import("../app/domain/order/mailer.ts").Mailer>>,
 ];
@@ -83,6 +96,7 @@ export type CustomerDirectoryForgetting = Expect<
     typeof import("../app/read/customer-directory/view.ts")
   >
 >;
+export type CustomerDirectoryClassification = Expect<core.ClassifiesColumns<"customerDirectory", typeof import("../app/read/customer-directory/view.ts")>>;
 
 export type OrderSummaryRow = core.RowOf<typeof import("../app/read/order-summary/view.ts")>;
 export type OrderSummaryFieldTypes = core.FieldTypesOf<typeof import("../app/read/order-summary/view.ts")>;
@@ -98,6 +112,7 @@ export type OrderSummaryForgetting = Expect<
     typeof import("../app/read/order-summary/view.ts")
   >
 >;
+export type OrderSummaryClassification = Expect<core.ClassifiesColumns<"orderSummary", typeof import("../app/read/order-summary/view.ts")>>;
 
 export type Queries = core.QueriesFacadeOf<{
   readonly getCustomer: typeof import("../app/read/customer-directory/queries/get-customer.ts");

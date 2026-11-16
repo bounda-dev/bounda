@@ -9,7 +9,7 @@ import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { NotifiedRecipient, RecipientDeclaration } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -160,11 +160,11 @@ const registryWith = ({
         commands: {
           registerCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
                 z.object({
-                  customerId: z.string(),
-                  email: z.email(),
-                  address: z.string().optional(),
+                  customerId: notPersonal(z.string()),
+                  email: notPersonal(z.email()),
+                  address: notPersonal(z.string().optional()),
                 }),
               handler: ({
                 command,
@@ -185,7 +185,8 @@ const registryWith = ({
           // Hands the customer's invoicing address to the CRM, from the state it loaded.
           syncCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ customerId: notPersonal(z.string()) }),
               handler: async ({
                 state,
                 events,

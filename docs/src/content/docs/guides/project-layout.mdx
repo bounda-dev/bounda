@@ -94,8 +94,8 @@ is in [Conventions](/reference/conventions/#what-the-generator-warns-about).
 // app/domain/order/order-placed.ts
 import type { Event } from "./+types/order-placed";
 
-export const payload = ({ z }: Event.PayloadArgs) =>
-  z.object({ customerId: z.string(), total: z.number().positive() });
+export const payload = ({ z, notPersonal }: Event.PayloadArgs) =>
+  z.object({ customerId: notPersonal(z.string()), total: z.number().positive() });
 
 export const begin = ({ event }: Event.BeginArgs) => ({
   status: "placed" as const,
@@ -280,8 +280,12 @@ A command is `commands/<name>.ts`.
 // app/domain/order/commands/place-order.ts
 import type { Command } from "./+types/place-order";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ orderId: z.uuid(), customerId: z.string(), skus: z.array(z.string()).min(1) });
+export const payload = ({ z, person, notPersonal }: Command.PayloadArgs) =>
+  z.object({
+    orderId: notPersonal(z.uuid()),
+    customerId: person(z.string()),
+    skus: notPersonal(z.array(z.string()).min(1)),
+  });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({
   AlreadyPlaced: `Order ${command.aggregateId} was already placed`,

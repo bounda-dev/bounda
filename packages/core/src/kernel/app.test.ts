@@ -81,8 +81,8 @@ const registry = {
     orderSummary: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          orderId: f.string().primaryKey(),
-          status: f.string(),
+          orderId: f.string().primaryKey().notPersonal(),
+          status: f.string().notPersonal(),
           total: f.number(),
         }),
       },

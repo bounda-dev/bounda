@@ -17,6 +17,14 @@ export type OrderEvents = {
   readonly reminderSent: typeof import("../app/domain/order/reminder-sent.ts");
 };
 export type OrderPorts = core.EmptyPayload;
+export type OrderClassification = [
+  Expect<core.ClassifiesPayload<"order.OrderCancelled", typeof import("../app/domain/order/order-cancelled.ts")>>,
+  Expect<core.ClassifiesPayload<"order.OrderPaid", typeof import("../app/domain/order/order-paid.ts")>>,
+  Expect<core.ClassifiesPayload<"order.OrderPlaced", typeof import("../app/domain/order/order-placed.ts")>>,
+  Expect<core.ClassifiesPayload<"order.ReminderSent", typeof import("../app/domain/order/reminder-sent.ts")>>,
+  Expect<core.ClassifiesPayload<"order.payOrder", typeof import("../app/domain/order/commands/pay-order.ts")>>,
+  Expect<core.ClassifiesPayload<"order.placeOrder", typeof import("../app/domain/order/commands/place-order.ts")>>,
+];
 
 export type Events = {
   readonly order: OrderEvents;
@@ -35,6 +43,8 @@ export type ReactionCommands = core.ReactionCommandsFacadeOf<{
   readonly payOrder: typeof import("../app/domain/order/commands/pay-order.ts");
   readonly placeOrder: typeof import("../app/domain/order/commands/place-order.ts");
 }>;
+
+type Expect<Check extends true> = Check;
 
 export type PersonalCategory = never;
 

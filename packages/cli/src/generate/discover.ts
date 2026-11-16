@@ -9,6 +9,7 @@ import {
 } from "@bounda-dev/core";
 import {
   APP_TYPE_NAMES,
+  classificationTypeName,
   createdStateTypeName,
   eventsTypeName,
   forgettingTypeName,
@@ -973,6 +974,7 @@ const checkTypeNames = (
         createdStateTypeName(aggregate.name),
         eventsTypeName(aggregate.name),
         portsTypeName(aggregate.name),
+        classificationTypeName(aggregate.name),
         recipientsTypeName(aggregate.name),
       ],
       aggregate.directory,
@@ -987,6 +989,7 @@ const checkTypeNames = (
         rowTypeName(readModel.name),
         portsTypeName(readModel.name),
         forgettingTypeName(readModel.name),
+        classificationTypeName(readModel.name),
         recipientsTypeName(readModel.name),
       ],
       readModel.directory,

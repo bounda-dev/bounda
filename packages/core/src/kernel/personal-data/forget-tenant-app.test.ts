@@ -10,7 +10,7 @@ import { TenantForgottenError, ValidationError } from "../../contracts/errors.ts
 import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten, expectTenantForgotten } from "../../testing/index.ts";
@@ -35,11 +35,11 @@ const registry = {
       state: { initialState: { email: null } },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
             z.object({
               email: personal(z.string()),
               taxId: personal(z.string(), { category: "invoices" as never }),
-              name: z.string(),
+              name: notPersonal(z.string()),
             }),
           evolve: ({ event }: { event: { payload: { email: string | null } } }) => ({
             email: event.payload.email,
@@ -49,12 +49,12 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
               z.object({
-                customerId: z.string(),
-                email: z.string(),
-                taxId: z.string(),
-                name: z.string(),
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.string()),
+                taxId: notPersonal(z.string()),
+                name: notPersonal(z.string()),
               }),
             handler: ({
               command,

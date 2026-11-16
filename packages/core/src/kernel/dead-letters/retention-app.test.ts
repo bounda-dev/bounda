@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Config } from "../../config/types.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
-import type { PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 
@@ -18,7 +18,8 @@ const registry = {
       commands: {
         placeOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
               events.orderPlaced?.({}),
             ],

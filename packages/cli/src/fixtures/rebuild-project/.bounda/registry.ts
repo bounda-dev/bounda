@@ -1,4 +1,5 @@
 import {
+  type CommandPayloadArgs,
   type EventPayloadArgs,
   type FieldsArgs,
   type PayloadArgs,
@@ -13,7 +14,7 @@ export const registry = {
       commands: {
         increment: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ counterId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) => z.object({ counterId: notPersonal(z.string()) }),
             handler: ({ events }: { events: { incremented: () => unknown } }) => [
               events.incremented(),
             ],
@@ -41,7 +42,7 @@ export const registry = {
       commands: {
         join: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ memberId: z.string(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) => z.object({ memberId: notPersonal(z.string()), name: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -58,7 +59,7 @@ export const registry = {
   },
   readModels: {
     counterTotals: {
-      view: { fields: ({ f }: FieldsArgs) => ({ counterId: f.string().primaryKey() }) },
+      view: { fields: ({ f }: FieldsArgs) => ({ counterId: f.string().primaryKey().notPersonal() }) },
       projections: {},
       queries: {},
     },

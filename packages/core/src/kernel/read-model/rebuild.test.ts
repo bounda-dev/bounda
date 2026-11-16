@@ -42,7 +42,10 @@ const registry = {
   readModels: {
     orderSummary: {
       view: {
-        fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey(), total: f.number() }),
+        fields: ({ f }: FieldsArgs) => ({
+          orderId: f.string().primaryKey().notPersonal(),
+          total: f.number(),
+        }),
       },
       projections: {
         order: {
@@ -84,7 +87,7 @@ const setUp = async () => {
   const table = (
     await adapter.createReadModel<Row>({
       name: "orderSummary",
-      fields: { orderId: f.string().primaryKey(), total: f.number() },
+      fields: { orderId: f.string().primaryKey().notPersonal(), total: f.number() },
       logger,
     })
   ).table;
@@ -264,7 +267,7 @@ describe("rebuildReadModel", () => {
     const table = (
       await adapter.createReadModel<Row>({
         name: "orderSummary",
-        fields: { orderId: f.string().primaryKey(), total: f.number() },
+        fields: { orderId: f.string().primaryKey().notPersonal(), total: f.number() },
         logger: silentLogger,
       })
     ).table;
@@ -372,7 +375,7 @@ describe("rebuildReadModel", () => {
           ...registry.readModels.orderSummary,
           view: {
             fields: ({ f }: FieldsArgs) => ({
-              orderId: f.string().primaryKey(),
+              orderId: f.string().primaryKey().notPersonal(),
               total: f.number().personal(),
             }),
           },

@@ -78,8 +78,14 @@ field `.personal()`, and has no `projections/bounda/personal-data-forgotten.ts`;
 field `.personal()` and none
 `.person()`; one that projects an event with a field marked `personal` and marks no field
 `.person()` without its view exporting `holdsPersonalData = false`, or one that exports it and marks
-a field; one that marks two fields `.person()`. The app refuses to start on the same rules, with
-`ConfigurationError`. The generated registry is checked against
+a field; one that marks two fields `.person()`. `<Aggregate>Classification` and
+`<ReadModel>Classification` fail to compile while a top-level field of an event's or a command's
+payload or of a process's state that can hold text is marked neither `personal`, `person` nor
+`notPersonal`, while a `string` column, or a `json` one whose value can hold text, is marked
+neither `.personal()`, `.person()` nor `.notPersonal()`, and while a payload or a state is not an
+object or keeps keys it does not declare, naming each
+([fields that hold no personal data](/guides/personal-data/#fields-that-hold-no-personal-data)).
+The app refuses to start on the same rules, with `ConfigurationError`. The generated registry is checked against
 `Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
 fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
 declares a category named `default`, or one without a basis Bounda knows or a retention, and a
@@ -100,7 +106,8 @@ Some rules need the modules themselves, so the app checks them when it is create
 - a policy or a projection whose trigger is not an event of the aggregate it listens to, the
   runtime's own `bounda` included; an event, a command or a process `state` that marks two fields
   with `person`, and a process `state` that starts with a `personal` or `person` field set; a
-  field given two of `personal`, `person` and `notPersonal`;
+  field given two of `personal`, `person` and `notPersonal`; a field or a column that can hold
+  text and has none of them, and a payload or a state that holds text out of a mark's reach;
 - a `deadline()` field without its `at-` file, and an `at-` file without its field; the name
   `timeout` is reserved for the process's lifetime;
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an
@@ -148,7 +155,7 @@ and not failed on:
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it, and `app/audit.ts` as `audit` and `app/personal-data.ts` as `personalData` when there are. `boot()` imports it |
 | `.bounda/register.d.ts` | Registers the registry type, the type of the `ports` section and the names of the categories of personal data with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument, `defineConfig` checks the implementation names, and `personal({ category })` and `forget` check the categories |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), one `<ReadModel>Forgetting` check per read model, one `<Owner>Recipients` check per aggregate or read model whose ports declare recipients, `PersonalCategory`, the names `app/personal-data.ts` declares, and its `PersonalDataDeclaration` check |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), one `<ReadModel>Forgetting` check per read model, one `<Aggregate>Classification` and one `<ReadModel>Classification` check per aggregate and read model, one `<Owner>Recipients` check per aggregate or read model whose ports declare recipients, `PersonalCategory`, the names `app/personal-data.ts` declares, and its `PersonalDataDeclaration` check |
 | `**/+types/<name>.ts` | The argument types each module imports, a port's only when it declares a `recipient`: `Port.Recipient` and its handlers' arguments. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as

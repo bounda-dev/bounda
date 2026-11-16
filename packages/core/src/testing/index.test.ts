@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { OrderProcessConfigArgs } from "../kernel/test-support.ts";
-import type { PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs } from "../modules/payload.ts";
 import type { CreateArgs, PortModules } from "../modules/port.ts";
 import type { ProcessAfterFunction, ProcessStateArgs } from "../modules/process.ts";
 import type { Registry } from "../modules/registry.ts";
@@ -70,7 +70,8 @@ interface Events {
 
 const HOUR = 3_600_000;
 
-const orderPayload = ({ z }: PayloadArgs) => z.object({ orderId: z.string() });
+const orderPayload = ({ z, notPersonal }: CommandPayloadArgs) =>
+  z.object({ orderId: notPersonal(z.string()) });
 
 /**
  * `placeOrder` and the `mailOnOrderPlaced` policy each read one port; `noteOrder` and the

@@ -21,7 +21,10 @@ const registry = {
   readModels: {
     placedOrders: {
       view: {
-        fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey(), total: f.number() }),
+        fields: ({ f }: FieldsArgs) => ({
+          orderId: f.string().primaryKey().notPersonal(),
+          total: f.number(),
+        }),
       },
       projections: {
         order: {
@@ -41,7 +44,7 @@ const registry = {
       queries: {},
     },
     archivedOrders: {
-      view: { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey() }) },
+      view: { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey().notPersonal() }) },
       projections: {
         order: {
           orderArchived: {

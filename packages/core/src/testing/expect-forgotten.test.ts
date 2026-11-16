@@ -15,7 +15,7 @@ import type { Witness } from "../kernel/witness.ts";
 import { witnessHooksOf } from "../kernel/witness.ts";
 import { memory } from "../memory/index.ts";
 import type { PersonalDataForgottenEvent } from "../modules/bounda-events.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../modules/payload.ts";
 import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
@@ -48,14 +48,15 @@ const registry = {
       state: { initialState: { email: null } satisfies CustomerState },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ email: personal(z.email()), plan: z.string() }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ email: personal(z.email()), plan: notPersonal(z.string()) }),
           evolve: ({ event }: { event: { payload: { email: string | null } } }) => ({
             email: event.payload.email,
           }),
         },
         customerGreeted: {
-          payload: ({ z }: EventPayloadArgs) => z.object({ to: z.string().nullable() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ to: notPersonal(z.string().nullable()) }),
           evolve: ({ state }: { state: CustomerState }) => state,
         },
         customerReminded: {
@@ -66,8 +67,12 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.email(), plan: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.email()),
+                plan: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -79,7 +84,8 @@ const registry = {
         },
         greetCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({ state, events }: { state: CustomerState; events: Events }) => [
               events.customerGreeted?.({ to: state.email }),
             ],
@@ -87,8 +93,8 @@ const registry = {
         },
         remindCustomer: {
           module: {
-            payload: ({ z, personal }: EventPayloadArgs) =>
-              z.object({ customerId: z.string(), email: personal(z.email()) }),
+            payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: personal(z.email()) }),
             handler: ({ events }: { events: Events }) => [events.customerReminded?.({})],
           },
         },
@@ -103,7 +109,7 @@ const registry = {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
           email: f.string().optional().personal({ clear: true }),
-          greeting: f.string().optional(),
+          greeting: f.string().optional().notPersonal(),
         }),
       },
       projections: {
@@ -259,7 +265,7 @@ const deriving = {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
           email: f.string().optional().personal({ clear: true }),
-          greeting: f.string().optional(),
+          greeting: f.string().optional().notPersonal(),
         }),
       },
       projections: {
@@ -1173,8 +1179,12 @@ describe("expectForgotten by categories", () => {
         commands: {
           billCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ customerId: z.string(), newsletter: z.string(), invoice: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({
+                  customerId: notPersonal(z.string()),
+                  newsletter: notPersonal(z.string()),
+                  invoice: notPersonal(z.string()),
+                }),
               handler: ({
                 command,
                 events,

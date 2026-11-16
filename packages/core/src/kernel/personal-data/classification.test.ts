@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { ConfigurationError } from "../../contracts/errors.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import { notPersonal, person, personal } from "../../modules/personal.ts";
-import { fieldBuilder as f } from "../../modules/view.ts";
+import type { ProcessStateArgs } from "../../modules/process.ts";
+import type { Registry } from "../../modules/registry.ts";
+import { type FieldsArgs, fieldBuilder as f } from "../../modules/view.ts";
+import { createTestApp } from "../../testing/index.ts";
 import { processStateArgs } from "../process/deadlines.ts";
-import { classifySchema, classifyView, holdsText } from "./classification.ts";
+import { checkClassification, classifySchema, classifyView, holdsText } from "./classification.ts";
 
 describe("holdsText", () => {
   it.each([
@@ -127,5 +132,144 @@ describe("classifyView", () => {
       { name: "total", mark: null, holdsText: false },
       { name: "lines", mark: null, holdsText: false },
     ]);
+  });
+});
+
+describe("checkClassification", () => {
+  const registry = (aggregates: object, readModels: object = {}): Registry =>
+    ({ aggregates, readModels }) as unknown as Registry;
+  const aggregate = (parts: object) => ({
+    events: {},
+    commands: {},
+    policies: {},
+    processes: {},
+    ...parts,
+  });
+
+  it("lets an app whose every field that can hold text is marked start", () => {
+    expect(() =>
+      checkClassification(
+        registry(
+          {
+            order: aggregate({
+              events: {
+                orderPlaced: {
+                  payload: ({ z, notPersonal, person }: EventPayloadArgs) =>
+                    z.object({ sku: notPersonal(z.string()), customerId: person(z.string()) }),
+                },
+                orderPaid: {},
+              },
+              commands: { cancelOrder: { module: {} } },
+              processes: {
+                lifecycle: {
+                  module: {
+                    state: ({ z, deadline }: ProcessStateArgs) =>
+                      z.object({ due: deadline(), total: z.number() }),
+                  },
+                },
+                quiet: { module: {} },
+              },
+            }),
+          },
+          {
+            orders: {
+              view: {
+                fields: ({ f: fields }: FieldsArgs) => ({
+                  id: fields.string().primaryKey().notPersonal(),
+                  lines: fields.json<string[]>(),
+                }),
+              },
+              queries: {
+                getOrder: { payload: ({ z }: EventPayloadArgs) => z.object({ id: z.string() }) },
+              },
+            },
+          },
+        ),
+      ),
+    ).not.toThrow();
+  });
+
+  it("refuses to start while a field that can hold text is left undecided, naming each", () => {
+    expect(() =>
+      checkClassification(
+        registry(
+          {
+            order: aggregate({
+              events: {
+                orderNoted: {
+                  payload: ({ z }: EventPayloadArgs) =>
+                    z.object({ note: z.string(), total: z.number() }),
+                },
+                orderTagged: { payload: ({ z }: EventPayloadArgs) => z.string() },
+                orderFlagged: {
+                  payload: ({ z }: EventPayloadArgs) => z.looseObject({ flag: z.boolean() }),
+                },
+              },
+              commands: {
+                noteOrder: {
+                  module: {
+                    payload: ({ z }: CommandPayloadArgs) => z.object({ orderId: z.uuid() }),
+                  },
+                },
+              },
+              processes: {
+                lifecycle: {
+                  module: {
+                    state: ({ z }: ProcessStateArgs) =>
+                      z.object({ step: z.string().nullable().default(null) }),
+                  },
+                },
+              },
+            }),
+          },
+          {
+            orders: {
+              view: {
+                fields: ({ f: fields }: FieldsArgs) => ({ id: fields.string().primaryKey() }),
+              },
+            },
+          },
+        ),
+      ),
+    ).toThrow(
+      new ConfigurationError(
+        [
+          "Every field that can hold text is marked personal, person or notPersonal:",
+          "  order.OrderNoted: field note can hold text; mark it personal(), person() or notPersonal()",
+          "  order.OrderTagged is not an object, so no mark reaches the text it holds; make it z.object({ ... })",
+          "  order.OrderFlagged keeps keys it does not declare, which no mark reaches; use z.object or z.strictObject",
+          "  order.noteOrder: field orderId can hold text; mark it personal(), person() or notPersonal()",
+          "  order.lifecycle: field step can hold text; mark it personal(), person() or notPersonal()",
+          "  Read model orders: column id can hold text; mark it .personal(), .person() or .notPersonal()",
+        ].join("\n"),
+      ),
+    );
+  });
+});
+
+describe("an app with a field left undecided", () => {
+  it("does not start", async () => {
+    await expect(
+      createTestApp({
+        registry: {
+          aggregates: {
+            order: {
+              events: {
+                orderNoted: {
+                  payload: ({ z }: EventPayloadArgs) => z.object({ note: z.string() }),
+                  evolve: () => ({}),
+                },
+              },
+              commands: {},
+              policies: {},
+              processes: {},
+            },
+          },
+          readModels: {},
+        } as unknown as Registry,
+      }),
+    ).rejects.toThrow(
+      "order.OrderNoted: field note can hold text; mark it personal(), person() or notPersonal()",
+    );
   });
 });

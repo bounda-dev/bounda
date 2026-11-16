@@ -13,6 +13,6 @@ lives in small modules under `app/`, and a file's folder and name are its declar
   directory: both are generated.
 - Mark every field of a payload, a process state or a view that can hold text as personal data
   (`personal`, with its category from `app/personal-data.ts`), as the person's id (`person`), or
-  as neither (`notPersonal`); `guides/personal-data.md` says how. `bounda personal-data inventory`
-  prints the record of processing activities and exits 1 while a field is left undecided.
+  as neither (`notPersonal`), or `.bounda/types.ts` does not compile; `guides/personal-data.md`
+  says how. `bounda personal-data inventory` prints the record of processing activities.
 - Test through commands and queries, as `tests/` does, and run the `test` script.

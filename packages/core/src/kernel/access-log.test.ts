@@ -4,7 +4,7 @@ import type { Table } from "../adapter/storage/table.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { memory } from "../memory/index.ts";
 import { MAX_ACCESS_PERSONS, type OnPersonalDataAccessArgs } from "../modules/audit.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
@@ -25,16 +25,20 @@ const registryWith = (audit?: Registry["audit"]) =>
       customer: {
         events: {
           customerRegistered: {
-            payload: ({ z, personal }: EventPayloadArgs) =>
-              z.object({ email: personal(z.email()), plan: z.string() }),
+            payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+              z.object({ email: personal(z.email()), plan: notPersonal(z.string()) }),
             evolve: () => ({}),
           },
         },
         commands: {
           registerCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ customerId: z.string(), email: z.email(), plan: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({
+                  customerId: notPersonal(z.string()),
+                  email: notPersonal(z.email()),
+                  plan: notPersonal(z.string()),
+                }),
               handler: ({
                 command,
                 events,
@@ -63,7 +67,7 @@ const registryWith = (audit?: Registry["audit"]) =>
           fields: ({ f }: FieldsArgs) => ({
             customerId: f.string().primaryKey().person(),
             email: f.string().personal(),
-            plan: f.string().index(),
+            plan: f.string().index().notPersonal(),
           }),
         },
         projections: {
@@ -120,7 +124,7 @@ const registryWith = (audit?: Registry["audit"]) =>
         view: {
           fields: ({ f }: FieldsArgs) => ({
             customerId: f.string().primaryKey().person(),
-            plan: f.string(),
+            plan: f.string().notPersonal(),
           }),
         },
         projections: {},
@@ -134,7 +138,7 @@ const registryWith = (audit?: Registry["audit"]) =>
       planStats: {
         view: {
           fields: ({ f }: FieldsArgs) => ({
-            plan: f.string().primaryKey(),
+            plan: f.string().primaryKey().notPersonal(),
             customers: f.number(),
           }),
         },

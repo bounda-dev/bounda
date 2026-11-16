@@ -5,10 +5,10 @@ export interface Line {
   readonly quantity: number;
 }
 
-export const payload = ({ z }: Event.PayloadArgs) =>
+export const payload = ({ z, notPersonal }: Event.PayloadArgs) =>
   z.object({
-    customerId: z.string(),
-    lines: z.array(z.object({ sku: z.string(), quantity: z.int().positive() })),
+    customerId: notPersonal(z.string()),
+    lines: notPersonal(z.array(z.object({ sku: z.string(), quantity: z.int().positive() }))),
   });
 
 export const begin = ({ event }: Event.BeginArgs) => ({

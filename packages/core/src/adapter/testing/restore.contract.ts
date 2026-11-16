@@ -112,8 +112,12 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.string()),
+                name: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -130,7 +134,8 @@ const registry = {
         },
         confirmCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             rejections: ({ state }: { state: CustomerState }) => ({
               NotYet: `${state.email ?? "This customer"} cannot be confirmed yet`,
             }),
@@ -139,8 +144,8 @@ const registry = {
         },
         noteCustomer: {
           module: {
-            payload: ({ z, personal }: CommandPayloadArgs) =>
-              z.object({ customerId: z.string(), note: personal(z.string()) }),
+            payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), note: personal(z.string()) }),
             handler: ({
               command,
               events,
@@ -191,8 +196,8 @@ const registry = {
       view: {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
-          email: f.string(),
-          name: f.string(),
+          email: f.string().notPersonal(),
+          name: f.string().notPersonal(),
         }),
       },
       projections: {
@@ -404,12 +409,12 @@ const categorized = {
       commands: {
         billCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
               z.object({
-                customerId: z.string(),
-                newsletter: z.string(),
-                taxId: z.string(),
-                name: z.string(),
+                customerId: notPersonal(z.string()),
+                newsletter: notPersonal(z.string()),
+                taxId: notPersonal(z.string()),
+                name: notPersonal(z.string()),
               }),
             handler: ({
               command,

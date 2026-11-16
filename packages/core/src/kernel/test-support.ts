@@ -14,7 +14,7 @@ import { memory } from "../memory/index.ts";
 import { createMemoryTenancyStore } from "../memory/tenancy-store.ts";
 import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import type { RejectFunction } from "../modules/command.ts";
-import type { PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { buildAggregates } from "./aggregate/build-aggregates.ts";
 import { createAggregateLoader } from "./aggregate/load-aggregate.ts";
@@ -75,7 +75,8 @@ export const orderAggregate = {
   commands: {
     placeOrder: {
       module: {
-        payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), total: z.number() }),
+        payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+          z.object({ orderId: notPersonal(z.string()), total: z.number() }),
         rejections: () => ({ AlreadyPlaced: "Order already placed" }),
         handler: async ({
           command,
@@ -101,8 +102,8 @@ export const orderAggregate = {
     },
     payOrder: {
       module: {
-        payload: ({ z }: PayloadArgs) =>
-          z.object({ orderId: z.string(), method: z.enum(["card", "transfer"]) }),
+        payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+          z.object({ orderId: notPersonal(z.string()), method: z.enum(["card", "transfer"]) }),
         rejections: ({ state }: { state: OrderState }) => ({
           NotPlaced: `Only placed orders can be paid; this one is ${state.status}`,
         }),
@@ -124,7 +125,8 @@ export const orderAggregate = {
     },
     archiveOrder: {
       module: {
-        payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+        payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+          z.object({ orderId: notPersonal(z.string()) }),
         handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
           events.orderArchived?.(),
         ],
@@ -132,13 +134,15 @@ export const orderAggregate = {
     },
     touchOrder: {
       module: {
-        payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+        payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+          z.object({ orderId: notPersonal(z.string()) }),
         handler: () => [],
       },
     },
     breakOrder: {
       module: {
-        payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+        payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+          z.object({ orderId: notPersonal(z.string()) }),
         handler: () => [{ type: "CustomerRegistered", payload: {} }],
       },
     },

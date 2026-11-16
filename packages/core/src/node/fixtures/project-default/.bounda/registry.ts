@@ -17,7 +17,7 @@ export const registry = {
       commands: {
         increment: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ counterId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) => z.object({ counterId: notPersonal(z.string()) }),
             handler: ({ events }: { events: { incremented: () => unknown } }) => [
               events.incremented(),
             ],

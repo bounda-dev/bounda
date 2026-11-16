@@ -10,7 +10,7 @@ import { ConfigurationError, ValidationError } from "../contracts/errors.ts";
 import type { Logger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { type BoundaApp, createApp } from "./app.ts";
@@ -48,7 +48,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -102,7 +103,10 @@ const registry = {
     },
     tally: {
       view: {
-        fields: ({ f }: FieldsArgs) => ({ id: f.string().primaryKey(), count: f.number() }),
+        fields: ({ f }: FieldsArgs) => ({
+          id: f.string().primaryKey().notPersonal(),
+          count: f.number(),
+        }),
         holdsPersonalData: false,
       },
       projections: {

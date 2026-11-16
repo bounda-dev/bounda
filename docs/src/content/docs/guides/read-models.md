@@ -17,9 +17,9 @@ the app: commands never read it, and queries never touch the event store.
 import type { View } from "./+types/view";
 
 export const fields = ({ f }: View.FieldsArgs) => ({
-  orderId: f.string().primaryKey(),
-  customerId: f.string().index(),
-  status: f.string(),
+  orderId: f.string().primaryKey().notPersonal(),
+  customerId: f.string().index().notPersonal(),
+  status: f.string().notPersonal(),
   total: f.number(),
   paidAt: f.date().optional(),
 });
@@ -41,8 +41,8 @@ export const fields = ({ f }: View.FieldsArgs) => ({
 ```
 
 Every `f.string()` column takes one of the three, and so does an `f.json<T>()` column whose `T` can
-hold text: [`bounda personal-data inventory`](/guides/personal-data/#the-record-of-processing-activities)
-reports a column left undecided.
+hold text, or `.bounda/types.ts` does not compile and the app does not start (see
+[Fields that hold no personal data](/guides/personal-data/#fields-that-hold-no-personal-data)).
 
 A `.personal()` column is sealed at rest under its person's key: the table holds ciphertext, which
 projections and queries read opened, and which reads as `null` once the person is forgotten, so its

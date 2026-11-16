@@ -6,7 +6,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createApp } from "../app.ts";
 
@@ -30,8 +30,8 @@ const registryOf = (category: "marketing" | "billing" | undefined): Registry =>
         commands: {
           registerCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ customerId: z.string(), email: z.email() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.email()) }),
               handler: ({
                 command,
                 events,
@@ -43,9 +43,9 @@ const registryOf = (category: "marketing" | "billing" | undefined): Registry =>
           },
           remindCustomer: {
             module: {
-              payload: ({ z, personal }: CommandPayloadArgs) =>
+              payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
                 z.object({
-                  customerId: z.string(),
+                  customerId: notPersonal(z.string()),
                   email: personal(z.email(), category === undefined ? undefined : { category }),
                 }),
               handler: () => [],

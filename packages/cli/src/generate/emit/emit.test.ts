@@ -422,6 +422,9 @@ export type OrderState = core.UnknownState;
 export type OrderCreatedState = OrderState;
 export type OrderEvents = Record<never, never>;
 export type OrderPorts = core.EmptyPayload;
+export type OrderClassification = [
+  Expect<core.ClassifiesState<"order.followUp", typeof import("../app/domain/order/processes/follow-up/index.ts")>>,
+];
 
 export type ShipmentCreatedState = { readonly carrier: string };
 export type ShipmentState = core.NotCreated<ShipmentCreatedState> | ShipmentCreatedState;
@@ -429,6 +432,9 @@ export type ShipmentEvents = {
   readonly created: typeof import("../app/domain/shipment/created.ts");
 };
 export type ShipmentPorts = core.EmptyPayload;
+export type ShipmentClassification = [
+  Expect<core.ClassifiesPayload<"shipment.Created", typeof import("../app/domain/shipment/created.ts")>>,
+];
 
 export type TicketState = { readonly open?: boolean; readonly title?: string };
 export type TicketCreatedState = TicketState;
@@ -436,6 +442,9 @@ export type TicketEvents = {
   readonly created: typeof import("../app/domain/ticket/created.ts");
 };
 export type TicketPorts = core.EmptyPayload;
+export type TicketClassification = [
+  Expect<core.ClassifiesPayload<"ticket.Created", typeof import("../app/domain/ticket/created.ts")>>,
+];
 
 export type Events = {
   readonly order: OrderEvents;
@@ -466,6 +475,7 @@ export type ShipmentsForgetting = Expect<
     typeof import("../app/read/shipments/view.ts")
   >
 >;
+export type ShipmentsClassification = Expect<core.ClassifiesColumns<"shipments", typeof import("../app/read/shipments/view.ts")>>;
 
 export type Queries = core.QueriesFacadeOf<Record<never, never>>;
 `);
@@ -525,7 +535,13 @@ export type Queries = core.QueriesFacadeOf<Record<never, never>>;
       model: { ...model, readModels: [] },
       path: "/project/.bounda/types.ts",
     }).content;
-    expect(withoutReadModels).not.toContain("Expect");
+    expect(withoutReadModels).not.toContain("core.ForgetsPersonalData");
+    expect(
+      emitTypes({
+        model: { ...model, aggregates: [], readModels: [] },
+        path: "/project/.bounda/types.ts",
+      }).content,
+    ).not.toContain("Expect");
   });
 });
 
@@ -536,6 +552,57 @@ describe("emitTypes for an app without aggregates", () => {
       path: "/project/.bounda/types.ts",
     });
     expect(content).toContain("export type Events = Record<never, never>;");
+  });
+
+  it("checks the columns of its read models, and the declaration of its categories", () => {
+    const declaresExpect = "type Expect<Check extends true> = Check;";
+    const readModelsOnly = emitTypes({
+      model: { ...model, aggregates: [] },
+      path: "/project/.bounda/types.ts",
+    }).content;
+    expect(readModelsOnly).toContain(declaresExpect);
+    expect(readModelsOnly).toContain(
+      'export type ShipmentsClassification = Expect<core.ClassifiesColumns<"shipments", typeof import("../app/read/shipments/view.ts")>>;',
+    );
+    expect(
+      emitTypes({
+        model: {
+          ...model,
+          aggregates: [],
+          readModels: [],
+          personalData: {
+            path: "/project/app/personal-data.ts",
+            relativePath: "app/personal-data.ts",
+          },
+        },
+        path: "/project/.bounda/types.ts",
+      }).content,
+    ).toContain(declaresExpect);
+  });
+});
+
+describe("emitTypes for an aggregate without modules", () => {
+  it("declares its classification as an empty list of checks", () => {
+    const { content } = emitTypes({
+      model: {
+        ...model,
+        aggregates: [
+          {
+            name: "ledger",
+            directory: "/project/app/domain/ledger",
+            state: null,
+            events: [],
+            ports: [],
+            commands: [],
+            policies: [],
+            processes: [],
+          },
+        ],
+        readModels: [],
+      },
+      path: "/project/.bounda/types.ts",
+    });
+    expect(content).toContain("export type LedgerClassification = [];\n");
   });
 });
 
@@ -707,7 +774,7 @@ describe("emitProject with a port that declares a recipient", () => {
     expect(
       emitTypes({ model: { ...withPorts, readModels: [] }, path: "/project/.bounda/types.ts" })
         .content,
-    ).not.toContain("Expect");
+    ).not.toContain("core.NotifiesRecipient");
     expect(
       emitTypes({
         model: {

@@ -36,11 +36,11 @@ const registry = {
       state: { initialState: { email: null } },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
             z.object({
               email: personal(z.string()),
               note: personal(z.string()).optional(),
-              plan: z.string(),
+              plan: notPersonal(z.string()),
             }),
           evolve: setEmail,
         },
@@ -49,8 +49,8 @@ const registry = {
           evolve: setEmail,
         },
         personalDataRedacted: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ events: z.array(z.string()), note: personal(z.string()) }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ events: notPersonal(z.array(z.string())), note: personal(z.string()) }),
           evolve: ({ state }: { state: object }) => state,
         },
         emailEchoed: {
@@ -62,12 +62,12 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
               z.object({
-                customerId: z.string(),
-                email: z.string(),
-                note: z.string().optional(),
-                plan: z.string(),
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.string()),
+                note: notPersonal(z.string().optional()),
+                plan: notPersonal(z.string()),
               }),
             handler: ({ command, events }: { command: { payload: object }; events: Events }) => [
               events.customerRegistered?.(command.payload),
@@ -76,8 +76,8 @@ const registry = {
         },
         correctEmail: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -89,7 +89,8 @@ const registry = {
         },
         echoEmail: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({ state, events }: { state: { email: string | null }; events: Events }) => [
               events.emailEchoed?.({ email: state.email }),
             ],
@@ -97,7 +98,8 @@ const registry = {
         },
         logRedaction: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Events }) => [
               events.personalDataRedacted?.({ events: ["e-1"], note: "n" }),
             ],
@@ -105,9 +107,9 @@ const registry = {
         },
         remindCustomer: {
           module: {
-            payload: ({ z, personal }: CommandPayloadArgs) =>
+            payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
               z.object({
-                customerId: z.string(),
+                customerId: notPersonal(z.string()),
                 email: personal(z.string()),
                 note: personal(z.string()),
               }),
@@ -928,11 +930,11 @@ describe("redact, in detail", () => {
             ...events,
             customerRegistered: {
               ...events.customerRegistered,
-              payload: ({ z, personal }: EventPayloadArgs) =>
+              payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
                 z.object({
                   email: personal(z.string()),
-                  note: z.string().optional(),
-                  plan: z.string(),
+                  note: notPersonal(z.string().optional()),
+                  plan: notPersonal(z.string()),
                 }),
             },
           },

@@ -3,7 +3,6 @@ import type { Storage } from "../../adapter/adapter.ts";
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import type { KeyedPerson, SealedValue } from "../../adapter/storage/personal-key-store.ts";
-import { createFixedClock } from "../../contracts/clock.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";

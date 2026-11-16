@@ -1,4 +1,5 @@
 import {
+  type CommandPayloadArgs,
   ConfigurationError,
   createApp,
   DEFAULT_PERSONAL_CATEGORY,
@@ -325,10 +326,14 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         evolved.push(message);
       },
     };
-    const plain = { id: f.string().primaryKey(), city: f.string(), code: f.string().unique() };
+    const plain = {
+      id: f.string().primaryKey().notPersonal(),
+      city: f.string().notPersonal(),
+      code: f.string().unique().notPersonal(),
+    };
     await openReadModel(adapter, "places", plain, logger);
     expect(evolved).toEqual([]);
-    const indexed = { ...plain, city: f.string().index() };
+    const indexed = { ...plain, city: f.string().index().notPersonal() };
     const first = await openReadModel(adapter, "places", indexed, logger);
     await openReadModel(adapter, "places", indexed, logger);
     expect(evolved).toEqual(["read model table evolved"]);
@@ -340,7 +345,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
 
   it("creates the checkpoints table of a read model's database from before the tables were versioned", async () => {
     const adapter = fresh();
-    const fields = { id: f.string().primaryKey() };
+    const fields = { id: f.string().primaryKey().notPersonal() };
     const first = await openReadModel(adapter, "places", fields);
     const raw = first.client.raw as Sql;
     await raw.unsafe(`DROP TABLE "t${run}_${prefixes}_checkpoints"`);
@@ -717,7 +722,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
 
   it("round-trips booleans, dates and json through native columns", async () => {
     const fields = {
-      id: f.string().primaryKey(),
+      id: f.string().primaryKey().notPersonal(),
       active: f.boolean(),
       since: f.date(),
       tags: f.json<readonly string[]>().optional(),
@@ -800,14 +805,14 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         logs.push([message, fields]);
       },
     };
-    const v1 = { id: f.string().primaryKey(), total: f.number() };
+    const v1 = { id: f.string().primaryKey().notPersonal(), total: f.number() };
     const first = await openReadModel<{ id: string; total: number }>(adapter, "orders", v1, logger);
     await first.table.insert({ id: "o-1", total: 5 });
     expect(logs).toEqual([]);
 
     const v2 = {
       ...v1,
-      note: f.string().optional(),
+      note: f.string().optional().notPersonal(),
       paid: f.boolean().index(),
       at: f.date().optional(),
     };
@@ -837,14 +842,14 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     await expect(
       adapter.createReadModel({
         name: "orders",
-        fields: { id: f.string().primaryKey() },
+        fields: { id: f.string().primaryKey().notPersonal() },
         logger: silentLogger,
       }),
     ).rejects.toBeInstanceOf(ConfigurationError);
     await expect(
       adapter.createReadModel({
         name: "orders",
-        fields: { ...v2, total: f.string() },
+        fields: { ...v2, total: f.string().notPersonal() },
         logger: silentLogger,
       }),
     ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
@@ -860,7 +865,11 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         evolved.push([message, fields]);
       },
     };
-    const fields = { id: f.string().primaryKey(), label: f.string().index(), rank: f.number() };
+    const fields = {
+      id: f.string().primaryKey().notPersonal(),
+      label: f.string().index().notPersonal(),
+      rank: f.number(),
+    };
     type Label = { id: string; label: string; rank: number };
     const first = await openReadModel<Label>(adapter, "labels", fields);
     const raw = first.client.raw as Sql;
@@ -916,34 +925,44 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     };
     const open = (fields: Parameters<PostgresqlAdapter["createReadModel"]>[0]["fields"]) =>
       openReadModel<{ id: string; email: string }>(adapter, "people", fields, logger);
-    const first = await open({ id: f.string().primaryKey(), email: f.string() });
+    const first = await open({
+      id: f.string().primaryKey().notPersonal(),
+      email: f.string().notPersonal(),
+    });
     await first.table.insert({ id: "1", email: "a@example.com" });
-    await expect(open({ id: f.string(), email: f.string().primaryKey() })).rejects.toThrow(
-      /Moving the primary key needs a rebuild/,
-    );
-    const unique = { id: f.string().primaryKey(), email: f.string().unique() };
+    await expect(
+      open({ id: f.string().notPersonal(), email: f.string().primaryKey().notPersonal() }),
+    ).rejects.toThrow(/Moving the primary key needs a rebuild/);
+    const unique = {
+      id: f.string().primaryKey().notPersonal(),
+      email: f.string().unique().notPersonal(),
+    };
     const second = await open(unique);
     await expect(second.table.insert({ id: "2", email: "a@example.com" })).rejects.toThrow();
     await open(unique);
     expect(evolved.filter((message) => message === "read model table evolved")).toHaveLength(1);
-    await expect(open({ id: f.string().primaryKey(), email: f.string() })).rejects.toThrow(
-      /Dropping `unique\(\)` needs a rebuild/,
-    );
+    await expect(
+      open({ id: f.string().primaryKey().notPersonal(), email: f.string().notPersonal() }),
+    ).rejects.toThrow(/Dropping `unique\(\)` needs a rebuild/);
   });
 
   it("lets instances that start together create and evolve the same tables one after the other", async () => {
     const schema = `boot_${run}`;
     const instance = () => fresh({ schema, tablePrefix: "bounda_" });
     await Promise.all(Array.from({ length: 4 }, () => openStorage(instance())));
-    const v1 = { id: f.string().primaryKey() };
+    const v1 = { id: f.string().primaryKey().notPersonal() };
     await Promise.all(Array.from({ length: 4 }, () => openReadModel(instance(), "people", v1)));
-    const v2 = { ...v1, note: f.string().optional(), city: f.string().optional().index() };
+    const v2 = {
+      ...v1,
+      note: f.string().optional().notPersonal(),
+      city: f.string().optional().index().notPersonal(),
+    };
     await Promise.all(Array.from({ length: 4 }, () => openReadModel(instance(), "people", v2)));
   });
 
   it("opens a store whose tables already exist without waiting for the schema's lock", async () => {
     const schema = `held_${run}`;
-    const fields = { id: f.string().primaryKey() };
+    const fields = { id: f.string().primaryKey().notPersonal() };
     await openStorage(fresh({ schema, tablePrefix: "bounda_" }));
     const adapter = fresh({ schema, tablePrefix: "bounda_" });
     await openReadModel(adapter, "people", fields);
@@ -979,7 +998,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
 
   it("hands back its use of the pool when a read model or a rebuild fails to open", async () => {
     const adapter = fresh();
-    const orders = { id: f.string().primaryKey(), total: f.number() };
+    const orders = { id: f.string().primaryKey().notPersonal(), total: f.number() };
     const open = await adapter.createReadModel({
       name: "orders",
       fields: orders,
@@ -988,14 +1007,17 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     await expect(
       adapter.createReadModel({
         name: "orders",
-        fields: { id: f.string().primaryKey() },
+        fields: { id: f.string().primaryKey().notPersonal() },
         logger: silentLogger,
       }),
     ).rejects.toBeInstanceOf(ConfigurationError);
     await expect(
       adapter.rebuildReadModel({
         name: "orders",
-        fields: { id: f.string().primaryKey(), "not an identifier": f.string() },
+        fields: {
+          id: f.string().primaryKey().notPersonal(),
+          "not an identifier": f.string().notPersonal(),
+        },
         logger: silentLogger,
         progress: "rebuild:orders:1",
       }),
@@ -1082,7 +1104,8 @@ const registry = {
       commands: {
         placeOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), total: z.number() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()), total: z.number() }),
             handler: ({
               command,
               events,
@@ -1094,7 +1117,8 @@ const registry = {
         },
         payOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
               events.orderPaid?.(),
             ],
@@ -1123,8 +1147,8 @@ const registry = {
     orderSummary: {
       view: {
         fields: ({ f: fields }: FieldsArgs) => ({
-          orderId: fields.string().primaryKey(),
-          status: fields.string(),
+          orderId: fields.string().primaryKey().notPersonal(),
+          status: fields.string().notPersonal(),
           total: fields.number(),
         }),
       },
@@ -1196,14 +1220,16 @@ const customers = {
           }),
         },
         customerGreeted: {
-          payload: ({ z }: EventPayloadArgs) => z.object({ to: z.string().nullable() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ to: notPersonal(z.string().nullable()) }),
           evolve: ({ state }: { state: { email: string | null } }) => state,
         },
       },
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.email()) }),
             handler: ({
               command,
               events,
@@ -1215,7 +1241,8 @@ const customers = {
         },
         greetCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({
               state,
               events,
@@ -1410,7 +1437,8 @@ const statusRegistry = (hold: HoldProjection = async () => {}) =>
         commands: {
           placeOrder: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ orderId: notPersonal(z.string()) }),
               handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
                 events.orderPlaced?.(),
               ],
@@ -1418,7 +1446,8 @@ const statusRegistry = (hold: HoldProjection = async () => {}) =>
           },
           cancelOrder: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ orderId: notPersonal(z.string()) }),
               handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
                 events.orderCancelled?.(),
               ],
@@ -1433,8 +1462,8 @@ const statusRegistry = (hold: HoldProjection = async () => {}) =>
       orderStatus: {
         view: {
           fields: ({ f: fields }: FieldsArgs) => ({
-            orderId: fields.string().primaryKey(),
-            status: fields.string(),
+            orderId: fields.string().primaryKey().notPersonal(),
+            status: fields.string().notPersonal(),
           }),
         },
         projections: {
@@ -1476,7 +1505,7 @@ const counterRegistry = (failOnce: { failed: boolean }) =>
       orderCount: {
         view: {
           fields: ({ f: fields }: FieldsArgs) => ({
-            id: fields.string().primaryKey(),
+            id: fields.string().primaryKey().notPersonal(),
             placed: fields.number(),
           }),
         },
@@ -1527,8 +1556,8 @@ describe.skipIf(testDatabase === null)("projections on postgresql", () => {
     });
 
     const { table, client } = await openReadModel<StatusRow>(adapter(), "orderStatus", {
-      orderId: f.string().primaryKey(),
-      status: f.string(),
+      orderId: f.string().primaryKey().notPersonal(),
+      status: f.string().notPersonal(),
     });
     const sql = client.raw as Sql;
     const waitingForLock = async () =>
@@ -1568,7 +1597,7 @@ describe.skipIf(testDatabase === null)("projections on postgresql", () => {
     await app.catchUpReadModels();
 
     const { table } = await openReadModel<CountRow>(adapter(), "orderCount", {
-      id: f.string().primaryKey(),
+      id: f.string().primaryKey().notPersonal(),
       placed: f.number(),
     });
     const lag = await app.getLag();
@@ -1584,8 +1613,8 @@ describe.skipIf(testDatabase === null)("projections on postgresql", () => {
     const adapter = fresh();
     const prefix = `t${run}_${prefixes}_`;
     const ports = await openReadModel<StatusRow>(adapter, "orderStatus", {
-      orderId: f.string().primaryKey(),
-      status: f.string(),
+      orderId: f.string().primaryKey().notPersonal(),
+      status: f.string().notPersonal(),
     });
     await expect(
       ports.transact({
@@ -1626,7 +1655,10 @@ describe.skipIf(testDatabase === null)("projections on postgresql", () => {
   it("keeps a newer rebuild and a rebuild's swap waiting on the lock of what is in flight", async () => {
     await closeOpened();
     const adapter = fresh();
-    const fields = { orderId: f.string().primaryKey(), status: f.string() };
+    const fields = {
+      orderId: f.string().primaryKey().notPersonal(),
+      status: f.string().notPersonal(),
+    };
     const ports = await openReadModel<StatusRow>(adapter, "orderStatus", fields);
     const probe = postgres(url, { max: 1, onnotice: () => undefined });
     closers.push(() => probe.end());
@@ -1735,8 +1767,8 @@ describe.skipIf(testDatabase === null)("projections on postgresql", () => {
     expect(await cancelled).toMatchObject({ position: 2 });
 
     const { table } = await openReadModel<StatusRow>(adapter(), "orderStatus", {
-      orderId: f.string().primaryKey(),
-      status: f.string(),
+      orderId: f.string().primaryKey().notPersonal(),
+      status: f.string().notPersonal(),
     });
     await Promise.all([worker.stop(), web.stop()]);
     expect(await table.findOne({ orderId: "r" })).toEqual({ orderId: "r", status: "cancelled" });

@@ -10,7 +10,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp, expectForgotten } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
@@ -34,16 +34,20 @@ const registry = {
       state: { initialState: {} },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ email: personal(z.email()), name: z.string() }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ email: personal(z.email()), name: notPersonal(z.string()) }),
           evolve: () => ({}),
         },
       },
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.email(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.email()),
+                name: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,

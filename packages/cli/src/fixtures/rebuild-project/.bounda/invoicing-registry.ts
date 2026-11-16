@@ -14,7 +14,7 @@ export const registry = {
       commands: {
         join: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ memberId: z.string(), taxId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) => z.object({ memberId: notPersonal(z.string()), taxId: notPersonal(z.string()) }),
             handler: ({
               command,
               events,

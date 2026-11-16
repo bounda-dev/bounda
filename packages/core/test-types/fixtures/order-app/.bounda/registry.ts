@@ -59,7 +59,7 @@ export const registry = {
     },
     order: {
       state: orderState,
-      stateFingerprint: "f82ec98c65f75680",
+      stateFingerprint: "94cf3e015d12ce1c",
       events: { orderCancelled, orderPaid, orderPlaced },
       upcasts: { orderPlaced: orderPlacedUpcasts },
       ports: {

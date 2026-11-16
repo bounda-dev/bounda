@@ -7,7 +7,7 @@ import {
   ValidationError,
 } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp, expectForgotten } from "../../testing/index.ts";
@@ -60,8 +60,12 @@ const registry = {
       commands: {
         startSignup: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ signupId: z.string(), customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                signupId: notPersonal(z.string()),
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.email()),
+              }),
             handler: ({
               command,
               events,
@@ -78,7 +82,8 @@ const registry = {
         },
         nudgeSignup: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ signupId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ signupId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
               events.signupNudged?.(),
             ],
@@ -86,7 +91,8 @@ const registry = {
         },
         confirmSignup: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ signupId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ signupId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
               events.signupConfirmed?.(),
             ],

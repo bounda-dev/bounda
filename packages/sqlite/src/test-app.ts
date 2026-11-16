@@ -1,10 +1,10 @@
 import {
   type BoundaApp,
   type Clock,
+  type CommandPayloadArgs,
   createApp,
   type EventPayloadArgs,
   type Logger,
-  type PayloadArgs,
   type Registry,
   systemClock,
 } from "@bounda-dev/core";
@@ -26,7 +26,8 @@ export const testRegistry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), name: notPersonal(z.string()) }),
             handler: ({
               command,
               events,

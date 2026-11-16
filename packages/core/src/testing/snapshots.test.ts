@@ -3,7 +3,7 @@ import { SnapshotError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { createApp } from "../kernel/app.ts";
 import { memory } from "../memory/index.ts";
-import type { PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { createTestApp } from "./index.ts";
 
@@ -23,7 +23,8 @@ const counter = (evolve: (state: State) => object) =>
         commands: {
           increment: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ counterId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ counterId: notPersonal(z.string()) }),
               handler: ({ events }: { events: { incremented: () => unknown } }) => [
                 events.incremented(),
               ],
@@ -31,7 +32,8 @@ const counter = (evolve: (state: State) => object) =>
           },
           read: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ counterId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ counterId: notPersonal(z.string()) }),
               handler: ({ state }: { state: State }) => {
                 seen.push(state.count);
                 return [];

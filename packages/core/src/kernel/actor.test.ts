@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { IdempotencyKeyConflictError, ValidationError } from "../contracts/errors.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import { MAX_ACTOR_LENGTH } from "../contracts/metadata.ts";
-import type { PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { createTestApp } from "../testing/index.ts";
 import { type OrderProcessConfigArgs, orderAggregateEntry } from "./test-support.ts";
@@ -22,7 +22,8 @@ const setUp = async () => {
           ...orderAggregateEntry().commands,
           noteOrder: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ orderId: notPersonal(z.string()) }),
               handler: ({ command }: { command: { metadata: { actor?: string } } }) => {
                 handled.push({ actor: command.metadata.actor });
                 return [];

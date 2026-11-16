@@ -28,8 +28,12 @@ alone. In Bounda that is an aggregate per period, `ledger`, with a predictable i
 // app/domain/ledger/ledger-opened.ts
 import type { Event } from "./+types/ledger-opened";
 
-export const payload = ({ z }: Event.PayloadArgs) =>
-  z.object({ accountId: z.string(), period: z.string(), balance: z.number() });
+export const payload = ({ z, notPersonal }: Event.PayloadArgs) =>
+  z.object({
+    accountId: notPersonal(z.string()),
+    period: notPersonal(z.string()),
+    balance: z.number(),
+  });
 
 export const begin = ({ event }: Event.BeginArgs) => ({
   status: "open" as const,
@@ -45,8 +49,8 @@ next period needs and nothing more:
 // app/domain/ledger/commands/close-ledger.ts
 import type { Command } from "./+types/close-ledger";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ ledgerId: z.string(), nextPeriod: z.string() });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({ ledgerId: notPersonal(z.string()), nextPeriod: notPersonal(z.string()) });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({
   NotOpen: `Ledger ${command.aggregateId} is not open`,
