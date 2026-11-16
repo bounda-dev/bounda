@@ -1,8 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { generate, loadLayer, repositoryFixes, TARGETS } from "./sync.ts";
+import { generate, loadLayer } from "./sync.ts";
 
 const temporary: string[] = [];
 
@@ -20,38 +19,7 @@ const readManifest = async (path: string) =>
     readonly cloudflare: Readonly<Record<string, unknown>>;
   };
 
-const templatesRepository = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "bounda-templates-repo-"));
-  temporary.push(root);
-  const template = async (name: string, devDependencies: Record<string, string>) => {
-    await mkdir(join(root, name), { recursive: true });
-    await writeFile(join(root, name, "package.json"), JSON.stringify({ name, devDependencies }));
-  };
-  await template("d1-template", { typescript: "5.9.3", wrangler: "4.136.1" });
-  await template("chanfana-openapi-template", { vitest: "4.1.10", wrangler: "4.136.1" });
-  await template("voice-agent-template", { "@cloudflare/vitest-plugin": "1.1.3" });
-  await template("bounda-event-sourcing-template", { vitest: "0.0.1" });
-  await mkdir(join(root, "cli/src"), { recursive: true });
-  await writeFile(
-    join(root, "cli/src/lint.ts"),
-    'const TARGET_COMPATIBILITY_DATE = "2025-10-08";\n',
-  );
-  await writeFile(
-    join(root, ".syncpackrc.json"),
-    JSON.stringify({
-      versionGroups: [
-        {
-          packages: ["bounda-event-sourcing-template"],
-          dependencies: ["typescript"],
-          pinVersion: "7.0.2",
-        },
-      ],
-    }),
-  );
-  return root;
-};
-
-describe("the layer of every copy", () => {
+describe("the layer of the copy", () => {
   it("declares, with a description, each secret the Deploy button asks for", async () => {
     const example = await readFile(
       resolve(import.meta.dirname, "../../template/durable-object/_dev.vars.example"),
@@ -59,25 +27,19 @@ describe("the layer of every copy", () => {
     );
     const secrets = [...example.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map(([, name]) => name ?? "");
     expect(secrets).toEqual(["BOUNDA_MASTER_KEY"]);
-    for (const target of TARGETS) {
-      const { cloudflare } = (await loadLayer(target)).package as {
-        readonly cloudflare: { readonly bindings: Readonly<Record<string, unknown>> };
-      };
-      expect(Object.keys(cloudflare.bindings)).toEqual(secrets);
-      for (const name of secrets) {
-        expect(cloudflare.bindings[name]).toEqual({ description: expect.stringMatching(/\S/) });
-      }
+    const { cloudflare } = (await loadLayer()).package as {
+      readonly cloudflare: { readonly bindings: Readonly<Record<string, unknown>> };
+    };
+    expect(Object.keys(cloudflare.bindings)).toEqual(secrets);
+    for (const name of secrets) {
+      expect(cloudflare.bindings[name]).toEqual({ description: expect.stringMatching(/\S/) });
     }
   });
 });
 
 describe("generate", () => {
   it("builds the template repository from the scaffolder's output and its extras", async () => {
-    const { root, project } = await generate({
-      target: "bounda-cloudflare-template",
-      scaffolder: "workspace",
-      install: false,
-    });
+    const { root, project } = await generate({ scaffolder: "workspace", install: false });
     temporary.push(root);
     const manifest = await readManifest(project);
     expect(Object.keys(manifest).slice(0, 2)).toEqual(["name", "description"]);
@@ -106,75 +68,10 @@ describe("generate", () => {
     expect(await readFile(join(project, "src/worker.ts"), "utf8")).toContain("createBoundaObject");
     expect(await readFile(join(project, "tests/api.test.ts"), "utf8")).toContain("SELF.fetch");
   });
-
-  it("builds the cloudflare/templates directory with the repository's versions and date", async () => {
-    const repository = await templatesRepository();
-    const { root, project, layer } = await generate({
-      target: "cloudflare-templates",
-      scaffolder: "workspace",
-      repository,
-      install: false,
-    });
-    temporary.push(root);
-    expect(project).toBe(join(root, layer.name));
-    const manifest = await readManifest(project);
-    expect(manifest.name).toBe("bounda-event-sourcing-template");
-    expect(manifest.devDependencies).toMatchObject({
-      typescript: "7.0.2",
-      vitest: "4.1.10",
-      wrangler: "4.136.1",
-      "@cloudflare/vitest-plugin": "1.1.3",
-    });
-    expect(manifest.dependencies["@bounda-dev/core"]).toMatch(/^\d+\.\d+\.\d+/);
-    expect(manifest.cloudflare).toMatchObject({
-      label: "Event Sourcing with Bounda",
-      bindings: { BOUNDA_MASTER_KEY: { description: expect.any(String) } },
-    });
-    expect(await readFile(join(project, "wrangler.jsonc"), "utf8")).toContain(
-      '"compatibility_date": "2025-10-08"',
-    );
-    expect(await readFile(join(project, ".gitignore"), "utf8")).toContain("### Bounda ###");
-    expect(
-      await readFile(join(root, "playwright-tests/bounda-event-sourcing-template.spec.ts"), "utf8"),
-    ).toContain("Event-sourced orders");
-  });
-
-  it("refuses to align the cloudflare/templates copy without a clone of that repository", async () => {
-    await expect(
-      generate({ target: "cloudflare-templates", scaffolder: "workspace", install: false }),
-    ).rejects.toThrow("cloudflare-templates needs a clone of its repository");
-  });
 });
 
 describe("loadLayer", () => {
-  it("reads each copy's layer", async () => {
-    expect(await loadLayer("bounda-cloudflare-template")).toMatchObject({
-      layout: "project",
-      pin: "range",
-      license: true,
-    });
-    expect(await loadLayer("cloudflare-templates")).toMatchObject({
-      name: "bounda-event-sourcing-template",
-      layout: "monorepo",
-      pin: "aligned",
-    });
-  });
-});
-
-describe("repositoryFixes", () => {
-  const fixes = repositoryFixes({
-    name: "bounda-event-sourcing-template",
-    devDependencies: { syncpack: "13.0.4", prettier: "3.7.4" },
-    rootFiles: ["playwright-tests/bounda-event-sourcing-template.spec.ts"],
-  });
-  const line = ({ command, args }: (typeof fixes)[number]) => [command, ...args].join(" ");
-
-  it("installs to add the template to the lockfile, and lints before Prettier formats", () => {
-    expect(fixes.map(line)).toEqual([
-      "pnpm install --no-frozen-lockfile",
-      "pnpm run fix:templates",
-      "npx --yes syncpack@13.0.4 format --source bounda-event-sourcing-template/package.json",
-      "npx --yes prettier@3.7.4 --write bounda-event-sourcing-template playwright-tests/bounda-event-sourcing-template.spec.ts",
-    ]);
+  it("reads the copy's layer", async () => {
+    expect(await loadLayer()).toMatchObject({ name: "bounda-cloudflare-template", license: true });
   });
 });

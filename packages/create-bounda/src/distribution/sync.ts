@@ -1,22 +1,11 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fromWorkspaceCatalog } from "../versions.ts";
 import { type Drift, driftBetween, readTree } from "./drift.ts";
-import {
-  alignVersions,
-  appendLines,
-  type JsonObject,
-  mergeManifest,
-  pinExact,
-  resolveCatalog,
-  setCompatibilityDate,
-  syncpackPins,
-  targetCompatibilityDate,
-} from "./transform.ts";
+import { appendLines, type JsonObject, mergeManifest, resolveCatalog } from "./transform.ts";
 
 const run = promisify(execFile);
 
@@ -25,28 +14,16 @@ const repoRoot = resolve(packageRoot, "../..");
 const distributionRoot = join(packageRoot, "distribution");
 
 /**
- * The copies of the Cloudflare template kept outside this repository: its own repository, with
- * the Deploy to Cloudflare button, and its directory in `cloudflare/templates`.
+ * The copy of the Cloudflare template kept outside this repository: `bounda-dev/bounda-cloudflare-template`,
+ * with the Deploy to Cloudflare button.
  */
-export type Target = "bounda-cloudflare-template" | "cloudflare-templates";
-
-export const TARGETS: readonly Target[] = ["bounda-cloudflare-template", "cloudflare-templates"];
+const COPY = "bounda-cloudflare-template";
 
 /**
- * What a copy adds to the scaffolder's output, from `distribution/<target>/layer.json`.
+ * What the copy adds to the scaffolder's output, from `distribution/<copy>/layer.json`.
  */
 export interface Layer {
   readonly name: string;
-  /**
-   * `project`: the copy is the project, at the root of its repository. `monorepo`: the project is
-   * the `<name>` directory of a repository of templates, with files of its own next to it.
-   */
-  readonly layout: "project" | "monorepo";
-  /**
-   * `range`: the scaffolder's caret ranges. `aligned`: exact versions, the ones the rest of the
-   * repository uses.
-   */
-  readonly pin: "range" | "aligned";
   readonly license: boolean;
   readonly gitignore: readonly string[];
   readonly package: JsonObject;
@@ -76,11 +53,11 @@ const writeJson = (path: string, value: JsonObject): Promise<void> =>
   writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
 
 export interface LoadLayerFunction {
-  (target: Target): Promise<Layer>;
+  (): Promise<Layer>;
 }
 
-export const loadLayer: LoadLayerFunction = async (target) =>
-  (await readJson(join(distributionRoot, target, "layer.json"))) as unknown as Layer;
+export const loadLayer: LoadLayerFunction = async () =>
+  (await readJson(join(distributionRoot, COPY, "layer.json"))) as unknown as Layer;
 
 const settle = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
@@ -137,24 +114,8 @@ const scaffold = async ({ scaffolder, name, cwd }: ScaffoldArgs): Promise<void> 
   );
 };
 
-const templateManifests = async (repository: string, except: string): Promise<JsonObject[]> => {
-  const manifests: JsonObject[] = [];
-  for (const entry of await readdir(repository, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.endsWith("-template") || entry.name === except)
-      continue;
-    manifests.push(await readJson(join(repository, entry.name, "package.json")));
-  }
-  return manifests;
-};
-
 export interface GenerateArgs {
-  readonly target: Target;
   readonly scaffolder: Scaffolder;
-  /**
-   * For `cloudflare-templates`: a clone of it, to align versions and read the compatibility
-   * date its linter requires.
-   */
-  readonly repository?: string;
   /**
    * Install the project to write `package-lock.json` and `worker-configuration.d.ts`. Off only
    * in tests.
@@ -164,8 +125,7 @@ export interface GenerateArgs {
 
 export interface GenerateResult {
   /**
-   * A directory laid out like the copy's repository: the project at its root, or in `<name>/`
-   * for `monorepo`.
+   * A temporary directory to remove once done; the copy is `project`, laid out like its repository.
    */
   readonly root: string;
   readonly project: string;
@@ -179,48 +139,24 @@ export interface GenerateFunction {
 /**
  * The app's code always comes from the scaffolder; a copy only adds its layer over it.
  */
-export const generate: GenerateFunction = async ({
-  target,
-  scaffolder,
-  repository,
-  install = true,
-}) => {
-  const layer = await loadLayer(target);
-  if (layer.pin === "aligned" && repository === undefined) {
-    throw new Error(`${target} needs a clone of its repository`);
-  }
-  const root = await mkdtemp(join(tmpdir(), `bounda-${target}-`));
+export const generate: GenerateFunction = async ({ scaffolder, install = true }) => {
+  const layer = await loadLayer();
+  const root = await mkdtemp(join(tmpdir(), `bounda-${COPY}-`));
   await scaffold({ scaffolder, name: layer.name, cwd: root });
-  const generated = join(root, layer.name);
-  const project = layer.layout === "project" ? await hoist(generated, root) : generated;
+  const project = await hoist(join(root, layer.name), root);
   // The master key the scaffolder generates is this machine's: whoever deploys the copy sets their
   // own, as `.dev.vars.example` asks.
   await rm(join(project, ".dev.vars"), { force: true });
 
   const extras = resolveCatalog(layer.package, fromWorkspaceCatalog);
-  let manifest = mergeManifest(await readJson(join(project, "package.json")), extras);
-  if (layer.pin === "aligned" && repository !== undefined) {
-    manifest = alignVersions({
-      manifest: pinExact(manifest),
-      neighbours: await templateManifests(repository, layer.name),
-      pinned: syncpackPins({
-        config: await readJson(join(repository, ".syncpackrc.json")),
-        packageName: layer.name,
-      }),
-    });
-    const wrangler = join(project, "wrangler.jsonc");
-    const date = targetCompatibilityDate(
-      await readFile(join(repository, "cli/src/lint.ts"), "utf8"),
-    );
-    await writeFile(wrangler, setCompatibilityDate(await readFile(wrangler, "utf8"), date));
-  }
-  await writeJson(join(project, "package.json"), manifest);
+  await writeJson(
+    join(project, "package.json"),
+    mergeManifest(await readJson(join(project, "package.json")), extras),
+  );
 
   const gitignore = join(project, ".gitignore");
   await writeFile(gitignore, appendLines(await readFile(gitignore, "utf8"), layer.gitignore));
-  await cp(join(distributionRoot, target, "files"), project, { recursive: true });
-  const rootFiles = join(distributionRoot, target, "root");
-  if (layer.layout === "monorepo") await cp(rootFiles, root, { recursive: true }).catch(skipAbsent);
+  await cp(join(distributionRoot, COPY, "files"), project, { recursive: true });
   if (layer.license) await cp(join(repoRoot, "LICENSE"), join(project, "LICENSE"));
 
   if (install) {
@@ -235,10 +171,6 @@ export const generate: GenerateFunction = async ({
   return { root, project, layer };
 };
 
-const skipAbsent = (error: NodeJS.ErrnoException): void => {
-  if (error.code !== "ENOENT") throw error;
-};
-
 const hoist = async (generated: string, root: string): Promise<string> => {
   const project = join(root, "copy");
   await cp(generated, project, { recursive: true });
@@ -247,7 +179,6 @@ const hoist = async (generated: string, root: string): Promise<string> => {
 };
 
 export interface SyncArgs {
-  readonly target: Target;
   readonly scaffolder: Scaffolder;
   /**
    * A clone of the copy's repository. It is rewritten in place and left for a pull request.
@@ -267,101 +198,13 @@ const replaceTree = async (from: string, to: string, keep: readonly string[]): P
   await cp(from, to, { recursive: true });
 };
 
-const sha1 = async (path: string): Promise<string> =>
-  createHash("sha1")
-    .update(await readFile(path))
-    .digest("hex");
-
-export interface Command {
-  readonly command: string;
-  readonly args: readonly string[];
-}
-
-export interface RepositoryFixesArgs {
-  readonly name: string;
-  /**
-   * The repository's root `devDependencies`, which pin its syncpack and Prettier.
-   */
-  readonly devDependencies: JsonObject;
-  /**
-   * Files laid next to the template, relative to the repository's root.
-   */
-  readonly rootFiles: readonly string[];
-}
-
-export interface RepositoryFixesFunction {
-  (args: RepositoryFixesArgs): readonly Command[];
-}
-
 /**
- * What a repository of templates runs at its root after the template is laid, in order. The
- * install adds the template to the workspace lockfile, and builds the `templates` CLI that
- * `fix:templates` runs. That linter rewrites `wrangler.jsonc` in a layout of its own, so Prettier
- * comes after it, as in the repository's `fix` script that its pre-push hook runs.
+ * Writes a freshly generated copy into a clone of its repository.
  */
-export const repositoryFixes: RepositoryFixesFunction = ({ name, devDependencies, rootFiles }) => [
-  { command: "pnpm", args: ["install", "--no-frozen-lockfile"] },
-  { command: "pnpm", args: ["run", "fix:templates"] },
-  {
-    command: "npx",
-    args: [
-      "--yes",
-      `syncpack@${String(devDependencies.syncpack)}`,
-      "format",
-      "--source",
-      `${name}/package.json`,
-    ],
-  },
-  {
-    command: "npx",
-    args: ["--yes", `prettier@${String(devDependencies.prettier)}`, "--write", name, ...rootFiles],
-  },
-];
-
-/**
- * Writes a freshly generated copy into a clone of its repository. For `cloudflare-templates` it
- * also runs the repository's {@link repositoryFixes} and records the new `package.json` hash in
- * `templates.json`, as its own `fix` scripts would.
- */
-export const sync: SyncFunction = async ({ target, scaffolder, into }) => {
-  const { root, project, layer } = await generate({ target, scaffolder, repository: into });
+export const sync: SyncFunction = async ({ scaffolder, into }) => {
+  const { root, project } = await generate({ scaffolder });
   try {
-    if (layer.layout === "project") {
-      await replaceTree(project, into, [".git"]);
-      return;
-    }
-    await replaceTree(project, join(into, layer.name), []);
-    const tree = await readTree(root, [layer.name]);
-    for (const [path, content] of tree) {
-      await mkdir(dirname(join(into, path)), { recursive: true });
-      await writeFile(join(into, path), content);
-    }
-    const devDependencies = (await readJson(join(into, "package.json")))
-      .devDependencies as JsonObject;
-    for (const { command, args } of repositoryFixes({
-      name: layer.name,
-      devDependencies,
-      rootFiles: [...tree.keys()],
-    })) {
-      await run(command, args, { cwd: into });
-    }
-    const registry = join(into, "templates.json");
-    const templates = await readJson(registry);
-    const entries = templates.templates as JsonObject;
-    await writeFile(
-      registry,
-      JSON.stringify(
-        {
-          ...templates,
-          templates: {
-            ...entries,
-            [layer.name]: { package_json_hash: await sha1(join(into, layer.name, "package.json")) },
-          },
-        },
-        null,
-        2,
-      ),
-    );
+    await replaceTree(project, into, [".git"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -383,7 +226,7 @@ export interface CheckFunction {
  * Only the files the `bounda-cloudflare-template` repository tracks are compared.
  */
 export const check: CheckFunction = async ({ scaffolder, clone }) => {
-  const { root, project } = await generate({ target: "bounda-cloudflare-template", scaffolder });
+  const { root, project } = await generate({ scaffolder });
   const workspace = clone ?? (await mkdtemp(join(tmpdir(), "bounda-cloudflare-template-clone-")));
   try {
     if (clone === undefined) {

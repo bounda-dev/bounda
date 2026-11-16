@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { check, type Scaffolder, sync, TARGETS, type Target } from "./sync.ts";
+import { check, type Scaffolder, sync } from "./sync.ts";
 
 const USAGE = `Usage:
-  pnpm templates:sync <${TARGETS.join("|")}> --into <clone> [--scaffolder published|workspace]
+  pnpm templates:sync --into <clone> [--scaffolder published|workspace]
   pnpm templates:check [--scaffolder published|workspace] [--clone <clone>]`;
 
 const { positionals, values } = parseArgs({
@@ -15,7 +15,7 @@ const { positionals, values } = parseArgs({
   },
 });
 
-const [command, target] = positionals;
+const [command] = positionals;
 const scaffolder = values.scaffolder as Scaffolder;
 
 if (scaffolder !== "published" && scaffolder !== "workspace") {
@@ -24,12 +24,14 @@ if (scaffolder !== "published" && scaffolder !== "workspace") {
 }
 
 if (command === "sync") {
-  if (!TARGETS.includes(target as Target) || values.into === undefined) {
+  if (values.into === undefined) {
     process.stderr.write(`${USAGE}\n`);
     process.exit(2);
   }
-  await sync({ target: target as Target, scaffolder, into: resolve(values.into) });
-  process.stdout.write(`synced ${target} into ${values.into}; review the diff and open a PR\n`);
+  await sync({ scaffolder, into: resolve(values.into) });
+  process.stdout.write(
+    `synced bounda-cloudflare-template into ${values.into}; review the diff and open a PR\n`,
+  );
 } else if (command === "check") {
   const drift = await check({
     scaffolder,
