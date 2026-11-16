@@ -9,9 +9,9 @@ export type FieldType = "string" | "number" | "boolean" | "date" | "json";
 
 /**
  * How a read-model field is marked: `personal` holds personal data of the person the row's
- * `person` field names, `person` is that field.
+ * `person` field names, `person` is that field, and `not-personal` holds no personal data.
  */
-export type FieldMark = "personal" | "person";
+export type FieldMark = "personal" | "person" | "not-personal";
 
 /**
  * What a table can filter a field by: how it is stored, or, for a field marked `.personal()` and
@@ -126,6 +126,14 @@ export interface Field<
   person(
     this: Field<string, Optional, null, Type, Indexed, false>,
   ): Field<Value, Optional, "person", Type, Indexed, false>;
+  /**
+   * Marks the field as holding no personal data: what someone decided on reading it, so `bounda
+   * personal-data inventory` records it as reviewed instead of reporting it. The column is stored
+   * as any other.
+   */
+  notPersonal(
+    this: Field<Value, Optional, null, Type, Indexed, false>,
+  ): Field<Value, Optional, "not-personal", Type, Indexed, false>;
 }
 
 /**
@@ -255,6 +263,7 @@ const createField = (flags: FieldFlags): AnyField =>
         clear: options?.clear === true,
       }),
     person: () => createField({ ...flags, mark: "person" }),
+    notPersonal: () => createField({ ...flags, mark: "not-personal" }),
   }) as unknown as AnyField;
 
 const field = <Value, Type extends FieldType>(type: Type): Field<Value, false, null, Type> =>

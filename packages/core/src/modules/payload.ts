@@ -1,5 +1,10 @@
 import type { z } from "zod";
-import type { CommandPersonalFunction, PersonalFunction, PersonFunction } from "./personal.ts";
+import type {
+  CommandPersonalFunction,
+  NotPersonalFunction,
+  PersonalFunction,
+  PersonFunction,
+} from "./personal.ts";
 
 /**
  * The Zod namespace, injected into every `payload`, `state` and similar schema function so user
@@ -17,12 +22,13 @@ export interface PayloadArgs {
 export type PayloadFunction<Schema extends z.ZodType = z.ZodType> = (args: PayloadArgs) => Schema;
 
 /**
- * Arguments of an event's `payload`: `z`, and `personal` and `person` to mark the fields that
- * hold personal data and the one that names whose it is.
+ * Arguments of an event's `payload`: `z`, `personal` and `person` to mark the fields that hold
+ * personal data and the one that names whose it is, and `notPersonal` for a field that holds none.
  */
 export interface EventPayloadArgs extends PayloadArgs {
   readonly personal: PersonalFunction;
   readonly person: PersonFunction;
+  readonly notPersonal: NotPersonalFunction;
 }
 
 export type EventPayloadFunction<Schema extends z.ZodType = z.ZodType> = (
@@ -30,12 +36,14 @@ export type EventPayloadFunction<Schema extends z.ZodType = z.ZodType> = (
 ) => Schema;
 
 /**
- * Arguments of a command's `payload`: `z`, and `personal` and `person` to mark the fields that
- * hold personal data and the one that names whose it is, for when the command is stored.
+ * Arguments of a command's `payload`: `z`, `personal` and `person` to mark the fields that hold
+ * personal data and the one that names whose it is, for when the command is stored, and
+ * `notPersonal` for a field that holds none.
  */
 export interface CommandPayloadArgs extends PayloadArgs {
   readonly personal: CommandPersonalFunction;
   readonly person: PersonFunction;
+  readonly notPersonal: NotPersonalFunction;
 }
 
 export type CommandPayloadFunction<Schema extends z.ZodType = z.ZodType> = (

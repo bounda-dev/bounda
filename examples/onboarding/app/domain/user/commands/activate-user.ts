@@ -1,6 +1,7 @@
 import type { Command } from "./+types/activate-user";
 
-export const payload = ({ z }: Command.PayloadArgs) => z.object({ userId: z.uuid() });
+export const payload = ({ z, person }: Command.PayloadArgs) =>
+  z.object({ userId: person(z.uuid()) });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({
   Expired: `The registration of user ${command.aggregateId} has expired`,

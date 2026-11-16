@@ -26,19 +26,23 @@ export const fields = ({ f }: View.FieldsArgs) => ({
 ```
 
 Each field is a column: `f.string()`, `f.number()`, `f.boolean()`, `f.date()` or `f.json<T>()`,
-then `.optional()`, `.primaryKey()` (exactly one), `.unique()` or `.index()`. Two more say what
+then `.optional()`, `.primaryKey()` (exactly one), `.unique()` or `.index()`. Three more say what
 the column means rather than how it is stored: `.person()` marks the column that holds the id of
-the person the row is about, a string, at most one per read model, and `.personal()` a column
-that holds that person's data:
+the person the row is about, a string, at most one per read model, `.personal()` a column
+that holds that person's data, and `.notPersonal()` one that holds none:
 
 ```ts
 // app/read/customer-directory/view.ts
 export const fields = ({ f }: View.FieldsArgs) => ({
   customerId: f.string().primaryKey().person(),
   email: f.string().personal().unique(),
-  plan: f.string(),
+  plan: f.string().notPersonal(),
 });
 ```
+
+Every `f.string()` column takes one of the three, and so does an `f.json<T>()` column whose `T` can
+hold text: [`bounda personal-data inventory`](/guides/personal-data/#the-record-of-processing-activities)
+reports a column left undecided.
 
 A `.personal()` column is sealed at rest under its person's key: the table holds ciphertext, which
 projections and queries read opened, and which reads as `null` once the person is forgotten, so its

@@ -6,5 +6,8 @@ export const config = ({ events }: Process.ConfigArgs) => ({
   timeout: process.env.ORDER_TIMEOUT ?? "30d",
 });
 
-export const state = ({ z, deadline }: Process.StateArgs) =>
-  z.object({ paymentId: z.uuid().nullable().default(null), paymentDeadline: deadline() });
+export const state = ({ z, deadline, notPersonal }: Process.StateArgs) =>
+  z.object({
+    paymentId: notPersonal(z.uuid()).nullable().default(null),
+    paymentDeadline: deadline(),
+  });

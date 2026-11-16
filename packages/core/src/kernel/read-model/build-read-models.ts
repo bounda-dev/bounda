@@ -174,7 +174,7 @@ export const checkReadModelPersons: CheckReadModelPersonsFunction = ({ registry,
   for (const [name, entry] of Object.entries(registry.readModels)) {
     const marks = Object.values(entry.view.fields({ f: fieldBuilder })).map(({ mark }) => mark);
     if (entry.view.holdsPersonalData === false) {
-      if (marks.some((mark) => mark !== null)) {
+      if (marks.some((mark) => mark === "personal" || mark === "person")) {
         throw new ConfigurationError(
           `Read model "${name}" exports holdsPersonalData = false, so it marks no field with .personal() or .person()`,
         );

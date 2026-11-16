@@ -79,6 +79,24 @@ export type {
 } from "./kernel/personal-data/forgotten-tenant.ts";
 export { TENANT_CHECK_INTERVAL_MS } from "./kernel/personal-data/forgotten-tenant.ts";
 export type {
+  InventoryCategory,
+  InventoryField,
+  InventoryFinding,
+  InventoryFindingKind,
+  InventoryHolder,
+  InventoryHolderKind,
+  InventoryNotPersonal,
+  InventoryRecipient,
+  InventoryRecord,
+  InventoryRecordName,
+  InventorySealing,
+  InventoryStore,
+  PersonalDataInventory,
+  PersonalDataInventoryArgs,
+  PersonalDataInventoryFunction,
+} from "./kernel/personal-data/inventory.ts";
+export { personalDataInventory } from "./kernel/personal-data/inventory.ts";
+export type {
   ListTenantsUnderPreviousMasterFunction,
   RewrappedTenantKeys,
   RewrapTenantKeysArgs,

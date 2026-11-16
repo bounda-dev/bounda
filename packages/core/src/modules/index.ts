@@ -90,6 +90,8 @@ export type {
   CommandPersonalSchema,
   ForgetsPersonalData,
   HasPersonalFields,
+  NotPersonalFunction,
+  NotPersonalSchema,
   PersonalFunction,
   PersonalOptions,
   PersonalPayloadFieldsOf,

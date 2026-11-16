@@ -1,7 +1,7 @@
 import type { Command } from "./+types/record-payment-failure";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ orderId: z.uuid(), reason: z.string().min(1) });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({ orderId: notPersonal(z.uuid()), reason: notPersonal(z.string().min(1)) });
 
 export const rejections = ({ state }: Command.RejectionsArgs) => ({
   NotPaying: `Only an order being paid can fail its payment; this one is ${state.status ?? "new"}`,

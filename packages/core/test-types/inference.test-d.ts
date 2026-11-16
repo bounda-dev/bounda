@@ -64,6 +64,8 @@ import type {
   Logger,
   LookupField,
   NotifiedRecipient,
+  NotPersonalFunction,
+  NotPersonalSchema,
   OnPersonalDataAccess,
   OnPersonalDataAccessArgs,
   OrderableField,
@@ -94,6 +96,7 @@ import type {
   ProcessingRestrictionLiftedEvent,
   ProcessingRestrictionLiftedPayload,
   ProcessModule,
+  ProcessStateArgs,
   ProcessStateEventType,
   ProcessStatus,
   QueriesFacade,
@@ -148,6 +151,7 @@ import type {
   StoredSubscriberFailure,
 } from "@bounda-dev/core/adapter";
 import { describe, expectTypeOf, it } from "vitest";
+import type { input as ZodInput, output as ZodOutput, ZodString } from "zod";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
 import type {
   Commands,
@@ -1836,5 +1840,35 @@ describe("operations", () => {
     expectTypeOf<ProcessStatus>().toEqualTypeOf<
       "started" | "completed" | "failed" | "timed_out" | "abandoned"
     >();
+  });
+});
+
+describe("fields that hold no personal data", () => {
+  it("gives notPersonal to an event's and a command's payload and a process's state, not a query's", () => {
+    expectTypeOf<EventPayloadArgs["notPersonal"]>().toEqualTypeOf<NotPersonalFunction>();
+    expectTypeOf<CommandPayloadArgs["notPersonal"]>().toEqualTypeOf<NotPersonalFunction>();
+    expectTypeOf<ProcessStateArgs["notPersonal"]>().toEqualTypeOf<NotPersonalFunction>();
+    expectTypeOf<PayloadArgs>().not.toHaveProperty("notPersonal");
+  });
+
+  it("validates and reads a field marked notPersonal as its schema does, never null", () => {
+    type Sku = NotPersonalSchema<ZodString>;
+    expectTypeOf<ZodOutput<Sku>>().toEqualTypeOf<string>();
+    expectTypeOf<ZodInput<Sku>>().toEqualTypeOf<string>();
+  });
+
+  it("leaves a column marked .notPersonal() typed as it is, and counts it as no mark", () => {
+    const view = {
+      fields: ({ f }: FieldsArgs) => ({
+        day: f.string().primaryKey().notPersonal(),
+        note: f.string().optional().notPersonal(),
+      }),
+      holdsPersonalData: false as const,
+    };
+    expectTypeOf<RowOf<typeof view>>().toEqualTypeOf<{
+      readonly day: string;
+      readonly note?: string;
+    }>();
+    expectTypeOf<ForgetsPersonalData<"totals", never, false, typeof view>>().toEqualTypeOf<true>();
   });
 });

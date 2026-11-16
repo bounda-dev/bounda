@@ -517,4 +517,15 @@ describe("what does not compile", () => {
     };
     void project;
   });
+
+  it("a column marked both personal and not", () => {
+    ({ f }: FieldsArgs) => ({
+      // @ts-expect-error: .notPersonal() comes only on a column no other mark took
+      email: f.string().personal().notPersonal(),
+      // @ts-expect-error: .personal() comes only on a column no other mark took
+      sku: f.string().notPersonal().personal(),
+      // @ts-expect-error: .person() comes only on a column no other mark took
+      customerId: f.string().notPersonal().person(),
+    });
+  });
 });

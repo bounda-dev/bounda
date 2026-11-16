@@ -1,9 +1,11 @@
 import type { z } from "zod";
 import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
+import { ConfigurationError } from "../contracts/errors.ts";
 import type { AppPersonalCategory } from "../register/index.ts";
 
 declare const personalBrand: unique symbol;
 declare const personBrand: unique symbol;
+declare const notPersonalBrand: unique symbol;
 
 /**
  * The schema `personal(schema)` returns: what `schema` takes when the event is written, and what
@@ -32,6 +34,14 @@ export interface CommandPersonalSchema<Schema extends z.ZodType>
   extends z.ZodPipe<Schema, z.ZodTransform<z.output<Schema>, z.output<Schema>>> {
   readonly [personalBrand]: true;
 }
+
+/**
+ * The schema `notPersonal(schema)` returns: `schema` itself, validating and reading as it does,
+ * marked as a field reviewed and found to hold no personal data.
+ */
+export type NotPersonalSchema<Schema extends z.ZodType> = Schema & {
+  readonly [notPersonalBrand]: true;
+};
 
 /**
  * What `personal` takes besides the schema.
@@ -80,31 +90,65 @@ export interface PersonFunction {
   <Schema extends z.ZodType>(schema: Schema): PersonSchema<Schema>;
 }
 
+/**
+ * Marks a field of an event's or a command's payload, or of a process's state, as holding no
+ * personal data: what someone decided on reading it, so `bounda personal-data inventory` records it
+ * as reviewed instead of reporting it. Nothing changes at rest: the field is stored as it comes.
+ * Same placement rules as `personal`.
+ */
+export interface NotPersonalFunction {
+  <Schema extends z.ZodType>(schema: Schema): NotPersonalSchema<Schema>;
+}
+
 // Each schema `personal` returned, with the category it was given.
 const PERSONAL = new WeakMap<z.ZodType, string>();
 const PERSON = new WeakSet<z.ZodType>();
+const NOT_PERSONAL = new WeakSet<z.ZodType>();
+
+const refuseNotPersonal = (schema: z.ZodType, by: string): void => {
+  if (personalMarkOf(schema)?.mark === "not-personal") {
+    throw new ConfigurationError(`${by}() was given a schema marked notPersonal(); keep one mark`);
+  }
+};
 
 export const personal: PersonalFunction = <Schema extends z.ZodType>(
   schema: Schema,
   options?: PersonalOptions,
 ) => {
+  refuseNotPersonal(schema, "personal");
   const marked = schema.transform((value): z.output<Schema> | null => value);
   PERSONAL.set(marked, options?.category ?? DEFAULT_PERSONAL_CATEGORY);
   return marked as PersonalSchema<Schema>;
 };
 
 export const person: PersonFunction = <Schema extends z.ZodType>(schema: Schema) => {
+  refuseNotPersonal(schema, "person");
   const marked = schema.transform((value): z.output<Schema> => value);
   PERSON.add(marked);
   return marked as PersonSchema<Schema>;
 };
 
+// A copy, so marking a schema shared between fields marks only the field it is given to.
+export const notPersonal: NotPersonalFunction = <Schema extends z.ZodType>(schema: Schema) => {
+  const mark = personalMarkOf(schema)?.mark;
+  if (mark !== undefined && mark !== "not-personal") {
+    throw new ConfigurationError(
+      `notPersonal() was given a schema marked ${mark}(); keep one mark`,
+    );
+  }
+  const marked = schema.clone();
+  NOT_PERSONAL.add(marked);
+  return marked as NotPersonalSchema<Schema>;
+};
+
 /**
- * How a field is marked: `personal` with the category it is sealed under, or `person`.
+ * How a field is marked: `personal` with the category it is sealed under, `person`, or
+ * `not-personal`.
  */
 export type PersonalMark =
   | { readonly mark: "personal"; readonly category: string }
-  | { readonly mark: "person" };
+  | { readonly mark: "person" }
+  | { readonly mark: "not-personal" };
 
 export interface PersonalMarkOfFunction {
   (schema: z.ZodType): PersonalMark | null;
@@ -115,7 +159,7 @@ interface Wrapper {
   readonly in?: z.ZodType;
 }
 
-// A mark sits on the schema `personal` or `person` returned, however it was wrapped afterwards:
+// A mark sits on the schema `personal`, `person` or `notPersonal` returned, however it was wrapped afterwards:
 // `.optional()`, `.nullable()`, `.default()` and the like keep what they wrap in `innerType`,
 // and a `.transform()` or `.pipe()` in `in`.
 export const personalMarkOf: PersonalMarkOfFunction = (schema) => {
@@ -124,6 +168,7 @@ export const personalMarkOf: PersonalMarkOfFunction = (schema) => {
     const category = PERSONAL.get(current);
     if (category !== undefined) return { mark: "personal", category };
     if (PERSON.has(current)) return { mark: "person" };
+    if (NOT_PERSONAL.has(current)) return { mark: "not-personal" };
     const def = current._zod.def as Wrapper;
     current = def.innerType ?? def.in;
   }

@@ -1,7 +1,11 @@
 import type { Command } from "./+types/register-user";
 
-export const payload = ({ z, personal }: Command.PayloadArgs) =>
-  z.object({ userId: z.uuid(), email: personal(z.email()), name: personal(z.string().min(1)) });
+export const payload = ({ z, personal, person }: Command.PayloadArgs) =>
+  z.object({
+    userId: person(z.uuid()),
+    email: personal(z.email(), { category: "account" }),
+    name: personal(z.string().min(1), { category: "account" }),
+  });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({
   AlreadyRegistered: `User ${command.aggregateId} is already registered`,

@@ -4,7 +4,7 @@ import type { Instant, instantSchema } from "../contracts/instant.ts";
 import type { EventModules, EventTypeNames, StoredEventOf } from "./event.ts";
 import type { TypeNameOf } from "./naming.ts";
 import type { EmptyPayload, PayloadArgs } from "./payload.ts";
-import type { PersonalFunction, PersonFunction } from "./personal.ts";
+import type { NotPersonalFunction, PersonalFunction, PersonFunction } from "./personal.ts";
 import type { RestrictionBasis } from "./personal-data.ts";
 import type { ReactionForgetFunction } from "./policy.ts";
 
@@ -70,9 +70,13 @@ export interface ProcessCorrelateArgs<Events extends AppEventModules> {
 }
 
 /**
- * The schema `instant()` returns: a moment the process only records, `null` until it is set.
+ * The schema `instant()` returns: a moment the process only records, `null` until it is set. A
+ * moment holds no text, so the field needs no `notPersonal()`; `personal(instant())` marks one that
+ * is personal data.
  */
-export type InstantFieldSchema = z.ZodDefault<z.ZodNullable<typeof instantSchema>>;
+export type InstantFieldSchema = z.ZodDefault<z.ZodNullable<typeof instantSchema>> & {
+  readonly "~instant": true;
+};
 
 /**
  * The schema `deadline()` returns: a moment the process acts at, `null` while nothing is due. It
@@ -88,13 +92,14 @@ export type DeadlineFieldSchema = InstantFieldSchema & { readonly "~deadline": t
  * key of the person the state names: the field marked `person()`, or the instance's id when none
  * is. Both start empty, since a state starts naming nobody. Once that person is forgotten
  * the field reads as `null` and the instance carries on, so handlers see it as possibly `null`,
- * and may set it to `null` themselves.
+ * and may set it to `null` themselves. `notPersonal()` marks a field that holds no personal data.
  */
 export interface ProcessStateArgs extends PayloadArgs {
   readonly deadline: () => DeadlineFieldSchema;
   readonly instant: () => InstantFieldSchema;
   readonly personal: PersonalFunction;
   readonly person: PersonFunction;
+  readonly notPersonal: NotPersonalFunction;
 }
 
 /**

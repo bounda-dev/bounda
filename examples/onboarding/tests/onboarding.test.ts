@@ -167,7 +167,7 @@ describe("onboarding", () => {
     expect(forgotten?.payload).toMatchObject({
       personId: ADA,
       cancelledCommands: [{ type: "SendActivationReminder" }],
-      recipients: [{ port: "user.emailSender", categories: ["default"], presumed: false }],
+      recipients: [{ port: "user.emailSender", categories: ["account"], presumed: false }],
     });
     expect(erased).toEqual([ADA]);
     expect(await app.recipientsOf(GRACE)).toMatchObject([

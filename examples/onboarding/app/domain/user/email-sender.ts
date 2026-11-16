@@ -31,7 +31,7 @@ export const recipient = {
   kind: "processor",
   country: "US",
   safeguard: "standard-contractual-clauses",
-  categories: ["default"],
+  categories: ["account"],
 } satisfies Port.Recipient;
 
 export const onPersonalDataForgotten = ({

@@ -40,4 +40,15 @@ describe("fieldBuilder", () => {
     expect(f.json<{ street: string }>().personal().mark).toBe("personal");
     expect(f.string().primaryKey().mark).toBeNull();
   });
+
+  it("marks a field not personal, keeping every other flag", () => {
+    const id = f.string().primaryKey().notPersonal().unique();
+    expect(id).toMatchObject({
+      mark: "not-personal",
+      category: null,
+      clear: false,
+      isPrimaryKey: true,
+      isUnique: true,
+    });
+  });
 });

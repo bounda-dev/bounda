@@ -1,6 +1,7 @@
 import type { Command } from "./+types/fulfill-order";
 
-export const payload = ({ z }: Command.PayloadArgs) => z.object({ orderId: z.uuid() });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({ orderId: notPersonal(z.uuid()) });
 
 export const rejections = ({ state }: Command.RejectionsArgs) => ({
   NotPaid: `Only paid orders can be fulfilled; this one is ${state.status ?? "new"}`,

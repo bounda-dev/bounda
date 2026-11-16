@@ -1,6 +1,7 @@
 import type { Command } from "./+types/settle-payment";
 
-export const payload = ({ z }: Command.PayloadArgs) => z.object({ paymentId: z.uuid() });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({ paymentId: notPersonal(z.uuid()) });
 
 // A webhook, which may arrive twice or out of order. A declined intent can still be paid later,
 // and by then the order is cancelled: money that arrives for a payment the app gave up on goes

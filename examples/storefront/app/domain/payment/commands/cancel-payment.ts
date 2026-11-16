@@ -1,7 +1,7 @@
 import type { Command } from "./+types/cancel-payment";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ paymentId: z.uuid(), reason: z.string().min(1) });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({ paymentId: notPersonal(z.uuid()), reason: notPersonal(z.string().min(1)) });
 
 // The compensation of requestPayment. The intent stays open, since cancelling it would not stop a
 // customer paying that same second: a payment that settles afterwards is refunded instead.

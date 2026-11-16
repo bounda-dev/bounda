@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
-import { person, personal, personalMarkOf } from "./personal.ts";
+import { ConfigurationError } from "../contracts/errors.ts";
+import { notPersonal, person, personal, personalMarkOf } from "./personal.ts";
 
 describe("personal and person", () => {
   it("validate as the schema they wrap and hand the value through", () => {
@@ -45,5 +46,30 @@ describe("personal and person", () => {
       category: DEFAULT_PERSONAL_CATEGORY,
     });
     expect(DEFAULT_PERSONAL_CATEGORY).toBe("default");
+  });
+
+  it("mark a field not personal on a copy, so a schema it shares stays unmarked", () => {
+    const sku = z.string().min(1);
+    const marked = notPersonal(sku);
+    expect(personalMarkOf(marked.optional())).toEqual({ mark: "not-personal" });
+    expect(personalMarkOf(sku)).toBeNull();
+    expect(marked.parse("a-1")).toBe("a-1");
+    expect(marked.safeParse("").success).toBe(false);
+    expect(personalMarkOf(notPersonal(notPersonal(sku)))).toEqual({ mark: "not-personal" });
+  });
+
+  it("refuse a field marked both personal and not", () => {
+    expect(() => notPersonal(personal(z.string()))).toThrow(
+      new ConfigurationError("notPersonal() was given a schema marked personal(); keep one mark"),
+    );
+    expect(() => notPersonal(person(z.string()).optional())).toThrow(
+      new ConfigurationError("notPersonal() was given a schema marked person(); keep one mark"),
+    );
+    expect(() => personal(notPersonal(z.string()))).toThrow(
+      new ConfigurationError("personal() was given a schema marked notPersonal(); keep one mark"),
+    );
+    expect(() => person(notPersonal(z.string()))).toThrow(
+      new ConfigurationError("person() was given a schema marked notPersonal(); keep one mark"),
+    );
   });
 });

@@ -11,6 +11,7 @@ import {
   MAX_ACTOR_LENGTH,
   migrateTables,
   parseDuration,
+  personalDataInventory,
   RESTRICTION_GROUNDS,
   type Registry,
   type RestrictionGround,
@@ -42,6 +43,7 @@ import { parseForgetList, parseSince, readForgotten, type Since } from "./forgot
 import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
+import { formatInventory, formatInventoryMarkdown } from "./inventory-output.ts";
 import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
 import { formatFiles, formatRecipients, formatSchema, formatStatus } from "./status-output.ts";
@@ -703,6 +705,38 @@ const runRecipients = (
     return EXIT_OK;
   });
 
+interface InventoryOptions extends ProjectOptions {
+  readonly json: boolean;
+  readonly markdown: boolean;
+}
+
+// Read from the modules and the configuration alone: nothing opens the database.
+const runInventory = async (
+  options: InventoryOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const project = await load(options, cwd, logTo(stderr), stderr);
+  if (project === undefined) return EXIT_FAILURE;
+  let inventory: ReturnType<typeof personalDataInventory>;
+  try {
+    inventory = personalDataInventory({ registry: project.registry, config: project.config });
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  line(
+    stdout,
+    options.json
+      ? JSON.stringify(inventory, null, 2)
+      : options.markdown
+        ? formatInventoryMarkdown(inventory)
+        : formatInventory(inventory),
+  );
+  return inventory.findings.length === 0 ? EXIT_OK : EXIT_CONVENTION;
+};
+
 interface ForgetTenantOptions extends ActingOptions {
   readonly yes: boolean;
   readonly despiteLegalObligations: boolean;
@@ -1185,6 +1219,21 @@ export const runCli: RunCliFunction = async ({
       .option("--json", "print every recipient as JSON", false),
   ).action(async (personId: string | undefined, options: RecipientsOptions) => {
     exitCode = await runRecipients(personId, options, cwd, stdout, stderr);
+  });
+
+  const personalData = program
+    .command("personal-data")
+    .description("describe the personal data the app processes");
+  projectOptions(
+    personalData
+      .command("inventory")
+      .description(
+        "print the record of processing activities (GDPR article 30) the modules and the configuration describe, and exit 1 while a field is not classified or looks personal unmarked",
+      )
+      .addOption(new Option("--json", "print it as JSON").default(false).conflicts("markdown"))
+      .addOption(new Option("--markdown", "print it as a Markdown document").default(false)),
+  ).action(async (options: InventoryOptions) => {
+    exitCode = await runInventory(options, cwd, stdout, stderr);
   });
 
   program

@@ -6,7 +6,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
 import { type FieldsArgs, type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
-import { buildReadModels, personalDataOf } from "./build-read-models.ts";
+import { buildReadModels, checkReadModelPersons, personalDataOf } from "./build-read-models.ts";
 
 const view = { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey() }) };
 
@@ -193,5 +193,41 @@ describe("personalDataOf", () => {
     ).rejects.toBeInstanceOf(ConfigurationError);
     expect(opened).toBe(0);
     expect(closes()).toBe(0);
+  });
+});
+
+describe("checkReadModelPersons", () => {
+  const withView = (fields: (args: FieldsArgs) => FieldsRecord): Registry =>
+    ({
+      aggregates: {},
+      readModels: {
+        totals: { view: { fields, holdsPersonalData: false }, projections: {}, queries: {} },
+      },
+    }) as unknown as Registry;
+  const aggregates = { byName: {} } as unknown as Parameters<
+    typeof checkReadModelPersons
+  >[0]["aggregates"];
+
+  it("lets a read model that holds no personal data mark its columns not personal", () => {
+    expect(() =>
+      checkReadModelPersons({
+        registry: withView(({ f }) => ({ day: f.string().primaryKey().notPersonal() })),
+        aggregates,
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    [
+      "personal",
+      ({ f }: FieldsArgs) => ({ day: f.string().primaryKey(), note: f.string().personal() }),
+    ],
+    ["person", ({ f }: FieldsArgs) => ({ day: f.string().primaryKey().person() })],
+  ])("refuses one that marks a column %s all the same", (_, fields) => {
+    expect(() => checkReadModelPersons({ registry: withView(fields), aggregates })).toThrow(
+      new ConfigurationError(
+        'Read model "totals" exports holdsPersonalData = false, so it marks no field with .personal() or .person()',
+      ),
+    );
   });
 });
