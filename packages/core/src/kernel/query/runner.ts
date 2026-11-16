@@ -15,7 +15,7 @@ import type { Disclosures } from "../recipients/gate.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, type TracerFunction, traced } from "../telemetry.ts";
 import { checkPayloadFields, type QueriesRuntime } from "./build-queries.ts";
 import { reading } from "./reading.ts";
 
@@ -63,6 +63,7 @@ export interface CreateQueryRunnerArgs {
   readonly ports: ModulePorts;
   readonly recordAccess: RecordAccess;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
   readonly disclosures?: Disclosures | undefined;
   /**
    * Where a read model's projection stands, as the dispatcher's lag says: its checkpoint, or past
@@ -82,6 +83,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
   ports,
   recordAccess,
   errorText,
+  tracer,
   disclosures,
   standing,
 }) => {
@@ -107,6 +109,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
     if (readModel === undefined)
       throw runtimeText(new NotFoundError(`Unknown read model "${query.readModel}"`));
     return traced({
+      tracer,
       errorText,
       name: `bounda.query ${type}`,
       attributes: {

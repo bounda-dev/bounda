@@ -1,15 +1,14 @@
 import { type Adapter, isAdapter } from "../adapter/adapter.ts";
-import type { ForgetLedger } from "../adapter/storage/forget-ledger.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 import { TenantForgottenError } from "../contracts/errors.ts";
-import type { BoundaClient } from "../kernel/app.ts";
 import { categoryOf, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
 import { needlesOf } from "../kernel/shared/value-search.ts";
+import type { Witness } from "../kernel/witness.ts";
 import type { PersonalCategoryName } from "../modules/personal-data.ts";
 import { findIn, outsidePlaces, type Place, placesOfTable } from "./places.ts";
-import type { TelemetryRecording } from "./telemetry.ts";
+import { watchedOf } from "./watched.ts";
 import type { TestWitness } from "./witness.ts";
 
 /**
@@ -77,10 +76,6 @@ export interface ExpectForgottenOptions {
    */
   readonly before?: PersonalDataExport;
   /**
-   * The spans recorded while the test ran, from `recordTelemetry()`.
-   */
-  readonly telemetry?: TelemetryRecording;
-  /**
    * More places to search, each under the name the report gives it: what a test double of a port
    * was sent, a log of your own.
    */
@@ -95,9 +90,13 @@ export interface ExpectForgottenOptions {
 }
 
 /**
- * The app `createTestApp` returned, or an adapter.
+ * The app `createTestApp` returned, an app given a witness, a client of either, a Durable Object
+ * of a class `witnessObjects` watches, a witness, or an adapter.
  */
-export type ExpectForgottenTarget = Pick<BoundaClient, "forget"> | Adapter;
+export type ExpectForgottenTarget =
+  | { forget(personId: string, ...rest: never[]): Promise<unknown> }
+  | Witness
+  | Adapter;
 
 export interface ExpectForgottenFunction {
   (
@@ -107,43 +106,8 @@ export interface ExpectForgottenFunction {
   ): Promise<void>;
 }
 
-const witnessed = new WeakMap<object, TestApps>();
-
-export interface TestApps {
-  readonly witness: TestWitness;
-  readonly adapters: readonly Adapter[];
-  /**
-   * Whether `app.stop()` ran: an in-memory database is gone then, and a ledger closed.
-   */
-  readonly stopped: () => boolean;
-  /**
-   * Whether the test's configuration chose `runtime.telemetry.errorText`. When it did not, the
-   * text of errors in logs and spans is there only because a test app includes it, and an app
-   * outside a test does not write it, so it is not searched.
-   */
-  readonly errorTextChosen: boolean;
-  /**
-   * The forget ledger this app opened, which closes with it.
-   */
-  readonly ledgers: readonly ForgetLedger[];
-}
-
-export interface RegisterTestAppFunction {
-  (app: object, apps: TestApps): void;
-}
-
-export const registerTestApp: RegisterTestAppFunction = (app, apps) => {
-  witnessed.set(app, apps);
-};
-
-export interface TestAppsOfFunction {
-  (target: object): TestApps | undefined;
-}
-
-/**
- * What the app `createTestApp` returned was seen doing, `undefined` for anything else.
- */
-export const testAppsOf: TestAppsOfFunction = (target) => witnessed.get(target);
+const NOT_A_TARGET =
+  "takes an app createTestApp returned or one given a witness, a client of one, a witness, a Durable Object of a class witnessObjects watches, or an adapter: for an app built without a witness, pass its storage adapter with the values to look for";
 
 interface ExportedRecord {
   readonly data: Readonly<Record<string, unknown>>;
@@ -270,18 +234,11 @@ const heldKeys = (tables: readonly InspectedTable[], personId: string): HeldKeys
  * of values. Works with any test runner.
  */
 export const expectForgotten: ExpectForgottenFunction = async (target, personId, options = {}) => {
-  const apps = witnessed.get(target);
-  if (apps === undefined && !isAdapter(target)) {
-    throw new TypeError(
-      "expectForgotten takes the app createTestApp returned, or an adapter: for an app built otherwise, pass its storage adapter with the values to look for",
-    );
+  const watched = watchedOf("expectForgotten", target);
+  if (watched === undefined && !isAdapter(target)) {
+    throw new TypeError(`expectForgotten ${NOT_A_TARGET}`);
   }
-  if (apps?.stopped() === true) {
-    throw new Error(
-      "expectForgotten reads what the app keeps, so call it before app.stop(): an in-memory database is gone once the app stops",
-    );
-  }
-  const adapters = apps?.adapters ?? [target as Adapter];
+  const adapters = watched?.adapters ?? [target as Adapter];
   const tables = (await Promise.all(adapters.map((adapter) => adapter.inspect()))).flat();
   if (tables.length === 0) {
     throw new Error(
@@ -301,9 +258,9 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
   }
   const values: unknown[] = [...(options.values ?? [])];
   if (options.before !== undefined) values.push(...exportedValues(options.before, categories));
-  if (apps !== undefined) {
-    values.push(...(await opened(apps.witness, personId, held.fingerprints, categories)));
-    values.push(...apps.witness.keptFor(personId, categories));
+  if (watched !== undefined) {
+    values.push(...(await opened(watched.witness, personId, held.fingerprints, categories)));
+    values.push(...watched.witness.keptFor(personId, categories));
   }
   const needles = needlesOf({ values, personId });
   if (needles.length === 0) {
@@ -317,11 +274,10 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
   const places: Place[] = [
     ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
     ...(await outsidePlaces({
-      logs: apps?.witness.logs ?? [],
-      ledgers: apps?.ledgers ?? [],
-      telemetry: options.telemetry,
+      logs: watched?.witness.logs ?? [],
+      ledgers: watched?.ledgers ?? [],
+      traces: watched?.witness.traces ?? [],
       places: options.places,
-      errorText: apps?.errorTextChosen ?? true,
       advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
     })),
   ];
@@ -361,14 +317,14 @@ export class TenantNotForgottenError extends Error {
 /**
  * What `expectTenantForgotten` searches for beyond what it finds on its own.
  */
-export type ExpectTenantForgottenOptions = Pick<
-  ExpectForgottenOptions,
-  "values" | "telemetry" | "places"
->;
+export type ExpectTenantForgottenOptions = Pick<ExpectForgottenOptions, "values" | "places">;
 
 export interface ExpectTenantForgottenFunction {
   (
-    target: Pick<BoundaClient, "forgetTenant"> | Adapter,
+    target:
+      | { forgetTenant(tenant: string, ...rest: never[]): Promise<unknown> }
+      | Witness
+      | Adapter,
     options?: ExpectTenantForgottenOptions,
   ): Promise<void>;
 }
@@ -427,42 +383,33 @@ export const expectTenantForgotten: ExpectTenantForgottenFunction = async (
   target,
   options = {},
 ) => {
-  const apps = witnessed.get(target);
-  if (apps === undefined && !isAdapter(target)) {
-    throw new TypeError(
-      "expectTenantForgotten takes the app createTestApp returned, or an adapter: for an app built otherwise, pass its storage adapter with the values to look for",
-    );
-  }
-  if (apps?.stopped() === true) {
-    throw new Error(
-      "expectTenantForgotten reads what the app keeps, so call it before app.stop(): an in-memory database is gone once the app stops",
-    );
+  const watched = watchedOf("expectTenantForgotten", target);
+  if (watched === undefined && !isAdapter(target)) {
+    throw new TypeError(`expectTenantForgotten ${NOT_A_TARGET}`);
   }
   const problems: string[] = [];
-  if (apps !== undefined) {
-    const refused = await (target as BoundaClient)
-      .exportPersonalData("expect-tenant-forgotten")
-      .then(
-        () => null,
-        (error: unknown) => error,
-      );
+  for (const { client } of watched?.running ?? []) {
+    const refused = await client.exportPersonalData("expect-tenant-forgotten").then(
+      () => null,
+      (error: unknown) => error,
+    );
     if (!(refused instanceof TenantForgottenError)) {
       problems.push("the app still serves calls: forget the tenant with forgetTenant first");
     }
   }
-  const adapters = apps?.adapters ?? [target as Adapter];
+  const adapters = watched?.adapters ?? [target as Adapter];
   const tables = (await Promise.all(adapters.map((adapter) => adapter.inspect()))).flat();
   problems.push(...tenantProblems(tables));
   const values: unknown[] = [...(options.values ?? [])];
-  if (apps !== undefined) {
-    for (const person of apps.witness.persons()) {
-      values.push(...(await opened(apps.witness, person, new Set(), undefined)));
-      values.push(...apps.witness.allKeptFor(person));
+  if (watched !== undefined) {
+    for (const person of watched.witness.persons()) {
+      values.push(...(await opened(watched.witness, person, new Set(), undefined)));
+      values.push(...watched.witness.allKeptFor(person));
     }
   }
   const needles = needlesOf({
     values,
-    personId: apps?.witness.persons() ?? [],
+    personId: watched?.witness.persons() ?? [],
   });
   if (needles.length === 0 && problems.length === 0) {
     throw new Error(
@@ -472,11 +419,10 @@ export const expectTenantForgotten: ExpectTenantForgottenFunction = async (
   const places: Place[] = [
     ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
     ...(await outsidePlaces({
-      logs: apps?.witness.logs ?? [],
-      ledgers: apps?.ledgers ?? [],
-      telemetry: options.telemetry,
+      logs: watched?.witness.logs ?? [],
+      ledgers: watched?.ledgers ?? [],
+      traces: watched?.witness.traces ?? [],
       places: options.places,
-      errorText: apps?.errorTextChosen ?? true,
       advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
     })),
   ];

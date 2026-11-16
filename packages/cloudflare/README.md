@@ -31,7 +31,7 @@ import { createBoundaObject, createWorker } from "@bounda-dev/cloudflare";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
-export const Store = createBoundaObject({ registry, config });
+export class Store extends createBoundaObject({ registry, config }) {}
 export default createWorker({
   config,
   tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",

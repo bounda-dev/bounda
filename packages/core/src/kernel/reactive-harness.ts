@@ -42,6 +42,7 @@ import { createRecipientNotices } from "./recipients/notices.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
+import { tracer } from "./telemetry.ts";
 import { defaultPorts, testWrapping, withPersonalKeys } from "./test-support.ts";
 
 export interface ReactiveHarness {
@@ -134,6 +135,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   });
   const processDefinitions = buildProcesses({ registry, aggregates, config });
   const pipeline = createCommandPipeline({
+    tracer: tracer,
     aggregates,
     loader,
     storage,
@@ -151,6 +153,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   });
   const intentions = createForgetIntentions({ ledger: null, ids, clock, logger });
   const policyExecutor = createPolicyExecutor({
+    tracer: tracer,
     aggregates,
     pipeline,
     config,
@@ -163,6 +166,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     recordAccess,
   });
   const processes = createProcessRunner({
+    tracer: tracer,
     processes: processDefinitions,
     aggregates,
     pipeline,
@@ -184,6 +188,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     policyExecutor,
     processes,
     notices: createRecipientNotices({
+      tracer: tracer,
       recipients: { all: [], byPort: {}, byOwner: {} },
       storage,
       config,
@@ -195,6 +200,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     clock,
   });
   const worker = createScheduledCommandWorker({
+    tracer: tracer,
     storage,
     aggregates,
     pipeline,
@@ -218,11 +224,13 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   });
   const makeDispatcher = (): Dispatcher =>
     createDispatcher({
+      tracer: tracer,
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
       subscribers: [
         ...Object.values(readModels.byName).map((readModel) =>
           createProjectionSubscriber({
+            tracer: tracer,
             readModel,
             sealing,
             logger,
@@ -235,6 +243,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
           adapterOf: (name) => adapterForReadModel({ name, config }),
         }).map((readModel) =>
           createRestrictedPersonsSubscriber({
+            tracer: tracer,
             readModel,
             logger,
             errorText: config.runtime.telemetry.errorText,

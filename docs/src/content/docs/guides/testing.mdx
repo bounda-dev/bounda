@@ -339,8 +339,10 @@ which it opens with the keys the person still holds, so a sealed column passes o
 forgotten, projection of the forgetting or not; a column kept in the clear, or one the read model
 did not mark, is found until the read model's projection of `PersonalDataForgotten` clears it.
 Key and blind index columns are key material, compared whole and never searched inside.
-[Personal data in tests](/guides/personal-data/#in-tests) says what it looks for and where, and
-how to point it at a Durable Object's storage.
+[Personal data in tests](/guides/personal-data/#in-tests) says what it looks for and where. An
+app built with `createApp`, `boot()` or `createBounda`, or run by a Durable Object, takes a witness
+from `createWitness()` instead, and every expectation searches it as it searches a test app: see
+[An app built otherwise](/guides/personal-data/#an-app-built-otherwise).
 
 ## Nothing left of a forgotten tenant
 

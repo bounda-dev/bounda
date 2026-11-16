@@ -24,7 +24,7 @@ import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
 import { actedBy } from "../shared/causation.ts";
 import { thrownValue } from "../shared/retry.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
-import { tracedOperation } from "../telemetry.ts";
+import { type TracerFunction, tracedOperation } from "../telemetry.ts";
 import type { DeadLetterRetry } from "./retry.ts";
 
 /**
@@ -86,6 +86,7 @@ export interface CreateDeadLettersArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
   /**
    * Who retries and discards, for the client bound to them.
    */
@@ -113,6 +114,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   clock,
   logger,
   errorText,
+  tracer,
   actor,
   recordAccess,
 }) => {
@@ -303,6 +305,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     ) =>
     (...args: Args): Promise<Result> =>
       tracedOperation({
+        tracer,
         operation: `deadLetters.${name}`,
         actor,
         errorText,

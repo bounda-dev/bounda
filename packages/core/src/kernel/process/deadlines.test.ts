@@ -15,6 +15,7 @@ import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { DEADLINE_WAIT_ROUNDS } from "../scheduler/worker.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
+import { tracer } from "../telemetry.ts";
 import {
   breakNextCommit,
   choosePorts,
@@ -562,6 +563,7 @@ describe("process deadlines", () => {
 
     reminding = "ok";
     const deadLetters = createDeadLetters({
+      tracer,
       recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,

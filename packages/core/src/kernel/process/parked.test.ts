@@ -9,6 +9,7 @@ import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/proce
 import type { Registry } from "../../modules/registry.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
+import { tracer } from "../telemetry.ts";
 import {
   createRecordingLogger,
   type OrderProcessConfigArgs,
@@ -137,6 +138,7 @@ const setUp = async ({
     ...(adapter === undefined ? {} : { adapter }),
   });
   const deadLetters = createDeadLetters({
+    tracer,
     recordAccess: unrecordedAccess,
     storage: harness.storage,
     retries: harness.retries,
@@ -430,6 +432,7 @@ describe("events of a failed process", () => {
     const { harness, settle } = context;
     await failOnFirstPayment(context);
     const actor = createDeadLetters({
+      tracer,
       recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,

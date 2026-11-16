@@ -11,6 +11,8 @@ import { createRecordingLogger } from "../kernel/test-support.ts";
 import { memory } from "../memory/index.ts";
 import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
+import { expectForgotten, type NotForgottenError } from "../testing/expect-forgotten.ts";
+import { createWitness } from "../testing/witness.ts";
 import { boot, loadProject } from "./boot.ts";
 import { registry } from "./fixtures/project/registry.ts";
 
@@ -367,6 +369,30 @@ describe("boot", () => {
     expect(process.listenerCount("SIGTERM")).toBe(before);
     await app.stop();
     expect(process.listenerCount("SIGTERM")).toBe(before);
+  });
+
+  it("hands the witness to the app, and logs what it logs itself through it", async () => {
+    const witness = createWitness();
+    const app = await boot<typeof registry>({
+      root,
+      registryPath: "registry.ts",
+      logger: silentLogger,
+      witness,
+    });
+    await app.as("ana@example.com").commands.increment({ counterId: "c-1" });
+    const values = ["ana@example.com", join(root, ".env")];
+    const error = (await expectForgotten(app, "c-1", { values }).catch(
+      (caught: unknown) => caught,
+    )) as NotForgottenError;
+    expect(error.found.map(({ store, field }) => `${store} ${field}`)).toEqual(
+      expect.arrayContaining([
+        "bounda_events metadata.actor",
+        "logs fields.path",
+        "spans attributes.bounda.actor",
+      ]),
+    );
+    await app.stop();
+    await expect(expectForgotten(app, "c-1", { values })).rejects.toThrow("before app.stop()");
   });
 
   it("reads .bounda/registry.ts by default and reports the environment it loaded", async () => {

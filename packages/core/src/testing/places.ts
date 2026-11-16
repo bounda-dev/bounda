@@ -1,8 +1,7 @@
 import type { ForgetLedger, ForgetLedgerEntry } from "../adapter/storage/forget-ledger.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import { type Leaf, leavesIn, matches, type Needle } from "../kernel/shared/value-search.ts";
-import type { TelemetryRecording } from "./telemetry.ts";
-import type { LoggedEntry } from "./witness.ts";
+import type { LoggedEntry, Traced } from "./witness.ts";
 
 /**
  * Where a value of a person turned up.
@@ -89,13 +88,8 @@ export const ledgerEntries: LedgerEntriesFunction = async (ledger) => {
 export interface OutsidePlacesArgs {
   readonly logs: readonly LoggedEntry[];
   readonly ledgers: readonly ForgetLedger[];
-  readonly telemetry: TelemetryRecording | undefined;
+  readonly traces: readonly Traced[];
   readonly places: Readonly<Record<string, unknown>> | undefined;
-  /**
-   * Whether the text of errors in logs and spans is searched: only when the test chose
-   * `runtime.telemetry.errorText` itself.
-   */
-  readonly errorText: boolean;
   readonly advice: {
     readonly logs: string;
     readonly spans: string;
@@ -108,15 +102,13 @@ export interface OutsidePlacesFunction {
 }
 
 /**
- * The places beside the tables: the app's logs, the forget ledger, the spans recorded and those
- * the test adds.
+ * The places beside the tables: the logs, the forget ledgers, the spans and those the test adds.
  */
 export const outsidePlaces: OutsidePlacesFunction = async ({
   logs,
   ledgers,
-  telemetry,
+  traces,
   places: given,
-  errorText,
   advice,
 }) => {
   const places: Place[] = [];
@@ -125,7 +117,7 @@ export const outsidePlaces: OutsidePlacesFunction = async ({
       store: "logs",
       row: `entry ${index + 1} (${entry.level} "${entry.message}")`,
       leaves: leavesIn({ message: entry.message, fields: entry.fields ?? {} }).filter(
-        (leaf) => errorText || !LOG_ERROR_TEXT.has(leaf.path[1] ?? ""),
+        (leaf) => entry.searchErrorText || !LOG_ERROR_TEXT.has(leaf.path[1] ?? ""),
       ),
       advice: advice.logs,
     });
@@ -140,22 +132,28 @@ export const outsidePlaces: OutsidePlacesFunction = async ({
       });
     }
   }
-  telemetry?.spans.forEach((span, index) => {
+  const spans = traces.flatMap(({ spans: started, searchErrorText }) =>
+    started.map((span) => ({ span, searchErrorText })),
+  );
+  spans.forEach(({ span, searchErrorText }, index) => {
     places.push({
       store: "spans",
       row: `span ${index + 1} ("${span.name}")`,
       leaves: leavesIn(span).filter(
-        (leaf) => errorText || !(leaf.path[0] === "status" && leaf.path[1] === "message"),
+        (leaf) => searchErrorText || !(leaf.path[0] === "status" && leaf.path[1] === "message"),
       ),
       advice: advice.spans,
     });
   });
-  telemetry?.spanEvents.forEach((event, index) => {
+  const events = traces.flatMap(({ spanEvents, searchErrorText }) =>
+    spanEvents.map((event) => ({ event, searchErrorText })),
+  );
+  events.forEach(({ event, searchErrorText }, index) => {
     places.push({
       store: "span events",
       row: `event ${index + 1} ("${event.name}" of "${event.span}")`,
       leaves: leavesIn(event).filter(
-        (leaf) => errorText || !SPAN_ERROR_TEXT.has(leaf.path[1] ?? ""),
+        (leaf) => searchErrorText || !SPAN_ERROR_TEXT.has(leaf.path[1] ?? ""),
       ),
       advice: advice.spans,
     });

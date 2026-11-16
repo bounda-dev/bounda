@@ -3,6 +3,7 @@ import { testMetadata } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock, type FixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
+import { tracer } from "../telemetry.ts";
 import { createRecordingLogger, eventually } from "../test-support.ts";
 import type { CheckpointedSubscriber, Delivery } from "./delivery.ts";
 import { createDispatcher, type DispatcherCatchUp, type Subscriber } from "./dispatcher.ts";
@@ -69,6 +70,7 @@ const setUp = async (
   const clock = createFixedClock();
   const { logger, entries } = createRecordingLogger();
   const dispatcher = createDispatcher({
+    tracer,
     clock,
     eventStore,
     checkpointStore,

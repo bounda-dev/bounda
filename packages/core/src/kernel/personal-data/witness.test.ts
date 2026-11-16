@@ -12,7 +12,6 @@ describe("a witnessed key wrapping", () => {
       onPersonalKey: (person, held) => {
         told.push([person, held]);
       },
-      onForgetLedger: () => {},
     });
     const keys = wrapping.over(
       createKeptPersonalKeyStore({ restricted: () => false, lastActiveAt: () => null }).store,

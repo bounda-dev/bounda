@@ -1,9 +1,15 @@
 import {
   type BoundaApp,
   ConfigurationError,
+  createApp,
   type DispatchOptions,
   idempotencyKeyFor,
+  type Registry,
+  silentLogger,
+  type Witness,
 } from "@bounda-dev/core";
+import { memory } from "@bounda-dev/core/memory";
+import { createWitness, expectForgotten, type NotForgottenError } from "@bounda-dev/core/testing";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { createBounda, DEFAULT_TENANT_APPS, DEFAULT_TENANT_IDLE_MS } from "./create-bounda.ts";
@@ -1055,5 +1061,89 @@ describe("createBounda's handleError", () => {
       ['[bounda] error request failed {"method":"GET","errorName":"Error"}'],
       ['[bounda] error request failed {"method":"GET","errorName":"Error"}'],
     ]);
+  });
+});
+
+describe("createBounda given a witness", () => {
+  const empty = { aggregates: {}, readModels: {} } as Registry;
+  const bootWith =
+    (given: (Witness | undefined)[]) =>
+    async (args?: { readonly tenant?: string; readonly witness?: Witness }) => {
+      given.push(args?.witness);
+      return createApp({
+        registry: empty,
+        config: { storage: memory(), runtime: { telemetry: { errorText: "include" } } },
+        ...(args?.witness === undefined ? {} : { witness: args.witness }),
+      });
+    };
+  const searched = async (witness: Witness) =>
+    (
+      (await expectForgotten(witness, "c-1", { values: ["ana@example.com"] }).catch(
+        (error: unknown) => error,
+      )) as NotForgottenError
+    ).found;
+
+  it("hands it to every boot, and logs what a request throws through it", async () => {
+    const witness = createWitness();
+    const given: (Witness | undefined)[] = [];
+    const { boundaMiddleware, handleError, dispose } = createBounda({
+      key: uniqueKey(),
+      boot: bootWith(given),
+      logger: silentLogger,
+      witness,
+    });
+    await boundaMiddleware(middlewareArgs().args, async () => undefined);
+    await handleError(new Error("no account for ana@example.com"), {
+      request: new Request("http://localhost/accounts"),
+    });
+    expect(given).toEqual([witness]);
+    expect(await searched(witness)).toEqual(
+      ["fields.errorMessage", "fields.errorStack"].map((field) => ({
+        value: "ana@example.com",
+        store: "logs",
+        row: 'entry 2 (error "request failed")',
+        field,
+      })),
+    );
+    await dispose();
+  });
+
+  it("hands it to the boot of each tenant's app, and logs through it on the console by default", async () => {
+    const witness = createWitness();
+    const given: (Witness | undefined)[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { boundaMiddleware, handleError, dispose } = createBounda({
+        key: uniqueKey(),
+        tenant: () => "acme",
+        boot: bootWith(given),
+        witness,
+      });
+      await boundaMiddleware(middlewareArgs().args, async () => undefined);
+      await handleError(new Error("no account for ana@example.com"), {
+        request: new Request("http://localhost/accounts"),
+      });
+      expect(given).toEqual([witness]);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect((await searched(witness)).map(({ store, field }) => `${store} ${field}`)).toEqual([
+        "logs fields.errorMessage",
+        "logs fields.errorStack",
+      ]);
+      await dispose();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("boots without one, as before, when it is given none", async () => {
+    const given: (Witness | undefined)[] = [];
+    const { boundaMiddleware, dispose } = createBounda({
+      key: uniqueKey(),
+      boot: bootWith(given),
+      logger: silentLogger,
+    });
+    await boundaMiddleware(middlewareArgs().args, async () => undefined);
+    expect(given).toEqual([undefined]);
+    await dispose();
   });
 });

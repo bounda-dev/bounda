@@ -35,6 +35,7 @@ import {
   type TenantForgottenResult,
   type TenantKeyVersions,
   type UnrestrictOptions,
+  type Witness,
   withErrorText,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
@@ -46,6 +47,7 @@ import { objectClock } from "./object-clock.ts";
 import { type RpcOutcome, settle } from "./outcome.ts";
 import type { DurableSqlStorage } from "./sql-database.ts";
 import { nextWake } from "./wake.ts";
+import { objectWitnessesOf } from "./witnesses.ts";
 
 export interface CreateBoundaObjectArgs<R extends Registry> {
   readonly registry: R;
@@ -280,9 +282,15 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 }: CreateBoundaObjectArgs<R>): BoundaObjectClass => {
   return class BoundaObject extends DurableObject implements BoundaObjectMethods {
     #app: BoundaApp<R> | undefined;
+    // What the object logs itself: through its witness too, when `witnessObjects` gave it one.
+    readonly #logger: Logger;
+    readonly #witness: Witness | undefined;
 
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
       super(ctx, env);
+      this.#witness = objectWitnessesOf(new.target)?.of(ctx.id.toString());
+      this.#witness?.watch(this);
+      this.#logger = this.#witness === undefined ? logger : this.#witness.logger(logger);
       void ctx.blockConcurrencyWhile(() => this.#open(env));
     }
 
@@ -305,6 +313,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         logger,
         clock: objectClock(clock),
         ...(ids === undefined ? {} : { ids }),
+        ...(this.#witness === undefined ? {} : { witness: this.#witness }),
       });
     }
 
@@ -356,17 +365,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
           const { done, position } = await app.rebuildReadModel(name, {
             maxEvents: eventsPerRebuildSlice,
           });
-          logger.info(done ? "bounda rebuild finished" : "bounda rebuild continues", {
+          this.#logger.info(done ? "bounda rebuild finished" : "bounda rebuild continues", {
             readModel: name,
             position,
           });
         } catch (error) {
           if (error instanceof RebuildSupersededError) {
-            logger.info("bounda rebuild slice taken over by another rebuild", { readModel: name });
+            this.#logger.info("bounda rebuild slice taken over by another rebuild", {
+              readModel: name,
+            });
             continue;
           }
           failed = true;
-          logger.error("bounda rebuild slice failed", {
+          this.#logger.error("bounda rebuild slice failed", {
             readModel: name,
             ...this.#errorFields(error),
           });
@@ -573,21 +584,21 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         rebuildFailed = await this.#continueRebuilds();
       } catch (error) {
         rebuildFailed = true;
-        logger.error("bounda rebuilds could not be listed", {
+        this.#logger.error("bounda rebuilds could not be listed", {
           ...this.#errorFields(error),
         });
       }
       try {
         ({ idle } = await this.#ready().runUntilIdle({ maxPasses: passesPerAlarm }));
       } catch (error) {
-        logger.error("bounda alarm failed; it will be retried", {
+        this.#logger.error("bounda alarm failed; it will be retried", {
           ...this.#errorFields(error),
         });
       }
       try {
         await this.#rearm(true, idle, rebuildFailed);
       } catch (error) {
-        logger.error("bounda alarm could not re-arm", {
+        this.#logger.error("bounda alarm could not re-arm", {
           ...this.#errorFields(error),
         });
       }

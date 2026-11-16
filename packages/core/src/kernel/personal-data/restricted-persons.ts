@@ -17,6 +17,7 @@ import {
 } from "../dispatch/delivery.ts";
 import type { ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
+import type { TracerFunction } from "../telemetry.ts";
 
 const REACTS_TO: ReadonlySet<string> = new Set(
   [PROCESSING_RESTRICTED_EVENT, PROCESSING_RESTRICTION_LIFTED_EVENT].map((type) =>
@@ -68,6 +69,7 @@ export interface CreateRestrictedPersonsSubscriberArgs {
   readonly readModel: Pick<ReadModelRuntime, "name" | "storage">;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
 }
 
 export interface CreateRestrictedPersonsSubscriberFunction {
@@ -84,6 +86,7 @@ export const createRestrictedPersonsSubscriber: CreateRestrictedPersonsSubscribe
   readModel,
   logger,
   errorText,
+  tracer,
 }) => {
   const name = restrictedPersonsSubscriberName(readModel.name);
   const { storage } = readModel;
@@ -110,6 +113,7 @@ export const createRestrictedPersonsSubscriber: CreateRestrictedPersonsSubscribe
     handles: (event) => REACTS_TO.has(qualifiedEventType(event.aggregateType, event.type)),
     logger,
     errorText,
+    tracer,
   });
   return { ...subscriber, reactsTo: (qualified) => REACTS_TO.has(qualified) };
 };

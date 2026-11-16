@@ -13,6 +13,7 @@ import type { Disclosures } from "../recipients/gate.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
+import type { TracerFunction } from "../telemetry.ts";
 import type { ProcessesRuntime } from "./build-processes.ts";
 import { createProcessRetry, type ProcessDeadLetters } from "./dead-letter-retry.ts";
 import { createDeadlineStep } from "./deadline-step.ts";
@@ -34,6 +35,7 @@ export interface CreateProcessRunnerArgs {
   readonly pipeline: CommandPipeline;
   readonly storage: AppStorage;
   readonly config: ResolvedConfig;
+  readonly tracer: TracerFunction;
   readonly personalCategories: PersonalCategories;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -59,6 +61,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   pipeline,
   storage,
   config,
+  tracer,
   ids,
   clock,
   pendingRetries,
@@ -79,6 +82,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     aggregates,
     pipeline,
     config,
+    tracer,
     personalCategories,
     ids,
     clock,

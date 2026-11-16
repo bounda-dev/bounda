@@ -90,6 +90,25 @@ export const LedgerStore = createBoundaObject({
 });
 
 /**
+ * The same app without policies or processes, recording every forgetting in `FORGET_LEDGER` and
+ * rebuilding one event per slice, whose objects the witness tests watch.
+ */
+export const WitnessedStore = createBoundaObject({
+  registry: quietRegistry,
+  config: {
+    storage: cloudflare(),
+    runtime: {
+      personalData: {
+        ...keys,
+        forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) },
+      },
+    },
+  },
+  clock,
+  eventsPerRebuildSlice: 1,
+});
+
+/**
  * The same app without policies and with a second read model, in small steps: one event per
  * batch, per rebuild slice and per alarm pass. Its ids are sequential and its logs are what the
  * tests read.

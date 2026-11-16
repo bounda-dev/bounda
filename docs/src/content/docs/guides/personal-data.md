@@ -2176,8 +2176,9 @@ a dead letter, a cancelled command's included, and each value a read model kept 
 `.personal()` for them before its category was forgotten. It searches every place the runtime keeps
 something, read as stored, never through the APIs that open fields: every table of the storage
 and of each read model's adapter, unmarked columns and JSON documents included, so a projection
-that copied the email into a column it did not mark is found; the forget ledger; and every entry
-the app logged through the test app's `logger`. A test app logs the text of errors so a failing
+that copied the email into a column it did not mark is found; the forget ledger; every entry
+the app logged through the test app's `logger`; and every span it started, its attributes, status,
+exceptions and events. A test app logs the text of errors so a failing
 test says what failed, which an app outside a test does not do by default (see
 [`runtime.telemetry.errorText`](/reference/observability/#error-text)): that text, in logs and
 spans, is searched only when the test's `config` sets `errorText` itself. A person given a key again after the forgetting
@@ -2207,29 +2208,16 @@ does.
 The options say what else to look for and where:
 
 ```ts
-import { expectForgotten, recordTelemetry } from "@bounda-dev/core/testing";
-
-const telemetry = recordTelemetry();
-try {
-  // ...
-  await expectForgotten(app, "c-1", {
-    values: ["Ana G.", "+34 600 123 456"],
-    telemetry,
-    places: { mailer: mailer.sent },
-  });
-} finally {
-  telemetry.stop();
-}
+await expectForgotten(app, "c-1", {
+  values: ["Ana G.", "+34 600 123 456"],
+  places: { mailer: mailer.sent },
+});
 ```
 
 - `values`: what a handler or a projection derived from the person's fields, a lowercased
   email or a formatted phone number, which no seal holds.
 - `before`: the person's [export](#exporting-a-persons-data), taken before they were forgotten;
   every value it opened is looked for.
-- `telemetry`: what `recordTelemetry()` recorded, so every span the runtime started, its
-  attributes, status, exceptions and events, is searched too. It registers a global
-  OpenTelemetry tracer provider until `stop()`, and throws when one is registered already, since
-  OpenTelemetry keeps the first.
 - `places`: anything else, under the name the report gives it: what a test double of a port was
   sent, so a test proves the [recipient's handler](#recipients) erased it there too.
 - `categories`: the [categories](#categories) to check alone, after
@@ -2243,15 +2231,9 @@ of something to look for: a person who still holds their keys, or one with no va
 and no `values`, rejects with an `Error` saying so, and so does one who still holds a key in force
 of a category `categories` names.
 
-`expectForgotten` also takes an adapter instead of the app, and then searches that adapter's
-tables for `values` and `before` alone: for an app built with `createApp` or `boot()`, or a
-Durable Object's storage, read from inside the object with `durableObjectAdapter` from
-`@bounda-dev/cloudflare` (see [Testing on Cloudflare](/adapters/cloudflare/#testing)). It reads
-the whole database, so point it only at a test's, and call it before `app.stop()`: an
-in-memory database is gone once the app stops. It works on every adapter: the in-memory one,
-SQLite, the Durable Object and PostgreSQL alike, each through its `inspect()`. A SQLite file
-[encrypted under the tenant's key](#encrypted-database-files) opens only through the adapter the
-app opened it with, `app.config.storage`.
+Each app records the spans it starts for its own witness, beside the tracer provider registered
+globally, which still receives every one, and without needing one: tests running in parallel see
+none of each other's spans, and a provider the test registers, an SDK's included, is left as it is.
 
 `expectRedacted` checks a [rectification](#correcting-a-persons-data): once fields of a person are
 redacted, that what they held can be read nowhere.
@@ -2266,10 +2248,10 @@ await app.runUntilIdle();
 await expectRedacted(app, "c-1");
 ```
 
-It looks for every value the test app's redactions of the person made unreadable, as each read
+It looks for every value the app's redactions of the person made unreadable, as each read
 before, and the `values` the test adds, where `expectForgotten` looks, every table as stored, the
-forget ledger, the logs and, with `telemetry`, the spans, with the same rules and options for
-`values`, `telemetry` and `places`; and since the person still holds their keys, it also opens
+forget ledger, the logs and the spans, with the same rules and options for `values` and
+`places`; and since the person still holds their keys, it also opens
 every value stored sealed that a key still held opens, so the old value copied into another event,
 a process's state, a command or a read model and left unredacted is found too. It rejects with
 `NotRedactedError`, whose `found` holds `{ value, store, row, field }` for each, a sealed one's
@@ -2320,7 +2302,7 @@ await app.forgetTenant("acme");
 await expectTenantForgotten(app);
 ```
 
-Given the test app, it looks for every value of every person the app sealed or a read model kept,
+Given the app, it looks for every value of every person the app sealed or a read model kept,
 and the `values` the test adds; given an adapter, such as one over a database restored from a copy,
 it checks that adapter's tables for `values` alone. It rejects with `TenantNotForgottenError`, whose
 `problems` list what is left beside values, and `found` the values, as `{ value, store, row,
@@ -2340,3 +2322,46 @@ clock.advance(31 * 86_400_000);
 await app.runUntilIdle();
 expect((await app.exportPersonalData("c-1")).events[0]?.data).toEqual({ email: null });
 ```
+
+### An app built otherwise
+
+An app built with `createApp` or `boot()`, those `createBounda` from `@bounda-dev/react-router`
+boots, and a Durable Object take a witness instead of being test apps: `createWitness()` from
+`@bounda-dev/core/testing` records what each app given it seals, keeps, logs and traces, as a test
+app does for itself, so the expectations look for the same values in the same places, with nothing
+passed by hand.
+
+```ts
+import { createApp } from "@bounda-dev/core";
+import { createWitness, expectForgotten } from "@bounda-dev/core/testing";
+
+const witness = createWitness();
+const app = await createApp({ registry, config, witness });
+await app.commands.registerCustomer({ customerId: "c-1", email: "ana@example.com", plan: "pro" });
+await app.forget("c-1");
+await app.runUntilIdle();
+await expectForgotten(app, "c-1");
+```
+
+`boot({ witness })` takes it as `createApp` does, and logs what it logs itself through it;
+`createBounda({ witness })` hands it to the boot of every app it serves, as `boot`'s `witness`, and
+logs what a request throws through it. The expectations take the app, a client of it, or the
+witness, which stands for every app it watches that has not stopped: pass the witness when the
+host keeps the app to itself, as `createBounda` does. `witness.logger(logger)` returns a logger
+whose every entry is searched too, for what a host or a test logs beside the app. The text of
+errors an app given a witness logs and traces is searched, since only its configuration made it
+write it. An app given none records nothing and costs nothing; a witness is for tests alone, as it
+keeps all it saw for as long as it is reachable.
+
+A Durable Object runs its app in `workerd`, from the Worker's module, which a test does not build:
+`witnessObjects` from `@bounda-dev/cloudflare/testing` gives every object of a class it opens from
+then on a witness of its own, and the expectations take the object inside `runInDurableObject`
+(see [Testing on Cloudflare](/adapters/cloudflare/#testing)).
+
+`expectForgotten` also takes an adapter instead, and then searches that adapter's tables for
+`values` and `before` alone: for a copy of a database restored from before the forgetting, or the
+storage of an app given no witness. It reads the whole database, so point it only at a test's, and
+call it before `app.stop()`: an in-memory database is gone once the app stops. It works on every
+adapter: the in-memory one, SQLite, the Durable Object and PostgreSQL alike, each through its
+`inspect()`. A SQLite file [encrypted under the tenant's key](#encrypted-database-files) opens only
+through the adapter the app opened it with, `app.config.storage`.

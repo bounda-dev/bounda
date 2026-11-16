@@ -1,14 +1,13 @@
 import { type Adapter, isAdapter } from "../adapter/adapter.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import type { SealedValue } from "../adapter/storage/personal-key-store.ts";
-import type { BoundaClient } from "../kernel/app.ts";
 import { isSealed, unseal } from "../kernel/personal-data/crypto.ts";
 import {
   REDACTION_SCRUB_COMMAND,
   type RedactionScrubPayload,
 } from "../kernel/personal-data/redaction.ts";
 import { leavesIn, needlesOf } from "../kernel/shared/value-search.ts";
-import { testAppsOf } from "./expect-forgotten.ts";
+import type { Witness } from "../kernel/witness.ts";
 import {
   type FoundValue,
   findIn,
@@ -17,7 +16,7 @@ import {
   placesOfTable,
   rowOfTable,
 } from "./places.ts";
-import type { TelemetryRecording } from "./telemetry.ts";
+import { watchedOf } from "./watched.ts";
 import type { TestWitness } from "./witness.ts";
 
 /**
@@ -60,10 +59,6 @@ export interface ExpectRedactedOptions {
    */
   readonly values?: readonly unknown[];
   /**
-   * The spans recorded while the test ran, from `recordTelemetry()`.
-   */
-  readonly telemetry?: TelemetryRecording;
-  /**
    * More places to search, each under the name the report gives it: what a test double of a port
    * was sent, a log of your own.
    */
@@ -71,9 +66,13 @@ export interface ExpectRedactedOptions {
 }
 
 /**
- * The app `createTestApp` returned, or an adapter.
+ * The app `createTestApp` returned, an app given a witness, a client of either, a Durable Object
+ * of a class `witnessObjects` watches, a witness, or an adapter.
  */
-export type ExpectRedactedTarget = Pick<BoundaClient, "exportPersonalData"> | Adapter;
+export type ExpectRedactedTarget =
+  | { exportPersonalData(personId: string, ...rest: never[]): Promise<unknown> }
+  | Witness
+  | Adapter;
 
 export interface ExpectRedactedFunction {
   (target: ExpectRedactedTarget, personId: string, options?: ExpectRedactedOptions): Promise<void>;
@@ -237,22 +236,17 @@ const sealedPlaces = async (
  * Rejects with an `Error` when it has nothing to look for. Works with any test runner.
  */
 export const expectRedacted: ExpectRedactedFunction = async (target, personId, options = {}) => {
-  const apps = testAppsOf(target);
-  if (apps === undefined && !isAdapter(target)) {
+  const watched = watchedOf("expectRedacted", target);
+  if (watched === undefined && !isAdapter(target)) {
     throw new TypeError(
-      "expectRedacted takes the app createTestApp returned, or an adapter: for an app built otherwise, pass its storage adapter with the values to look for",
+      "expectRedacted takes an app createTestApp returned or one given a witness, a client of one, a witness, a Durable Object of a class witnessObjects watches, or an adapter: for an app built without a witness, pass its storage adapter with the values to look for",
     );
   }
-  if (apps?.stopped() === true) {
-    throw new Error(
-      "expectRedacted reads what the app keeps, so call it before app.stop(): an in-memory database is gone once the app stops",
-    );
-  }
-  const adapters = apps?.adapters ?? [target as Adapter];
+  const adapters = watched?.adapters ?? [target as Adapter];
   const inspected = await Promise.all(adapters.map((adapter) => adapter.inspect()));
   const tables = inspected.flat();
   const needles = needlesOf({
-    values: [...(apps?.witness.redactedFor(personId) ?? []), ...(options.values ?? [])],
+    values: [...(watched?.witness.redactedFor(personId) ?? []), ...(options.values ?? [])],
     personId,
   });
   if (needles.length === 0) {
@@ -262,13 +256,12 @@ export const expectRedacted: ExpectRedactedFunction = async (target, personId, o
   }
   const places: Place[] = [
     ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
-    ...(apps === undefined ? [] : await sealedPlaces(tables, apps.witness)),
+    ...(watched === undefined ? [] : await sealedPlaces(tables, watched.witness)),
     ...(await outsidePlaces({
-      logs: apps?.witness.logs ?? [],
-      ledgers: apps?.ledgers ?? [],
-      telemetry: options.telemetry,
+      logs: watched?.witness.logs ?? [],
+      ledgers: watched?.ledgers ?? [],
+      traces: watched?.witness.traces ?? [],
       places: options.places,
-      errorText: apps?.errorTextChosen ?? true,
       advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
     })),
   ];

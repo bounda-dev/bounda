@@ -32,7 +32,7 @@ import {
   type SealingKeys,
 } from "../read-model/sealing-keys.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
-import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, type TracerFunction, traced } from "../telemetry.ts";
 
 export interface ProjectionTarget {
   readonly name: string;
@@ -69,6 +69,7 @@ export interface ProjectBatchArgs {
   readonly sealing: BatchSealing;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
   /**
    * Stop after `maxMs` on `clock`, once the event in hand is projected.
    */
@@ -138,6 +139,7 @@ export const projectBatch: ProjectBatchFunction = async ({
   sealing,
   logger,
   errorText,
+  tracer,
   budget: { clock, maxMs },
   rebuilding,
 }) => {
@@ -191,6 +193,7 @@ export const projectBatch: ProjectBatchFunction = async ({
     for (const projection of readModel.projectionsByEvent[qualified] ?? []) {
       try {
         await traced({
+          tracer,
           name: `bounda.projection ${readModel.name}.${projection.key}`,
           attributes: {
             [ATTRIBUTES.readModel]: readModel.name,
@@ -282,6 +285,7 @@ export interface CreateProjectionSubscriberArgs {
   readonly sealing: SealingSource;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
   readonly budget: ProjectionBudget;
 }
 
@@ -306,6 +310,7 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   sealing,
   logger,
   errorText,
+  tracer,
   budget,
 }) => {
   const name = projectionSubscriberName(readModel.name);
@@ -346,11 +351,13 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
         sealing: { layout, keys, indexer: sealing.indexer, redacted },
         logger,
         errorText,
+        tracer,
         budget,
       }),
     handles: (event) => reactsTo(qualifiedEventType(event.aggregateType, event.type)),
     logger,
     errorText,
+    tracer,
   });
   return { ...subscriber, reactsTo };
 };

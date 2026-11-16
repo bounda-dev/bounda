@@ -13,11 +13,11 @@ import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
-import { recordTelemetry } from "../testing/telemetry.ts";
 import { type BoundaApp, createApp } from "./app.ts";
 import { masterKey } from "./personal-data/master-key.ts";
 import { defineTenantKeyStore } from "./personal-data/tenant-key-source.ts";
 import { UNWRAPPED_KEY_TTL_MS } from "./personal-data/wrapped-keys.ts";
+import { installFakeTelemetry } from "./telemetry-fake.ts";
 
 interface CustomerRow {
   readonly customerId: string;
@@ -271,7 +271,7 @@ describe("the tenant of an app", () => {
   });
 
   it("traces each of its calls, and logs the version a rotation put in force", async () => {
-    const telemetry = recordTelemetry();
+    const telemetry = installFakeTelemetry();
     try {
       const infos: unknown[][] = [];
       const app = await createApp({
@@ -299,7 +299,7 @@ describe("the tenant of an app", () => {
         "bounda.operation forgetTenant",
       ]);
     } finally {
-      telemetry.stop();
+      telemetry.restore();
     }
   });
 

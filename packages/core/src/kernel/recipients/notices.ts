@@ -26,7 +26,13 @@ import type { ReactionOutcome } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
 import { runAttempt } from "../shared/reaction-attempt.ts";
 import { withTimeout } from "../shared/timeout.ts";
-import { ATTRIBUTES, actorAttribute, deadLettered, traced } from "../telemetry.ts";
+import {
+  ATTRIBUTES,
+  actorAttribute,
+  deadLettered,
+  type TracerFunction,
+  traced,
+} from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { RECIPIENT_EVENT_TYPES, type RecipientEvent, touchedBy, within } from "./addressing.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
@@ -111,6 +117,7 @@ export interface CreateRecipientNoticesArgs {
   readonly recipients: RecipientsRuntime;
   readonly storage: Pick<AppStorage, "eventStore" | "recipients">;
   readonly config: ResolvedConfig;
+  readonly tracer: TracerFunction;
   readonly clock: Clock;
   readonly recordAccess: RecordAccess;
 }
@@ -165,6 +172,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
   recipients,
   storage,
   config,
+  tracer,
   clock,
   recordAccess,
 }) => ({
@@ -214,6 +222,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
       (outcome) => record(outcome, false),
       () =>
         traced({
+          tracer,
           errorText: config.runtime.telemetry.errorText,
           name: `bounda.recipient ${recipient.port}`,
           attributes: {

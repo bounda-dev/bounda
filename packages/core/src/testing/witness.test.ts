@@ -7,9 +7,20 @@ import {
 } from "../adapter/testing/fixtures.ts";
 import type { LogFields } from "../contracts/logger.ts";
 import { silentLogger } from "../contracts/logger.ts";
+import { type AppWitness, witnessHooksOf } from "../kernel/witness.ts";
 import { memory } from "../memory/index.ts";
 import { fieldBuilder as f } from "../modules/view.ts";
-import { testWitnessOf } from "./witness.ts";
+import { type TestWitness, testWitnessOf } from "./witness.ts";
+
+// What one app over the witness is told through, the same for every call on the same witness.
+const attachedTo = new WeakMap<TestWitness, AppWitness>();
+const appOf = (witness: TestWitness): AppWitness => {
+  const known = attachedTo.get(witness);
+  if (known !== undefined) return known;
+  const attached = witnessHooksOf(witness.witness).attach({ searchErrorText: true });
+  attachedTo.set(witness, attached);
+  return attached;
+};
 
 const sealed = (person: string, data: string, key = `fp-${person}`) => ({
   $personal: { person, key, iv: "iv", data },
@@ -52,9 +63,9 @@ describe("the witness of a test app's storage", () => {
     const witness = testWitnessOf(adapter);
     expect(testWitnessOf(adapter)).toBe(witness);
     expect(testWitnessOf(memory())).not.toBe(witness);
-    expect(witness.storage(adapter)).toBe(witness.storage(adapter));
-    expect(witness.storage(adapter)).not.toBe(adapter);
-    expect(witness.storage(adapter).inspect).toBe(adapter.inspect);
+    expect(appOf(witness).storage(adapter)).toBe(appOf(witness).storage(adapter));
+    expect(appOf(witness).storage(adapter)).not.toBe(adapter);
+    expect(appOf(witness).storage(adapter).inspect).toBe(adapter.inspect);
   });
 
   it("observes the adapter an encrypted file opens as, in its place", async () => {
@@ -64,7 +75,7 @@ describe("the witness of a test app's storage", () => {
       encryptedFile: { database: "app.db", open: async () => opened },
     };
     const witness = testWitnessOf(adapter);
-    const observed = witness.storage(adapter);
+    const observed = appOf(witness).storage(adapter);
     const keyed = await observed.encryptedFile?.open({
       keys: {} as never,
       logger: {
@@ -74,14 +85,14 @@ describe("the witness of a test app's storage", () => {
         error: () => undefined,
       },
     });
-    expect(keyed).toBe(witness.storage(opened));
-    expect(witness.storage(memory()).encryptedFile).toBeUndefined();
+    expect(keyed).toBe(appOf(witness).storage(opened));
+    expect(appOf(witness).storage(memory()).encryptedFile).toBeUndefined();
   });
 
   it("keeps every envelope a store is handed, however deep, but no error text, with the key that opens it", async () => {
     const adapter = memory();
     const witness = testWitnessOf(adapter);
-    const storage = await witness.storage(adapter).createStorage();
+    const storage = await appOf(witness).storage(adapter).createStorage();
     await storage.scheduler.schedule({
       dedupeKey: "command:c1",
       command: testCommand("1", {
@@ -102,7 +113,7 @@ describe("the witness of a test app's storage", () => {
       } as never);
     });
     const key = { fingerprint: "fp-c-1", cryptoKey: {} as CryptoKey, retained: false };
-    witness.onPersonalKey("c-1", key);
+    appOf(witness).onPersonalKey("c-1", key);
     expect(witness.sealedFor("c-1")).toEqual([
       { envelope: sealed("c-1", "one").$personal, key },
       { envelope: sealed("c-1", "two", "fp-other").$personal, key: null },
@@ -114,7 +125,7 @@ describe("the witness of a test app's storage", () => {
   it("keeps what a read model writes in its personal fields, by person, until they are forgotten", async () => {
     const adapter = memory();
     const witness = testWitnessOf(adapter);
-    const observed = witness.storage(adapter);
+    const observed = appOf(witness).storage(adapter);
     const storage = await observed.createStorage();
     const model = await observed.createReadModel<Row>({
       name: "orders",
@@ -158,7 +169,7 @@ describe("the witness of a test app's storage", () => {
   it("keeps nothing of a row that names nobody", async () => {
     const adapter = memory();
     const witness = testWitnessOf(adapter);
-    const observed = witness.storage(adapter);
+    const observed = appOf(witness).storage(adapter);
     const storage = await observed.createStorage();
     const model = await observed.createReadModel<{ readonly id: string; readonly note?: string }>({
       name: "notes",
@@ -173,7 +184,7 @@ describe("the witness of a test app's storage", () => {
   it("records every entry logged, and hands it on", () => {
     const witness = testWitnessOf(memory());
     const seen: [string, string, LogFields | undefined][] = [];
-    const logger = witness.logger({
+    const logger = appOf(witness).logger({
       debug: (message, fields) => seen.push(["debug", message, fields]),
       info: (message, fields) => seen.push(["info", message, fields]),
       warn: (message, fields) => seen.push(["warn", message, fields]),
@@ -184,10 +195,10 @@ describe("the witness of a test app's storage", () => {
     logger.warn("w");
     logger.error("e", { b: 2 });
     expect(witness.logs).toEqual([
-      { level: "debug", message: "d", fields: undefined },
-      { level: "info", message: "i", fields: { a: 1 } },
-      { level: "warn", message: "w", fields: undefined },
-      { level: "error", message: "e", fields: { b: 2 } },
+      { level: "debug", message: "d", fields: undefined, searchErrorText: true },
+      { level: "info", message: "i", fields: { a: 1 }, searchErrorText: true },
+      { level: "warn", message: "w", fields: undefined, searchErrorText: true },
+      { level: "error", message: "e", fields: { b: 2 }, searchErrorText: true },
     ]);
     expect(seen).toEqual([
       ["debug", "d", undefined],

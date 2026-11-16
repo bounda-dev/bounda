@@ -4,6 +4,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { tracer } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { advanceUntilWaiting, createRecordingLogger } from "../test-support.ts";
 import {
@@ -70,6 +71,7 @@ describe("createCheckpointedSubscriber", () => {
     const { claim } = transactional(checkpointStore, "partial");
     const seen: number[][] = [];
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "partial",
       kind: "projection",
       position: () => checkpointStore.get("partial"),
@@ -101,6 +103,7 @@ describe("createCheckpointedSubscriber", () => {
     transactions.acquired = false;
     let processed = 0;
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "held-elsewhere",
       kind: "projection",
       position: () => checkpointStore.get("held-elsewhere"),
@@ -130,6 +133,7 @@ describe("createCheckpointedSubscriber", () => {
     const outcomes: number[] = [0];
     const { logger, entries } = createRecordingLogger();
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "undone",
       kind: "projection",
       position: () => checkpointStore.get("undone"),
@@ -168,6 +172,7 @@ describe("createCheckpointedSubscriber", () => {
     let processed = 0;
     const { logger, entries } = createRecordingLogger();
     const subscriber = createCheckpointedSubscriber<CheckpointClaim>({
+      tracer,
       name: "stale",
       kind: "projection",
       position: () => checkpointStore.get("stale"),
@@ -201,6 +206,7 @@ describe("createCheckpointedSubscriber", () => {
     const seen: number[][] = [];
     const { logger, entries } = createRecordingLogger();
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "poisoned",
       kind: "projection",
       position: () => checkpointStore.get("poisoned"),
@@ -253,6 +259,7 @@ describe("createCheckpointedSubscriber", () => {
     const { claim } = transactional(checkpointStore, "shaky");
     const { logger, entries } = createRecordingLogger();
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "shaky",
       kind: "projection",
       position: () => checkpointStore.get("shaky"),
@@ -281,6 +288,7 @@ describe("createCheckpointedSubscriber", () => {
     const { claim, transactions } = transactional(checkpointStore, "contended");
     const { logger, entries } = createRecordingLogger();
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "contended",
       kind: "projection",
       position: () => checkpointStore.get("contended"),
@@ -305,6 +313,7 @@ describe("createCheckpointedSubscriber", () => {
     const { claim } = transactional(checkpointStore, "overtaken");
     const { logger, entries } = createRecordingLogger();
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "overtaken",
       kind: "projection",
       position: () => checkpointStore.get("overtaken"),
@@ -338,6 +347,7 @@ describe("createCheckpointedSubscriber", () => {
     const { checkpointStore, read } = await setup(2);
     const { claim, transactions } = transactional(checkpointStore, "head");
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "head",
       kind: "projection",
       position: () => checkpointStore.get("head"),
@@ -366,6 +376,7 @@ describe("createCheckpointedSubscriber", () => {
     const { checkpointStore, read } = await setup(0);
     const { claim, transactions } = transactional(checkpointStore, "quiet");
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "quiet",
       kind: "projection",
       position: () => checkpointStore.get("quiet"),
@@ -402,6 +413,7 @@ describe("a checkpointed subscriber that says what it handles", () => {
     const { claim, transactions } = transactional(checkpointStore, "picky");
     const seen: number[][] = [];
     const subscriber = createCheckpointedSubscriber({
+      tracer,
       name: "picky",
       kind: "projection",
       position: () => checkpointStore.get("picky"),
@@ -452,6 +464,7 @@ describe("a checkpointed subscriber that says what it handles", () => {
     const { checkpointStore } = await setup(0);
     const handles = (event: StoredEvent) => event.position > 1;
     const wrapped = checkpointedByStore({
+      tracer,
       subscriber: {
         name: "plain",
         kind: "policy",
@@ -464,6 +477,7 @@ describe("a checkpointed subscriber that says what it handles", () => {
     });
     expect(wrapped.handles).toBe(handles);
     const bare = checkpointedByStore({
+      tracer,
       subscriber: { name: "bare", kind: "policy", process: async (events) => events.length },
       checkpointStore,
       logger: silentLogger,
@@ -478,6 +492,7 @@ describe("the dispatcher with a subscriber at rest", () => {
     const { eventStore, checkpointStore } = await setup(count);
     const writes: number[] = [];
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -542,6 +557,7 @@ describe("the dispatcher with a subscriber at rest", () => {
       process: async (events: readonly StoredEvent[]) => events.length,
     });
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore: {
         ...eventStore,
@@ -582,6 +598,7 @@ describe("the dispatcher with a checkpointed subscriber", () => {
     transactions.acquired = false;
     const outcomes: DeliveryOutcome[] = [];
     const inner = createCheckpointedSubscriber({
+      tracer,
       name: "shared",
       kind: "projection",
       position: () => checkpointStore.get("shared"),
@@ -592,6 +609,7 @@ describe("the dispatcher with a checkpointed subscriber", () => {
     });
     const clock = createFixedClock();
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,

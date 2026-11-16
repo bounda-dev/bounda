@@ -1,24 +1,9 @@
-import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
+import type { AppWitness } from "../witness.ts";
 import type { PersonalKey } from "./crypto.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
-/**
- * What `createTestApp` is told of while the app runs, so that `expectForgotten` can open what was
- * sealed under a key the app has since destroyed, and read the forget ledger the app opened, and
- * `expectRedacted` knows each value a redaction made unreadable.
- */
-export interface PersonalDataWitness {
-  onPersonalKey(person: string, key: PersonalKey): void;
-  onForgetLedger(ledger: ForgetLedger): void;
-  /**
-   * The values a redaction made unreadable, as they read before, and the key it sealed them under
-   * and let go.
-   */
-  onRedacted?(person: string, values: readonly unknown[], key: PersonalKey): void;
-}
-
 export interface WitnessedWrappingFunction {
-  (wrapping: PersonalKeyWrapping, witness: PersonalDataWitness): PersonalKeyWrapping;
+  (wrapping: PersonalKeyWrapping, witness: Pick<AppWitness, "onPersonalKey">): PersonalKeyWrapping;
 }
 
 // Every key the kernel seals or opens with comes out of `held`, `opened`, `heldAll`, `heldAllOf`,

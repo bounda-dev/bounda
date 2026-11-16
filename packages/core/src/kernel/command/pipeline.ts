@@ -59,7 +59,15 @@ import { actedBy } from "../shared/causation.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import { ATTRIBUTES, actorAttribute, METRICS, meter, SPAN_EVENTS, traced } from "../telemetry.ts";
+import {
+  ATTRIBUTES,
+  actorAttribute,
+  METRICS,
+  meter,
+  SPAN_EVENTS,
+  type TracerFunction,
+  traced,
+} from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import { fingerprintOf } from "./fingerprint.ts";
 import { validatePayload } from "./validate.ts";
@@ -122,6 +130,7 @@ export interface CreateCommandPipelineArgs {
   readonly loader: AggregateLoader;
   readonly storage: AppStorage;
   readonly config: ResolvedConfig;
+  readonly tracer: TracerFunction;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -423,6 +432,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   loader,
   storage,
   config,
+  tracer,
   ids,
   clock,
   logger,
@@ -781,6 +791,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     };
 
     return traced({
+      tracer,
       errorText: config.runtime.telemetry.errorText,
       name: `bounda.command ${type}`,
       attributes: {

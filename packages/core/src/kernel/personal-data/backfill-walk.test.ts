@@ -7,7 +7,7 @@ import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { ATTRIBUTES } from "../telemetry.ts";
+import { ATTRIBUTES, tracer } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { newStoredKey, openedKey, testWrapping } from "../test-support.ts";
 import {
@@ -108,6 +108,7 @@ interface WalkerArgs {
 const walker = ({ storage, marks = "m1", batchSize = 10, logger = silentLogger }: WalkerArgs) => {
   const clock = createFixedClock(START);
   const backfill = createPersonalDataBackfill({
+    tracer,
     storage,
     reading: storage.eventStore,
     atRest: null,

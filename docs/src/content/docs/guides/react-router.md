@@ -357,7 +357,7 @@ import { createRequestHandler } from "react-router";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
-export const Store = createBoundaObject({ registry, config });
+export class Store extends createBoundaObject({ registry, config }) {}
 
 const handler = createRequestHandler(
   () => import("virtual:react-router/server-build"),

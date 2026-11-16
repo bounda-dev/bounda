@@ -15,7 +15,7 @@ import {
   restrictionViewOf,
 } from "../personal-data/restricted-reads.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
-import { tracedOperation } from "../telemetry.ts";
+import { type TracerFunction, tracedOperation } from "../telemetry.ts";
 
 /**
  * A subscriber's last failure, with the error's text opened: `null` once the person the event
@@ -59,6 +59,7 @@ export interface CreateSubscriberFailuresArgs {
   readonly actor: string | undefined;
   readonly recordAccess: RecordAccess;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
 }
 
 export interface CreateSubscriberFailuresFunction {
@@ -75,6 +76,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
   actor,
   recordAccess,
   errorText,
+  tracer,
 }) => {
   const opened = async (
     { errorMessage, errorStack, ...failure }: StoredSubscriberFailure,
@@ -169,6 +171,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
   return {
     list: (options) =>
       tracedOperation({
+        tracer,
         operation: "subscriberFailures.list",
         actor,
         errorText,
@@ -176,6 +179,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
       }),
     get: (subscriber, options) =>
       tracedOperation({
+        tracer,
         operation: "subscriberFailures.get",
         actor,
         errorText,

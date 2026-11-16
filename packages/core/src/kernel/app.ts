@@ -1,5 +1,5 @@
 import type { ObservableResult } from "@opentelemetry/api";
-import { isAdapter } from "../adapter/adapter.ts";
+import { type Adapter, isAdapter } from "../adapter/adapter.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type {
@@ -99,7 +99,7 @@ import { createKeyRotation } from "./personal-data/rotation.ts";
 import { guardClient } from "./personal-data/tenant-guard.ts";
 import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
 import { checkPersonId } from "./personal-data/transact.ts";
-import { type PersonalDataWitness, witnessedWrapping } from "./personal-data/witness.ts";
+import { witnessedWrapping } from "./personal-data/witness.ts";
 import { keylessWrapping, UNWRAPPED_KEY_TTL_MS } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
@@ -143,8 +143,17 @@ import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts
 import { createRestoreWatch, GENERATION_INTERVAL_MS, type Restored } from "./shared/restores.ts";
 import { runtimeText } from "./shared/runtime-text.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
+import { teeTracer } from "./span-recorder.ts";
 import { type AppStatus, readAppStatus } from "./status.ts";
-import { ATTRIBUTES, METRICS, meter, tracedOperation } from "./telemetry.ts";
+import {
+  ATTRIBUTES,
+  METRICS,
+  meter,
+  type TracerFunction,
+  tracedOperation,
+  tracer,
+} from "./telemetry.ts";
+import { type AppWitness, type Witness, witnessedConfig, witnessHooksOf } from "./witness.ts";
 
 /**
  * What `catchUpReadModels` waits for: every read model when empty, or only what one dispatch
@@ -539,6 +548,12 @@ export type CreateAppArgs<R extends Registry> = {
    * with one store.
    */
   readonly tenant?: string | undefined;
+  /**
+   * For tests: what `createWitness()` from `@bounda-dev/core/testing` returns, which records what
+   * the app seals, keeps, logs and traces for `expectForgotten` and the other expectations. Left
+   * out, the app records nothing.
+   */
+  readonly witness?: Witness | undefined;
 } & EnvSection<R>;
 
 export interface CreateAppFunction {
@@ -558,8 +573,9 @@ export const createApp: CreateAppFunction = <R extends Registry>({
   clock = systemClock,
   env = {},
   tenant,
+  witness,
 }: CreateAppArgs<R>): Promise<BoundaApp<R>> =>
-  assembleApp<R>({ registry, config, logger, ids, clock, env, tenant });
+  assembleApp<R>({ registry, config, logger, ids, clock, env, tenant, witness });
 
 export interface AssembleAppArgs<R extends Registry> {
   readonly registry: R;
@@ -582,11 +598,42 @@ export interface AssembleAppArgs<R extends Registry> {
    * `app/audit.ts`, and to the logger without it.
    */
   readonly onPersonalDataAccess?: OnPersonalDataAccess | undefined;
+  readonly witness?: Witness | undefined;
   /**
-   * Given by `createTestApp`: told of the keys and the ledger the app holds.
+   * Given by `createTestApp`, `false` unless the test chose `runtime.telemetry.errorText`: the
+   * text of errors it makes the app log and trace is not searched.
    */
-  readonly witness?: PersonalDataWitness | undefined;
+  readonly searchErrorText?: boolean;
 }
+
+const watchedClient = <R extends Registry>(
+  client: BoundaClient<R>,
+  witness: AppWitness,
+): BoundaClient<R> => ({
+  ...client,
+  as: (actor) => {
+    const next = watchedClient(client.as(actor), witness);
+    witness.watch(next);
+    return next;
+  },
+});
+
+const watchedApp = <R extends Registry>(
+  app: BoundaApp<R>,
+  witness: AppWitness,
+  adapters: readonly Adapter[],
+): BoundaApp<R> => {
+  const watched: BoundaApp<R> = {
+    ...app,
+    as: watchedClient(app, witness).as,
+    stop: () => {
+      witness.onStopped();
+      return app.stop();
+    },
+  };
+  witness.onApp(watched, adapters);
+  return watched;
+};
 
 export interface AssembleAppFunction {
   <R extends Registry>(args: AssembleAppArgs<R>): Promise<BoundaApp<R>>;
@@ -594,8 +641,8 @@ export interface AssembleAppFunction {
 
 export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   registry,
-  config: rawConfig,
-  logger: rawLogger,
+  config: givenConfig,
+  logger: givenLogger,
   ids,
   clock,
   env,
@@ -604,7 +651,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   pendingRetries = ignoredRetries,
   onPersonalDataAccess,
   witness,
+  searchErrorText = true,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
+  // Attached first, so every store call, log entry and span of the app reaches it.
+  const watching =
+    witness === undefined ? undefined : witnessHooksOf(witness).attach({ searchErrorText });
+  const rawConfig = watching === undefined ? givenConfig : witnessedConfig(givenConfig, watching);
+  const rawLogger = watching === undefined ? givenLogger : watching.logger(givenLogger);
+  const appTracer: TracerFunction =
+    watching === undefined ? tracer : () => teeTracer(tracer(), watching.tracer);
   validateRegistry(registry);
   const unkeyed = resolveConfig(rawConfig);
   checkConfigNames({ registry, config: unkeyed });
@@ -660,6 +715,17 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
       );
     }
+    // The app, its clients, and every adapter it opened stand for the witness while it runs.
+    const watched = (app: BoundaApp<R>): BoundaApp<R> =>
+      watching === undefined
+        ? app
+        : watchedApp(
+            app,
+            watching,
+            [config.storage, ...Object.values(config.readModels)]
+              .filter(isAdapter)
+              .filter((store, index, all) => all.indexOf(store) === index),
+          );
     const adapted = await config.storage.createStorage();
     opened.unshift(() => adapted.close());
     const ledgerConfig = config.runtime.personalData.forgetLedger;
@@ -676,7 +742,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         tenant,
         keepForMs: keepForMs ?? undefined,
       });
-      witness?.onForgetLedger(ledger);
+      watching?.onForgetLedger(ledger);
       if (ledger.close !== undefined) opened.unshift(ledger.close.bind(ledger));
       forgetLedger = {
         config: ledgerConfig,
@@ -734,7 +800,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // Closed last, after the storage, as `stop` closes them.
     if (hierarchy !== null) opened.push(hierarchy.close);
     const keyed = hierarchy?.wrapping ?? keylessWrapping();
-    const wrapping = witness === undefined ? keyed : witnessedWrapping(keyed, witness);
+    const wrapping = watching === undefined ? keyed : witnessedWrapping(keyed, watching);
     // Opened at once, never inside a transaction: none of a forgotten tenant, whose key is gone.
     const databaseKey =
       hierarchy === null || hierarchy.tenantKeys.forgotten() !== null
@@ -778,7 +844,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
     });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
-    const notices = createRecipientNotices({ recipients, storage, config, clock, recordAccess });
+    const notices = createRecipientNotices({
+      tracer: appTracer,
+      recipients,
+      storage,
+      config,
+      clock,
+      recordAccess,
+    });
     const delivery = createRecipientDelivery({
       recipients,
       notices,
@@ -814,6 +887,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       });
     const forgottenRunnerOf = (keys: NonNullable<typeof hierarchy>): ForgottenRunner =>
       createForgottenRunner({
+        tracer: appTracer,
         // Its events as stored: the notices read no personal field, and a copy restored under the
         // app holds keys whose tenant's key is gone, which opening would refuse.
         storage: { ...storage, eventStore: written.eventStore },
@@ -860,22 +934,24 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         tenant: tenantId,
         forgottenAt: forgottenAtStart.at,
       });
-      return forgottenApp<R>({
-        config,
-        role: config.runtime.role,
-        runner: forgottenRunnerOf(hierarchy),
-        forgotten: forgottenError,
-        forgetting: forgottenAtStart,
-        tenant: tenantId,
-        close: async () => {
-          await restores.flush();
-          try {
-            for (const close of opened) await close();
-          } finally {
-            await ports.dispose();
-          }
-        },
-      });
+      return watched(
+        forgottenApp<R>({
+          config,
+          role: config.runtime.role,
+          runner: forgottenRunnerOf(hierarchy),
+          forgotten: forgottenError,
+          forgetting: forgottenAtStart,
+          tenant: tenantId,
+          close: async () => {
+            await restores.flush();
+            try {
+              for (const close of opened) await close();
+            } finally {
+              await ports.dispose();
+            }
+          },
+        }),
+      );
     }
     const sealing = await openReadModelSealing({
       layouts: Object.values(readModels.byName).map(({ layout }) => layout),
@@ -908,6 +984,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const marks = marksFingerprint({ aggregates, processes: processDefinitions });
     const earlierAnswers = createEarlierAnswers({ storage, atRest: storage.atRest, clock });
     const pipeline = createCommandPipeline({
+      tracer: appTracer,
       aggregates,
       loader,
       storage,
@@ -924,6 +1001,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
     });
     const queryRunner = createQueryRunner({
+      tracer: appTracer,
       queries: buildQueries({ readModels }),
       readModels,
       sealing,
@@ -935,6 +1013,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       standing: (subscriber) => dispatcher.positionOf(subscriber),
     });
     const processes = createProcessRunner({
+      tracer: appTracer,
       processes: processDefinitions,
       aggregates,
       pipeline,
@@ -951,6 +1030,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     const policies = buildPolicies({ registry, aggregates });
     const policyExecutor = createPolicyExecutor({
+      tracer: appTracer,
       aggregates,
       pipeline,
       config,
@@ -1041,7 +1121,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       logger,
       concurrencyRetries,
-      onRedacted: witness?.onRedacted,
+      onRedacted: watching?.onRedacted,
     };
     const retentionDue = recordsActivity
       ? retentionDueOf({
@@ -1091,6 +1171,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       walked === null || marks === null
         ? undefined
         : createPersonalDataBackfill({
+            tracer: appTracer,
             storage: written,
             reading: storage.eventStore,
             atRest: storage.atRest,
@@ -1121,11 +1202,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // A pass checks first whether the tenant was forgotten elsewhere, once the check exists.
     let tenantCheck: () => Promise<void> = async () => undefined;
     const dispatcher = createDispatcher({
+      tracer: appTracer,
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
       subscribers: [
         ...Object.values(readModels.byName).map((readModel) =>
           createProjectionSubscriber({
+            tracer: appTracer,
             readModel,
             sealing,
             logger,
@@ -1136,7 +1219,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ...restrictedPersonsHosts({
           readModels: Object.values(readModels.byName),
           adapterOf: (name) => adapterForReadModel({ name, config }),
-        }).map((readModel) => createRestrictedPersonsSubscriber({ readModel, logger, errorText })),
+        }).map((readModel) =>
+          createRestrictedPersonsSubscriber({ tracer: appTracer, readModel, logger, errorText }),
+        ),
         ...following,
         ...Object.values(aggregates.byName)
           .filter(takesSnapshots)
@@ -1182,6 +1267,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       errorText,
     });
     const worker = createScheduledCommandWorker({
+      tracer: appTracer,
       storage,
       aggregates,
       pipeline,
@@ -1378,7 +1464,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       name: string,
       options: RebuildReadModelOptions & { readonly actor?: string } = {},
     ) =>
-      rebuildReadModelWith({ registry, config: keyedConfig, name, logger, wrapping, ...options });
+      rebuildReadModelWith({
+        tracer: appTracer,
+        registry,
+        config: keyedConfig,
+        name,
+        logger,
+        wrapping,
+        ...options,
+      });
     const keysFor = (operation: string): NonNullable<typeof hierarchy> => {
       if (hierarchy === null) {
         throw new ConfigurationError(
@@ -1563,8 +1657,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }) as CommandsFacade<R>,
         queries: queryRunner.facade(actor) as QueriesFacade<R>,
         getLag,
-        status: () => tracedOperation({ errorText, operation: "status", actor, run: status }),
+        status: () =>
+          tracedOperation({
+            tracer: appTracer,
+            errorText,
+            operation: "status",
+            actor,
+            run: status,
+          }),
         subscriberFailures: createSubscriberFailures({
+          tracer: appTracer,
           store: written.subscriberFailures,
           keys: storage.personalKeys,
           persons: storage.persons,
@@ -1574,6 +1676,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }),
         events,
         deadLetters: createDeadLetters({
+          tracer: appTracer,
           storage,
           retries,
           processes,
@@ -1585,6 +1688,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }),
         rebuildReadModel: (name) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "rebuildReadModel",
             actor,
@@ -1592,6 +1696,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         forget: (personId, options) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "forget",
             actor,
@@ -1612,6 +1717,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         recipientsOf: (personId) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "recipientsOf",
             actor,
@@ -1641,6 +1747,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         exportPersonalData: (personId) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "exportPersonalData",
             actor,
@@ -1648,6 +1755,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         restrict: (personId, options) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "restrict",
             actor,
@@ -1667,6 +1775,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         unrestrict: (personId, options) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "unrestrict",
             actor,
@@ -1686,6 +1795,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         redact: (personId, options) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "redact",
             actor,
@@ -1699,6 +1809,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         forgetTenant: (name, options) =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "forgetTenant",
             actor,
@@ -1706,6 +1817,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         rotateTenantKey: () =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "rotateTenantKey",
             actor,
@@ -1721,6 +1833,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
         retireTenantKeys: () =>
           tracedOperation({
+            tracer: appTracer,
             errorText,
             operation: "retireTenantKeys",
             actor,
@@ -1890,7 +2003,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
     };
     // The app's own `rebuildReadModel` takes the place of the client's.
-    return { ...clientOf(undefined), ...lifecycle } as BoundaApp<R>;
+    return watched({ ...clientOf(undefined), ...lifecycle } as BoundaApp<R>);
   } catch (error) {
     for (const close of opened) await close().catch(() => undefined);
     await ports.dispose();

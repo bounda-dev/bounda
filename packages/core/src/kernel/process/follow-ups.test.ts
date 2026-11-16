@@ -8,6 +8,7 @@ import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { type CreateReactiveHarnessArgs, createReactiveHarness } from "../reactive-harness.ts";
+import { tracer } from "../telemetry.ts";
 import {
   createRecordingLogger,
   type OrderProcessConfigArgs,
@@ -148,6 +149,7 @@ const setUp = async (
   beforeTimeout = undefined;
   const harness = await createReactiveHarness({ registry: app, config, adapter: adapter() });
   const deadLetters = createDeadLetters({
+    tracer,
     recordAccess: unrecordedAccess,
     storage: harness.storage,
     retries: harness.retries,

@@ -12,6 +12,7 @@ import { type BoundaApp, createApp } from "../kernel/app.ts";
 import { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 import { withErrorText } from "../kernel/shared/error-text.ts";
 import { guardedLogger } from "../kernel/shared/guarded-logger.ts";
+import type { Witness } from "../kernel/witness.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppRegistry } from "../register/index.ts";
 import { createConsoleLogger } from "./console-logger.ts";
@@ -70,6 +71,12 @@ export interface BootArgs<R extends Registry = AppRegistry> {
    * Defaults to UUID v7 ids.
    */
   readonly ids?: IdGenerator;
+  /**
+   * For tests: what `createWitness()` from `@bounda-dev/core/testing` returns, which records what
+   * the app seals, keeps, logs and traces, and what `boot` logs itself, for `expectForgotten` and
+   * the other expectations.
+   */
+  readonly witness?: Witness | undefined;
   /**
    * Defaults to `systemClock`.
    */
@@ -233,9 +240,13 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   ids,
   clock,
   tenant,
+  witness,
 }: BootArgs<R> = {}): Promise<BoundaApp<R>> => {
   // What boot logs itself carries no error; the app logs under the rule its configuration sets.
-  const logger = guardedLogger(rawLogger, "omit");
+  const logger = guardedLogger(
+    witness === undefined ? rawLogger : witness.logger(rawLogger),
+    "omit",
+  );
   const project = await loadProject<R>({
     root,
     configPath,
@@ -257,6 +268,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
     ...(ids === undefined ? {} : { ids }),
     ...(clock === undefined ? {} : { clock }),
     ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
+    ...(witness === undefined ? {} : { witness }),
   });
 
   if (!signals) return app;
@@ -271,5 +283,7 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
-  return { ...app, stop };
+  const booted = { ...app, stop };
+  witness?.watch(booted);
+  return booted;
 };

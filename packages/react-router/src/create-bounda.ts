@@ -9,6 +9,7 @@ import {
   type Registry,
   readYourWrites,
   resolveErrorText,
+  type Witness,
 } from "@bounda-dev/core";
 import type { ErrorText } from "@bounda-dev/core/config";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
@@ -22,6 +23,10 @@ export interface BootBoundaArgs {
    * The tenant the app serves, for a project whose `tenant` names one per request.
    */
   readonly tenant?: string;
+  /**
+   * The `witness` `createBounda` was given, for `boot()` or `createApp` to take as theirs.
+   */
+  readonly witness?: Witness;
 }
 
 /**
@@ -79,6 +84,13 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    * and `DEFAULT_TENANT_IDLE_MS`.
    */
   readonly tenantApps?: TenantAppsOptions | undefined;
+  /**
+   * For tests: what `createWitness()` from `@bounda-dev/core/testing` returns. `boot` receives it
+   * with each app's arguments, the default one handing it to `boot()`, so the witness records
+   * what every app booted seals, keeps, logs and traces, and `handleError` logs through it too;
+   * `expectForgotten` and the other expectations then take the witness.
+   */
+  readonly witness?: Witness | undefined;
 }
 
 /**
@@ -274,6 +286,7 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   errorText = "omit",
   tenant,
   tenantApps: { max = DEFAULT_TENANT_APPS, idleMs = DEFAULT_TENANT_IDLE_MS } = {},
+  witness,
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   checkConsistency(consistency);
   if (tenant !== undefined && typeof tenant !== "function") {
@@ -296,6 +309,9 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   };
   for (const [name, app] of [...tenants]) evict(name, app);
   let consoleLogger: Promise<Logger> | undefined;
+  // What `handleError` logs, through the witness when there is one.
+  const logged = (to: Logger): Logger => (witness === undefined ? to : witness.logger(to));
+  const given = logger === undefined ? undefined : logged(logger);
 
   // The tenant's app, served last now; the apps past the bound or idle too long go.
   const tenantApp = (name: string): TenantApp => {
@@ -323,7 +339,8 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
 
   const boundaMiddleware: BoundaMiddleware = async (args, next) => {
     if (tenant === undefined) {
-      const client = await actAs(await load(slot, () => bootApp(), consistency), actor, args);
+      const booting = () => (witness === undefined ? bootApp() : bootApp({ witness }));
+      const client = await actAs(await load(slot, booting, consistency), actor, args);
       args.context.set(bounda, await withIdempotencyKey(client, args.request));
       return next();
     }
@@ -331,7 +348,11 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
     const app = tenantApp(name);
     app.inFlight += 1;
     try {
-      const booted = await load(app.slot as Slot<R>, () => bootApp({ tenant: name }), consistency);
+      const booted = await load(
+        app.slot as Slot<R>,
+        () => bootApp({ tenant: name, ...(witness === undefined ? {} : { witness }) }),
+        consistency,
+      );
       const client = await actAs(booted, actor, args);
       args.context.set(bounda, await withIdempotencyKey(client, args.request));
       return await next();
@@ -354,8 +375,10 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
         .errorText ??
       resolveErrorText({ env: process.env, fallback: errorText, ignoreInvalidEnv: true }),
     logger: () => {
-      if (logger !== undefined) return logger;
-      consoleLogger ??= import("@bounda-dev/core/node").then((node) => node.createConsoleLogger());
+      if (given !== undefined) return given;
+      consoleLogger ??= import("@bounda-dev/core/node").then((node) =>
+        logged(node.createConsoleLogger()),
+      );
       return consoleLogger;
     },
   });

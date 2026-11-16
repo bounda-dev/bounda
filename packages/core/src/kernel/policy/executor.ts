@@ -18,7 +18,7 @@ import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, type TracerFunction, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { PolicyRuntime } from "./build-policies.ts";
 
@@ -55,6 +55,7 @@ export interface CreatePolicyExecutorArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
+  readonly tracer: TracerFunction;
   readonly personalCategories: PersonalCategories;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -77,6 +78,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   aggregates,
   pipeline,
   config,
+  tracer,
   ids,
   clock,
   logger,
@@ -122,6 +124,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       restricted: policy.restricted,
     });
     const handled = traced({
+      tracer,
       errorText: config.runtime.telemetry.errorText,
       name: `bounda.policy ${policy.name}`,
       attributes: {
