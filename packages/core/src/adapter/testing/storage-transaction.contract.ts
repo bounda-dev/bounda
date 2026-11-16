@@ -12,10 +12,10 @@ import {
   testKeyedPerson as held,
   pendingEvent,
   testPersonalKey as stored,
+  testAnswer,
   testCommand,
   testContext,
   testDeadLetter,
-  testOutcome,
 } from "./fixtures.ts";
 
 // When a test resolves a letter.
@@ -33,8 +33,7 @@ const now = new Date("2026-01-01T00:00:00.000Z");
 const key = { handler: "order.p", eventId: "e1" };
 const record = {
   key: "idem-1",
-  fingerprint: "fp",
-  outcome: testOutcome("1"),
+  answer: testAnswer("1"),
   expiresAt: new Date(now.getTime() + 60_000).toISOString(),
   persons: [],
   now,
@@ -110,12 +109,12 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.deadLetterStore.count()).toBe(1);
       expect((await storage.inboxLedger.get(key))?.status).toBe("succeeded");
       expect(await storage.idempotencyStore.get({ key: record.key, now })).toMatchObject({
-        fingerprint: "fp",
+        answer: record.answer,
       });
     });
 
     it("writes nothing when the idempotency key it records is already taken", async () => {
-      await storage.idempotencyStore.put({ ...record, fingerprint: "first" });
+      await storage.idempotencyStore.put({ ...record, answer: testAnswer("first") });
       await expect(
         storage.transact(async (tx) => {
           await tx.eventStore.append({
@@ -131,7 +130,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.eventStore.lastPosition()).toBe(0);
       expect((await storage.inboxLedger.get(key))?.status).toBe("pending");
       expect(await storage.idempotencyStore.get({ key: record.key, now })).toMatchObject({
-        fingerprint: "first",
+        answer: testAnswer("first"),
       });
     });
 
@@ -423,7 +422,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       ]);
     });
 
-    it("forgets a person's snapshots and remembered rejections with their key", async () => {
+    it("forgets a person's snapshots and erases their remembered answers with their key", async () => {
       await storage.personalKeys.add("c-1", D, stored("1"));
       await storage.personalKeys.add("c-2", D, stored("2"));
       const snapshot = (aggregateId: string, persons: readonly KeyedPerson[]) => ({
@@ -438,13 +437,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       await storage.snapshotStore.put(snapshot("c-2", [held("c-2", "2")]));
       const remembered = {
         key: "req-1",
-        fingerprint: "fp",
-        outcome: {
-          rejected: "Taken",
-          message: "taken",
-          aggregateType: "customer",
-          aggregateId: "c-1",
-        },
+        answer: testAnswer("req-1"),
         expiresAt: "2026-01-02T00:00:00.000Z",
         persons: [held("c-1", "1")],
         now,
@@ -455,7 +448,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         await tx.snapshotStore.forget("c-1");
         await tx.idempotencyStore.forget("c-1");
       });
-      expect(await storage.idempotencyStore.get({ key: "req-1", now })).toBeNull();
+      expect((await storage.idempotencyStore.get({ key: "req-1", now }))?.answer).toBeNull();
       expect(await storage.personalKeys.get("c-1", D)).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-1", []))).toBeNull();
       expect(await storage.snapshotStore.get(snapshot("c-2", []))).toEqual(

@@ -20,8 +20,9 @@ export interface FailureFunction {
  * `ValidationError` becomes a 400 with its issues, a `DomainError`, the command's rejection, a 409
  * with its code in `rejected`, a `ProcessingRestrictedError`, a command refused because the person
  * it touches is restricted, a 409 as well, an `IdempotencyKeyConflictError`, a key the request
- * reuses for another command, a 422, and a `TenantForgottenError`, the request's tenant forgotten,
- * a 410. It goes by the error's `code`, so the same refusals that come back
+ * reuses for another command, a 422, an `IdempotentAnswerErasedError`, a key whose command's answer
+ * was erased with a person's data, a 410, and a `TenantForgottenError`, the request's tenant
+ * forgotten, a 410 too. It goes by the error's `code`, so the same refusals that come back
  * from a Durable Object count too. Anything else is rethrown, for the route's `ErrorBoundary`.
  *
  * ```ts
@@ -49,7 +50,7 @@ export const failure: FailureFunction = (error) => {
   if (code === "IDEMPOTENCY_KEY_CONFLICT") {
     return data<Failure>({ error: (error as Error).message, issues: [] }, { status: 422 });
   }
-  if (code === "TENANT_FORGOTTEN") {
+  if (code === "IDEMPOTENT_ANSWER_ERASED" || code === "TENANT_FORGOTTEN") {
     return data<Failure>({ error: (error as Error).message, issues: [] }, { status: 410 });
   }
   throw error;

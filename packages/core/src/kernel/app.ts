@@ -271,8 +271,9 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * projects the `PersonalDataRedacted` appended to the stream `bounda:<personId>`, over every
    * personal value of the person when it projects an event type the redaction reached, until the
    * worker has rebuilt it in the background so nothing derived from an old value is left. Snapshots of
-   * those streams and the person's remembered rejections go, and so do the scheduled commands and
-   * dead letters whose payload holds an old value; an error text quoting one is sealed for good.
+   * those streams go, the answers remembered of the person are erased, so a dispatch under one of
+   * their idempotency keys runs nothing until it expires, and so do the scheduled commands and dead
+   * letters whose payload holds an old value; an error text quoting one is sealed for good.
    * Append the corrected value as an event of the app's own. Resolves like a command, so
    * `catchUpReadModels({ through })` waits for the read models. A field no key of the person
    * opens any more, redacted or forgotten already, is left as it is, and nothing left to redact
@@ -1516,6 +1517,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                       scheduledCommands: exported.scheduledCommands.length,
                       deadLetters: exported.deadLetters.length,
                       subscriberFailures: exported.subscriberFailures.length,
+                      answers: exported.answers.length,
                       readModelRows: Object.values(exported.readModels).reduce(
                         (sum, rows) => sum + rows.length,
                         0,

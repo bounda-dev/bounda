@@ -754,6 +754,14 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
       for (const person of ["ana", "bob"]) {
         await expectForgottenIn(restored, person);
+        // What the copy remembered of their commands is erased with them: a retry runs nothing.
+        const { email, name } = valuesOf(person);
+        await expect(
+          restored.commands.registerCustomer?.(
+            { customerId: person, email, name },
+            { idempotencyKey: `register-${person}` },
+          ),
+        ).rejects.toMatchObject({ code: "IDEMPOTENT_ANSWER_ERASED" });
       }
       expect(await forgettings(restored.app, "cy")).toEqual(cyForgotten);
       expect(await forgettings(restored.app, "eve")).toEqual([]);

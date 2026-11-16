@@ -79,8 +79,11 @@ export type {
   GetIdempotencyRecordArgs,
   IdempotencyRecord,
   IdempotencyStore,
+  ListIdempotencyRecordsArgs,
   PurgeIdempotencyRecordsArgs,
   PutIdempotencyRecordArgs,
+  ResealIdempotencyRecordArgs,
+  StoredAnswer,
 } from "./storage/idempotency-store.ts";
 export type {
   ClaimArgs,

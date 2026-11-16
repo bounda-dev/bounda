@@ -101,7 +101,7 @@ const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
   deadLetters:
     "A dead letter holds the value in the clear: mark the field of the command's payload personal(), or name the person whose data the failed work read, and keep personal data out of error messages.",
   idempotencyKeys:
-    "A remembered answer quotes the value: keep personal data out of a rejection's message and say what went wrong with its code and ids.",
+    "A remembered answer holds the value outside the person's keys: the command it answered names nobody, so mark the field of its payload the value comes from personal(), or it was kept before answers were sealed and goes when its idempotency key expires.",
   snapshots:
     "A snapshot holds the value from a field left unmarked: mark it personal() where the state's value comes from.",
   subscriberFailures:

@@ -551,13 +551,14 @@ export interface WithPersonalKeysFunction {
 
 /**
  * The storage with its keys, and those of its transactions, as the kernel reads them; its event
- * store as written.
+ * store as written, and remembered answers kept in the clear.
  */
 export const withPersonalKeys: WithPersonalKeysFunction = (storage, clock = createFixedClock()) => {
   const wrapping = testWrapping(clock);
   return {
     ...storage,
     personalKeys: wrapping.over(storage.personalKeys),
+    atRest: null,
     transact: (work) =>
       storage.transact((transaction) =>
         work({ ...transaction, personalKeys: wrapping.over(transaction.personalKeys) }),

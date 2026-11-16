@@ -87,7 +87,7 @@ restored; and a backup is taken, the tenant is forgotten, and the copy is restor
 - **Whoever was forgotten after the copy is forgotten again,** their `PersonalDataForgotten`
   committed once more under the id, time and reason the ledger recorded before it first committed:
   no key,
-  snapshot, idempotency record of a rejection or scheduled command of theirs, no row a projection
+  snapshot, remembered answer that opens or scheduled command of theirs, no row a projection
   of `PersonalDataForgotten` removes, their fields `null` in the export, in every event and dead
   letter and in the state of their processes, and none of their values in any row of the
   database.

@@ -4,6 +4,7 @@ import {
   DomainError,
   IdempotencyKeyConflictError,
   IdempotencyKeyTakenError,
+  IdempotentAnswerErasedError,
   ValidationError,
 } from "../../contracts/errors.ts";
 import { classifyFailure } from "../shared/retry.ts";
@@ -50,7 +51,7 @@ describe("a command dispatched with an idempotency key", () => {
     expect(sentMessages).toEqual(["placed o-1 v0"]);
     expect(await storedTypes(harness)).toEqual(["OrderPlaced"]);
     expect(await harness.storage.idempotencyStore.get({ key: "req-1", now })).toMatchObject({
-      outcome: first,
+      answer: { outcome: first },
       expiresAt: "2026-01-02T00:00:00.000Z",
       persons: [],
     });
@@ -161,18 +162,18 @@ describe("a command dispatched with an idempotency key", () => {
     onTestFinished(() => telemetry.restore());
     const harness = await createKernelHarness();
     const { idempotencyStore } = harness.storage;
+    const outcome = {
+      scheduled: false as const,
+      aggregateType: "order",
+      aggregateId: "o-1",
+      version: 7,
+      eventIds: ["elsewhere"],
+      eventTypes: ["OrderPlaced"],
+      position: 7,
+    };
     const winner = {
       key: "req-1",
-      fingerprint: await fingerprintOf(placeOrder),
-      outcome: {
-        scheduled: false as const,
-        aggregateType: "order",
-        aggregateId: "o-1",
-        version: 7,
-        eventIds: ["elsewhere"],
-        eventTypes: ["OrderPlaced"],
-        position: 7,
-      },
+      answer: { fingerprint: await fingerprintOf(placeOrder), outcome },
       expiresAt: "2026-01-02T00:00:00.000Z",
       persons: [],
       now,
@@ -187,7 +188,7 @@ describe("a command dispatched with an idempotency key", () => {
       return found;
     };
     expect(await harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1") })).toEqual(
-      winner.outcome,
+      outcome,
     );
     expect(placeOrderKeys).toHaveLength(1);
     expect(await storedTypes(harness)).toEqual([]);
@@ -209,7 +210,9 @@ describe("a command dispatched with an idempotency key", () => {
     looked = 0;
     harness.storage.idempotencyStore.get = async () => {
       looked += 1;
-      return looked === 1 ? null : { ...winner, fingerprint: await fingerprintOf(broken) };
+      return looked === 1
+        ? null
+        : { ...winner, answer: { outcome, fingerprint: await fingerprintOf(broken) } };
     };
     await expect(
       harness.pipeline.dispatch({ ...broken, ...withKey("req-2") }),
@@ -261,7 +264,7 @@ describe("a command dispatched with an idempotency key", () => {
     expect(await storedTypes(harness)).toEqual(["OrderPlaced"]);
     expect(
       await harness.storage.idempotencyStore.get({ key: "req-1", now: harness.clock.now() }),
-    ).toMatchObject({ outcome: { eventTypes: ["OrderPlaced"] } });
+    ).toMatchObject({ answer: { outcome: { eventTypes: ["OrderPlaced"] } } });
   });
 
   it("does not remember a command that failed, so a retry runs it", async () => {
@@ -302,7 +305,7 @@ describe("a command dispatched with an idempotency key", () => {
     expect(await harness.storage.idempotencyStore.get({ key: "req-1", now })).toBeNull();
     await unit.commit();
     expect(await harness.storage.idempotencyStore.get({ key: "req-1", now })).toMatchObject({
-      outcome: first,
+      answer: { outcome: first },
     });
     expect(await storedTypes(harness)).toEqual(["OrderPlaced"]);
 
@@ -351,7 +354,7 @@ describe("a command dispatched with an idempotency key", () => {
     ).toEqual(once);
     await twice.commit();
     expect(await harness.storage.idempotencyStore.get({ key: "req-9", now })).toMatchObject({
-      outcome: once,
+      answer: { outcome: once },
     });
 
     const scheduling = createUnitOfWork({ storage: harness.storage });
@@ -366,7 +369,39 @@ describe("a command dispatched with an idempotency key", () => {
     await scheduling.commit();
     expect(await harness.storage.scheduler.list()).toHaveLength(1);
     expect(await harness.storage.idempotencyStore.get({ key: "req-3", now })).toMatchObject({
-      outcome: delayed,
+      answer: { outcome: delayed },
     });
+  });
+
+  it("runs nothing under a key whose answer was erased, attended or not, until the key expires", async () => {
+    const harness = await createKernelHarness();
+    await harness.storage.idempotencyStore.put({
+      key: "req-1",
+      answer: null,
+      expiresAt: "2026-01-01T01:00:00.000Z",
+      persons: [],
+      now,
+    });
+    for (const dispatched of [
+      harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1") }),
+      harness.pipeline.dispatchUnattended({
+        type: "TouchOrder",
+        payload: { orderId: "o-9" },
+        ...withKey("req-1"),
+        within: createUnitOfWork({ storage: harness.storage }),
+      }),
+    ]) {
+      const refused = await dispatched.catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(IdempotentAnswerErasedError);
+      expect(refused).toMatchObject({ code: "IDEMPOTENT_ANSWER_ERASED", idempotencyKey: "req-1" });
+      expect((refused as Error).message).toMatch(
+        /^The idempotency key was used for a command whose answer was erased with personal data, so (PlaceOrder|TouchOrder) does not run under it$/,
+      );
+      expect(classifyFailure(refused)).toBe("terminal");
+    }
+    expect(placeOrderKeys).toEqual([]);
+    harness.clock.advance(3_600_000);
+    await harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1") });
+    expect(placeOrderKeys).toHaveLength(1);
   });
 });

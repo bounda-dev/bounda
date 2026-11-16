@@ -71,13 +71,19 @@ dead letter with `errorType: "retriable_exhausted"`.
   another command or for the same command with another payload or `delay`. Nothing runs.
   `idempotencyKey`.
   See [idempotent commands](/guides/idempotent-commands/).
+- **`IDEMPOTENT_ANSWER_ERASED`** (`IdempotentAnswerErasedError`; terminal). A dispatch's
+  `idempotencyKey` names a command that ran, but whose answer was erased with the personal data of
+  someone it named, forgotten or redacted since. Nothing runs, whatever the payload, until the key
+  expires. `idempotencyKey`. See
+  [remembered answers](/guides/personal-data/#remembered-answers).
 - **`PROCESSING_RESTRICTED`** (`ProcessingRestrictedError`; terminal). Work would process data a
   [restriction](/guides/personal-data/#restricting-processing) covers, on no basis that opens it:
   a command that touches a person restricted as a whole, the one its payload names with `person`
   or whose aggregate is the person, or whose aggregate's events hold data a restriction covers,
   refused before its handler runs; one restricted while it ran, or whose events seal a field of a
-  restricted category, refused as its events are appended; a policy, process step or scheduled
-  command on such data, before its handler runs. Nothing is stored and nothing is recorded.
+  restricted category, refused as its events are appended; a dispatch whose `idempotencyKey` would
+  replay an answer that names such a person; a policy, process step or scheduled command on such
+  data, before its handler runs. Nothing is stored and nothing is recorded.
   `personId`. A reaction's letter with this code is retried by the runtime once `unrestrict` lifts
   the restriction; `processRestricted`, or `restricted` in a policy or process, names the basis that
   lets the work through.
@@ -147,6 +153,7 @@ The hosts map the codes a client can cause to a status:
 | `PROCESSING_RESTRICTED` | 409 | 409 |
 | `TENANT_FORGOTTEN` | 410 | 410 |
 | `IDEMPOTENCY_KEY_CONFLICT` | 500, code `INTERNAL`, logged | 422 |
+| `IDEMPOTENT_ANSWER_ERASED` | 500, code `INTERNAL`, logged | 410 |
 | `CONCURRENCY_CONFLICT` | 409 | rethrown |
 | `CHAIN_DEPTH_EXCEEDED` | 409 | rethrown |
 | `FOREIGN_REJECTION` | 500, code `INTERNAL`, logged | rethrown |

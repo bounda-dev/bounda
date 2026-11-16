@@ -694,7 +694,7 @@ describe("expectForgotten", () => {
     expect(await adviceFor("events")).toContain("An event holds the value");
     expect(await adviceFor("scheduledCommands")).toContain("A stored command holds");
     expect(await adviceFor("deadLetters")).toContain("A dead letter holds the value");
-    expect(await adviceFor("idempotencyKeys")).toContain("A remembered answer quotes");
+    expect(await adviceFor("idempotencyKeys")).toContain("A remembered answer holds");
     expect(await adviceFor("snapshots")).toContain("A snapshot holds the value");
     for (const store of ["persons", "checkpoints", "forgetLedger", null] as const) {
       expect(await adviceFor(store), String(store)).toBe(otherwise);

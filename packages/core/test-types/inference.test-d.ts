@@ -35,6 +35,7 @@ import type {
   EnvSection,
   EventMetadata,
   EventPayloadArgs,
+  ExportedAnswer,
   ExportedCategories,
   ExportedCategory,
   ExportedData,
@@ -800,6 +801,7 @@ describe("personal data", () => {
       readonly scheduledCommands: number;
       readonly deadLetters: number;
       readonly subscriberFailures: number;
+      readonly answers: number;
       readonly readModelRows: number;
       readonly recipients: number;
     } | null>();
@@ -952,7 +954,14 @@ describe("personal data", () => {
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
       readonly subscriberFailures: readonly ExportedSubscriberFailure[];
+      readonly answers: readonly ExportedAnswer[];
       readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
+    }>();
+    expectTypeOf<ExportedAnswer>().toEqualTypeOf<{
+      readonly idempotencyKey: string;
+      readonly expiresAt: string;
+      readonly outcome: DispatchResult | RejectedDispatch;
+      readonly restricted: ExportedRestricted;
     }>();
     expectTypeOf<BoundaClient["recipientsOf"]>().toEqualTypeOf<
       (personId: string) => Promise<readonly PersonRecipient[]>

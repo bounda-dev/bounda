@@ -1,6 +1,6 @@
 import type { StorageTransaction } from "./adapter.ts";
 import type { NewDeadLetter, StoredDeadLetter } from "./storage/dead-letter-store.ts";
-import type { IdempotencyRecord } from "./storage/idempotency-store.ts";
+import { erased, type IdempotencyRecord } from "./storage/idempotency-store.ts";
 import { namesPerson } from "./storage/personal-key-store.ts";
 import type { ScheduleArgs, ScheduledCommand } from "./storage/scheduler.ts";
 
@@ -22,15 +22,15 @@ export interface DeferredWriteTarget {
     DeferredStores["scheduler"],
     "schedule" | "cancel" | "complete" | "fail" | "defer" | "reseal"
   >;
-  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget">;
+  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget" | "reseal">;
 }
 
 /**
  * The stores with their writes held back: `stores` answer reads from `live` at once and record
  * every write in order, and `flush` runs the writes recorded so far against another set of the
  * same stores, a transaction's or the live ones. `add` answers the letter as filed, whatever the
- * store holds under that id already; `get` on the idempotency store answers a record `put`
- * recorded before anything `live` holds. `tryClaim`, `claimDue`, both `renew`, both `purge`, the
+ * store holds under that id already; `get` and `listByPerson` on the idempotency store answer a
+ * record `put` recorded before anything `live` holds, as its writes since left it. `tryClaim`, `claimDue`, both `renew`, both `purge`, the
  * `forget` of the scheduler and the dead letter store, and `clear` act at once, on `live`, since
  * their answer decides what happens next.
  */
@@ -136,6 +136,23 @@ export const deferWrites: DeferWritesFunction = ({
           records.set(record.key, record);
           recorded.push((target) => target.idempotencyStore.put(args));
         },
+        listByPerson: async (args) =>
+          [
+            ...[...records.values()].filter(
+              (record) =>
+                new Date(record.expiresAt).getTime() > args.now.getTime() &&
+                namesPerson(record, args.person),
+            ),
+            ...(await idempotencyStore.listByPerson(args)).filter(({ key }) => !records.has(key)),
+          ].sort((a, b) => (a.key < b.key ? -1 : 1)),
+        reseal: async (args) => {
+          const { now: _now, ...resealed } = args;
+          const record = records.get(args.key) ?? (await idempotencyStore.get(args));
+          if (record === null || record.answer === null) return false;
+          records.set(args.key, { ...record, ...resealed });
+          recorded.push((target) => target.idempotencyStore.reseal(args));
+          return true;
+        },
         purge: idempotencyStore.purge,
         clear: async () => {
           records.clear();
@@ -143,7 +160,7 @@ export const deferWrites: DeferWritesFunction = ({
         },
         forget: async (person, keep) => {
           for (const [key, record] of records) {
-            if (namesPerson(record, person, keep)) records.delete(key);
+            if (namesPerson(record, person, keep)) records.set(key, erased(record));
           }
           recorded.push((target) => target.idempotencyStore.forget(person, keep));
         },

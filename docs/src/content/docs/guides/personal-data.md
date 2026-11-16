@@ -109,8 +109,8 @@ to erase it (article 17(3)(b)). Its key is kept, [restricted](#restricting-proce
 longer in force: what it sealed still opens for the export, for a query that reads on
 `legal-obligation` and for work that names that basis, while a command, a policy or a process that
 names none reads it as `null`, as if forgotten; nothing new is sealed under it,
-no snapshot or remembered rejection holds its data, and the scheduled commands and dead letters
-that held it go with the rest. The key's last activity is fixed at the forgetting, so a person who
+no snapshot holds its data, a [remembered answer](#remembered-answers) sealed under it is erased,
+and the scheduled commands and dead letters that held it go with the rest. The key's last activity is fixed at the forgetting, so a person who
 comes back extends nothing kept from before: what they write afterwards gets a new key in force,
 and the kept one goes on its own once its retention has passed, with a `PersonalDataForgotten`
 that names the category in `expired`. Whether a key is kept that way, and since when, is recorded
@@ -131,8 +131,9 @@ event, process state, scheduled command and dead letter that holds it: the marks
 worker walks the stream again, opens each value sealed under a category its field is no longer in
 and seals it under the right one, as the forgettings since it was written say, a category kept or
 forgotten included. From then on forgetting the old category no longer reaches the value, and
-forgetting the new one does. A remembered rejection that may quote it under the old key is dropped,
-as is a snapshot of its stream, and decided or folded again. A value no key opens any more, its
+forgetting the new one does. A [remembered answer](#remembered-answers) sealed under the old key,
+which may quote it, is sealed under the new one too, and a snapshot of its stream is dropped and
+folded again. A value no key opens any more, its
 person forgotten in its old category, stays as it is: it was forgotten already. Going back to
 earlier marks walks the stream again too.
 
@@ -265,7 +266,7 @@ empty, `commands stored before their marks name no person and stay in the clear`
 marks are read on the payload as stored, below the [upcasters](/guides/changing-events/), so a field
 an upcaster renamed or computed is sealed under the name it was stored with, or not at all when it
 was never stored; an event whose `person` field changed since it was sealed keeps the person it was
-sealed for. A rejection remembered under an [`idempotencyKey`](/guides/idempotent-commands/) before
+sealed for. An answer remembered under an [`idempotencyKey`](/guides/idempotent-commands/) before
 the marks names nobody and lasts until its key expires, a day by default. A person whose processing
 is restricted has their data sealed all the same: sealing protects it, and processes nothing.
 
@@ -311,8 +312,9 @@ cancelledCommands, removedDeadLetters }`:
   events.
 
 `forget(person, { categories })` forgets those categories alone: their keys go, and so do the
-scheduled commands, dead letters, snapshots and remembered rejections that hold data sealed under
-them; the rest of the person's data, and what holds it, stays. Naming a category the app does not
+scheduled commands, dead letters and snapshots that hold data sealed under them, while the
+[remembered answers](#remembered-answers) sealed under them are erased; the rest of the person's
+data, and what holds it, stays. Naming a category the app does not
 have, or none, is refused with `ValidationError`. It resolves like a command, with the event's
 position, so `catchUpReadModels({ through })` waits for the read models that handle it, and the Durable Object's `forget` and the one in React
 Router's `bounda` context wait for them themselves unless `consistency` is `"eventual"`. A person
@@ -345,14 +347,6 @@ for a person who no longer holds that key in force. The next command on such an
 aggregate folds it from its first event, with the fields forgotten, and the snapshot after it
 holds them as `null`.
 
-A command dispatched with an [`idempotencyKey`](/guides/idempotent-commands/) remembers
-what it answered, and a rejection's message may quote the state it was decided on. Such a
-rejection names the people whose fields were in that state, with their keys as a snapshot does,
-and `forget` removes it too: the same request sent again is decided again, on the state without
-them. What it cannot see is personal
-data that came in the command's payload, marked or not: keep that out of a rejection's
-message and say what went wrong with its code and the ids involved.
-
 The message of an error a handler throws may quote a personal field it read, of any category, so a
 [dead letter](/guides/dead-letters/#what-a-letter-holds) keeps the message and the stack encrypted
 under every key the person its work names holds, one inside the other, and forgetting any category
@@ -383,6 +377,31 @@ or not; set it to bound how long that is.
 Nor does it reach the `actor` in the metadata of events, who acted on them (see
 [Who acts](/concepts/ids-causation-and-correlation/#who-acts)): it is an id, as a person's id is,
 so bind clients with the id of a user or a service, never their name or email.
+
+### Remembered answers
+
+A command dispatched with an [`idempotencyKey`](/guides/idempotent-commands/) remembers what it
+answered, so a retry answers the same. That answer is the personal data of the person the command
+touches, the one its payload names with `person` or whose aggregate is the person: a rejection's
+message may quote anything the handler saw, the state and the payload, of any category. So the
+whole of it, the result or the rejection and the fingerprint of the command's payload, is
+encrypted under every key that person holds in force, one inside the other, and under one of each
+category the payload holds a value of, created when they hold none; a rejection is also encrypted
+under the keys of everyone whose data the state it was decided on held, as they were read. An
+answer that concerns nobody is encrypted under the [database's key](#three-keys-deep). The key a
+caller chose, which may quote someone too, is sealed with the answer, and the answer is filed under
+an HMAC of it, under a key derived from the database's.
+
+Forgetting any category of anyone an answer names destroys a key it needs: the answer no longer
+opens anywhere, in the database or in any copy of it, without being found. `forget` also erases it
+in the live store, leaving the key alone, and so does a [redaction](#correcting-a-persons-data) of
+the person's data, which may have changed what it quotes. A dispatch under that key then rejects
+with `IdempotentAnswerErasedError` (`IDEMPOTENT_ANSWER_ERASED`) and runs nothing until the key
+expires: a late retry neither repeats what the command did nor brings back data the person had
+erased. Its payload is not compared any more, since its fingerprint went with the answer. Replaying
+an answer is processing the person's data, so a [restriction](#restricting-processing) of anyone
+it names refuses it, as it would refuse the command, unless the dispatch names a basis with
+`processRestricted`. The export hands out the answers remembered of the person in `answers`.
 
 ## Exporting a person's data
 
@@ -441,6 +460,12 @@ person, for them to take away, as the right of access and the right to portabili
       errorMessage: "cannot index ana@example.com", errorStack,
       restricted: ["errorMessage", "errorStack"] },
   ],
+  answers: [
+    { idempotencyKey: "confirm-7", expiresAt,
+      outcome: { rejected: "NotYet", message: "ana@example.com cannot be confirmed yet",
+        aggregateType: "customer", aggregateId: "c-42" },
+      restricted: ["outcome"] },
+  ],
   readModels: {
     customerDirectory: [
       { key: "c-42", data: { email: "ana@example.com" }, categories: { email: "default" },
@@ -463,8 +488,8 @@ since when; a lift announced is among `events`, as `ProcessingRestrictionLiftAnn
 `liftsAt`. Restricted data is still in the export, since the right of access holds: every record
 says in `restricted` what of it a restriction covers, the fields of `data` of a restricted
 category, or kept under a legal obligation, or every one for a person restricted as a whole, and
-`errorMessage` and `errorStack` while any restriction holds, since an error's text may quote any
-of their data.
+`errorMessage` and `errorStack`, or an answer's `outcome`, while any restriction holds, since an
+error's text or a rejection's message may quote any of their data.
 
 `redactions` are the [redactions](#correcting-a-persons-data) of their data, in the order they
 were made, each with the id of its `PersonalDataRedacted`, when, and the events and fields it
@@ -488,7 +513,8 @@ for one the runtime scheduled itself, the scheduler's key, each with the same `d
 scheduled commands whose payload holds their fields, with its `data`. `subscriberFailures` are the
 last failures of the subscribers on an event that names them, kept with their error text
 encrypted with their keys (see [observability](/reference/observability/#error-text)), opened.
-After `forget`, the person's events and letters are still theirs, and every field and error text
+`answers` are what the commands dispatched with an idempotency key that concern them answered, as
+long as each is [remembered](#remembered-answers) and opens, opened. After `forget`, the person's events and letters are still theirs, and every field and error text
 reads as `null`, as a handler reads it. `readModels` has an entry for every read model with a field marked
 [`.person()`](#personal-data-in-read-models): the rows whose person field holds the id, each
 with its primary key as `key`, so the person can tell them apart, and its fields marked
@@ -506,7 +532,7 @@ type marked its fields is found once the [backfill](#marking-a-field-later) has 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
 carries, and a dead letter by its `person` or its `persons`. `forget` and the export find those
-rows, and the snapshots and remembered rejections `forget` removes, through an index, never by
+rows, and the snapshots and remembered answers `forget` removes or erases, through an index, never by
 reading every row: PostgreSQL indexes the `persons` column itself, and SQLite, the Durable Object
 included, keeps a table of which row names which person, written and removed by the same statement
 as the row.
@@ -804,7 +830,7 @@ person's data in the clear records it, once per call:
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, readModelRows, recipients }`, how many of each; `null` when it failed |
+| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients }`, how many of each; `null` when it failed |
 | `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
 | `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
 | `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
@@ -1100,7 +1126,9 @@ commits:
   that nobody they touch is restricted as a whole and that no field they seal is of a restricted
   category, so a command running when `restrict` commits stores nothing it decided after. `app.commands`
   throws the refusal; nothing is recorded under an `idempotencyKey`, so the same request sent once
-  the restriction is lifted runs.
+  the restriction is lifted runs. An answer already [remembered](#remembered-answers) under a key
+  is not replayed either while a restriction covers anyone it names, any category of theirs
+  included, since it may quote any of their data.
 - **Reactions.** A policy whose event is about a person restricted as a whole, by its `person`
   field or because its aggregate is the person, though it carries none of their data, or whose
   event holds data a restriction covers, a step of a process whose event or [state](#in-a-processs-state) does, and a
@@ -1378,7 +1406,8 @@ hierarchy, envelope encryption as a cloud KMS does it:
   store** apart from the tenant's database: another database, a KV namespace, a vault;
 - the **persons' keys**, one per person and category, and the **database's key**, which derives
   the [blind indexes](#sealed-at-rest) and seals what the runtime keeps of
-  several persons at once (a snapshot's state, a remembered answer), all wrapped under the
+  several persons at once (a snapshot's state, a remembered answer that names nobody), all
+  wrapped under the
   tenant's key and kept in the database;
 - on an engine that encrypts its database files, libSQL's, **each file's key**, random, wrapped
   under the tenant's key and kept with it in the tenant key store, so the file itself opens only

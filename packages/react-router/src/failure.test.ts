@@ -2,6 +2,7 @@ import {
   ConcurrencyError,
   DomainError,
   IdempotencyKeyConflictError,
+  IdempotentAnswerErasedError,
   type PayloadArgs,
   ProcessingRestrictedError,
   type RejectFunction,
@@ -83,6 +84,20 @@ describe("failure", () => {
       issues: [],
     });
     expect(answer.init).toEqual({ status: 422 });
+  });
+
+  it("answers a key whose answer was erased with a 410, whether the error comes as a class or a code", () => {
+    const answer = failure(
+      new IdempotentAnswerErasedError({ idempotencyKey: "req-1", commandType: "PlaceOrder" }),
+    );
+    expect(answer.data).toEqual({
+      error:
+        "The idempotency key was used for a command whose answer was erased with personal data, so PlaceOrder does not run under it",
+      issues: [],
+    });
+    expect(answer.init).toEqual({ status: 410 });
+    const plain = failure(Object.assign(new Error("erased"), { code: "IDEMPOTENT_ANSWER_ERASED" }));
+    expect(plain.init).toEqual({ status: 410 });
   });
 
   it("answers a forgotten tenant with a 410, whether the error comes as a class or a code", () => {

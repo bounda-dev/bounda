@@ -3,6 +3,7 @@ import type { Storage } from "../../adapter/adapter.ts";
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import type { PendingEvent } from "../../adapter/storage/event-store.ts";
 import type { SealedValue } from "../../adapter/storage/personal-key-store.ts";
+import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
 import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -101,6 +102,7 @@ const setup = async (recordsActivity = true) => {
     processes,
     wrapping,
     recordsActivity,
+    clock: createFixedClock(),
   });
   const append = async (...events: PendingEvent[]) => {
     for (const pending of events) {
@@ -245,7 +247,7 @@ describe("resealing a batch of events by category", () => {
 });
 
 describe("resealing a field moved to another category", () => {
-  it("seals it anew under its category's key, and drops what remembers it under the old key", async () => {
+  it("seals it anew under its category's key, and seals what remembers it under the old key under the new one too", async () => {
     const { storage, reseal, append, opened } = await setup();
     const stored = await storage.personalKeys.add("c-1", "default", await newStoredKey());
     const old = await openedKey(stored);
@@ -254,22 +256,21 @@ describe("resealing a field moved to another category", () => {
       event("customer", "c-1", 1, "CustomerProfiled", { email: "ada@example.com", nickname }),
     );
     const now = new Date("2026-01-01T00:00:00.000Z");
-    await storage.idempotencyStore.put({
-      key: "k-1",
-      fingerprint: "fp",
-      outcome: { rejected: "Taken", message: "Ada is taken", code: "TAKEN" } as never,
+    const body = { fingerprint: "fp", outcome: { rejected: "Taken", message: "Ada is taken" } };
+    const remembered = {
       expiresAt: "2099-01-01T00:00:00.000Z",
       persons: [{ person: "c-1", fingerprint: stored.fingerprint }],
       now,
-    });
+    };
+    const answer = await seal({ key: old, person: "c-1", category: "default", value: body });
+    await storage.idempotencyStore.put({ ...remembered, key: "k-1", answer });
     const extra = await storage.personalKeys.add("c-1", "extra", await newStoredKey());
+    const elsewhere = { $sealed: { salt: "s", data: "d" } };
     await storage.idempotencyStore.put({
+      ...remembered,
       key: "k-2",
-      fingerprint: "fp",
-      outcome: { rejected: "Taken", message: "taken", code: "TAKEN" } as never,
-      expiresAt: "2099-01-01T00:00:00.000Z",
+      answer: elsewhere,
       persons: [{ person: "c-1", fingerprint: extra.fingerprint }],
-      now,
     });
     expect((await reseal.events(await all(storage))).resealed).toBe(1);
     const [profiled] = await all(storage);
@@ -277,8 +278,19 @@ describe("resealing a field moved to another category", () => {
       $personal: { category: "profile" },
     });
     expect(await opened(fieldOf(profiled?.payload, "nickname"))).toBe("Ada");
-    expect(await storage.idempotencyStore.get({ key: "k-1", now })).toBeNull();
-    expect((await storage.idempotencyStore.get({ key: "k-2", now }))?.key).toBe("k-2");
+    const profile = await storage.personalKeys.get("c-1", "profile");
+    const resealed = await storage.idempotencyStore.get({ key: "k-1", now });
+    expect(resealed?.answer).toMatchObject({
+      $personal: { person: "c-1", category: "profile", key: profile?.fingerprint },
+    });
+    expect(resealed?.persons).toEqual([
+      { person: "c-1", fingerprint: stored.fingerprint },
+      { person: "c-1", fingerprint: profile?.fingerprint },
+    ]);
+    expect(await opened(resealed?.answer)).toEqual(body);
+    expect((await storage.idempotencyStore.get({ key: "k-2", now }))?.answer).toEqual(elsewhere);
+    await storage.personalKeys.remove("c-1", profile?.fingerprint ?? "");
+    expect(await opened(resealed?.answer)).toBeNull();
   });
 
   it("names a resealed command's person under the key it moved to, keeping who else it named", async () => {

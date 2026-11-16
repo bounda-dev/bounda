@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { Table } from "../../adapter/storage/table.ts";
 import {
   ConfigurationError,
+  IdempotentAnswerErasedError,
   ProcessingRestrictedError,
   ValidationError,
 } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import type { PersonalDataAccess } from "../../modules/audit.ts";
 import type {
   PersonalDataForgottenEvent,
   ProcessingRestrictedEvent,
@@ -18,6 +20,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
+import { fingerprintOf } from "../command/fingerprint.ts";
 import { rebuildReadModel } from "../read-model/rebuild.ts";
 import { isSealed } from "./crypto.ts";
 import { masterKey } from "./master-key.ts";
@@ -458,14 +461,14 @@ describe("personal data in an app", () => {
     await app.stop();
   });
 
-  it("forgets the rejections it remembered for a person, so a retry decides again without their data", async () => {
+  it("seals what it remembered for a person under their keys, and erases it with them: a retry runs nothing", async () => {
     const adapter = memory();
     const storage = await adapter.createStorage();
     const { app, clock } = await createTestApp({ registry, adapter });
     await app.commands.registerCustomer(ana);
-    const confirm = () =>
+    const confirm = (customerId = "c-1") =>
       app.commands
-        .confirmCustomer({ customerId: "c-1" }, { idempotencyKey: "confirm-1" })
+        .confirmCustomer({ customerId }, { idempotencyKey: "confirm-1" })
         .catch((error: unknown) => error);
     const first = await confirm();
     expect(first).toMatchObject({
@@ -473,23 +476,146 @@ describe("personal data in an app", () => {
       message: "ana@example.com cannot be confirmed yet",
     });
     const key = await storage.personalKeys.get("c-1", "default");
-    expect(
-      await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() }),
-    ).toMatchObject({
+    // Filed under a hash of the key, which is sealed with the answer.
+    expect(await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() })).toBeNull();
+    const [remembered] = await storage.idempotencyStore.listByPerson({
+      person: "c-1",
+      now: clock.now(),
+    });
+    expect(remembered).toMatchObject({
+      answer: { $personal: { person: "c-1", key: key?.fingerprint } },
       persons: [{ person: "c-1", fingerprint: key?.fingerprint }],
     });
+    expect(JSON.stringify(remembered)).not.toContain("ana@example.com");
+    expect(JSON.stringify(remembered)).not.toContain("confirm-1");
     expect(await confirm()).toMatchObject({ message: "ana@example.com cannot be confirmed yet" });
 
     await app.forget("c-1");
-    expect(await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() })).toBeNull();
-    const again = await confirm();
-    expect(again).toMatchObject({
+    // A copy kept elsewhere names a key nobody holds any more.
+    expect(await storage.personalKeys.list("c-1")).toEqual([]);
+    expect(
+      await storage.idempotencyStore.get({ key: remembered?.key ?? "", now: clock.now() }),
+    ).toEqual({
+      key: remembered?.key,
+      answer: null,
+      expiresAt: remembered?.expiresAt,
+      persons: [],
+    });
+    for (const again of [await confirm(), await confirm("c-2")]) {
+      expect(again).toBeInstanceOf(IdempotentAnswerErasedError);
+      expect(again).toMatchObject({
+        code: "IDEMPOTENT_ANSWER_ERASED",
+        idempotencyKey: "confirm-1",
+      });
+    }
+    clock.advance(24 * 60 * 60 * 1_000);
+    expect(await confirm()).toMatchObject({
       rejected: "NotYet",
       message: "This customer cannot be confirmed yet",
     });
+    await app.stop();
+  });
+
+  it("replays an answer kept before answers were sealed whole, filed under its key in the clear", async () => {
+    const adapter = memory();
+    const storage = await adapter.createStorage();
+    const { app, clock } = await createTestApp({ registry, adapter });
+    await app.commands.registerCustomer(ana);
+    const payload = { customerId: "c-1" };
+    const outcome = {
+      rejected: "NotYet",
+      message: "kept before",
+      aggregateType: "customer",
+      aggregateId: "c-1",
+    };
+    await storage.idempotencyStore.put({
+      key: "earlier-1",
+      answer: { fingerprint: await fingerprintOf({ type: "ConfirmCustomer", payload }), outcome },
+      expiresAt: "2026-01-02T00:00:00.000Z",
+      persons: [],
+      now: clock.now(),
+    });
+    const replayed = await app.commands
+      .confirmCustomer(payload, { idempotencyKey: "earlier-1" })
+      .catch((error: unknown) => error);
+    expect(replayed).toMatchObject({ rejected: "NotYet", message: "kept before" });
+    await app.stop();
+  });
+
+  it("hands out what it remembers for a person in their export, and replays it only on a basis while they are restricted", async () => {
+    const adapter = memory();
+    const storage = await adapter.createStorage();
+    const accesses: PersonalDataAccess[] = [];
+    const { app } = await createTestApp({
+      registry,
+      adapter,
+      onPersonalDataAccess: ({ access }) => {
+        accesses.push(access);
+      },
+    });
+    const registered = await app.commands.registerCustomer(ana, { idempotencyKey: "register-1" });
+    const confirm = (options: { readonly processRestricted?: "consent" } = {}) =>
+      app.commands
+        .confirmCustomer({ customerId: "c-1" }, { idempotencyKey: "confirm-1", ...options })
+        .catch((error: unknown) => error);
+    const rejected = {
+      rejected: "NotYet",
+      message: "ana@example.com cannot be confirmed yet",
+      aggregateType: "customer",
+      aggregateId: "c-1",
+    };
+    await confirm();
+    // A replay of nobody restricted records no access, on a basis or without one.
+    await confirm();
+    await confirm({ processRestricted: "consent" });
+    expect(accesses.filter(({ operation }) => operation === "command")).toEqual([]);
+    const remembered = await storage.idempotencyStore.listByPerson({
+      person: "c-1",
+      now: new Date(0),
+    });
+    expect(remembered).toHaveLength(2);
+    expect(JSON.stringify(remembered)).not.toContain(registered.eventIds[0]);
+    expect(JSON.stringify(remembered)).not.toContain("register-1");
+    const answers = (await app.exportPersonalData("c-1")).answers;
+    expect(answers).toEqual([
+      {
+        idempotencyKey: "confirm-1",
+        expiresAt: expect.any(String),
+        outcome: rejected,
+        restricted: [],
+      },
+      {
+        idempotencyKey: "register-1",
+        expiresAt: expect.any(String),
+        outcome: registered,
+        restricted: [],
+      },
+    ]);
+    expect((await app.exportPersonalData("c-2")).answers).toEqual([]);
+
+    await app.restrict("c-1", { ground: "accuracy-contested" });
     expect(
-      JSON.stringify(await storage.idempotencyStore.get({ key: "confirm-1", now: clock.now() })),
-    ).not.toContain("ana@example.com");
+      (await app.exportPersonalData("c-1")).answers.map(({ restricted }) => restricted),
+    ).toEqual([["outcome"], ["outcome"]]);
+    accesses.length = 0;
+    expect(await confirm()).toBeInstanceOf(ProcessingRestrictedError);
+    expect(accesses).toEqual([]);
+    expect(await confirm({ processRestricted: "consent" })).toMatchObject({
+      rejected: "NotYet",
+      message: rejected.message,
+    });
+    expect(accesses).toMatchObject([
+      {
+        operation: "command",
+        detail: { handler: "ConfirmCustomer" },
+        outcome: "ok",
+        persons: ["c-1"],
+        restricted: { basis: "consent", persons: ["c-1"] },
+      },
+    ]);
+
+    await app.forget("c-1");
+    expect((await app.exportPersonalData("c-1")).answers).toEqual([]);
     await app.stop();
   });
 

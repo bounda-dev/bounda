@@ -422,9 +422,10 @@ const scrubbed = async (
 // Seals for good, in place, the fields the targets name that hold a value the person's keys still
 // open, each under a key made for the redaction and let go at once, and appends
 // `PersonalDataRedacted` with the identity given. In the same transaction the snapshots of those
-// streams and the person's remembered rejections go, the scheduled commands and dead letters whose
-// payload holds an old value go, the letters whose text quotes one are sealed for good, and the
-// old values wait, as the events held them, for the read models to write over their copies.
+// streams go and the person's remembered answers are erased, the scheduled commands and dead
+// letters whose payload holds an old value go, the letters whose text quotes one are sealed for
+// good, and the old values wait, as the events held them, for the read models to write over their
+// copies.
 export const redactWithin: RedactWithinFunction = async (args) => {
   const { transaction, ids, clock, personId, identity, context, targets } = args;
   const applied = await transaction.eventStore.readOne({

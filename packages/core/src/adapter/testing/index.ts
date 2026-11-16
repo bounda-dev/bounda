@@ -16,7 +16,14 @@ export type {
   TestCommandFunction,
   TestOutcomeFunction,
 } from "./fixtures.ts";
-export { pendingEvent, testCommand, testContext, testMetadata, testOutcome } from "./fixtures.ts";
+export {
+  pendingEvent,
+  testAnswer,
+  testCommand,
+  testContext,
+  testMetadata,
+  testOutcome,
+} from "./fixtures.ts";
 export type {
   ForgetLedgerContractArgs,
   ForgetLedgerContractFunction,

@@ -230,13 +230,26 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
       migrate: async (tx) => {
         await tx.run(tenancyTableStatement(tables.tenancy), []);
         // Snapshots and remembered rejections are sealed at rest from now on. Those kept in the clear
-        // go: a snapshot is only a cache, and a rejection sent again is decided again, as after
-        // a forgetting; a stored result holds ids alone, and stays until it expires.
+        // go: a snapshot is only a cache, and a rejection sent again is decided again; a stored
+        // result holds ids alone, and stays until it expires.
         await tx.run(`DELETE FROM ${tables.snapshots}`, []);
         await tx.run(
           `DELETE FROM ${tables.idempotencyKeys} WHERE jsonb_typeof("outcome"->'rejected') = 'string'`,
           [],
         );
+      },
+    },
+    {
+      version: 8,
+      migrate: async (tx) => {
+        // An answer is sealed whole from now on, the command's fingerprint inside it. One kept
+        // before takes its fingerprint in, and is read as it was until it expires.
+        if (!(await columnsOf(tx, schema, tables.idempotencyKeys)).has("fingerprint")) return;
+        await tx.run(
+          `UPDATE ${tables.idempotencyKeys} SET "outcome" = jsonb_build_object('fingerprint', "fingerprint", 'outcome', "outcome")`,
+          [],
+        );
+        await tx.run(`ALTER TABLE ${tables.idempotencyKeys} DROP COLUMN "fingerprint"`, []);
       },
     },
   ],

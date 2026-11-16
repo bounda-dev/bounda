@@ -106,10 +106,13 @@ when its handler rejects it, with the code in `rejected`. Return `failure(error)
 |---|---|---|
 | `ValidationError` | 400 | `{ error, issues }`, each issue with the `path` of the field and its `message` |
 | `DomainError` | 409 | `{ error, issues: [], rejected }`, the code the command declares |
+| `ProcessingRestrictedError` | 409 | `{ error, issues: [] }`, the command touches data a [restriction](/guides/personal-data/#restricting-processing) covers |
 | `IdempotencyKeyConflictError` | 422 | `{ error, issues: [] }`, the request's `Idempotency-Key` came back with another payload |
+| `IdempotentAnswerErasedError` | 410 | `{ error, issues: [] }`, the request's `Idempotency-Key` names a command whose answer was [erased with a person's data](/guides/personal-data/#remembered-answers) |
+| `TenantForgottenError` | 410 | `{ error, issues: [] }`, the request's tenant was [forgotten](/guides/personal-data/#forgetting-a-tenant) |
 
-`failure` goes by the error's `code`, `VALIDATION_FAILED`, `DOMAIN_ERROR` or
-`IDEMPOTENCY_KEY_CONFLICT`, so it answers the same for the refusals a Durable Object sends back on
+`failure` goes by the error's `code`, `VALIDATION_FAILED`, `DOMAIN_ERROR`, `PROCESSING_RESTRICTED`,
+`IDEMPOTENCY_KEY_CONFLICT`, `IDEMPOTENT_ANSWER_ERASED` or `TENANT_FORGOTTEN`, so it answers the same for the refusals a Durable Object sends back on
 Cloudflare, which arrive as plain errors.
 Anything else is rethrown and reaches the route's `ErrorBoundary`. `Failure`, the shape of that
 data, is exported from `@bounda-dev/react-router`.

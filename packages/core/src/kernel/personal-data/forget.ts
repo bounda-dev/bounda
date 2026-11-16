@@ -97,9 +97,9 @@ export interface ForgetWithinFunction {
  * the fields gone already. A key in force of a category whose basis is a legal obligation is
  * retained instead while its retention has not run out, when the person or the category is what
  * was asked for; a key named by fingerprint goes whatever it is. The scheduled commands, dead
- * letters, snapshots and remembered rejections that hold the person's data under a key no longer
- * in force go in the same transaction, every one that names them when they are forgotten as a
- * whole, and the event names the commands and the letters. A person without a key is forgotten
+ * letters and snapshots that hold the person's data under a key no longer in force go in the same
+ * transaction, and the remembered answers sealed under one are erased, every one that names them
+ * when they are forgotten as a whole; the event names the commands and the letters. A person without a key is forgotten
  * all the same, since read models may hold what their events carried in the clear.
  */
 export const forgetWithin: ForgetWithinFunction = async (args) => {

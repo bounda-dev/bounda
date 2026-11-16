@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
-import { testOutcome } from "../../adapter/testing/fixtures.ts";
 import { memory } from "../../memory/index.ts";
 import {
   createAtRestSealer,
   isSealedAtRest,
   type SealedAtRest,
-  sealedAnswers,
   sealedSnapshots,
 } from "./at-rest.ts";
 
@@ -37,6 +35,23 @@ describe("createAtRestSealer", () => {
     await expect(createAtRestSealer(await baseKey()).open(first)).rejects.toThrow();
     const swapped: SealedAtRest = { $sealed: { ...first.$sealed, salt: second.$sealed.salt } };
     await expect(sealer.open(swapped)).rejects.toThrow();
+  });
+
+  it("files a key under its HMAC, the same for one base and another under another, its key derived once", async () => {
+    const base = await baseKey();
+    const sealer = createAtRestSealer(base);
+    const derived = vi.spyOn(crypto.subtle, "deriveKey");
+    const filed = await sealer.lookup("register-ana@example.com");
+    expect(await sealer.lookup("register-ana@example.com")).toBe(filed);
+    expect(derived.mock.calls.map((call) => [call[3], call[4]])).toEqual([[false, ["sign"]]]);
+    derived.mockRestore();
+    expect(filed).not.toContain("ana");
+    expect(filed).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+    expect(await sealer.lookup("register-bo@example.com")).not.toBe(filed);
+    expect(await createAtRestSealer(base).lookup("register-ana@example.com")).toBe(filed);
+    expect(await createAtRestSealer(await baseKey()).lookup("register-ana@example.com")).not.toBe(
+      filed,
+    );
   });
 
   it.each([
@@ -76,32 +91,6 @@ describe("sealedSnapshots", () => {
     await opened.snapshotStore.put({ ...snapshot, state: "not json" });
     expect(await snapshots.get(stream)).toBeNull();
     expect(await snapshots.get({ ...stream, aggregateId: "o-2" })).toBeNull();
-    await opened.close();
-  });
-});
-
-describe("sealedAnswers", () => {
-  it("keeps every answer sealed, and reads one kept in the clear as it is", async () => {
-    const opened = await storage();
-    const sealer = createAtRestSealer(await baseKey());
-    const answers = sealedAnswers(opened.idempotencyStore, sealer);
-    const now = new Date("2026-01-01T00:00:00.000Z");
-    const record = {
-      fingerprint: "fp",
-      outcome: testOutcome("ada@example.com"),
-      expiresAt: "2099-01-01T00:00:00.000Z",
-      persons: [],
-      now,
-    };
-    await answers.put({ ...record, key: "k-1" });
-    const stored = await opened.idempotencyStore.get({ key: "k-1", now });
-    expect(JSON.stringify(stored)).not.toContain("ada@example.com");
-    expect(isSealedAtRest(stored?.outcome)).toBe(true);
-    expect((await answers.get({ key: "k-1", now }))?.outcome).toEqual(record.outcome);
-
-    await opened.idempotencyStore.put({ ...record, key: "k-2" });
-    expect((await answers.get({ key: "k-2", now }))?.outcome).toEqual(record.outcome);
-    expect(await answers.get({ key: "k-3", now })).toBeNull();
     await opened.close();
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isAdapter } from "../adapter/adapter.ts";
+import { testKeyedPerson, testPersonalKey } from "../adapter/testing/fixtures.ts";
 import {
   type ContractRow,
   checkpointStoreContract,
@@ -354,6 +355,14 @@ describe("memory adapter", () => {
       context,
     });
     await storage.deadLetterStore.add(letter("kept"));
+    await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
+    const answered = {
+      key: "answered",
+      answer: { sealed: true },
+      expiresAt: "2026-01-02T00:00:00.000Z",
+      persons: [testKeyedPerson("c-1", "1")],
+    };
+    await storage.idempotencyStore.put({ ...answered, now });
     await storage.inboxLedger.tryClaim({ ...key, now, leaseMs: 1_000 });
     storage.inboxLedger.complete = async () => {
       throw new Error("connection lost");
@@ -388,17 +397,20 @@ describe("memory adapter", () => {
         await tx.deadLetterStore.add(letter("lost"));
         await tx.idempotencyStore.put({
           key: "lost",
-          fingerprint: "fp",
-          outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
+          answer: {
+            outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
+          },
           expiresAt: "2026-01-02T00:00:00.000Z",
           persons: [],
           now,
         });
+        await tx.idempotencyStore.forget("c-1");
         await tx.inboxLedger.fail({ ...key, error: "boom" });
         await tx.inboxLedger.complete(key);
       }),
     ).rejects.toThrow("connection lost");
     expect(await storage.idempotencyStore.get({ key: "lost", now })).toBeNull();
+    expect(await storage.idempotencyStore.get({ key: "answered", now })).toEqual(answered);
     expect(await storage.eventStore.lastPosition()).toBe(1);
     expect(
       (await storage.eventStore.load({ aggregateType: "order", aggregateId: "1" })).events.map(
