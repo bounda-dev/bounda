@@ -223,18 +223,20 @@ export const expectEarlierRowsTakenIn: ExpectEarlierRowsTakenInFunction = async 
     lastActiveAt: null,
   });
   // Kept in the clear: the snapshot, a cache, and the rejection, which may quote what it was
-  // decided on, go; the result, ids alone, stays.
+  // decided on, go; the result, ids alone, stays, its fingerprint taken into its answer.
   expect(await storage.snapshotStore.get({ aggregateType: "order", aggregateId: "1" })).toBeNull();
   const now = new Date("2026-01-01T00:00:00.000Z");
   expect(await storage.idempotencyStore.get({ key: "k-2", now })).toBeNull();
-  expect((await storage.idempotencyStore.get({ key: "k-1", now }))?.outcome).toEqual(
-    testOutcome("1"),
-  );
+  expect((await storage.idempotencyStore.get({ key: "k-1", now }))?.answer).toEqual({
+    fingerprint: "fp",
+    outcome: testOutcome("1"),
+  });
   expect(await storage.tenancy.get()).toBeNull();
   await storage.idempotencyStore.forget("p-2");
-  expect(
-    await execute(`SELECT count(*) AS "left" FROM ${tables.idempotencyKeys}`).then(([row]) =>
-      Number(row?.left),
-    ),
-  ).toBe(0);
+  expect(await storage.idempotencyStore.get({ key: "k-1", now })).toEqual({
+    key: "k-1",
+    answer: null,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    persons: [],
+  });
 };

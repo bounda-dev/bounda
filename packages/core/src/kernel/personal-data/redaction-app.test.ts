@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { Table } from "../../adapter/storage/table.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { IdempotentAnswerErasedError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
@@ -438,6 +438,27 @@ describe.each(adapters)("redact, %s", (_, adapterOf) => {
     });
     expect(await queries.byEmail?.({ email: "ana@old.example" })).toBeNull();
     expect(await scheduled()).toEqual([]);
+    await expectRedacted(app, "ana");
+  });
+
+  it("erases what it remembered of a command of the person, so a retry under its key runs nothing", async () => {
+    const { app, commands, registered, exported, holding } = await setUp(adapterOf());
+    await registered("ana", "ana@old.example");
+    const corrected = { customerId: "ana", email: "ana@new.example" };
+    await commands.correctEmail?.(corrected, { idempotencyKey: "correct-1" });
+    expect((await exported("ana")).answers.map(({ idempotencyKey }) => idempotencyKey)).toEqual([
+      "correct-1",
+    ]);
+    await app.redact("ana", { events: await holding("ana", "ana@old.example") });
+    expect((await exported("ana")).answers).toEqual([]);
+    const retried = await commands
+      .correctEmail?.(corrected, { idempotencyKey: "correct-1" })
+      .catch((error: unknown) => error);
+    expect(retried).toBeInstanceOf(IdempotentAnswerErasedError);
+    expect(
+      (await app.events.read({ limit: 1_000 })).filter(({ type }) => type === "EmailCorrected"),
+    ).toHaveLength(1);
+    await app.runUntilIdle();
     await expectRedacted(app, "ana");
   });
 

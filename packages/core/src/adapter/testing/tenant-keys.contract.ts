@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Storage } from "../adapter.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../storage/personal-key-store.ts";
 import type { TenantKeyRecord, TenantKeyStore } from "../storage/tenant-key-store.ts";
-import { testOutcome } from "./fixtures.ts";
+import { testAnswer } from "./fixtures.ts";
 
 export interface TenantKeyStoreContractArgs {
   /**
@@ -249,8 +249,7 @@ export const tenancyContract: TenancyContractFunction = ({ create }) => {
         const now = new Date("2026-01-01T00:00:00.000Z");
         await storage.idempotencyStore.put({
           key: "k-1",
-          fingerprint: "fp",
-          outcome: testOutcome("o-1"),
+          answer: testAnswer("o-1"),
           expiresAt: "2099-01-01T00:00:00.000Z",
           persons: [],
           now,

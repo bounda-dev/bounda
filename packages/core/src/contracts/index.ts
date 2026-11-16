@@ -43,6 +43,8 @@ export {
   IdempotencyKeyConflictError,
   type IdempotencyKeyConflictErrorArgs,
   IdempotencyKeyTakenError,
+  IdempotentAnswerErasedError,
+  type IdempotentAnswerErasedErrorArgs,
   NotFoundError,
   ProcessingRestrictedError,
   RebuildSupersededError,

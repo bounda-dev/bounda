@@ -5,7 +5,7 @@ import type { Adapter } from "../adapter.ts";
 import type { InspectedTable } from "../storage/inspection.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../storage/personal-key-store.ts";
 import { storedFields } from "../storage/sealed-fields.ts";
-import { pendingEvent, testCommand, testContext, testDeadLetter, testOutcome } from "./fixtures.ts";
+import { pendingEvent, testAnswer, testCommand, testContext, testDeadLetter } from "./fixtures.ts";
 import { type ContractRow, contractFields } from "./table.contract.ts";
 
 export interface InspectionContractArgs {
@@ -68,8 +68,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       await storage.deadLetterStore.add(testDeadLetter("dl-1"));
       await storage.idempotencyStore.put({
         key: "idem-1",
-        fingerprint: "fp",
-        outcome: testOutcome("1"),
+        answer: testAnswer("1"),
         expiresAt: new Date(now.getTime() + 60_000).toISOString(),
         persons: [],
         now,

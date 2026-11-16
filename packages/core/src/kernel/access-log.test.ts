@@ -223,6 +223,7 @@ describe("the access log", () => {
           scheduledCommands: 0,
           deadLetters: 1,
           subscriberFailures: 0,
+          answers: 0,
           readModelRows: 1,
           recipients: 0,
         },

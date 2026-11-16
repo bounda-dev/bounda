@@ -40,7 +40,11 @@ export interface DispatchOptions {
    * every later one with the same key, the same command, the same payload, the same `delay` and
    * the same actor (`as`) answers the same without running it, its rejection included. The same
    * key with any of those changed rejects with `IdempotencyKeyConflictError`. A dispatch that fails is not remembered,
-   * so a retry runs it. Between 1 and `MAX_IDEMPOTENCY_KEY_LENGTH` characters.
+   * so a retry runs it. What it answered is the personal data of the person the command touches,
+   * sealed under their keys: once they are forgotten, or their data redacted, a dispatch under the
+   * key rejects with `IdempotentAnswerErasedError` and runs nothing until the key expires. The key
+   * is stored only as a keyed hash, its text sealed with the answer. Between 1 and
+   * `MAX_IDEMPOTENCY_KEY_LENGTH` characters.
    */
   readonly idempotencyKey?: string;
   /**
@@ -54,7 +58,8 @@ export interface DispatchOptions {
    * `legal-claims`, the `protection-of-rights` of another person or an important `public-interest`
    * open what a person asked to restrict; any of them, or `legal-obligation`, what a forgetting
    * kept. Without it a command that touches a person restricted as a whole, or would read or write
-   * restricted data, is refused with `ProcessingRestrictedError`. Its events carry the basis in
+   * restricted data, or replay an answer remembered of such data, is refused with
+   * `ProcessingRestrictedError`. Its events carry the basis in
    * `metadata.restrictionBasis`, and the access log records the restricted persons it let
    * through. Not with `delay`: a basis holds when it is given.
    */

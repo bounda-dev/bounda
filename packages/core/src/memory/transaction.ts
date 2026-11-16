@@ -8,7 +8,7 @@ import {
 import { createStagedEventStore, type StagedBatch } from "../adapter/staged-event-store.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterStore } from "../adapter/storage/dead-letter-store.ts";
-import type { IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
+import type { IdempotencyRecord, IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
 import type { ClaimKey, InboxLedger } from "../adapter/storage/inbox-ledger.ts";
 import type { PersonActivity, PersonStore } from "../adapter/storage/person-store.ts";
 import {
@@ -337,8 +337,19 @@ const createUndoLog = ({
       idempotencyStore: {
         put: (args) =>
           tracked(entries.idempotencyStore, args.key, () => idempotencyStore.put(args)),
-        // Not put back: a rejection forgotten is decided again, which is all it costs.
-        forget: (person, keep) => idempotencyStore.forget(person, keep),
+        reseal: (args) =>
+          tracked(entries.idempotencyStore, args.key, () => idempotencyStore.reseal(args)),
+        forget: async (person, keep) => {
+          const named = entries.idempotencyStore
+            .list()
+            .filter(([, record]) => namesPerson(record as IdempotencyRecord, person, keep))
+            .map(([key]) => [key, entries.idempotencyStore.read(key)] as const);
+          await idempotencyStore.forget(person, keep);
+          for (const [key, before] of named) {
+            const after = entries.idempotencyStore.read(key);
+            undos.push(() => entries.idempotencyStore.putBack(key, before, after));
+          }
+        },
       },
     },
     undo: () => undoAll(undos),

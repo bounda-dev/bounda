@@ -28,7 +28,7 @@ describe("migrateTables", () => {
       },
     };
     expect(await migrateTables({ config })).toEqual([
-      { database: "storage", scope: "storage", version: 7, latest: 7 },
+      { database: "storage", scope: "storage", version: 8, latest: 8 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
       { database: "readModels.customers", scope: "checkpoints", version: 3, latest: 3 },
       { database: "forgetLedger", scope: "forget-ledger", version: 7, latest: 7 },

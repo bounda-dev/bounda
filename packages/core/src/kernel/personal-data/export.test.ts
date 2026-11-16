@@ -16,8 +16,11 @@ import { sealedTable } from "../read-model/sealed-table.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
 import { keysOver, testWrapping } from "../test-support.ts";
+import { sealAnswer } from "./answers.ts";
+import { createAtRestSealer } from "./at-rest.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
+import { createDisposableKey, seal } from "./crypto.ts";
 import { sealError } from "./errors.ts";
 import { exportPersonalData } from "./export.ts";
 
@@ -356,6 +359,7 @@ describe("exportPersonalData", () => {
       scheduledCommands: [],
       deadLetters: [],
       subscriberFailures: [],
+      answers: [],
       readModels: { customerDirectory: [], orderNotes: [], orderCustomers: [] },
     });
     expect(await exportOf("c-1", 100)).toEqual(exported);
@@ -794,5 +798,69 @@ describe("exportPersonalData", () => {
       default: { basis: null, retention: null, restrictedUntil: null },
     });
     expect((await exportOf("c-1")).categories).toEqual(exportedCategories);
+  });
+
+  it("hands out each answer remembered of the person that still opens, by key", async () => {
+    const { storage, exportOf } = await setup();
+    const keys = storage.personalKeys;
+    const own = await keys.create("c-1", "default");
+    const outcome = {
+      rejected: "Taken",
+      message: "ana@example.com is taken",
+      aggregateType: "customer",
+      aggregateId: "c-1",
+    };
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    const remember = async (filed: string, key: string) => {
+      const sealed = await sealAnswer({
+        keys,
+        atRest: createAtRestSealer(
+          await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]),
+        ),
+        answer: { key, fingerprint: "fp", outcome },
+        person: "c-1",
+        marks: null,
+        payload: {},
+        read: [],
+      });
+      await storage.idempotencyStore.put({
+        key: filed,
+        answer: sealed.answer,
+        persons: sealed.persons,
+        expiresAt: "2026-01-02T00:00:00.000Z",
+        now,
+      });
+    };
+    // Filed in another order than their keys sort in, as an HMAC files them.
+    await remember("h-1", "confirm-3");
+    await remember("h-3", "confirm-1");
+    // Sealed under a key the person no longer holds: nothing of it opens.
+    await storage.idempotencyStore.put({
+      key: "h-2",
+      answer: await seal({
+        key: await createDisposableKey(),
+        person: "c-1",
+        category: "default",
+        value: { key: "confirm-2", fingerprint: "fp", outcome },
+      }),
+      persons: [{ person: "c-1", fingerprint: own.fingerprint }],
+      expiresAt: "2026-01-02T00:00:00.000Z",
+      now,
+    });
+    expect((await exportOf("c-1")).answers).toEqual([
+      {
+        idempotencyKey: "confirm-1",
+        expiresAt: "2026-01-02T00:00:00.000Z",
+        outcome,
+        restricted: [],
+      },
+      {
+        idempotencyKey: "confirm-3",
+        expiresAt: "2026-01-02T00:00:00.000Z",
+        outcome,
+        restricted: [],
+      },
+    ]);
+    expect((await exportOf("c-2")).answers).toEqual([]);
   });
 });

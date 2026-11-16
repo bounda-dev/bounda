@@ -350,6 +350,7 @@ describe("settleReadModels", () => {
     const atRest = {
       seal: () => Promise.reject(new Error("not asked")),
       open: () => Promise.reject(new Error("not asked")),
+      lookup: () => Promise.reject(new Error("not asked")),
     };
     const unindexed = sealedLayoutOf({
       readModel: "notes",

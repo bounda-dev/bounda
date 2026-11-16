@@ -144,8 +144,9 @@ describe("scheduled command worker", () => {
     const { purge } = idempotencyStore;
     const record = (key: string, expiresInMs: number) => ({
       key,
-      fingerprint: "fp",
-      outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
+      answer: {
+        outcome: { rejected: "Nope", message: "no", aggregateType: "order", aggregateId: "1" },
+      },
       expiresAt: new Date(harness.clock.now().getTime() + expiresInMs).toISOString(),
       persons: [],
       now: harness.clock.now(),

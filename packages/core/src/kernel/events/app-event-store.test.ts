@@ -36,6 +36,15 @@ const setUp = async () => {
 };
 
 describe("appStorage", () => {
+  it("keeps snapshots as the adapter stores them, and nothing to seal answers with, without keys", async () => {
+    const { written, storage } = await setUp();
+    expect(storage.atRest).toBeNull();
+    expect(storage.snapshotStore).toBe(written.snapshotStore);
+    await storage.transact(async (transaction) => {
+      expect(transaction.snapshotStore).toBe(written.snapshotStore);
+    });
+  });
+
   it("drops a key a transaction removes once it commits, even one kept again meanwhile", async () => {
     const { unwrapped, written, storage, stored, readMeanwhile } = await setUp();
     expect(unwrapped).toHaveLength(0);

@@ -2,6 +2,7 @@ import type { NewCommand, StoredDispatch } from "../../contracts/command.ts";
 import type { CausationContext, EventMetadata } from "../../contracts/metadata.ts";
 import type { NewDeadLetter } from "../storage/dead-letter-store.ts";
 import type { PendingEvent } from "../storage/event-store.ts";
+import type { StoredAnswer } from "../storage/idempotency-store.ts";
 import type { KeyedPerson, SealedValue, StoredPersonalKey } from "../storage/personal-key-store.ts";
 
 /**
@@ -113,6 +114,17 @@ export const testOutcome: TestOutcomeFunction = (aggregateId) => ({
   eventIds: [`order-${aggregateId}-1`],
   eventTypes: ["OrderPlaced"],
   position: 1,
+});
+
+export interface TestAnswerFunction {
+  (aggregateId: string): StoredAnswer;
+}
+
+/**
+ * An answer as an idempotency store is given it, for its contract tests: JSON it keeps as it is.
+ */
+export const testAnswer: TestAnswerFunction = (aggregateId) => ({
+  $sealed: { salt: `salt-${aggregateId}`, data: `data-${aggregateId}` },
 });
 
 export interface TestPersonalKeyFunction {

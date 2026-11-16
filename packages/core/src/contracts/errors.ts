@@ -120,6 +120,31 @@ export class IdempotencyKeyConflictError extends BoundaError {
   }
 }
 
+export interface IdempotentAnswerErasedErrorArgs {
+  readonly idempotencyKey: string;
+  readonly commandType: string;
+}
+
+/**
+ * Thrown by a dispatch whose `idempotencyKey` names a command that ran, but whose answer held
+ * personal data since erased: a person it names was forgotten, or had their data redacted. The
+ * command does not run again under the key, so a late retry neither repeats its effects nor brings
+ * back data a person had erased; once the key expires, after
+ * `runtime.commands.idempotencyKeyLifetime`, it is free. The payload is no longer compared, so
+ * another command under the key throws this too.
+ */
+export class IdempotentAnswerErasedError extends BoundaError {
+  readonly idempotencyKey: string;
+
+  constructor({ idempotencyKey, commandType }: IdempotentAnswerErasedErrorArgs) {
+    super(
+      "IDEMPOTENT_ANSWER_ERASED",
+      `The idempotency key was used for a command whose answer was erased with personal data, so ${commandType} does not run under it`,
+    );
+    this.idempotencyKey = idempotencyKey;
+  }
+}
+
 /**
  * Thrown by an idempotency store asked to record a dispatch under a key that already holds one:
  * a duplicate that ran beside the first lost the race. Whatever the recording was part of rolls

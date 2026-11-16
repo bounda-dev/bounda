@@ -10,10 +10,10 @@ import { DEFAULT_PERSONAL_CATEGORY, type KeyedPerson } from "../storage/personal
 import {
   testKeyedPerson as held,
   testPersonalKey as key,
+  testAnswer,
   testCommand,
   testContext,
   testDeadLetter,
-  testOutcome,
 } from "../testing/fixtures.ts";
 import {
   type ContractRow,
@@ -200,8 +200,7 @@ describe("the person index of the SQLite stores", () => {
     });
     await storage.idempotencyStore.put({
       key: "i",
-      fingerprint: "f",
-      outcome: testOutcome("1"),
+      answer: testAnswer("1"),
       expiresAt: "2026-01-02T00:00:00.000Z",
       persons: [held("c-2", "2")],
       now: new Date("2026-01-01T00:00:00.000Z"),

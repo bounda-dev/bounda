@@ -1,4 +1,8 @@
-import type { IdempotencyRecord, IdempotencyStore } from "../adapter/storage/idempotency-store.ts";
+import {
+  erased,
+  type IdempotencyRecord,
+  type IdempotencyStore,
+} from "../adapter/storage/idempotency-store.ts";
 import { type KeyedPerson, namesPerson } from "../adapter/storage/personal-key-store.ts";
 import { IdempotencyKeyTakenError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
@@ -21,7 +25,7 @@ const expired = (record: IdempotencyRecord, now: Date): boolean =>
 
 const copy = (record: IdempotencyRecord): IdempotencyRecord => ({
   ...record,
-  outcome: jsonCopy(record.outcome),
+  answer: jsonCopy(record.answer),
 });
 
 export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({ holds }) => {
@@ -37,7 +41,18 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
       if (existing !== undefined && !expired(existing, now)) {
         throw new IdempotencyKeyTakenError(record.key);
       }
-      if (record.persons.every(holds)) records.set(record.key, copy(record));
+      records.set(record.key, copy(record.persons.every(holds) ? record : erased(record)));
+    },
+    listByPerson: async ({ person, now }) =>
+      [...records.values()]
+        .filter((record) => !expired(record, now) && namesPerson(record, person))
+        .sort((a, b) => (a.key < b.key ? -1 : 1))
+        .map(copy),
+    reseal: async ({ key, answer, persons, now }) => {
+      const record = records.get(key);
+      if (record === undefined || record.answer === null || expired(record, now)) return false;
+      records.set(key, copy({ ...record, answer, persons }));
+      return true;
     },
     clear: async () => {
       records.clear();
@@ -53,7 +68,7 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
     },
     forget: async (person, keep) => {
       for (const [key, record] of records) {
-        if (namesPerson(record, person, keep)) records.delete(key);
+        if (namesPerson(record, person, keep)) records.set(key, erased(record));
       }
     },
   };

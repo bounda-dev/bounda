@@ -43,6 +43,7 @@ const LATEST = [
   { scope: "storage", version: 5 },
   { scope: "storage", version: 6 },
   { scope: "storage", version: 7 },
+  { scope: "storage", version: 8 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -155,20 +156,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 7 },
+        { scope: "storage", version: 0, latest: 8 },
         { scope: "checkpoints", version: 0, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 7 },
+        { scope: "storage", version: 0, latest: 8 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
-        { scope: "storage", version: 7, latest: 7 },
+        { scope: "storage", version: 8, latest: 8 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 7, latest: 7 },
         { scope: "tenant-keys", version: 1, latest: 1 },
@@ -225,7 +226,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 7,
+        supported: 8,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });

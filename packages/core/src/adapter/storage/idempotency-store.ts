@@ -8,18 +8,34 @@ import type { KeyedPerson } from "./personal-key-store.ts";
 export type DispatchOutcome = DispatchResult | RejectedDispatch;
 
 /**
- * A dispatch remembered under its idempotency key: the fingerprint of the command it was, what it
- * answered, and when the key may be used for another command. `persons` names the people whose
- * personal fields were in the state a rejection was decided on, since its message may quote
- * them, each with the key they were read under; it is empty for any other outcome.
+ * What a dispatch was and what it answered, sealed by the runtime: a JSON object the store keeps
+ * as it is and never reads.
+ */
+export type StoredAnswer = object;
+
+/**
+ * A dispatch remembered under its idempotency key until `expiresAt`. `answer` is sealed under the
+ * key of every person it names in `persons`, each with the fingerprint of that key, or under the
+ * database's key when it names nobody. An answer erased, because a person it names was forgotten
+ * or their data redacted, is `null` and names nobody: the key stays taken until it expires.
  */
 export interface IdempotencyRecord {
   readonly key: string;
-  readonly fingerprint: string;
-  readonly outcome: DispatchOutcome;
+  readonly answer: StoredAnswer | null;
   readonly expiresAt: string;
   readonly persons: readonly KeyedPerson[];
 }
+
+export interface ErasedFunction {
+  (record: IdempotencyRecord): IdempotencyRecord;
+}
+
+export const erased: ErasedFunction = ({ key, expiresAt }) => ({
+  key,
+  answer: null,
+  expiresAt,
+  persons: [],
+});
 
 export interface GetIdempotencyRecordArgs {
   readonly key: string;
@@ -36,6 +52,21 @@ export interface PutIdempotencyRecordArgs extends IdempotencyRecord {
   readonly now: Date;
 }
 
+export interface ListIdempotencyRecordsArgs {
+  readonly person: string;
+  /**
+   * The kernel clock's time: a record expired by then is left out.
+   */
+  readonly now: Date;
+}
+
+export interface ResealIdempotencyRecordArgs {
+  readonly key: string;
+  readonly answer: StoredAnswer;
+  readonly persons: readonly KeyedPerson[];
+  readonly now: Date;
+}
+
 export interface PurgeIdempotencyRecordsArgs {
   readonly now: Date;
 }
@@ -46,10 +77,10 @@ export interface PurgeIdempotencyRecordsArgs {
  * its outcome, and the other rejects with `IdempotencyKeyTakenError`, which rolls back whatever
  * the recording was part of.
  *
- * A record that names people lives only as long as their keys stay in force, as a snapshot does:
- * `put` records nothing unless every person it names with a fingerprint holds the key of that
+ * An answer lives only as long as the keys it is sealed under stay in force: `put` records it
+ * erased, the key alone, when a person it names with a fingerprint no longer holds the key of that
  * fingerprint in force (one named with `null` was read in the clear and needs none), checked in
- * the same statement, and `forget` removes every record that names the person under a key outside
+ * the same statement; and `forget` erases every answer that names the person under a key outside
  * `keep`, or read in the clear.
  */
 export interface IdempotencyStore {
@@ -58,10 +89,19 @@ export interface IdempotencyStore {
    */
   get(args: GetIdempotencyRecordArgs): Promise<IdempotencyRecord | null>;
   /**
-   * Records the outcome, taking the place of an expired record. Rejects with
+   * Records the dispatch, taking the place of an expired record. Rejects with
    * `IdempotencyKeyTakenError` when the key holds a record that has not expired.
    */
   put(args: PutIdempotencyRecordArgs): Promise<void>;
+  /**
+   * The records that have not expired whose `persons` names the person.
+   */
+  listByPerson(args: ListIdempotencyRecordsArgs): Promise<readonly IdempotencyRecord[]>;
+  /**
+   * Replaces the answer of the record under `key`, and the persons it names, unless it has expired
+   * or was erased meanwhile, and resolves to whether it did.
+   */
+  reseal(args: ResealIdempotencyRecordArgs): Promise<boolean>;
   /**
    * Removes the records expired by `now`, and resolves to how many.
    */

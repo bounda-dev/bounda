@@ -1,5 +1,6 @@
 import type { ReadModelStorage } from "../../adapter/adapter.ts";
 import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type { DispatchOutcome } from "../../adapter/storage/idempotency-store.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { retentionEnd } from "../../contracts/duration.ts";
@@ -27,6 +28,7 @@ import { createSealingKeyRing, type SealingKeyRing } from "../read-model/sealing
 import type { RecipientsRuntime } from "../recipients/build.ts";
 import { recipientsOf } from "../recipients/listing.ts";
 import { isRecord } from "../shared/merge-fields.ts";
+import { openAnswer } from "./answers.ts";
 import { formatRetention, type PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
@@ -139,6 +141,21 @@ export interface ExportedDeadLetter {
 }
 
 /**
+ * A dispatch remembered under an idempotency key whose answer names the person, sealed under
+ * their keys: what it answered, opened. It is remembered until `expiresAt`.
+ */
+export interface ExportedAnswer {
+  readonly idempotencyKey: string;
+  readonly expiresAt: string;
+  readonly outcome: DispatchOutcome;
+  /**
+   * `["outcome"]` while any restriction of the person holds: the answer may quote any of their
+   * data.
+   */
+  readonly restricted: ExportedRestricted;
+}
+
+/**
  * The last failure of a subscriber on an event that names the person, whose error text is sealed
  * under their key: opened, `null` once they are forgotten.
  */
@@ -199,6 +216,11 @@ export interface PersonalDataExport {
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
   readonly subscriberFailures: readonly ExportedSubscriberFailure[];
+  /**
+   * What the commands dispatched with an idempotency key that concern the person answered, while
+   * the runtime remembers it.
+   */
+  readonly answers: readonly ExportedAnswer[];
   /**
    * By read model, every one with a field marked `.person()`, rows or none.
    */
@@ -511,6 +533,30 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         ),
       })),
   );
+  // An answer a key it is sealed under no longer opens holds nothing to hand out. One kept before
+  // keys were filed by their HMAC holds no key of its own, and is filed under it in the clear.
+  const answers: ExportedAnswer[] = [];
+  for (const record of await storage.idempotencyStore.listByPerson({
+    person: personId,
+    now: clock.now(),
+  })) {
+    const remembered =
+      record.answer === null
+        ? null
+        : await openAnswer({
+            keys: storage.personalKeys,
+            atRest: storage.atRest,
+            answer: record.answer,
+          });
+    if (remembered === null) continue;
+    answers.push({
+      idempotencyKey: remembered.key ?? record.key,
+      expiresAt: record.expiresAt,
+      outcome: remembered.outcome,
+      restricted: restrictions.length > 0 ? ["outcome"] : [],
+    });
+  }
+  answers.sort((a, b) => (a.idempotencyKey < b.idempotencyKey ? -1 : 1));
   const redactedOf = new Map<string, Set<string>>();
   for (const redaction of redactions) {
     for (const { id, fields } of redaction.events) {
@@ -531,6 +577,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
     scheduledCommands,
     deadLetters,
     subscriberFailures,
+    answers,
     readModels: Object.fromEntries(await rows),
   };
 };

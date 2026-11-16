@@ -43,9 +43,13 @@ means to do once, such as a UUID made when the form is submitted and sent again 
 it. It is remembered for `runtime.commands.idempotencyKeyLifetime`, 24 hours by default; past it
 the key is free for another command, and the scheduled-command worker purges the record from
 `bounda_idempotency_keys` ([configuration](/reference/configuration/#commands)).
-A rejection decided on a state that held someone's [personal data](/guides/personal-data/) is
-remembered only until that person is forgotten: `forget` removes it, and the same key is then
-decided again.
+What a command answered is the [personal data](/guides/personal-data/#remembered-answers) of the
+person it touches, so it is kept encrypted under their keys, and erased when they are forgotten or
+their data redacted: the same key then rejects with `IdempotentAnswerErasedError`
+(`IDEMPOTENT_ANSWER_ERASED`) and runs nothing until it expires, so a late retry neither repeats the
+command nor brings back what the person had erased. The key is stored only as an HMAC under the
+database's key, its text sealed with the answer, so a key that quotes someone is never kept in the
+clear either.
 
 This is not the `idempotencyKey` a command handler receives: that one is the command's own id,
 for the provider the handler calls, the same across the runs a concurrency conflict causes

@@ -59,6 +59,7 @@ export type {
 } from "./kernel/personal-data/encrypted-files.ts";
 export { withEncryptedFiles } from "./kernel/personal-data/encrypted-files.ts";
 export type {
+  ExportedAnswer,
   ExportedCategories,
   ExportedCategory,
   ExportedData,

@@ -28,6 +28,7 @@ import {
   DomainError,
   IdempotencyKeyConflictError,
   IdempotencyKeyTakenError,
+  IdempotentAnswerErasedError,
   NotFoundError,
   rejectionOf,
   ValidationError,
@@ -45,10 +46,12 @@ import {
 import type { AggregateRuntime, AggregatesRuntime, CommandRuntime } from "../aggregate/runtime.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
+import { openAnswer, sealAnswer } from "../personal-data/answers.ts";
 import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
 import { hidingRetained } from "../personal-data/event-store.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted, refuseRestrictedRead } from "../personal-data/refusal.ts";
+import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import type { Disclosures } from "../recipients/gate.ts";
 import { openedOf, PersonalDataChangedError } from "../recipients/gate.ts";
 import { actedBy } from "../shared/causation.ts";
@@ -189,6 +192,8 @@ type DispatchStores = Pick<
 
 interface Idempotency {
   readonly key: string;
+  // What the store files the key under: its HMAC, or the key itself in an app without keys.
+  readonly filed: string;
   readonly fingerprint: string;
 }
 
@@ -416,7 +421,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
 }) => {
   // Only streams written before `begin` existed land here, so the set stays small.
   const warnedOpenings = new Set<string>();
-  // Whose personal data a rejection's state held, which its message may quote.
+  // Whose personal data a rejection's state held, whose keys its answer is sealed under too.
   const rejectedPersons = new WeakMap<DomainError, readonly KeyedPerson[]>();
   const execute = async (
     aggregate: AggregateRuntime,
@@ -570,11 +575,16 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     const maxDepth = config.forAggregate(aggregate.name).policies.maxChainDepth;
     if (depth > maxDepth) throw new ChainDepthExceededError(depth, maxDepth);
     const actor = context === undefined ? caller : context.actor;
-    const idempotency: Idempotency | undefined =
+    const key =
       options.idempotencyKey === undefined
         ? undefined
+        : checkIdempotencyKey(type, options.idempotencyKey);
+    const idempotency: Idempotency | undefined =
+      key === undefined
+        ? undefined
         : {
-            key: checkIdempotencyKey(type, options.idempotencyKey),
+            key,
+            filed: storage.atRest === null ? key : await storage.atRest.lookup(key),
             fingerprint: await fingerprintOf({
               type,
               payload,
@@ -608,6 +618,11 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       },
     };
 
+    // Refused before it runs, and again by the store as its events are written, so one running
+    // when `restrict` commits stores nothing.
+    const person = personOfCommand({ aggregate, command: runtime, payload: parsed, aggregateId });
+    const touches = person === null ? [] : [person];
+
     const signals = [reactionSignal, options.signal].filter((one) => one !== undefined);
     for (const signal of signals) signal.throwIfAborted();
 
@@ -637,17 +652,27 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       };
     };
 
-    const recordOf = (
-      { key, fingerprint }: Idempotency,
+    // Sealed with `keys`, the transaction's when the answer is recorded in one: a key the person
+    // is given there commits with the answer.
+    const recordOf = async (
+      { key, filed, fingerprint }: Idempotency,
       outcome: DispatchOutcome,
-      persons: readonly KeyedPerson[] = [],
-    ): PutIdempotencyRecordArgs => {
+      keys: PersonalKeys,
+      read: readonly KeyedPerson[] = [],
+    ): Promise<PutIdempotencyRecordArgs> => {
+      const sealed = await sealAnswer({
+        keys,
+        atRest: storage.atRest,
+        answer: { key, fingerprint, outcome },
+        person,
+        marks: runtime.personal,
+        payload: parsed,
+        read,
+      });
       const now = clock.now();
       return {
-        key,
-        fingerprint,
-        outcome,
-        persons,
+        key: filed,
+        ...sealed,
         expiresAt: new Date(
           now.getTime() + config.runtime.commands.idempotencyKeyLifetimeMs,
         ).toISOString(),
@@ -677,10 +702,6 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       lastLoad = loaded;
       within?.read(loaded.persons);
     };
-    // Refused before it runs, and again by the store as its events are written, so one running
-    // when `restrict` commits stores nothing.
-    const person = personOfCommand({ aggregate, command: runtime, payload: parsed, aggregateId });
-    const touches = person === null ? [] : [person];
     // The restricted persons `basis` let the command read, recorded however it settles.
     const letThrough = new Set<string>();
     const run = (store: EventStore): Promise<StoredDispatch | DomainError> =>
@@ -698,18 +719,23 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           keys: storage.personalKeys,
         });
         if (idempotency === undefined) return schedule(stores.scheduler, delay, sealed);
-        const scheduling = async (transaction: DispatchStores): Promise<ScheduledDispatch> => {
+        const scheduling = async (
+          transaction: DispatchStores,
+          keys: PersonalKeys,
+        ): Promise<ScheduledDispatch> => {
           const answer = await schedule(transaction.scheduler, delay, sealed);
-          await transaction.idempotencyStore.put(recordOf(idempotency, answer));
+          await transaction.idempotencyStore.put(await recordOf(idempotency, answer, keys));
           return answer;
         };
-        return within === undefined ? storage.transact(scheduling) : scheduling(within);
+        return within === undefined
+          ? storage.transact((transaction) => scheduling(transaction, transaction.personalKeys))
+          : scheduling(within, storage.personalKeys);
       }
       if (idempotency === undefined) return run(stores.eventStore);
       if (within !== undefined) {
         const answer = await run(within.eventStore);
         await within.idempotencyStore.put(
-          recordOf(idempotency, outcomeOf(answer), personsOf(answer)),
+          await recordOf(idempotency, outcomeOf(answer), storage.personalKeys, personsOf(answer)),
         );
         return answer;
       }
@@ -720,7 +746,11 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           const appended = await storage.transact(async (transaction) => {
             const result = await transaction.eventStore.append(args);
             await transaction.idempotencyStore.put(
-              recordOf(idempotency, storedDispatch(aggregate, aggregateId, result)),
+              await recordOf(
+                idempotency,
+                storedDispatch(aggregate, aggregateId, result),
+                transaction.personalKeys,
+              ),
             );
             return result;
           });
@@ -731,7 +761,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       const answer = await run(recording);
       if (!recorded)
         await storage.idempotencyStore.put(
-          recordOf(idempotency, outcomeOf(answer), personsOf(answer)),
+          await recordOf(idempotency, outcomeOf(answer), storage.personalKeys, personsOf(answer)),
         );
       return answer;
     };
@@ -750,20 +780,56 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       run: async (span): Promise<DispatchResult | Rejected> => {
         const replay = async (): Promise<DispatchResult | Rejected | null> => {
           if (idempotency === undefined) return null;
-          const found = await stores.idempotencyStore.get({
-            key: idempotency.key,
-            now: clock.now(),
-          });
+          const { key: given, filed } = idempotency;
+          // One kept before keys were filed by their HMAC is found by the key itself until it
+          // expires.
+          const found =
+            (await stores.idempotencyStore.get({ key: filed, now: clock.now() })) ??
+            (filed === given
+              ? null
+              : await stores.idempotencyStore.get({ key: given, now: clock.now() }));
           if (found === null) return null;
-          if (found.fingerprint !== idempotency.fingerprint) {
+          const remembered =
+            found.answer === null
+              ? null
+              : await openAnswer({
+                  keys: storage.personalKeys,
+                  atRest: storage.atRest,
+                  answer: found.answer,
+                });
+          if (remembered === null) {
+            throw new IdempotentAnswerErasedError({
+              idempotencyKey: idempotency.key,
+              commandType: type,
+            });
+          }
+          if (remembered.fingerprint !== idempotency.fingerprint) {
             throw new IdempotencyKeyConflictError({
               idempotencyKey: idempotency.key,
               commandType: type,
             });
           }
+          // The answer is personal data of whom it names: replaying it processes their data.
+          const through = await refuseRestrictedRead({
+            persons: stores.persons,
+            keys: storage.personalKeys,
+            opened: found.persons,
+            touches,
+            basis,
+          });
+          if (basis !== undefined && through.length > 0) {
+            await recordAccess({
+              operation: "command",
+              detail: { handler: type },
+              actor,
+              persons: through,
+              outcome: "ok",
+              restricted: { basis, persons: through },
+            });
+          }
           span.setAttribute(ATTRIBUTES.outcome, "replayed");
           count(type, "replayed");
-          const { outcome } = found;
+          const { outcome } = remembered;
           if (!("rejected" in outcome)) return outcome;
           span.addEvent(SPAN_EVENTS.commandRejected, { [ATTRIBUTES.rejected]: outcome.rejected });
           return rejected(new DomainError(rejectionOf(outcome.rejected, outcome.message)), {

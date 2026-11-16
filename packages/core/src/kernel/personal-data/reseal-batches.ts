@@ -1,12 +1,14 @@
 import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type { StoredAnswer } from "../../adapter/storage/idempotency-store.ts";
 import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 import type { ScheduledCommand } from "../../adapter/storage/scheduler.ts";
+import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { isRecord } from "../shared/merge-fields.ts";
-import { isSealed, type PersonalKey } from "./crypto.ts";
+import { createDisposableKey, isSealed, type PersonalKey, seal } from "./crypto.ts";
 import { sealUnderAll } from "./errors.ts";
 import { personOfEvent } from "./persons.ts";
 import {
@@ -82,6 +84,7 @@ export interface CreateResealBatchesArgs {
    * last activity, for a retention.
    */
   readonly recordsActivity: boolean;
+  readonly clock: Clock;
 }
 
 export interface CreateResealBatchesFunction {
@@ -170,18 +173,46 @@ const personsAfter = (
   );
 };
 
-// A remembered rejection may quote a value read under the key it moved from, which forgetting its
-// new category would not reach: it is decided again instead.
-const dropCachedUnder = async (
+interface MovedTo {
+  readonly category: string;
+  readonly key: PersonalKey;
+}
+
+// A remembered answer sealed under a key a value moved from may quote it, which forgetting the
+// value's new category must reach too: it is sealed once more under each key the value moved to.
+const sealCachedUnder = async (
   transaction: StorageTransaction,
   person: string,
   movedFrom: ReadonlySet<string>,
+  movedTo: ReadonlyMap<string, MovedTo>,
+  now: Date,
 ): Promise<void> => {
   if (movedFrom.size === 0) return;
-  const keep = (await transaction.personalKeys.list(person))
-    .map(({ key }) => key.fingerprint)
-    .filter((fingerprint) => !movedFrom.has(fingerprint));
-  await transaction.idempotencyStore.forget(person, keep);
+  for (const record of await transaction.idempotencyStore.listByPerson({ person, now })) {
+    const named = new Set(
+      record.persons.filter((held) => held.person === person).map((held) => held.fingerprint),
+    );
+    if (record.answer === null || ![...movedFrom].some((moved) => named.has(moved))) continue;
+    let answer: unknown = record.answer;
+    const persons = [...record.persons];
+    for (const [fingerprint, { category, key }] of movedTo) {
+      if (named.has(fingerprint)) continue;
+      // No answer is kept under a key a forgetting kept: one no key opens takes its place.
+      answer = await seal({
+        key: key.retained ? await createDisposableKey() : key,
+        person,
+        category,
+        value: answer,
+      });
+      if (!key.retained) persons.push({ person, fingerprint });
+    }
+    await transaction.idempotencyStore.reseal({
+      key: record.key,
+      answer: answer as StoredAnswer,
+      persons,
+      now,
+    });
+  }
 };
 
 const unsealable = (count: number, types: Iterable<string>): Sealed => ({
@@ -196,6 +227,7 @@ export const createResealBatches: CreateResealBatchesFunction = ({
   processes,
   wrapping,
   recordsActivity,
+  clock,
 }) => {
   const outside = wrapping.over(storage.personalKeys);
 
@@ -245,6 +277,7 @@ export const createResealBatches: CreateResealBatchesFunction = ({
       const resealed = [];
       const streams = new Map<string, StoredEvent>();
       const moved = new Set<string>();
+      const movedTo = new Map<string, MovedTo>();
       for (const { event, plan } of items) {
         const opened = await plan.opened(keys.open);
         if (opened === null) continue;
@@ -253,6 +286,7 @@ export const createResealBatches: CreateResealBatchesFunction = ({
           keys.event(plan.person, category, event.position),
         );
         if (chosen.discarded) discardedTypes.add(qualified(event));
+        for (const [category, key] of chosen.keys) movedTo.set(key.fingerprint, { category, key });
         resealed.push({
           position: event.position,
           payload: await opened.seal(keyOfChosen(chosen)),
@@ -273,7 +307,9 @@ export const createResealBatches: CreateResealBatchesFunction = ({
         resealed.map(({ position, payload, person }) => ({ position, payload, person })),
       );
       const [first] = items;
-      if (first !== undefined) await dropCachedUnder(transaction, first.plan.person, moved);
+      if (first !== undefined) {
+        await sealCachedUnder(transaction, first.plan.person, moved, movedTo, clock.now());
+      }
       // A snapshot folded from what was in the clear names nobody a forget would remove it for.
       for (const { aggregateType, aggregateId } of streams.values()) {
         if ((aggregates.byName[aggregateType]?.snapshot ?? null) === null) continue;

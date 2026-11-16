@@ -160,6 +160,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     processes,
     wrapping,
     recordsActivity,
+    clock,
   });
 
   // Pages by offset, renewing the lease before each page and stopping, `null`, once another

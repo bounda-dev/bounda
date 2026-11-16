@@ -1,8 +1,3 @@
-import type {
-  DispatchOutcome,
-  IdempotencyRecord,
-  IdempotencyStore,
-} from "../../adapter/storage/idempotency-store.ts";
 import type { Snapshot, SnapshotStore } from "../../adapter/storage/snapshot-store.ts";
 import { fromBase64, PERSONAL_KEY_ALGORITHM, toBase64 } from "./crypto.ts";
 
@@ -10,11 +5,12 @@ const SALT_BYTES = 16;
 // Every record is sealed under a key of its own, so one nonce serves them all.
 const RECORD_IV = new Uint8Array(12);
 const INFO = new TextEncoder().encode("bounda:at-rest");
+const LOOKUP_INFO = new TextEncoder().encode("bounda:idempotency-key");
 
 /**
- * What the runtime keeps of several persons at once, sealed whole under the database's key: a
- * snapshot's state and a remembered answer. It names no person: forgetting the tenant, whose key
- * wraps the database's, makes it unreadable in every copy.
+ * What the runtime keeps of several persons at once, or of nobody, sealed whole under the
+ * database's key: a snapshot's state and a remembered answer that names nobody. It names no
+ * person: forgetting the tenant, whose key wraps the database's, makes it unreadable in every copy.
  */
 export interface SealedAtRest {
   readonly $sealed: {
@@ -26,6 +22,11 @@ export interface SealedAtRest {
 export interface AtRestSealer {
   seal(text: string): Promise<SealedAtRest>;
   open(sealed: SealedAtRest): Promise<string>;
+  /**
+   * What an idempotency key is filed under: its HMAC under a key derived from the same base, so the
+   * text a caller chose, which may quote someone, is never stored in the clear.
+   */
+  lookup(key: string): Promise<string>;
 }
 
 export interface IsSealedAtRestFunction {
@@ -62,7 +63,23 @@ export const createAtRestSealer: CreateAtRestSealerFunction = (base) => {
       false,
       ["encrypt", "decrypt"],
     );
+  let lookupKey: Promise<CryptoKey> | undefined;
   return {
+    lookup: async (key) => {
+      lookupKey ??= crypto.subtle.deriveKey(
+        { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(), info: LOOKUP_INFO },
+        base,
+        { name: "HMAC", hash: "SHA-256", length: 256 },
+        false,
+        ["sign"],
+      );
+      const signed = await crypto.subtle.sign(
+        "HMAC",
+        await lookupKey,
+        new TextEncoder().encode(key),
+      );
+      return toBase64(new Uint8Array(signed));
+    },
     seal: async (text) => {
       const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
       const data = await crypto.subtle.encrypt(
@@ -106,29 +123,4 @@ export const sealedSnapshots: SealedSnapshotsFunction = (store, sealer) => ({
   },
   put: async (snapshot: Snapshot) =>
     store.put({ ...snapshot, state: JSON.stringify(await sealer.seal(snapshot.state)) }),
-});
-
-export interface SealedAnswersFunction {
-  (store: IdempotencyStore, sealer: AtRestSealer): IdempotencyStore;
-}
-
-/**
- * The idempotency store with every answer sealed at rest; one kept in the clear by an earlier
- * version of Bounda reads as it is, until it expires.
- */
-export const sealedAnswers: SealedAnswersFunction = (store, sealer) => ({
-  ...store,
-  get: async (args) => {
-    const record = await store.get(args);
-    if (record === null || !isSealedAtRest(record.outcome)) return record;
-    return {
-      ...record,
-      outcome: JSON.parse(await sealer.open(record.outcome)) as DispatchOutcome,
-    } satisfies IdempotencyRecord;
-  },
-  put: async (args) =>
-    store.put({
-      ...args,
-      outcome: (await sealer.seal(JSON.stringify(args.outcome))) as unknown as DispatchOutcome,
-    }),
 });
