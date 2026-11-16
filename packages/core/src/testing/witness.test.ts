@@ -17,7 +17,10 @@ const attachedTo = new WeakMap<TestWitness, AppWitness>();
 const appOf = (witness: TestWitness): AppWitness => {
   const known = attachedTo.get(witness);
   if (known !== undefined) return known;
-  const attached = witnessHooksOf(witness.witness).attach({ searchErrorText: true });
+  const attached = witnessHooksOf(witness.witness).attach({
+    searchErrorText: true,
+    tenant: "default",
+  });
   attachedTo.set(witness, attached);
   return attached;
 };
@@ -114,11 +117,11 @@ describe("the witness of a test app's storage", () => {
     });
     const key = { fingerprint: "fp-c-1", cryptoKey: {} as CryptoKey, retained: false };
     appOf(witness).onPersonalKey("c-1", key);
-    expect(witness.sealedFor("c-1")).toEqual([
+    expect(witness.of("default").sealedFor("c-1")).toEqual([
       { envelope: sealed("c-1", "one").$personal, key },
       { envelope: sealed("c-1", "two", "fp-other").$personal, key: null },
     ]);
-    expect(witness.sealedFor("c-2")).toEqual([]);
+    expect(witness.of("default").sealedFor("c-2")).toEqual([]);
     expect(await storage.scheduler.list()).toHaveLength(1);
   });
 
@@ -153,16 +156,24 @@ describe("the witness of a test app's storage", () => {
       await table.insert({ orderId: "o-4", customerId: "c-1", note: "rebuilt", total: 1 });
     });
     await rebuild.abort();
-    expect(witness.keptFor("c-1")).toEqual([]);
+    expect(witness.of("default").keptFor("c-1")).toEqual([]);
 
     await storage.eventStore.append(forgetting("c-1", "customer"));
-    expect(witness.keptFor("c-1")).toEqual([]);
+    expect(witness.of("default").keptFor("c-1")).toEqual([]);
     await storage.eventStore.append(forgetting("c-1"));
-    expect(witness.keptFor("c-1")).toEqual(["ring twice", "leave it next door", "rebuilt"]);
-    expect(witness.keptFor("c-2")).toEqual([]);
+    expect(witness.of("default").keptFor("c-1")).toEqual([
+      "ring twice",
+      "leave it next door",
+      "rebuilt",
+    ]);
+    expect(witness.of("default").keptFor("c-2")).toEqual([]);
 
     await model.table.upsert({ orderId: "o-5", customerId: "c-1", note: "given again", total: 1 });
-    expect(witness.keptFor("c-1")).toEqual(["ring twice", "leave it next door", "rebuilt"]);
+    expect(witness.of("default").keptFor("c-1")).toEqual([
+      "ring twice",
+      "leave it next door",
+      "rebuilt",
+    ]);
     expect(await model.table.findOne({ orderId: "o-2" })).toMatchObject({ total: 3 });
   });
 
@@ -178,7 +189,7 @@ describe("the witness of a test app's storage", () => {
     });
     await model.table.upsert({ id: "c-1", note: "ring twice" });
     await storage.eventStore.append(forgetting("c-1"));
-    expect(witness.keptFor("c-1")).toEqual([]);
+    expect(witness.of("default").keptFor("c-1")).toEqual([]);
   });
 
   it("records every entry logged, and hands it on", () => {
@@ -195,10 +206,10 @@ describe("the witness of a test app's storage", () => {
     logger.warn("w");
     logger.error("e", { b: 2 });
     expect(witness.logs).toEqual([
-      { level: "debug", message: "d", fields: undefined, searchErrorText: true },
-      { level: "info", message: "i", fields: { a: 1 }, searchErrorText: true },
-      { level: "warn", message: "w", fields: undefined, searchErrorText: true },
-      { level: "error", message: "e", fields: { b: 2 }, searchErrorText: true },
+      { level: "debug", message: "d", fields: undefined, searchErrorText: true, tenant: "default" },
+      { level: "info", message: "i", fields: { a: 1 }, searchErrorText: true, tenant: "default" },
+      { level: "warn", message: "w", fields: undefined, searchErrorText: true, tenant: "default" },
+      { level: "error", message: "e", fields: { b: 2 }, searchErrorText: true, tenant: "default" },
     ]);
     expect(seen).toEqual([
       ["debug", "d", undefined],

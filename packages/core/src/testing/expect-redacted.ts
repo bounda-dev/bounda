@@ -1,4 +1,4 @@
-import { type Adapter, isAdapter } from "../adapter/adapter.ts";
+import type { Adapter } from "../adapter/adapter.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import type { SealedValue } from "../adapter/storage/personal-key-store.ts";
 import { isSealed, unseal } from "../kernel/personal-data/crypto.ts";
@@ -8,6 +8,7 @@ import {
 } from "../kernel/personal-data/redaction.ts";
 import { leavesIn, needlesOf } from "../kernel/shared/value-search.ts";
 import type { Witness } from "../kernel/witness.ts";
+import type { PersonData } from "./person-data.ts";
 import {
   type FoundValue,
   findIn,
@@ -16,8 +17,7 @@ import {
   placesOfTable,
   rowOfTable,
 } from "./places.ts";
-import { watchedOf } from "./watched.ts";
-import type { TestWitness } from "./witness.ts";
+import { scopesOf } from "./watched.ts";
 
 /**
  * Where `expectRedacted` found a value a redaction should have made unreadable.
@@ -170,7 +170,7 @@ const envelopesIn = (value: unknown, into: SealedValue[]): void => {
 // opened in turn; `undefined` once one of them is gone.
 const openedNow = async (
   sealed: SealedValue,
-  witness: TestWitness,
+  witness: PersonData,
   held: ReadonlySet<string>,
 ): Promise<unknown> => {
   const { person, key: fingerprint } = sealed.$personal;
@@ -184,7 +184,7 @@ const openedNow = async (
 // holds is readable, however it is stored.
 const sealedPlaces = async (
   tables: readonly InspectedTable[],
-  witness: TestWitness,
+  witness: PersonData,
 ): Promise<readonly Place[]> => {
   const held = new Set(
     tables
@@ -224,60 +224,67 @@ const sealedPlaces = async (
  * `NotRedactedError` that lists where each value turned up, and what to do about it, and resolves
  * when there is none.
  *
- * Given the app `createTestApp` returned, it looks for every value the app's redactions of the
- * person sealed for good, as each read before, and adds `values`. It searches each table of the
- * storage and of every read model as stored, the forget ledger, every entry the app logged and,
- * with `telemetry`, every span, as `expectForgotten` does; and it opens every value stored
- * sealed that a key the person, or anyone, still holds opens, so a copy in an event, a command or
- * a read model that was not redacted is found too. Given an adapter, it searches that adapter's
- * tables as stored for `values` alone. Either way it rejects while the worker has not settled a
- * redaction of the person, since a read model that projects an event it reached may hold a copy
- * derived from an old value, reformatted or hashed, until the worker has rebuilt it. A value is matched as `expectForgotten` matches one.
+ * Given an app from `createTestApp`, an app given a witness, a client of either, a Durable Object
+ * of a class `witnessObjects` watches, or the witness, it looks for every value the app's
+ * redactions of the person sealed for good, as each read before, and adds `values`. It searches
+ * each table of the storage and of every read model as stored, the forget ledger, every entry the
+ * app logged and every span it started, as `expectForgotten` does, each tenant's values in its own
+ * places; and it opens every value stored sealed that a key the person, or anyone, still holds
+ * opens, so a copy in an event, a command or a read model that was not redacted is found too.
+ * Given an adapter, it searches that adapter's tables as stored for `values` alone. Either way it
+ * rejects while the worker has not settled a redaction of the person, since a read model that
+ * projects an event it reached may hold a copy derived from an old value, reformatted or hashed,
+ * until the worker has rebuilt it. A value is matched as `expectForgotten` matches one.
  * Rejects with an `Error` when it has nothing to look for. Works with any test runner.
  */
 export const expectRedacted: ExpectRedactedFunction = async (target, personId, options = {}) => {
-  const watched = watchedOf("expectRedacted", target);
-  if (watched === undefined && !isAdapter(target)) {
-    throw new TypeError(
-      "expectRedacted takes an app createTestApp returned or one given a witness, a client of one, a witness, a Durable Object of a class witnessObjects watches, or an adapter: for an app built without a witness, pass its storage adapter with the values to look for",
+  let needles = 0;
+  const found: RedactedValueFound[] = [];
+  const pending: RedactedValueFound[] = [];
+  const advice = new Set<string>();
+  for (const scope of scopesOf("expectRedacted", target)) {
+    const inspected = await Promise.all(scope.adapters.map((adapter) => adapter.inspect()));
+    const tables = inspected.flat();
+    // A read model's own database keeps no scheduler, and opening storage there would create one.
+    pending.push(
+      ...(await unsettled(
+        scope.adapters.filter((_, index) =>
+          inspected[index]?.some((table) => table.store === "scheduledCommands"),
+        ),
+        personId,
+      )),
     );
+    const sought = needlesOf({
+      values: [...(scope.data?.redactedFor(personId) ?? []), ...(options.values ?? [])],
+      personId,
+    });
+    needles += sought.length;
+    if (sought.length === 0) continue;
+    const places: Place[] = [
+      ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
+      ...(scope.data === null ? [] : await sealedPlaces(tables, scope.data)),
+      ...(await outsidePlaces({
+        logs: scope.logs,
+        ledgers: scope.ledgers,
+        traces: scope.traces,
+        places: options.places,
+        advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
+      })),
+    ];
+    const inScope = findIn(places, sought);
+    found.push(...inScope.found);
+    for (const line of inScope.advice) advice.add(line);
   }
-  const adapters = watched?.adapters ?? [target as Adapter];
-  const inspected = await Promise.all(adapters.map((adapter) => adapter.inspect()));
-  const tables = inspected.flat();
-  const needles = needlesOf({
-    values: [...(watched?.witness.redactedFor(personId) ?? []), ...(options.values ?? [])],
-    personId,
-  });
-  if (needles.length === 0) {
+  if (needles === 0) {
     throw new Error(
       `expectRedacted found no redacted value of "${personId}" to look for: redact a field of theirs first, or pass the old values as values`,
     );
   }
-  const places: Place[] = [
-    ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
-    ...(watched === undefined ? [] : await sealedPlaces(tables, watched.witness)),
-    ...(await outsidePlaces({
-      logs: watched?.witness.logs ?? [],
-      ledgers: watched?.ledgers ?? [],
-      traces: watched?.witness.traces ?? [],
-      places: options.places,
-      advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
-    })),
-  ];
-  const { found, advice } = findIn(places, needles);
-  // A read model's own database keeps no scheduler, and opening storage there would create one.
-  const pending = await unsettled(
-    adapters.filter((_, index) =>
-      inspected[index]?.some((table) => table.store === "scheduledCommands"),
-    ),
-    personId,
-  );
   if (found.length + pending.length > 0) {
     throw new NotRedactedError(
       personId,
       [...pending, ...found],
-      pending.length === 0 ? advice : [REBUILD_ADVICE, ...advice],
+      pending.length === 0 ? [...advice] : [REBUILD_ADVICE, ...advice],
     );
   }
 };

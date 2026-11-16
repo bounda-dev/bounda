@@ -1,6 +1,6 @@
 import { ROOT_CONTEXT, type Span, SpanStatusCode, type Tracer } from "@opentelemetry/api";
 import { describe, expect, it } from "vitest";
-import { recordSpans, teeTracer } from "./span-recorder.ts";
+import { recordSpans, teedTracer, teeTracer } from "./span-recorder.ts";
 
 interface Call {
   readonly span: string;
@@ -147,5 +147,19 @@ describe("a tracer teed to a copy", () => {
     expect(started?.attributes).toEqual({ a: 1 });
     expect(changed).toMatchObject({ attributes: { a: 1, b: 2 }, ended: false });
     expect(recording.spans[0]?.ended).toBe(true);
+  });
+
+  it("builds the tee again only once the primary tracer changes", () => {
+    const first = callingTracer("primary").tracer;
+    const second = callingTracer("primary").tracer;
+    let current = first;
+    const copy = recordSpans().tracer;
+    const resolve = teedTracer(() => current, copy);
+    const teed = resolve();
+    expect(resolve()).toBe(teed);
+    current = second;
+    const again = resolve();
+    expect(again).not.toBe(teed);
+    expect(resolve()).toBe(again);
   });
 });

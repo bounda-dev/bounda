@@ -1,20 +1,6 @@
-import type {
-  Adapter,
-  ReadModelRebuild,
-  ReadModelStorage,
-  ReadModelTransaction,
-  Storage,
-  StorageTransaction,
-} from "../adapter/adapter.ts";
+import type { Adapter } from "../adapter/adapter.ts";
 import type { ForgetLedger } from "../adapter/storage/forget-ledger.ts";
-import {
-  DEFAULT_PERSONAL_CATEGORY,
-  type PersonalEnvelope,
-} from "../adapter/storage/personal-key-store.ts";
-import type { Table } from "../adapter/storage/table.ts";
 import type { LogFields, Logger } from "../contracts/logger.ts";
-import { isSealed, type PersonalKey } from "../kernel/personal-data/crypto.ts";
-import { parseEnvelope } from "../kernel/read-model/sealed-rows.ts";
 import { type RecordedSpan, type RecordedSpanEvent, recordSpans } from "../kernel/span-recorder.ts";
 import {
   type AppWitness,
@@ -23,8 +9,7 @@ import {
   type Witness,
   type WitnessHooks,
 } from "../kernel/witness.ts";
-import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../modules/bounda-events.ts";
-import type { FieldsRecord } from "../modules/view.ts";
+import { createPersonData, type PersonData } from "./person-data.ts";
 
 export interface LoggedEntry {
   readonly level: keyof Logger;
@@ -35,6 +20,11 @@ export interface LoggedEntry {
    * write it.
    */
   readonly searchErrorText: boolean;
+  /**
+   * The tenant of the app that logged it, `null` for what the host logged through the witness,
+   * searched for every tenant.
+   */
+  readonly tenant: string | null;
 }
 
 /**
@@ -44,6 +34,7 @@ export interface Traced {
   readonly spans: readonly RecordedSpan[];
   readonly spanEvents: readonly RecordedSpanEvent[];
   readonly searchErrorText: boolean;
+  readonly tenant: string;
 }
 
 /**
@@ -54,6 +45,7 @@ export interface WatchedApp {
    * The app, through which `expectTenantForgotten` checks that it refuses every call.
    */
   readonly client: WatchedClient;
+  readonly tenant: string;
   readonly adapters: readonly Adapter[];
   /**
    * The forget ledger the app opened, which closes with it.
@@ -66,26 +58,8 @@ export interface WatchedApp {
 }
 
 /**
- * A value a read model kept in a field marked `.personal()`, its category, and how many times its
- * person had been forgotten when it was written: only what was written before a later forgetting
- * of its category is theirs no longer.
- */
-interface KeptValue {
-  readonly value: unknown;
-  readonly category: string;
-  readonly forgettings: number;
-}
-
-/**
- * The categories a `PersonalDataForgotten` forgot, `null` for every one, as one recorded before
- * categories did.
- */
-type Forgetting = readonly string[] | null;
-
-/**
- * Everything the apps a witness watched saw that the expectations need once the person's key is
- * gone: the values sealed under each key, the keys, what the read models kept of each person, the
- * logs, the spans and the apps themselves.
+ * Everything the apps a witness watched saw that the expectations need once a person's key is
+ * gone: what each tenant's apps did with its persons' data, the logs, the spans and the apps.
  */
 export interface TestWitness {
   /**
@@ -93,50 +67,24 @@ export interface TestWitness {
    */
   readonly witness: Witness;
   /**
-   * The values the person's redactions made unreadable, as they read before.
+   * What the apps of `tenant` did with its persons' data.
    */
-  redactedFor(person: string): readonly unknown[];
-  /**
-   * The person's key of that fingerprint, as the test app held it, `null` when it never did.
-   */
-  keyOf(person: string, fingerprint: string): PersonalKey | null;
+  of(tenant: string): PersonData;
   readonly logs: readonly LoggedEntry[];
   readonly traces: readonly Traced[];
   /**
    * Every app watched, in the order each started.
    */
   readonly apps: readonly WatchedApp[];
-  /**
-   * The envelopes sealed under the person's keys, with the key that opens each when the test app
-   * held it.
-   */
-  sealedFor(person: string): readonly SealedFor[];
-  /**
-   * What the read models kept in their personal fields of the person, in a category forgotten
-   * since; with `categories`, in one of those alone.
-   */
-  keptFor(person: string, categories?: readonly string[]): readonly unknown[];
-  /**
-   * Every person the test app sealed a value of, or a read model kept one of.
-   */
-  persons(): readonly string[];
-  /**
-   * Everything the read models kept in their personal fields of the person, whatever was forgotten
-   * since.
-   */
-  allKeptFor(person: string): readonly unknown[];
-}
-
-export interface SealedFor {
-  readonly envelope: PersonalEnvelope;
-  readonly key: PersonalKey | null;
 }
 
 /**
- * The text of an error, which may quote anything: what its person's values are is found in the
- * fields they came from, and a whole message would match every other letter that failed alike.
+ * What a target stands for: a witness, and the tenant of the app it is, `null` for every tenant.
  */
-const ERROR_TEXT = new Set(["errorMessage", "errorStack"]);
+export interface WatchedTarget {
+  readonly witness: TestWitness;
+  readonly tenant: string | null;
+}
 
 export interface TestWitnessOfFunction {
   (adapter: Adapter): TestWitness;
@@ -158,14 +106,14 @@ export const testWitnessOf: TestWitnessOfFunction = (adapter) => {
 };
 
 // What each target stands for: the witness itself, every app it watched, the clients of each.
-const targets = new WeakMap<object, TestWitness>();
+const targets = new WeakMap<object, WatchedTarget>();
 
 export interface WatchedByFunction {
-  (target: object): TestWitness | undefined;
+  (target: object): WatchedTarget | undefined;
 }
 
 /**
- * The witness `target` stands for, `undefined` for anything else.
+ * What `target` stands for, `undefined` for anything else.
  */
 export const watchedBy: WatchedByFunction = (target) => targets.get(target);
 
@@ -179,285 +127,91 @@ export interface CreateWitnessFunction {
  * `@bounda-dev/react-router` as `witness`, or to the Durable Objects of a class through
  * `witnessObjects` from `@bounda-dev/cloudflare/testing`. It records what every app given it
  * seals, keeps, logs and traces from then on, its spans beside any tracer provider registered,
- * which it never replaces; then `expectForgotten`, `expectRedacted` and `expectTenantForgotten`
- * take the app, a client of it, or the witness, and search the tables of every app it watches that
- * has not stopped. Give each test a witness of its own, as each records for as long as it is
- * reachable.
+ * which it never replaces, each tenant's apart; then `expectForgotten`, `expectRedacted` and
+ * `expectTenantForgotten` take the app, a client of it, or the witness, and search the tables of
+ * every app it watches that has not stopped, of the app's tenant or of every one. Give each test a
+ * witness of its own, as each records for as long as it is reachable.
  */
 export const createWitness: CreateWitnessFunction = () => createTestWitness().witness;
 
 const createTestWitness = (): TestWitness => {
-  const keys = new Map<string, Map<string, PersonalKey>>();
-  const envelopes = new Map<string, Map<string, PersonalEnvelope>>();
-  const kept = new Map<string, KeptValue[]>();
-  const forgettings = new Map<string, Forgetting[]>();
+  const tenants = new Map<string, PersonData>();
   const logs: LoggedEntry[] = [];
   const traces: Traced[] = [];
   const apps: WatchedApp[] = [];
-  const wrapped = new WeakMap<Adapter, Adapter>();
-  const redacted = new Map<string, unknown[]>();
 
-  const observe = (value: unknown, field: string | null, seen: WeakSet<object>): void => {
-    if (typeof value !== "object" || value === null || seen.has(value)) return;
-    seen.add(value);
-    if (isSealed(value)) {
-      if (field !== null && ERROR_TEXT.has(field)) return;
-      const envelope = value.$personal;
-      const sealed = envelopes.get(envelope.person) ?? new Map<string, PersonalEnvelope>();
-      sealed.set(envelope.data, envelope);
-      envelopes.set(envelope.person, sealed);
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) observe(item, field, seen);
-      return;
-    }
-    const record = value as Record<string, unknown>;
-    if (
-      record.type === PERSONAL_DATA_FORGOTTEN_EVENT &&
-      record.aggregateType === BOUNDA_AGGREGATE &&
-      typeof record.aggregateId === "string"
-    ) {
-      const forgot: unknown = Reflect.get(Object(record.payload), "categories");
-      forgettings.set(record.aggregateId, [
-        ...(forgettings.get(record.aggregateId) ?? []),
-        Array.isArray(forgot) ? forgot.map(String) : null,
-      ]);
-    }
-    for (const [name, inner] of Object.entries(record)) observe(inner, name, seen);
-  };
-  const observeArgs = (args: readonly unknown[]): void => {
-    const seen = new WeakSet<object>();
-    for (const arg of args) observe(arg, null, seen);
+  const of = (tenant: string): PersonData => {
+    const known = tenants.get(tenant);
+    if (known !== undefined) return known;
+    const created = createPersonData();
+    tenants.set(tenant, created);
+    return created;
   };
 
-  // Every call on a store, so a value sealed and then removed, as a cancelled command's, is
-  // still known.
-  const observed = <T extends object>(store: T): T =>
-    new Proxy(store, {
-      get: (target, property, receiver) => {
-        const member: unknown = Reflect.get(target, property, receiver);
-        if (typeof member !== "function") return member;
-        return (...args: unknown[]) => {
-          observeArgs(args);
-          return Reflect.apply(member, target, args) as unknown;
-        };
-      },
-    });
-
-  const observedTransaction = (transaction: StorageTransaction): StorageTransaction =>
-    Object.fromEntries(
-      Object.entries(transaction).map(([name, store]) => [
-        name,
-        typeof store === "object" && store !== null ? observed(store) : store,
-      ]),
-    ) as unknown as StorageTransaction;
-
-  const observedStorage = (storage: Storage): Storage => {
-    const stores = Object.fromEntries(
-      Object.entries(storage).map(([name, member]) => [
-        name,
-        typeof member === "object" && member !== null ? observed(member) : member,
-      ]),
-    ) as unknown as Storage;
+  const recording = (logger: Logger, searchErrorText: boolean, tenant: string | null): Logger => {
+    const record =
+      (level: keyof Logger) =>
+      (message: string, fields?: LogFields): void => {
+        logs.push({ level, message, fields, searchErrorText, tenant });
+        logger[level](message, fields);
+      };
     return {
-      ...stores,
-      transact: (work) => storage.transact((transaction) => work(observedTransaction(transaction))),
+      debug: record("debug"),
+      info: record("info"),
+      warn: record("warn"),
+      error: record("error"),
     };
-  };
-
-  const keep = (row: Record<string, unknown>, marks: ReadModelMarks): void => {
-    observeArgs([row]);
-    const person = marks.person === null ? undefined : row[marks.person];
-    if (typeof person !== "string") return;
-    const values = kept.get(person) ?? [];
-    for (const { name, category } of marks.personal) {
-      if (row[name] === undefined || row[name] === null) continue;
-      // A sealed field holds the JSON of its envelope: known as any other envelope is.
-      const envelope = parseEnvelope(row[name]);
-      if (envelope !== null) {
-        observeArgs([envelope]);
-        continue;
-      }
-      values.push({
-        value: row[name],
-        category,
-        forgettings: forgettings.get(person)?.length ?? 0,
-      });
-    }
-    kept.set(person, values);
-  };
-
-  const keptBy = <Row extends object>(table: Table<Row>, marks: ReadModelMarks): Table<Row> => ({
-    ...table,
-    upsert: async (row) => {
-      keep(row as Record<string, unknown>, marks);
-      await table.upsert(row);
-    },
-    insert: async (row) => {
-      keep(row as Record<string, unknown>, marks);
-      await table.insert(row);
-    },
-    update: async (where, patch) => {
-      const changes = patch as Record<string, unknown>;
-      if (marks.personal.some(({ name }) => changes[name] !== undefined)) {
-        for (const row of await table.findMany({ where })) {
-          keep({ ...(row as Record<string, unknown>), ...changes }, marks);
-        }
-      }
-      await table.update(where, patch);
-    },
-  });
-
-  const keptIn = <Row extends object>(
-    transaction: ReadModelTransaction<Row>,
-    marks: ReadModelMarks,
-  ): ReadModelTransaction<Row> => ({ ...transaction, table: keptBy(transaction.table, marks) });
-
-  const readModelStorage = <Row extends object>(
-    storage: ReadModelStorage<Row>,
-    marks: ReadModelMarks,
-  ): ReadModelStorage<Row> => ({
-    ...storage,
-    table: keptBy(storage.table, marks),
-    transact: (args) =>
-      storage.transact({ ...args, work: (transaction) => args.work(keptIn(transaction, marks)) }),
-  });
-
-  const readModelRebuild = <Row extends object>(
-    rebuild: ReadModelRebuild<Row>,
-    marks: ReadModelMarks,
-  ): ReadModelRebuild<Row> => ({
-    ...rebuild,
-    table: keptBy(rebuild.table, marks),
-    transact: (work) => rebuild.transact((transaction) => work(keptIn(transaction, marks))),
-  });
-
-  const record =
-    (level: keyof Logger, logger: Logger, searchErrorText: boolean) =>
-    (message: string, fields?: LogFields): void => {
-      logs.push({ level, message, fields, searchErrorText });
-      logger[level](message, fields);
-    };
-
-  const recording = (logger: Logger, searchErrorText: boolean): Logger => ({
-    debug: record("debug", logger, searchErrorText),
-    info: record("info", logger, searchErrorText),
-    warn: record("warn", logger, searchErrorText),
-    error: record("error", logger, searchErrorText),
-  });
-
-  const storage = function observe(adapter: Adapter): Adapter {
-    const existing = wrapped.get(adapter);
-    if (existing !== undefined) return existing;
-    const file = adapter.encryptedFile;
-    const observing: Adapter = {
-      ...adapter,
-      // The adapter the app opens the file through is observed in its place.
-      ...(file === undefined
-        ? {}
-        : { encryptedFile: { ...file, open: async (args) => observe(await file.open(args)) } }),
-      createStorage: async () => observedStorage(await adapter.createStorage()),
-      createReadModel: async (args) =>
-        readModelStorage(await adapter.createReadModel(args), marksOf(args.fields)),
-      rebuildReadModel: async (args) =>
-        readModelRebuild(await adapter.rebuildReadModel(args), marksOf(args.fields)),
-    };
-    wrapped.set(adapter, observing);
-    return observing;
-  };
-
-  const onPersonalKey = (person: string, key: PersonalKey): void => {
-    const held = keys.get(person) ?? new Map<string, PersonalKey>();
-    held.set(key.fingerprint, key);
-    keys.set(person, held);
-  };
-
-  // The key a redaction let go opens what it sealed, as a key a forgetting destroyed does.
-  const onRedacted = (person: string, values: readonly unknown[], key: PersonalKey): void => {
-    onPersonalKey(person, key);
-    redacted.set(person, [...(redacted.get(person) ?? []), ...values]);
   };
 
   let self: TestWitness;
-  const watch = (target: object): void => {
-    targets.set(target, self);
+  const watch = (target: object, tenant: string | null): void => {
+    targets.set(target, { witness: self, tenant });
   };
 
   const hooks: WitnessHooks = {
-    attach: ({ searchErrorText }): AppWitness => {
+    attach: ({ searchErrorText, tenant }): AppWitness => {
+      const data = of(tenant);
       const { tracer, spans, spanEvents } = recordSpans();
-      traces.push({ spans, spanEvents, searchErrorText });
+      traces.push({ spans, spanEvents, searchErrorText, tenant });
       const ledgers: ForgetLedger[] = [];
       let watched: { -readonly [K in keyof WatchedApp]: WatchedApp[K] } | undefined;
       return {
-        storage,
-        logger: (logger) => recording(logger, searchErrorText),
+        storage: data.storage,
+        logger: (logger) => recording(logger, searchErrorText, tenant),
         tracer,
-        onPersonalKey,
-        onRedacted,
+        onPersonalKey: data.onPersonalKey,
+        onRedacted: data.onRedacted,
         onForgetLedger: (ledger) => {
           ledgers.push(ledger);
         },
         onApp: (client, adapters) => {
-          watched = { client, adapters, ledgers, stopped: false };
+          watched = { client, tenant, adapters, ledgers, stopped: false };
           apps.push(watched);
-          watch(client);
+          watch(client, tenant);
         },
         onStopped: () => {
           if (watched !== undefined) watched.stopped = true;
         },
-        watch,
+        watch: (target) => watch(target, tenant),
       };
     },
   };
 
   const witness = {
-    logger: (logger: Logger) => recording(logger, true),
-    watch,
+    logger: (logger: Logger) => recording(logger, true, null),
+    watch: (target: object, like?: object) => {
+      targets.set(
+        target,
+        (like === undefined ? undefined : targets.get(like)) ?? {
+          witness: self,
+          tenant: null,
+        },
+      );
+    },
     [WITNESS_HOOKS]: hooks,
   } satisfies Witness & { readonly [WITNESS_HOOKS]: WitnessHooks };
 
-  self = {
-    witness,
-    redactedFor: (person) => redacted.get(person) ?? [],
-    keyOf: (person, fingerprint) => keys.get(person)?.get(fingerprint) ?? null,
-    logs,
-    traces,
-    apps,
-    sealedFor: (person) =>
-      [...(envelopes.get(person)?.values() ?? [])].map((envelope) => ({
-        envelope,
-        key: keys.get(person)?.get(envelope.key) ?? null,
-      })),
-    keptFor: (person, categories) => {
-      const since = forgettings.get(person) ?? [];
-      return (kept.get(person) ?? [])
-        .filter(
-          ({ category, forgettings: before }) =>
-            (categories === undefined || categories.includes(category)) &&
-            since.slice(before).some((forgot) => forgot === null || forgot.includes(category)),
-        )
-        .map(({ value }) => value);
-    },
-    persons: () => [...new Set([...envelopes.keys(), ...kept.keys()])],
-    allKeptFor: (person) => (kept.get(person) ?? []).map(({ value }) => value),
-  };
-  watch(witness);
+  self = { witness, of, logs, traces, apps };
+  witness.watch(witness);
   return self;
-};
-
-interface ReadModelMarks {
-  readonly person: string | null;
-  readonly personal: readonly { readonly name: string; readonly category: string }[];
-}
-
-const marksOf = (fields: FieldsRecord): ReadModelMarks => {
-  const entries = Object.entries(fields);
-  return {
-    person: entries.find(([, field]) => field.mark === "person")?.[0] ?? null,
-    personal: entries
-      .filter(([, field]) => field.mark === "personal")
-      .map(([name, field]) => ({ name, category: field.category ?? DEFAULT_PERSONAL_CATEGORY })),
-  };
 };

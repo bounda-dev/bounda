@@ -7,9 +7,9 @@ import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
 import { needlesOf } from "../kernel/shared/value-search.ts";
 import type { Witness } from "../kernel/witness.ts";
 import type { PersonalCategoryName } from "../modules/personal-data.ts";
+import type { PersonData } from "./person-data.ts";
 import { findIn, outsidePlaces, type Place, placesOfTable } from "./places.ts";
-import { watchedOf } from "./watched.ts";
-import type { TestWitness } from "./witness.ts";
+import { type Scope, scopesOf } from "./watched.ts";
 
 /**
  * Where `expectForgotten` found a value of the person.
@@ -106,9 +106,6 @@ export interface ExpectForgottenFunction {
   ): Promise<void>;
 }
 
-const NOT_A_TARGET =
-  "takes an app createTestApp returned or one given a witness, a client of one, a witness, a Durable Object of a class witnessObjects watches, or an adapter: for an app built without a witness, pass its storage adapter with the values to look for";
-
 interface ExportedRecord {
   readonly data: Readonly<Record<string, unknown>>;
   readonly categories: Readonly<Record<string, string>>;
@@ -166,7 +163,7 @@ const STORE_ADVICE: Readonly<Partial<Record<InspectedStore, string>>> = {
 };
 
 const opened = async (
-  witness: TestWitness,
+  witness: PersonData,
   personId: string,
   held: ReadonlySet<string>,
   categories: readonly string[] | undefined,
@@ -213,33 +210,22 @@ const heldKeys = (tables: readonly InspectedTable[], personId: string): HeldKeys
   };
 };
 
-/**
- * Checks that nothing a person had is left readable once they are forgotten: rejects with a
- * `NotForgottenError` that lists where each value turned up, and what to do about it, and
- * resolves when there is none.
- *
- * Given the app `createTestApp` returned, it looks for every value of a field marked
- * `personal()` that the app sealed under a key the person no longer holds, and for every value a
- * read model kept in a field marked `.personal()` for them before its category was forgotten, and
- * adds `values` and `before`; with `categories`, those of the categories named alone. A key a
- * legal obligation kept past the forgetting is still held, so what it sealed is not looked for. It searches each table of the storage and of every read model, read as
- * stored and never opened, the forget ledger, every entry the app logged and, with `telemetry`,
- * every span. Given an adapter, such as one over a Durable Object's storage, it searches that
- * adapter's tables for `values` and `before` alone.
- *
- * A value is matched without regard to case, inside any longer text, a JSON document stored as
- * text included; one shorter than `MIN_SUBSTRING_LENGTH` only as a whole word. Key material and
- * ciphertext are compared whole. A value equal to the person's id is never looked for, since ids
- * stay. Rejects with an `Error` when it has nothing to look for, so a test cannot pass for want
- * of values. Works with any test runner.
- */
-export const expectForgotten: ExpectForgottenFunction = async (target, personId, options = {}) => {
-  const watched = watchedOf("expectForgotten", target);
-  if (watched === undefined && !isAdapter(target)) {
-    throw new TypeError(`expectForgotten ${NOT_A_TARGET}`);
-  }
-  const adapters = watched?.adapters ?? [target as Adapter];
-  const tables = (await Promise.all(adapters.map((adapter) => adapter.inspect()))).flat();
+interface ScopeSearch {
+  readonly found: readonly ForgottenValueFound[];
+  readonly advice: readonly string[];
+  readonly needles: number;
+  /**
+   * The categories the person still holds a key in force of, among those asked for.
+   */
+  readonly stillHeld: readonly string[];
+}
+
+const searchScope = async (
+  scope: Scope,
+  personId: string,
+  options: ExpectForgottenOptions,
+): Promise<ScopeSearch> => {
+  const tables = (await Promise.all(scope.adapters.map((adapter) => adapter.inspect()))).flat();
   if (tables.length === 0) {
     throw new Error(
       "expectForgotten found no table to search: the adapter's database holds none of Bounda's, so it may be another one, or closed",
@@ -251,38 +237,79 @@ export const expectForgotten: ExpectForgottenFunction = async (target, personId,
   const stillHeld = [...held.inForce].filter(
     (category) => categories === undefined || categories.includes(category),
   );
+  // A tenant where the person still holds a key in force of a category asked for is not where
+  // they were forgotten.
   if (categories !== undefined && stillHeld.length > 0) {
-    throw new Error(
-      `"${personId}" still holds a key in force of ${stillHeld.map((category) => `"${category}"`).join(", ")}: forget those categories before expectForgotten`,
-    );
+    return { found: [], advice: [], needles: 0, stillHeld };
   }
   const values: unknown[] = [...(options.values ?? [])];
   if (options.before !== undefined) values.push(...exportedValues(options.before, categories));
-  if (watched !== undefined) {
-    values.push(...(await opened(watched.witness, personId, held.fingerprints, categories)));
-    values.push(...watched.witness.keptFor(personId, categories));
+  if (scope.data !== null) {
+    values.push(...(await opened(scope.data, personId, held.fingerprints, categories)));
+    values.push(...scope.data.keptFor(personId, categories));
   }
   const needles = needlesOf({ values, personId });
-  if (needles.length === 0) {
+  if (needles.length === 0) return { found: [], advice: [], needles: 0, stillHeld };
+  const places: Place[] = [
+    ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
+    ...(await outsidePlaces({
+      logs: scope.logs,
+      ledgers: scope.ledgers,
+      traces: scope.traces,
+      places: options.places,
+      advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
+    })),
+  ];
+  return { ...findIn(places, needles), needles: needles.length, stillHeld };
+};
+
+/**
+ * Checks that nothing a person had is left readable once they are forgotten: rejects with a
+ * `NotForgottenError` that lists where each value turned up, and what to do about it, and
+ * resolves when there is none.
+ *
+ * Given an app from `createTestApp`, an app given a witness, a client of either, a Durable Object
+ * of a class `witnessObjects` watches, or the witness, it looks for every value of a field marked
+ * `personal()` that the app sealed under a key the person no longer holds, and for every value a
+ * read model kept in a field marked `.personal()` for them before its category was forgotten, and
+ * adds `values` and `before`; with `categories`, those of the categories named alone. A key a
+ * legal obligation kept past the forgetting is still held, so what it sealed is not looked for. It
+ * searches each table of the storage and of every read model, read as stored and never opened,
+ * the forget ledger, every entry the app logged and every span it started; for a witness that
+ * watches apps of several tenants, each tenant's values in its own tables, logs and spans. Given
+ * an adapter, such as one over a copy of a database, it searches that adapter's tables for
+ * `values` and `before` alone.
+ *
+ * A value is matched without regard to case, inside any longer text, a JSON document stored as
+ * text included; one shorter than `MIN_SUBSTRING_LENGTH` only as a whole word. Key material and
+ * ciphertext are compared whole. A value equal to the person's id is never looked for, since ids
+ * stay. Rejects with an `Error` when it has nothing to look for, so a test cannot pass for want
+ * of values, and when every app it stands for has stopped. Works with any test runner.
+ */
+export const expectForgotten: ExpectForgottenFunction = async (target, personId, options = {}) => {
+  const searched: ScopeSearch[] = [];
+  for (const scope of scopesOf("expectForgotten", target)) {
+    searched.push(await searchScope(scope, personId, options));
+  }
+  if (searched.every(({ needles }) => needles === 0)) {
+    const stillHeld = [...new Set(searched.flatMap((each) => each.stillHeld))];
+    if (options.categories !== undefined && stillHeld.length > 0) {
+      throw new Error(
+        `"${personId}" still holds a key in force of ${stillHeld.map((category) => `"${category}"`).join(", ")}: forget those categories before expectForgotten`,
+      );
+    }
     throw new Error(
       stillHeld.length === 0
         ? `expectForgotten found no value of "${personId}" to look for: pass the ones the test gave them as values, or their export as before`
         : `"${personId}" still holds a key: forget them before expectForgotten, which looks only for what was sealed under keys they no longer hold`,
     );
   }
-
-  const places: Place[] = [
-    ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
-    ...(await outsidePlaces({
-      logs: watched?.witness.logs ?? [],
-      ledgers: watched?.ledgers ?? [],
-      traces: watched?.witness.traces ?? [],
-      places: options.places,
-      advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
-    })),
-  ];
-  const { found, advice } = findIn(places, needles);
-  if (found.length > 0) throw new NotForgottenError(personId, found, advice);
+  const found = searched.flatMap((each) => each.found);
+  if (found.length > 0) {
+    throw new NotForgottenError(personId, found, [
+      ...new Set(searched.flatMap(({ advice }) => advice)),
+    ]);
+  }
 };
 
 /**
@@ -373,62 +400,82 @@ const tenantProblems = (tables: readonly InspectedTable[]): string[] => {
  * clear anywhere `expectForgotten` searches. Rejects with a `TenantNotForgottenError` that lists
  * what is left, and resolves when nothing is.
  *
- * Given the app `createTestApp` returned, it looks for every value of a field marked `personal()`
- * the app sealed and every value a read model kept in a field marked `.personal()`, of every
- * person, and adds `values`. Given an adapter, such as one over a database restored from a copy,
- * it checks that adapter's tables and searches them for `values` alone. Works with any test
- * runner.
+ * Given an app from `createTestApp`, an app given a witness, a client of either, a Durable Object
+ * of a class `witnessObjects` watches, or the witness, it looks for every value of a field marked
+ * `personal()` the app sealed and every value a read model kept in a field marked `.personal()`,
+ * of every person, and adds `values`; for a witness that watches apps of several tenants, it
+ * checks those of the tenants one of whose apps refuses calls, each in its own tables, and
+ * reports that the app still serves calls when none does. Given an adapter, such as one over a
+ * database restored from a copy, it checks that adapter's tables and searches them for `values`
+ * alone. Works with any test runner.
  */
 export const expectTenantForgotten: ExpectTenantForgottenFunction = async (
   target,
   options = {},
 ) => {
-  const watched = watchedOf("expectTenantForgotten", target);
-  if (watched === undefined && !isAdapter(target)) {
-    throw new TypeError(`expectTenantForgotten ${NOT_A_TARGET}`);
-  }
   const problems: string[] = [];
-  for (const { client } of watched?.running ?? []) {
-    const refused = await client.exportPersonalData("expect-tenant-forgotten").then(
-      () => null,
-      (error: unknown) => error,
+  const scopes = await Promise.all(
+    scopesOf("expectTenantForgotten", target).map(async (scope) => ({
+      scope,
+      refused: await Promise.all(
+        scope.running.map(({ client }) =>
+          client.exportPersonalData("expect-tenant-forgotten").then(
+            () => false,
+            (error: unknown) => error instanceof TenantForgottenError,
+          ),
+        ),
+      ),
+    })),
+  );
+  const forgotten = scopes.filter(({ refused }) => refused.includes(true));
+  if (scopes.some(({ refused }) => refused.length > 0) && forgotten.length === 0) {
+    problems.push("the app still serves calls: forget the tenant with forgetTenant first");
+  }
+  if (forgotten.some(({ refused }) => refused.includes(false))) {
+    problems.push(
+      "an app of the tenant still serves calls: forget the tenant with forgetTenant first",
     );
-    if (!(refused instanceof TenantForgottenError)) {
-      problems.push("the app still serves calls: forget the tenant with forgetTenant first");
-    }
   }
-  const adapters = watched?.adapters ?? [target as Adapter];
-  const tables = (await Promise.all(adapters.map((adapter) => adapter.inspect()))).flat();
-  problems.push(...tenantProblems(tables));
-  const values: unknown[] = [...(options.values ?? [])];
-  if (watched !== undefined) {
-    for (const person of watched.witness.persons()) {
-      values.push(...(await opened(watched.witness, person, new Set(), undefined)));
-      values.push(...watched.witness.allKeptFor(person));
+  // Another tenant's apps serve as they should: once one tenant's refuse, only those are checked.
+  const checked = (forgotten.length === 0 ? scopes : forgotten).map(({ scope }) => scope);
+  let needles = 0;
+  const found: ForgottenValueFound[] = [];
+  const advice = new Set<string>();
+  for (const scope of checked) {
+    const tables = (await Promise.all(scope.adapters.map((adapter) => adapter.inspect()))).flat();
+    problems.push(...tenantProblems(tables));
+    const values: unknown[] = [...(options.values ?? [])];
+    const { data } = scope;
+    const persons = data?.persons() ?? [];
+    if (data !== null) {
+      for (const person of persons) {
+        values.push(...(await opened(data, person, new Set(), undefined)));
+        values.push(...data.allKeptFor(person));
+      }
     }
+    const sought = needlesOf({ values, personId: persons });
+    needles += sought.length;
+    if (sought.length === 0) continue;
+    const places: Place[] = [
+      ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
+      ...(await outsidePlaces({
+        logs: scope.logs,
+        ledgers: scope.ledgers,
+        traces: scope.traces,
+        places: options.places,
+        advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
+      })),
+    ];
+    const inScope = findIn(places, sought);
+    found.push(...inScope.found);
+    for (const line of inScope.advice) advice.add(line);
   }
-  const needles = needlesOf({
-    values,
-    personId: watched?.witness.persons() ?? [],
-  });
-  if (needles.length === 0 && problems.length === 0) {
+  if (needles === 0 && problems.length === 0) {
     throw new Error(
       "expectTenantForgotten found no value of the tenant's persons to look for: pass the ones the test gave them as values",
     );
   }
-  const places: Place[] = [
-    ...tables.flatMap((table) => placesOfTable(table, adviceOf)),
-    ...(await outsidePlaces({
-      logs: watched?.witness.logs ?? [],
-      ledgers: watched?.ledgers ?? [],
-      traces: watched?.witness.traces ?? [],
-      places: options.places,
-      advice: { logs: LOGS_ADVICE, spans: SPANS_ADVICE, otherwise: OTHERWISE },
-    })),
-  ];
-  const { found, advice } =
-    needles.length === 0 ? { found: [], advice: [] } : findIn(places, needles);
   if (found.length > 0 || problems.length > 0) {
-    throw new TenantNotForgottenError(found, problems, advice);
+    throw new TenantNotForgottenError(found, problems, [...advice]);
   }
 };

@@ -2347,7 +2347,10 @@ await expectForgotten(app, "c-1");
 `createBounda({ witness })` hands it to the boot of every app it serves, as `boot`'s `witness`, and
 logs what a request throws through it. The expectations take the app, a client of it, or the
 witness, which stands for every app it watches that has not stopped: pass the witness when the
-host keeps the app to itself, as `createBounda` does. `witness.logger(logger)` returns a logger
+host keeps the app to itself, as `createBounda` does. A witness that watches apps of several
+tenants keeps each tenant's persons apart, since the same id names another person in another
+tenant: each is looked for in its own tenant's tables, logs and spans, and `expectTenantForgotten`
+checks the tenants one of whose apps refuses calls. `witness.logger(logger)` returns a logger
 whose every entry is searched too, for what a host or a test logs beside the app. The text of
 errors an app given a witness logs and traces is searched, since only its configuration made it
 write it. An app given none records nothing and costs nothing; a witness is for tests alone, as it

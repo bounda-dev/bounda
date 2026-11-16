@@ -284,6 +284,6 @@ export const boot: BootFunction = async <R extends Registry = AppRegistry>({
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   const booted = { ...app, stop };
-  witness?.watch(booted);
+  witness?.watch(booted, app);
   return booted;
 };

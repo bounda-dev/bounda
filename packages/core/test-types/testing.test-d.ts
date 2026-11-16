@@ -136,7 +136,7 @@ describe("a witness", () => {
     expectTypeOf(createWitness).returns.toEqualTypeOf<Witness>();
     expectTypeOf<TestingWitness>().toEqualTypeOf<Witness>();
     expectTypeOf<Witness["logger"]>().toEqualTypeOf<(logger: Logger) => Logger>();
-    expectTypeOf<Witness["watch"]>().toEqualTypeOf<(target: object) => void>();
+    expectTypeOf<Witness["watch"]>().toEqualTypeOf<(target: object, like?: object) => void>();
   });
 
   it("is an option of createApp and boot, for tests", () => {

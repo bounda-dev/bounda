@@ -883,6 +883,7 @@ describe("expectForgotten", () => {
     const adapter = memory();
     const witness = witnessHooksOf(testWitnessOf(adapter).witness).attach({
       searchErrorText: true,
+      tenant: "default",
     });
     const storage = await witness.storage(adapter).createStorage();
     await storage.scheduler.schedule({
@@ -1001,7 +1002,7 @@ describe("expectForgotten given an app built with a witness", () => {
   it("searches every app the witness watches that runs, and says when none does", async () => {
     const witness = createWitness();
     await expect(expectForgotten(witness, "c-1")).rejects.toThrow(
-      "expectForgotten found no app the witness watched: give the witness to createApp, boot() or createBounda as witness before the app starts",
+      "expectForgotten found no app the witness watched that started: give it the witness before it starts, as createApp, boot() and createBounda take it, and check that it started",
     );
     const clean = await start(witness, registry, { ports: {} as never });
     const leaking = await start(witness, leaky, { ports: {} as never });
@@ -1049,6 +1050,35 @@ describe("expectForgotten given an app built with a witness", () => {
     await expectTenantForgotten(again.as("support-1").as("support-2"));
     await again.stop();
     await expect(expectTenantForgotten(witness)).rejects.toThrow("before app.stop()");
+  });
+
+  it("keeps each tenant's persons apart, and checks the tenant forgotten alone", async () => {
+    const witness = createWitness();
+    const tenantApp = (tenant: string) =>
+      createApp({
+        registry,
+        config: { storage: memory(), ports: {} as never },
+        tenant,
+        witness,
+      });
+    const globex = await tenantApp("globex");
+    const acme = await tenantApp("acme");
+    await globex.commands.registerCustomer({ ...ana, email: "bo@globex.example" });
+    await acme.commands.registerCustomer(ana);
+    for (const app of [globex, acme]) await app.runUntilIdle();
+    await acme.forget("c-1");
+    await acme.runUntilIdle();
+    await expectForgotten(witness, "c-1");
+    await expectForgotten(acme, "c-1");
+    await expect(expectForgotten(globex, "c-1")).rejects.toThrow('"c-1" still holds a key');
+    await acme.forgetTenant("acme", { despiteLegalObligations: true });
+    await expectTenantForgotten(witness);
+    await expectTenantForgotten(acme.as("support-1"));
+    await expect(expectTenantForgotten(globex)).rejects.toThrow(
+      "the app still serves calls: forget the tenant with forgetTenant first",
+    );
+    await globex.stop();
+    await acme.stop();
   });
 
   it("checks a redaction through the witness, finding the old value the app logged", async () => {

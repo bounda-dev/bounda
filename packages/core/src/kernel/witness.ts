@@ -26,10 +26,11 @@ export interface Witness {
    */
   logger(logger: Logger): Logger;
   /**
-   * Makes `target` stand for the witness in the expectations: for a host that serves the app
-   * behind an object of its own, as `createBoundaObject` does with the Durable Object.
+   * Makes `target` stand for the witness in the expectations, or for what `like` stands for, an
+   * app or a client: for a host that serves the app behind an object of its own, as
+   * `createBoundaObject` does with the Durable Object.
    */
-  watch(target: object): void;
+  watch(target: object, like?: object): void;
 }
 
 /**
@@ -68,6 +69,10 @@ export interface AttachWitnessArgs {
    * test harness made the app write it.
    */
   readonly searchErrorText: boolean;
+  /**
+   * The tenant the app serves: what each tenant's apps do with its persons' data is kept apart.
+   */
+  readonly tenant: string;
 }
 
 export interface WitnessHooks {

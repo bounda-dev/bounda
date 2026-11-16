@@ -193,3 +193,20 @@ export const teeTracer: TeeTracerFunction = (primary, copy) => ({
     ]) as unknown;
   }) as Tracer["startActiveSpan"],
 });
+
+export interface TeedTracerFunction {
+  (primary: () => Tracer, copy: Tracer): () => Tracer;
+}
+
+/**
+ * `primary`, resolved on every call, teed to `copy`: the tee is built again only when the tracer
+ * `primary` resolves to changes, as when an SDK is registered.
+ */
+export const teedTracer: TeedTracerFunction = (primary, copy) => {
+  let last: { readonly primary: Tracer; readonly teed: Tracer } | undefined;
+  return () => {
+    const now = primary();
+    if (last?.primary !== now) last = { primary: now, teed: teeTracer(now, copy) };
+    return last.teed;
+  };
+};

@@ -143,7 +143,7 @@ import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts
 import { createRestoreWatch, GENERATION_INTERVAL_MS, type Restored } from "./shared/restores.ts";
 import { runtimeText } from "./shared/runtime-text.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
-import { teeTracer } from "./span-recorder.ts";
+import { teedTracer } from "./span-recorder.ts";
 import { type AppStatus, readAppStatus } from "./status.ts";
 import {
   ATTRIBUTES,
@@ -655,11 +655,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   // Attached first, so every store call, log entry and span of the app reaches it.
   const watching =
-    witness === undefined ? undefined : witnessHooksOf(witness).attach({ searchErrorText });
+    witness === undefined
+      ? undefined
+      : witnessHooksOf(witness).attach({ searchErrorText, tenant: tenant ?? DEFAULT_TENANT });
   const rawConfig = watching === undefined ? givenConfig : witnessedConfig(givenConfig, watching);
   const rawLogger = watching === undefined ? givenLogger : watching.logger(givenLogger);
   const appTracer: TracerFunction =
-    watching === undefined ? tracer : () => teeTracer(tracer(), watching.tracer);
+    watching === undefined ? tracer : teedTracer(tracer, watching.tracer);
   validateRegistry(registry);
   const unkeyed = resolveConfig(rawConfig);
   checkConfigNames({ registry, config: unkeyed });
