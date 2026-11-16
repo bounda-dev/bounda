@@ -58,6 +58,7 @@ const recipient = (
       onProcessingRestrictionLiftAnnounced: handler,
       onProcessingRestrictionLifted: handler,
       onPersonalDataRedacted: handler,
+      onTenantForgotten: handler,
     },
     implementation: () => `${name} port`,
   } as unknown as RecipientRuntime;

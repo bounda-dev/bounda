@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
+import { createEphemeralKeys } from "../../kernel/personal-data/ephemeral-keys.ts";
 import { createRecordingLogger } from "../../kernel/test-support.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -117,9 +118,12 @@ const forgottenSinceTheCopy = async (forgetLedger?: Adapter) => {
   const { adapter, db } = createNodeSqliteAdapter(path);
   const config = {
     storage: adapter,
-    ...(forgetLedger === undefined
-      ? {}
-      : { runtime: { personalData: { forgetLedger: { store: forgetLedger } } } }),
+    runtime: {
+      personalData: {
+        ...createEphemeralKeys(),
+        ...(forgetLedger === undefined ? {} : { forgetLedger: { store: forgetLedger } }),
+      },
+    },
   };
   const before = await createApp({ registry, config });
   await register(before, "c-1");
@@ -159,6 +163,7 @@ describe("a restore under a running app", () => {
         storage: adapter,
         runtime: {
           personalData: {
+            ...createEphemeralKeys(),
             forgetLedger: { store: createNodeSqliteAdapter(fresh("ledger")).adapter },
           },
         },
@@ -177,6 +182,34 @@ describe("a restore under a running app", () => {
     expect(await nameOf(app, "c-1")).toBe("name of c-1");
     await app.runUntilIdle();
     expect(await nameOf(app, "c-1")).toBeNull();
+    await app.stop();
+  });
+
+  it("settles a tenant's forgetting again in a copy restored under the app it left forgotten", async () => {
+    const path = fresh("store");
+    const copy = fresh("backup");
+    const { adapter, db } = createNodeSqliteAdapter(path);
+    const config = { storage: adapter, runtime: { personalData: createEphemeralKeys() } };
+    const before = await createApp({ registry, config });
+    await register(before, "c-1");
+    db.exec(`VACUUM INTO '${copy}'`);
+    await before.forgetTenant("default");
+    await before.stop();
+    const app = await createApp({ registry, config });
+    await app.runUntilIdle();
+    const source = new DatabaseSync(copy, { readOnly: true });
+    try {
+      await backup(source, path);
+    } finally {
+      source.close();
+    }
+    const keys = () => db.prepare('SELECT count(*) AS "n" FROM "bounda_personal_keys"').get();
+    expect(keys()).toEqual({ n: 1 });
+    await app.runUntilIdle();
+    expect(keys()).toEqual({ n: 0 });
+    expect(
+      db.prepare('SELECT "forgotten_at" FROM "bounda_tenancy"').get()?.forgotten_at,
+    ).not.toBeNull();
     await app.stop();
   });
 

@@ -1,18 +1,19 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
-import { importRawKey, withRawKey } from "./crypto.ts";
+import { importRawKey, type KeyKind, withRawKey } from "./crypto.ts";
 
 /**
- * Wraps the key of every person before the store keeps it, and unwraps it when the runtime reads
- * it, so a copy of the database holds no key that opens a personal field: envelope encryption.
- * `masterKey` is the one Bounda brings; a KMS, Vault or an HSM is an implementation of this
- * interface, given through `defineKeyWrapper`.
+ * Wraps the key of every tenant before the tenant key store keeps it, and unwraps it when the
+ * runtime reads it; the tenant's key wraps the keys of its persons and of its database in turn, so
+ * neither a copy of the database nor one of the tenant key store opens a personal field without
+ * the master key: envelope encryption. `masterKey` is the one Bounda brings; a KMS, Vault or an
+ * HSM is an implementation of this interface, given through `defineKeyWrapper`.
  *
- * The key a person's data is encrypted with never changes when it is wrapped anew, so rotating
- * the wrapping key rewrites no event. The runtime holds a person's key only as a WebCrypto key
- * that cannot be exported: the raw bytes exist only while `wrap` or `unwrap` runs, and the runtime
- * zeroes them as soon as it settles.
+ * The key a tenant's keys are wrapped with never changes when it is wrapped anew, so rotating the
+ * master key rewrites one record per tenant and nothing in the database. The runtime holds a
+ * tenant's key only as a WebCrypto key that cannot be exported: the raw bytes exist only while
+ * `wrap` or `unwrap` runs, and the runtime zeroes them as soon as it settles.
  */
 export interface KeyWrapper {
   /**
@@ -27,7 +28,7 @@ export interface KeyWrapper {
    */
   readonly previous?: readonly string[];
   /**
-   * Wraps the raw bytes of a person's key under `kid`. What it resolves is stored as it is. The
+   * Wraps the raw bytes of a tenant's key under `kid`. What it resolves is stored as it is. The
    * runtime zeroes `key` once it settles, so send the bytes and keep no copy of them.
    */
   wrap(key: Uint8Array): Promise<Uint8Array>;
@@ -66,6 +67,11 @@ export interface CryptoUnwrapArgs extends UnwrapArgs {
    * Only to wrap the key again; a key to seal and open with never is.
    */
   readonly extractable: boolean;
+  /**
+   * A tenant's key, or a person's or a database's key a version of Bounda before tenant keys
+   * wrapped under the master key directly, read once to be wrapped under the tenant's.
+   */
+  readonly kind: KeyKind;
 }
 
 export interface WrappedCryptoKey {
@@ -84,7 +90,7 @@ export interface CryptoKeyWrapper {
   readonly kid: string;
   readonly previous: readonly string[];
   /**
-   * `key` must be exportable; what it resolves is kept as it is.
+   * `key`, a tenant's, must be exportable; what it resolves is kept as it is.
    */
   wrap(key: CryptoKey): Promise<WrappedCryptoKey>;
   unwrap(args: CryptoUnwrapArgs): Promise<CryptoKey>;
@@ -114,9 +120,9 @@ export const cryptoKeyWrapperOver: CryptoKeyWrapperOverFunction = (wrapper) => (
     withRawKey(key, async (raw) => {
       // A copy: the bytes it resolves may be the very array it was given, which is zeroed next.
       const wrapped = Uint8Array.from(await wrapper.wrap(raw));
-      return { wrapped, key: await importRawKey({ raw, extractable: false }) };
+      return { wrapped, key: await importRawKey({ raw, extractable: false, kind: "tenant" }) };
     }),
-  unwrap: async ({ kid, wrapped, extractable }) => {
+  unwrap: async ({ kid, wrapped, extractable, kind }) => {
     const raw: unknown = await wrapper.unwrap({ kid, wrapped });
     if (!(raw instanceof Uint8Array)) {
       throw runtimeText(
@@ -125,7 +131,7 @@ export const cryptoKeyWrapperOver: CryptoKeyWrapperOverFunction = (wrapper) => (
         ),
       );
     }
-    return importRawKey({ raw, extractable });
+    return importRawKey({ raw, extractable, kind });
   },
 });
 

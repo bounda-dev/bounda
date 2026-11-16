@@ -15,6 +15,7 @@ export interface StorageTables {
   readonly idempotencyKeys: string;
   readonly personalKeys: string;
   readonly indexKeys: string;
+  readonly tenancy: string;
   readonly persons: string;
   readonly restrictions: string;
   readonly restrictedPersons: string;
@@ -25,6 +26,7 @@ export interface StorageTables {
   readonly recipients: string;
   // In a database of its own, apart from the other storage tables.
   readonly forgetLedger: string;
+  readonly tenantKeys: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
   readonly checkpointsLockKey: string;
@@ -67,6 +69,8 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
     personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
     indexKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "indexKeys" })),
+    tenancy: quoteIdentifier(storageTableNameFor({ prefix, table: "tenancy" })),
+    tenantKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "tenantKeys" })),
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
     restrictions: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictions" })),
     restrictedPersons: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictedPersons" })),

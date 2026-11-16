@@ -5,3 +5,5 @@ BOUNDA_MASTER_KEY={{masterKey}}
 
 # Where the database is, as in .env.example.
 # DATABASE_URL=postgres://user:password@localhost:5432/{{name}}
+# Where the tenant's key is, as in .env.example.
+# TENANT_KEYS_URL=postgres://user:password@localhost:5432/{{name}}_keys

@@ -29,7 +29,7 @@ bounda.config.ts            storage: cloudflare()
 .dev.vars                   the master key, and the text of errors in the logs, for development
 workers/app.ts              the Worker: React Router, and the Durable Object class
 vite.config.ts              plugins: [cloudflare(), bounda(), reactRouter()]
-wrangler.jsonc              the binding and the SQLite migration for the object
+wrangler.jsonc              the bindings: the object, its SQLite migration, and TENANT_KEYS (KV)
 tests/orders.test.ts        the domain, on an in-memory store
 tests/store.test.ts         the store, in its Durable Object in workerd
 ```

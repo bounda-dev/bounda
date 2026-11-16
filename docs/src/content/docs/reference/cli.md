@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, list the recipients of personal data, migrate its tables and declare a restore."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, list the recipients of personal data, forget a tenant and rotate its key, migrate its tables and declare a restore."
 sidebar:
   order: 0
 ---
@@ -68,6 +68,17 @@ Give an id, such as the operator's account, never a name or an email: events kee
 and are never deleted. Without `--actor` the command names nobody, as before. An id that is not 1
 to 255 characters is refused with exit code `1`. `bounda forgotten` takes none: it prints ids the
 stream holds in the clear and records nothing, and `bounda generate` loads no app.
+
+## Which tenant
+
+`--tenant <name>`, on every command that loads the project, names the [tenant](/guides/personal-data/#tenants)
+the app serves: a configuration that is a function of the tenant is called with it, and the app
+opens that tenant's key. `BOUNDA_TENANT`, in the environment or in `.env`, does the same without it;
+without either, the app serves `default`.
+
+```bash
+bounda status --tenant acme
+```
 
 ## `bounda generate`
 
@@ -268,7 +279,10 @@ subscribers (head at 1204)
   policies  at 1204, 0 behind
 personal data backfill: sealed through position 1204, caught up
 forget ledger: reconciled, applied through 2026-11-08T22:15:00.000Z, last run 2026-11-09T10:00:00.000Z
-key rotation: under 7Kx0Qw9z (previous Wn3eT1aa), 12 keys left to rewrap
+tenant: acme, key 7Kx0Qw9zR2bV1mPq (older Wn3eT1aaK8sL0dXy), wrapped under master key c1Hq4Z0aJ5fM
+database files
+  storage  ./data/acme.db  encrypted under the tenant's key in force
+key rotation: under 7Kx0Qw9zR2bV1mPq (previous Wn3eT1aaK8sL0dXy), 12 keys left to rewrap
 retention
   default  2y, 0 persons past it, next due 2028-01-04T09:13:00.000Z
   marketing  18mo, 3 keys past it, next due 2026-11-09T11:40:00.000Z
@@ -288,9 +302,16 @@ recipients
 - each subscriber's checkpoint and lag, and its last failure, by any instance: `failing` while it is
   still stuck on it, `last failed, resolved …` once it got past. Its class and code, the event, how
   many deliveries in a row failed and since when; never its text.
+- the [tenant](/guides/personal-data/#tenants): the version of its key in force, the older ones
+  its record still holds, and the master key they are wrapped under, or how many versions are left
+  to [rewrap](/guides/personal-data/#rotating-the-master-key) under it; `forgotten at …` once it
+  is [forgotten](/guides/personal-data/#forgetting-a-tenant).
+- each database file [encrypted under the tenant's key](/guides/personal-data/#encrypted-database-files),
+  and where it stands: `still in the clear` or `still under an earlier key` while another connection
+  kept it from being encrypted, which [`bounda rekey`](#bounda-rekey) does once it can.
 - the [backfill](/guides/personal-data/#marking-a-field-later) of personal data, the forget
   ledger's [reconciliation](/guides/personal-data/#what-the-runtime-does-with-it), the
-  [rotation](/guides/personal-data/#rotating-the-master-key) of the master key, the
+  [rotation](/guides/personal-data/#rotating-the-tenants-key) of the tenant's key, the
   [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
   letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
   The retention has a line for the app's, which forgets persons as a whole, under `default`, and
@@ -333,6 +354,30 @@ after `bounda forget --from` when restoring without a ledger (see
 `--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, `2` the project could not be
 loaded.
 
+## `bounda rekey`
+
+Encrypts under the tenant's key in force every [encrypted database
+file](/guides/personal-data/#encrypted-database-files) still in the clear or under an earlier key,
+which a start leaves so while another connection holds the file, and prints where each stands:
+
+```bash
+bounda rekey --tenant acme
+```
+
+```
+database files
+  storage  ./data/acme.db  encrypted under the tenant's key in force
+```
+
+It reads only the configuration, with the master key from the environment, and starts no app; run
+it once the other processes that hold the file have stopped. Exit codes: `0` every file under the
+key in force, `2` one still held elsewhere, or the project could not be loaded.
+
+| Option | Meaning |
+| --- | --- |
+| `--root`, `--config` | As for `bounda migrate` |
+| `--tenant <name>` | The tenant whose files to encrypt, for a configuration of the tenant (default: `BOUNDA_TENANT`) |
+
 ## `bounda migrate`
 
 Brings Bounda's tables to this release's version in every database the configuration names, as
@@ -353,12 +398,17 @@ It reads only the configuration, never the registry, and starts no app: run it a
 deploy, after stopping the previous version and before starting the new one (see
 [Schema](/guides/deployment/#schema)). Each database migrates under its own lock, as a start does,
 so running it twice, or while an instance starts, migrates once. Tables a newer release migrated
-are refused untouched with [`STORAGE_SCHEMA_TOO_NEW`](/reference/errors/#codes).
+are refused untouched with [`STORAGE_SCHEMA_TOO_NEW`](/reference/errors/#codes). A SQLite file
+[encrypted under the tenant's key](/guides/personal-data/#encrypted-database-files) opens under the
+keys of the tenant `--tenant` names, with the master key read from the environment, and one in the
+clear is encrypted first, as a start would; `bounda forgotten` and `bounda rebuild` open it the same
+way.
 
 | Option | Meaning |
 | --- | --- |
 | `--root <dir>` | The project root, the current directory by default |
 | `--config <file>` | The configuration module under the root, `bounda.config.ts` by default |
+| `--tenant <name>` | The tenant whose databases to migrate, for a configuration that is a function of the tenant; `BOUNDA_TENANT` by default |
 
 Exit codes: `0` migrated, `1` bad arguments, `2` the configuration could not be loaded or a
 migration failed.
@@ -520,6 +570,72 @@ Exit codes: `0` done, `1` bad arguments, or a person and `--from` both or neithe
 could not be loaded, the export or the forget failed, or the file could not be read or has a line
 that is neither a person's id nor an entry, in which case nobody is forgotten.
 
+## `bounda forget-tenant`
+
+[Forgets a tenant](/guides/personal-data/#forgetting-a-tenant) as a whole: destroys its key, so
+nothing personal of it opens again, in the database, its backups or a Durable Object's copies, and
+the app serves nothing more but the notices to its recipients. It boots the project for that
+tenant, unless `--tenant` names another, which it refuses.
+
+```bash
+bounda forget-tenant acme --yes --actor ops-ana
+```
+
+```
+forgot tenant acme at 2026-11-09T10:00:00.000Z (event 019a0c4e-3c9e-7a1b-9f1e-2b3c4d5e6f70); the app tells its recipients in the background
+```
+
+Without `--yes` it forgets nothing and says what it would destroy. Run again on a forgotten tenant,
+it prints the forgetting it finds. Its recipients are told by the app's worker, on the next start
+of an instance that runs it.
+
+| Option | Meaning |
+| --- | --- |
+| `--yes` | Confirm: the tenant's data cannot be read again |
+| `--despite-legal-obligations` | Destroy too the keys a legal obligation keeps, once their data was handed back |
+| `--root`, `--config`, `--registry`, `--error-text`, `--actor` | As for `bounda rebuild` |
+
+Exit codes: `0` forgotten, `1` bad arguments, `2` no `--yes`, the project could not be loaded or
+the forgetting was refused.
+
+## `bounda tenant-key rotate` and `bounda tenant-key retire`
+
+[Rotate the tenant's key](/guides/personal-data/#rotating-the-tenants-key): `rotate` puts a new
+version in force, under which the worker rewraps every key in the background; `retire` removes the
+older versions once nothing is wrapped under them, so a backup that needs them opens nothing
+personal any more.
+
+```bash
+bounda tenant-key rotate --tenant acme
+bounda tenant-key retire --tenant acme
+```
+
+```
+tenant key 7Kx0Qw9zR2bV1mPq in force; the worker rewraps every key under it, then retire Wn3eT1aaK8sL0dXy with bounda tenant-key retire
+retired Wn3eT1aaK8sL0dXy: a backup with keys wrapped under them opens nothing personal any more
+```
+
+`retire` refuses while a key is still wrapped under an older version, and until twice the key
+cache's time after the version in force was created.
+
+`rewrap-master` serves a [rotation of the master key](/guides/personal-data/#rotating-the-master-key):
+it rewraps under the master key in force the key of every tenant the tenant key store holds,
+whether their apps run or not, and names each one it rewrapped. It exits with `2` while any tenant
+is left under a previous master key, naming it and why, so a deploy keeps the previous keys until
+it passes:
+
+```bash
+bounda tenant-key rewrap-master
+```
+
+```
+rewrapped acme
+rewrapped globex
+2 tenant key(s) rewrapped; none is left under a previous master key: remove them
+``` Both take `--root`, `--config`, `--registry`,
+`--error-text`, `--actor` and `--tenant`. Exit codes: `0` done, `1` bad arguments, `2` the project
+could not be loaded or the call was refused.
+
 ## `bounda forget-ledger expire`
 
 Gives every entry of a Workers KV [forget ledger](/guides/personal-data/#keeping-the-ledger-short)
@@ -572,7 +688,10 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `app.as(actor).subscriberFailures.list()`; `bounda migrate` is `migrateTables({ config })` from
 `@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
 or `app.as(actor).deadLetters`, `bounda export` is `app.as(actor).exportPersonalData(person)`,
-`bounda forget <person>` is `app.as(actor).forget(person, { categories })`, and
-`bounda forget --from` is `app.forgetAgain(entries, { actor })`. The
+`bounda forget <person>` is `app.as(actor).forget(person, { categories })`,
+`bounda forget --from` is `app.forgetAgain(entries, { actor })`, `bounda forget-tenant` is
+`app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey()`
+and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
+`rewrapTenantKeys({ config, env })` for `rewrap-master`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.

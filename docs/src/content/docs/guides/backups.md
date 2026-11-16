@@ -16,9 +16,13 @@ operator does, and what the runtime then guarantees.
 
 - Configure a [forget ledger](/guides/personal-data/#the-forget-ledger) in a store the restore
   does not touch, and set its `keepFor` longer than your oldest backup.
-- Keep every [master key](/guides/personal-data/#rotating-the-master-key) a backup was taken under
-  as long as the backup: a backup restored after a rotation opens only with the old key in
-  `previous`, and the worker rewraps its keys under the current one again.
+- Keep the [tenant key store](/guides/personal-data/#the-tenant-key-store) apart from the
+  database, and back it up apart: a restore of the database never touches it, which is what lets a
+  [forgotten tenant](/guides/personal-data/#forgetting-a-tenant) stay forgotten in every copy.
+- Keep every version of the tenant's key a backup's keys are wrapped under, and every [master
+  key](/guides/personal-data/#rotating-the-master-key) a backup of the tenant key store was taken
+  under, as long as the backup: retire an older version of the tenant's key only once the backups
+  that need it have expired, or they open nothing personal.
 - Keep the read models that live in [another database](/reference/configuration/) on the same
   schedule as the storage, and restore both to the same moment.
 
@@ -78,7 +82,7 @@ An app without a forget ledger logs an error as well, since it has no record of 
 Bounda's restore tests run this on SQLite (node:sqlite and libSQL), PostgreSQL and the Durable
 Object, with the app stopped and, where the engine allows it, running: persons write their data,
 a backup is taken, some are forgotten, the master key rotates, more is written, and the copy is
-restored.
+restored; and a backup is taken, the tenant is forgotten, and the copy is restored.
 
 - **Whoever was forgotten after the copy is forgotten again,** their `PersonalDataForgotten`
   committed once more under the id, time and reason the ledger recorded before it first committed:
@@ -108,8 +112,15 @@ restored.
 - **Whoever was forgotten before the copy stays forgotten,** once: the copy holds their forgetting.
   Someone who registered after the copy is gone with it, and their entry in the ledger finds no
   key to remove.
-- **Everyone else reads as before,** their keys wrapped under the previous master key open and are
-  rewrapped under the current one.
+- **Everyone else reads as before,** their keys wrapped under an older version of the tenant's
+  key open while the record holds it, and are rewrapped under the current one; a tenant key wrapped
+  under the previous master key opens and is rewrapped too.
+- **A tenant forgotten after the copy stays forgotten:** its key is gone from the tenant key store,
+  so nothing personal of the copy opens, and the app that starts on it serves nothing, removes the
+  copy's keys, snapshots, remembered answers and read model rows, and appends the
+  `TenantForgotten` the copy lacks, under the id and time the store recorded. Until it starts, a
+  read model's fields not marked `.personal()` are in the clear in the copy, as they were in the
+  database.
 - **The app goes on:** projections stay current, new persons register, `forget` and the rotation
   work, and the next normal start forgets nobody again. A failed reconciliation the copy
   remembers does not hold the restored start back, and `bounda status` counts the restore.

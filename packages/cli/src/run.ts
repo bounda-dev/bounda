@@ -17,10 +17,17 @@ import {
   type RestrictionNotice,
   rebuildReadModel,
   resolveErrorText,
+  rewrapTenantKeys,
   type SubscriberFailure,
+  withEncryptedFiles,
   withErrorText,
 } from "@bounda-dev/core";
-import { type AdapterDefinition, isAdapter, type Storage } from "@bounda-dev/core/adapter";
+import {
+  type AdapterDefinition,
+  type FileEncryptionState,
+  isAdapter,
+  type Storage,
+} from "@bounda-dev/core/adapter";
 import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
@@ -37,7 +44,7 @@ import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
 import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
-import { formatRecipients, formatSchema, formatStatus } from "./status-output.ts";
+import { formatFiles, formatRecipients, formatSchema, formatStatus } from "./status-output.ts";
 
 export interface Output {
   write(text: string): void;
@@ -136,6 +143,7 @@ const load = async (
       configPath: options.config,
       registryPath: options.registry,
       logger,
+      ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
     });
     resolveErrorText({ env: process.env });
     return project;
@@ -172,12 +180,14 @@ const runRebuild = async (
   const project = await load(options, cwd, logger, stderr);
   if (project === undefined) return EXIT_FAILURE;
   try {
+    const { tenant: _tenant, ...loaded } = project;
     const result = await rebuildReadModel({
-      ...project,
+      ...loaded,
       config: withErrorText(errorTextArgs(options, project.config)),
       env: process.env,
       name: readModel,
       logger,
+      ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
       ...(options.actor === undefined ? {} : { actor: options.actor }),
     });
     line(
@@ -195,6 +205,7 @@ interface ProjectOptions {
   readonly config: string;
   readonly registry: string;
   readonly errorText: boolean;
+  readonly tenant?: string;
 }
 
 interface ActingOptions extends ProjectOptions {
@@ -230,6 +241,7 @@ const withApp = async <T>(
       loadEnv: false,
       signals: false,
       logger,
+      ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
     });
     return await work(app);
   } catch (error) {
@@ -345,32 +357,42 @@ const runForgotten = async (
 ): Promise<number> => {
   const project = await load(options, cwd, logTo(stderr), stderr);
   if (project === undefined) return EXIT_FAILURE;
-  const definition: AdapterDefinition = project.config.storage;
-  if (!isAdapter(definition)) {
+  if (!isAdapter(project.config.storage)) {
     line(
       stderr,
-      `error: storage "${definition.name}" is a definition without factories. Import the adapter package's factory.`,
+      `error: storage "${project.config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
     return EXIT_FAILURE;
   }
-  let storage: Storage | undefined;
   try {
-    storage = await definition.createStorage();
-    const { eventStore } = storage;
-    const lines = await readForgotten({
-      events: {
-        read: ({ after = 0, limit = 1_000 } = {}) =>
-          eventStore.readAll({ afterPosition: after, limit }),
+    const lines = await withEncryptedFiles({
+      config: project.config,
+      env: process.env,
+      ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
+      work: async (config) => {
+        const definition: AdapterDefinition = config.storage;
+        if (!isAdapter(definition)) return [];
+        let storage: Storage | undefined;
+        try {
+          storage = await definition.createStorage();
+          const { eventStore } = storage;
+          return await readForgotten({
+            events: {
+              read: ({ after = 0, limit = 1_000 } = {}) =>
+                eventStore.readAll({ afterPosition: after, limit }),
+            },
+            since: options.since,
+          });
+        } finally {
+          await storage?.close();
+        }
       },
-      since: options.since,
     });
     for (const forgotten of lines) line(stdout, JSON.stringify(forgotten));
     line(stderr, `${lines.length} person${lines.length === 1 ? "" : "s"} forgotten`);
     return EXIT_OK;
   } catch (error) {
     return failed(stderr, error, resolveErrorText(errorTextArgs(options, project.config)));
-  } finally {
-    await storage?.close();
   }
 };
 
@@ -681,6 +703,70 @@ const runRecipients = (
     return EXIT_OK;
   });
 
+interface ForgetTenantOptions extends ActingOptions {
+  readonly yes: boolean;
+  readonly despiteLegalObligations: boolean;
+}
+
+const runForgetTenant = (
+  tenant: string,
+  options: ForgetTenantOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  if (!options.yes) {
+    line(
+      stderr,
+      `error: forgetting tenant ${tenant} destroys its key: nothing personal of it opens again, in the database or in any backup, and the app serves nothing more. Run again with --yes to forget it`,
+    );
+    return Promise.resolve(EXIT_FAILURE);
+  }
+  return withApp({ ...options, tenant: options.tenant ?? tenant }, cwd, stderr, async (app) => {
+    const forgotten = await actingAs(app, options).forgetTenant(tenant, {
+      despiteLegalObligations: options.despiteLegalObligations,
+    });
+    // Its notices go out from the app's own worker, which the next start runs.
+    line(
+      stdout,
+      `forgot tenant ${forgotten.tenant} at ${forgotten.forgottenAt} (event ${forgotten.eventId}); the app tells its recipients in the background`,
+    );
+    return EXIT_OK;
+  });
+};
+
+const runRotateTenantKey = (
+  options: ActingOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    const { kid, previous } = await actingAs(app, options).rotateTenantKey();
+    line(
+      stdout,
+      `tenant key ${kid} in force; the worker rewraps every key under it, then retire ${previous.join(", ")} with bounda tenant-key retire`,
+    );
+    return EXIT_OK;
+  });
+
+const runRetireTenantKeys = (
+  options: ActingOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp(options, cwd, stderr, async (app) => {
+    const retired = await actingAs(app, options).retireTenantKeys();
+    line(
+      stdout,
+      retired.length === 0
+        ? "no older version of the tenant key to retire"
+        : `retired ${retired.join(", ")}: a backup with keys wrapped under them opens nothing personal any more`,
+    );
+    return EXIT_OK;
+  });
+
 const runRestored = (
   options: ProjectOptions,
   cwd: string,
@@ -696,10 +782,110 @@ const runRestored = (
     return EXIT_OK;
   });
 
+// Opens every database file the configuration encrypts under the tenant's keys, as a start would,
+// which encrypts under the key in force a file left in the clear or under an earlier key, and
+// tries again on any still waiting: what an operator runs once the file is the process's alone.
+const runRekey = async (
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const logger = logTo(stderr);
+  let config: Config;
+  let tenant: string | undefined;
+  try {
+    ({ config, tenant } = await loadProject({
+      root: rootOf(options, cwd),
+      configPath: options.config,
+      registry: NO_REGISTRY,
+      logger,
+      ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
+    }));
+    resolveErrorText({ env: process.env });
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  try {
+    const files = await withEncryptedFiles({
+      config,
+      env: process.env,
+      logger,
+      ...(tenant === undefined ? {} : { tenant }),
+      work: async (keyed) => {
+        const databases: (readonly [string, AdapterDefinition])[] = [
+          ["storage", keyed.storage],
+          ...Object.entries(keyed.readModels ?? {}).map(
+            ([name, adapter]) => [`readModels.${name}`, adapter] as const,
+          ),
+        ];
+        const settled: { database: string; file: string; state: FileEncryptionState }[] = [];
+        const seen = new Set<AdapterDefinition>();
+        for (const [database, adapter] of databases) {
+          if (seen.has(adapter) || !isAdapter(adapter) || adapter.fileEncryption === undefined) {
+            continue;
+          }
+          seen.add(adapter);
+          settled.push({
+            database,
+            file: adapter.fileEncryption.database,
+            state: await adapter.fileEncryption.settle(),
+          });
+        }
+        return settled;
+      },
+    });
+    if (files.length === 0) {
+      line(stdout, "no database file is encrypted under the tenant's keys");
+      return EXIT_OK;
+    }
+    line(stdout, formatFiles(files).join("\n"));
+    return files.every(({ state }) => state === "current") ? EXIT_OK : EXIT_FAILURE;
+  } catch (error) {
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
+  }
+};
+
 // Only the configuration is read: the tables are migrated before any app of this release starts.
 const NO_REGISTRY: Registry = { aggregates: {}, readModels: {} };
 
 const runMigrate = async (
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const logger = logTo(stderr);
+  let config: Config;
+  let tenant: string | undefined;
+  try {
+    ({ config, tenant } = await loadProject({
+      root: rootOf(options, cwd),
+      configPath: options.config,
+      registry: NO_REGISTRY,
+      logger,
+      ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
+    }));
+    resolveErrorText({ env: process.env });
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  try {
+    const migrated = await migrateTables({
+      config,
+      env: process.env,
+      ...(tenant === undefined ? {} : { tenant }),
+    });
+    line(stdout, `migrated\n${formatSchema(migrated)}`);
+    return EXIT_OK;
+  } catch (error) {
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
+  }
+};
+
+const runRewrapMaster = async (
   options: ProjectOptions,
   cwd: string,
   stdout: Output,
@@ -713,17 +899,38 @@ const runMigrate = async (
       configPath: options.config,
       registry: NO_REGISTRY,
       logger,
+      ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
     }));
     resolveErrorText({ env: process.env });
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
     return EXIT_FAILURE;
   }
+  const errorText = resolveErrorText(errorTextArgs(options, config));
   try {
-    line(stdout, `migrated\n${formatSchema(await migrateTables({ config }))}`);
-    return EXIT_OK;
+    const { rewrapped, left } = await rewrapTenantKeys({ config, env: process.env });
+    for (const tenant of rewrapped) line(stdout, `rewrapped ${tenant}`);
+    if (left.length === 0) {
+      line(
+        stdout,
+        `${rewrapped.length} tenant key(s) rewrapped; none is left under a previous master key: remove them`,
+      );
+      return EXIT_OK;
+    }
+    for (const { tenant, error } of left) {
+      const { errorName, errorMessage } = errorFields({ error, errorText });
+      line(
+        stderr,
+        `error: ${tenant} is still under a previous master key: ${errorMessage ?? errorName}`,
+      );
+    }
+    line(
+      stderr,
+      `${left.length} tenant key(s) left under a previous master key: keep the previous master keys until none is`,
+    );
+    return EXIT_FAILURE;
   } catch (error) {
-    return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
+    return failed(stderr, error, errorText);
   }
 };
 
@@ -749,6 +956,10 @@ const projectOptions = <T extends Command>(command: T): T =>
       "--error-text",
       "print the message of the error a command fails on, and log the text of errors: either may quote personal data",
       false,
+    )
+    .option(
+      "--tenant <name>",
+      "the tenant the app serves, for a configuration that is a function of the tenant (default: BOUNDA_TENANT)",
     );
 
 const actingOptions = <T extends Command>(command: T): T =>
@@ -1010,6 +1221,54 @@ export const runCli: RunCliFunction = async ({
     exitCode = await runStatus(options, cwd, stdout, stderr);
   });
 
+  actingOptions(
+    program
+      .command("forget-tenant")
+      .description(
+        "forget a tenant as a whole: destroy its key, so nothing personal of it opens again in the database, its backups or a Durable Object's copies, and the app serves nothing but the notices to its recipients",
+      )
+      .argument("<tenant>", "the tenant to forget, the one the app serves")
+      .option("--yes", "confirm: the tenant's data cannot be read again", false)
+      .option(
+        "--despite-legal-obligations",
+        "destroy too the keys a legal obligation keeps, once their data was handed back",
+        false,
+      ),
+  ).action(async (tenant: string, options: ForgetTenantOptions) => {
+    exitCode = await runForgetTenant(tenant, options, cwd, stdout, stderr);
+  });
+
+  const tenantKey = program
+    .command("tenant-key")
+    .description("rotate the tenant's key, and retire its older versions");
+  actingOptions(
+    tenantKey
+      .command("rotate")
+      .description(
+        "put a new version of the tenant's key in force: the worker rewraps every person's key and the database's key under it",
+      ),
+  ).action(async (options: ActingOptions) => {
+    exitCode = await runRotateTenantKey(options, cwd, stdout, stderr);
+  });
+  actingOptions(
+    tenantKey
+      .command("retire")
+      .description(
+        "remove the older versions of the tenant's key once nothing is wrapped under them: backups that need them open nothing personal any more",
+      ),
+  ).action(async (options: ActingOptions) => {
+    exitCode = await runRetireTenantKeys(options, cwd, stdout, stderr);
+  });
+  projectOptions(
+    tenantKey
+      .command("rewrap-master")
+      .description(
+        "rewrap under the master key in force the key of every tenant the tenant key store holds, their apps running or not: once none is left under a previous master key, remove those",
+      ),
+  ).action(async (options: ProjectOptions) => {
+    exitCode = await runRewrapMaster(options, cwd, stdout, stderr);
+  });
+
   projectOptions(
     program
       .command("restored")
@@ -1021,12 +1280,31 @@ export const runCli: RunCliFunction = async ({
   });
 
   program
+    .command("rekey")
+    .description(
+      "encrypt under the tenant's key in force every database file still in the clear or under an earlier key; exits with 2 while another connection keeps one from it",
+    )
+    .option("--root <dir>", "project root (default: current directory)")
+    .option("--config <file>", "configuration module under the root", "bounda.config.ts")
+    .option(
+      "--tenant <name>",
+      "the tenant whose files to encrypt, for a configuration that is a function of the tenant (default: BOUNDA_TENANT)",
+    )
+    .action(async (options: ProjectOptions) => {
+      exitCode = await runRekey({ ...options, errorText: false }, cwd, stdout, stderr);
+    });
+
+  program
     .command("migrate")
     .description(
       "bring Bounda's tables to this release's version in every database of the configuration, before a deploy",
     )
     .option("--root <dir>", "project root (default: current directory)")
     .option("--config <file>", "configuration module under the root", "bounda.config.ts")
+    .option(
+      "--tenant <name>",
+      "the tenant whose databases to migrate, for a configuration that is a function of the tenant (default: BOUNDA_TENANT)",
+    )
     .action(async (options: ProjectOptions) => {
       exitCode = await runMigrate({ ...options, errorText: false }, cwd, stdout, stderr);
     });

@@ -25,6 +25,10 @@ const clearValue = (type: FieldType, text: string): unknown => {
 export interface SettledPatchArgs {
   readonly context: SealingContext;
   readonly stored: Row;
+  /**
+   * Computes every blind index anew, not only a missing one: the database's key changed.
+   */
+  readonly reindex?: boolean;
 }
 
 export interface SettledPatchFunction {
@@ -34,7 +38,7 @@ export interface SettledPatchFunction {
 // What a stored row needs to read as the runtime writes it, `null` when nothing: a value in the
 // clear in a sealed field is sealed; an envelope in a field now kept in the clear is opened, unless
 // its key is gone from a field that needs a value; a missing key field or blind index is filled.
-export const settledPatch: SettledPatchFunction = async ({ context, stored }) => {
+export const settledPatch: SettledPatchFunction = async ({ context, stored, reindex = false }) => {
   const { layout, keys } = context;
   const person = layout.person === null ? null : stored[layout.person];
   const owner = typeof person === "string" ? person : null;
@@ -79,7 +83,7 @@ export const settledPatch: SettledPatchFunction = async ({ context, stored }) =>
     const missingKey = stored[field.keyField] === undefined || stored[field.keyField] === null;
     const missingIndex =
       field.indexField !== null &&
-      (stored[field.indexField] === undefined || stored[field.indexField] === null);
+      (reindex || stored[field.indexField] === undefined || stored[field.indexField] === null);
     if (field.sealed && !missingKey && !missingIndex) continue;
     const { person: sealedFor, key: fingerprint } = envelope.$personal;
     const key = await keys.forOpen(sealedFor, fingerprint);
@@ -90,7 +94,8 @@ export const settledPatch: SettledPatchFunction = async ({ context, stored }) =>
     }
     if (field.sealed) {
       if (missingIndex && field.indexField !== null && opened !== null) {
-        patch[field.indexField] = await indexOf({ context, field, value: opened });
+        const index = await indexOf({ context, field, value: opened });
+        if (index !== stored[field.indexField]) patch[field.indexField] = index;
       }
       continue;
     }
@@ -160,7 +165,7 @@ export const settlePage: SettlePageFunction = async ({ context, table, after }) 
     limit: SETTLE_BATCH,
   });
   for (const stored of rows) {
-    const patch = await settledPatch({ context, stored });
+    const patch = await settledPatch({ context, stored, reindex: true });
     if (patch !== null) await table.update({ [key]: stored[key] }, patch);
   }
   return { last: rows.at(-1)?.[key], done: rows.length < SETTLE_BATCH };
@@ -174,23 +179,27 @@ export interface SettledMarkFunction {
 // settled for.
 export const settledMark: SettledMarkFunction = (readModel) => `read-model:settled:${readModel}`;
 
-export interface LayoutDigestFunction {
-  (context: Pick<SealingContext, "layout">): number;
+export interface LayoutDigestArgs extends Pick<SealingContext, "layout"> {
+  /**
+   * The epoch of the blind indexes, `null` without any.
+   */
+  readonly epoch?: string | null;
 }
 
-// The layout of personal fields as a number a checkpoint keeps: what changes it is what a settling
-// has to go through the rows for. Never 0, which a checkpoint never written reads as.
-export const layoutDigest: LayoutDigestFunction = ({ layout }) =>
-  Number.parseInt(
-    digest(
-      JSON.stringify(
-        layout.personal.map(({ field, category, sealed, indexField }) => [
-          field,
-          category,
-          sealed,
-          indexField,
-        ]),
-      ),
-    ).slice(0, 8),
-    16,
-  ) || 1;
+export interface LayoutDigestFunction {
+  (args: LayoutDigestArgs): number;
+}
+
+// The layout of personal fields, and the key a read model with blind indexes computes them under,
+// as a number a checkpoint keeps: what changes it is what a settling has to go through the rows
+// for. Never 0, which a checkpoint never written reads as.
+export const layoutDigest: LayoutDigestFunction = ({ layout, epoch = null }) => {
+  const fields = layout.personal.map(({ field, category, sealed, indexField }) => [
+    field,
+    category,
+    sealed,
+    indexField,
+  ]);
+  const settled = layout.indexed && epoch !== null ? { fields, epoch } : fields;
+  return Number.parseInt(digest(JSON.stringify(settled)).slice(0, 8), 16) || 1;
+};

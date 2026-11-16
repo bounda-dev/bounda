@@ -54,6 +54,102 @@ export interface CreateDeadLetterRetryFunction {
   (args: CreateDeadLetterRetryArgs): DeadLetterRetry;
 }
 
+interface LetterUnits {
+  settled(letter: StoredDeadLetter, run: (unit: UnitOfWork) => Promise<void>): Promise<void>;
+  eventOf(letter: StoredDeadLetter): Promise<StoredEvent>;
+}
+
+const letterUnits = (storage: AppStorage, config: ResolvedConfig, clock: Clock): LetterUnits => ({
+  // The retry's writes and the letter's new status, together or not at all. A retry that
+  // another one settled first writes nothing, and does not run again after a conflict.
+  settled: (letter, run) =>
+    commitWork({
+      storage,
+      concurrencyRetries: config.runtime.commands.concurrencyRetries,
+      work: async (unit) => {
+        await run(unit);
+        await unit.deadLetterStore.updateStatus(letter.id, "retried", clock.now());
+      },
+      beforeRerun: async () => {
+        const current = await storage.deadLetterStore.get(letter.id);
+        if (current?.status !== "failed") throw new DeadLetterSettledError({ id: letter.id });
+      },
+    }),
+  eventOf: async (letter) => {
+    const event = await storage.eventStore.readOne({
+      aggregateType: letter.aggregateType,
+      aggregateId: letter.aggregateId,
+      eventId: letter.eventId,
+    });
+    if (event === null) {
+      throw runtimeText(
+        new NotFoundError(
+          `Event ${letter.eventId} of ${letter.aggregateType}:${letter.aggregateId} not found`,
+        ),
+      );
+    }
+    return event;
+  },
+});
+
+const retryNotice = (
+  { settled, eventOf }: LetterUnits,
+  notices: RecipientNotices,
+  letter: StoredDeadLetter,
+  retryId: string,
+  actor: string | undefined,
+): Promise<void> =>
+  eventOf(letter).then((event) =>
+    settled(letter, (unit) =>
+      notices.run({
+        port: letter.handler,
+        event,
+        attempt: letter.attempts + 1,
+        retryId,
+        actor,
+        within: unit,
+      }),
+    ),
+  );
+
+export interface CreateRecipientLetterRetryArgs {
+  readonly storage: AppStorage;
+  readonly notices: RecipientNotices;
+  readonly config: ResolvedConfig;
+  readonly ids: IdGenerator;
+  readonly clock: Clock;
+}
+
+export interface CreateRecipientLetterRetryFunction {
+  (args: CreateRecipientLetterRetryArgs): DeadLetterRetry;
+}
+
+/**
+ * The retry of an app whose tenant was forgotten: a recipient's notice is told again, any other
+ * letter is refused, since nothing it would run serves the tenant any more.
+ */
+export const createRecipientLetterRetry: CreateRecipientLetterRetryFunction = ({
+  storage,
+  notices,
+  config,
+  ids,
+  clock,
+}) => {
+  const units = letterUnits(storage, config, clock);
+  return {
+    retry: async (letter, actor) => {
+      if (letter.kind !== "recipient") {
+        throw runtimeText(
+          new DeadLetterNotRetriableError(
+            `Dead letter "${letter.id}" is not a recipient's notice, and the tenant was forgotten`,
+          ),
+        );
+      }
+      await retryNotice(units, notices, letter, ids.next(), actor);
+    },
+  };
+};
+
 /**
  * A retry bypasses the inbox ledger on purpose: the ledger already says the handler ran, and
  * whoever retries is asking for another run.
@@ -70,40 +166,8 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
   ids,
   clock,
 }) => {
-  // The retry's writes and the letter's new status, together or not at all. A retry that
-  // another one settled first writes nothing, and does not run again after a conflict.
-  const settled = (
-    letter: StoredDeadLetter,
-    run: (unit: UnitOfWork) => Promise<void>,
-  ): Promise<void> =>
-    commitWork({
-      storage,
-      concurrencyRetries: config.runtime.commands.concurrencyRetries,
-      work: async (unit) => {
-        await run(unit);
-        await unit.deadLetterStore.updateStatus(letter.id, "retried", clock.now());
-      },
-      beforeRerun: async () => {
-        const current = await storage.deadLetterStore.get(letter.id);
-        if (current?.status !== "failed") throw new DeadLetterSettledError({ id: letter.id });
-      },
-    });
-
-  const eventOf = async (letter: StoredDeadLetter): Promise<StoredEvent> => {
-    const event = await storage.eventStore.readOne({
-      aggregateType: letter.aggregateType,
-      aggregateId: letter.aggregateId,
-      eventId: letter.eventId,
-    });
-    if (event === null) {
-      throw runtimeText(
-        new NotFoundError(
-          `Event ${letter.eventId} of ${letter.aggregateType}:${letter.aggregateId} not found`,
-        ),
-      );
-    }
-    return event;
-  };
+  const units = letterUnits(storage, config, clock);
+  const { settled, eventOf } = units;
 
   const retryPolicy = async (
     letter: StoredDeadLetter,
@@ -203,20 +267,9 @@ export const createDeadLetterRetry: CreateDeadLetterRetryFunction = ({
       case "scheduled":
         await retryScheduled(letter, actor);
         return false;
-      case "recipient": {
-        const event = await eventOf(letter);
-        await settled(letter, (unit) =>
-          notices.run({
-            port: letter.handler,
-            event,
-            attempt: letter.attempts + 1,
-            retryId,
-            actor,
-            within: unit,
-          }),
-        );
+      case "recipient":
+        await retryNotice(units, notices, letter, retryId, actor);
         return false;
-      }
       default:
         // Stores cast the stored kind, so a row no release writes still reaches here.
         throw runtimeText(

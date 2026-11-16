@@ -1,5 +1,6 @@
 import { type Consistency, systemClock } from "@bounda-dev/core";
 import type { Plugin } from "vite";
+import type { TenantAppsOptions } from "./create-bounda.ts";
 import { createBoundaPlugin } from "./vite-plugin.ts";
 
 export interface BoundaVitePluginOptions {
@@ -12,6 +13,11 @@ export interface BoundaVitePluginOptions {
    * Defaults to 100 ms.
    */
   readonly debounceMs?: number;
+  /**
+   * How many tenants' apps the Node host keeps running, and for how long without a request, for a
+   * project with `app/tenant.ts`: see `createBounda`'s `tenantApps`.
+   */
+  readonly tenantApps?: TenantAppsOptions;
 }
 
 export interface BoundaVitePluginFunction {

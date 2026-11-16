@@ -5,7 +5,6 @@ import type {
 } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
-import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import {
   fingerprintOf,
@@ -14,13 +13,11 @@ import {
   importRawKey,
   type PersonalKey,
   toBase64,
-  withRawKey,
+  unwrapUnderTenantKey,
+  wrapUnderTenantKey,
 } from "./crypto.ts";
-import {
-  buildKeyWrapper,
-  type CryptoKeyWrapper,
-  type KeyWrapperDefinition,
-} from "./key-wrapper.ts";
+import type { CryptoKeyWrapper } from "./key-wrapper.ts";
+import type { TenantKeys } from "./tenant-keys.ts";
 
 /**
  * How many keys an app keeps, least recently used out first.
@@ -101,12 +98,15 @@ export const inSealingOrder: InSealingOrderFunction = (keys) =>
 
 export interface PersonalKeyWrapping {
   /**
-   * `null` without a key wrapper: keys are kept as they are.
+   * The id of the tenant key new keys are wrapped under, and those of every key the rotation
+   * rewraps from: the tenant's older versions, the master keys a version of Bounda before tenant
+   * keys wrapped persons' keys under directly, and `null`, for a key kept unwrapped before a key
+   * wrapper was required.
    */
-  readonly wrapper: CryptoKeyWrapper | null;
+  kids(): Promise<{ readonly kid: string; readonly previous: readonly (string | null)[] }>;
   /**
-   * The key wrapped under the wrapper's `kid`, or as it is without a wrapper. It is unwrapped for
-   * that alone and not kept: the rotation rewraps the keys of persons nobody reads.
+   * The key wrapped under the tenant key in force. It is unwrapped for that alone and not kept:
+   * the rotation rewraps the keys of persons nobody reads.
    */
   wrapped(key: StoredPersonalKey): Promise<RewrappedKey>;
   /**
@@ -122,6 +122,17 @@ export interface PersonalKeyWrapping {
    * for a key that is no person's.
    */
   unwrap(stored: StoredPersonalKey): Promise<CryptoKey>;
+  /**
+   * Whether `stored` is wrapped under a version of the tenant's key, rather than under a master
+   * key or none, as keys stored before tenant keys are.
+   */
+  isTenantWrapped(stored: StoredPersonalKey): boolean;
+  /**
+   * The key `stored`, wrapped under a version of the tenant's key, as a base that derives keys
+   * and does nothing else, checked against its fingerprint first: its bytes never reach
+   * JavaScript.
+   */
+  derivationBase(stored: StoredPersonalKey): Promise<CryptoKey>;
   over(keys: PersonalKeyStore): PersonalKeys;
   /**
    * Drops every key kept and the timer that expires them.
@@ -135,7 +146,12 @@ export interface GeneratedKey {
 }
 
 export interface CreatePersonalKeyWrappingArgs {
-  readonly wrapper: CryptoKeyWrapper | null;
+  readonly tenantKeys: TenantKeys;
+  /**
+   * The master key, which keys stored before tenant keys are wrapped under, read once each to be
+   * wrapped under the tenant's.
+   */
+  readonly master: Pick<CryptoKeyWrapper, "kid" | "previous" | "unwrap">;
   readonly clock: Clock;
   /**
    * How many keys to keep. Defaults to `UNWRAPPED_KEYS_KEPT`.
@@ -165,7 +181,8 @@ interface KeptKey {
  * which a clock may decline to arm where a pending timer keeps the process awake.
  */
 export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
-  wrapper,
+  tenantKeys,
+  master,
   clock,
   keep = UNWRAPPED_KEYS_KEPT,
   ttlMs = UNWRAPPED_KEY_TTL_MS,
@@ -176,7 +193,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
   const keptAt = new Map<string, KeptKey>();
   // The fingerprints kept for each person, so forgetting them drops their keys at once.
   const byPerson = new Map<string, Set<string>>();
-  const known = new Set(wrapper === null ? [] : [wrapper.kid, ...wrapper.previous]);
+  const masterKids = new Set([master.kid, ...master.previous]);
   let cancelExpiry: (() => void) | null = null;
 
   const drop = (fingerprint: string): void => {
@@ -214,31 +231,43 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     armExpiry();
   };
 
-  const wrapperFor = (kid: string): CryptoKeyWrapper => {
-    if (wrapper === null) {
+  // The tenant's version of that id; a key under any other is one this app cannot open.
+  const tenantKeyOf = async (kid: string): Promise<CryptoKey> => {
+    const key = await tenantKeys.keyOf(kid);
+    if (key === null) {
       throw runtimeText(
         new ConfigurationError(
-          `A personal key is wrapped under ${kid}, and runtime.personalData.keyWrapper is not set`,
+          `A key is wrapped under ${kid}, which is neither a version of the tenant's key nor a master key the key wrapper knows`,
         ),
       );
     }
-    if (!known.has(kid)) {
-      throw runtimeText(
-        new ConfigurationError(
-          `A personal key is wrapped under ${kid}, which is neither the key wrapper's key nor one of its previous ones`,
-        ),
-      );
-    }
-    return wrapper;
+    return key;
   };
 
-  // Exportable only to be wrapped again, never to be kept.
+  // Exportable only to be wrapped again, never to be kept. A key under a master key or none was
+  // stored before tenant keys, and is read so only until the rotation wraps it under the tenant's:
+  // the one path where a raw key, kept unwrapped, ever reaches JavaScript.
   const unwrap = async (stored: StoredPersonalKey, extractable: boolean): Promise<CryptoKey> => {
     const { kid } = stored;
-    const key =
-      kid === null
-        ? await importRawKey({ raw: fromBase64(stored.key), extractable })
-        : await wrapperFor(kid).unwrap({ kid, wrapped: fromBase64(stored.key), extractable });
+    const wrapped = fromBase64(stored.key);
+    let key: CryptoKey;
+    if (kid === null) {
+      key = await importRawKey({ raw: wrapped, extractable });
+    } else if (masterKids.has(kid)) {
+      key = await master.unwrap({ kid, wrapped, extractable, kind: "personal" });
+    } else {
+      const tenantKey = await tenantKeyOf(kid);
+      try {
+        key = await unwrapUnderTenantKey({ wrapped, tenantKey, extractable });
+      } catch (error) {
+        throw runtimeText(
+          new ConfigurationError(
+            `A key does not unwrap under the tenant's key ${kid}: the key was altered in the store`,
+            { cause: error },
+          ),
+        );
+      }
+    }
     if ((await fingerprintOf(key)) !== stored.fingerprint) {
       throw runtimeText(
         new ConfigurationError(
@@ -270,9 +299,9 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     retained = false,
   ): Promise<PersonalKey> => {
     const { kid, fingerprint } = stored;
-    // Before the cache, so a key rewrapped under a kid this app does not know fails however
-    // recently it was kept.
-    if (kid !== null) wrapperFor(kid);
+    // Before the cache, so a key rewrapped under a kid this app does not know, or kept after its
+    // tenant was forgotten, fails however recently it was kept.
+    if (kid !== null && !masterKids.has(kid) && !tenantKeys.knows(kid)) await tenantKeyOf(kid);
     dropExpired(clock.now().getTime());
     const entry = kept.get(fingerprint);
     if (entry === undefined) {
@@ -285,32 +314,29 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     return { fingerprint, cryptoKey: await entry.key, retained };
   };
 
-  // The new key as the store keeps it, and as it is sealed with. Its raw bytes exist only without
-  // a wrapper, to be stored as they are, or for a wrapper of the app's own.
+  // The new key as the store keeps it, and as it is sealed with: WebCrypto wraps it under the
+  // tenant's key and unwraps it straight into one that cannot be exported.
   const generate = async (): Promise<GeneratedKey> => {
+    const tenant = await tenantKeys.current();
     const exportable = await generateWrappableKey();
     const fingerprint = await fingerprintOf(exportable);
-    if (wrapper === null) {
-      return withRawKey(exportable, async (raw) => {
-        const text = toBase64(raw);
-        const cryptoKey = await importRawKey({ raw, extractable: false });
-        return {
-          stored: { key: text, fingerprint, kid: null },
-          key: { fingerprint, cryptoKey, retained: false },
-        };
-      });
-    }
-    const { wrapped, key: cryptoKey } = await wrapper.wrap(exportable);
+    const wrapped = await wrapUnderTenantKey(exportable, tenant.key);
+    const cryptoKey = await unwrapUnderTenantKey({
+      wrapped,
+      tenantKey: tenant.key,
+      extractable: false,
+    });
     return {
-      stored: { key: toBase64(wrapped), fingerprint, kid: wrapper.kid },
+      stored: { key: toBase64(wrapped), fingerprint, kid: tenant.kid },
       key: { fingerprint, cryptoKey, retained: false },
     };
   };
 
   const wrapped = async (key: StoredPersonalKey): Promise<RewrappedKey> => {
-    if (wrapper === null) return { key: key.key, kid: key.kid };
-    const { wrapped: rewrapped } = await wrapper.wrap(await unwrap(key, true));
-    return { key: toBase64(rewrapped), kid: wrapper.kid };
+    const tenant = await tenantKeys.current();
+    if (key.kid === tenant.kid) return { key: key.key, kid: key.kid };
+    const rewrapped = await wrapUnderTenantKey(await unwrap(key, true), tenant.key);
+    return { key: toBase64(rewrapped), kid: tenant.kid };
   };
 
   const dropPerson = (person: string): void => {
@@ -318,11 +344,24 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
   };
 
   return {
-    wrapper,
+    kids: async () => {
+      const { kid, previous } = await tenantKeys.kids();
+      return { kid, previous: [...previous, ...masterKids, null] };
+    },
     wrapped,
     drop: dropPerson,
     generate,
     unwrap: (stored) => unwrap(stored, false),
+    isTenantWrapped: ({ kid }) => kid !== null && !masterKids.has(kid) && tenantKeys.knows(kid),
+    derivationBase: async (stored) => {
+      await unwrap(stored, false);
+      return unwrapUnderTenantKey({
+        wrapped: fromBase64(stored.key),
+        tenantKey: await tenantKeyOf(stored.kid ?? ""),
+        extractable: false,
+        as: "derivation",
+      });
+    },
     over: (keys) => ({
       get: (person, category) => keys.get(person, category),
       find: (person, fingerprint) => keys.find(person, fingerprint),
@@ -330,13 +369,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       listMany: (persons) => keys.listMany(persons),
       // Wrapped on the way in, as every key the store keeps.
       add: async (person, category, key) =>
-        keys.add(
-          person,
-          category,
-          key.kid === (wrapper?.kid ?? null)
-            ? key
-            : { ...(await wrapped(key)), fingerprint: key.fingerprint },
-        ),
+        keys.add(person, category, { ...(await wrapped(key)), fingerprint: key.fingerprint }),
       held: async (person, category) => {
         const stored = await keys.get(person, category);
         return stored === null ? null : open(person, stored);
@@ -402,6 +435,13 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       hold: (person, from, hold) => keys.hold(person, from, hold),
       nextHoldEnd: (args) => keys.nextHoldEnd(args),
       countWrappedUnder: (args) => keys.countWrappedUnder(args),
+      kids: () => keys.kids(),
+      categories: () => keys.categories(),
+      clear: async () => {
+        const removed = await keys.clear();
+        for (const fingerprint of [...kept.keys()]) drop(fingerprint);
+        return removed;
+      },
       releaseHolds: () => keys.releaseHolds(),
     }),
     close: () => {
@@ -412,22 +452,42 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
   };
 };
 
-export interface BuildPersonalKeyWrappingArgs {
-  readonly definition: KeyWrapperDefinition | null;
-  readonly env: AppEnv;
-  readonly clock: Clock;
+export interface KeylessWrappingFunction {
+  (): PersonalKeyWrapping;
 }
 
-export interface BuildPersonalKeyWrappingFunction {
-  (args: BuildPersonalKeyWrappingArgs): Promise<PersonalKeyWrapping>;
-}
-
-export const buildPersonalKeyWrapping: BuildPersonalKeyWrappingFunction = async ({
-  definition,
-  env,
-  clock,
-}) =>
-  createPersonalKeyWrapping({
-    wrapper: definition === null ? null : await buildKeyWrapper({ definition, env }),
-    clock,
-  });
+/**
+ * The keys of an app that marks nothing personal and names no key: the store as it is, and a
+ * refusal for anything that would seal, open or wrap a key.
+ */
+export const keylessWrapping: KeylessWrappingFunction = () => {
+  const refuse = (): never => {
+    throw runtimeText(
+      new ConfigurationError(
+        "A personal key is needed, and the app has no keys: set runtime.personalData.keyWrapper and runtime.personalData.tenantKeys",
+      ),
+    );
+  };
+  return {
+    kids: async () => refuse(),
+    wrapped: async () => refuse(),
+    drop: () => undefined,
+    generate: async () => refuse(),
+    unwrap: async () => refuse(),
+    isTenantWrapped: () => false,
+    derivationBase: async () => refuse(),
+    over: (keys) => ({
+      ...keys,
+      held: async (person, category) =>
+        (await keys.get(person, category)) === null ? null : refuse(),
+      opened: async (person, fingerprint) =>
+        (await keys.find(person, fingerprint)) === null ? null : refuse(),
+      heldAll: async (person) => ((await keys.list(person)).length === 0 ? [] : refuse()),
+      heldAllOf: async (persons) =>
+        (await keys.listMany(persons)).size === 0 ? new Map() : refuse(),
+      open: async () => refuse(),
+      create: async () => refuse(),
+    }),
+    close: () => undefined,
+  };
+};

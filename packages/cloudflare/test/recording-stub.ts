@@ -76,6 +76,18 @@ export const recordingStub = (): {
         forgets.push(["restrict", ...args]);
         return answer();
       },
+      forgetTenant: async (...args) => {
+        forgets.push(["forgetTenant", ...args]);
+        return answer();
+      },
+      rotateTenantKey: async (...args) => {
+        forgets.push(["rotateTenantKey", ...args]);
+        return answer();
+      },
+      retireTenantKeys: async (...args) => {
+        forgets.push(["retireTenantKeys", ...args]);
+        return answer();
+      },
       unrestrict: async (...args) => {
         forgets.push(["unrestrict", ...args]);
         return answer();

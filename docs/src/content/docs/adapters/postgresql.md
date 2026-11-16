@@ -59,6 +59,13 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
 Storage and read models opened from the same `postgresql(...)` share one pool, closed when the
 app stops.
 
+An adapter pointed at another database also serves as a [tenant key
+store](/guides/personal-data/#the-tenant-key-store), `tenantKeys: postgresql({ url:
+process.env.TENANT_KEYS_URL })`, one table for every tenant, written under compare-and-set, or as
+a [forget ledger](/guides/personal-data/#the-forget-ledger). One pointed at the storage's own
+database and schema is refused. Another schema of the same database is not enough for the tenant's
+key: a dump or a point-in-time restore of the database carries every schema.
+
 ## In tests
 
 The adapter's own tests start `postgres:17` with [Testcontainers](https://node.testcontainers.org/),

@@ -37,9 +37,16 @@ import {
   storageTransactionContract,
   subscriberFailureStoreContract,
   tableContract,
+  tenancyContract,
+  tenantKeyStoreContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
-import { createTestApp, expectForgotten, NotForgottenError } from "@bounda-dev/core/testing";
+import {
+  createTestApp,
+  createTestKeys,
+  expectForgotten,
+  NotForgottenError,
+} from "@bounda-dev/core/testing";
 import postgres, { type Sql } from "postgres";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createPostgresqlDatabase } from "./database.ts";
@@ -123,6 +130,31 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
   recipientStoreContract({ create: openStorage });
+  tenancyContract({ create: openStorage });
+  tenantKeyStoreContract({
+    create: async () => {
+      const store = await fresh().createTenantKeyStore();
+      closers.push(async () => store.close?.());
+      return store;
+    },
+  });
+
+  it("keeps every tenant's record in its own table, under the adapter's prefix", async () => {
+    const adapter = fresh();
+    const { tablePrefix } = resolvePostgresqlOptions(adapter.options);
+    const store = await adapter.createTenantKeyStore();
+    closers.push(async () => store.close?.());
+    await store.put("acme", { store: "s-1", keys: [], forgotten: null }, null);
+    const client = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    const rows = await client.unsafe(
+      `SELECT "table_name" FROM information_schema.tables WHERE "table_name" LIKE '${tablePrefix}%' ORDER BY "table_name"`,
+    );
+    expect(rows.map((row) => row.table_name)).toEqual([
+      `${tablePrefix}migrations`,
+      `${tablePrefix}tenant_keys`,
+    ]);
+  });
   inspectionContract({
     create: async () => {
       await closeOpened();
@@ -679,6 +711,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       "scheduled_commands",
       "snapshots",
       "subscriber_failures",
+      "tenancy",
     ]);
   });
 
@@ -1299,15 +1332,19 @@ describe.skipIf(testDatabase === null)("an app on the postgresql adapter", () =>
     const runs: string[] = [];
     const prefix = `two_${run}_`;
     const registry = refusingRegistry(runs);
+    const runtime = {
+      policies: { retry: { strategy: "none" } },
+      personalData: createTestKeys(),
+    } as const;
     const first = await createTestApp({
       registry,
       adapter: postgresql({ url, tablePrefix: prefix, maxConnections: 3 }),
-      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+      config: { runtime },
     });
     const second = await createTestApp({
       registry,
       adapter: postgresql({ url, tablePrefix: prefix, maxConnections: 3 }),
-      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+      config: { runtime },
     });
     for (const orderId of ["o-1", "o-2", "o-3", "o-4"]) {
       await first.app.commands.placeOrder({ orderId, total: 1 });
@@ -1478,13 +1515,15 @@ describe.skipIf(testDatabase === null)("projections on postgresql", () => {
     const holding = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    const fast = await createTestApp({ registry: statusRegistry(), adapter: adapter() });
+    const config = { runtime: { personalData: createTestKeys() } };
+    const fast = await createTestApp({ registry: statusRegistry(), adapter: adapter(), config });
     const slow = await createTestApp({
       registry: statusRegistry(async () => {
         entered();
         await gate;
       }),
       adapter: adapter(),
+      config,
     });
 
     const { table, client } = await openReadModel<StatusRow>(adapter(), "orderStatus", {

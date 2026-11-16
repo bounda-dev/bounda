@@ -312,6 +312,7 @@ const RECIPIENT_ARGS: readonly (readonly [string, string])[] = [
   ["OnProcessingRestrictionLiftAnnouncedArgs", "core.RecipientLiftAnnouncedArgs"],
   ["OnProcessingRestrictionLiftedArgs", "core.RecipientLiftedArgs"],
   ["OnPersonalDataRedactedArgs", "core.RecipientRedactedArgs"],
+  ["OnTenantForgottenArgs", "core.RecipientTenantForgottenArgs"],
 ];
 
 // A port module that declares a recipient: its declaration, and what each handler receives, the

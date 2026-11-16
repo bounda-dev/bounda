@@ -13,6 +13,10 @@ export interface DurableObjectAdapterArgs {
    * The options the app's `cloudflare()` takes. Defaults to none.
    */
   readonly options?: CloudflareOptions;
+  /**
+   * Removes everything the object stores, once its tenant is forgotten and the recipients told.
+   */
+  readonly discard?: () => Promise<void>;
 }
 
 export interface DurableObjectAdapterFunction {
@@ -24,7 +28,11 @@ export interface DurableObjectAdapterFunction {
  * that reads the object's storage from inside it, through `runInDurableObject`: give it to
  * `expectForgotten` from `@bounda-dev/core/testing` to search every table the object keeps.
  */
-export const durableObjectAdapter: DurableObjectAdapterFunction = ({ storage, options = {} }) => {
+export const durableObjectAdapter: DurableObjectAdapterFunction = ({
+  storage,
+  options = {},
+  discard,
+}) => {
   const db = createDurableSqlDatabase(storage);
   return createSqliteAdapter({
     name: "cloudflare",
@@ -33,5 +41,6 @@ export const durableObjectAdapter: DurableObjectAdapterFunction = ({ storage, op
     acquire: () => ({ db, raw: storage.sql }),
     // Nothing to close: the storage lives as long as the object.
     release: async () => {},
+    ...(discard === undefined ? {} : { discard }),
   });
 };

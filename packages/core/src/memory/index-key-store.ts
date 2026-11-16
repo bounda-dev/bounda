@@ -17,6 +17,16 @@ export const createMemoryIndexKeyStore: CreateMemoryIndexKeyStoreFunction = () =
       held ??= { key, createdAt: at.toISOString() };
       return held.key;
     },
+    clear: async () => {
+      held = null;
+    },
+    replace: async (from, to) => {
+      if (held === null || held.key.fingerprint !== from.fingerprint || held.key.key !== from.key) {
+        return false;
+      }
+      held = { ...held, key: to };
+      return true;
+    },
     rewrap: async (from, to) => {
       if (held === null || held.key.fingerprint !== from.fingerprint || held.key.key !== from.key) {
         return false;

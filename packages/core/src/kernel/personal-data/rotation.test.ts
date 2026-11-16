@@ -3,14 +3,22 @@ import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts"
 import {
   DEFAULT_PERSONAL_CATEGORY,
   type PersonalKeyStore,
+  type StoredPersonalKey,
 } from "../../adapter/storage/personal-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { LEASE_MS } from "../shared/lease.ts";
-import { removeKeys } from "../test-support.ts";
+import { removeKeys, testMaster, testTenantKeys } from "../test-support.ts";
+import {
+  fingerprintOf,
+  generateWrappableKey,
+  TENANT_KEY_ALGORITHM,
+  TENANT_KEY_USAGES,
+  toBase64,
+  withRawKey,
+} from "./crypto.ts";
 import { HOLD_MAX_MS, HOLD_MS } from "./hold.ts";
-import { type CryptoKeyWrapper, cryptoKeyWrapperOver } from "./key-wrapper.ts";
 import {
   createKeyRotation,
   ROTATED_PREFIX,
@@ -19,17 +27,35 @@ import {
   ROTATION_LEASE_PREFIX,
   ROTATION_MARK_EXPIRY_MS,
 } from "./rotation.ts";
+import type { TenantKeys } from "./tenant-keys.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
-const fakeWrapper = (kid: string, previous?: readonly string[]): CryptoKeyWrapper => {
-  const flip = (bytes: Uint8Array, under: string) => bytes.map((byte) => byte ^ under.length);
-  return cryptoKeyWrapperOver({
-    kid,
-    ...(previous === undefined ? {} : { previous }),
-    wrap: async (key) => flip(key, kid),
-    unwrap: async ({ kid: under, wrapped }) => flip(wrapped, under),
-  });
+// One version per kid, for the whole file: two fakes that name a kid share its key.
+const versions = new Map<string, Promise<CryptoKey>>();
+const versionOf = (kid: string): Promise<CryptoKey> => {
+  const known = versions.get(kid);
+  if (known !== undefined) return known;
+  const created = crypto.subtle.generateKey({ name: TENANT_KEY_ALGORITHM, length: 256 }, false, [
+    ...TENANT_KEY_USAGES,
+  ]);
+  versions.set(kid, created);
+  return created;
 };
+
+// A tenant whose key is `kid`, its older versions `previous`.
+const fakeWrapper = (kid: string, previous: readonly string[] = []): TenantKeys => {
+  const known = [kid, ...previous];
+  return {
+    ...testTenantKeys,
+    current: async () => ({ kid, key: await versionOf(kid) }),
+    keyOf: async (asked) => (known.includes(asked) ? versionOf(asked) : null),
+    knows: (asked) => known.includes(asked),
+    kids: async () => ({ kid, previous, since: new Date(0).toISOString() }),
+  };
+};
+
+const wrappingOver = (tenantKeys: TenantKeys) =>
+  createPersonalKeyWrapping({ tenantKeys, master: testMaster, clock });
 
 interface Logged {
   readonly level: string;
@@ -58,7 +84,7 @@ const clock = createFixedClock(new Date("2026-01-01T00:00:00Z"));
 interface RotationOverArgs {
   readonly keys: PersonalKeyStore;
   readonly checkpoints: CheckpointStore;
-  readonly wrapper: CryptoKeyWrapper;
+  readonly wrapper: TenantKeys;
   readonly logger?: Logger;
 }
 
@@ -72,24 +98,35 @@ const rotationOver = ({
   createKeyRotation({
     keys,
     checkpoints,
-    wrapper,
-    wrapping: createPersonalKeyWrapping({ wrapper, clock }),
+    tenantKeys: wrapper,
+    master: testMaster,
+    wrapping: wrappingOver(wrapper),
     clock,
     logger,
   });
 
-const setUp = async (wrapper: CryptoKeyWrapper = fakeWrapper("new", ["old"])) => {
+const setUp = async (
+  wrapper: TenantKeys = fakeWrapper("new", ["old"]),
+  failOn: (stored: StoredPersonalKey) => Promise<boolean> = async () => false,
+) => {
   const storage = await memory().createStorage();
   const store = storage.personalKeys;
   const checkpoints = storage.checkpointStore;
   clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
   const logger = recordingLogger();
-  const wrapping = createPersonalKeyWrapping({ wrapper, clock });
+  const wrapping = wrappingOver(wrapper);
   const rotation = createKeyRotation({
     keys: store,
     checkpoints,
-    wrapper,
-    wrapping,
+    tenantKeys: wrapper,
+    master: testMaster,
+    wrapping: {
+      kids: () => wrapping.kids(),
+      wrapped: async (stored) => {
+        if (await failOn(stored)) throw new Error("unwrap failed");
+        return wrapping.wrapped(stored);
+      },
+    },
     clock,
     logger,
   });
@@ -128,10 +165,17 @@ const countedMarks = (checkpoints: CheckpointStore) => {
 
 // The key as the store keeps it.
 const addUnder = async (store: PersonalKeyStore, kid: string | null, person: string) => {
-  const wrapper = kid === null ? null : fakeWrapper(kid);
-  await createPersonalKeyWrapping({ wrapper, clock })
-    .over(store)
-    .create(person, DEFAULT_PERSONAL_CATEGORY);
+  if (kid === null) {
+    // As a version of Bounda before key wrappers kept it: its raw bytes in base64.
+    const key = await generateWrappableKey();
+    await store.add(person, DEFAULT_PERSONAL_CATEGORY, {
+      key: await withRawKey(key, async (raw) => toBase64(raw)),
+      fingerprint: await fingerprintOf(key),
+      kid: null,
+    });
+  } else {
+    await wrappingOver(fakeWrapper(kid)).over(store).create(person, DEFAULT_PERSONAL_CATEGORY);
+  }
   const stored = await store.get(person, DEFAULT_PERSONAL_CATEGORY);
   if (stored === null) throw new Error(`no key stored for ${person}`);
   return stored;
@@ -174,10 +218,7 @@ describe("createKeyRotation", () => {
     const storage = await memory().createStorage();
     const wrapper = fakeWrapper("new", ["old"]);
     const logger = recordingLogger();
-    const generated = await createPersonalKeyWrapping({
-      wrapper: fakeWrapper("old"),
-      clock,
-    }).generate();
+    const generated = await wrappingOver(fakeWrapper("old")).generate();
     await storage.indexKeys.add(generated.stored, clock.now());
     let failing = true;
     const rotation = createKeyRotation({
@@ -188,8 +229,9 @@ describe("createKeyRotation", () => {
           failing ? Promise.reject(new Error("index down")) : storage.indexKeys.rewrap(from, to),
       },
       checkpoints: storage.checkpointStore,
-      wrapper,
-      wrapping: createPersonalKeyWrapping({ wrapper, clock }),
+      tenantKeys: wrapper,
+      master: testMaster,
+      wrapping: wrappingOver(wrapper),
       clock,
       logger,
     });
@@ -199,7 +241,7 @@ describe("createKeyRotation", () => {
     expect(await rotation.sweep(clock.now())).toBe(0);
     expect(logger.logged).toContainEqual({
       level: "error",
-      message: "the key of the blind indexes could not be rewrapped",
+      message: "the database's key could not be rewrapped",
       context: expect.objectContaining({ kid: "old" }),
     });
     expect((await storage.indexKeys.get())?.kid).toBe("old");
@@ -232,7 +274,7 @@ describe("createKeyRotation", () => {
     expect(await rotation.sweep(clock.now())).toBe(0);
     const removable = {
       level: "info",
-      message: "no personal key is wrapped under a previous key any more; remove them",
+      message: "no key is wrapped under an older version of the tenant's key any more; retire them",
       context: { kid: "new", previous: ["old"] },
     };
     expect(logger.logged).toEqual([removable]);
@@ -256,14 +298,18 @@ describe("createKeyRotation", () => {
     expect(await rotation.sweep(clock.now())).toBe(1);
     expect(await rotation.sweep(clock.now())).toBe(0);
     expect(logger.logged).toEqual([
-      { level: "info", message: "every personal key is wrapped", context: { kid: "new" } },
+      {
+        level: "info",
+        message: "every key is wrapped under the tenant's key",
+        context: { kid: "new" },
+      },
     ]);
     const plain = fakeWrapper("new");
     const gone = await setUp({
       ...plain,
-      wrap: async (key) => {
+      current: async () => {
         await removeKeys(gone.store, "c-1");
-        return plain.wrap(key);
+        return plain.current();
       },
     });
     await addUnder(gone.store, null, "c-1");
@@ -287,9 +333,9 @@ describe("createKeyRotation", () => {
     const wrapper = fakeWrapper("new", ["old"]);
     const { store, clock, rotation } = await setUp({
       ...wrapper,
-      wrap: async (key) => {
+      current: async () => {
         await removeKeys(store, "c-1");
-        return wrapper.wrap(key);
+        return wrapper.current();
       },
     });
     await addUnder(store, "old", "c-1");
@@ -300,19 +346,11 @@ describe("createKeyRotation", () => {
   it("holds a key that failed to rewrap, longer after each failure, while the others go on", async () => {
     let failing = true;
     const wrapper = fakeWrapper("new", ["old"]);
-    const { store, clock, logger, rotation } = await setUp({
-      ...wrapper,
-      unwrap: async (args) => {
-        if (
-          failing &&
-          args.wrapped.length > 0 &&
-          (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.key === toText(args.wrapped)
-        ) {
-          throw new Error("unwrap failed");
-        }
-        return wrapper.unwrap(args);
-      },
-    });
+    const { store, clock, logger, rotation } = await setUp(
+      wrapper,
+      async (stored) =>
+        failing && (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.key === stored.key,
+    );
     await addUnder(store, "old", "c-1");
     await addUnder(store, "old", "c-2");
     expect(await rotation.sweep(clock.now())).toBe(1);
@@ -357,7 +395,8 @@ describe("createKeyRotation", () => {
     const rotation = createKeyRotation({
       keys,
       checkpoints: (await memory().createStorage()).checkpointStore,
-      wrapper: fakeWrapper("new", ["old"]),
+      tenantKeys: fakeWrapper("new", ["old"]),
+      master: testMaster,
       wrapping,
       clock,
       logger,
@@ -385,7 +424,7 @@ describe("createKeyRotation", () => {
     const { clock, logger, rotation } = await setUp();
     expect(await rotation.sweep(clock.now())).toBe(0);
     expect(logger.logged.map(({ message }) => message)).toEqual([
-      "no personal key is wrapped under a previous key any more; remove them",
+      "no key is wrapped under an older version of the tenant's key any more; retire them",
     ]);
   });
 
@@ -393,10 +432,10 @@ describe("createKeyRotation", () => {
     const wrapper = fakeWrapper("new", ["old"]);
     const { store, clock, rotation } = await setUp({
       ...wrapper,
-      wrap: async (key) => {
+      current: async () => {
         if ((await store.get("a-held", DEFAULT_PERSONAL_CATEGORY))?.kid === "old" && failing)
           throw new Error("wrap failed");
-        return wrapper.wrap(key);
+        return wrapper.current();
       },
     });
     let failing = true;
@@ -467,7 +506,7 @@ describe("createKeyRotation", () => {
       checkpoints,
       wrapper: {
         ...failing,
-        wrap: async () => {
+        current: async () => {
           throw new Error("wrap failed");
         },
       },
@@ -545,7 +584,7 @@ describe("createKeyRotation", () => {
     // The first set's mark is fresh: an instance on that set may still run, so it stays.
     expect(await rotated()).toHaveLength(2);
     expect(logger.logged.map(({ message }) => message)).toEqual([
-      "no personal key is wrapped under a previous key any more; remove them",
+      "no key is wrapped under an older version of the tenant's key any more; retire them",
     ]);
     await checkpoints.set("some-subscriber", 1);
     clock.advance(ROTATION_MARK_EXPIRY_MS);
@@ -575,9 +614,9 @@ describe("createKeyRotation", () => {
   it("holds a failed key on its row, so another instance skips it until the hold ends and a restart backs off from it", async () => {
     const { store, checkpoints, clock } = await setUp();
     const wrapper = fakeWrapper("new", ["old"]);
-    const failing: CryptoKeyWrapper = {
+    const failing: TenantKeys = {
       ...wrapper,
-      unwrap: async () => {
+      keyOf: async () => {
         throw new Error("unwrap failed");
       },
     };
@@ -642,7 +681,7 @@ describe("createKeyRotation", () => {
       checkpoints,
       wrapper: {
         ...wrapper,
-        unwrap: async () => {
+        keyOf: async () => {
           throw new Error("unwrap failed");
         },
       },
@@ -682,7 +721,7 @@ describe("createKeyRotation", () => {
       checkpoints,
       wrapper: {
         ...wrapper,
-        unwrap: async () => {
+        keyOf: async () => {
           throw new Error("unwrap failed");
         },
       },
@@ -734,7 +773,7 @@ describe("createKeyRotation", () => {
       checkpoints,
       wrapper: {
         ...failing,
-        unwrap: async () => {
+        keyOf: async () => {
           throw new Error("unwrap failed");
         },
       },
@@ -750,8 +789,6 @@ describe("createKeyRotation", () => {
     expect(await rotation.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS / 2));
   });
 });
-
-const toText = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64");
 
 describe("the key rotation across instances", () => {
   const wrapper = () => fakeWrapper("new", ["old"]);
@@ -926,5 +963,152 @@ describe("the key rotation across instances", () => {
       pending: 0,
       completeAt: clock.now().toISOString(),
     });
+  });
+});
+
+describe("the tenant's key under the master key", () => {
+  const master = { kid: "m-new", previous: ["m-old"] };
+
+  // A tenant whose record is under the previous master key until rewrapped, as `rewrap` says.
+  const underMaster = (rewrap: () => Promise<boolean>, under = true) => {
+    const state = { under, calls: 0 };
+    const tenantKeys: TenantKeys = {
+      ...fakeWrapper("new"),
+      underPreviousMaster: () => state.under,
+      rewrapUnderMaster: async () => {
+        state.calls += 1;
+        state.under = !(await rewrap());
+        return state.under ? 0 : 1;
+      },
+    };
+    return { state, tenantKeys };
+  };
+
+  const rotationWith = async (tenantKeys: TenantKeys, of = master) => {
+    const storage = await memory().createStorage();
+    const logger = recordingLogger();
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    const rotation = createKeyRotation({
+      keys: storage.personalKeys,
+      checkpoints: storage.checkpointStore,
+      tenantKeys,
+      master: of,
+      wrapping: wrappingOver(tenantKeys),
+      clock,
+      logger,
+    });
+    return { rotation, logger };
+  };
+
+  const removeThem = {
+    level: "info",
+    message:
+      "this tenant's key is wrapped under the master key in force; remove the previous ones once bounda tenant-key rewrap-master, or the Worker's schedule, finds no tenant left under them",
+    context: { kid: "m-new", previous: ["m-old"] },
+  };
+
+  it("is due at once while a version is under a previous master key, rewraps it, and logs once that the previous can go", async () => {
+    const { state, tenantKeys } = underMaster(async () => true);
+    const { rotation, logger } = await rotationWith(tenantKeys);
+    expect(await rotation.nextDueAt()).toEqual(clock.now());
+    await rotation.sweep(clock.now());
+    expect(state.calls).toBe(1);
+    expect(logger.logged.filter(({ message }) => message === removeThem.message)).toEqual([
+      removeThem,
+    ]);
+    clock.set(new Date(clock.now().getTime() + 2 * ROTATION_CHECK_INTERVAL_MS));
+    await rotation.sweep(clock.now());
+    expect(state.calls).toBe(1);
+    expect(logger.logged.filter(({ message }) => message === removeThem.message)).toHaveLength(1);
+    expect((await rotation.status()).completeAt).not.toBeNull();
+  });
+
+  it("logs as much for a record another instance rewrapped, and nothing without a previous master key", async () => {
+    const elsewhere = underMaster(async () => true, false);
+    const { rotation, logger } = await rotationWith(elsewhere.tenantKeys);
+    await rotation.sweep(clock.now());
+    expect(elsewhere.state.calls).toBe(0);
+    expect(logger.logged).toContainEqual(removeThem);
+
+    const alone = underMaster(async () => true, false);
+    const single = await rotationWith(alone.tenantKeys, { kid: "m-new", previous: [] });
+    await single.rotation.sweep(clock.now());
+    expect(single.logger.logged.map(({ message }) => message)).not.toContain(removeThem.message);
+  });
+
+  it("completes nothing while a version is left under a previous master key", async () => {
+    const { state, tenantKeys } = underMaster(async () => false);
+    const { rotation, logger } = await rotationWith(tenantKeys);
+    await rotation.sweep(clock.now());
+    expect(state.calls).toBe(1);
+    expect((await rotation.status()).completeAt).toBeNull();
+    expect(logger.logged.map(({ message }) => message)).not.toContain(removeThem.message);
+  });
+
+  it("logs a rewrap that fails, completes nothing, and tries again on the next pass", async () => {
+    const { state, tenantKeys } = underMaster(async () => {
+      throw new Error("the KMS is down");
+    });
+    const { rotation, logger } = await rotationWith(tenantKeys);
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(logger.logged).toContainEqual({
+      level: "error",
+      message: "the tenant's key could not be rewrapped under the master key",
+      context: { kid: "m-new", error: expect.objectContaining({ message: "the KMS is down" }) },
+    });
+    expect((await rotation.status()).completeAt).toBeNull();
+    await rotation.sweep(clock.now());
+    expect(state.calls).toBe(2);
+  });
+});
+
+describe("settled", () => {
+  it("says whether any key, a person's or the database's, is still under an older version", async () => {
+    const storage = await memory().createStorage();
+    const wrapper = fakeWrapper("new", ["old", "new"]);
+    const rotation = createKeyRotation({
+      keys: storage.personalKeys,
+      indexKeys: storage.indexKeys,
+      checkpoints: storage.checkpointStore,
+      tenantKeys: wrapper,
+      master: testMaster,
+      wrapping: wrappingOver(wrapper),
+      clock,
+      logger: recordingLogger(),
+    });
+    expect(await rotation.settled()).toBe(true);
+    await addUnder(storage.personalKeys, "new", "c-1");
+    expect(await rotation.settled()).toBe(true);
+    await addUnder(storage.personalKeys, "old", "c-2");
+    expect(await rotation.settled()).toBe(false);
+    await removeKeys(storage.personalKeys, "c-2");
+    const index = await wrappingOver(fakeWrapper("old")).generate();
+    await storage.indexKeys.add(index.stored, clock.now());
+    expect(await rotation.settled()).toBe(false);
+    await storage.indexKeys.replace(index.stored, { ...index.stored, kid: null });
+    expect(await rotation.settled()).toBe(true);
+
+    const current = fakeWrapper("new");
+    const alone = createKeyRotation({
+      keys: storage.personalKeys,
+      checkpoints: storage.checkpointStore,
+      tenantKeys: current,
+      master: testMaster,
+      wrapping: wrappingOver(current),
+      clock,
+      logger: recordingLogger(),
+    });
+    expect(await alone.settled()).toBe(true);
+    const older = fakeWrapper("new", ["old"]);
+    const withoutIndex = createKeyRotation({
+      keys: storage.personalKeys,
+      checkpoints: storage.checkpointStore,
+      tenantKeys: older,
+      master: testMaster,
+      wrapping: wrappingOver(older),
+      clock,
+      logger: recordingLogger(),
+    });
+    expect(await withoutIndex.settled()).toBe(true);
   });
 });

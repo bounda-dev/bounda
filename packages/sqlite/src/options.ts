@@ -1,7 +1,15 @@
 import { DEFAULT_TABLE_PREFIX } from "@bounda-dev/core/adapter/sql";
 
 export type SqliteLocation =
-  | { readonly path: string }
+  | {
+      readonly path: string;
+      /**
+       * Whether an app with a key wrapper and a tenant key store encrypts the file under a key of
+       * its tenant's own, which forgetting the tenant destroys with the file's every copy. Defaults
+       * to `true`; without them, the file stays in the clear.
+       */
+      readonly encrypt?: boolean;
+    }
   | { readonly url: string; readonly authToken?: string }
   | { readonly memory: true };
 

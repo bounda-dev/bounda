@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Adapter, CreateReadModelArgs } from "../adapter/adapter.ts";
+import { createNodeSqliteAdapter } from "../adapter/sqlite/node-sqlite.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError, DomainError } from "../contracts/errors.ts";
@@ -627,13 +628,49 @@ describe("implementations built by create", () => {
 
   it("gives create the tenant the app serves, and none without one", async () => {
     const { create, app: lifecycleRegistry } = lifecycle([]);
-    const config = { storage: memory() };
-    const named = await createApp({ registry: lifecycleRegistry, config, tenant: "acme" });
-    const unnamed = await createApp({ registry: lifecycleRegistry, config });
+    const named = await createApp({
+      registry: lifecycleRegistry,
+      config: { storage: memory() },
+      tenant: "acme",
+    });
+    const unnamed = await createApp({ registry: lifecycleRegistry, config: { storage: memory() } });
     expect(create.mock.calls[0]?.[0]).toMatchObject({ tenant: "acme" });
     expect(create.mock.calls[1]?.[0]).not.toHaveProperty("tenant");
+    expect((await named.status()).tenant?.tenant).toBe("acme");
+    expect((await unnamed.status()).tenant?.tenant).toBe("default");
     await named.stop();
     await unnamed.stop();
+  });
+
+  it("refuses a database bound to another tenant, and a tenant whose key belongs to another database", async () => {
+    const { app: lifecycleRegistry } = lifecycle([]);
+    const storage = memory();
+    const acme = await createApp({
+      registry: lifecycleRegistry,
+      config: { storage },
+      tenant: "acme",
+    });
+    await acme.stop();
+    await expect(
+      createApp({ registry: lifecycleRegistry, config: { storage }, tenant: "globex" }),
+    ).rejects.toThrow(
+      "This database belongs to tenant acme, and the app serves globex: give it its own database",
+    );
+    const shared = memory();
+    const keys = shared.ephemeralKeys;
+    if (keys === undefined) throw new Error("memory() brings its keys");
+    const runtime = { personalData: { keyWrapper: keys.keyWrapper, tenantKeys: keys.tenantKeys } };
+    const first = await createApp({
+      registry: lifecycleRegistry,
+      config: { storage: shared, runtime },
+    });
+    await first.stop();
+    await expect(
+      createApp({
+        registry: lifecycleRegistry,
+        config: { storage: createNodeSqliteAdapter().adapter, runtime },
+      }),
+    ).rejects.toThrow("The tenant key store holds the key of tenant default for another database");
   });
 
   it("closes what create built when the app fails to start", async () => {

@@ -85,6 +85,7 @@ const setUp = async ({
     put: vi.fn(storage.snapshotStore.put),
     remove: vi.fn(storage.snapshotStore.remove),
     forget: vi.fn(storage.snapshotStore.forget),
+    clear: vi.fn(storage.snapshotStore.clear),
   };
   const { logger, entries } = createRecordingLogger();
   const loader = createAggregateLoader({ snapshotStore, logger, strict, fenced });

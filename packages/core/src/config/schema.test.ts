@@ -3,7 +3,9 @@ import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
+import { defineTenantKeyStore } from "../kernel/personal-data/tenant-key-source.ts";
 import { memory } from "../memory/index.ts";
+import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import {
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
   DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
@@ -23,6 +25,7 @@ const postgres: AdapterDefinition<"postgresql", { url: string }> = {
 };
 
 const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
+const tenantKeys = defineTenantKeyStore(() => createMemoryTenantKeyStore());
 const forgetLedger = defineForgetLedger(() => ({
   append: async () => {},
   read: async () => [],
@@ -67,7 +70,7 @@ describe("resolveConfig", () => {
         backoff: { baseDelayMs: 1_000, maxDelayMs: 30_000 },
         catchUp: { timeoutMs: 2_000, pollIntervalMs: 15 },
       },
-      personalData: { retention: null, keyWrapper: null, forgetLedger: null },
+      personalData: { retention: null, keyWrapper: null, tenantKeys: null, forgetLedger: null },
       deadLetters: { retentionMs: null },
       telemetry: { errorText: "omit" },
       overrides: {},
@@ -94,6 +97,7 @@ describe("resolveConfig", () => {
         personalData: {
           retention: "30d",
           keyWrapper,
+          tenantKeys,
           forgetLedger: {
             store: forgetLedger,
             reconcileEvery: "1m",
@@ -132,6 +136,7 @@ describe("resolveConfig", () => {
     expect(resolved.runtime.personalData).toEqual({
       retention: { months: 0, ms: 2_592_000_000 },
       keyWrapper,
+      tenantKeys,
       forgetLedger: {
         store: forgetLedger,
         reconcileEveryMs: 60_000,
@@ -292,6 +297,11 @@ describe("resolveConfig", () => {
     ).toContain(
       'runtime.personalData.keyWrapper: Expected a key wrapper such as masterKey({ from: "BOUNDA_MASTER_KEY" })',
     );
+    for (const tenantKeys of [sqlite, "./keys.db", { kind: "bounda-tenant-key-store" }, null]) {
+      expect(message({ storage: sqlite, runtime: { personalData: { tenantKeys } } })).toContain(
+        'runtime.personalData.tenantKeys: Expected a tenant key store such as sqlite({ path: "./keys/tenant-keys.db" }) or one from defineTenantKeyStore',
+      );
+    }
     for (const store of [sqlite, "./ledger.db", { kind: "bounda-forget-ledger" }, null]) {
       expect(
         message({ storage: sqlite, runtime: { personalData: { forgetLedger: { store } } } }),

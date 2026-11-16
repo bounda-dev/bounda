@@ -2,6 +2,7 @@ import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
 import type { DurationInput, Retention, RetentionInput } from "../contracts/duration.ts";
 import type { ForgetLedgerSource } from "../kernel/personal-data/forget-ledger.ts";
 import type { KeyWrapperDefinition } from "../kernel/personal-data/key-wrapper.ts";
+import type { TenantKeySource } from "../kernel/personal-data/tenant-key-source.ts";
 import type { AppPortsConfig } from "../register/index.ts";
 
 /**
@@ -127,6 +128,23 @@ export interface DispatcherConfig {
 }
 
 /**
+ * What a function of the tenant `bounda.config.ts` exports is called with.
+ */
+export interface TenantConfigArgs {
+  /**
+   * The tenant the app serves: `DEFAULT_TENANT` unless the host names another, as `boot({ tenant
+   * })`, `BOUNDA_TENANT`, `bounda --tenant` or React Router's `app/tenant.ts` do.
+   */
+  readonly tenant: string;
+}
+
+/**
+ * What `bounda.config.ts` exports: one configuration, or a function that gives each tenant its
+ * own, its database above all.
+ */
+export type ProjectConfig = Config | ((args: TenantConfigArgs) => Config);
+
+/**
  * Runtime settings for personal data. App-wide only: a person's events span aggregates, so their
  * inactivity is one clock, not one per aggregate.
  */
@@ -140,13 +158,22 @@ export interface PersonalDataConfig {
    */
   readonly retention?: RetentionInput;
   /**
-   * Wraps every person's key before the store keeps it, so a copy of the database holds no key
-   * that opens their data: `masterKey({ from: "BOUNDA_MASTER_KEY" })`, or a wrapper of your own
-   * through `defineKeyWrapper`. Built from the host's environment when the app starts. Without
-   * it the keys are kept as they are, next to the data, and the app warns at start when the
-   * registry marks personal fields.
+   * The master key, which wraps every tenant's key, so neither a copy of the database nor one of
+   * the tenant key store opens a personal field without it: `masterKey({ from:
+   * "BOUNDA_MASTER_KEY" })`, or a wrapper of your own through `defineKeyWrapper`. Built from the
+   * host's environment when the app starts. Required once the registry marks a field personal,
+   * unless the storage brings one, as `memory()` does: the app does not start without it.
    */
   readonly keyWrapper?: KeyWrapperDefinition;
+  /**
+   * Where the key of each tenant lives, wrapped under the master key and apart from every
+   * tenant's database, so `forgetTenant` destroys it for every copy of the database at once: an
+   * adapter pointed at another database, such as `sqlite({ path: "./keys/tenant-keys.db" })`,
+   * `kvTenantKeys({ binding })` from `@bounda-dev/cloudflare`, or a store of your own through
+   * `defineTenantKeyStore`. Required with `keyWrapper`, unless the storage brings one, as
+   * `memory()` does.
+   */
+  readonly tenantKeys?: TenantKeySource;
   /**
    * Where every forgetting is recorded outside the database, so restoring a backup taken before
    * someone was forgotten forgets them again, and how the app reconciles with it. Without it, a
@@ -418,6 +445,10 @@ export interface ResolvedConfig {
        * `null` when no key wrapper is configured.
        */
       readonly keyWrapper: KeyWrapperDefinition | null;
+      /**
+       * `null` when no tenant key store is configured.
+       */
+      readonly tenantKeys: TenantKeySource | null;
       /**
        * `null` when no forget ledger is configured.
        */

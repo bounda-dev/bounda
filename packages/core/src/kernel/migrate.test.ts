@@ -19,17 +19,22 @@ describe("migrateTables", () => {
     const storage = createNodeSqliteAdapter(join(directory, "storage.db"));
     const readModels = createNodeSqliteAdapter(join(directory, "read-models.db"));
     const ledger = createNodeSqliteAdapter(join(directory, "ledger.db"));
+    const keys = createNodeSqliteAdapter(join(directory, "keys.db"));
     const config = {
       storage: storage.adapter,
       readModels: { customers: readModels.adapter, orders: storage.adapter },
-      runtime: { personalData: { forgetLedger: { store: ledger.adapter } } },
+      runtime: {
+        personalData: { forgetLedger: { store: ledger.adapter }, tenantKeys: keys.adapter },
+      },
     };
     expect(await migrateTables({ config })).toEqual([
-      { database: "storage", scope: "storage", version: 6, latest: 6 },
+      { database: "storage", scope: "storage", version: 7, latest: 7 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
       { database: "readModels.customers", scope: "checkpoints", version: 3, latest: 3 },
       { database: "forgetLedger", scope: "forget-ledger", version: 7, latest: 7 },
+      { database: "tenantKeys", scope: "tenant-keys", version: 1, latest: 1 },
     ]);
+    expect(tablesIn(keys.db)).toEqual(["bounda_migrations", "bounda_tenant_keys"]);
     expect(tablesIn(readModels.db)).toEqual([
       "bounda_checkpoints",
       "bounda_migrations",
@@ -43,7 +48,7 @@ describe("migrateTables", () => {
     ]);
     expect(tablesIn(storage.db)).toContain("bounda_subscriber_failures");
     expect(tablesIn(storage.db)).not.toContain("bounda_forget_ledger");
-    expect(await migrateTables({ config })).toHaveLength(4);
+    expect(await migrateTables({ config })).toHaveLength(5);
   });
 
   it("has nothing to migrate in a store without tables", async () => {

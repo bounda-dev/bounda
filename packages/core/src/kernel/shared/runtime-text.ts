@@ -8,6 +8,7 @@ import {
   ForgetLedgerUnreconciledError,
   ProcessingRestrictedError,
   RebuildSupersededError,
+  TenantForgottenError,
 } from "../../contracts/errors.ts";
 import { thrownValue } from "./retry.ts";
 import { HandlerTimeoutError } from "./timeout.ts";
@@ -26,6 +27,7 @@ const COMPOSED: readonly (abstract new (...args: never[]) => Error)[] = [
   HandlerTimeoutError,
   ProcessingRestrictedError,
   RebuildSupersededError,
+  TenantForgottenError,
 ];
 
 const vouched = new WeakSet<Error>();

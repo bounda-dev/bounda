@@ -1,50 +1,74 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PERSONAL_CATEGORY,
   type PersonalKeyStore,
 } from "../../adapter/storage/personal-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, TenantForgottenError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
-import { newStoredKey } from "../test-support.ts";
-import { fromBase64, type PersonalKey, seal, unseal } from "./crypto.ts";
-import { cryptoKeyWrapperOver, defineKeyWrapper, type KeyWrapper } from "./key-wrapper.ts";
+import { newStoredKey, testTenantKeys } from "../test-support.ts";
 import {
-  buildPersonalKeyWrapping,
+  fingerprintOf as fingerprintOfKey,
+  generateWrappableKey,
+  type PersonalKey,
+  seal,
+  TENANT_KEY_ALGORITHM,
+  TENANT_KEY_USAGES,
+  toBase64,
+  unseal,
+  withRawKey,
+} from "./crypto.ts";
+import { buildKeyWrapper } from "./key-wrapper.ts";
+import { ephemeralMasterKey } from "./master-key.ts";
+import type { TenantKeys } from "./tenant-keys.ts";
+import {
   createPersonalKeyWrapping,
   inSealingOrder,
+  keylessWrapping,
   UNWRAPPED_KEY_TTL_MS,
   UNWRAPPED_KEYS_KEPT,
 } from "./wrapped-keys.ts";
 
-interface FakeWrapper extends KeyWrapper {
+interface FakeTenant extends TenantKeys {
+  // Every version a person's key was unwrapped under, once per unwrapping.
   readonly unwrapped: string[];
-  // Every array the runtime handed to `wrap` and every one `unwrap` handed back.
-  readonly raw: Uint8Array[];
 }
 
-// Flips every byte with the kid's length, so each kid wraps differently and wrapping is reversible.
-const fakeWrapper = (kid: string, previous: readonly string[] = []): FakeWrapper => {
+// One version per kid, for the whole file: two fakes that name a kid share its key.
+const versions = new Map<string, Promise<CryptoKey>>();
+const versionOf = (kid: string): Promise<CryptoKey> => {
+  const known = versions.get(kid);
+  if (known !== undefined) return known;
+  const created = crypto.subtle.generateKey({ name: TENANT_KEY_ALGORITHM, length: 256 }, false, [
+    ...TENANT_KEY_USAGES,
+  ]);
+  versions.set(kid, created);
+  return created;
+};
+
+const fakeTenant = (
+  kid: string,
+  previous: readonly string[] = [],
+  before: () => Promise<void> = async () => undefined,
+): FakeTenant => {
   const unwrapped: string[] = [];
-  const raw: Uint8Array[] = [];
-  const flip = (bytes: Uint8Array, under: string) => bytes.map((byte) => byte ^ under.length);
+  const known = [kid, ...previous];
   return {
-    kid,
-    previous,
+    ...testTenantKeys,
     unwrapped,
-    raw,
-    wrap: async (key) => {
-      raw.push(key);
-      return flip(key, kid);
+    current: async () => ({ kid, key: await versionOf(kid) }),
+    keyOf: async (asked) => {
+      if (!known.includes(asked)) return null;
+      unwrapped.push(asked);
+      await before();
+      return versionOf(asked);
     },
-    unwrap: async ({ kid: under, wrapped }) => {
-      unwrapped.push(under);
-      const key = flip(wrapped, under);
-      raw.push(key);
-      return key;
-    },
+    knows: (asked) => known.includes(asked),
+    kids: async () => ({ kid, previous, since: new Date(0).toISOString() }),
   };
 };
+
+const master = buildKeyWrapper({ definition: ephemeralMasterKey(), env: {} });
 
 const clock = createFixedClock();
 
@@ -52,15 +76,23 @@ const keyStore = async (): Promise<PersonalKeyStore> =>
   (await memory().createStorage()).personalKeys;
 
 const wrappingOf = (
-  wrapper: KeyWrapper | null,
-  options: Omit<Parameters<typeof createPersonalKeyWrapping>[0], "wrapper" | "clock"> & {
+  tenant: TenantKeys,
+  options: Omit<
+    Parameters<typeof createPersonalKeyWrapping>[0],
+    "tenantKeys" | "master" | "clock"
+  > & {
     readonly clock?: typeof clock;
   } = {},
 ) =>
   createPersonalKeyWrapping({
     clock,
     ...options,
-    wrapper: wrapper === null ? null : cryptoKeyWrapperOver(wrapper),
+    tenantKeys: tenant,
+    master: {
+      kid: "master-1",
+      previous: [],
+      unwrap: async (args) => (await master).unwrap({ ...args, kid: (await master).kid }),
+    },
   });
 
 const fingerprintOf = async (key: Promise<PersonalKey | null>): Promise<string | undefined> =>
@@ -79,6 +111,16 @@ const expectSameKey = async (one: PersonalKey | null, other: PersonalKey | null)
   expect(await unseal({ key: other, sealed })).toBe("ana@example.com");
 };
 
+// A key as a version of Bounda before key wrappers kept it: its raw bytes in base64.
+const rawRow = async () => {
+  const key = await generateWrappableKey();
+  return {
+    key: await withRawKey(key, async (raw) => toBase64(raw)),
+    fingerprint: await fingerprintOfKey(key),
+    kid: null,
+  };
+};
+
 describe("createPersonalKeyWrapping", () => {
   it("hands every call it does not wrap straight to the store, with what it answered", async () => {
     const calls: unknown[][] = [];
@@ -90,7 +132,7 @@ describe("createPersonalKeyWrapping", () => {
           return Promise.resolve(`${String(name)} answer`);
         },
     });
-    const keys = wrappingOf(null).over(store);
+    const keys = wrappingOf(fakeTenant("kid-1")).over(store);
     const passed: [keyof PersonalKeyStore, unknown[]][] = [
       ["retain", ["c-1", "f-1", { since: "s", lastActiveAt: "a" }]],
       ["touch", ["c-1", "a"]],
@@ -108,6 +150,8 @@ describe("createPersonalKeyWrapping", () => {
       ["countWrappedUnder", [{ kids: [null] }]],
       ["releaseHolds", []],
       ["listMany", [["c-1", "c-2"]]],
+      ["kids", []],
+      ["categories", []],
     ];
     for (const [name, args] of passed) {
       const call = keys[name] as (...args: unknown[]) => Promise<unknown>;
@@ -116,9 +160,9 @@ describe("createPersonalKeyWrapping", () => {
     }
   });
 
-  it("stores a new key wrapped under the wrapper's kid, named by its fingerprint, without unwrapping it", async () => {
+  it("stores a new key wrapped under the tenant key in force, named by its fingerprint, without unwrapping it", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper).over(store);
     const key = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const stored = await store.get("c-1", DEFAULT_PERSONAL_CATEGORY);
@@ -134,7 +178,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("answers a create with the key another writer stored first, unwrapped", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const first = await wrappingOf(wrapper).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
     await expectSameKey(
       first,
@@ -145,7 +189,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("opens the key a row read for the person holds", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const key = await wrappingOf(wrapper).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const keys = wrappingOf(wrapper).over(store);
     const stored = await keys.get("c-1", DEFAULT_PERSONAL_CATEGORY);
@@ -156,7 +200,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("keeps one key in force per category, and opens a key by fingerprint, in force or retained", async () => {
     const store = await keyStore();
-    const keys = wrappingOf(fakeWrapper("kid-1")).over(store);
+    const keys = wrappingOf(fakeTenant("kid-1")).over(store);
     const profile = await keys.create("c-1", "profile");
     const invoices = await keys.create("c-1", "invoices");
     expect(invoices.fingerprint).not.toBe(profile.fingerprint);
@@ -177,7 +221,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("opens every key the person holds, in force or retained, with its category", async () => {
     const store = await keyStore();
-    const keys = wrappingOf(null).over(store);
+    const keys = wrappingOf(fakeTenant("kid-1")).over(store);
     const profile = await keys.create("c-1", "profile");
     const invoices = await keys.create("c-1", "invoices");
     await keys.create("c-2", "profile");
@@ -197,8 +241,8 @@ describe("createPersonalKeyWrapping", () => {
     expect(await keys.heldAll("c-3")).toEqual([]);
   });
 
-  it("holds every key as one that can never be exported: new, read, wrapped or not", async () => {
-    for (const wrapper of [fakeWrapper("kid-1"), null]) {
+  it("holds every key as one that can never be exported: new or read", async () => {
+    for (const wrapper of [fakeTenant("kid-1")]) {
       const store = await keyStore();
       const created = await wrappingOf(wrapper)
         .over(store)
@@ -214,23 +258,9 @@ describe("createPersonalKeyWrapping", () => {
     }
   });
 
-  it("zeroes every raw key it hands to a wrapper of the app's own, or is handed back", async () => {
-    const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1", ["kid-0"]);
-    await wrappingOf(fakeWrapper("kid-0")).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
-    const wrapping = wrappingOf(wrapper);
-    await wrapping.over(store).create("c-2", DEFAULT_PERSONAL_CATEGORY);
-    await wrapping.over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY);
-    await wrapping.wrapped(
-      (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey()),
-    );
-    expect(wrapper.raw.length).toBeGreaterThanOrEqual(4);
-    for (const raw of wrapper.raw) expect(raw).toEqual(new Uint8Array(32));
-  });
-
   it("keeps a key once, whatever number of reads, and never answers from it once the row is gone", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper).over(store);
     const key = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     await expectSameKey(key, await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY));
@@ -243,7 +273,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("drops the key of a person it forgets", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper).over(store);
     const key = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const stored = (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey());
@@ -262,7 +292,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("unwraps once for reads made at the same time", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const key = await wrappingOf(wrapper).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const keys = wrappingOf(wrapper).over(store);
     const [one, other] = await Promise.all([
@@ -276,17 +306,13 @@ describe("createPersonalKeyWrapping", () => {
 
   it("unwraps again a key whose unwrapping failed", async () => {
     const store = await keyStore();
-    const key = await wrappingOf(fakeWrapper("kid-1"))
+    const key = await wrappingOf(fakeTenant("kid-1"))
       .over(store)
       .create("c-1", DEFAULT_PERSONAL_CATEGORY);
     let fail = true;
-    const flaky: KeyWrapper = {
-      ...fakeWrapper("kid-1"),
-      unwrap: async (args) => {
-        if (fail) throw new Error("KMS unavailable");
-        return fakeWrapper("kid-1").unwrap(args);
-      },
-    };
+    const flaky = fakeTenant("kid-1", [], async () => {
+      if (fail) throw new Error("KMS unavailable");
+    });
     const keys = wrappingOf(flaky).over(store);
     await expect(keys.held("c-1", DEFAULT_PERSONAL_CATEGORY)).rejects.toThrow("KMS unavailable");
     fail = false;
@@ -299,7 +325,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("keeps at most as many keys as it is told, the least recently read out first", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper, { keep: 3 }).over(store);
     const persons = Array.from({ length: 4 }, (_, index) => `c-${index}`);
     for (const person of persons) await keys.create(person, DEFAULT_PERSONAL_CATEGORY);
@@ -324,7 +350,7 @@ describe("createPersonalKeyWrapping", () => {
     expect(UNWRAPPED_KEY_TTL_MS).toBe(300_000);
     const store = await keyStore();
     const timed = createFixedClock();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper, { clock: timed }).over(store);
     await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     timed.advance(UNWRAPPED_KEY_TTL_MS - 1);
@@ -338,7 +364,7 @@ describe("createPersonalKeyWrapping", () => {
   it("drops a key its time after it was kept, however often it is read, with nothing read meanwhile", async () => {
     const store = await keyStore();
     const timed = createFixedClock();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper, { clock: timed, ttlMs: 1_000 }).over(store);
     const first = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     timed.advance(600);
@@ -361,7 +387,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("unwraps again a key read past its time before the timer dropped it", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
     const keys = wrappingOf(wrapper, { clock: late, ttlMs: 1_000 }).over(store);
     const key = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
@@ -375,7 +401,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("puts a key unwrapped again past its time last, so the next one in is not what goes out", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
     const keys = wrappingOf(wrapper, { clock: late, keep: 2, ttlMs: 1_000 }).over(store);
     await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
@@ -394,23 +420,19 @@ describe("createPersonalKeyWrapping", () => {
 
   it("keeps a key unwrapped again when an older unwrapping of it fails late", async () => {
     const store = await keyStore();
-    const key = await wrappingOf(fakeWrapper("kid-1"))
+    const key = await wrappingOf(fakeTenant("kid-1"))
       .over(store)
       .create("c-1", DEFAULT_PERSONAL_CATEGORY);
     let fail: (error: Error) => void = () => undefined;
     let calls = 0;
-    const slow: KeyWrapper = {
-      ...fakeWrapper("kid-1"),
-      unwrap: async (args) => {
-        calls += 1;
-        if (calls === 1) {
-          await new Promise<void>((_, reject) => {
-            fail = reject;
-          });
-        }
-        return fakeWrapper("kid-1").unwrap(args);
-      },
-    };
+    const slow = fakeTenant("kid-1", [], async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((_, reject) => {
+          fail = reject;
+        });
+      }
+    });
     const late: typeof clock = { ...createFixedClock(), after: () => () => undefined };
     const keys = wrappingOf(slow, { clock: late, ttlMs: 1_000 }).over(store);
     const first = keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
@@ -425,27 +447,34 @@ describe("createPersonalKeyWrapping", () => {
 
   it("unwraps a key anew, exportable, to rewrap it, and keeps none it unwrapped for that", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1", ["kid-0"]);
+    const wrapper = fakeTenant("kid-1", ["kid-0"]);
     const wrapping = wrappingOf(wrapper);
     const keys = wrapping.over(store);
-    await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
+    await wrappingOf(fakeTenant("kid-0")).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const stored = (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey());
     await wrapping.wrapped(stored);
     await wrapping.wrapped(stored);
-    expect(wrapper.unwrapped).toHaveLength(2);
+    expect(wrapper.unwrapped).toEqual(["kid-0", "kid-0"]);
     await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
-    expect(wrapper.unwrapped).toHaveLength(2);
+    await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(wrapper.unwrapped).toHaveLength(3);
+    // One under the version in force is kept as it is, unwrapped for nothing.
+    const current = await keys.create("c-2", DEFAULT_PERSONAL_CATEGORY);
+    const row = (await store.get("c-2", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey());
+    expect(await wrapping.wrapped(row)).toEqual({ key: row.key, kid: "kid-1" });
+    expect(row.fingerprint).toBe(current.fingerprint);
+    expect(wrapper.unwrapped).toHaveLength(3);
     wrapping.drop("c-1");
     wrapping.drop("c-9");
     await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
     await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
-    expect(wrapper.unwrapped).toHaveLength(3);
+    expect(wrapper.unwrapped).toHaveLength(4);
   });
 
   it("takes a key kept from further off than its time allows, after the clock was set back, as expired", async () => {
     const store = await keyStore();
     const timed = createFixedClock(new Date("2026-01-01T01:00:00Z"));
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper, { clock: timed, ttlMs: 1_000 }).over(store);
     await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     timed.set(new Date("2026-01-01T00:00:00Z"));
@@ -455,7 +484,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("still drops a person's new key when they forget them after their old one went out", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper, { keep: 2 }).over(store);
     const old = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     // Forgotten on another instance, then keyed anew here: the old key is still kept.
@@ -472,7 +501,7 @@ describe("createPersonalKeyWrapping", () => {
 
   it("drops only the forgotten person's key", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper).over(store);
     const forgotten = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const kept = await keys.create("c-2", DEFAULT_PERSONAL_CATEGORY);
@@ -491,7 +520,7 @@ describe("createPersonalKeyWrapping", () => {
         return () => undefined;
       },
     };
-    await wrappingOf(fakeWrapper("kid-1"), { clock: watched })
+    await wrappingOf(fakeTenant("kid-1"), { clock: watched })
       .over(store)
       .create("c-1", DEFAULT_PERSONAL_CATEGORY);
     expect(options).toEqual([{ background: true }]);
@@ -500,7 +529,7 @@ describe("createPersonalKeyWrapping", () => {
   it("drops every key and its timer when closed", async () => {
     const store = await keyStore();
     const timed = createFixedClock();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const wrapping = wrappingOf(wrapper, { clock: timed });
     await wrapping.over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
     expect(timed.pending()).toBe(1);
@@ -510,11 +539,11 @@ describe("createPersonalKeyWrapping", () => {
     expect(wrapper.unwrapped).toHaveLength(1);
   });
 
-  it("opens keys kept unwrapped, from before a wrapper was set, without the wrapper", async () => {
+  it("opens keys kept unwrapped, from before a wrapper was required, without the tenant's key", async () => {
     const store = await keyStore();
-    const stored = await newStoredKey();
+    const stored = await rawRow();
     await store.add("c-1", DEFAULT_PERSONAL_CATEGORY, stored);
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     expect(
       await fingerprintOf(wrappingOf(wrapper).over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY)),
     ).toBe(stored.fingerprint);
@@ -523,11 +552,11 @@ describe("createPersonalKeyWrapping", () => {
 
   it("unwraps a key under a previous kid, and rewraps it under the current one", async () => {
     const store = await keyStore();
-    const key = await wrappingOf(fakeWrapper("old"))
+    const key = await wrappingOf(fakeTenant("old"))
       .over(store)
       .create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const stored = (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey());
-    const wrapping = wrappingOf(fakeWrapper("current", ["old"]));
+    const wrapping = wrappingOf(fakeTenant("current", ["old"]));
     await expectSameKey(key, await wrapping.over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY));
     const rewrapped = await wrapping.wrapped(stored);
     expect(rewrapped.kid).toBe("current");
@@ -540,80 +569,102 @@ describe("createPersonalKeyWrapping", () => {
     await expectSameKey(key, await wrapping.over(moved).held("c-1", DEFAULT_PERSONAL_CATEGORY));
   });
 
-  it("imports a new key once without a wrapper, never reading it back from the store", async () => {
+  it("opens a key wrapped under the master key before tenant keys, and rewraps it under the tenant's", async () => {
     const store = await keyStore();
-    const imported = vi.spyOn(crypto.subtle, "importKey");
-    try {
-      const key = await wrappingOf(null).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
-      expect(imported).toHaveBeenCalledTimes(1);
-      expect(key.fingerprint).toBe(
-        (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY))?.fingerprint,
-      );
-    } finally {
-      imported.mockRestore();
-    }
-  });
-
-  it("keeps keys as they are without a wrapper", async () => {
-    const store = await keyStore();
-    const wrapping = wrappingOf(null);
-    const key = await wrapping.over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
-    const stored = await store.get("c-1", DEFAULT_PERSONAL_CATEGORY);
-    expect(stored).toEqual({ key: expect.any(String), fingerprint: key.fingerprint, kid: null });
-    expect(fromBase64(stored?.key ?? "")).toHaveLength(32);
-    expect(await wrapping.wrapped(stored ?? (await newStoredKey()))).toEqual({
-      key: stored?.key,
-      kid: null,
+    const person = await generateWrappableKey();
+    const legacy = await master;
+    const { wrapped } = await legacy.wrap(person);
+    const fingerprint = await fingerprintOfKey(person);
+    await store.add("c-1", DEFAULT_PERSONAL_CATEGORY, {
+      key: toBase64(wrapped),
+      fingerprint,
+      kid: "master-1",
     });
-    await expectSameKey(
-      key,
-      await wrappingOf(null).over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY),
+    const tenant = fakeTenant("kid-1");
+    const wrapping = wrappingOf(tenant);
+    const asked: unknown[] = [];
+    const recording = createPersonalKeyWrapping({
+      clock,
+      tenantKeys: tenant,
+      master: {
+        kid: "master-1",
+        previous: [],
+        unwrap: async (args) => {
+          asked.push(args.kind);
+          return (await master).unwrap({ ...args, kid: (await master).kid });
+        },
+      },
+    });
+    await recording.over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY);
+    // A person's key, as the master key wrapped it before tenant keys.
+    expect(asked).toEqual(["personal"]);
+    expect(await fingerprintOf(wrapping.over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY))).toBe(
+      fingerprint,
     );
+    expect(tenant.unwrapped).toEqual([]);
+    const stored = (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await rawRow());
+    const rewrapped = await wrapping.wrapped(stored);
+    expect(rewrapped.kid).toBe("kid-1");
+    expect(await wrapping.kids()).toEqual({ kid: "kid-1", previous: ["master-1", null] });
   });
 
-  it("refuses a wrapped key without a wrapper, under an unknown kid, or unwrapping to another key", async () => {
+  it("refuses a key under an unknown kid, or under a version that is not the one it was wrapped under", async () => {
     const store = await keyStore();
-    await wrappingOf(fakeWrapper("kid-1")).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
+    await wrappingOf(fakeTenant("kid-1")).over(store).create("c-1", DEFAULT_PERSONAL_CATEGORY);
     await expect(
-      wrappingOf(null).over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY),
-    ).rejects.toThrow(
-      new ConfigurationError(
-        "A personal key is wrapped under kid-1, and runtime.personalData.keyWrapper is not set",
-      ),
-    );
-    await expect(
-      wrappingOf(fakeWrapper("kid-2", ["kid-3"]))
+      wrappingOf(fakeTenant("kid-2", ["kid-3"]))
         .over(store)
         .held("c-1", DEFAULT_PERSONAL_CATEGORY),
     ).rejects.toThrow(
       new ConfigurationError(
-        "A personal key is wrapped under kid-1, which is neither the key wrapper's key nor one of its previous ones",
+        "A key is wrapped under kid-1, which is neither a version of the tenant's key nor a master key the key wrapper knows",
       ),
     );
-    const liar: KeyWrapper = { ...fakeWrapper("kid-1"), unwrap: async () => new Uint8Array(32) };
-    await expect(
-      wrappingOf(liar).over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY),
-    ).rejects.toThrow(
-      new ConfigurationError(
-        "A personal key unwrapped under kid-1 does not match its fingerprint: the key wrapper returned another key, or the database was written before fingerprints were key check values and must be created anew",
-      ),
+    const liar: TenantKeys = { ...fakeTenant("kid-1"), keyOf: () => versionOf("kid-other") };
+    const altered = await wrappingOf(liar)
+      .over(store)
+      .held("c-1", DEFAULT_PERSONAL_CATEGORY)
+      .catch((error: unknown) => error);
+    expect(altered).toBeInstanceOf(ConfigurationError);
+    expect((altered as Error).message).toBe(
+      "A key does not unwrap under the tenant's key kid-1: the key was altered in the store",
     );
+    // What WebCrypto said is kept, for whoever reads the error.
+    expect((altered as Error).cause).toBeInstanceOf(Error);
     await expect(
-      wrappingOf(liar).wrapped(
-        (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey()),
-      ),
-    ).rejects.toThrow("does not match its fingerprint");
+      wrappingOf({
+        ...liar,
+        current: async () => ({ kid: "kid-2", key: await versionOf("kid-2") }),
+      }).wrapped((await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey())),
+    ).rejects.toThrow("does not unwrap under the tenant's key");
+  });
+
+  it("refuses every key, kept or not, once the tenant is forgotten", async () => {
+    const store = await keyStore();
+    let forgotten = false;
+    const tenant = fakeTenant("kid-1");
+    const forgetting: TenantKeys = {
+      ...tenant,
+      knows: (kid) => {
+        if (forgotten) throw new TenantForgottenError("acme", "2026-01-01T00:00:00.000Z");
+        return tenant.knows(kid);
+      },
+    };
+    const keys = wrappingOf(forgetting).over(store);
+    await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
+    forgotten = true;
+    await expect(keys.held("c-1", DEFAULT_PERSONAL_CATEGORY)).rejects.toThrow(TenantForgottenError);
   });
 
   it("refuses a key kept unwrapped that does not match its fingerprint", async () => {
     const store = await keyStore();
-    const [stored, other] = await Promise.all([newStoredKey(), newStoredKey()]);
+    const [stored, other] = await Promise.all([rawRow(), rawRow()]);
     await store.add("c-1", DEFAULT_PERSONAL_CATEGORY, {
       ...stored,
       fingerprint: other.fingerprint,
     });
     await expect(
-      wrappingOf(fakeWrapper("kid-1")).over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY),
+      wrappingOf(fakeTenant("kid-1")).over(store).held("c-1", DEFAULT_PERSONAL_CATEGORY),
     ).rejects.toThrow(
       new ConfigurationError(
         "A personal key kept unwrapped does not match its fingerprint: the key was altered in the store, or the database was written before fingerprints were key check values and must be created anew",
@@ -623,20 +674,20 @@ describe("createPersonalKeyWrapping", () => {
 
   it("refuses a key rewrapped under a kid it does not know, however recently it kept the key", async () => {
     const store = await keyStore();
-    const keys = wrappingOf(fakeWrapper("kid-1")).over(store);
+    const keys = wrappingOf(fakeTenant("kid-1")).over(store);
     await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const stored = (await store.get("c-1", DEFAULT_PERSONAL_CATEGORY)) ?? (await newStoredKey());
     await store.rewrap("c-1", stored, { key: stored.key, kid: "kid-9" });
     await expect(keys.held("c-1", DEFAULT_PERSONAL_CATEGORY)).rejects.toThrow(
-      "A personal key is wrapped under kid-9, which is neither the key wrapper's key nor one of its previous ones",
+      "A key is wrapped under kid-9, which is neither a version of the tenant's key nor a master key the key wrapper knows",
     );
   });
 
   it("wraps a key added as it is kept unwrapped, and keeps one already wrapped under its kid as it is", async () => {
     const store = await keyStore();
-    const wrapper = fakeWrapper("kid-1");
+    const wrapper = fakeTenant("kid-1");
     const keys = wrappingOf(wrapper).over(store);
-    const plain = await newStoredKey();
+    const plain = await rawRow();
     expect(await keys.add("c-1", DEFAULT_PERSONAL_CATEGORY, plain)).toMatchObject({
       fingerprint: plain.fingerprint,
       kid: "kid-1",
@@ -649,20 +700,17 @@ describe("createPersonalKeyWrapping", () => {
     const unwraps = wrapper.unwrapped.length;
     expect(await keys.add("c-2", DEFAULT_PERSONAL_CATEGORY, wrappedRow)).toEqual(wrappedRow);
     expect(wrapper.unwrapped).toHaveLength(unwraps);
-    expect(await wrappingOf(null).over(store).add("c-3", DEFAULT_PERSONAL_CATEGORY, plain)).toEqual(
-      plain,
-    );
   });
 
   it("passes reading, adding, forgetting, listing and rewrapping through to the store", async () => {
     const store = await keyStore();
-    const keys = wrappingOf(fakeWrapper("kid-1")).over(store);
+    const keys = wrappingOf(fakeTenant("kid-1")).over(store);
     const key = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
     const [row] = await keys.listWrappedUnder({ kids: ["kid-1"], limit: 10 });
     expect(row?.person).toBe("c-1");
     const stored = row?.key ?? (await newStoredKey());
     expect(await keys.get("c-1", DEFAULT_PERSONAL_CATEGORY)).toEqual(stored);
-    const other = await wrappingOf(fakeWrapper("kid-1"))
+    const other = await wrappingOf(fakeTenant("kid-1"))
       .over(await keyStore())
       .create("c-2", DEFAULT_PERSONAL_CATEGORY);
     expect((await keys.add("c-2", DEFAULT_PERSONAL_CATEGORY, stored)).fingerprint).toBe(
@@ -686,22 +734,74 @@ describe("createPersonalKeyWrapping", () => {
   });
 });
 
-describe("buildPersonalKeyWrapping", () => {
-  it("builds the wrapper from the environment, or none without a definition", async () => {
-    const seen: unknown[] = [];
-    const built = await buildPersonalKeyWrapping({
-      clock,
-      definition: defineKeyWrapper(({ env }) => {
-        seen.push(env);
-        return fakeWrapper("kid-1", ["kid-0"]);
-      }),
-      env: { NAME: "value" },
-    });
-    expect(built.wrapper).toMatchObject({ kid: "kid-1", previous: ["kid-0"] });
-    expect(seen).toEqual([{ NAME: "value" }]);
-    expect(
-      (await buildPersonalKeyWrapping({ definition: null, env: {}, clock })).wrapper,
-    ).toBeNull();
+describe("isTenantWrapped and derivationBase", () => {
+  it("tells a key under a version of the tenant's key from one under a master key, none, or a stranger", async () => {
+    const wrapping = wrappingOf(fakeTenant("kid-1", ["kid-0"]));
+    const row = (kid: string | null) => ({ key: "k", fingerprint: "f", kid });
+    expect(wrapping.isTenantWrapped(row("kid-1"))).toBe(true);
+    expect(wrapping.isTenantWrapped(row("kid-0"))).toBe(true);
+    expect(wrapping.isTenantWrapped(row("master-1"))).toBe(false);
+    expect(wrapping.isTenantWrapped(row(null))).toBe(false);
+    expect(wrapping.isTenantWrapped(row("kid-9"))).toBe(false);
+  });
+
+  it("derives from a key under the tenant's key alone, never from one kept unwrapped", async () => {
+    await expect(wrappingOf(fakeTenant("kid-1")).derivationBase(await rawRow())).rejects.toThrow(
+      new ConfigurationError(
+        "A key is wrapped under , which is neither a version of the tenant's key nor a master key the key wrapper knows",
+      ),
+    );
+  });
+
+  it("clears every key of the store, and those it kept", async () => {
+    const store = await keyStore();
+    const keys = wrappingOf(fakeTenant("kid-1")).over(store);
+    await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
+    await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(await keys.clear()).toBe(1);
+    expect(await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
+  });
+});
+
+describe("keylessWrapping", () => {
+  it("refuses every call that needs a key, saying what to set, and wraps nothing", async () => {
+    const wrapping = keylessWrapping();
+    const refusal = new ConfigurationError(
+      "A personal key is needed, and the app has no keys: set runtime.personalData.keyWrapper and runtime.personalData.tenantKeys",
+    );
+    const stored = await rawRow();
+    for (const call of [
+      () => wrapping.kids(),
+      () => wrapping.wrapped(stored),
+      () => wrapping.unwrap(stored),
+      () => wrapping.derivationBase(stored),
+      () => wrapping.generate(),
+    ]) {
+      await expect(call()).rejects.toThrow(refusal);
+    }
+    expect(wrapping.isTenantWrapped(stored)).toBe(false);
+    expect(wrapping.drop("c-1")).toBeUndefined();
+    expect(wrapping.close()).toBeUndefined();
+    const store = await keyStore();
+    await store.add("c-1", DEFAULT_PERSONAL_CATEGORY, stored);
+    const keys = wrapping.over(store);
+    await expect(keys.opened("c-1", stored.fingerprint)).rejects.toThrow(refusal);
+    await expect(keys.heldAll("c-1")).rejects.toThrow(refusal);
+    await expect(keys.heldAllOf(["c-1"])).rejects.toThrow(refusal);
+    await expect(keys.open("c-1", stored)).rejects.toThrow(refusal);
+  });
+
+  it("passes the store through, and refuses anything that would need a key", async () => {
+    const store = await keyStore();
+    const keys = keylessWrapping().over(store);
+    expect(await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY)).toBeNull();
+    expect(await keys.heldAll("c-1")).toEqual([]);
+    expect(await keys.heldAllOf(["c-1"])).toEqual(new Map());
+    expect(await keys.opened("c-1", "f-1")).toBeNull();
+    await expect(keys.create("c-1", DEFAULT_PERSONAL_CATEGORY)).rejects.toThrow(ConfigurationError);
+    await store.add("c-1", DEFAULT_PERSONAL_CATEGORY, await rawRow());
+    await expect(keys.held("c-1", DEFAULT_PERSONAL_CATEGORY)).rejects.toThrow(ConfigurationError);
+    await expect(keylessWrapping().generate()).rejects.toThrow(ConfigurationError);
   });
 });
 

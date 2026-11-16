@@ -39,6 +39,9 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
       }
       if (record.persons.every(holds)) records.set(record.key, copy(record));
     },
+    clear: async () => {
+      records.clear();
+    },
     purge: async ({ now }) => {
       let purged = 0;
       for (const [key, record] of records) {

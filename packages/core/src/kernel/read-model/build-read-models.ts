@@ -288,3 +288,15 @@ export const buildReadModels: BuildReadModelsFunction = async ({ registry, confi
     },
   };
 };
+
+export interface ReadModelsMarkPersonalFunction {
+  (registry: Pick<Registry, "readModels">): boolean;
+}
+
+/**
+ * Whether any read model of the registry marks a field `.personal()`, which then needs keys.
+ */
+export const readModelsMarkPersonal: ReadModelsMarkPersonalFunction = (registry) =>
+  Object.values(registry.readModels).some((entry) =>
+    Object.values(entry.view.fields({ f: fieldBuilder })).some(({ mark }) => mark === "personal"),
+  );

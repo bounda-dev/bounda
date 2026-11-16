@@ -15,6 +15,7 @@ import {
   drained,
   orderRegistry,
   slowJob,
+  TEST_TENANT_KID,
   withoutLedger,
 } from "../test-support.ts";
 import { createUnitOfWork } from "../unit-of-work/unit-of-work.ts";
@@ -381,7 +382,11 @@ describe("createReactionCommands", () => {
 
   it("forgets a person when the unit commits, once however often the run names them", async () => {
     const { reaction, storage, unit, entries } = await setUp();
-    await storage.personalKeys.add("c-1", "default", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", "default", {
+      key: "k",
+      fingerprint: "f",
+      kid: TEST_TENANT_KID,
+    });
     await reaction.forget("c-1");
     await reaction.forget("c-1");
     expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
@@ -429,12 +434,12 @@ describe("createReactionCommands", () => {
     await harness.storage.personalKeys.add("c-1", "default", {
       key: "k",
       fingerprint: "f-1",
-      kid: null,
+      kid: TEST_TENANT_KID,
     });
     await reaction.forget("c-1");
     expect(recorded).toEqual([]);
     await unit.commit();
-    expect(keysAtRecord).toEqual([{ key: "k", fingerprint: "f-1", kid: null }]);
+    expect(keysAtRecord).toEqual([{ key: "k", fingerprint: "f-1", kid: TEST_TENANT_KID }]);
     const [forgotten] = await forgottenEvents(harness.storage);
     expect(recorded).toEqual([
       {
@@ -455,7 +460,7 @@ describe("createReactionCommands", () => {
       await harness.storage.personalKeys.add("c-1", "default", {
         key: "k",
         fingerprint: "f-2",
-        kid: null,
+        kid: TEST_TENANT_KID,
       });
     });
     await unit.commit();
@@ -495,7 +500,11 @@ describe("createReactionCommands", () => {
 
   it("forgets nobody for a unit that never commits", async () => {
     const { reaction, storage } = await setUp();
-    await storage.personalKeys.add("c-1", "default", { key: "k", fingerprint: "f", kid: null });
+    await storage.personalKeys.add("c-1", "default", {
+      key: "k",
+      fingerprint: "f",
+      kid: TEST_TENANT_KID,
+    });
     await reaction.forget("c-1");
     expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
     expect(await forgottenEvents(storage)).toEqual([]);

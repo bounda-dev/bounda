@@ -22,6 +22,8 @@ import {
   storageTransactionContract,
   subscriberFailureStoreContract,
   tableContract,
+  tenancyContract,
+  tenantKeyStoreContract,
   viewContract,
 } from "../adapter/testing/index.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
@@ -44,6 +46,8 @@ describe("memory adapter", () => {
   personalKeyStoreContract({ create: async () => storage() });
   personStoreContract({ create: async () => (await storage()).persons });
   recipientStoreContract({ create: storage });
+  tenancyContract({ create: storage });
+  tenantKeyStoreContract({ create: () => memory().createTenantKeyStore() });
   inspectionContract({ create: async () => memory() });
   subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
   forgetLedgerContract({
@@ -631,5 +635,38 @@ describe("memory adapter", () => {
         },
       ]);
     });
+  });
+});
+
+describe("what memory() shows of its tenant", () => {
+  it("names the tenancy row by its scope and each tenant's key by its tenant", async () => {
+    const adapter = memory();
+    const opened = await adapter.createStorage();
+    const tablesOf = async () => {
+      const tables = await adapter.inspect();
+      return Object.fromEntries(
+        tables
+          .filter(({ store }) => store === "tenancy" || store === "tenantKeys")
+          .map(({ store, key, rows }) => [store, { key, rows }]),
+      );
+    };
+    expect(await tablesOf()).toEqual({
+      tenancy: { key: ["scope"], rows: [] },
+      tenantKeys: { key: ["tenant"], rows: [] },
+    });
+    await opened.tenancy.bind({ tenant: "acme", store: "s-1", boundAt: "2026-01-01T00:00:00Z" });
+    expect((await tablesOf()).tenancy).toEqual({
+      key: ["scope"],
+      rows: [
+        {
+          scope: "app",
+          tenant: "acme",
+          store: "s-1",
+          bound_at: "2026-01-01T00:00:00Z",
+          forgotten_at: null,
+        },
+      ],
+    });
+    await opened.close();
   });
 });

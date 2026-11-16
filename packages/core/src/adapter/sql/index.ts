@@ -101,4 +101,16 @@ export { byExecuteAt, earliestDue } from "./scheduling.ts";
 export type { SqlCondition, SqlExecutor } from "./sql-table.ts";
 export { createSqlReadClient, createSqlTable } from "./sql-table.ts";
 export { createSqlSubscriberFailureStore } from "./subscriber-failure-store.ts";
+export type { CreateSqlTenancyStoreArgs, CreateSqlTenancyStoreFunction } from "./tenancy-store.ts";
+export { createSqlTenancyStore, tenancyTableStatement } from "./tenancy-store.ts";
+export type {
+  CreateSqlTenantKeyStoreArgs,
+  CreateSqlTenantKeyStoreFunction,
+} from "./tenant-key-store.ts";
+export {
+  createSqlTenantKeyStore,
+  parseTenantKeyRecord,
+  tenantKeyRecordText,
+  tenantKeysTableStatement,
+} from "./tenant-key-store.ts";
 export { selectUnsettled } from "./unsettled.ts";

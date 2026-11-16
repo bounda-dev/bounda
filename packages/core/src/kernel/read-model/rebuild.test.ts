@@ -1,13 +1,26 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Adapter, CreateReadModelRebuildArgs } from "../../adapter/adapter.ts";
+import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { Table } from "../../adapter/storage/table.ts";
-import { RebuildSupersededError, ValidationError } from "../../contracts/errors.ts";
+import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
+import {
+  ConfigurationError,
+  RebuildSupersededError,
+  TenantForgottenError,
+  ValidationError,
+} from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "../../memory/checkpoint-store.ts";
 import { memory } from "../../memory/index.ts";
+import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type FieldsArgs, fieldBuilder as f } from "../../modules/view.ts";
 import { createApp } from "../app.ts";
+import { masterKey } from "../personal-data/master-key.ts";
+import { defineTenantKeyStore } from "../personal-data/tenant-key-source.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
 import { pendingRebuilds, rebuildReadModel, rebuiltMark, startedMark } from "./rebuild.ts";
 
@@ -257,6 +270,118 @@ describe("rebuildReadModel", () => {
     ).table;
     expect(await table.findMany()).toEqual([{ orderId: "o-1", total: 7 }]);
     await app.stop();
+  });
+
+  it("opens a file encrypted under the tenant's keys through them, and closes the store if it fails", async () => {
+    mode = "ok";
+    const env = {
+      MASTER: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64"),
+    };
+    const records = createMemoryTenantKeyStore();
+    let closed = 0;
+    const store: TenantKeyStore = {
+      ...records,
+      close: async () => {
+        closed += 1;
+      },
+    };
+    const keys = {
+      keyWrapper: masterKey({ from: "MASTER" }),
+      tenantKeys: defineTenantKeyStore(() => store),
+    };
+    const encrypted = (opened: Adapter): Adapter => ({
+      ...memory(),
+      encryptedFile: { database: "app.db", open: async () => opened },
+    });
+    const base = memory();
+    const config = {
+      storage: encrypted(base),
+      ports: { order: { notifier: "memory" } },
+      runtime: { personalData: keys },
+    };
+    const writer = await createApp({ registry: writeSide, config, env, tenant: "acme" });
+    await writer.commands.placeOrder({ orderId: "o-1", total: 7 });
+    await writer.stop();
+    closed = 0;
+    expect(
+      await rebuildReadModel({
+        registry,
+        config,
+        env,
+        tenant: "acme",
+        name: "orderSummary",
+        logger: createRecordingLogger().logger,
+      }),
+    ).toEqual({ events: 1, position: 1, done: true });
+    expect(closed).toBe(1);
+
+    const broken: Adapter = {
+      ...memory(),
+      createStorage: async () => {
+        throw new Error("the disk is gone");
+      },
+    };
+    await expect(
+      rebuildReadModel({
+        registry,
+        config: { ...config, storage: encrypted(broken) },
+        env,
+        tenant: "acme",
+        name: "orderSummary",
+      }),
+    ).rejects.toThrow("the disk is gone");
+    expect(closed).toBe(2);
+  });
+
+  it("refuses to rebuild a read model of a forgotten tenant", async () => {
+    mode = "ok";
+    const config = { storage: memory(), ports: { order: { notifier: "memory" } } };
+    const writer = await createApp({ registry, config });
+    await writer.commands.placeOrder({ orderId: "o-1", total: 7 });
+    await writer.forgetTenant("default");
+    await writer.stop();
+    await expect(
+      rebuildReadModel({ registry, config, name: "orderSummary", logger: silentLogger }),
+    ).rejects.toThrow(TenantForgottenError);
+  });
+
+  it("needs no key for a project that marks nothing personal, and asks for them once a read model does", async () => {
+    mode = "ok";
+    const file = join(mkdtempSync(join(tmpdir(), "bounda-rebuild-keys-")), "app.db");
+    const config = {
+      storage: createNodeSqliteAdapter(file).adapter,
+      ports: { order: { notifier: "memory" } },
+    };
+    // Without keys, a remembered answer is kept as it is, sealed under nothing.
+    const writer = await createApp({ registry, config });
+    const placed = await writer.commands.placeOrder(
+      { orderId: "o-1", total: 7 },
+      { idempotencyKey: "k-1" },
+    );
+    expect(
+      await writer.commands.placeOrder({ orderId: "o-1", total: 7 }, { idempotencyKey: "k-1" }),
+    ).toEqual(placed);
+    await writer.stop();
+    expect(
+      await rebuildReadModel({ registry, config, name: "orderSummary", logger: silentLogger }),
+    ).toMatchObject({ done: true });
+    const sealing = {
+      ...registry,
+      readModels: {
+        orderSummary: {
+          ...registry.readModels.orderSummary,
+          view: {
+            fields: ({ f }: FieldsArgs) => ({
+              orderId: f.string().primaryKey(),
+              total: f.number().personal(),
+            }),
+          },
+        },
+      },
+    } as unknown as Registry;
+    await expect(
+      rebuildReadModel({ registry: sealing, config, name: "orderSummary", logger: silentLogger }),
+    ).rejects.toThrow(ConfigurationError);
   });
 
   it("ends the rebuild and closes the storage when a step before the first batch fails", async () => {

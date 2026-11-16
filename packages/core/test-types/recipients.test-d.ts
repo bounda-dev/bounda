@@ -87,6 +87,7 @@ describe("recipients", () => {
       onProcessingRestrictionLiftAnnounced: () => {},
       onProcessingRestrictionLifted: () => {},
       onPersonalDataRedacted: () => {},
+      onTenantForgotten: () => {},
     };
     interface Async {
       send(): Promise<void>;

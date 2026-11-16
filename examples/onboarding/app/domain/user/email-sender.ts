@@ -25,7 +25,7 @@ export interface EmailSender {
 }
 
 // The provider receives the user's address and name, so it is told when they are forgotten,
-// restricted or corrected.
+// restricted or corrected, and when the whole tenant is forgotten.
 export const recipient = {
   name: "Postmark",
   kind: "processor",
@@ -67,3 +67,14 @@ export const onPersonalDataRedacted = ({
   idempotencyKey,
 }: Port.OnPersonalDataRedactedArgs) =>
   emailSender.erase({ userId: event.payload.personId, idempotencyKey });
+
+// Every user the provider was sent goes, each under a key of its own.
+export const onTenantForgotten = async ({
+  persons,
+  emailSender,
+  idempotencyKey,
+}: Port.OnTenantForgottenArgs) => {
+  for await (const userId of persons()) {
+    await emailSender.erase({ userId, idempotencyKey: `${idempotencyKey}:${userId}` });
+  }
+};

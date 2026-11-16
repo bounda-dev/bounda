@@ -11,6 +11,7 @@ import {
   type DispatchOptions,
   type DispatchResult,
   type ForgetOptions,
+  type ForgetTenantOptions,
   type IncludeRestrictedOptions,
   type ListDeadLettersArgs,
   type PersonalDataExport,
@@ -25,6 +26,8 @@ import {
   type StoredDispatch,
   type StoredEvent,
   type SubscriberFailure,
+  type TenantForgottenResult,
+  type TenantKeyVersions,
   type UnrestrictOptions,
 } from "@bounda-dev/core";
 import { unwrap } from "./outcome.ts";
@@ -91,6 +94,9 @@ export interface BoundaStub {
     actor: string | undefined,
     options: RedactRequest,
   ): PromiseLike<unknown>;
+  forgetTenant(tenant: string, actor?: string, options?: ForgetTenantOptions): PromiseLike<unknown>;
+  rotateTenantKey(actor?: string): PromiseLike<unknown>;
+  retireTenantKeys(actor?: string): PromiseLike<unknown>;
 }
 
 /**
@@ -192,6 +198,10 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       unwrap<StoredDispatch>(stub.unrestrict(personId, consistency, actor, options)),
     redact: (personId, options) =>
       unwrap<StoredDispatch>(stub.redact(personId, consistency, actor, options)),
+    forgetTenant: (tenant, options) =>
+      unwrap<TenantForgottenResult>(stub.forgetTenant(tenant, actor, options)),
+    rotateTenantKey: () => unwrap<TenantKeyVersions>(stub.rotateTenantKey(actor)),
+    retireTenantKeys: () => unwrap<readonly string[]>(stub.retireTenantKeys(actor)),
     as: (next) => {
       checkActor(next);
       return clientAs(next);

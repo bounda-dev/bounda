@@ -21,6 +21,7 @@ afterEach(() => {
   delete process.env.BOUNDA_ROLE;
   delete process.env.BOUNDA_TEST_MARKER;
   delete process.env.BOUNDA_ERROR_TEXT;
+  delete process.env.BOUNDA_TENANT;
 });
 
 describe("loadProject", () => {
@@ -77,6 +78,85 @@ describe("loadProject", () => {
     });
     expect(process.env.BOUNDA_TEST_MARKER).toBeUndefined();
     expect(project).toEqual({ config, registry });
+  });
+});
+
+describe("the tenant", () => {
+  // A configuration that is a function of the tenant, recording every tenant it was called with.
+  const perTenant = () => {
+    const tenants: string[] = [];
+    return {
+      tenants,
+      config: ({ tenant }: { readonly tenant: string }) => {
+        tenants.push(tenant);
+        return {
+          storage: memory(),
+          runtime: { role: tenant === "acme" ? "all" : "worker" },
+        } as const;
+      },
+    };
+  };
+
+  it("calls a configuration that is a function with the tenant named, BOUNDA_TENANT, or the default", async () => {
+    const named = perTenant();
+    process.env.BOUNDA_TENANT = "globex";
+    const project = await loadProject({
+      root,
+      loadEnv: false,
+      registry,
+      config: named.config,
+      tenant: "acme",
+      logger: silentLogger,
+    });
+    expect(project.tenant).toBe("acme");
+    expect(project.config.runtime?.role).toBe("all");
+    const fromEnv = await loadProject({
+      root,
+      loadEnv: false,
+      registry,
+      config: named.config,
+      logger: silentLogger,
+    });
+    expect(fromEnv.tenant).toBe("globex");
+    for (const blank of ["", "  "]) {
+      process.env.BOUNDA_TENANT = blank;
+      const unnamed = await loadProject({
+        root,
+        loadEnv: false,
+        registry,
+        config: named.config,
+        logger: silentLogger,
+      });
+      expect(unnamed.tenant).toBeUndefined();
+    }
+    expect(named.tenants).toEqual(["acme", "globex", "default", "default"]);
+  });
+
+  it("reads BOUNDA_TENANT once .env is loaded, and boots the app for the tenant", async () => {
+    const named = perTenant();
+    process.env.BOUNDA_TENANT = " acme ";
+    const app = await boot({
+      root,
+      signals: false,
+      logger: silentLogger,
+      registry,
+      importConfig: async () => ({ default: named.config }),
+    });
+    expect(named.tenants).toEqual(["acme"]);
+    expect(app.role).toBe("all");
+    expect((await app.status()).tenant?.tenant).toBe("acme");
+    await app.stop();
+    const unnamed = await boot({
+      root,
+      loadEnv: false,
+      signals: false,
+      logger: silentLogger,
+      registry,
+      config: { storage: memory() },
+      tenant: "globex",
+    });
+    expect((await unnamed.status()).tenant?.tenant).toBe("globex");
+    await unnamed.stop();
   });
 });
 

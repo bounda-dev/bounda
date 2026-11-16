@@ -10,6 +10,7 @@ export interface StorageTables {
   readonly idempotencyKeys: string;
   readonly personalKeys: string;
   readonly indexKeys: string;
+  readonly tenancy: string;
   readonly persons: string;
   readonly snapshots: string;
   readonly personRows: string;
@@ -34,6 +35,7 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
   personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
   indexKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "indexKeys" })),
+  tenancy: quoteIdentifier(storageTableNameFor({ prefix, table: "tenancy" })),
   persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
   snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
   personRows: quoteIdentifier(storageTableNameFor({ prefix, table: "personRows" })),

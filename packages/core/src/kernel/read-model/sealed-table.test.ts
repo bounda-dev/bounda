@@ -23,6 +23,7 @@ const fields: FieldsRecord = {
 
 // An index that reads as what it indexes, so a test sees which value a condition names.
 const indexer: BlindIndexer = {
+  epoch: "epoch-1",
   index: async ({ readModel, field, value }) => `${readModel}.${field}=${JSON.stringify(value)}`,
 };
 

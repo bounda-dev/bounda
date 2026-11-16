@@ -252,6 +252,34 @@ export type PersonalDataRedactedEvent = StoredEvent<
 >;
 
 /**
+ * Appended to the stream `bounda:<tenant>` by `forgetTenant` once the tenant's key is destroyed,
+ * and again, with the same id and time, by a start that finds the tenant forgotten and the event
+ * missing, as from a database restored from a copy. Every personal value of the tenant reads as
+ * nothing from then on, in every copy, and the app serves nothing: no read model, policy or
+ * process handles it. Only the recipients it names are told, through their `onTenantForgotten`.
+ */
+export const TENANT_FORGOTTEN_EVENT: "TenantForgotten" = "TenantForgotten";
+
+export interface TenantForgottenPayload {
+  readonly tenant: string;
+  /**
+   * The categories the tenant's persons held keys of when it was forgotten, every one gone.
+   */
+  readonly categories: readonly PersonalCategoryName[];
+  /**
+   * The recipients to tell of it (article 19): every port whose recipient was disclosed data of
+   * any of the tenant's persons, or may have been, as the store recorded it when the event
+   * committed; absent when there is none to tell.
+   */
+  readonly recipients?: readonly NotifiedRecipient[];
+}
+
+export type TenantForgottenEvent = StoredEvent<
+  typeof TENANT_FORGOTTEN_EVENT,
+  TenantForgottenPayload
+>;
+
+/**
  * The runtime's events, by the key a module's file name gives them.
  */
 export const BOUNDA_EVENTS: Readonly<Record<string, string>> = {

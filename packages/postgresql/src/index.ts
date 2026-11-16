@@ -13,6 +13,8 @@ import {
   createSqlPersonStore,
   createSqlRecipientStore,
   createSqlSubscriberFailureStore,
+  createSqlTenancyStore,
+  createSqlTenantKeyStore,
   inspectSqlTable,
   postgresqlDialect,
   quoteName,
@@ -31,6 +33,7 @@ import {
   postgresqlCheckpointsScope,
   postgresqlForgetLedgerScope,
   postgresqlStorageScope,
+  postgresqlTenantKeysScope,
   readPostgresqlSchemaVersions,
 } from "./migrations.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
@@ -108,6 +111,7 @@ export const postgresql: PostgresqlFunction = (options) => {
     storage: postgresqlStorageScope({ schema, tables }),
     checkpoints: postgresqlCheckpointsScope(tables),
     "forget-ledger": postgresqlForgetLedgerScope(tables.forgetLedger),
+    "tenant-keys": postgresqlTenantKeysScope(tables.tenantKeys),
   };
   // A use of the pool for one call, handed back whatever the call does.
   const briefly = async <T>(work: (connection: Connection) => Promise<T>): Promise<T> => {
@@ -213,6 +217,11 @@ export const postgresql: PostgresqlFunction = (options) => {
             table: tables.indexKeys,
             dialect: postgresqlDialect,
           }),
+          tenancy: createSqlTenancyStore({
+            db,
+            table: tables.tenancy,
+            dialect: postgresqlDialect,
+          }),
           // The append lock comes first, before any row the work may lock: two transactions that
           // took the lock and a row in opposite orders would deadlock.
           transact: (work) =>
@@ -286,6 +295,22 @@ export const postgresql: PostgresqlFunction = (options) => {
         await release();
         return inspected;
       }),
+    createTenantKeyStore: async () => {
+      const { db } = open();
+      return createSqlTenantKeyStore({
+        db,
+        table: tables.tenantKeys,
+        dialect: postgresqlDialect,
+        ensureSchema: () =>
+          migratePostgresql({
+            db,
+            schema,
+            prefix: tablePrefix,
+            scopes: [postgresqlTenantKeysScope(tables.tenantKeys)],
+          }),
+        close: release,
+      });
+    },
     createForgetLedger: async ({ tenant }) => {
       const { db } = open();
       return createSqlForgetLedger({

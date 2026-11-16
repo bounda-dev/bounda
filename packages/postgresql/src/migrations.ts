@@ -20,6 +20,8 @@ import {
   type SqlExecutor,
   type SqlTransaction,
   schemaMigrationsTableFor,
+  tenancyTableStatement,
+  tenantKeysTableStatement,
 } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
 import {
@@ -223,7 +225,30 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
         for (const statement of recipientTablesStatements(tables)) await tx.run(statement, []);
       },
     },
+    {
+      version: 7,
+      migrate: async (tx) => {
+        await tx.run(tenancyTableStatement(tables.tenancy), []);
+        // Snapshots and remembered rejections are sealed at rest from now on. Those kept in the clear
+        // go: a snapshot is only a cache, and a rejection sent again is decided again, as after
+        // a forgetting; a stored result holds ids alone, and stays until it expires.
+        await tx.run(`DELETE FROM ${tables.snapshots}`, []);
+        await tx.run(
+          `DELETE FROM ${tables.idempotencyKeys} WHERE jsonb_typeof("outcome"->'rejected') = 'string'`,
+          [],
+        );
+      },
+    },
   ],
+});
+
+export interface PostgresqlTenantKeysScopeFunction {
+  (table: string): SchemaScope;
+}
+
+export const postgresqlTenantKeysScope: PostgresqlTenantKeysScopeFunction = (table) => ({
+  scope: SCHEMA_SCOPES.tenantKeys,
+  migrations: [{ version: 1, migrate: (tx) => tx.run(tenantKeysTableStatement(table), []) }],
 });
 
 export interface PostgresqlCheckpointsScopeFunction {

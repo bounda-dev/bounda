@@ -162,29 +162,153 @@ export const createDisposableKey: CreateDisposableKeyFunction = async () => {
   return { fingerprint: await fingerprintOf(cryptoKey), cryptoKey, retained: false };
 };
 
+/**
+ * What a key is for: a person's or the database's, which seals and opens values, or a tenant's,
+ * which only wraps and unwraps those.
+ */
+export type KeyKind = "personal" | "tenant";
+
+export const TENANT_KEY_ALGORITHM = "AES-KW";
+
+/**
+ * The usages of a tenant key: it never seals a value, only wraps the keys that do.
+ */
+export const TENANT_KEY_USAGES: readonly KeyUsage[] = ["wrapKey", "unwrapKey"];
+
+export interface KeyAlgorithmOfFunction {
+  (kind: KeyKind): { readonly name: string; readonly usages: readonly KeyUsage[] };
+}
+
+export const keyAlgorithmOf: KeyAlgorithmOfFunction = (kind) =>
+  kind === "tenant"
+    ? { name: TENANT_KEY_ALGORITHM, usages: TENANT_KEY_USAGES }
+    : { name: PERSONAL_KEY_ALGORITHM, usages: PERSONAL_KEY_USAGES };
+
 export interface ImportRawKeyArgs {
   /**
    * Zeroed once imported, imported or not.
    */
   readonly raw: Uint8Array;
   readonly extractable: boolean;
+  /**
+   * Defaults to `"personal"`.
+   */
+  readonly kind?: KeyKind;
 }
 
 export interface ImportRawKeyFunction {
   (args: ImportRawKeyArgs): Promise<CryptoKey>;
 }
 
-export const importRawKey: ImportRawKeyFunction = async ({ raw, extractable }) => {
+export const importRawKey: ImportRawKeyFunction = async ({
+  raw,
+  extractable,
+  kind = "personal",
+}) => {
   const copy = Uint8Array.from(raw);
+  const { name, usages } = keyAlgorithmOf(kind);
   try {
-    return await crypto.subtle.importKey("raw", copy, PERSONAL_KEY_ALGORITHM, extractable, [
-      ...PERSONAL_KEY_USAGES,
-    ]);
+    return await crypto.subtle.importKey("raw", copy, name, extractable, [...usages]);
   } finally {
     copy.fill(0);
     raw.fill(0);
   }
 };
+
+export interface GenerateWrappableTenantKeyFunction {
+  (): Promise<CryptoKey>;
+}
+
+/**
+ * A fresh tenant key that can be exported, so the master key can wrap it: never used to wrap a
+ * key, never kept past wrapping it.
+ */
+export const generateWrappableTenantKey: GenerateWrappableTenantKeyFunction = async () =>
+  crypto.subtle.generateKey({ name: TENANT_KEY_ALGORITHM, length: KEY_BITS }, true, [
+    ...TENANT_KEY_USAGES,
+  ]);
+
+// What a tenant key's check value wraps: a key every byte of which is zero, which nothing else uses.
+const CHECK_KEY_BYTES = 16;
+
+export interface TenantFingerprintOfFunction {
+  (key: CryptoKey): Promise<string>;
+}
+
+/**
+ * A tenant key's check value, in base64: the AES-KW wrapping of a key of zeroes, which reveals
+ * nothing of the key and is computed from the key itself, so one that can never be exported is
+ * checked all the same.
+ */
+// A public constant, imported once a process: no secret goes through it.
+let checkKey: Promise<CryptoKey> | null = null;
+
+export const tenantFingerprintOf: TenantFingerprintOfFunction = async (key) => {
+  checkKey ??= crypto.subtle.importKey(
+    "raw",
+    new Uint8Array(CHECK_KEY_BYTES),
+    PERSONAL_KEY_ALGORITHM,
+    true,
+    ["encrypt"],
+  );
+  return toBase64(
+    new Uint8Array(await crypto.subtle.wrapKey("raw", await checkKey, key, TENANT_KEY_ALGORITHM)),
+  );
+};
+
+export interface WrapUnderTenantKeyFunction {
+  (key: CryptoKey, tenantKey: CryptoKey): Promise<Uint8Array>;
+}
+
+/**
+ * `key`, which must be exportable, wrapped under a tenant key by WebCrypto: its raw bytes never
+ * reach JavaScript.
+ */
+export const wrapUnderTenantKey: WrapUnderTenantKeyFunction = async (key, tenantKey) =>
+  new Uint8Array(await crypto.subtle.wrapKey("raw", key, tenantKey, TENANT_KEY_ALGORITHM));
+
+export interface UnwrapUnderTenantKeyArgs {
+  readonly wrapped: Uint8Array;
+  readonly tenantKey: CryptoKey;
+  /**
+   * Only to wrap the key again; a key to seal and open with never is.
+   */
+  readonly extractable: boolean;
+  /**
+   * A key to seal and open with, the default, or a base keys are derived from.
+   */
+  readonly as?: "seal" | "derivation";
+}
+
+export interface UnwrapUnderTenantKeyFunction {
+  (args: UnwrapUnderTenantKeyArgs): Promise<CryptoKey>;
+}
+
+export const unwrapUnderTenantKey: UnwrapUnderTenantKeyFunction = async ({
+  wrapped,
+  tenantKey,
+  extractable,
+  as = "seal",
+}) =>
+  as === "derivation"
+    ? crypto.subtle.unwrapKey(
+        "raw",
+        Uint8Array.from(wrapped),
+        tenantKey,
+        TENANT_KEY_ALGORITHM,
+        "HKDF",
+        false,
+        ["deriveKey"],
+      )
+    : crypto.subtle.unwrapKey(
+        "raw",
+        Uint8Array.from(wrapped),
+        tenantKey,
+        TENANT_KEY_ALGORITHM,
+        PERSONAL_KEY_ALGORITHM,
+        extractable,
+        [...PERSONAL_KEY_USAGES],
+      );
 
 export interface WithRawKeyFunction {
   <T>(key: CryptoKey, use: (raw: Uint8Array<ArrayBuffer>) => Promise<T>): Promise<T>;

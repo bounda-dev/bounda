@@ -23,6 +23,11 @@ export interface LibsqlConnection extends SqliteConnection<Client> {
    * under one frees what libSQL's native code is still using.
    */
   settled(): Promise<void>;
+  /**
+   * Runs `task` on the client with no other statement of this process alongside: between them,
+   * never inside a transaction.
+   */
+  alone<T>(task: () => Promise<T>): Promise<T>;
 }
 
 export interface CreateSqliteDatabaseFunction {
@@ -100,6 +105,7 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
   return {
     raw,
     isBusy,
+    alone: (task) => tracked(prepared(() => (local ? serially(task) : task()))),
     settled: async () => {
       while (running.size > 0) await Promise.allSettled([...running]);
     },

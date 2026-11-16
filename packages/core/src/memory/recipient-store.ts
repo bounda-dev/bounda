@@ -122,6 +122,27 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
           .sort(([a], [b]) => byText(a, b))
           .map(([port, named]) => ({ port, persons: named.size }));
       },
+      received: async () => {
+        const received = new Map<string, Set<string>>();
+        for (const { port, category } of disclosures.values()) {
+          received.set(port, (received.get(port) ?? new Set()).add(category));
+        }
+        return new Map(
+          [...received.entries()]
+            .sort(([a], [b]) => byText(a, b))
+            .map(([port, categories]) => [port, [...categories].sort(byText)]),
+        );
+      },
+      personsOf: async ({ port, after, limit }) =>
+        [
+          ...new Set(
+            [...disclosures.values()]
+              .filter((row) => row.port === port && (after === null || row.person > after))
+              .map(({ person }) => person),
+          ),
+        ]
+          .sort(byText)
+          .slice(0, limit),
     },
     snapshot: () => {
       const kept = { disclosures: new Map(disclosures), recipients: new Map(recipients) };

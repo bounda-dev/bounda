@@ -11,6 +11,10 @@ import {
   type KeyWrapperDefinition,
 } from "../kernel/personal-data/key-wrapper.ts";
 import {
+  isTenantKeySource,
+  type TenantKeySource,
+} from "../kernel/personal-data/tenant-key-source.ts";
+import {
   DEFAULT_BACKOFF_BASE_DELAY_MS,
   DEFAULT_BACKOFF_MAX_DELAY_MS,
   DEFAULT_BATCH_SIZE,
@@ -159,6 +163,12 @@ const runtime = z.strictObject({
         })
         .optional(),
       forgetLedger: forgetLedger.optional(),
+      tenantKeys: z
+        .custom<TenantKeySource>(isTenantKeySource, {
+          message:
+            'Expected a tenant key store such as sqlite({ path: "./keys/tenant-keys.db" }) or one from defineTenantKeyStore',
+        })
+        .optional(),
     })
     .optional(),
   deadLetters: z.strictObject({ retention: timeout.optional() }).optional(),
@@ -310,6 +320,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
       personalData: {
         retention: parsed.runtime?.personalData?.retention ?? null,
         keyWrapper: parsed.runtime?.personalData?.keyWrapper ?? null,
+        tenantKeys: parsed.runtime?.personalData?.tenantKeys ?? null,
         forgetLedger: resolveForgetLedger(parsed.runtime?.personalData?.forgetLedger),
       },
       deadLetters: {

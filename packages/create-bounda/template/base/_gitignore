@@ -2,4 +2,5 @@ node_modules/
 .bounda/
 **/+types/
 data/
+keys/
 .env

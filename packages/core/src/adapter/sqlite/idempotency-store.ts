@@ -75,6 +75,7 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
         throw new IdempotencyKeyTakenError(key);
       }
     },
+    clear: () => db.run(`DELETE FROM ${table}`, []),
     purge: async ({ now }) => {
       const rows = await db.all(`DELETE FROM ${table} WHERE "expires_at" <= ? RETURNING "key"`, [
         now.toISOString(),

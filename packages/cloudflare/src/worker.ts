@@ -5,9 +5,11 @@ import {
   type DispatchOptions,
   errorFields,
   type Logger,
+  listTenantsUnderPreviousMaster,
   resolveErrorText,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
+import type { BoundaObjectMethods } from "./bounda-object.ts";
 import type { BoundaStub } from "./client.ts";
 import { cloudflareStorageOf } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
@@ -75,6 +77,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   PROCESSING_RESTRICTED: 409,
   CONCURRENCY_CONFLICT: 409,
   CHAIN_DEPTH_EXCEEDED: 409,
+  TENANT_FORGOTTEN: 410,
   HANDLER_TIMEOUT: 504,
 };
 
@@ -146,6 +149,25 @@ const isActor = (actor: unknown): boolean => {
   return true;
 };
 
+// The id of an object reached without a name, which names its tenant then.
+const OBJECT_ID = /^[0-9a-f]{64}$/;
+
+// How many objects the schedule wakes at once.
+const WAKE_BATCH = 50;
+
+// A tenant's object: by its id when the name is one, else by its name, a name that only looks
+// like an id included.
+const objectIdOf = (namespace: DurableObjectNamespace, tenant: string): DurableObjectId => {
+  if (OBJECT_ID.test(tenant)) {
+    try {
+      return namespace.idFromString(tenant);
+    } catch {
+      // A name of 64 hexadecimal digits: an id of no object of this namespace.
+    }
+  }
+  return namespace.idFromName(tenant);
+};
+
 const route = (pathname: string): { readonly kind: string; readonly name: string } | null => {
   const match = /^\/(commands|queries)\/([A-Za-z][A-Za-z0-9]*)\/?$/.exec(pathname);
   return match === null ? null : { kind: match[1] as string, name: match[2] as string };
@@ -162,9 +184,12 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * Refusals come back as `{ error: { code, message } }`: 400 for a payload that fails validation,
  * with `issues`, 404 for an unknown command, query or row, 409 for a command's rejection, with its
  * code in `rejected`, for one refused because the person it touches is restricted, or for a
- * conflict, 413 for a body over `maxPayloadBytes`. Anything else is a
+ * conflict, 410 once the tenant was forgotten, 413 for a body over `maxPayloadBytes`. Anything
+ * else is a
  * 500 without its message, which is logged instead, as `BOUNDA_ERROR_TEXT` in the Worker's `env`
- * says, or else `runtime.telemetry.errorText`. There is no authentication and no operator
+ * says, or else `runtime.telemetry.errorText`. Its `scheduled`, run by a cron trigger, wakes every
+ * object whose tenant's key is still under a previous master key, so a rotation of the master key
+ * reaches the tenants whose objects sleep. There is no authentication and no operator
  * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
@@ -179,6 +204,48 @@ export const createWorker: CreateWorkerFunction = ({
   const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
   return {
+    // A rotation of the master key rewraps a tenant's key in the tenant's own object, the one
+    // writer of its record: each one still under a previous master key is woken to do it.
+    scheduled: async (_controller, env) => {
+      const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
+      if (namespace === undefined) {
+        logger.error("bounda worker has no such binding", { binding });
+        return;
+      }
+      if (config.runtime?.personalData?.tenantKeys === undefined) return;
+      const tenants = await listTenantsUnderPreviousMaster({ config, env });
+      const errorText = resolveErrorText({ env, config, ignoreInvalidEnv: true });
+      let failed = 0;
+      for (let start = 0; start < tenants.length; start += WAKE_BATCH) {
+        const batch = tenants.slice(start, start + WAKE_BATCH);
+        const woken = await Promise.allSettled(
+          batch.map((tenant) =>
+            unwrap(
+              (
+                namespace.get(objectIdOf(namespace, tenant)) as unknown as Pick<
+                  BoundaObjectMethods,
+                  "wake"
+                >
+              ).wake(),
+            ),
+          ),
+        );
+        for (const [index, outcome] of woken.entries()) {
+          if (outcome.status === "fulfilled") continue;
+          failed += 1;
+          logger.error("bounda worker could not wake a tenant's object", {
+            tenant: batch[index],
+            ...errorFields({ error: outcome.reason, errorText }),
+          });
+        }
+      }
+      logger.info(
+        tenants.length === 0
+          ? "bounda worker found no tenant left under a previous master key"
+          : "bounda worker woke the tenants still under a previous master key",
+        { tenants: tenants.length, failed },
+      );
+    },
     fetch: async (request, env) => {
       const url = new URL(request.url);
       const target = route(url.pathname);

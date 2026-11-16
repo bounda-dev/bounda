@@ -22,6 +22,7 @@ sqlite({ url: "libsql://my-app-me.turso.io", authToken: process.env.TURSO_AUTH_T
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `path` | | Path of the database file, created if missing |
+| `encrypt` | `true` | With `path`: in an app with a key wrapper and a tenant key store, encrypt the file under a key of the tenant's own |
 | `memory: true` | | An in-memory database that lives as long as the app |
 | `url`, `authToken` | | A libSQL URL (`libsql://`, `https://` or `file:`) and its token |
 | `tablePrefix` | `bounda_` | Put in front of every table Bounda creates |
@@ -52,6 +53,22 @@ The SQL itself is not specific to libSQL. The stores, the schema and the read mo
 `@bounda-dev/core/adapter/sqlite`, and `createSqliteAdapter` builds a complete adapter from any
 SQLite connection a host brings: this package brings libSQL, and the same code runs inside a
 Cloudflare Durable Object.
+
+## Encryption
+
+In an app with a key wrapper and a tenant key store, the file is encrypted under a key of its
+tenant's own, which [forgetting the tenant](/guides/personal-data/#forgetting-a-tenant) destroys
+with every copy of the file: see [Encrypted database
+files](/guides/personal-data/#encrypted-database-files). A file in the clear is encrypted when the
+app first starts with it to itself, and from then on only what holds the tenant's keys opens it:
+the app, `bounda migrate`, `bounda forgotten`, `bounda rebuild` and `withEncryptedFiles`. Pass
+`encrypt: false` to keep it in the clear, for a tool of your own that reads the file directly. A
+tenant key store's or a forget ledger's file is never encrypted: neither is a tenant's.
+
+An adapter pointed at another file also serves as a [tenant key
+store](/guides/personal-data/#the-tenant-key-store), `tenantKeys: sqlite({ path:
+"./keys/tenant-keys.db" })`, or as a [forget ledger](/guides/personal-data/#the-forget-ledger):
+it creates its table there on first use. One pointed at the storage's own file is refused.
 
 ## In tests
 

@@ -1,10 +1,12 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createApp } from "@bounda-dev/core";
+import { masterKey } from "@bounda-dev/core/config";
 import { beforeEach, describe, expect, it } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
+import { kvTenantKeys } from "../src/tenant-keys.ts";
 import { regionLog, regionRegistry } from "./app.ts";
 
 beforeEach(() => {
@@ -21,12 +23,11 @@ describe("an implementation built by create inside a Durable Object", () => {
     expect(regionLog).toEqual(["eu-test:acme:o-1", "eu-test:acme:o-2"]);
   });
 
-  it("receives no tenant in an object reached through an id without a name", async () => {
-    const store = connect<typeof regionRegistry>(
-      env.REGION_STORE.get(env.REGION_STORE.newUniqueId()),
-    );
+  it("receives the object's id as its tenant when it was reached through an id without a name", async () => {
+    const id = env.REGION_STORE.newUniqueId();
+    const store = connect<typeof regionRegistry>(env.REGION_STORE.get(id));
     await store.commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" });
-    expect(regionLog).toEqual(["eu-test:unnamed:o-1"]);
+    expect(regionLog).toEqual([`eu-test:${id.toString()}:o-1`]);
   });
 
   it("is closed through Symbol.asyncDispose when the app stops", async () => {
@@ -34,7 +35,18 @@ describe("an implementation built by create inside a Durable Object", () => {
     await runInDurableObject(stub, async (_instance, state) => {
       const app = await createApp({
         registry: regionRegistry,
-        config: configForObject({ storage: cloudflare() }, state.storage),
+        config: configForObject(
+          {
+            storage: cloudflare(),
+            runtime: {
+              personalData: {
+                keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+                tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+              },
+            },
+          },
+          state.storage,
+        ),
         env,
       });
       await app.commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" });

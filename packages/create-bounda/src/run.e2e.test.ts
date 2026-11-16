@@ -387,9 +387,16 @@ describe("a project created by create-bounda", () => {
         10_000,
       );
 
-      // An edited configuration reboots the app: here, on a database of its own.
+      // An edited configuration reboots the app: here, on a database of its own, whose tenant's
+      // key is apart from the first one's, as a tenant's key belongs to one database.
       expect(original).toContain("./data/app.db");
-      await writeFile(config, original.replace("./data/app.db", "./data/edited.db"));
+      expect(original).toContain("./keys/tenant-keys.db");
+      await writeFile(
+        config,
+        original
+          .replace("./data/app.db", "./data/edited.db")
+          .replace("./keys/tenant-keys.db", "./keys/edited.db"),
+      );
       await until(
         async () =>
           (await rendered(await fetch(`${server.url}/?customer=grace`))).includes(

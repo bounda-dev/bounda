@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
+import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ValidationError } from "../../contracts/errors.ts";
@@ -19,7 +20,6 @@ import {
   BACKFILL_PREFIX,
 } from "./backfill.ts";
 import { HOLD_MS } from "./hold.ts";
-import { defineKeyWrapper } from "./key-wrapper.ts";
 
 const START = new Date("2026-05-01T00:00:00.000Z");
 const MINUTE_MS = 60_000;
@@ -464,7 +464,7 @@ describe("the backfill of personal data", () => {
     await before.stop();
     const runtime: RuntimeConfig = { dispatcher: { batchSize: 1 } };
     const one = await start({ adapter, marks: marked, runtime });
-    const other = await start({ adapter, marks: marked, runtime });
+    const other = await start({ adapter, marks: marked });
     await one.app.runUntilIdle({ maxPasses: 1 });
     await other.app.runUntilIdle();
     expect(await other.app.getLag()).toMatchObject({
@@ -480,7 +480,28 @@ describe("the backfill of personal data", () => {
   });
 
   it("holds the walk for every instance after a failure, longer after each, until one succeeds", async () => {
-    const adapter = memory();
+    let down = false;
+    const inner = memory();
+    // The key table refuses new keys while it is down, as a database that fails would.
+    const refusing = <Keys extends PersonalKeyStore>(keys: Keys): Keys => ({
+      ...keys,
+      add: (...args: Parameters<PersonalKeyStore["add"]>) =>
+        down ? Promise.reject(new Error("key table is down")) : keys.add(...args),
+    });
+    const adapter: Adapter = {
+      ...inner,
+      createStorage: async () => {
+        const storage = await inner.createStorage();
+        return {
+          ...storage,
+          personalKeys: refusing(storage.personalKeys),
+          transact: (work) =>
+            storage.transact((transaction) =>
+              work({ ...transaction, personalKeys: refusing(transaction.personalKeys) }),
+            ),
+        };
+      },
+    };
     const before = await start({ adapter, marks: unmarked });
     await before.commands.registerCustomer?.({
       customerId: "c-1",
@@ -488,18 +509,9 @@ describe("the backfill of personal data", () => {
       name: "Ada",
     });
     await before.stop();
-    let down = true;
-    const keyWrapper = defineKeyWrapper(async () => ({
-      kid: "test",
-      wrap: async (key) => {
-        if (down) throw new Error("key service is down");
-        return key;
-      },
-      unwrap: async ({ wrapped }) => wrapped,
-    }));
+    down = true;
     const { logger, logs } = recording();
-    const runtime: RuntimeConfig = { personalData: { keyWrapper } };
-    const one = await start({ adapter, marks: marked, runtime, logger });
+    const one = await start({ adapter, marks: marked, logger });
     await one.app.runUntilIdle();
     expect(logs).toContainEqual([
       "error",
@@ -509,7 +521,7 @@ describe("the backfill of personal data", () => {
     expect(await one.app.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));
     await one.stop();
 
-    const other = await start({ adapter, marks: marked, runtime });
+    const other = await start({ adapter, marks: marked });
     await other.app.runUntilIdle();
     expect(await other.app.getLag()).toMatchObject({ personalDataBackfill: { position: 0 } });
     expect(await other.app.nextDueAt()).toEqual(new Date(START.getTime() + HOLD_MS));

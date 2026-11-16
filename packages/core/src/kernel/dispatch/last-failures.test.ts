@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { testMetadata } from "../../adapter/testing/fixtures.ts";
-import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
-import { createPersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
-import { createRecordingLogger } from "../test-support.ts";
+import { createRecordingLogger, testWrapping } from "../test-support.ts";
 import { createLastFailures } from "./last-failures.ts";
 
 const event: StoredEvent = {
@@ -24,10 +22,7 @@ const event: StoredEvent = {
 const setUp = async () => {
   const storage = await memory().createStorage();
   const { logger, entries } = createRecordingLogger("omit");
-  const keys = createPersonalKeyWrapping({
-    wrapper: null,
-    clock: createFixedClock(),
-  }).over(storage.personalKeys);
+  const keys = testWrapping().over(storage.personalKeys);
   const failing = {
     ...storage.subscriberFailures,
     record: () => Promise.reject(new Error("store is down")),
@@ -67,9 +62,7 @@ describe("createLastFailures", () => {
     const lastFailures = createLastFailures({
       store: storage.subscriberFailures,
       aggregates: buildAggregates({ registry: { aggregates: {}, readModels: {} }, ports: {} }),
-      keys: createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }).over(
-        storage.personalKeys,
-      ),
+      keys: testWrapping().over(storage.personalKeys),
       logger: createRecordingLogger("omit").logger,
     });
     await lastFailures.record({

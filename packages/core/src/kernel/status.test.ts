@@ -25,6 +25,30 @@ describe("databasesOf", () => {
       ["readModels.notes", ["checkpoints"]],
     ]);
   });
+
+  it("names the tenant key store's scope in the database it shares, or as a database of its own", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bounda-databases-"));
+    const storage = createNodeSqliteAdapter(join(directory, "storage.db")).adapter;
+    const reports = createNodeSqliteAdapter(join(directory, "reports.db")).adapter;
+    const keys = createNodeSqliteAdapter(join(directory, "keys.db")).adapter;
+    const scopesOf = (tenantKeys: typeof keys) =>
+      databasesOf(
+        resolveConfig({
+          storage,
+          readModels: { reports },
+          runtime: { personalData: { tenantKeys } },
+        }),
+      ).map(({ database, scopes }) => [database, scopes]);
+    expect(scopesOf(createNodeSqliteAdapter(join(directory, "reports.db")).adapter)).toEqual([
+      ["storage", ["storage", "checkpoints"]],
+      ["readModels.reports", ["checkpoints", "tenant-keys"]],
+    ]);
+    expect(scopesOf(keys)).toEqual([
+      ["storage", ["storage", "checkpoints"]],
+      ["readModels.reports", ["checkpoints"]],
+      ["tenantKeys", ["tenant-keys"]],
+    ]);
+  });
 });
 
 describe("readAppStatus", () => {

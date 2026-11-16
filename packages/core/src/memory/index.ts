@@ -21,6 +21,7 @@ import {
 } from "../adapter/storage/restricted-persons.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import { RebuildSupersededError } from "../contracts/errors.ts";
+import { createEphemeralKeys } from "../kernel/personal-data/ephemeral-keys.ts";
 import type { FieldsRecord } from "../modules/view.ts";
 import { createMemoryCheckpointStore } from "./checkpoint-store.ts";
 import { createKeptDeadLetterStore } from "./dead-letter-store.ts";
@@ -39,6 +40,8 @@ import { createKeptScheduler } from "./scheduler.ts";
 import { createMemorySnapshotStore } from "./snapshot-store.ts";
 import { createMemorySubscriberFailureStore } from "./subscriber-failure-store.ts";
 import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./table.ts";
+import { createMemoryTenancyStore } from "./tenancy-store.ts";
+import { createMemoryTenantKeyStore } from "./tenant-key-store.ts";
 import {
   createCheckpointJournal,
   createMemoryLocks,
@@ -105,6 +108,8 @@ export const memory: MemoryFunction = (options = {}) => {
   const tables = new Map<string, LiveTable>();
   const shadows = new Map<string, MemoryTable<Record<string, unknown>>>();
   const forgetLedgers = createMemoryForgetLedgers();
+  const tenantKeys = createMemoryTenantKeyStore();
+  const ephemeral = createEphemeralKeys(tenantKeys);
   const restrictedPersons = createMemoryRestrictedPersons();
   // What `createStorage` opened, read by `inspect`.
   let storageTables: () => readonly InspectedTable[] = () => [];
@@ -192,6 +197,7 @@ export const memory: MemoryFunction = (options = {}) => {
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
       const subscriberFailures = createMemorySubscriberFailureStore();
       const indexKeys = createMemoryIndexKeyStore();
+      const tenancy = createMemoryTenancyStore();
       const recipients = createKeptRecipientStore();
       const stores = {
         eventStore: createMemoryEventStore({
@@ -246,6 +252,7 @@ export const memory: MemoryFunction = (options = {}) => {
             rows: entriesRows(personalKeys.entries, "person"),
           }),
           storageTable({ table: "indexKeys", key: ["scope"], rows: indexKeys.rows() }),
+          storageTable({ table: "tenancy", key: ["scope"], rows: tenancy.rows() }),
           storageTable({
             table: "disclosures",
             key: ["person", "port", "recipient", "category"],
@@ -280,6 +287,7 @@ export const memory: MemoryFunction = (options = {}) => {
         snapshotStore,
         subscriberFailures,
         indexKeys,
+        tenancy,
         transact: createMemoryStorageTransaction({
           ...stores,
           recipients,
@@ -405,6 +413,8 @@ export const memory: MemoryFunction = (options = {}) => {
       };
     },
     createForgetLedger: async ({ tenant }) => forgetLedgers.ledgerOf(tenant),
+    createTenantKeyStore: async () => tenantKeys,
+    ephemeralKeys: ephemeral,
     inspect: async () => [
       ...storageTables(),
       storageTable({ table: "checkpoints", key: ["subscriber"], rows: checkpointStore.rows() }),
@@ -425,6 +435,7 @@ export const memory: MemoryFunction = (options = {}) => {
         key: ["tenant", "eventId"],
         rows: forgetLedgers.rows(),
       }),
+      storageTable({ table: "tenantKeys", key: ["tenant"], rows: tenantKeys.rows() }),
       ...[...tables.entries()].map(([name, { current }]) => readModelTable(name, current)),
       ...[...shadows.entries()].map(([name, shadow]) => readModelTable(name, shadow, true)),
     ],

@@ -237,6 +237,22 @@ describe("bounda() Vite plugin", () => {
     expect(load("\0@bounda-dev/react-router/app", "server")).toContain('consistency: "eventual"');
   });
 
+  it("passes the bound of tenants' apps through, and leaves it out when not given", () => {
+    const bounded = harness("/project", { tenantApps: { max: 5, idleMs: 1_000 } });
+    bounded.configure("serve");
+    expect(bounded.load("\0@bounda-dev/react-router/app", "server")).toContain(
+      "tenantApps: { max: 5, idleMs: 1000 },",
+    );
+    const forever = harness("/project", { tenantApps: { idleMs: Number.POSITIVE_INFINITY } });
+    forever.configure("serve");
+    expect(forever.load("\0@bounda-dev/react-router/app", "server")).toContain(
+      "tenantApps: { idleMs: Infinity },",
+    );
+    const plain = harness("/project", {});
+    plain.configure("serve");
+    expect(plain.load("\0@bounda-dev/react-router/app", "server")).not.toContain("tenantApps");
+  });
+
   it("serves the client a stub that fails loudly when touched", async () => {
     const { configure, load } = harness("/project");
     configure("serve");

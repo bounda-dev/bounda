@@ -1,23 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PERSONAL_CATEGORY as D } from "../../adapter/storage/personal-key-store.ts";
-import { createFixedClock } from "../../contracts/clock.ts";
 import { createKeptPersonalKeyStore } from "../../memory/personal-key-store.ts";
+import { testWrapping } from "../test-support.ts";
 import type { PersonalKey } from "./crypto.ts";
 import { witnessedWrapping } from "./witness.ts";
-import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
 
 describe("a witnessed key wrapping", () => {
   it("tells of every key it hands out to seal or open with, and of none a person does not hold", async () => {
     const told: [string, PersonalKey][] = [];
-    const wrapping = witnessedWrapping(
-      createPersonalKeyWrapping({ wrapper: null, clock: createFixedClock() }),
-      {
-        onPersonalKey: (person, held) => {
-          told.push([person, held]);
-        },
-        onForgetLedger: () => {},
+    const wrapping = witnessedWrapping(testWrapping(), {
+      onPersonalKey: (person, held) => {
+        told.push([person, held]);
       },
-    );
+      onForgetLedger: () => {},
+    });
     const keys = wrapping.over(
       createKeptPersonalKeyStore({ restricted: () => false, lastActiveAt: () => null }).store,
     );

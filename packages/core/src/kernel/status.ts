@@ -1,5 +1,6 @@
 import type { Adapter, SchemaScopeName, SchemaVersion } from "../adapter/adapter.ts";
 import { isAdapter } from "../adapter/adapter.ts";
+import type { FileEncryptionState } from "../adapter/storage/encrypted-file.ts";
 import type {
   StoredSubscriberFailure,
   SubscriberFailureStore,
@@ -15,11 +16,12 @@ import type {
 } from "./personal-data/reconciliation.ts";
 import type { RetentionStatus, RetentionSweep } from "./personal-data/retention.ts";
 import type { KeyRotation, KeyRotationStatus } from "./personal-data/rotation.ts";
+import type { TenantKeyStatus } from "./personal-data/tenant-keys.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
 
 /**
  * A scope of Bounda's tables where it lives: `storage`, a read model's database of its own as
- * `readModels.<name>`, or `forgetLedger`.
+ * `readModels.<name>`, `forgetLedger`, or `tenantKeys`.
  */
 export interface SchemaStatus extends SchemaVersion {
   readonly database: string;
@@ -59,7 +61,14 @@ export interface AppStatus {
    */
   readonly forgetLedger: ForgetLedgerReconciliationStatus | null;
   /**
-   * `null` without `runtime.personalData.keyWrapper`.
+   * The tenant the app serves and its key: the version in force, the older ones still held, the
+   * master key they are wrapped under, and when the tenant was forgotten. `null` for an app without
+   * keys, which marks nothing personal and names none.
+   */
+  readonly tenant: TenantKeyStatus | null;
+  /**
+   * Where the keys under the tenant's key stand as it rotates. `null` for an app without keys,
+   * and once the tenant is forgotten.
    */
   readonly keyRotation: KeyRotationStatus | null;
   /**
@@ -76,6 +85,22 @@ export interface AppStatus {
    * Every recipient the app declares or the store remembers data went to, by port.
    */
   readonly recipients: readonly RecipientStatus[];
+  /**
+   * Every database file the app opened under the tenant's keys, and where its encryption stands:
+   * one still `"clear"`, or under an `"earlier"` key, is encrypted once no other connection has it
+   * open. Empty without such a file.
+   */
+  readonly files: readonly EncryptedFileStatus[];
+}
+
+/**
+ * A database file opened under the tenant's keys: the database of the configuration it holds, the
+ * file, and where its encryption stands.
+ */
+export interface EncryptedFileStatus {
+  readonly database: string;
+  readonly file: string;
+  readonly state: FileEncryptionState;
 }
 
 /**
@@ -105,6 +130,7 @@ export interface ReadAppStatusArgs {
   readonly restores: RestoreWatch;
   readonly reconciliation?: ForgetLedgerReconciliation | undefined;
   readonly rotation?: KeyRotation | undefined;
+  readonly tenant?: (() => Promise<TenantKeyStatus>) | undefined;
   readonly retention?: RetentionSweep | undefined;
   readonly letterRetention?: DeadLetterRetention | undefined;
   readonly recipients?: (() => Promise<readonly RecipientStatus[]>) | undefined;
@@ -144,6 +170,18 @@ export const databasesOf: DatabasesOfFunction = (config) => {
   if (isAdapter(ledger)) {
     databases.push({ database: "forgetLedger", adapter: ledger, scopes: ["forget-ledger"] });
   }
+  const tenantKeys = config.runtime.personalData.tenantKeys;
+  if (isAdapter(tenantKeys)) {
+    const shared = databases.find((known) => sharesStorage(tenantKeys, known.adapter));
+    if (shared === undefined) {
+      databases.push({ database: "tenantKeys", adapter: tenantKeys, scopes: ["tenant-keys"] });
+    } else {
+      databases[databases.indexOf(shared)] = {
+        ...shared,
+        scopes: [...shared.scopes, "tenant-keys"],
+      };
+    }
+  }
   return databases;
 };
 
@@ -164,6 +202,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
   restores,
   reconciliation,
   rotation,
+  tenant,
   retention,
   letterRetention,
   recipients,
@@ -175,6 +214,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     stored,
     forgetLedger,
     keyRotation,
+    tenantKey,
     retained,
     purged,
     told,
@@ -189,6 +229,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     failures.list(),
     reconciliation?.status() ?? null,
     rotation?.status() ?? null,
+    tenant?.() ?? null,
     retention?.status() ?? null,
     letterRetention?.status() ?? null,
     recipients?.() ?? [],
@@ -209,9 +250,21 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     }),
     personalDataBackfill: current.personalDataBackfill,
     forgetLedger,
+    tenant: tenantKey,
     keyRotation,
     retention: retained,
     deadLetterRetention: purged,
     recipients: told,
+    files: databasesOf(config).flatMap(({ database, adapter }) =>
+      adapter.fileEncryption === undefined
+        ? []
+        : [
+            {
+              database,
+              file: adapter.fileEncryption.database,
+              state: adapter.fileEncryption.state(),
+            },
+          ],
+    ),
   };
 };

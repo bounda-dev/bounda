@@ -111,3 +111,10 @@ export {
   tableContract,
   viewContract,
 } from "./table.contract.ts";
+export type {
+  TenancyContractArgs,
+  TenancyContractFunction,
+  TenantKeyStoreContractArgs,
+  TenantKeyStoreContractFunction,
+} from "./tenant-keys.contract.ts";
+export { tenancyContract, tenantKeyStoreContract } from "./tenant-keys.contract.ts";

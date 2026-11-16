@@ -69,6 +69,15 @@ export interface TestWitness {
    */
   keptFor(person: string, categories?: readonly string[]): readonly unknown[];
   /**
+   * Every person the test app sealed a value of, or a read model kept one of.
+   */
+  persons(): readonly string[];
+  /**
+   * Everything the read models kept in their personal fields of the person, whatever was forgotten
+   * since.
+   */
+  allKeptFor(person: string): readonly unknown[];
+  /**
    * `adapter`, observed: the same object for the same adapter, so the app still tells it apart
    * from another, as the forget ledger's check that it is not the storage does.
    */
@@ -289,11 +298,18 @@ const createTestWitness = (): TestWitness => {
         )
         .map(({ value }) => value);
     },
-    storage: (adapter) => {
+    persons: () => [...new Set([...envelopes.keys(), ...kept.keys()])],
+    allKeptFor: (person) => (kept.get(person) ?? []).map(({ value }) => value),
+    storage: function observe(adapter) {
       const existing = wrapped.get(adapter);
       if (existing !== undefined) return existing;
+      const file = adapter.encryptedFile;
       const observing: Adapter = {
         ...adapter,
+        // The adapter the app opens the file through is observed in its place.
+        ...(file === undefined
+          ? {}
+          : { encryptedFile: { ...file, open: async (args) => observe(await file.open(args)) } }),
         createStorage: async () => observedStorage(await adapter.createStorage()),
         createReadModel: async (args) =>
           readModelStorage(await adapter.createReadModel(args), marksOf(args.fields)),

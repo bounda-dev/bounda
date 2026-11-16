@@ -1,12 +1,14 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
+import { masterKey } from "@bounda-dev/core/config";
 import { expectForgotten, expectRedacted } from "@bounda-dev/core/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
 import { configForObject, createBoundaObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
+import { kvTenantKeys } from "../src/tenant-keys.ts";
 import {
   outage,
   type processRegistry,
@@ -16,7 +18,7 @@ import {
 } from "./app.ts";
 import { clock } from "./clock.ts";
 import { logs, recordingLogger } from "./logs.ts";
-import { QuietStore } from "./test-worker.ts";
+import { QuietStore, type WrappedStore } from "./test-worker.ts";
 
 const fresh = () => env.STORE.get(env.STORE.newUniqueId());
 
@@ -372,8 +374,9 @@ describe("a Bounda Durable Object", () => {
     expect(await settledAlarm(stub)).toBeNull();
   });
 
-  it("wraps its personal keys under the master key in the Worker's secret, and opens them back", async () => {
-    const stub = env.WRAPPED_STORE.get(env.WRAPPED_STORE.newUniqueId());
+  it("wraps its persons' keys under its tenant's key, kept in KV under the master key in the Worker's secret", async () => {
+    const id = env.WRAPPED_STORE.newUniqueId();
+    const stub = env.WRAPPED_STORE.get(id);
     const store = connect<typeof quietRegistry>(stub);
     // Started first, so the master key is read and imported before the watch begins.
     await store.exportPersonalData("nobody");
@@ -384,34 +387,56 @@ describe("a Bounda Durable Object", () => {
     expect((await store.exportPersonalData("ada")).events.map((event) => event.data)).toEqual([
       { note: "ring" },
     ]);
-    // The watch sees inside the object, which sealed the note, yet the person's raw key never
-    // reached JavaScript there.
+    // The watch sees inside the object, which sealed the note, yet no raw key reached JavaScript.
     expect(sealed).toHaveBeenCalled();
     expect(exported).not.toHaveBeenCalled();
     expect(imported).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+    const stored = (await env.TENANT_KEYS.get(`bounda/tenant-keys/${id.toString()}`, "json")) as {
+      readonly record: string;
+    };
+    const [version] = (
+      JSON.parse(stored.record) as {
+        keys: { kid: string; key: string; wrappedBy: string }[];
+      }
+    ).keys;
     const rows = await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
       state.storage.sql
         .exec(`SELECT "person", "key", "fingerprint", "kid" FROM bounda_personal_keys`)
         .toArray(),
     );
+    expect(rows).toEqual([
+      {
+        person: "ada",
+        key: expect.any(String),
+        fingerprint: expect.any(String),
+        kid: version?.kid,
+      },
+    ]);
     const bytes = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
     const master = bytes(env.BOUNDA_MASTER_KEY);
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", master));
     const kid = btoa(String.fromCharCode(...digest.slice(0, 12)))
       .replaceAll("+", "-")
       .replaceAll("/", "_");
-    expect(rows).toEqual([
-      { person: "ada", key: expect.any(String), fingerprint: expect.any(String), kid },
-    ]);
-    const [row] = rows as { key: string; fingerprint: string }[];
-    // Unwrapped by WebCrypto straight into a key that can never be exported, and checked by the
-    // AES-GCM tag of nothing under the all-zero nonce, as the runtime fingerprints it.
+    expect(version?.wrappedBy).toBe(kid);
+    // The master key opens the tenant's key, which opens the person's, each a key WebCrypto never
+    // lets out, checked by the AES-GCM tag of nothing under the all-zero nonce.
     const wrapping = await crypto.subtle.importKey("raw", master, "AES-KW", false, ["unwrapKey"]);
+    const tenantKey = await crypto.subtle.unwrapKey(
+      "raw",
+      bytes(version?.key ?? ""),
+      wrapping,
+      "AES-KW",
+      "AES-KW",
+      false,
+      ["wrapKey", "unwrapKey"],
+    );
+    const [row] = rows as { key: string; fingerprint: string }[];
     const key = await crypto.subtle.unwrapKey(
       "raw",
       bytes(row?.key ?? ""),
-      wrapping,
+      tenantKey,
       "AES-KW",
       "AES-GCM",
       false,
@@ -426,9 +451,80 @@ describe("a Bounda Durable Object", () => {
       ),
     );
     expect(btoa(String.fromCharCode(...tag))).toBe(row?.fingerprint);
-    expect((await store.exportPersonalData("ada")).events.map((event) => event.data)).toEqual([
-      { note: "ring" },
-    ]);
+  });
+
+  it("forgets its tenant: the key goes from KV, and the object serves nothing more", async () => {
+    const id = env.WRAPPED_STORE.newUniqueId();
+    const stub = env.WRAPPED_STORE.get(id);
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada", note: "ring" });
+    const before = Date.now();
+    // Its alarm is armed at once after each, so the worker rewraps the keys and tells the
+    // recipients.
+    const { rotated, rotatedAlarm } = await runInDurableObject(
+      stub as unknown as DurableObjectStub,
+      async (object, state) => {
+        const outcome = await (object as InstanceType<typeof WrappedStore>).rotateTenantKey();
+        return { rotated: outcome, rotatedAlarm: await state.storage.getAlarm() };
+      },
+    );
+    expect(rotated).toMatchObject({ ok: true, value: { previous: [expect.any(String)] } });
+    expect(rotatedAlarm).toBeGreaterThanOrEqual(before);
+    expect(rotatedAlarm).toBeLessThanOrEqual(Date.now());
+    const again = await store.rotateTenantKey();
+    expect(again.previous).toHaveLength(2);
+    await expect(store.retireTenantKeys()).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await expect(store.forgetTenant("acme")).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    const settledAt = Date.now();
+    const { outcome, alarm } = await runInDurableObject(
+      stub as unknown as DurableObjectStub,
+      async (object, state) => ({
+        outcome: await (object as InstanceType<typeof WrappedStore>).forgetTenant(id.toString()),
+        alarm: await state.storage.getAlarm(),
+      }),
+    );
+    expect(alarm).toBeGreaterThanOrEqual(settledAt);
+    expect(alarm).toBeLessThanOrEqual(Date.now());
+    if (!outcome.ok) throw new Error("the tenant was not forgotten");
+    const forgotten = outcome.value;
+    expect(forgotten).toMatchObject({ tenant: id.toString() });
+    const stored = (await env.TENANT_KEYS.get(`bounda/tenant-keys/${id.toString()}`, "json")) as {
+      readonly record: string;
+    };
+    expect(JSON.parse(stored.record)).toMatchObject({
+      keys: [],
+      forgotten: { at: forgotten.forgottenAt, eventId: forgotten.eventId },
+    });
+    await expect(store.exportPersonalData("ada")).rejects.toMatchObject({
+      code: "TENANT_FORGOTTEN",
+    });
+    await expect(
+      store.commands.placeOrder({ orderId: "o-2", total: 1, customer: "bob", note: "x" }),
+    ).rejects.toMatchObject({ code: "TENANT_FORGOTTEN" });
+    expect((await store.status()).tenant).toMatchObject({ forgottenAt: forgotten.forgottenAt });
+    expect(await store.forgetTenant(id.toString())).toEqual(forgotten);
+    const left = await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+      state.storage.sql.exec(`SELECT count(*) AS "left" FROM bounda_personal_keys`).one(),
+    );
+    expect(left).toEqual({ left: 0 });
+
+    // Once its recipients are told, the object empties its storage, whose copies Cloudflare keeps
+    // under keys of its own, and holds the forgetting alone.
+    await runAlarm(stub);
+    const kept = await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+      state.storage.sql.exec(`SELECT "id" FROM bounda_events`).toArray(),
+    );
+    expect(kept).toEqual([{ id: forgotten.eventId }]);
+    await expect(store.exportPersonalData("ada")).rejects.toMatchObject({
+      code: "TENANT_FORGOTTEN",
+    });
+    expect((await store.status()).tenant).toMatchObject({ forgottenAt: forgotten.forgottenAt });
+    await runAlarm(stub);
+    expect(
+      await runInDurableObject(stub as unknown as DurableObjectStub, (_i, state) =>
+        state.storage.sql.exec(`SELECT count(*) AS "events" FROM bounda_events`).one(),
+      ),
+    ).toEqual({ events: 1 });
   });
 
   it("answers an eventual command once its events are stored and projects them in its alarm", async () => {
@@ -592,7 +688,7 @@ describe("a Bounda Durable Object", () => {
     outage.projection = false;
     const status = await store.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 6, latest: 6 },
+      { database: "storage", scope: "storage", version: 7, latest: 7 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
     ]);
     expect(status.subscriberFailures).toContainEqual(
@@ -914,7 +1010,16 @@ describe("BOUNDA_ERROR_TEXT", () => {
     runInDurableObject(env.BARE.get(env.BARE.newUniqueId()), async (_bare, state) => {
       const Store = createBoundaObject({
         registry: quietRegistry,
-        config: { storage: cloudflare(), runtime },
+        config: {
+          storage: cloudflare(),
+          runtime: {
+            ...runtime,
+            personalData: {
+              keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+              tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+            },
+          },
+        },
         clock,
         logger: recordingLogger,
       });

@@ -90,6 +90,9 @@ describe("cloudflareClients", () => {
     await client.restrict("c-2", { ground: "accuracy-contested" });
     await client.unrestrict("c-2", { notice: "given" });
     await client.redact("c-2", { events: [redacted] });
+    await client.forgetTenant("acme", { despiteLegalObligations: true });
+    await client.rotateTenantKey();
+    await client.retireTenantKeys();
     expect(store.calls).toEqual([
       ["acme", "lag"],
       ["acme", "status"],
@@ -107,6 +110,9 @@ describe("cloudflareClients", () => {
       ["acme", "restrict", "c-2", "read-your-writes", undefined, { ground: "accuracy-contested" }],
       ["acme", "unrestrict", "c-2", "read-your-writes", undefined, { notice: "given" }],
       ["acme", "redact", "c-2", "read-your-writes", undefined, { events: [redacted] }],
+      ["acme", "forgetTenant", "acme", undefined, { despiteLegalObligations: true }],
+      ["acme", "rotateTenantKey", undefined],
+      ["acme", "retireTenantKeys", undefined],
     ]);
   });
 

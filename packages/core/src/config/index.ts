@@ -15,14 +15,27 @@ export type {
 export { defineKeyWrapper } from "../kernel/personal-data/key-wrapper.ts";
 export type { MasterKeyFunction, MasterKeyOptions } from "../kernel/personal-data/master-key.ts";
 export { masterKey } from "../kernel/personal-data/master-key.ts";
+export type {
+  CreateTenantKeyStoreArgs,
+  DefineTenantKeyStoreFunction,
+  TenantKeySource,
+  TenantKeyStoreDefinition,
+} from "../kernel/personal-data/tenant-key-source.ts";
+export { defineTenantKeyStore } from "../kernel/personal-data/tenant-key-source.ts";
+export { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 export {
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
   DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
   DEFAULT_SNAPSHOT_VERIFY,
   DEFAULT_SNAPSHOT_VERSION,
 } from "./defaults.ts";
-export type { DefineConfigFunction, WithExactPorts } from "./define-config.ts";
-export { defineConfig } from "./define-config.ts";
+export type {
+  ConfigForTenantArgs,
+  ConfigForTenantFunction,
+  DefineConfigFunction,
+  WithExactPorts,
+} from "./define-config.ts";
+export { configForTenant, defineConfig } from "./define-config.ts";
 export type {
   AggregateCommandsConfig,
   AggregateOverrides,
@@ -39,6 +52,7 @@ export type {
   PortsConfig,
   PortsSection,
   ProcessesConfig,
+  ProjectConfig,
   ResolvedConfig,
   ResolvedForgetLedgerConfig,
   ResolvedSnapshotConfig,
@@ -47,4 +61,5 @@ export type {
   RuntimeRole,
   SnapshotConfig,
   TelemetryConfig,
+  TenantConfigArgs,
 } from "./types.ts";

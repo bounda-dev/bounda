@@ -14,6 +14,8 @@ import {
   ConfigurationError,
   ForgetLedgerUnreconciledError,
   RebuildSupersededError,
+  TenantForgottenError,
+  ValidationError,
 } from "../contracts/errors.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
@@ -46,10 +48,15 @@ import {
 } from "./dispatch/subscriber-failures.ts";
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
+import { createForgottenRunner, type ForgottenRunner, forgottenApp } from "./forgotten-app.ts";
 import { createAccessLog, recorded } from "./personal-data/access.ts";
 import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
+import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
+import { logClearFields } from "./personal-data/clear-fields.ts";
+import { openEncryptedFiles } from "./personal-data/encrypted-files.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
+import { createFileEncryptions } from "./personal-data/file-encryption.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import {
   type BoundedForgetLedger,
@@ -57,7 +64,15 @@ import {
   openForgetLedger,
   waitForLedger,
 } from "./personal-data/forget-ledger.ts";
+import {
+  type ForgetTenantOptions,
+  settleTenantForgetting,
+  TENANT_CHECK_INTERVAL_MS,
+  type TenantForgottenResult,
+} from "./personal-data/forgotten-tenant.ts";
 import { createForgetIntentions } from "./personal-data/intention.ts";
+import { keySourcesOf, openKeyHierarchy } from "./personal-data/key-hierarchy.ts";
+import { buildKeyWrapper } from "./personal-data/key-wrapper.ts";
 import { createLedgerOutbox } from "./personal-data/ledger-outbox.ts";
 import { marksPersonalFields } from "./personal-data/marks.ts";
 import {
@@ -80,9 +95,11 @@ import {
   retentionDueOf,
 } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
+import { guardClient } from "./personal-data/tenant-guard.ts";
+import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
 import { checkPersonId } from "./personal-data/transact.ts";
 import { type PersonalDataWitness, witnessedWrapping } from "./personal-data/witness.ts";
-import { buildPersonalKeyWrapping } from "./personal-data/wrapped-keys.ts";
+import { keylessWrapping, UNWRAPPED_KEY_TTL_MS } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
@@ -97,6 +114,7 @@ import {
   adapterForReadModel,
   buildReadModels,
   checkReadModelPersons,
+  readModelsMarkPersonal,
 } from "./read-model/build-read-models.ts";
 import {
   pendingRebuilds,
@@ -117,10 +135,12 @@ import {
   createRecipientSubscriber,
 } from "./recipients/notices.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
+import { startedBy } from "./shared/causation.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
 import { createRestoreWatch, GENERATION_INTERVAL_MS, type Restored } from "./shared/restores.ts";
+import { runtimeText } from "./shared/runtime-text.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
 import { type AppStatus, readAppStatus } from "./status.ts";
 import { ATTRIBUTES, METRICS, meter, tracedOperation } from "./telemetry.ts";
@@ -263,6 +283,36 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    */
   redact(personId: string, options: RedactOptions<R>): Promise<StoredDispatch>;
   /**
+   * Forgets the tenant the app serves, `tenant` naming it as a check: its key is destroyed in the
+   * tenant key store, so nothing personal of the tenant opens again, in the database, in a backup
+   * or in a Durable Object's copy, then `TenantForgotten` is appended, every person's key, the
+   * database's key, every snapshot and remembered answer go, and the rows of the read models that
+   * may hold personal data are deleted. What stays is the skeleton: ids, event types, positions,
+   * times and the fields no schema marks. From then on the app serves nothing: every call rejects
+   * with `TenantForgottenError`, here at once and on another instance within
+   * `TENANT_CHECK_INTERVAL_MS`, and only the notices to the recipients of the tenant's data go out.
+   * Calling it again resolves to the same forgetting. Rejects with `ValidationError`, forgetting
+   * nothing, when `tenant` is not the app's, or while a person holds a key of a category whose
+   * basis is `legal-obligation`, unless `despiteLegalObligations`; with `ConfigurationError` in an
+   * app without keys.
+   */
+  forgetTenant(tenant: string, options?: ForgetTenantOptions): Promise<TenantForgottenResult>;
+  /**
+   * Puts a new version of the tenant's key in force: new keys are wrapped under it, and the worker
+   * rewraps every person's key and the database's key under it in the background. The older
+   * versions stay in the tenant key store, opening what a backup holds under them, until
+   * `retireTenantKeys`. Rejects with `ConfigurationError` in an app without keys.
+   */
+  rotateTenantKey(): Promise<TenantKeyVersions>;
+  /**
+   * Removes from the tenant key store every version of the tenant's key but the one in force, and
+   * resolves to the ids it removed: a backup that holds keys wrapped under them opens nothing
+   * personal any more. Rejects with `ValidationError` while a key is still wrapped under one, or
+   * before twice `UNWRAPPED_KEY_TTL_MS` has passed since the version in force was created, the
+   * time every instance takes to wrap under it.
+   */
+  retireTenantKeys(): Promise<readonly string[]>;
+  /**
    * The same client, acting as `actor`: who does what it does, for the audit trail the event
    * store keeps. Every command it dispatches carries the actor in its metadata, and so does every
    * event that command writes, and every command and event the policies, processes and scheduled
@@ -275,6 +325,18 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * `ValidationError` for an actor that is not a string of 1 to `MAX_ACTOR_LENGTH` characters.
    */
   as(actor: string): BoundaClient<R>;
+}
+
+/**
+ * The version of the tenant's key in force and the older ones the tenant key store still holds.
+ */
+export interface TenantKeyVersions {
+  readonly kid: string;
+  readonly previous: readonly string[];
+  /**
+   * When the version in force was created, as an ISO timestamp.
+   */
+  readonly since: string;
 }
 
 /**
@@ -542,22 +604,25 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   witness,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   validateRegistry(registry);
-  const config = resolveConfig(rawConfig);
-  checkConfigNames({ registry, config });
-  const { errorText } = config.runtime.telemetry;
+  const unkeyed = resolveConfig(rawConfig);
+  checkConfigNames({ registry, config: unkeyed });
+  const { errorText } = unkeyed.runtime.telemetry;
   const logger = guardedLogger(rawLogger, errorText);
-  if (!isAdapter(config.storage)) {
+  if (!isAdapter(unkeyed.storage)) {
     throw new ConfigurationError(
-      `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
+      `storage "${unkeyed.storage.name}" is a definition without factories. Import the adapter package's factory.`,
     );
   }
-  // Built first: a master key missing from the environment fails the start before anything opens.
-  const built = await buildPersonalKeyWrapping({
-    definition: config.runtime.personalData.keyWrapper,
-    env,
-    clock,
+  const keySources = keySourcesOf({
+    storage: unkeyed.storage,
+    personalData: unkeyed.runtime.personalData,
   });
-  const wrapping = witness === undefined ? built : witnessedWrapping(built, witness);
+  // Built first: a master key missing from the environment fails the start before anything opens.
+  const master =
+    keySources.keyWrapper === null
+      ? null
+      : await buildKeyWrapper({ definition: keySources.keyWrapper, env });
+  const tenantId = tenant ?? DEFAULT_TENANT;
   // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
   // open; a failure further on closes them again.
   const ports = await createPorts({
@@ -566,11 +631,33 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     tenant,
     logger: guardedLogger(rawLogger, errorText, { thrownAsError: false }),
     clock,
-    ...(test === undefined ? { config: config.ports } : { test }),
+    ...(test === undefined ? { config: unkeyed.ports } : { test }),
   });
   // What a start that fails has to close, in the order `stop` closes it.
-  const opened: (() => Promise<void>)[] = [async () => wrapping.close()];
+  const opened: (() => Promise<void>)[] = [];
   try {
+    // Read before the storage opens: its file, and the read models', open under the tenant's keys.
+    const files = await openEncryptedFiles({
+      config: rawConfig,
+      master,
+      tenantKeys: keySources.tenantKeys,
+      tenant: tenantId,
+      env,
+      clock,
+      logger,
+    });
+    // Until the key hierarchy takes it over.
+    let filesStore = files.store;
+    opened.push(async () => {
+      await filesStore?.close?.();
+    });
+    const keyedConfig = files.config;
+    const config = files.store === null ? unkeyed : resolveConfig(keyedConfig);
+    if (!isAdapter(config.storage)) {
+      throw new ConfigurationError(
+        `storage "${config.storage.name}" is a definition without factories. Import the adapter package's factory.`,
+      );
+    }
     const adapted = await config.storage.createStorage();
     opened.unshift(() => adapted.close());
     const ledgerConfig = config.runtime.personalData.forgetLedger;
@@ -625,22 +712,40 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     checkReadModelPersons({ registry, aggregates });
     const processDefinitions = buildProcesses({ registry, aggregates, config });
+    // The hierarchy owns the store from here, closing it when it fails.
+    filesStore = null;
+    const hierarchy = await openKeyHierarchy({
+      storage: config.storage,
+      master,
+      tenantKeys: keySources.tenantKeys,
+      ephemeral: keySources.ephemeral ?? false,
+      opened: adapted,
+      store: files.store,
+      claims: files.claims,
+      tenant: tenantId,
+      personal:
+        marksPersonalFields({ aggregates, processes: processDefinitions }) ||
+        readModelsMarkPersonal(registry),
+      env,
+      clock,
+    });
+    // Closed last, after the storage, as `stop` closes them.
+    if (hierarchy !== null) opened.push(hierarchy.close);
+    const keyed = hierarchy?.wrapping ?? keylessWrapping();
+    const wrapping = witness === undefined ? keyed : witnessedWrapping(keyed, witness);
+    // Opened at once, never inside a transaction: none of a forgotten tenant, whose key is gone.
+    const databaseKey =
+      hierarchy === null || hierarchy.tenantKeys.forgotten() !== null
+        ? null
+        : await openDatabaseKey({ store: written.indexKeys, wrapping, clock });
     const storage = appStorage({
       storage: written,
       aggregates,
       processes: processDefinitions,
       wrapping,
       fenced,
+      atRest: databaseKey?.atRest ?? null,
     });
-    if (
-      wrapping.wrapper === null &&
-      test === undefined &&
-      marksPersonalFields({ aggregates, processes: processDefinitions })
-    ) {
-      logger.warn(
-        "personal keys are stored unwrapped, next to the data they open: set runtime.personalData.keyWrapper",
-      );
-    }
     const loader = createAggregateLoader({
       snapshotStore: storage.snapshotStore,
       logger,
@@ -649,6 +754,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     const readModels = await buildReadModels({ registry, config, logger });
     opened.unshift(() => readModels.close());
+    logClearFields({ readModels: readModels.byName, config, encrypted: files.encrypted, logger });
+    const fileEncryptions = createFileEncryptions({ config, clock, logger });
     const personalCategories = buildPersonalCategories({
       module: registry.personalData,
       retention: config.runtime.personalData.retention,
@@ -659,15 +766,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       processes: processDefinitions,
       readModels: readModels.byName,
     });
-    const sealing = await openReadModelSealing({
-      layouts: Object.values(readModels.byName).map(({ layout }) => layout),
-      keys: storage.personalKeys,
-      indexKeys: written.indexKeys,
-      wrapping,
-      clock,
-      scheduler: written.scheduler,
-    });
-    await settleReadModels({ readModels: Object.values(readModels.byName), sealing, logger });
     // One list per `runUntilIdle` under way.
     const observers = new Set<CommandRejection[]>();
     const recordAccess = createAccessLog({
@@ -678,6 +776,112 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
     });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
+    const notices = createRecipientNotices({ recipients, storage, config, clock, recordAccess });
+    const delivery = createRecipientDelivery({
+      recipients,
+      notices,
+      storage,
+      config,
+      clock,
+      pendingRetries,
+      logger,
+    });
+    const { concurrencyRetries } = config.runtime.commands;
+    const forgottenError = (): TenantForgottenError =>
+      new TenantForgottenError(
+        tenantId,
+        hierarchy?.tenantKeys.forgotten()?.at ?? clock.now().toISOString(),
+      );
+    // Every read model but those whose view says they keep nothing derived from personal data.
+    const personalReadModels = Object.values(readModels.byName).filter(
+      ({ name }) => registry.readModels[name]?.view.holdsPersonalData !== false,
+    );
+    const settleForgotten = (
+      forgetting: NonNullable<ReturnType<NonNullable<typeof hierarchy>["tenantKeys"]["forgotten"]>>,
+      actor?: string,
+    ): Promise<void> =>
+      settleTenantForgetting({
+        storage: written,
+        readModels: personalReadModels,
+        tenant: tenantId,
+        forgetting,
+        ids,
+        clock,
+        concurrencyRetries,
+        context: startedBy(ids.next(), actor),
+      });
+    const forgottenRunnerOf = (keys: NonNullable<typeof hierarchy>): ForgottenRunner =>
+      createForgottenRunner({
+        // Its events as stored: the notices read no personal field, and a copy restored under the
+        // app holds keys whose tenant's key is gone, which opening would refuse.
+        storage: { ...storage, eventStore: written.eventStore },
+        config,
+        notices,
+        delivery,
+        recordAccess,
+        restores,
+        tenantKeys: keys.tenantKeys,
+        forgotten: forgottenError,
+        resettle: async () => {
+          const forgetting = keys.tenantKeys.forgotten();
+          if (forgetting !== null) await settleForgotten(forgetting);
+        },
+        discharge: async () => {
+          if (await keys.tenantKeys.releaseFiles()) {
+            logger.warn(
+              "tenant forgotten: its recipients are told, and its database files' keys destroyed",
+              { tenant: tenantId },
+            );
+          }
+          // Only a database that holds more than the forgetting's own event: one emptied already
+          // holds that alone, appended again when it opened.
+          if (adapted.discard === undefined) return;
+          const forgetting = keys.tenantKeys.forgotten();
+          const held = await adapted.eventStore.readAll({ afterPosition: 0, limit: 2 });
+          if (held.some(({ id }) => id !== forgetting?.eventId)) {
+            await adapted.discard();
+            logger.warn("tenant forgotten: its recipients are told, and its storage emptied", {
+              tenant: tenantId,
+            });
+          }
+        },
+        pendingRetries,
+        ids,
+        clock,
+        logger,
+        errorText,
+      });
+    const forgottenAtStart = hierarchy?.tenantKeys.forgotten() ?? null;
+    if (hierarchy !== null && forgottenAtStart !== null) {
+      await settleForgotten(forgottenAtStart);
+      logger.warn("tenant forgotten: the app serves nothing but the notices to its recipients", {
+        tenant: tenantId,
+        forgottenAt: forgottenAtStart.at,
+      });
+      return forgottenApp<R>({
+        config,
+        role: config.runtime.role,
+        runner: forgottenRunnerOf(hierarchy),
+        forgotten: forgottenError,
+        forgetting: forgottenAtStart,
+        tenant: tenantId,
+        close: async () => {
+          await restores.flush();
+          try {
+            for (const close of opened) await close();
+          } finally {
+            await ports.dispose();
+          }
+        },
+      });
+    }
+    const sealing = await openReadModelSealing({
+      layouts: Object.values(readModels.byName).map(({ layout }) => layout),
+      keys: storage.personalKeys,
+      databaseKey,
+      scheduler: written.scheduler,
+    });
+    await settleReadModels({ readModels: Object.values(readModels.byName), sealing, logger });
     // What was disclosed under a port's former key is the renamed port's, presumption included.
     for (const { port, formerly } of recipients.all) {
       for (const former of formerly) await written.recipients.rename(former, port);
@@ -699,16 +903,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       recipients.all.length === 0
         ? undefined
         : createDisclosures({ recipients, storage, intentions, recordAccess, clock });
-    const notices = createRecipientNotices({ recipients, storage, config, clock, recordAccess });
-    const delivery = createRecipientDelivery({
-      recipients,
-      notices,
-      storage,
-      config,
-      clock,
-      pendingRetries,
-      logger,
-    });
     const pipeline = createCommandPipeline({
       aggregates,
       loader,
@@ -831,7 +1025,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             clock,
             logger,
           });
-    const { concurrencyRetries } = config.runtime.commands;
     const redactions: Redactions = {
       storage: written,
       wrapping,
@@ -875,13 +1068,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           };
     const reconciliation = reconciling?.reconciliation;
     const rotation =
-      wrapping.wrapper === null
+      hierarchy === null
         ? undefined
         : createKeyRotation({
             keys: written.personalKeys,
             indexKeys: written.indexKeys,
             checkpoints: written.checkpointStore,
-            wrapper: wrapping.wrapper,
+            tenantKeys: hierarchy.tenantKeys,
+            master: hierarchy.master,
             wrapping,
             clock,
             logger,
@@ -915,6 +1109,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       const forgotten = await reconciliation?.reconcile(clock.now());
       return typeof forgotten === "number" ? forgotten : 0;
     };
+    // A pass checks first whether the tenant was forgotten elsewhere, once the check exists.
+    let tenantCheck: () => Promise<void> = async () => undefined;
     const dispatcher = createDispatcher({
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
@@ -967,6 +1163,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       // Nothing is delivered on a restored database before whom it brought back is forgotten again:
       // the pass then delivers that forgetting to the read models.
       beforePass: async () => {
+        await tenantCheck();
+        await fileEncryptions.settle();
         const found = await restores.check(clock.now());
         if (found !== null) await restartFound(found);
       },
@@ -1114,6 +1312,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         restores,
         reconciliation,
         rotation,
+        tenant: hierarchy === null ? undefined : () => hierarchy.tenantKeys.status(),
         retention,
         letterRetention,
         recipients: () => recipientStatuses({ storage: written, recipients }),
@@ -1166,7 +1365,139 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const rebuild = (
       name: string,
       options: RebuildReadModelOptions & { readonly actor?: string } = {},
-    ) => rebuildReadModelWith({ registry, config: rawConfig, name, logger, wrapping, ...options });
+    ) =>
+      rebuildReadModelWith({ registry, config: keyedConfig, name, logger, wrapping, ...options });
+    const keysFor = (operation: string): NonNullable<typeof hierarchy> => {
+      if (hierarchy === null) {
+        throw new ConfigurationError(
+          `${operation} needs keys: set runtime.personalData.keyWrapper and runtime.personalData.tenantKeys`,
+        );
+      }
+      return hierarchy;
+    };
+    // What this instance runs once it knows the tenant is forgotten, built once.
+    let forgottenRunner: ForgottenRunner | null = null;
+    let entering: Promise<ForgottenRunner> | null = null;
+    let started = false;
+    // A failure is logged and forgotten, so the next call that finds the tenant forgotten tries
+    // again; `settled` when the caller settled the forgetting itself.
+    const enterForgotten = (
+      keys: NonNullable<typeof hierarchy>,
+      { settled = false } = {},
+    ): Promise<ForgottenRunner> => {
+      if (entering !== null) return entering;
+      const entered: Promise<ForgottenRunner> = (async () => {
+        unwatch?.();
+        unwatch = undefined;
+        await Promise.all([dispatcher.stop(), worker.stop()]);
+        if (!settled) {
+          const forgetting = keys.tenantKeys.forgotten() ?? (await keys.tenantKeys.refresh());
+          if (forgetting !== null) await settleForgotten(forgetting);
+        }
+        wrapping.close();
+        const runner = forgottenRunnerOf(keys);
+        forgottenRunner = runner;
+        if (started && stopping === undefined) runner.start();
+        return runner;
+      })().catch((error: unknown) => {
+        if (entering === entered) entering = null;
+        logger.error("the tenant's forgetting could not be settled", { tenant: tenantId, error });
+        throw error;
+      });
+      entering = entered;
+      return entered;
+    };
+    const enterQuietly = (keys: NonNullable<typeof hierarchy>): void => {
+      enterForgotten(keys).catch(() => undefined);
+    };
+    // Whether the tenant was forgotten, read from the database's binding at most once every
+    // `TENANT_CHECK_INTERVAL_MS`: another instance's forgetting is seen within that time.
+    let checkedAt = Number.NEGATIVE_INFINITY;
+    const ensureLive = async (): Promise<void> => {
+      if (hierarchy === null) return;
+      if (entering !== null) throw forgottenError();
+      const now = clock.now().getTime();
+      if (now >= checkedAt && now - checkedAt < TENANT_CHECK_INTERVAL_MS) return;
+      checkedAt = now;
+      const binding = await written.tenancy.get();
+      if (hierarchy.tenantKeys.forgotten() !== null || binding?.forgottenAt != null) {
+        // Read again, so the error names when the tenant was forgotten, not now.
+        if (hierarchy.tenantKeys.forgotten() === null) {
+          await hierarchy.tenantKeys.refresh().catch(() => null);
+        }
+        enterQuietly(hierarchy);
+        throw forgottenError();
+      }
+    };
+    tenantCheck = ensureLive;
+    const guarded: <T>(value: T) => T =
+      hierarchy === null
+        ? (value) => value
+        : guardClient({ ensureLive, onForgotten: () => enterQuietly(hierarchy) });
+    const forgetThisTenant = async (
+      name: string,
+      { despiteLegalObligations = false }: ForgetTenantOptions = {},
+      actor?: string,
+    ): Promise<TenantForgottenResult> => {
+      const keys = keysFor("forgetTenant");
+      if (name !== tenantId) {
+        throw runtimeText(
+          new ValidationError(`forgetTenant names tenant ${name}, and the app serves another`, [
+            { path: ["tenant"], message: "Expected the tenant the app serves" },
+          ]),
+        );
+      }
+      const earlier = keys.tenantKeys.forgotten();
+      if (earlier === null) {
+        const held = (await written.personalKeys.categories()).filter(
+          (category) => personalCategories.of(category)?.basis === "legal-obligation",
+        );
+        if (held.length > 0 && !despiteLegalObligations) {
+          throw runtimeText(
+            new ValidationError(
+              `Tenant ${tenantId}'s persons hold keys a legal obligation keeps (${held.join(", ")}): hand the data back first, then forget the tenant with despiteLegalObligations`,
+              [{ path: ["despiteLegalObligations"], message: "Expected true to destroy them too" }],
+            ),
+          );
+        }
+      }
+      if (earlier === null) await fileEncryptions.refuseClear();
+      const forgetting =
+        earlier ??
+        (await keys.tenantKeys.forget({ at: clock.now().toISOString(), eventId: ids.next() }));
+      await settleForgotten(forgetting, actor);
+      if (earlier === null) {
+        logger.warn("tenant forgotten", { tenant: tenantId, eventId: forgetting.eventId });
+      }
+      await enterForgotten(keys, { settled: true });
+      return { tenant: tenantId, forgottenAt: forgetting.at, eventId: forgetting.eventId };
+    };
+    const retireTenantKeys = async (): Promise<readonly string[]> => {
+      const { tenantKeys } = keysFor("retireTenantKeys");
+      const { previous, since } = await tenantKeys.kids();
+      if (previous.length === 0) return [];
+      // An instance that read the tenant's record before the rotation wraps new keys under the
+      // older version until it reads it again, which it does within the key cache's time.
+      if (clock.now().getTime() - Date.parse(since) < 2 * UNWRAPPED_KEY_TTL_MS) {
+        throw runtimeText(
+          new ValidationError(
+            `The version of the tenant's key in force was created at ${since}: older versions can be retired once every instance wraps under it, twice the key cache's time after`,
+            [{ path: [], message: "Expected the version in force to be older" }],
+          ),
+        );
+      }
+      if (rotation !== undefined && !(await rotation.settled())) {
+        throw runtimeText(
+          new ValidationError(
+            "Keys are still wrapped under an older version of the tenant's key: wait for the rotation to finish",
+            [{ path: [], message: "Expected no key under an older version" }],
+          ),
+        );
+      }
+      const retired = await tenantKeys.retire();
+      logger.info("older versions of the tenant key retired", { tenant: tenantId, retired });
+      return retired;
+    };
     const clientAs = (
       actor: string | undefined,
     ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => {
@@ -1353,6 +1684,35 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 actor,
               }),
           }),
+        forgetTenant: (name, options) =>
+          tracedOperation({
+            errorText,
+            operation: "forgetTenant",
+            actor,
+            run: () => forgetThisTenant(name, options, actor),
+          }),
+        rotateTenantKey: () =>
+          tracedOperation({
+            errorText,
+            operation: "rotateTenantKey",
+            actor,
+            run: async () => {
+              const { tenantKeys } = keysFor("rotateTenantKey");
+              await tenantKeys.rotate();
+              // Each file has a new key too, which the worker moves it under once it can.
+              await fileEncryptions.refresh();
+              const versions = await tenantKeys.kids();
+              logger.info("tenant key rotated", { tenant: tenantId, ...versions });
+              return versions;
+            },
+          }),
+        retireTenantKeys: () =>
+          tracedOperation({
+            errorText,
+            operation: "retireTenantKeys",
+            actor,
+            run: () => retireTenantKeys(),
+          }),
         as: (next) => {
           checkActor(next);
           return clientAs(next);
@@ -1360,68 +1720,50 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       };
     };
 
-    return {
-      ...clientAs(undefined),
-      config,
-      role,
-      start: () => {
-        if (stopping !== undefined) return;
-        if (role === "web") {
-          unwatch ??= watchForRestores();
-          return;
-        }
-        dispatcher.start();
-        worker.start();
-      },
-      stop: () => {
-        stopping ??= (async () => {
-          try {
-            lag.removeCallback(observeLag);
-            unwatch?.();
-            await Promise.all([dispatcher.stop(), worker.stop()]);
-            await restores.flush();
-            try {
-              await readModels.close();
-            } finally {
-              try {
-                await storage.close();
-              } finally {
-                wrapping.close();
-                await forgetLedger?.store.close?.();
-              }
-            }
-          } finally {
-            await ports.dispose();
-          }
-        })();
-        return stopping;
-      },
-      runUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
-        const rejections: CommandRejection[] = [];
-        observers.add(rejections);
-        try {
-          for (let round = 0; round < maxPasses; round += 1) {
-            pendingRetries.startRound();
-            const advanced = await dispatcher.processOnce();
-            const ran = await worker.runOnce();
-            if (advanced || ran > 0) continue;
-            if (!(await pendingRetries.skipToNext(scheduledDueAt, nextRetryAt))) {
-              return { idle: true, rejections };
-            }
-          }
-          return { idle: false, rejections };
-        } finally {
-          observers.delete(rejections);
-        }
-      },
-      nextDueAt,
-      catchUpReadModels: async ({ through } = {}) => {
-        if (through === undefined) return dispatcher.catchUp("projection");
-        if (through.scheduled) return;
-        await dispatcher.catchUpThrough(through);
-      },
+    const clientOf = (
+      actor: string | undefined,
+    ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => {
+      const live = clientAs(actor);
+      const gate = guarded(live);
+      // Each call goes to what serves it then: the live app's letters, or, once the tenant is
+      // forgotten, those of the notices to its recipients.
+      const letters = (): DeadLetters => forgottenRunner?.deadLetters(actor) ?? gate.deadLetters;
+      return {
+        commands: gate.commands,
+        queries: gate.queries,
+        getLag: () => forgottenRunner?.getLag() ?? gate.getLag(),
+        status: () => forgottenRunner?.status() ?? gate.status(),
+        subscriberFailures: gate.subscriberFailures,
+        events: gate.events,
+        deadLetters: {
+          list: (args, options) => letters().list(args, options),
+          count: (args) => letters().count(args),
+          get: (id, options) => letters().get(id, options),
+          retry: (id) => letters().retry(id),
+          discard: (id) => letters().discard(id),
+        },
+        rebuildReadModel: (name) => gate.rebuildReadModel(name),
+        forget: (personId, options) => gate.forget(personId, options),
+        exportPersonalData: (personId) => gate.exportPersonalData(personId),
+        recipientsOf: (personId) => gate.recipientsOf(personId),
+        restrict: (personId, options) => gate.restrict(personId, options),
+        unrestrict: (personId, options) => gate.unrestrict(personId, options),
+        redact: (personId, options) => gate.redact(personId, options),
+        forgetTenant: (name, options) => live.forgetTenant(name, options),
+        rotateTenantKey: () => gate.rotateTenantKey(),
+        retireTenantKeys: () => gate.retireTenantKeys(),
+        as: (next) => {
+          live.as(next);
+          return clientOf(next);
+        },
+      };
+    };
+    const operations = guarded({
       rebuildReadModel: rebuild,
-      forgetAgain: async (entries, { actor } = {}) => {
+      forgetAgain: async (
+        entries: readonly ForgetAgainEntry[],
+        { actor }: ForgetAgainOptions = {},
+      ): Promise<readonly string[]> => {
         if (actor !== undefined) checkActor(actor);
         for (const { personId } of entries) checkPersonId(personId, "forgetAgain");
         const forgotten: string[] = [];
@@ -1446,10 +1788,86 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }
         return forgotten;
       },
-      restored: async () => {
+      restored: async (): Promise<void> => {
         await restartFound(await restores.declare());
       },
+    });
+    const lifecycle: Omit<BoundaApp<R>, Exclude<keyof BoundaClient<R>, "rebuildReadModel">> = {
+      config,
+      role,
+      start: () => {
+        if (stopping !== undefined) return;
+        started = true;
+        if (entering !== null) {
+          entering.then((runner) => runner.start()).catch(() => undefined);
+          return;
+        }
+        if (role === "web") {
+          unwatch ??= watchForRestores();
+          return;
+        }
+        dispatcher.start();
+        worker.start();
+      },
+      stop: () => {
+        stopping ??= (async () => {
+          try {
+            lag.removeCallback(observeLag);
+            unwatch?.();
+            // Stopped at once, before anything awaited: their timers go with the call.
+            const background = Promise.all([dispatcher.stop(), worker.stop()]);
+            const runner = await entering?.catch(() => null);
+            await Promise.all([background, runner?.stop()]);
+            await restores.flush();
+            try {
+              await readModels.close();
+            } finally {
+              try {
+                await storage.close();
+              } finally {
+                await hierarchy?.close();
+                await forgetLedger?.store.close?.();
+              }
+            }
+          } finally {
+            await ports.dispose();
+          }
+        })();
+        return stopping;
+      },
+      runUntilIdle: async ({ maxPasses = Number.POSITIVE_INFINITY } = {}) => {
+        if (entering !== null) {
+          return { idle: await (await entering).runUntilIdle(maxPasses), rejections: [] };
+        }
+        const rejections: CommandRejection[] = [];
+        observers.add(rejections);
+        try {
+          for (let round = 0; round < maxPasses; round += 1) {
+            pendingRetries.startRound();
+            const advanced = await dispatcher.processOnce();
+            const ran = await worker.runOnce();
+            if (advanced || ran > 0) continue;
+            if (!(await pendingRetries.skipToNext(scheduledDueAt, nextRetryAt))) {
+              return { idle: true, rejections };
+            }
+          }
+          return { idle: false, rejections };
+        } finally {
+          observers.delete(rejections);
+        }
+      },
+      nextDueAt: async () => (entering === null ? nextDueAt() : (await entering).nextDueAt()),
+      catchUpReadModels: async ({ through } = {}) => {
+        if (entering !== null) return;
+        if (through === undefined) return dispatcher.catchUp("projection");
+        if (through.scheduled) return;
+        await dispatcher.catchUpThrough(through);
+      },
+      rebuildReadModel: (name, options) => operations.rebuildReadModel(name, options),
+      forgetAgain: (entries, options) => operations.forgetAgain(entries, options),
+      restored: () => operations.restored(),
       pendingRebuilds: async () => {
+        if (entering !== null) return [];
         const paused = await Promise.all(
           Object.values(readModels.byName).map(async ({ name, storage }) =>
             (await pendingRebuilds(storage.checkpointStore)).includes(name) ? [name] : [],
@@ -1458,6 +1876,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         return paused.flat();
       },
     };
+    // The app's own `rebuildReadModel` takes the place of the client's.
+    return { ...clientOf(undefined), ...lifecycle } as BoundaApp<R>;
   } catch (error) {
     for (const close of opened) await close().catch(() => undefined);
     await ports.dispose();

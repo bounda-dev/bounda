@@ -155,6 +155,16 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
         keys.set(idOf(person, key.fingerprint), kept);
         return stored(kept);
       },
+      kids: async () => [...new Set([...keys.values()].map(({ kid }) => kid))],
+      categories: async () =>
+        [...new Set([...keys.values()].map(({ category }) => category))].sort((a, b) =>
+          a < b ? -1 : a > b ? 1 : 0,
+        ),
+      clear: async () => {
+        const removed = keys.size;
+        keys.clear();
+        return removed;
+      },
       remove: async (person, fingerprint) => keys.delete(idOf(person, fingerprint)),
       retain: async (person, fingerprint, { since, lastActiveAt }) => {
         const kept = keys.get(idOf(person, fingerprint));

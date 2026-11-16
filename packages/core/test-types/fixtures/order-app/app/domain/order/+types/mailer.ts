@@ -10,4 +10,5 @@ export declare namespace Port {
   type OnProcessingRestrictionLiftAnnouncedArgs = core.RecipientLiftAnnouncedArgs<Ports>;
   type OnProcessingRestrictionLiftedArgs = core.RecipientLiftedArgs<Ports>;
   type OnPersonalDataRedactedArgs = core.RecipientRedactedArgs<Ports>;
+  type OnTenantForgottenArgs = core.RecipientTenantForgottenArgs<Ports>;
 }

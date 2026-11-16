@@ -38,6 +38,13 @@ export { workersLogger } from "./logger.ts";
 export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
 export type { DurableSqlStorage } from "./sql-database.ts";
 export type {
+  CreateKvTenantKeyStoreArgs,
+  CreateKvTenantKeyStoreFunction,
+  KvTenantKeysFunction,
+  KvTenantKeysOptions,
+} from "./tenant-keys.ts";
+export { createKvTenantKeyStore, KV_TENANT_KEYS_ROOT, kvTenantKeys } from "./tenant-keys.ts";
+export type {
   ActorOfFunction,
   CreateWorkerArgs,
   CreateWorkerFunction,

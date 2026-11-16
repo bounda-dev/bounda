@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { errorFields } from "../shared/error-fields.ts";
-import { fingerprintOf, generateWrappableKey } from "./crypto.ts";
+import {
+  fingerprintOf,
+  generateWrappableKey,
+  generateWrappableTenantKey,
+  tenantFingerprintOf,
+} from "./crypto.ts";
 import { buildKeyWrapper, type CryptoKeyWrapper } from "./key-wrapper.ts";
-import { GENERATE_MASTER_KEY_COMMAND, masterKey } from "./master-key.ts";
+import { ephemeralMasterKey, GENERATE_MASTER_KEY_COMMAND, masterKey } from "./master-key.ts";
 
 const randomKey = (): string =>
   Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
@@ -23,9 +28,9 @@ const create = (
     env,
   });
 
-// Wraps a fresh key, resolving what was wrapped and what it was.
+// Wraps a fresh tenant key, resolving what was wrapped and what it was.
 const wrapNew = async (wrapper: CryptoKeyWrapper) => {
-  const key = await generateWrappableKey();
+  const key = await generateWrappableTenantKey();
   return { ...(await wrapper.wrap(key)), original: key };
 };
 
@@ -53,37 +58,57 @@ describe("masterKey", () => {
     const raw = await rawOf(original);
     expect(wrapped).toHaveLength(40);
     expect(Buffer.from(wrapped).includes(Buffer.from(raw))).toBe(false);
-    const fingerprint = await fingerprintOf(original);
-    expect(await fingerprintOf(key)).toBe(fingerprint);
-    const unwrapped = await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: false });
-    expect(await fingerprintOf(unwrapped)).toBe(fingerprint);
-    const exportable = await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: true });
+    const fingerprint = await tenantFingerprintOf(original);
+    expect(await tenantFingerprintOf(key)).toBe(fingerprint);
+    const unwrapped = await wrapper.unwrap({
+      kid: wrapper.kid,
+      wrapped,
+      extractable: false,
+      kind: "tenant",
+    });
+    expect(await tenantFingerprintOf(unwrapped)).toBe(fingerprint);
+    const exportable = await wrapper.unwrap({
+      kid: wrapper.kid,
+      wrapped,
+      extractable: true,
+      kind: "tenant",
+    });
     expect(await rawOf(exportable)).toEqual(raw);
   });
 
   it("answers keys that can never be exported, unless asked for one to wrap again", async () => {
     const wrapper = await create({ BOUNDA_MASTER_KEY: randomKey() });
     const { wrapped, key } = await wrapNew(wrapper);
-    const unwrapped = await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: false });
+    const unwrapped = await wrapper.unwrap({
+      kid: wrapper.kid,
+      wrapped,
+      extractable: false,
+      kind: "tenant",
+    });
     for (const sealed of [key, unwrapped]) {
       expect(sealed.extractable).toBe(false);
-      expect(sealed.algorithm).toEqual({ name: "AES-GCM", length: 256 });
-      expect(sealed.usages.toSorted()).toEqual(["decrypt", "encrypt"]);
+      expect(sealed.algorithm).toEqual({ name: "AES-KW", length: 256 });
+      expect(sealed.usages.toSorted()).toEqual(["unwrapKey", "wrapKey"]);
       await expect(crypto.subtle.exportKey("raw", sealed)).rejects.toThrow();
     }
-    const exportable = await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: true });
+    const exportable = await wrapper.unwrap({
+      kid: wrapper.kid,
+      wrapped,
+      extractable: true,
+      kind: "tenant",
+    });
     expect(exportable.extractable).toBe(true);
-    expect(exportable.usages.toSorted()).toEqual(["decrypt", "encrypt"]);
+    expect(exportable.usages.toSorted()).toEqual(["unwrapKey", "wrapKey"]);
   });
 
-  it("never brings a person's raw key into JavaScript: WebCrypto wraps and unwraps it", async () => {
+  it("never brings a tenant's raw key into JavaScript: WebCrypto wraps and unwraps it", async () => {
     const wrapper = await create({ BOUNDA_MASTER_KEY: randomKey() });
-    const key = await generateWrappableKey();
+    const key = await generateWrappableTenantKey();
     const exported = vi.spyOn(crypto.subtle, "exportKey");
     const imported = vi.spyOn(crypto.subtle, "importKey");
     const { wrapped } = await wrapper.wrap(key);
-    await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: false });
-    await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: true });
+    await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: false, kind: "tenant" });
+    await wrapper.unwrap({ kid: wrapper.kid, wrapped, extractable: true, kind: "tenant" });
     expect(exported).not.toHaveBeenCalled();
     expect(imported).not.toHaveBeenCalled();
   });
@@ -125,23 +150,34 @@ describe("masterKey", () => {
     const old = randomKey();
     const before = await create({ BOUNDA_MASTER_KEY: old });
     const { wrapped, original } = await wrapNew(before);
-    const fingerprint = await fingerprintOf(original);
+    const fingerprint = await tenantFingerprintOf(original);
     const after = await create({ BOUNDA_MASTER_KEY: randomKey(), BOUNDA_MASTER_KEY_OLD: old }, [
       "BOUNDA_MASTER_KEY_OLD",
     ]);
     expect(after.previous).toEqual([before.kid]);
-    const opened = await after.unwrap({ kid: before.kid, wrapped, extractable: true });
-    expect(await fingerprintOf(opened)).toBe(fingerprint);
+    const opened = await after.unwrap({
+      kid: before.kid,
+      wrapped,
+      extractable: true,
+      kind: "tenant",
+    });
+    expect(await tenantFingerprintOf(opened)).toBe(fingerprint);
     const rewrapped = await after.wrap(opened);
     expect(rewrapped.wrapped).not.toEqual(wrapped);
     const again = await after.unwrap({
       kid: after.kid,
       wrapped: rewrapped.wrapped,
       extractable: false,
+      kind: "tenant",
     });
-    expect(await fingerprintOf(again)).toBe(fingerprint);
+    expect(await tenantFingerprintOf(again)).toBe(fingerprint);
     await failure(
-      before.unwrap({ kid: before.kid, wrapped: rewrapped.wrapped, extractable: false }),
+      before.unwrap({
+        kid: before.kid,
+        wrapped: rewrapped.wrapped,
+        extractable: false,
+        kind: "tenant",
+      }),
     );
   });
 
@@ -187,12 +223,16 @@ describe("masterKey", () => {
     const wrapper = await create({ BOUNDA_MASTER_KEY: randomKey() });
     const { wrapped } = await wrapNew(wrapper);
     expect(
-      (await failure(wrapper.unwrap({ kid: "unknown", wrapped, extractable: false }))).message,
+      (
+        await failure(
+          wrapper.unwrap({ kid: "unknown", wrapped, extractable: false, kind: "tenant" }),
+        )
+      ).message,
     ).toBe("No master key configured has the id unknown");
     const altered = Uint8Array.from(wrapped);
     altered[0] = (altered[0] ?? 0) ^ 1;
     const error = await failure(
-      wrapper.unwrap({ kid: wrapper.kid, wrapped: altered, extractable: false }),
+      wrapper.unwrap({ kid: wrapper.kid, wrapped: altered, extractable: false, kind: "tenant" }),
     );
     expect(error.message).toContain(`does not unwrap under the master key ${wrapper.kid}`);
     expect(error.cause).toBeDefined();
@@ -202,6 +242,50 @@ describe("masterKey", () => {
     const first = await create({ BOUNDA_MASTER_KEY: randomKey() });
     const second = await create({ BOUNDA_MASTER_KEY: randomKey() });
     const { wrapped } = await wrapNew(first);
-    await failure(second.unwrap({ kid: second.kid, wrapped, extractable: false }));
+    await failure(second.unwrap({ kid: second.kid, wrapped, extractable: false, kind: "tenant" }));
+  });
+
+  it("unwraps a person's key wrapped under it before tenant keys, as a key to seal and open with", async () => {
+    const wrapper = await create({ BOUNDA_MASTER_KEY: randomKey() });
+    const person = await generateWrappableKey();
+    const { wrapped } = await wrapper.wrap(person);
+    const opened = await wrapper.unwrap({
+      kid: wrapper.kid,
+      wrapped,
+      extractable: false,
+      kind: "personal",
+    });
+    expect(opened.algorithm).toEqual({ name: "AES-GCM", length: 256 });
+    expect(opened.extractable).toBe(false);
+    expect(await fingerprintOf(opened)).toBe(await fingerprintOf(person));
+  });
+});
+
+describe("ephemeralMasterKey", () => {
+  it("is the same key for every wrapper built from one definition, another for another, and never exported", async () => {
+    const definition = ephemeralMasterKey();
+    const generated = vi.spyOn(crypto.subtle, "generateKey");
+    const first = await buildKeyWrapper({ definition, env: {} });
+    // Generated where no byte of it can be read.
+    expect(generated.mock.calls.map((call) => call[1])).toEqual([false]);
+    generated.mockRestore();
+    const again = await buildKeyWrapper({ definition, env: {} });
+    const other = await buildKeyWrapper({ definition: ephemeralMasterKey(), env: {} });
+    expect(again.kid).toBe(first.kid);
+    expect(other.kid).not.toBe(first.kid);
+    expect(first.kid).toMatch(/^ephemeral-[A-Za-z0-9_-]{16}$/);
+    expect(first.previous).toEqual([]);
+    const key = await generateWrappableTenantKey();
+    const exported = vi.spyOn(crypto.subtle, "exportKey");
+    const { wrapped } = await first.wrap(key);
+    const opened = await again.unwrap({
+      kid: first.kid,
+      wrapped,
+      extractable: false,
+      kind: "tenant",
+    });
+    expect(exported).not.toHaveBeenCalled();
+    expect(await tenantFingerprintOf(opened)).toBe(await tenantFingerprintOf(key));
+    await failure(other.unwrap({ kid: first.kid, wrapped, extractable: false, kind: "tenant" }));
   });
 });

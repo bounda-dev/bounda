@@ -1,6 +1,8 @@
 import { expect, vi } from "vitest";
 import type { Storage } from "../adapter/adapter.ts";
 import type { PersonalKeyStore, StoredPersonalKey } from "../adapter/storage/personal-key-store.ts";
+import type { TenancyStore } from "../adapter/storage/tenancy-store.ts";
+import type { TenantKeyStore } from "../adapter/storage/tenant-key-store.ts";
 import { selectImplementations } from "../config/ports.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type { Config, ErrorText, PortsConfig, ResolvedConfig } from "../config/types.ts";
@@ -9,6 +11,8 @@ import type { CommandRejection } from "../contracts/command.ts";
 import { createSequentialIdGenerator, type IdGenerator } from "../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
+import { createMemoryTenancyStore } from "../memory/tenancy-store.ts";
+import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import type { RejectFunction } from "../modules/command.ts";
 import type { PayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
@@ -20,19 +24,19 @@ import type { AppStorage } from "./events/app-event-store.ts";
 import type { RecordAccess } from "./personal-data/access.ts";
 import { createAccessLog } from "./personal-data/access.ts";
 import {
-  fingerprintOf,
-  fromBase64,
-  generateWrappableKey,
-  importRawKey,
   type PersonalKey,
-  toBase64,
-  withRawKey,
+  TENANT_KEY_ALGORITHM,
+  TENANT_KEY_USAGES,
 } from "./personal-data/crypto.ts";
 import { createForgetIntentions, type ForgetIntentions } from "./personal-data/intention.ts";
+import { buildKeyWrapper, type CryptoKeyWrapper } from "./personal-data/key-wrapper.ts";
+import { ephemeralMasterKey } from "./personal-data/master-key.ts";
+import { openTenantKeys, type TenantKeys } from "./personal-data/tenant-keys.ts";
 import {
   type CategoryKey,
   createPersonalKeyWrapping,
   type PersonalKeys,
+  type PersonalKeyWrapping,
 } from "./personal-data/wrapped-keys.ts";
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
 import type { SealingSource } from "./projection/runner.ts";
@@ -436,15 +440,110 @@ export const breakNextCommit: BreakNextCommitFunction = (storage) => {
  */
 export const unrecordedAccess: RecordAccess = async () => undefined;
 
+// Generated once, for every test of the process: a key stored by one opens in another.
+let testTenantKey: Promise<CryptoKey> | null = null;
+const tenantKeyOfTests = (): Promise<CryptoKey> => {
+  testTenantKey ??= crypto.subtle.generateKey({ name: TENANT_KEY_ALGORITHM, length: 256 }, false, [
+    ...TENANT_KEY_USAGES,
+  ]);
+  return testTenantKey;
+};
+
+/**
+ * The id of the tenant key every test wraps persons' keys under.
+ */
+export const TEST_TENANT_KID = "test-tenant-key";
+
+/**
+ * A tenant's keys for tests: one version, generated once per process, which never forgets.
+ */
+export const testTenantKeys: TenantKeys = {
+  tenant: "test",
+  store: "test-store",
+  current: async () => ({ kid: TEST_TENANT_KID, key: await tenantKeyOfTests() }),
+  keyOf: async (kid) => (kid === TEST_TENANT_KID ? tenantKeyOfTests() : null),
+  knows: (kid) => kid === TEST_TENANT_KID,
+  kids: async () => ({ kid: TEST_TENANT_KID, previous: [], since: new Date(0).toISOString() }),
+  forgotten: () => null,
+  refresh: async () => null,
+  rotate: async () => TEST_TENANT_KID,
+  retire: async () => [],
+  forget: async (forgetting) => forgetting,
+  releaseFiles: async () => false,
+  rewrapUnderMaster: async () => 0,
+  underPreviousMaster: () => false,
+  status: async () => ({
+    tenant: "test",
+    forgottenAt: null,
+    kid: TEST_TENANT_KID,
+    previous: [],
+    master: { kid: "test-master", previous: [], pending: 0 },
+  }),
+  close: () => undefined,
+};
+
+/**
+ * A master key that wraps nothing: the persons' keys of tests are all under the tenant's.
+ */
+export const testMaster: Pick<CryptoKeyWrapper, "kid" | "previous" | "unwrap"> = {
+  kid: "test-master",
+  previous: [],
+  unwrap: async () => {
+    throw new Error("No key of a test is wrapped under the master key");
+  },
+};
+
+export interface OpenTestTenantKeysArgs {
+  readonly master?: CryptoKeyWrapper;
+  readonly store?: TenantKeyStore;
+  readonly tenancy?: TenancyStore;
+  readonly tenant?: string;
+  readonly clock?: Clock;
+}
+
+export interface OpenTestTenantKeysFunction {
+  (args?: OpenTestTenantKeysArgs): Promise<TenantKeys>;
+}
+
+/**
+ * A tenant's keys as an app opens them, in stores of its own unless given, under an ephemeral
+ * master key unless given.
+ */
+export const openTestTenantKeys: OpenTestTenantKeysFunction = async ({
+  master,
+  store = createMemoryTenantKeyStore(),
+  tenancy = createMemoryTenancyStore(),
+  tenant = "acme",
+  clock = createFixedClock(),
+} = {}) =>
+  openTenantKeys({
+    tenant,
+    store,
+    tenancy,
+    master: master ?? (await buildKeyWrapper({ definition: ephemeralMasterKey(), env: {} })),
+    clock,
+    holdsTenantWrapped: async () => false,
+  });
+
+export interface TestWrappingFunction {
+  (clock?: Clock): PersonalKeyWrapping;
+}
+
+/**
+ * The persons' keys of tests, wrapped under the tenant key of tests.
+ */
+export const testWrapping: TestWrappingFunction = (clock = createFixedClock()) =>
+  createPersonalKeyWrapping({ tenantKeys: testTenantKeys, master: testMaster, clock });
+
 export interface KeysOverFunction {
   (keys: PersonalKeyStore, clock?: Clock): PersonalKeys;
 }
 
 /**
- * A store's keys as the kernel reads them, kept unwrapped.
+ * A store's keys as the kernel reads them, wrapped under the tenant key of tests.
  */
 export const keysOver: KeysOverFunction = (keys, clock = createFixedClock()) =>
-  createPersonalKeyWrapping({ wrapper: null, clock }).over(keys);
+  testWrapping(clock).over(keys);
 
 export interface WithPersonalKeysFunction {
   (storage: Storage, clock?: Clock): AppStorage;
@@ -455,7 +554,7 @@ export interface WithPersonalKeysFunction {
  * store as written.
  */
 export const withPersonalKeys: WithPersonalKeysFunction = (storage, clock = createFixedClock()) => {
-  const wrapping = createPersonalKeyWrapping({ wrapper: null, clock });
+  const wrapping = testWrapping(clock);
   return {
     ...storage,
     personalKeys: wrapping.over(storage.personalKeys),
@@ -485,27 +584,21 @@ export interface NewStoredKeyFunction {
 }
 
 /**
- * A new key as a store keeps it without a wrapper.
+ * A new key as a store keeps it, wrapped under the tenant key of tests.
  */
-export const newStoredKey: NewStoredKeyFunction = async () => {
-  const key = await generateWrappableKey();
-  return {
-    key: await withRawKey(key, async (raw) => toBase64(raw)),
-    fingerprint: await fingerprintOf(key),
-    kid: null,
-  };
-};
+export const newStoredKey: NewStoredKeyFunction = async () =>
+  (await testWrapping().generate()).stored;
 
 export interface OpenedKeyFunction {
   (stored: StoredPersonalKey): Promise<PersonalKey>;
 }
 
 /**
- * A key kept without a wrapper, as the kernel seals and opens with it.
+ * A key wrapped under the tenant key of tests, as the kernel seals and opens with it.
  */
-export const openedKey: OpenedKeyFunction = async ({ key, fingerprint }) => ({
-  fingerprint,
-  cryptoKey: await importRawKey({ raw: fromBase64(key), extractable: false }),
+export const openedKey: OpenedKeyFunction = async (stored) => ({
+  fingerprint: stored.fingerprint,
+  cryptoKey: await testWrapping().unwrap(stored),
   retained: false,
 });
 

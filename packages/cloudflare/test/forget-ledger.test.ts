@@ -9,6 +9,7 @@ import {
 } from "@bounda-dev/core";
 import type { Adapter } from "@bounda-dev/core/adapter";
 import { forgetLedgerContract } from "@bounda-dev/core/adapter/testing";
+import { masterKey } from "@bounda-dev/core/config";
 import { describe, expect, it } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
 import { configForObject } from "../src/bounda-object.ts";
@@ -22,6 +23,7 @@ import {
   kvForgetLedger,
   planKvForgetLedgerExpiry,
 } from "../src/forget-ledger.ts";
+import { kvTenantKeys } from "../src/tenant-keys.ts";
 import { quietRegistry } from "./app.ts";
 import { clock } from "./clock.ts";
 
@@ -398,10 +400,18 @@ describe("the KV forget ledger's listing", () => {
   });
 });
 
+const keys = {
+  keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+  tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+};
+
 const config = {
   storage: cloudflare(),
   runtime: {
-    personalData: { forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) } },
+    personalData: {
+      ...keys,
+      forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) },
+    },
   },
 };
 
@@ -664,6 +674,7 @@ describe("a Durable Object's forgetting and the KV ledger", () => {
           ...configForObject(config, state.storage),
           runtime: {
             personalData: {
+              ...keys,
               forgetLedger: { store: kvForgetLedger({ binding: "DOWN" }), strict: true },
             },
           },

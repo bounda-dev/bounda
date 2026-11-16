@@ -46,6 +46,7 @@ export const createPostgresqlSnapshotStore: CreatePostgresqlSnapshotStoreFunctio
         postgresqlDialect.encode("json", persons),
       ],
     ),
+  clear: () => db.run(`DELETE FROM ${table}`, []),
   remove: ({ aggregateType, aggregateId }) =>
     db.run(`DELETE FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2`, [
       aggregateType,

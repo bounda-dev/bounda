@@ -86,6 +86,20 @@ export interface RecipientStore {
   rename(from: string, to: string): Promise<void>;
   caughtUp(port: string, position: number): Promise<void>;
   summary(): Promise<readonly RecipientSummary[]>;
+  /**
+   * Every category disclosed to each port, of any person, by port.
+   */
+  received(): Promise<ReadonlyMap<string, readonly string[]>>;
+  /**
+   * The persons disclosed to the port, in order of their id, past `after`, at most `limit`.
+   */
+  personsOf(args: PersonsOfArgs): Promise<readonly string[]>;
+}
+
+export interface PersonsOfArgs {
+  readonly port: string;
+  readonly after: string | null;
+  readonly limit: number;
 }
 
 export interface DisclosureKeyFunction {
