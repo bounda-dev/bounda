@@ -129,4 +129,23 @@ describe("a tracer teed to a copy", () => {
     ]);
     expect(recording.spanEvents).toEqual([{ span: "work", name: "sent", attributes: { to: "x" } }]);
   });
+
+  it("keeps each span as it stood when read, unended until it ends", () => {
+    const recording = recordSpans();
+    const span = recording.tracer.startSpan("work", { attributes: { a: 1 } });
+    const started = recording.spans[0];
+    expect(started).toEqual({
+      name: "work",
+      attributes: { a: 1 },
+      status: { code: SpanStatusCode.UNSET },
+      exceptions: [],
+      ended: false,
+    });
+    span.setAttribute("b", 2);
+    const changed = recording.spans[0];
+    span.end();
+    expect(started?.attributes).toEqual({ a: 1 });
+    expect(changed).toMatchObject({ attributes: { a: 1, b: 2 }, ended: false });
+    expect(recording.spans[0]?.ended).toBe(true);
+  });
 });

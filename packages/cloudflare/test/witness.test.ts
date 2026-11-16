@@ -142,6 +142,18 @@ describe("a Durable Object of a class witnessObjects watches", () => {
     expect(witnesses?.of("a")).not.toBe(witnesses?.of("b"));
   });
 
+  it("watches a class extending a watched one as its parent, or apart once watched itself", () => {
+    const inherited = class extends WitnessedStore {};
+    const apart = class extends WitnessedStore {};
+    witnessObjects(apart);
+    const parent = objectWitnessesOf(WitnessedStore);
+    expect(objectWitnessesOf(inherited)).toBe(parent);
+    expect(objectWitnessesOf(apart)).not.toBe(parent);
+    const own = objectWitnessesOf(apart)?.of("a");
+    expect(own).toEqual(expect.objectContaining({ logger: expect.any(Function) }));
+    expect(own).not.toBe(parent?.of("a"));
+  });
+
   it("leaves an object of a class it does not watch to be refused", async () => {
     const stub = env.QUIET_STORE.get(env.QUIET_STORE.newUniqueId());
     const error = await runInDurableObject(stub, (object) =>

@@ -1135,15 +1135,24 @@ describe("createBounda given a witness", () => {
     }
   });
 
-  it("boots without one, as before, when it is given none", async () => {
-    const given: (Witness | undefined)[] = [];
-    const { boundaMiddleware, dispose } = createBounda({
+  it("boots without one, with the arguments it took before, when it is given none", async () => {
+    const calls: unknown[] = [];
+    const boot = async (args?: { readonly tenant?: string }) => {
+      calls.push(args);
+      return createApp({ registry: empty, config: { storage: memory() } });
+    };
+    const single = createBounda({ key: uniqueKey(), boot, logger: silentLogger });
+    const tenants = createBounda({
       key: uniqueKey(),
-      boot: bootWith(given),
+      tenant: () => "acme",
+      boot,
       logger: silentLogger,
     });
-    await boundaMiddleware(middlewareArgs().args, async () => undefined);
-    expect(given).toEqual([undefined]);
-    await dispose();
+    for (const { boundaMiddleware } of [single, tenants]) {
+      await boundaMiddleware(middlewareArgs().args, async () => undefined);
+    }
+    expect(calls).toStrictEqual([undefined, { tenant: "acme" }]);
+    await single.dispose();
+    await tenants.dispose();
   });
 });

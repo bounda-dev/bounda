@@ -1077,6 +1077,17 @@ describe("expectForgotten given an app built with a witness", () => {
         witness: { logger: (logger) => logger, watch: () => undefined },
       }),
     ).rejects.toThrow("witness must be what createWitness() from @bounda-dev/core/testing returns");
+    await expect(
+      createApp({
+        registry,
+        config: { storage: memory() },
+        witness: {
+          logger: (logger) => logger,
+          watch: () => undefined,
+          [Symbol.for("@bounda-dev/core/witness")]: null,
+        } as Witness,
+      }),
+    ).rejects.toThrow("witness must be what createWitness() from @bounda-dev/core/testing returns");
     const app = await createApp({ registry, config: { storage: memory() } });
     await expect(expectForgotten(app, "c-1")).rejects.toBeInstanceOf(TypeError);
     await app.stop();

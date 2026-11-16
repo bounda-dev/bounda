@@ -722,9 +722,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         : watchedApp(
             app,
             watching,
-            [config.storage, ...Object.values(config.readModels)]
-              .filter(isAdapter)
-              .filter((store, index, all) => all.indexOf(store) === index),
+            [config.storage, ...Object.values(config.readModels)].filter(isAdapter),
           );
     const adapted = await config.storage.createStorage();
     opened.unshift(() => adapted.close());
