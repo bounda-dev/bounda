@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { parseDuration } from "../../contracts/duration.ts";
 import { type Instant, instantSchema } from "../../contracts/instant.ts";
-import { person, personal } from "../../modules/personal.ts";
+import { notPersonal, person, personal } from "../../modules/personal.ts";
 import type {
   DeadlineFieldSchema,
   InstantFieldSchema,
@@ -34,8 +34,13 @@ export interface ProcessDeadlinePayload {
 }
 
 const deadlineSchemas = new WeakSet<object>();
+const instantSchemas = new WeakSet<object>();
 
-const instant = (): InstantFieldSchema => instantSchema.nullable().default(null);
+const instant = (): InstantFieldSchema => {
+  const schema = instantSchema.nullable().default(null);
+  instantSchemas.add(schema);
+  return schema as InstantFieldSchema;
+};
 
 const deadline = (): DeadlineFieldSchema => {
   const schema = instant();
@@ -46,7 +51,20 @@ const deadline = (): DeadlineFieldSchema => {
 /**
  * What a process `state` schema function receives.
  */
-export const processStateArgs: ProcessStateArgs = { z, deadline, instant, personal, person };
+export const processStateArgs: ProcessStateArgs = {
+  z,
+  deadline,
+  instant,
+  personal,
+  person,
+  notPersonal,
+};
+
+export interface IsInstantFieldFunction {
+  (schema: z.ZodType): boolean;
+}
+
+export const isInstantField: IsInstantFieldFunction = (schema) => instantSchemas.has(schema);
 
 export interface DeadlineFieldsOfFunction {
   (schema: z.ZodType | null): readonly string[];

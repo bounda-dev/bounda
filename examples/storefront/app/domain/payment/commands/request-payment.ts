@@ -1,7 +1,11 @@
 import type { Command } from "./+types/request-payment";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
-  z.object({ paymentId: z.uuid(), orderId: z.uuid(), amount: z.number().positive() });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({
+    paymentId: notPersonal(z.uuid()),
+    orderId: notPersonal(z.uuid()),
+    amount: z.number().positive(),
+  });
 
 export const handler = async ({
   command,

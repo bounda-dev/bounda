@@ -1,6 +1,7 @@
 import type { Command } from "./+types/lock-order-for-payment";
 
-export const payload = ({ z }: Command.PayloadArgs) => z.object({ orderId: z.uuid() });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({ orderId: notPersonal(z.uuid()) });
 
 export const rejections = ({ state }: Command.RejectionsArgs) => ({
   NotPlaced: `Only placed orders can be locked for payment; this one is ${state.status ?? "new"}`,

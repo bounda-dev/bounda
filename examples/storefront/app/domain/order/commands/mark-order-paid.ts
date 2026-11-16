@@ -1,6 +1,7 @@
 import type { Command } from "./+types/mark-order-paid";
 
-export const payload = ({ z }: Command.PayloadArgs) => z.object({ orderId: z.uuid() });
+export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+  z.object({ orderId: notPersonal(z.uuid()) });
 
 export const rejections = ({ state }: Command.RejectionsArgs) => ({
   NotOpen: `Only open orders can be paid; this one is ${state.status ?? "new"}`,

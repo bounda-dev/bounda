@@ -1,7 +1,11 @@
 import type { Event } from "./+types/payment-requested";
 
-export const payload = ({ z }: Event.PayloadArgs) =>
-  z.object({ orderId: z.string(), amount: z.number().positive(), intentId: z.string() });
+export const payload = ({ z, notPersonal }: Event.PayloadArgs) =>
+  z.object({
+    orderId: notPersonal(z.string()),
+    amount: z.number().positive(),
+    intentId: notPersonal(z.string()),
+  });
 
 export const begin = ({ event }: Event.BeginArgs) => ({
   status: "requested" as const,

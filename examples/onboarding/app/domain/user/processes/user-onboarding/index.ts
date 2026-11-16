@@ -6,5 +6,5 @@ export const config = ({ events }: Process.ConfigArgs) => ({
   timeout: process.env.ONBOARDING_TIMEOUT ?? "7d",
 });
 
-export const state = ({ z }: Process.StateArgs) =>
-  z.object({ welcomeEmailSent: z.boolean().default(false) });
+export const state = ({ z, notPersonal }: Process.StateArgs) =>
+  z.object({ welcomeEmailSent: notPersonal(z.boolean()).default(false) });

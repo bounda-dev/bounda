@@ -146,14 +146,22 @@ fresh key, so the corrected request runs instead of conflicting with the first.
 
 **Personal data, forgotten.** The email and the name are marked with `personal` wherever they
 appear, in the events and in the payloads of the commands that carry them, the scheduled reminder
-among them, and the person is the user, the aggregate's id
+among them, in the category `account` that `app/personal-data.ts` declares on the basis of the
+contract, and the person is the user, the aggregate's id
 ([personal data](/guides/personal-data/)):
 
 ```ts
 // app/domain/user/user-registered.ts
 export const payload = ({ z, personal }: Event.PayloadArgs) =>
-  z.object({ email: personal(z.email()), name: personal(z.string().min(1)) });
+  z.object({
+    email: personal(z.email(), { category: "account" }),
+    name: personal(z.string().min(1), { category: "account" }),
+  });
 ```
+
+Every other field that can hold text is marked too: the user's id with `person` in the commands,
+and the rest with `notPersonal`, so `bounda personal-data inventory` prints a complete
+[record of processing activities](/guides/personal-data/#the-record-of-processing-activities).
 
 Whoever reads the event sees `string | null`: the policies skip a user forgotten before they ran,
 and the projections skip one a rebuild meets. Each read model projects

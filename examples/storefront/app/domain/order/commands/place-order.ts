@@ -1,18 +1,20 @@
 import type { Command } from "./+types/place-order";
 
-export const payload = ({ z }: Command.PayloadArgs) =>
+export const payload = ({ z, person, notPersonal }: Command.PayloadArgs) =>
   z.object({
-    orderId: z.uuid(),
-    customerId: z.string().min(1),
-    items: z
-      .array(
-        z.object({
-          productId: z.string().min(1),
-          quantity: z.int().positive(),
-          price: z.number().positive(),
-        }),
-      )
-      .min(1),
+    orderId: notPersonal(z.uuid()),
+    customerId: person(z.string().min(1)),
+    items: notPersonal(
+      z
+        .array(
+          z.object({
+            productId: z.string().min(1),
+            quantity: z.int().positive(),
+            price: z.number().positive(),
+          }),
+        )
+        .min(1),
+    ),
   });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({

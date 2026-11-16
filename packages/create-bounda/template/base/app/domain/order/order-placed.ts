@@ -4,7 +4,7 @@ export const payload = ({ z, person, personal }: Event.PayloadArgs) =>
   z.object({
     customerId: person(z.string()),
     total: z.number().positive(),
-    deliveryNote: personal(z.string()).optional(),
+    deliveryNote: personal(z.string(), { category: "delivery" }).optional(),
   });
 
 export const begin = ({ event }: Event.BeginArgs) => ({

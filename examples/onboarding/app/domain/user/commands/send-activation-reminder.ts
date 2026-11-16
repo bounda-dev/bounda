@@ -2,11 +2,11 @@ import type { Command } from "./+types/send-activation-reminder";
 
 // Scheduled days ahead with the address it goes to, so the stored command holds personal data:
 // marked, it waits encrypted, and forgetting the user cancels it.
-export const payload = ({ z, personal }: Command.PayloadArgs) =>
+export const payload = ({ z, personal, person }: Command.PayloadArgs) =>
   z.object({
-    userId: z.uuid(),
-    email: personal(z.email()),
-    name: personal(z.string().min(1)),
+    userId: person(z.uuid()),
+    email: personal(z.email(), { category: "account" }),
+    name: personal(z.string().min(1), { category: "account" }),
   });
 
 export const handler = async ({

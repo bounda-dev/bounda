@@ -1,6 +1,6 @@
 ---
 title: Personal data
-description: Mark the fields of an event, a process state or a read model that hold personal data, say whose they are, sort them in categories with their legal basis and retention, seal what was written before a field was marked, forget a person, export their data or correct it with one call, tell the recipients their data went to, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person, nor a value corrected, is left readable.
+description: Mark the fields of an event, a process state or a read model that hold personal data, and those that hold none, say whose they are, print the record of processing activities, sort them in categories with their legal basis and retention, seal what was written before a field was marked, forget a person, export their data or correct it with one call, tell the recipients their data went to, record who opened whose data, forget them after a retention or when a purpose ends, wrap their keys under a master key kept out of the database, handle forgetting in every read model that showed them, and check in a test that nothing of a forgotten person, nor a value corrected, is left readable.
 sidebar:
   order: 11
 ---
@@ -47,6 +47,38 @@ export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
 ```
 
 An event names at most one person.
+
+### Fields that hold no personal data
+
+A field nobody marks may be personal data nobody looked at, so a field that holds none says so
+with `notPersonal`, next to `personal` and `person` in the same arguments:
+
+```ts
+export const payload = ({ z, person, personal, notPersonal }: Event.PayloadArgs) =>
+  z.object({
+    customerId: person(z.string()),
+    sku: notPersonal(z.string()),
+    quantity: z.int().positive(),
+    deliveryNote: personal(z.string()).optional(),
+  });
+```
+
+`notPersonal` changes nothing at rest: the field is stored as it comes, and validates and reads as
+its schema says. It records a decision, which the [record of processing
+activities](#the-record-of-processing-activities) lists for whoever reviews it. It works where
+`personal` does, on a top-level field of an event's or a command's payload or of a process's state,
+a whole object or array included, and a read-model column takes `.notPersonal()`. A field holds one
+mark: `personal`, `person` or `notPersonal` on a schema that already carries another throws
+`ConfigurationError`, and `.notPersonal()` comes only on a column `.personal()` and `.person()` left
+unmarked.
+
+Every field that can hold text needs one of the three: a string that is not one of a set of
+literals, a template literal, `unknown` or `any`, or an object, array, record, map, set, tuple or
+union that can contain one, keys of a record included. A number, a boolean, a date, a literal or an
+enum cannot carry text, so they need none; `instant()` and `deadline()` in a process's state hold a
+moment and need none either. In a read model every `f.string()` column needs one, whatever its
+projections write, since the column holds any text the database is given, and an `f.json<T>()`
+column once `T` can hold text. A query's payload needs none: a query is never stored.
 
 ## Categories
 
@@ -1399,6 +1431,72 @@ forget waits on its own row, as a person does. `runtime.personalData.retention` 
 category's retention, and forgets the person as a whole: every category but those a legal
 obligation keeps, after which each declared category has nothing left to forget but what was
 kept.
+
+## The record of processing activities
+
+Article 30 of the GDPR asks the controller to keep a record of what it processes: the categories
+of personal data and of the persons they are about, the purposes, who receives the data and where,
+how long it is kept and how it is protected. Most of that is in the app's modules and
+configuration, so Bounda prints it:
+
+```bash
+bounda personal-data inventory
+bounda personal-data inventory --json > record.json
+bounda personal-data inventory --markdown > record-of-processing.md
+```
+
+It reads the registry and `bounda.config.ts`, as `bounda rebuild` loads them, and opens no
+database. The record lists:
+
+- each [category](#categories), with its basis and how long after the person's last activity it is
+  kept, and how many fields are in it;
+- each event, command, process state and read model with a field marked `personal` or `person`:
+  whose the data is (the field marked `person`, else the aggregate's or the instance's id), each
+  personal field with its category and how it is kept (sealed under the person's key, sealed with a
+  [blind index](#sealed-at-rest), or [in the clear](#in-the-clear)), and where its copies go: the
+  event store, the aggregate's [snapshots](/concepts/long-streams/#snapshots) when it takes them,
+  scheduled commands and dead letters for a command, the read model's table, each in the database
+  its adapter names;
+- each [recipient](#recipients): its port, name, kind, country, the safeguard of a transfer out
+  of the European Economic Area, and the categories it receives;
+- what the runtime keeps about persons besides those fields: their keys, their activity and
+  restrictions, its own events about them, [remembered answers](#remembered-answers) for as long as
+  `runtime.commands.idempotencyKeyLifetime` keeps them, dead letters for as long as
+  [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters) keeps resolved
+  ones, what went to each recipient, the [forget ledger](#the-forget-ledger) for its `keepFor`, and
+  the [access log](#who-opened-what) when `app/audit.ts` exists;
+- whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
+  ledger are configured;
+- the fields marked `notPersonal`.
+
+What it cannot know is the controller's to add: who the controller, its representative and its
+data protection officer are, the purposes in words beyond each category's basis, which categories
+of persons each person id stands for, and the security measures outside the app. `--markdown`
+writes the record as a document to complete with them.
+
+The command also says what keeps the record from being complete, and exits `1` while anything does,
+so a CI step fails on it:
+
+- a field that can hold text and is [marked](#fields-that-hold-no-personal-data) neither
+  `personal`, `person` nor `notPersonal`;
+- a field of any type, marked none of them, whose name says personal data;
+- text no mark reaches: a payload or a state that is not an object, or an object that keeps keys it
+  does not declare, as `z.looseObject` and `.catchall()` do;
+- personal fields in the default category, which declares no legal basis: declare
+  [categories](#categories) and give each field one;
+- [`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text), which puts the
+  text of errors, personal data included, in logs no forgetting reaches.
+
+A name says personal data when one of its words, or two of them joined, is one the GDPR's
+definitions point at: an identifier of article 4(1), such as a name (`name`, `firstName`,
+`surname`, `username`), contact (`email`, `phone`, `address`, `zip`), a birth date or an age, an
+identity document or number (`passport`, `ssn`, `taxId`), money (`iban`, `card`, `salary`), an
+online or device identifier (`ip`, `userAgent`, `cookie`, `deviceId`), a location (`latitude`,
+`geo`), a trait (`gender`, `nationality`, `photo`, `signature`); a special category of article 9
+(`health`, `religion`, `ethnicity`, `biometric`, `sexuality`) or a criminal record of article 10;
+and free text written about someone (`note`, `comment`, `message`, `bio`). Words are read apart, so
+`birthDate`, `birth_date` and `birthdate` all match, while `latency` never matches `lat`. A field the
+list names wrongly, such as `welcomeEmailSentAt`, takes `notPersonal` like any other.
 
 ## Where the keys live
 

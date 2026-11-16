@@ -1,6 +1,6 @@
 import type { Event } from "./+types/profile-updated";
 
 export const payload = ({ z, personal }: Event.PayloadArgs) =>
-  z.object({ name: personal(z.string().min(1)) });
+  z.object({ name: personal(z.string().min(1), { category: "account" }) });
 
 export const evolve = ({ event }: Event.EvolveArgs) => ({ name: event.payload.name });

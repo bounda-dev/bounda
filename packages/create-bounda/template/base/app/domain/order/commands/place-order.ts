@@ -1,11 +1,11 @@
 import type { Command } from "./+types/place-order";
 
-export const payload = ({ z, person, personal }: Command.PayloadArgs) =>
+export const payload = ({ z, person, personal, notPersonal }: Command.PayloadArgs) =>
   z.object({
-    orderId: z.uuid(),
+    orderId: notPersonal(z.uuid()),
     customerId: person(z.string().min(1)),
     total: z.number().positive(),
-    deliveryNote: personal(z.string().min(1)).optional(),
+    deliveryNote: personal(z.string().min(1), { category: "delivery" }).optional(),
   });
 
 export const rejections = ({ command }: Command.RejectionsArgs) => ({

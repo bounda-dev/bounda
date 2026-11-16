@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, list the recipients of personal data, forget a tenant and rotate its key, migrate its tables and declare a restore."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, print the record of processing activities, list the recipients of personal data, forget a tenant and rotate its key, migrate its tables and declare a restore."
 sidebar:
   order: 0
 ---
@@ -435,6 +435,60 @@ withdrawn, and prints `forgot marketing of c-42`. A category whose basis is `leg
 kept, restricted, until its retention ends, either way. A category the app does not have fails with
 `VALIDATION_FAILED` and nothing is forgotten. The export lists the person's restrictions, and marks
 on each record the fields a restriction covers.
+
+## `bounda personal-data inventory`
+
+Prints the record of processing activities of article 30 of the GDPR, as far as the modules and
+the configuration say it: the categories of personal data with their basis and retention, every
+event, command, process state and read model that holds personal data, whose and where, every
+recipient, what the runtime keeps about persons and for how long, and the fields marked
+`notPersonal`. It loads the project as `bounda rebuild` does and opens no database. See
+[The record of processing activities](/guides/personal-data/#the-record-of-processing-activities).
+
+```bash
+bounda personal-data inventory
+bounda personal-data inventory --json
+bounda personal-data inventory --markdown > record-of-processing.md
+```
+
+```
+Personal data inventory (GDPR article 30)
+
+Categories
+  default  no basis declared  kept until forgotten  0 fields
+  account  contract  forgotten 2y after last activity  14 fields
+
+Personal data
+  event user.UserRegistered, of the aggregate's id
+    email  account  sealed under the person's key
+    name  account  sealed under the person's key
+    kept in: event store (sqlite)
+  read model usersDirectory, of the person in userId
+    email  account  sealed under the person's key, found by a blind index
+    name  account  sealed under the person's key
+    kept in: read-model table (sqlite)
+…
+Complete: every field is classified
+```
+
+The record ends with what keeps it from being complete, one finding a line: a field that can hold
+text and is marked neither `personal`, `person` nor `notPersonal`, a field whose name says personal
+data and is not marked, text no mark reaches, personal fields in the default category, which
+declares no legal basis, and logs that carry the text of errors.
+
+| Option | Meaning |
+| --- | --- |
+| `--json` | Print the record as JSON, as `personalDataInventory` from `@bounda-dev/core` returns it |
+| `--markdown` | Print it as a Markdown document, for the controller to complete and keep |
+| `--root`, `--config`, `--registry`, `--tenant` | As for `bounda rebuild` |
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The record is complete |
+| `1` | It has findings, printed with it; or the command line is wrong |
+| `2` | The project failed to load |
 
 ## `bounda recipients`
 

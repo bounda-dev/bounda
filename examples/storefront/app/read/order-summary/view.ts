@@ -1,9 +1,9 @@
 import type { View } from "./+types/view";
 
 export const fields = ({ f }: View.FieldsArgs) => ({
-  orderId: f.string().primaryKey(),
-  customerId: f.string().index(),
-  status: f.string().index(),
+  orderId: f.string().primaryKey().notPersonal(),
+  customerId: f.string().index().person(),
+  status: f.string().index().notPersonal(),
   total: f.number(),
   itemCount: f.number(),
   placedAt: f.date(),
@@ -12,6 +12,6 @@ export const fields = ({ f }: View.FieldsArgs) => ({
   cancelledAt: f.date().optional(),
   confirmationSent: f.boolean(),
   reminderSent: f.boolean(),
-  paymentId: f.string().optional(),
-  paymentStatus: f.string().optional(),
+  paymentId: f.string().optional().notPersonal(),
+  paymentStatus: f.string().optional().notPersonal(),
 });

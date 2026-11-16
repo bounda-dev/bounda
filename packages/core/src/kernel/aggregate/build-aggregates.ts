@@ -4,7 +4,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { createEventBuilders } from "../../modules/event.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
-import { person, personal } from "../../modules/personal.ts";
+import { notPersonal, person, personal } from "../../modules/personal.ts";
 import type { AggregateEntry, Registry } from "../../modules/registry.ts";
 import { personalMarksOf } from "../personal-data/marks.ts";
 import type { ModulePorts } from "../ports/ports.ts";
@@ -18,7 +18,8 @@ import type {
 
 // One `personal` marks both: only its type tells an event's field, read as `null` once its person
 // is forgotten, from a command's, which never runs then.
-const schemaArgs = { z, personal, person } as EventPayloadArgs & CommandPayloadArgs;
+export const schemaArgs = { z, personal, person, notPersonal } as EventPayloadArgs &
+  CommandPayloadArgs;
 
 const compileSchema = (
   payload: ((args: EventPayloadArgs & CommandPayloadArgs) => unknown) | undefined,

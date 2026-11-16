@@ -30,7 +30,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
 | `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes; without it, the app's logger |
 | `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis and retention; without it, every personal field is in the default category |
-| `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data; `holdsPersonalData = false` (optional) to state it keeps nothing of anyone's data though it projects events with personal fields |
+| `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data, `.notPersonal()` on those that hold none; `holdsPersonalData = false` (optional) to state it keeps nothing of anyone's data though it projects events with personal fields |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once its view keeps a field in the clear with `.personal({ clear: true })`, or a projection of the read model sees a field marked `personal` and the view marks no field `.personal()` |
 | `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts`, `processing-restriction-lifted.ts` | `project`, optional |
@@ -99,7 +99,8 @@ Some rules need the modules themselves, so the app checks them when it is create
 
 - a policy or a projection whose trigger is not an event of the aggregate it listens to, the
   runtime's own `bounda` included; an event, a command or a process `state` that marks two fields
-  with `person`, and a process `state` that starts with a `personal` or `person` field set;
+  with `person`, and a process `state` that starts with a `personal` or `person` field set; a
+  field given two of `personal`, `person` and `notPersonal`;
 - a `deadline()` field without its `at-` file, and an `at-` file without its field; the name
   `timeout` is reserved for the process's lifetime;
 - an event of another aggregate that a process listens to and cannot assign to an instance, by an
