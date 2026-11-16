@@ -3,13 +3,15 @@ import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ValidationError } from "../../contracts/errors.ts";
+import { ProcessingRestrictedError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import type { EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
+import { sealedKeys } from "../personal-data/commands.ts";
 import { isSealed } from "../personal-data/crypto.ts";
+import { openTextWith } from "../personal-data/errors.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger, keysOver, newStoredKey } from "../test-support.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
@@ -61,6 +63,7 @@ const subject = {
   aggregateType: "order",
   aggregateId: "o-1",
   person: null,
+  statePerson: null,
   read: [],
 };
 
@@ -134,6 +137,7 @@ describe("subjectOf", () => {
     ).toEqual({
       ...subject,
       person: "c-1",
+      statePerson: null,
     });
     expect(
       failures.subjectOf(orderPayment, placed({ customerId: "c-1", note: null }), null),
@@ -241,6 +245,42 @@ describe("letterOf", () => {
     expect(letter.errorMessage).not.toMatchObject({ $personal: { key: read.fingerprint } });
   });
 
+  it("names whom the instance's state names besides, and seals the text under their keys around the subject person's", async () => {
+    const { failures, storage } = await setup();
+    await storage.personalKeys.add("c-1", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
+    await storage.personalKeys.add("c-2", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
+    const letter = await failures.letterOf(
+      orderPayment,
+      { ...subject, person: "c-1", statePerson: "c-2" },
+      new Error("cannot mail ana@example.com"),
+      1,
+      "terminal",
+    );
+    expect(letter).toMatchObject({ person: "c-1", statePerson: "c-2" });
+    const outer = letter.errorMessage;
+    expect(outer).toMatchObject({ $personal: { person: "c-2" } });
+    const keys = keysOver(storage.personalKeys);
+    const opened = await openTextWith(sealedKeys(keys))(outer);
+    expect(opened).toBe("cannot mail ana@example.com");
+    expect(isSealed(letter.errorStack)).toBe(true);
+    const ofState = await storage.personalKeys.get("c-2", DEFAULT_PERSONAL_CATEGORY);
+    await storage.personalKeys.remove("c-2", ofState?.fingerprint ?? "");
+    expect(await openTextWith(sealedKeys(keysOver(storage.personalKeys)))(outer)).toBeNull();
+  });
+
+  it("names the state's person once when a restriction of theirs failed the step", async () => {
+    const { failures } = await setup();
+    const letter = await failures.letterOf(
+      orderPayment,
+      { ...subject, person: "c-1", statePerson: "c-2" },
+      new ProcessingRestrictedError("c-2"),
+      1,
+      "terminal",
+    );
+    expect(letter.person).toBe("c-2");
+    expect(letter).not.toHaveProperty("statePerson");
+  });
+
   it("gives no key to a person who holds none, sealing the text unreadable", async () => {
     const { failures, storage } = await setup();
     const letter = await failures.letterOf(
@@ -309,6 +349,7 @@ describe("subjectOf an event on a loaded instance", () => {
     ).toEqual({
       ...subject,
       person: "c-2",
+      statePerson: null,
       read: [held],
     });
     expect(
@@ -316,7 +357,7 @@ describe("subjectOf an event on a loaded instance", () => {
         instanceId: "o-1",
         instance: loaded,
       }),
-    ).toEqual({ ...subject, person: "c-1", read: [held] });
+    ).toEqual({ ...subject, person: "c-1", statePerson: "c-2", read: [held] });
     expect(
       failures.subjectOf(orderPayment, placed({ customerId: "c-1" }), {
         instanceId: "o-1",
@@ -331,6 +372,7 @@ describe("subjectOf an event on a loaded instance", () => {
   it("stands a deadline in under whom the state names", () => {
     expect(deadlineSubject(onboarding, "o-1", "paymentDeadline", loaded)).toMatchObject({
       person: "c-2",
+      statePerson: null,
       read: [held],
     });
   });
@@ -346,6 +388,7 @@ describe("deadlineSubject", () => {
       aggregateType: "process:orderPayment",
       aggregateId: "o-1",
       person: null,
+      statePerson: null,
       read: [],
     });
   });

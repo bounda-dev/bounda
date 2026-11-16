@@ -228,6 +228,7 @@ const scheduleRetry = (
       payload: { personId },
     },
     executeAt: new Date(event.timestamp),
+    scheduledAt: new Date(event.timestamp),
     context: { ...causedBy(event), depth: 0 },
   });
 
@@ -254,6 +255,7 @@ const scheduleLifts = async (
         dedupeKey: liftRestrictionKey(personId, ground, category),
         command: { type: LIFT_RESTRICTION_COMMAND, aggregateId: personId, payload: scheduled },
         executeAt: new Date(liftsAt),
+        scheduledAt: new Date(event.timestamp),
         context: { ...causedBy(event), depth: 0 },
       });
     }

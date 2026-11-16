@@ -310,6 +310,7 @@ describe("scheduled command worker", () => {
         dedupeKey: entry.dedupeKey,
         command: { ...entry.command, payload: { orderId: "o-2", total: 5 } },
         executeAt: harness.clock.now(),
+        scheduledAt: harness.clock.now(),
         context: entry.context,
       });
       return dispatch(args);
@@ -587,6 +588,7 @@ describe("scheduled command worker", () => {
       dedupeKey: "command:x",
       command: { type: "TouchOrder", aggregateId: "o-1", payload: { orderId: "o-1" } },
       executeAt: harness.clock.now(),
+      scheduledAt: harness.clock.now(),
       context: { correlationId: "c", causationId: "c", depth: 0 },
     });
     await harness.worker.runOnce();
@@ -970,6 +972,7 @@ describe("scheduled command worker", () => {
       dedupeKey: "command:x",
       command: { type: "TouchOrder", aggregateId: "o-1", payload: { orderId: "o-1" } },
       executeAt: harness.clock.now(),
+      scheduledAt: harness.clock.now(),
       context: { correlationId: "c", causationId: "c", depth: 0 },
     });
     await harness.worker.runOnce();
@@ -985,6 +988,7 @@ describe("scheduled command worker", () => {
       dedupeKey: "command:y",
       command: { type: "Unknown", aggregateId: "z", payload: {} },
       executeAt: harness.clock.now(),
+      scheduledAt: harness.clock.now(),
       context: { correlationId: "c", causationId: "c", depth: 0 },
     });
     harness.worker.start();

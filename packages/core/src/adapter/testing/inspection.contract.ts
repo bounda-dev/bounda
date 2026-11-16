@@ -63,6 +63,7 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
         dedupeKey: "command:c1",
         command: testCommand("1"),
         executeAt: now,
+        scheduledAt: now,
         context: testContext,
       });
       await storage.deadLetterStore.add(testDeadLetter("dl-1"));

@@ -589,6 +589,7 @@ describe("redact, in detail", () => {
       dedupeKey: "command:gone",
       command: { type: "Gone", aggregateId: "ana", payload: { email: "ana@old.example" } },
       executeAt: new Date("2030-01-01T00:00:00.000Z"),
+      scheduledAt: new Date("2030-01-01T00:00:00.000Z"),
       context: { correlationId: "c", causationId: "c", depth: 0 },
       persons: [{ person: "ana", fingerprint: null }],
     });

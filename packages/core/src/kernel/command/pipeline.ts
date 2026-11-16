@@ -48,6 +48,7 @@ import type { AppStorage } from "../events/app-event-store.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { openAnswer, sealAnswer } from "../personal-data/answers.ts";
 import { type SealedPayload, sealCommandPayload } from "../personal-data/commands.ts";
+import { createEarlierAnswers, type EarlierAnswers } from "../personal-data/earlier-answers.ts";
 import { hidingRetained } from "../personal-data/event-store.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted, refuseRestrictedRead } from "../personal-data/refusal.ts";
@@ -137,6 +138,16 @@ export interface CreateCommandPipelineArgs {
    * without it.
    */
   readonly disclosures?: Disclosures | undefined;
+  /**
+   * The fingerprint of the app's marks, as `marksFingerprint` names them: a remembered answer is
+   * sealed under them, and one sealed under others is erased.
+   */
+  readonly marks: string | null;
+  /**
+   * What files the answers kept by the caller's key itself under its HMAC before a lookup misses;
+   * one of the pipeline's own when left out.
+   */
+  readonly earlierAnswers?: EarlierAnswers;
 }
 
 export interface CreateCommandPipelineFunction {
@@ -418,6 +429,8 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   recordAccess,
   onRejection,
   disclosures,
+  marks,
+  earlierAnswers = createEarlierAnswers({ storage, atRest: storage.atRest, clock }),
 }) => {
   // Only streams written before `begin` existed land here, so the set stays small.
   const warnedOpenings = new Set<string>();
@@ -636,6 +649,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         dedupeKey: scheduledCommandKey(commandId),
         command: { type, payload: stored, aggregateId },
         executeAt,
+        scheduledAt: clock.now(),
         context: {
           correlationId: command.metadata.correlationId,
           causationId: command.metadata.causationId,
@@ -663,7 +677,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       const sealed = await sealAnswer({
         keys,
         atRest: storage.atRest,
-        answer: { key, fingerprint, outcome },
+        answer: { key, fingerprint, outcome, marks },
         person,
         marks: runtime.personal,
         payload: parsed,
@@ -780,14 +794,14 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       run: async (span): Promise<DispatchResult | Rejected> => {
         const replay = async (): Promise<DispatchResult | Rejected | null> => {
           if (idempotency === undefined) return null;
-          const { key: given, filed } = idempotency;
-          // One kept before keys were filed by their HMAC is found by the key itself until it
-          // expires.
-          const found =
-            (await stores.idempotencyStore.get({ key: filed, now: clock.now() })) ??
-            (filed === given
-              ? null
-              : await stores.idempotencyStore.get({ key: given, now: clock.now() }));
+          const { filed } = idempotency;
+          let found = await stores.idempotencyStore.get({ key: filed, now: clock.now() });
+          // A key filed by itself, as before keys were filed by their HMAC, is found once it is
+          // filed under it.
+          if (found === null && !earlierAnswers.settled()) {
+            await earlierAnswers.file();
+            found = await stores.idempotencyStore.get({ key: filed, now: clock.now() });
+          }
           if (found === null) return null;
           const remembered =
             found.answer === null
@@ -797,7 +811,8 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
                   atRest: storage.atRest,
                   answer: found.answer,
                 });
-          if (remembered === null) {
+          // Sealed under other marks, it may quote what these mark, under no key of theirs.
+          if (remembered === null || (remembered.marks ?? null) !== marks) {
             throw new IdempotentAnswerErasedError({
               idempotencyKey: idempotency.key,
               commandType: type,

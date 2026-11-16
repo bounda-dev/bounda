@@ -375,6 +375,35 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.listByPerson("c-3")).toEqual([]);
     });
 
+    it("names the person of a process's state beside the person of its work: lists it for either, and forgets it for neither", async () => {
+      const text = sealed("c-2", "2");
+      await store.add(
+        letter("process", {
+          kind: "process",
+          handler: "order.orderPayment",
+          person: "c-1",
+          statePerson: "c-2",
+          errorMessage: text,
+        }),
+      );
+      await store.add(letter("policy", { person: "c-1", errorMessage: sealed("c-1", "1") }));
+      expect(await store.get("process")).toMatchObject({ person: "c-1", statePerson: "c-2" });
+      expect(await store.get("policy")).not.toHaveProperty("statePerson");
+      expect((await store.listByPerson("c-2")).map(({ id }) => id)).toEqual(["process"]);
+      expect((await store.listByPerson("c-1")).map(({ id }) => id)).toEqual(["policy", "process"]);
+      expect(await store.forget("c-2")).toEqual([]);
+      expect(await store.forget("c-1")).toEqual([]);
+      await store.reseal("policy", {
+        person: "c-1",
+        statePerson: "c-3",
+        errorMessage: sealed("c-3", "3"),
+      });
+      expect((await store.listByPerson("c-3")).map(({ id }) => id)).toEqual(["policy"]);
+      await store.reseal("process", { person: "c-1", errorMessage: text });
+      expect(await store.get("process")).not.toHaveProperty("statePerson");
+      expect(await store.listByPerson("c-2")).toEqual([]);
+    });
+
     it("reseals a letter in place, whatever its status, keeping the rest of it", async () => {
       await store.add(letter("p", { errorStack: "Error: timeout\n    at handler" }));
       await store.add(

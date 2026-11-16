@@ -71,17 +71,20 @@ export const createRestrictedRetries: CreateRestrictedRetriesFunction = ({
       errorCode: _code,
       errorMessage: _message,
       errorStack: _stack,
+      statePerson: ofState,
       ...letter
     }: StoredDeadLetter,
     error: unknown,
   ): Promise<void> => {
     const person = restrictedPersonOf(error) ?? letter.person;
+    const statePerson = ofState === undefined || ofState === person ? null : ofState;
     await unit.deadLetterStore.remove(letter.id);
     await unit.deadLetterStore.add({
       ...letter,
       person,
+      ...(statePerson === null ? {} : { statePerson }),
       errorType: "terminal",
-      ...(await sealError({ error, person, keys: storage.personalKeys })),
+      ...(await sealError({ error, person, statePerson, keys: storage.personalKeys })),
       attempts: letter.attempts + 1,
       lastFailedAt: clock.now().toISOString(),
     });

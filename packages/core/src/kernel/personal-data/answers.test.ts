@@ -9,6 +9,7 @@ import { isSealed } from "./crypto.ts";
 import type { PersonalMarks } from "./marks.ts";
 
 const answer: RememberedAnswer = {
+  key: "k-1",
   fingerprint: "fp",
   outcome: {
     rejected: "Taken",
@@ -192,12 +193,16 @@ describe("sealAnswer", () => {
 });
 
 describe("openAnswer", () => {
-  it("reads an answer kept before answers were sealed whole, its outcome in the clear or under the database's key", async () => {
+  it("reads no answer kept in the clear in an app with keys: it is from before answers were sealed", async () => {
     const { keys, atRest, opened } = await setup();
     const outcome = testOutcome("1");
-    expect(await opened({ fingerprint: "fp", outcome })).toEqual({ fingerprint: "fp", outcome });
     const earlier = { fingerprint: "fp", outcome: await atRest.seal(JSON.stringify(outcome)) };
-    expect(await opened(earlier)).toEqual({ fingerprint: "fp", outcome });
-    expect(await opened(earlier, { keys, atRest: null })).toBeNull();
+    expect(await opened(earlier)).toBeNull();
+    expect(await opened({ fingerprint: "fp", outcome })).toBeNull();
+    expect(await opened({ key: "k", fingerprint: "fp", outcome }, { keys, atRest: null })).toEqual({
+      key: "k",
+      fingerprint: "fp",
+      outcome,
+    });
   });
 });

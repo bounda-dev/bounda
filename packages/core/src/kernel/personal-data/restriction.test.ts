@@ -403,6 +403,7 @@ describe("unrestrictProcessing", () => {
           payload: { personId: "c-1" },
         },
         executeAt: "2026-01-01T00:01:00.000Z",
+        scheduledAt: "2026-01-01T00:01:00.000Z",
         context: { correlationId: "id-3", causationId: "id-4", depth: 0 },
         attempts: 0,
       },
@@ -442,6 +443,7 @@ describe("unrestrictProcessing", () => {
           payload: { personId: "c-1", ground, categories: ["marketing"] },
         },
         executeAt: "2026-01-08T00:00:00.000Z",
+        scheduledAt: "2026-01-01T00:00:00.000Z",
         context: { correlationId: "id-5", causationId: "id-6", depth: 0 },
         attempts: 0,
       })),
@@ -938,6 +940,7 @@ describe("restrictAgain", () => {
       dedupeKey: liftRestrictionKey("c-1", "legal-claims", null),
       command: { type: LIFT_RESTRICTION_COMMAND, aggregateId: "c-1", payload: {} },
       executeAt: new Date(T2),
+      scheduledAt: new Date(T2),
       context: { correlationId: "c", causationId: "c", depth: 0 },
     });
     const event = await again(storage, restrictedEntry("e-1", T1));

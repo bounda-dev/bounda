@@ -143,6 +143,7 @@ describe("forgetPersonalData", () => {
         dedupeKey,
         command: testCommand(aggregateId),
         executeAt: new Date("2026-01-01T00:01:00.000Z"),
+        scheduledAt: new Date("2026-01-01T00:01:00.000Z"),
         context: testContext,
         persons: named,
       });
@@ -190,6 +191,7 @@ describe("forgetPersonalData", () => {
         dedupeKey,
         command: testCommand("c-1"),
         executeAt: new Date("2026-01-01T00:01:00.000Z"),
+        scheduledAt: new Date("2026-01-01T00:01:00.000Z"),
         context: testContext,
         persons: named,
       });

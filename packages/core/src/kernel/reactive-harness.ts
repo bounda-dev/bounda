@@ -19,6 +19,7 @@ import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories } from "./personal-data/categories.ts";
 import { createForgetIntentions } from "./personal-data/intention.ts";
 import type { ForgetLedgerReconciliation } from "./personal-data/reconciliation.ts";
+import { marksFingerprint } from "./personal-data/resealing.ts";
 import {
   createRestrictedPersonsSubscriber,
   restrictedPersonsHosts,
@@ -131,6 +132,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
     clock,
   });
+  const processDefinitions = buildProcesses({ registry, aggregates, config });
   const pipeline = createCommandPipeline({
     aggregates,
     loader,
@@ -140,6 +142,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     clock,
     logger,
     recordAccess,
+    marks: marksFingerprint({ aggregates, processes: processDefinitions }),
   });
   const policies = buildPolicies({ registry, aggregates });
   const personalCategories = buildPersonalCategories({
@@ -160,7 +163,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     recordAccess,
   });
   const processes = createProcessRunner({
-    processes: buildProcesses({ registry, aggregates, config }),
+    processes: processDefinitions,
     aggregates,
     pipeline,
     storage,

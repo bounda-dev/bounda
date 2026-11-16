@@ -439,6 +439,7 @@ describe("the backfill of personal data", () => {
         payload: { customerId: "c-1", email: "ada@example.com" },
       },
       executeAt: new Date(START.getTime() + 86_400_000),
+      scheduledAt: new Date(START.getTime() + 86_400_000),
       context: { correlationId: "c", causationId: "c", depth: 0 },
     });
     await app.app.runUntilIdle();

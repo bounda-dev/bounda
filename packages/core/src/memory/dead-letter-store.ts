@@ -82,15 +82,22 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     remove: async (id) => {
       letters.delete(id);
     },
-    reseal: async (id, { person, errorMessage, errorStack, payload, persons }) => {
+    reseal: async (id, { person, statePerson, errorMessage, errorStack, payload, persons }) => {
       const existing = letters.get(id);
       if (existing === undefined) return;
-      const { errorStack: _stack, payload: _payload, persons: _persons, ...kept } = existing;
+      const {
+        errorStack: _stack,
+        payload: _payload,
+        persons: _persons,
+        statePerson: _statePerson,
+        ...kept
+      } = existing;
       letters.set(
         id,
         copy({
           ...kept,
           person,
+          ...(statePerson === undefined ? {} : { statePerson }),
           errorMessage,
           ...(errorStack === undefined ? {} : { errorStack }),
           ...(payload === undefined ? {} : { payload }),
@@ -100,7 +107,12 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     },
     listByPerson: async (person) =>
       select({})
-        .filter((letter) => letter.person === person || namesPerson(letter, person))
+        .filter(
+          (letter) =>
+            letter.person === person ||
+            letter.statePerson === person ||
+            namesPerson(letter, person),
+        )
         .map(copy),
     forget: async (person, keep) => {
       const named = select({}).filter((letter) => namesPerson(letter, person, keep));

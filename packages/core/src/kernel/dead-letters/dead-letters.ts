@@ -97,9 +97,12 @@ export interface CreateDeadLettersFunction {
   (args: CreateDeadLettersArgs): DeadLetters;
 }
 
-// The person the error's text is sealed under, and those whose fields a payload holds.
-const personsOf = (letter: Pick<StoredDeadLetter, "person" | "persons">): string[] => [
+// The persons the error's text is sealed under, and those whose fields a payload holds.
+const personsOf = (
+  letter: Pick<StoredDeadLetter, "person" | "statePerson" | "persons">,
+): string[] => [
   ...(letter.person === null ? [] : [letter.person]),
+  ...(letter.statePerson === undefined ? [] : [letter.statePerson]),
   ...(letter.persons ?? []).map(({ person }) => person),
 ];
 

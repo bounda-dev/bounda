@@ -76,13 +76,14 @@ export { byForgetLedgerOrder } from "./storage/forget-ledger.ts";
 export type { Hold } from "./storage/hold.ts";
 export type {
   DispatchOutcome,
+  EraseIdempotencyRecordArgs,
   GetIdempotencyRecordArgs,
   IdempotencyRecord,
   IdempotencyStore,
+  ListAllIdempotencyRecordsArgs,
   ListIdempotencyRecordsArgs,
   PurgeIdempotencyRecordsArgs,
   PutIdempotencyRecordArgs,
-  ResealIdempotencyRecordArgs,
   StoredAnswer,
 } from "./storage/idempotency-store.ts";
 export type {

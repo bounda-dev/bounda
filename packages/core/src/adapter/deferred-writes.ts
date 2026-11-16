@@ -22,7 +22,7 @@ export interface DeferredWriteTarget {
     DeferredStores["scheduler"],
     "schedule" | "cancel" | "complete" | "fail" | "defer" | "reseal"
   >;
-  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget" | "reseal">;
+  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget" | "erase">;
 }
 
 /**
@@ -66,7 +66,10 @@ export const deferWrites: DeferWritesFunction = ({
   idempotencyStore,
 }) => {
   const recorded: Recorded[] = [];
-  const records = new Map<string, IdempotencyRecord>();
+  // `null` for a record filed elsewhere, gone from its key.
+  const records = new Map<string, IdempotencyRecord | null>();
+  const held = (): IdempotencyRecord[] =>
+    [...records.values()].filter((record): record is IdempotencyRecord => record !== null);
   const scheduled = new Map<string, ScheduleArgs>();
   const letters = new Map<string, NewDeadLetter>();
   const later =
@@ -130,7 +133,8 @@ export const deferWrites: DeferWritesFunction = ({
         forget: scheduler.forget,
       },
       idempotencyStore: {
-        get: async (args) => records.get(args.key) ?? idempotencyStore.get(args),
+        get: async (args) =>
+          records.has(args.key) ? (records.get(args.key) ?? null) : idempotencyStore.get(args),
         put: async (args) => {
           const { now: _now, ...record } = args;
           records.set(record.key, record);
@@ -138,20 +142,45 @@ export const deferWrites: DeferWritesFunction = ({
         },
         listByPerson: async (args) =>
           [
-            ...[...records.values()].filter(
+            ...held().filter(
               (record) =>
                 new Date(record.expiresAt).getTime() > args.now.getTime() &&
                 namesPerson(record, args.person),
             ),
             ...(await idempotencyStore.listByPerson(args)).filter(({ key }) => !records.has(key)),
           ].sort((a, b) => (a.key < b.key ? -1 : 1)),
-        reseal: async (args) => {
-          const { now: _now, ...resealed } = args;
-          const record = records.get(args.key) ?? (await idempotencyStore.get(args));
-          if (record === null || record.answer === null) return false;
-          records.set(args.key, { ...record, ...resealed });
-          recorded.push((target) => target.idempotencyStore.reseal(args));
-          return true;
+        list: async (args) => {
+          const now = args.now.getTime();
+          const merged = new Map(
+            (await idempotencyStore.list({ now: args.now })).map((record) => [record.key, record]),
+          );
+          for (const [key, record] of records) {
+            if (record !== null && new Date(record.expiresAt).getTime() > now) {
+              merged.set(key, record);
+            } else merged.delete(key);
+          }
+          const offset = args.offset ?? 0;
+          return [...merged.values()]
+            .sort((a, b) => (a.key < b.key ? -1 : 1))
+            .slice(offset, args.limit === undefined ? undefined : offset + args.limit);
+        },
+        erase: async (args) => {
+          const { key, filed = key, now } = args;
+          const live = async (at: string): Promise<IdempotencyRecord | null> => {
+            const found = records.has(at)
+              ? (records.get(at) ?? null)
+              : await idempotencyStore.get({ key: at, now });
+            return found === null || new Date(found.expiresAt).getTime() <= now.getTime()
+              ? null
+              : found;
+          };
+          const record = await live(key);
+          if (record === null) return;
+          const existing = await live(filed);
+          if (filed !== key) records.set(key, null);
+          if (filed === key || existing === null)
+            records.set(filed, erased({ ...record, key: filed }));
+          recorded.push((target) => target.idempotencyStore.erase(args));
         },
         purge: idempotencyStore.purge,
         clear: async () => {
@@ -160,7 +189,9 @@ export const deferWrites: DeferWritesFunction = ({
         },
         forget: async (person, keep) => {
           for (const [key, record] of records) {
-            if (namesPerson(record, person, keep)) records.set(key, erased(record));
+            if (record !== null && namesPerson(record, person, keep)) {
+              records.set(key, erased(record));
+            }
           }
           recorded.push((target) => target.idempotencyStore.forget(person, keep));
         },

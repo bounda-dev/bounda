@@ -69,13 +69,33 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
           [person, now.toISOString()],
         )
       ).map(toRecord),
-    reseal: async ({ key, answer, persons, now }) =>
+    list: async ({ now, limit, offset = 0 }) =>
       (
         await db.all(
-          `UPDATE ${table} SET "outcome" = ?, "persons" = ? WHERE "key" = ? AND "expires_at" > ? AND "outcome" <> 'null' RETURNING "key"`,
-          [JSON.stringify(answer), JSON.stringify(persons), key, now.toISOString()],
+          `SELECT ${COLUMNS} FROM ${table} WHERE "expires_at" > ? ORDER BY "key" LIMIT ? OFFSET ?`,
+          [now.toISOString(), limit ?? -1, offset],
         )
-      ).length > 0,
+      ).map(toRecord),
+    // Filing it elsewhere copies it there erased before it leaves `key`: a crash between the two
+    // leaves both, and erasing it again moves it once more.
+    erase: async ({ key, filed = key, now }) => {
+      if (filed === key) {
+        await db.run(
+          `UPDATE ${table} SET "outcome" = 'null', "persons" = '[]' WHERE "key" = ? AND "expires_at" > ?`,
+          [key, now.toISOString()],
+        );
+        return;
+      }
+      await db.run(
+        `INSERT INTO ${table} (${COLUMNS}) SELECT ?, 'null', "expires_at", '[]' FROM ${table} WHERE "key" = ? AND "expires_at" > ?
+       ON CONFLICT ("key") DO UPDATE SET "outcome" = 'null', "expires_at" = excluded."expires_at", "persons" = '[]' WHERE ${table}."expires_at" <= ?`,
+        [filed, key, now.toISOString(), now.toISOString()],
+      );
+      await db.run(`DELETE FROM ${table} WHERE "key" = ? AND "expires_at" > ?`, [
+        key,
+        now.toISOString(),
+      ]);
+    },
     clear: () => db.run(`DELETE FROM ${table}`, []),
     purge: async ({ now }) => {
       const rows = await db.all(`DELETE FROM ${table} WHERE "expires_at" <= ? RETURNING "key"`, [

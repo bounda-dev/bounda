@@ -31,6 +31,7 @@ import {
 import { createForgetIntentions, type ForgetIntentions } from "./personal-data/intention.ts";
 import { buildKeyWrapper, type CryptoKeyWrapper } from "./personal-data/key-wrapper.ts";
 import { ephemeralMasterKey } from "./personal-data/master-key.ts";
+import { marksFingerprint } from "./personal-data/resealing.ts";
 import { openTenantKeys, type TenantKeys } from "./personal-data/tenant-keys.ts";
 import {
   type CategoryKey,
@@ -362,6 +363,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     logger,
     recordAccess: createAccessLog({ hook: undefined, env: {}, tenant: undefined, logger, clock }),
     onRejection: (rejection) => rejections.push(rejection),
+    marks: marksFingerprint({ aggregates, processes: { all: [] } }),
   });
   return { storage, config, aggregates, clock, pipeline, rejections };
 };

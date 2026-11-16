@@ -337,8 +337,10 @@ const createUndoLog = ({
       idempotencyStore: {
         put: (args) =>
           tracked(entries.idempotencyStore, args.key, () => idempotencyStore.put(args)),
-        reseal: (args) =>
-          tracked(entries.idempotencyStore, args.key, () => idempotencyStore.reseal(args)),
+        erase: (args) =>
+          tracked(entries.idempotencyStore, args.filed ?? args.key, () =>
+            tracked(entries.idempotencyStore, args.key, () => idempotencyStore.erase(args)),
+          ),
         forget: async (person, keep) => {
           const named = entries.idempotencyStore
             .list()

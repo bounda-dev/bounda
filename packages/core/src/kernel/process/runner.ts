@@ -88,7 +88,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     recordAccess,
     disclosures,
   });
-  const schedule = createDeadlineSchedule({ storage, units });
+  const schedule = createDeadlineSchedule({ storage, units, clock });
   const deadlineStep = createDeadlineStep({ units, handlers, ids });
   const resume = createResumeParked({ units, failures, handlers, deadlineStep, schedule, logger });
   const events = createEventDelivery({

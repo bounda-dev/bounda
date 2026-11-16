@@ -674,6 +674,45 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect(await store.lastPosition()).toBe(4);
     });
 
+    it("rewrites an event's schema version with its payload when given, and keeps the rest of its metadata", async () => {
+      await store.append({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 1,
+            type: "CustomerRegistered",
+            payload: { mail: "ada@example.com" },
+          }),
+          pendingEvent({
+            aggregateType: "customer",
+            aggregateId: "c-1",
+            version: 2,
+            type: "CustomerNoted",
+            payload: { note: 1 },
+          }),
+        ],
+      });
+      const [registered, noted] = await store.readAll({ afterPosition: 0, limit: 10 });
+      const sealed = { $personal: { person: "c-1", key: "k", iv: "iv", data: "data" } };
+      await store.reseal([
+        { position: 1, payload: { email: sealed }, person: "c-1", schemaVersion: 3 },
+        { position: 2, payload: { note: 2 }, person: null },
+      ]);
+      expect(await store.readAll({ afterPosition: 0, limit: 10 })).toEqual([
+        {
+          ...registered,
+          payload: { email: sealed },
+          person: "c-1",
+          metadata: { ...registered?.metadata, schemaVersion: 3 },
+        },
+        { ...noted, payload: { note: 2 } },
+      ]);
+    });
+
     it("reseals nothing for an empty list", async () => {
       await naming(1, {});
       const before = await store.readAll({ afterPosition: 0, limit: 10 });

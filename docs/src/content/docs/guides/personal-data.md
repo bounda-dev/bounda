@@ -131,9 +131,9 @@ event, process state, scheduled command and dead letter that holds it: the marks
 worker walks the stream again, opens each value sealed under a category its field is no longer in
 and seals it under the right one, as the forgettings since it was written say, a category kept or
 forgotten included. From then on forgetting the old category no longer reaches the value, and
-forgetting the new one does. A [remembered answer](#remembered-answers) sealed under the old key,
-which may quote it, is sealed under the new one too, and a snapshot of its stream is dropped and
-folded again. A value no key opens any more, its
+forgetting the new one does. A [remembered answer](#remembered-answers) sealed under the earlier
+marks, which may quote it, is erased, and a snapshot of its stream is dropped and folded again. A
+value no key opens any more, its
 person forgotten in its old category, stays as it is: it was forgotten already. Going back to
 earlier marks walks the stream again too.
 
@@ -205,9 +205,15 @@ an instance unable to go on once its person is forgotten.
 The rest follows from the stream: the [export](#exporting-a-persons-data) lists the lifecycle
 events that name the person, with the fields of the state they carry; while their processing is
 [restricted](#restricting-processing), a step of the instance is refused before its handler runs;
-and a step that fails has its error text encrypted with the key of the person its event names,
-or else of the one the state names, which covers a deadline. A lifecycle event written before its
-state marked its fields is sealed in place by the [backfill](#marking-a-field-later).
+and a step that fails has its error text encrypted with the keys of the person its event names,
+or else of the one the state names, which covers a deadline. When the event names one person and
+the state another, the [dead letter](/guides/dead-letters/#what-a-letter-holds) names both, the
+state's as `statePerson`, and its text is encrypted under the keys of each, one inside the other:
+the step read the state, and a handler's error may quote it. Forgetting either leaves the text
+unreadable, and the export, a restriction and a redaction of either reach the letter. A lifecycle
+event written before its state marked its fields is sealed in place by the
+[backfill](#marking-a-field-later), and so is a letter filed before: its text is sealed under the
+person the state of its instance named when the step failed too.
 
 ## What the types say
 
@@ -239,9 +245,11 @@ fields the same way, are part of the stream it walks.
 It walks once per set of marks. Its position is kept under a fingerprint of every mark of the
 registry, so adding, removing or moving one walks the stream again from the start, and a restart
 with the same marks walks nothing twice. Once it reaches the head it goes through the scheduled
-commands and dead letters, and from then on reads what comes after once a minute: an instance still
-running the old marks, as in a rolling deploy, writes in the clear for a while, and what it writes
-is sealed that much later, the stores included. One instance walks at a time, under a lease kept in
+commands, dead letters and remembered answers, and from then on reads what comes after once a
+minute: an instance still running the old marks, as in a rolling deploy, writes in the clear for a
+while, and what it writes is sealed that much later, the stores included, which the walk goes
+through again on each pass for as long as such an instance renews its lease, and once more after.
+One instance walks at a time, under a lease kept in
 `bounda_checkpoints`; a batch that fails, because the [key wrapper](#where-the-keys-live) does not
 answer, say, holds the walk for every instance, 30 seconds and twice as long after each failure in
 a row, up to an hour, and the worker logs it.
@@ -250,8 +258,11 @@ A person forgotten before the marks were added has no key to seal with, and crea
 what their forgetting should have covered readable again. What an event held of them before their
 last forgetting is sealed under a key no store keeps, and reads as `null`, as if it had been marked
 then; what came after, once they were registered again, is sealed under the key they hold now. A
-scheduled command or a dead letter of a person who holds no key and was forgotten gets the same, and
-the text of an error never gets a new key, as when a handler fails. The worker logs `personal data of
+scheduled command gets the same by when it was scheduled, which its entry keeps, and a dead letter by
+when it failed: one written before a forgetting of its person is sealed under a key no store keeps,
+one written after under their key, and one that nothing says the time of, a command scheduled by a
+version that did not record it, is taken as written before. The text of an error never gets a new
+key, as when a handler fails. The worker logs `personal data of
 persons forgotten before it was marked is sealed for good; rebuild the read models that project it`
 with the event types: a read model that showed those fields keeps what it projected before the
 forgetting reached them, and a [rebuild](/guides/deployment/#rebuilding-a-read-model) replays the events with
@@ -262,13 +273,26 @@ since it names nobody a `forget` would remove it for, and the next command folds
 What it cannot seal stays as it was, and the worker says so: a value in the clear in an event whose
 `person` field is empty, `personal data written before its marks names no person and stays in the
 clear`, with the event types, and a scheduled or dead-lettered command whose `person` field is
-empty, `commands stored before their marks name no person and stay in the clear`. The
-marks are read on the payload as stored, below the [upcasters](/guides/changing-events/), so a field
-an upcaster renamed or computed is sealed under the name it was stored with, or not at all when it
-was never stored; an event whose `person` field changed since it was sealed keeps the person it was
-sealed for. An answer remembered under an [`idempotencyKey`](/guides/idempotent-commands/) before
-the marks names nobody and lasts until its key expires, a day by default. A person whose processing
-is restricted has their data sealed all the same: sealing protects it, and processes nothing.
+empty, `commands stored before their marks name no person and stay in the clear`. An event whose
+`person` field changed since it was sealed keeps the person it was sealed for. A person whose
+processing is restricted has their data sealed all the same: sealing protects it, and processes
+nothing.
+
+An event of a type that marks fields, stored in an older shape that its
+[upcasters](/guides/changing-events/) bring up to date, is rewritten in its current one: what it
+holds sealed is opened, `null` where no key opens it any more, as the upcasters read it, the
+upcasters run, and the fields its schema marks today are sealed under the person it was sealed for,
+or else the one its current shape names, before it is written in place with the current schema
+version. A field an upcaster renamed or computed is sealed under its name of today, and one it
+dropped is gone from the store. While an instance on other marks renews its lease, as one still
+running the previous code in a rolling deploy, which may not know the current version, events are
+left in their stored shape and sealed as their marks say, and the walk goes back to the first it
+left once that instance has stopped; `caughtUp` waits for it. From then on an instance of the
+previous code refuses those events, as it refuses the events a newer deploy writes: roll forward.
+
+An answer remembered under an [`idempotencyKey`](/guides/idempotent-commands/) is sealed under the
+marks of its day, which said whom it quotes and in which categories: one sealed under other marks
+is [erased](#remembered-answers) by the walk, its key kept taken until it expires.
 
 `app.getLag()` reports where the walk stands, `personalDataBackfill: { position, caughtUp }`, `null`
 for an app that marks nothing: `caughtUp` once the walk has sealed the stream up to its head and
@@ -390,7 +414,13 @@ category the payload holds a value of, created when they hold none; a rejection 
 under the keys of everyone whose data the state it was decided on held, as they were read. An
 answer that concerns nobody is encrypted under the [database's key](#three-keys-deep). The key a
 caller chose, which may quote someone too, is sealed with the answer, and the answer is filed under
-an HMAC of it, under a key derived from the database's.
+an HMAC of it, under a key derived from the database's. The answer also names the
+[marks](#marking-a-field-later) it was sealed under: one sealed under other marks may quote, in the
+clear of any key of today, what the marks of today make personal, so a replay of it rejects with
+`IdempotentAnswerErasedError`, and the walk of the backfill erases it. An answer kept by an earlier
+version, filed under the key itself and in the clear, is erased and filed under the key's HMAC
+before the first lookup that misses, so a retry of what it recorded is refused instead of run
+again, and by the walk too.
 
 Forgetting any category of anyone an answer names destroys a key it needs: the answer no longer
 opens anywhere, in the database or in any copy of it, without being found. `forget` also erases it
@@ -531,7 +561,7 @@ type marked its fields is found once the [backfill](#marking-a-field-later) has 
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
-carries, and a dead letter by its `person` or its `persons`. `forget` and the export find those
+carries, and a dead letter by its `person`, its `statePerson` or its `persons`. `forget` and the export find those
 rows, and the snapshots and remembered answers `forget` removes or erases, through an index, never by
 reading every row: PostgreSQL indexes the `persons` column itself, and SQLite, the Durable Object
 included, keeps a table of which row names which person, written and removed by the same statement

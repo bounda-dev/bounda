@@ -79,6 +79,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           dedupeKey: "command:c1",
           command: testCommand("1"),
           executeAt: new Date(now.getTime() + 60_000),
+          scheduledAt: new Date(now.getTime() + 60_000),
           context: testContext,
         });
         expect(await tx.deadLetterStore.add(testDeadLetter("dl-1"))).toEqual({
@@ -148,6 +149,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
             dedupeKey: "command:c1",
             command: testCommand("1"),
             executeAt: new Date(now.getTime() + 60_000),
+            scheduledAt: new Date(now.getTime() + 60_000),
             context: testContext,
           });
           await tx.eventStore.append({
@@ -167,6 +169,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         dedupeKey: "command:c1",
         command: testCommand("1"),
         executeAt: now,
+        scheduledAt: now,
         context: testContext,
       });
       const [stale] = await storage.scheduler.claimDue({ now, limit: 1, leaseMs: 1_000 });
@@ -220,6 +223,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
             dedupeKey,
             command: testCommand("1"),
             executeAt: new Date(now.getTime() + 60_000),
+            scheduledAt: new Date(now.getTime() + 60_000),
             context: testContext,
           });
           await tx.deadLetterStore.updateStatus("d1", "retried", resolvedAt);
@@ -462,6 +466,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           dedupeKey,
           command: testCommand(person),
           executeAt: new Date(now.getTime() + 60_000),
+          scheduledAt: new Date(now.getTime() + 60_000),
           context: testContext,
           persons: [held(person, "1")],
         });
@@ -517,6 +522,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
           dedupeKey,
           command: testCommand(person),
           executeAt: new Date(now.getTime() + 60_000),
+          scheduledAt: new Date(now.getTime() + 60_000),
           context: testContext,
           persons: [held(person, "1")],
         });
@@ -574,6 +580,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         dedupeKey: "command:c1",
         command: testCommand("c-1"),
         executeAt: now,
+        scheduledAt: now,
         context: testContext,
         persons: [held("c-1", "1")],
       });
@@ -619,6 +626,7 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         dedupeKey: "command:c1",
         command: testCommand("c-1", { email: "a" }),
         executeAt: new Date(now.getTime() + 60_000),
+        scheduledAt: new Date(now.getTime() + 60_000),
         context: testContext,
       });
       await storage.deadLetterStore.add(testDeadLetter("d1"));

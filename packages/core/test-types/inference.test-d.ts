@@ -781,6 +781,7 @@ describe("personal data", () => {
       readonly readModel: string;
     }>();
     expectTypeOf<DeadLetter["resolvedAt"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<DeadLetter["statePerson"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<DeadLetterAccess["operation"]>().toEqualTypeOf<
       "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard"
     >();
@@ -1029,6 +1030,7 @@ describe("personal data", () => {
       readonly commandId: string;
       readonly type: string;
       readonly executeAt: string;
+      readonly scheduledAt?: string;
       readonly data: ExportedData;
       readonly categories: ExportedCategories;
       readonly restricted: ExportedRestricted;

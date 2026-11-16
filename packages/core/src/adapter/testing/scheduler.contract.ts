@@ -38,6 +38,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey,
           command: testCommand("1"),
           executeAt: at(1_000),
+          scheduledAt: at(1_000),
           context: testContext,
         });
       }
@@ -53,6 +54,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "k-1",
         command: testCommand("1"),
         executeAt: at(1_000),
+        scheduledAt: at(1_000),
         context: testContext,
         persons,
       });
@@ -60,6 +62,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "k-1",
         command: testCommand("1"),
         executeAt: at(1_000).toISOString(),
+        scheduledAt: at(1_000).toISOString(),
         context: testContext,
         attempts: 0,
         persons,
@@ -70,23 +73,51 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(await scheduler.get("k")).toBeNull();
     });
 
+    it("keeps when a command was scheduled while the key holds it, and the time of the one that replaces it", async () => {
+      const args: ScheduleArgs = {
+        dedupeKey: "k-1",
+        command: testCommand("1"),
+        executeAt: at(9_000),
+        scheduledAt: at(1_000),
+        context: testContext,
+      };
+      await scheduler.schedule(args);
+      await scheduler.schedule({ ...args, scheduledAt: at(2_000) });
+      expect((await scheduler.get("k-1"))?.scheduledAt).toBe(at(1_000).toISOString());
+      await scheduler.schedule({ ...args, executeAt: at(8_000), scheduledAt: at(3_000) });
+      expect((await scheduler.get("k-1"))?.scheduledAt).toBe(at(3_000).toISOString());
+      await scheduler.schedule({
+        ...args,
+        command: testCommand("1", { changed: true }),
+        executeAt: at(8_000),
+        scheduledAt: at(4_000),
+        keepTimingOfSameCommand: true,
+      });
+      expect(await scheduler.list()).toEqual([
+        expect.objectContaining({ dedupeKey: "k-1", scheduledAt: at(4_000).toISOString() }),
+      ]);
+    });
+
     it("hands out only commands that are due, oldest first, up to the limit", async () => {
       await scheduler.schedule({
         dedupeKey: "later",
         command: testCommand("3"),
         executeAt: at(10_000),
+        scheduledAt: at(10_000),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "second",
         command: testCommand("2"),
         executeAt: at(2_000),
+        scheduledAt: at(2_000),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "first",
         command: testCommand("1"),
         executeAt: at(1_000),
+        scheduledAt: at(1_000),
         context: testContext,
       });
 
@@ -107,6 +138,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey: key,
           command: testCommand(key),
           executeAt: at(0),
+          scheduledAt: at(0),
           context: testContext,
         });
       }
@@ -118,6 +150,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const results = await Promise.all(
@@ -133,6 +166,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       expect(await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 })).toHaveLength(1);
@@ -147,6 +181,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
@@ -168,12 +203,14 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "late",
         command: testCommand("2"),
         executeAt: at(60_000),
+        scheduledAt: at(60_000),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "soon",
         command: testCommand("1"),
         executeAt: at(5_000),
+        scheduledAt: at(5_000),
         context: testContext,
       });
       expect(await scheduler.nextDueAt({ leaseMs: 1_000 })).toEqual(at(5_000));
@@ -196,12 +233,14 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "b",
         command: testCommand("2"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const claimed = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
@@ -219,12 +258,14 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "b",
         command: testCommand("2"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const claimed = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
@@ -243,6 +284,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
@@ -266,6 +308,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           payload: { at: new Date("2026-01-01T00:00:00.000Z"), lines: ["a"] },
         },
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const [listed] = await scheduler.list();
@@ -282,6 +325,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey: "empty",
           command: { ...testCommand("1"), payload: undefined },
           executeAt: at(0),
+          scheduledAt: at(0),
           context: testContext,
         }),
       ).rejects.toThrow();
@@ -297,6 +341,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey: key,
           command: { ...testCommand("1"), payload },
           executeAt: at(0),
+          scheduledAt: at(0),
           context: testContext,
         });
       }
@@ -311,6 +356,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       };
       await scheduler.schedule(entry);
@@ -338,6 +384,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       };
       await scheduler.schedule(entry);
@@ -357,6 +404,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
         keepTimingOfSameCommand: true,
       };
@@ -384,12 +432,14 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "timeout:order:1",
         command: testCommand("1"),
         executeAt: at(1_000),
+        scheduledAt: at(1_000),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "timeout:order:1",
         command: testCommand("1", { late: true }),
         executeAt: at(50_000),
+        scheduledAt: at(50_000),
         context: testContext,
       });
       expect(await scheduler.claimDue({ now: at(2_000), limit: 10, leaseMs: 60_000 })).toEqual([]);
@@ -407,6 +457,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1", payload),
         executeAt,
+        scheduledAt: executeAt,
         context: testContext,
       });
 
@@ -472,6 +523,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const [stale] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 1_000 });
@@ -505,6 +557,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       };
       await scheduler.schedule(entry);
@@ -528,6 +581,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       const [claimed] = await scheduler.claimDue({ now: at(1), limit: 10, leaseMs: 60_000 });
@@ -551,6 +605,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(0),
+        scheduledAt: at(0),
         context: testContext,
       });
       await expect(
@@ -571,6 +626,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey,
           command: testCommand(dedupeKey),
           executeAt: at(ms),
+          scheduledAt: at(ms),
           context: testContext,
           ...(persons === undefined ? {} : { persons }),
         });
@@ -594,6 +650,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("a"),
         executeAt: at(1_000).toISOString(),
+        scheduledAt: at(1_000).toISOString(),
         context: testContext,
         attempts: 0,
         persons: [held("c-1", "1")],
@@ -607,6 +664,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "d",
         command: testCommand("d"),
         executeAt: at(500).toISOString(),
+        scheduledAt: at(500).toISOString(),
         context: testContext,
         attempts: 0,
         persons: [held("c-1", "1"), held("c-3", "3")],
@@ -624,6 +682,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey,
           command: testCommand(dedupeKey),
           executeAt: at(1_000),
+          scheduledAt: at(1_000),
           context: testContext,
           persons,
         });
@@ -643,6 +702,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey: "a",
           command: testCommand("1"),
           executeAt: at(1_000),
+          scheduledAt: at(1_000),
           context: testContext,
           ...(persons === undefined ? {} : { persons }),
         });
@@ -661,12 +721,14 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "a",
         command: testCommand("1", payload),
         executeAt: at(1_000),
+        scheduledAt: at(1_000),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "b",
         command: testCommand("2", payload),
         executeAt: at(2_000),
+        scheduledAt: at(2_000),
         context: testContext,
       });
       const claimed = claimOf(
@@ -698,6 +760,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey: "a",
           command: testCommand("1", sealed),
           executeAt: at(1_500).toISOString(),
+          scheduledAt: at(1_000).toISOString(),
           context: testContext,
           attempts: 1,
           persons: [held("c-1", "1")],
@@ -706,6 +769,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey: "b",
           command: testCommand("2", sealed),
           executeAt: at(2_000).toISOString(),
+          scheduledAt: at(2_000).toISOString(),
           context: testContext,
           attempts: 0,
           persons: [held("c-1", "1")],
@@ -729,6 +793,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
           dedupeKey: "a",
           command: testCommand("1", payload),
           executeAt: at(1_000),
+          scheduledAt: at(1_000),
           context: testContext,
         });
       await schedule(read);
@@ -754,18 +819,21 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         dedupeKey: "b",
         command: testCommand("2"),
         executeAt: at(2_000),
+        scheduledAt: at(2_000),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "a",
         command: testCommand("1"),
         executeAt: at(1_000),
+        scheduledAt: at(1_000),
         context: testContext,
       });
       await scheduler.schedule({
         dedupeKey: "c",
         command: testCommand("3"),
         executeAt: at(3_000),
+        scheduledAt: at(3_000),
         context: testContext,
       });
       expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toEqual(["a", "b", "c"]);

@@ -89,6 +89,7 @@ describe("the witness of a test app's storage", () => {
         again: sealed("c-1", "one"),
       }),
       executeAt: new Date("2026-01-01T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
       context: testContext,
     });
     await storage.transact(async (transaction) => {

@@ -8,14 +8,17 @@ import { isRecord } from "../shared/merge-fields.ts";
 import { type AtRestSealer, isSealedAtRest } from "./at-rest.ts";
 import { sealedKeys } from "./commands.ts";
 import { isSealed, seal, unseal } from "./crypto.ts";
+import { isEarlierAnswer } from "./earlier-answers.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { type CategoryKey, inSealingOrder, type PersonalKeys } from "./wrapped-keys.ts";
 
-// `key` is the caller's, absent from an answer kept before keys were filed by their HMAC.
+// `key` is the caller's. `marks` is the fingerprint of the marks it was sealed under, `null` in an
+// app that marks nothing; absent from one sealed before answers named theirs.
 export interface RememberedAnswer {
-  readonly key?: string;
+  readonly key: string;
   readonly fingerprint: string;
   readonly outcome: DispatchOutcome;
+  readonly marks?: string | null;
 }
 
 export interface AnswerSealing {
@@ -124,9 +127,10 @@ export interface OpenAnswerFunction {
   (args: OpenAnswerArgs): Promise<RememberedAnswer | null>;
 }
 
-// `null` once a key it was sealed under is gone. One kept before answers were sealed whole holds
-// its outcome in the clear or under the database's key.
+// `null` once a key it was sealed under is gone. An app with keys keeps no answer in the clear:
+// one is from before answers were sealed, and is no answer.
 export const openAnswer: OpenAnswerFunction = async ({ keys, atRest, answer }) => {
+  if (atRest !== null && isEarlierAnswer(answer)) return null;
   let opened: unknown = answer;
   const keyOf = sealedKeys(keys);
   while (isSealed(opened)) {
@@ -134,15 +138,7 @@ export const openAnswer: OpenAnswerFunction = async ({ keys, atRest, answer }) =
     opened = await unseal({ key: await keyOf(person, key), sealed: opened });
     if (opened === null) return null;
   }
-  if (isSealedAtRest(opened)) {
-    if (atRest === null) return null;
-    return JSON.parse(await atRest.open(opened)) as RememberedAnswer;
-  }
-  const remembered = opened as { readonly fingerprint: string; readonly outcome: unknown };
-  if (!isSealedAtRest(remembered.outcome)) return remembered as RememberedAnswer;
+  if (!isSealedAtRest(opened)) return opened as RememberedAnswer;
   if (atRest === null) return null;
-  return {
-    fingerprint: remembered.fingerprint,
-    outcome: JSON.parse(await atRest.open(remembered.outcome)) as DispatchOutcome,
-  };
+  return JSON.parse(await atRest.open(opened)) as RememberedAnswer;
 };

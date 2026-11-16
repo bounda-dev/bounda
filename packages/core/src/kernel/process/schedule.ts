@@ -1,4 +1,5 @@
 import type { Storage } from "../../adapter/adapter.ts";
+import type { Clock } from "../../contracts/clock.ts";
 import type { UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import {
@@ -49,6 +50,7 @@ export interface DeadlineSchedule {
 export interface CreateDeadlineScheduleArgs {
   readonly storage: Storage;
   readonly units: ProcessUnits;
+  readonly clock: Clock;
 }
 
 export interface CreateDeadlineScheduleFunction {
@@ -58,7 +60,11 @@ export interface CreateDeadlineScheduleFunction {
 const deadlineKey = (process: string, instanceId: string): string =>
   `process-deadline:${process}:${instanceId}`;
 
-export const createDeadlineSchedule: CreateDeadlineScheduleFunction = ({ storage, units }) => ({
+export const createDeadlineSchedule: CreateDeadlineScheduleFunction = ({
+  storage,
+  units,
+  clock,
+}) => ({
   stage: async (unit, process, instanceId) => {
     const dedupeKey = deadlineKey(process.name, instanceId);
     const instance = await units.over(unit).load(process, instanceId);
@@ -79,6 +85,7 @@ export const createDeadlineSchedule: CreateDeadlineScheduleFunction = ({ storage
         } satisfies ProcessDeadlinePayload,
       },
       executeAt: new Date(next.at),
+      scheduledAt: clock.now(),
       context: deadlineContext(process, instanceId, instance, next),
       keepTimingOfSameCommand: true,
     });

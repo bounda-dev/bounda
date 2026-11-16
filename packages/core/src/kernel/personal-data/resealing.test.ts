@@ -10,9 +10,12 @@ import type { PersonalMarks } from "./marks.ts";
 import {
   createResealKeys,
   marksFingerprint,
+  needsUpcastRewrite,
   planEventReseal,
   planPayloadReseal,
+  planUpcastReseal,
   type ResealPlanOf,
+  walkFingerprint,
 } from "./resealing.ts";
 
 interface Marked {
@@ -76,6 +79,27 @@ const sealedWith = async <Value>(plan: ResealPlanOf<Value>) => {
     value: await opened.seal(() => key),
   };
 };
+
+describe("walkFingerprint", () => {
+  it("names the schema version of a marked event with upcasts too, which the marks alone do not", () => {
+    const marks = { person: null, fields: ["email"], categories: {} };
+    const versioned = (schemaVersion: number) => {
+      const { aggregates, processes } = runtimes({ events: { CustomerRegistered: marks } });
+      const customer = aggregates.byName.customer as unknown as {
+        eventsByType: Record<string, object>;
+      };
+      customer.eventsByType.CustomerRegistered = {
+        ...customer.eventsByType.CustomerRegistered,
+        schemaVersion,
+      };
+      return { aggregates, processes };
+    };
+    expect(walkFingerprint(versioned(1))).toEqual(marksFingerprint(versioned(1)));
+    expect(walkFingerprint(versioned(2))).not.toEqual(walkFingerprint(versioned(1)));
+    expect(marksFingerprint(versioned(2))).toEqual(marksFingerprint(versioned(1)));
+    expect(walkFingerprint(runtimes({ events: { CustomerRegistered: null } }))).toBeNull();
+  });
+});
 
 describe("marksFingerprint", () => {
   it("is null when nothing is marked, and names each set of marks apart, whatever their order", () => {
@@ -571,7 +595,7 @@ describe("createResealKeys", () => {
     expect(await storage.personalKeys.list("ana")).toEqual([]);
   });
 
-  it("seals a payload under the key the person holds unless forgotten after it was filed, and creates none for a forgotten person", async () => {
+  it("seals a payload under the key the person holds unless forgotten after it was written, or ever when nothing says when, and creates none for a forgotten person", async () => {
     const { storage, keys, back, kept } = await setup();
     expect(await keys.payload("kept", "default", null)).toMatchObject({
       discarded: false,
@@ -587,7 +611,8 @@ describe("createResealKeys", () => {
     expect(await keys.payload("back", "default", "2026-01-02T00:00:00.000Z")).toMatchObject({
       discarded: false,
     });
-    expect(await keys.payload("back", "default", null)).toMatchObject({ discarded: false });
+    // Nothing says when it was written: it is taken as written before the forgetting.
+    expect(await keys.payload("back", "default", null)).toMatchObject({ discarded: true });
     expect(await keys.payload("gone", "default", null)).toMatchObject({ discarded: true });
     expect(await storage.personalKeys.list("gone")).toEqual([]);
     expect(await keys.payload("new", "default", null)).toMatchObject({ discarded: false });
@@ -636,5 +661,110 @@ describe("createResealKeys", () => {
         { category: "profile", key: { fingerprint: profile.fingerprint } },
       ],
     });
+  });
+});
+
+describe("planUpcastReseal", () => {
+  const upcasting = (marks: PersonalMarks | null) =>
+    ({
+      byName: {
+        customer: {
+          name: "customer",
+          eventsByType: {
+            CustomerRegistered: {
+              type: "CustomerRegistered",
+              personal: marks,
+              schemaVersion: 2,
+              upcasts: [
+                (payload: { customerId?: string; mail?: string | null; note?: string }) => ({
+                  customerId: payload.customerId,
+                  email: payload.mail,
+                }),
+              ],
+            },
+          },
+          commands: {},
+        },
+      },
+      commandsByType: {},
+    }) as unknown as AggregatesRuntime;
+  const marked: PersonalMarks = { person: "customerId", fields: ["email"], categories: {} };
+  const older = (overrides: Partial<StoredEvent>) =>
+    event({ type: "CustomerRegistered", ...overrides });
+  const plan = (aggregates: AggregatesRuntime, overrides: Partial<StoredEvent>) =>
+    planUpcastReseal({ event: older(overrides), aggregates });
+
+  it("plans nothing for an event in its current shape, a system event, or one of a type that marks nothing", () => {
+    const current = { metadata: { ...older({}).metadata, schemaVersion: 2 } };
+    const system = { metadata: { ...older({}).metadata, system: true } };
+    for (const [aggregates, overrides] of [
+      [upcasting(marked), current],
+      [upcasting(marked), system],
+      [upcasting(null), {}],
+      [upcasting(marked), { type: "CustomerGone" }],
+    ] as const) {
+      expect(plan(aggregates, overrides)).toBeNull();
+      expect(needsUpcastRewrite({ event: older(overrides), aggregates })).toBe(false);
+    }
+    expect(needsUpcastRewrite({ event: older({}), aggregates: upcasting(marked) })).toBe(true);
+  });
+
+  it("rewrites as it is an event that names nobody and holds no marked value, and leaves one that holds one", () => {
+    expect(plan(upcasting(marked), { payload: { note: "x" } })).toEqual({
+      bare: { customerId: undefined, email: undefined },
+      schemaVersion: 2,
+    });
+    expect(plan(upcasting(marked), { payload: { mail: "ana@example.com" } })).toBe("unsealable");
+  });
+
+  it("opens what it holds sealed, null where no key opens it, upcasts it and seals the current fields", async () => {
+    const key = await openedKey(await newStoredKey());
+    const sealed = await seal({
+      key,
+      person: "c-1",
+      category: "default",
+      value: "ana@example.com",
+    });
+    for (const [opens, expected] of [
+      [true, "ana@example.com"],
+      [false, null],
+    ] as const) {
+      const planned = plan(upcasting(marked), {
+        person: "c-1",
+        payload: { customerId: "c-1", mail: sealed },
+      });
+      if (planned === null || planned === "unsealable" || "bare" in planned) {
+        throw new Error("no plan");
+      }
+      expect(planned).toMatchObject({ person: "c-1", schemaVersion: 2 });
+      const opened = await planned.opened(async (value) =>
+        opens ? { value: await unseal({ key, sealed: value }) } : null,
+      );
+      expect(opened).toMatchObject({ categories: ["default"], movedFrom: [] });
+      const rewritten = (await opened?.seal(() => key)) as Record<string, unknown>;
+      expect(rewritten.customerId).toBe("c-1");
+      expect(rewritten).not.toHaveProperty("mail");
+      expect(await unseal({ key, sealed: rewritten.email as never })).toBe(expected);
+    }
+  });
+
+  it("names the person the current shape names, or the aggregate when the marks name no field", async () => {
+    const byField = plan(upcasting(marked), { payload: { customerId: "c-2", mail: "a@b.c" } });
+    expect(byField).toMatchObject({ person: "c-2" });
+    expect(
+      plan(upcasting(marked), { person: "c-1", payload: { customerId: "c-2", mail: "a@b.c" } }),
+    ).toMatchObject({ person: "c-1" });
+    const byAggregate = plan(upcasting({ person: null, fields: ["email"], categories: {} }), {
+      aggregateId: "c-3",
+      payload: { mail: "a@b.c" },
+    });
+    expect(byAggregate).toMatchObject({ person: "c-3" });
+    if (byAggregate === null || byAggregate === "unsealable" || "bare" in byAggregate) {
+      throw new Error("no plan");
+    }
+    const key = await openedKey(await newStoredKey());
+    const opened = await byAggregate.opened(async () => null);
+    const rewritten = (await opened?.seal(() => key)) as Record<string, unknown> | undefined;
+    expect(isSealed(rewritten?.email)).toBe(true);
   });
 });

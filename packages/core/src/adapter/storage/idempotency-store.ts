@@ -60,10 +60,25 @@ export interface ListIdempotencyRecordsArgs {
   readonly now: Date;
 }
 
-export interface ResealIdempotencyRecordArgs {
+export interface ListAllIdempotencyRecordsArgs {
+  /**
+   * The kernel clock's time: a record expired by then is left out.
+   */
+  readonly now: Date;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface EraseIdempotencyRecordArgs {
   readonly key: string;
-  readonly answer: StoredAnswer;
-  readonly persons: readonly KeyedPerson[];
+  /**
+   * Where the key is filed from now on, when another than `key`: for a record filed by the
+   * caller's key itself, before keys were filed by their HMAC.
+   */
+  readonly filed?: string;
+  /**
+   * The kernel clock's time: a record expired by then is left as it is.
+   */
   readonly now: Date;
 }
 
@@ -98,10 +113,16 @@ export interface IdempotencyStore {
    */
   listByPerson(args: ListIdempotencyRecordsArgs): Promise<readonly IdempotencyRecord[]>;
   /**
-   * Replaces the answer of the record under `key`, and the persons it names, unless it has expired
-   * or was erased meanwhile, and resolves to whether it did.
+   * Every record that has not expired, by `key`.
    */
-  reseal(args: ResealIdempotencyRecordArgs): Promise<boolean>;
+  list(args: ListAllIdempotencyRecordsArgs): Promise<readonly IdempotencyRecord[]>;
+  /**
+   * Erases the answer of the record under `key` unless it has expired, keeping the key taken
+   * until it expires. With `filed`, the record erased is filed there, with the same expiry, and
+   * leaves `key`; a record that has not expired under `filed` is kept as it is. Only the runtime
+   * calls it, for answers sealed under other marks or filed by the caller's key.
+   */
+  erase(args: EraseIdempotencyRecordArgs): Promise<void>;
   /**
    * Removes the records expired by `now`, and resolves to how many.
    */

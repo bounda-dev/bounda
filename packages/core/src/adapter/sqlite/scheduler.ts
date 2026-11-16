@@ -24,7 +24,7 @@ export interface CreateSqliteSchedulerFunction {
 }
 
 const COLUMNS =
-  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts", "persons"';
+  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts", "persons", "scheduled_at"';
 
 const toScheduled = (row: Record<string, unknown>): ScheduledCommand => {
   const persons = JSON.parse(String(row.persons)) as KeyedPerson[];
@@ -36,6 +36,9 @@ const toScheduled = (row: Record<string, unknown>): ScheduledCommand => {
       payload: JSON.parse(String(row.payload)) as unknown,
     },
     executeAt: String(row.execute_at),
+    ...(row.scheduled_at === null || row.scheduled_at === undefined
+      ? {}
+      : { scheduledAt: String(row.scheduled_at) }),
     context: JSON.parse(String(row.context)) as CausationContext,
     attempts: Number(row.attempts),
     ...(persons.length === 0 ? {} : { persons }),
@@ -74,9 +77,17 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
     );
 
   return {
-    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand, persons = [] }) =>
+    schedule: ({
+      dedupeKey,
+      command,
+      executeAt,
+      scheduledAt,
+      context,
+      keepTimingOfSameCommand,
+      persons = [],
+    }) =>
       db.run(
-        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 0)
+        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, 0)
        ON CONFLICT ("dedupe_key") DO UPDATE SET
          "command_type" = excluded."command_type",
          "aggregate_id" = excluded."aggregate_id",
@@ -84,6 +95,7 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
          "execute_at" = excluded."execute_at",
          "context" = excluded."context",
          "persons" = excluded."persons",
+         "scheduled_at" = excluded."scheduled_at",
          "attempts" = 0,
          "last_error" = NULL,
          "revision" = ${table}."revision" + 1
@@ -103,6 +115,7 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
           executeAt.toISOString(),
           JSON.stringify(context),
           JSON.stringify(persons),
+          scheduledAt.toISOString(),
         ],
       ),
     cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = ?`, [dedupeKey]),

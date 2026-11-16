@@ -344,6 +344,7 @@ const sealLetters = async (
     if (text === null) continue;
     await transaction.deadLetterStore.reseal(letter.id, {
       person: letter.person,
+      ...(letter.statePerson === undefined ? {} : { statePerson: letter.statePerson }),
       ...text,
       ...(letter.payload === undefined ? {} : { payload: letter.payload }),
       ...(letter.persons === undefined ? {} : { persons: letter.persons }),
@@ -510,6 +511,7 @@ export const redactWithin: RedactWithinFunction = async (args) => {
       } satisfies RedactionScrubPayload,
     },
     executeAt: new Date(event.timestamp),
+    scheduledAt: new Date(event.timestamp),
     context: causedBy(event),
   });
   return { event, payload, values, disposable };

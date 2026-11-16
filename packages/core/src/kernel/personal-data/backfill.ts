@@ -1,4 +1,5 @@
 import type { Storage } from "../../adapter/adapter.ts";
+import type { EventStore } from "../../adapter/storage/event-store.ts";
 import type { Hold } from "../../adapter/storage/hold.ts";
 import { isReleasedBy } from "../../adapter/storage/hold.ts";
 import type { ErrorText } from "../../config/types.ts";
@@ -8,6 +9,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { createLease, LEASE_MS } from "../shared/lease.ts";
 import { ATTRIBUTES, traced } from "../telemetry.ts";
+import type { AtRestSealer } from "./at-rest.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import {
   addSealed,
@@ -16,15 +18,17 @@ import {
   type ResealBatches,
   type Sealed,
 } from "./reseal-batches.ts";
+import { needsUpcastRewrite } from "./resealing.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
 /**
  * The checkpoint rows of the backfill, named `<prefix><marks>:<row>` after the fingerprint of the
  * marks it seals for: `started`, when the first pass under them ran, in milliseconds; `position`,
  * the global position the walk has sealed through; `stores`, when it last went through the
- * scheduled commands and dead letters; `lease`, until when the instance walking holds the walk;
- * `held-until` and `attempts`, the hold of a walk that failed. Marks that change start them all
- * again.
+ * scheduled commands and dead letters; `rewrite`, the position of the first event it left in an
+ * older shape while an instance on other marks ran; `lease`, until when the instance walking
+ * holds the walk; `held-until` and `attempts`, the hold of a walk that failed. Marks that change
+ * start them all again.
  */
 export const BACKFILL_PREFIX = "personal-data:backfill:";
 
@@ -39,6 +43,24 @@ export const BACKFILL_LEASE_MS: number = LEASE_MS;
 // How long the lease of other marks must have lapsed before their rows are removed: marks some
 // instance still runs renew theirs at least every lease.
 export const BACKFILL_EXPIRY_MS: number = 10 * BACKFILL_FOLLOW_INTERVAL_MS;
+
+// This instance's tally since it started, for the line it logs when the walk catches up.
+const NO_TALLY = {
+  events: 0,
+  discarded: 0,
+  unsealable: 0,
+  scheduledCommands: 0,
+  deadLetters: 0,
+  answers: 0,
+};
+
+interface BackfillRow {
+  readonly subscriber: string;
+  // The fingerprint of the marks the row is of.
+  readonly owner: string;
+  readonly name: string;
+  readonly position: number;
+}
 
 export interface PersonalDataBackfillStatus {
   readonly position: number;
@@ -83,15 +105,34 @@ export interface CreatePersonalDataBackfillArgs {
    */
   readonly storage: Pick<
     Storage,
-    "transact" | "checkpointStore" | "eventStore" | "personalKeys" | "scheduler" | "deadLetterStore"
+    | "transact"
+    | "checkpointStore"
+    | "eventStore"
+    | "personalKeys"
+    | "scheduler"
+    | "deadLetterStore"
+    | "idempotencyStore"
   >;
+  /**
+   * The events as handlers read them, opened and upcast: what a process routes an event by.
+   */
+  readonly reading: Pick<EventStore, "readOne">;
+  /**
+   * What answers that name nobody are sealed under and keys are filed by.
+   */
+  readonly atRest: AtRestSealer | null;
   readonly aggregates: AggregatesRuntime;
   readonly processes: Pick<ProcessesRuntime, "byName">;
   readonly wrapping: PersonalKeyWrapping;
   /**
-   * The fingerprint of the marks, as `marksFingerprint` names them.
+   * The fingerprint of what it walks for, as `walkFingerprint` names it.
    */
   readonly marks: string;
+  /**
+   * The fingerprint of the marks alone, as `marksFingerprint` names them: what a remembered
+   * answer sealed under them names.
+   */
+  readonly answerMarks: string;
   readonly batchSize: number;
   /**
    * Whether a retention is configured: a person an event names only once it is resealed has
@@ -113,6 +154,7 @@ const rowsOf = (marks: string) => {
     started: row("started"),
     position: row("position"),
     stores: row("stores"),
+    rewrite: row("rewrite"),
     lease: row("lease"),
     heldUntil: row("held-until"),
     attempts: row("attempts"),
@@ -135,10 +177,13 @@ const rowsOf = (marks: string) => {
  */
 export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
   storage,
+  reading,
+  atRest,
   aggregates,
   processes,
   wrapping,
   marks,
+  answerMarks,
   batchSize,
   recordsActivity,
   clock,
@@ -151,16 +196,18 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
   let restUntil = Number.NEGATIVE_INFINITY;
   const lease = createLease({ checkpoints: checkpointStore, row: rows.lease, clock, logger });
   let caughtUp = false;
-  // This instance's tally since it started, for the line it logs when the walk catches up.
-  let tally = { events: 0, discarded: 0, unsealable: 0, scheduledCommands: 0, deadLetters: 0 };
+  let tally = NO_TALLY;
 
   const reseal: ResealBatches = createResealBatches({
     storage,
+    reading,
     aggregates,
     processes,
     wrapping,
+    atRest,
+    marks: answerMarks,
+    logger,
     recordsActivity,
-    clock,
   });
 
   // Pages by offset, renewing the lease before each page and stopping, `null`, once another
@@ -214,12 +261,18 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     await checkpointStore.remove(rows.heldUntil);
   };
 
+  // The backfill's rows of every set of marks, read once a pass.
+  const listRows = async (): Promise<readonly BackfillRow[]> =>
+    (await checkpointStore.list()).flatMap(({ subscriber, position }) => {
+      if (!subscriber.startsWith(BACKFILL_PREFIX)) return [];
+      const [owner = "", name = ""] = subscriber.slice(BACKFILL_PREFIX.length).split(":");
+      return [{ subscriber, owner, name, position }];
+    });
+
   // The rows of other marks whose lease lapsed long ago: no instance runs those marks any more.
-  const removeStale = async (at: number): Promise<void> => {
+  const removeStale = async (at: number, listed: readonly BackfillRow[]): Promise<void> => {
     const others = new Map<string, { lease: number; rows: string[] }>();
-    for (const { subscriber, position } of await checkpointStore.list()) {
-      if (!subscriber.startsWith(BACKFILL_PREFIX)) continue;
-      const [owner = "", name] = subscriber.slice(BACKFILL_PREFIX.length).split(":");
+    for (const { subscriber, owner, name, position } of listed) {
       if (owner === marks) continue;
       const known = others.get(owner) ?? { lease: 0, rows: [] };
       others.set(owner, {
@@ -233,22 +286,27 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     }
   };
 
+  // An instance on other marks renewed its lease within a follow interval: one still running, as
+  // in a rolling deploy, which may not know the shape an event is rewritten in, and stores
+  // commands, letters and answers as its marks say.
+  const othersRunning = (at: number, listed: readonly BackfillRow[]): boolean =>
+    listed.some(
+      ({ owner, name, position }) =>
+        owner !== marks && name === "lease" && position + BACKFILL_FOLLOW_INTERVAL_MS > at,
+    );
+
   // Marks walked since these were: what they sealed follows them, as a field moved to another
   // category, so these walk again from the first event, as when a deploy goes back to them.
-  const walkedSince = async (started: number): Promise<boolean> => {
-    for (const { subscriber, position } of await checkpointStore.list()) {
-      if (!subscriber.startsWith(BACKFILL_PREFIX)) continue;
-      const [owner = "", name] = subscriber.slice(BACKFILL_PREFIX.length).split(":");
+  const walkedSince = (started: number, listed: readonly BackfillRow[]): boolean =>
+    listed.some(({ owner, name, position }) => {
       // Marks started at the same moment are ordered by name, so only one of them walks again.
       const later = position > started || (position === started && owner > marks);
-      if (owner !== marks && name === "started" && later) return true;
-    }
-    return false;
-  };
+      return owner !== marks && name === "started" && later;
+    });
 
   const report = (): void => {
     logger.info("personal data written before its marks is sealed", { marks, ...tally });
-    tally = { events: 0, discarded: 0, unsealable: 0, scheduledCommands: 0, deadLetters: 0 };
+    tally = NO_TALLY;
   };
 
   const warnOf = (sealed: Sealed, from: number, through: number): void => {
@@ -274,11 +332,20 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
   };
 
   // Resolves to how many events it walked past, `moved` when another instance moved the position
-  // first.
-  const walk = async (position: number): Promise<number | "moved"> => {
+  // first. An event left in an older shape, since `rewrite` is off, is noted to walk again from.
+  const walk = async (position: number, rewrite: boolean): Promise<number | "moved"> => {
     const events = await storage.eventStore.readAll({ afterPosition: position, limit: batchSize });
     const last = events.at(-1)?.position;
     if (last === undefined) return 0;
+    const left = rewrite
+      ? undefined
+      : events.find((event) => needsUpcastRewrite({ event, aggregates }));
+    if (left !== undefined) {
+      const noted = await checkpointStore.get(rows.rewrite);
+      if (noted === 0 || left.position < noted) {
+        await checkpointStore.set(rows.rewrite, left.position);
+      }
+    }
     const sealed = await traced({
       errorText,
       name: "bounda.backfill",
@@ -286,7 +353,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
         [ATTRIBUTES.afterPosition]: position,
         [ATTRIBUTES.eventCount]: events.length,
       },
-      run: () => reseal.events(events),
+      run: () => reseal.events(events, rewrite),
     });
     if (!(await checkpointStore.compareAndSet(rows.position, position, last))) return "moved";
     warnOf(sealed, position, last);
@@ -309,8 +376,13 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
     return events.length;
   };
 
-  // `null` when another instance took the walk meanwhile.
-  const sealStores = async (at: number, started: number): Promise<number | null> => {
+  // `null` when another instance took the walk meanwhile. While an instance on other marks runs,
+  // what it stores is not as these marks say: the stores are gone through again on each pass.
+  const sealStores = async (
+    at: number,
+    started: number,
+    others: boolean,
+  ): Promise<number | null> => {
     const commands = await sealPages(
       (page) => storage.scheduler.list(page),
       (entries) => reseal.commands(entries),
@@ -321,12 +393,18 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       (page) => reseal.letters(page, started),
     );
     if (letters === null) return null;
+    const answers = await sealPages(
+      (page) => storage.idempotencyStore.list({ now: clock.now(), ...page }),
+      (records) => reseal.answers(records, clock.now()),
+    );
+    if (answers === null) return null;
     tally = {
       ...tally,
       discarded: tally.discarded + commands.discarded + letters.discarded,
       unsealable: tally.unsealable + commands.unsealable + letters.unsealable,
       scheduledCommands: tally.scheduledCommands + commands.resealed,
       deadLetters: tally.deadLetters + letters.resealed,
+      answers: tally.answers + answers.resealed,
     };
     if (commands.unsealable + letters.unsealable > 0) {
       logger.warn("commands stored before their marks name no person and stay in the clear", {
@@ -335,18 +413,30 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
         commandTypes: [...new Set([...commands.unsealableTypes, ...letters.unsealableTypes])],
       });
     }
-    await checkpointStore.set(rows.stores, at);
-    return commands.resealed + letters.resealed;
+    if (!others) await checkpointStore.set(rows.stores, at);
+    return commands.resealed + letters.resealed + answers.resealed;
   };
 
   // What comes after the head once it caught up is written sealed, but by an instance on older
   // marks, which takes the stores back to not caught up.
   const status = async (): Promise<PersonalDataBackfillStatus> => {
-    const [position, stores] = await Promise.all([
+    const [position, stores, rewrite] = await Promise.all([
       checkpointStore.get(rows.position),
       checkpointStore.get(rows.stores),
+      checkpointStore.get(rows.rewrite),
     ]);
-    return { position, caughtUp: stores > 0 };
+    return { position, caughtUp: stores > 0 && rewrite === 0 };
+  };
+
+  // Once no instance on other marks runs, the walk goes back to the first event it left in an
+  // older shape; rewriting it takes the stores back to not caught up, as any event resealed does.
+  const rewind = async (position: number): Promise<number | "moved"> => {
+    const from = await checkpointStore.get(rows.rewrite);
+    if (from === 0) return position;
+    const back = Math.min(position, from - 1);
+    if (!(await checkpointStore.compareAndSet(rows.position, position, back))) return "moved";
+    await checkpointStore.remove(rows.rewrite);
+    return back;
   };
 
   const pass = async (now: Date): Promise<number> => {
@@ -357,9 +447,10 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       return 0;
     }
     if (!(await lease.take(at))) return 0;
+    const listed = await listRows();
     let started = await checkpointStore.get(rows.started);
-    if (started !== 0 && (await walkedSince(started))) {
-      for (const row of [rows.position, rows.stores, rows.started]) {
+    if (started !== 0 && walkedSince(started, listed)) {
+      for (const row of [rows.position, rows.stores, rows.rewrite, rows.started]) {
         await checkpointStore.remove(row);
       }
       caughtUp = false;
@@ -369,21 +460,25 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       await checkpointStore.compareAndSet(rows.started, 0, at);
       started = await checkpointStore.get(rows.started);
     }
-    const position = await checkpointStore.get(rows.position);
-    const walked = await walk(position);
+    const others = othersRunning(at, listed);
+    const position = others
+      ? await checkpointStore.get(rows.position)
+      : await rewind(await checkpointStore.get(rows.position));
+    if (position === "moved") return 0;
+    const walked = await walk(position, !others);
     if (walked === "moved") return 0;
     if (walked >= batchSize) return walked;
     let stored = 0;
     if ((await checkpointStore.get(rows.stores)) === 0) {
-      const sealed = await sealStores(at, started);
+      const sealed = await sealStores(at, started, others);
       if (sealed === null) return walked;
       stored = sealed;
-      report();
+      if (!others) report();
     }
-    caughtUp = true;
+    caughtUp = !others && (await checkpointStore.get(rows.rewrite)) === 0;
     restUntil = at + BACKFILL_FOLLOW_INTERVAL_MS;
     await releaseHold();
-    await removeStale(at);
+    await removeStale(at, listed);
     return walked + stored;
   };
 
