@@ -87,7 +87,7 @@ letter: its batch is delivered again until it goes through, so the runtime keeps
 of each subscriber instead, its text encrypted under the person the event names, or in the clear
 for an event that names nobody, whatever `errorText` says. `app.subscriberFailures.list()` and
 `.get(subscriber)`, or `bounda status --error-text`, open it, and each call is recorded in the
-[access log](/guides/personal-data/#the-access-log); once the person is forgotten it reads `null`.
+[access log](/guides/personal-data/#who-opened-what); once the person is forgotten it reads `null`.
 Your own logger calls
 around the app, in a request handler, can follow the same rule with `errorFields`:
 

@@ -9,7 +9,9 @@ Events are never deleted, so personal data in one is forgotten by making it unre
 person has a key for each [category](#categories) of their data, their fields are stored encrypted
 with the key of the field's category, and `forget` throws the keys away.
 [Forgetting in an immutable log](/concepts/forgetting-in-an-immutable-log/) says when to do this
-and when to keep the data behind a port instead. This page is the how.
+and when to keep the data behind a port instead. This page is the how; [GDPR rights in
+Bounda](/reference/gdpr/) goes through the regulation article by article, with what Bounda covers
+of each and what is left to the app.
 
 ## Marking a field
 
@@ -458,12 +460,12 @@ a key no one holds: it is dropped when it comes due, unrun, and the worker logs 
 dropped: its person was forgotten`. The [dead letters](/guides/dead-letters/) list shows a
 scheduled command's payload with its fields opened.
 
-A [snapshot](/concepts/long-streams/#snapshots) holds the state in the clear, so the same
-transaction removes every snapshot whose state carried a field of theirs under a key that goes or is
-kept; each one names the people it holds and the key it read each one under, and none is written
-for a person who no longer holds that key in force. The next command on such an
-aggregate folds it from its first event, with the fields forgotten, and the snapshot after it
-holds them as `null`.
+A [snapshot](/concepts/long-streams/#snapshots) holds the state with the person's fields opened,
+sealed under the [database's key](#three-keys-deep) alone, so the same transaction removes every
+snapshot whose state carried a field of theirs under a key that goes or is kept; each one names the
+people it holds and the key it read each one under, and none is written for a person who no longer
+holds that key in force. The next command on such an aggregate folds it from its first event, with
+the fields forgotten, and the snapshot after it holds them as `null`.
 
 The message of an error a handler throws may quote a personal field it read, of any category, so a
 [dead letter](/guides/dead-letters/#what-a-letter-holds) keeps the message and the stack encrypted
@@ -1494,7 +1496,7 @@ bounda restrict c-42 --ground accuracy-contested --category contact
 bounda unrestrict c-42 --notice 7d --ground accuracy-contested
 ```
 
-See [the CLI reference](/reference/cli/#bounda-restrict).
+See [the CLI reference](/reference/cli/#bounda-restrict-and-bounda-unrestrict).
 
 ## Retention
 
@@ -2351,8 +2353,8 @@ as a request, whenever the person holds a key: list only those forgotten after t
 `app.forgetAgain(entries, { actor })` is the same in code, each entry with its `categories`. Then
 run `bounda restored`, so the jobs start over from the copy ([restores](#restores)). Without a
 backup in play, `bounda forget <person>` forgets a person from the command line, `--category`
-naming the categories alone, and `bounda export <person>` prints their data: see the
-[CLI](/reference/cli/#bounda-export-and-bounda-forget-person).
+naming the categories alone, and `bounda personal-data export <person>` prints their data: see
+the [CLI](/reference/cli/#bounda-personal-data-export-and-bounda-forget-person).
 
 Without either, a restored backup brings back the data of everyone forgotten after it was taken,
 until they are forgotten again.

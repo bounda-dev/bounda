@@ -54,8 +54,8 @@ ledger, forgets again whoever the copy brought back, and the read models hear of
 start resolves. A ledger that does not answer within ten seconds is left to finish in the
 background, unless the ledger is [strict](/guides/personal-data/#what-the-runtime-does-with-it).
 Without a forget ledger nothing outside the database says it went back: run `bounda restored`,
-then [`bounda forget --from`](/reference/cli/#bounda-forgotten-and-bounda-forget) with the list of
-whom you forgot since the copy, saved before the restore.
+then [`bounda forget --from`](/reference/cli/#bounda-forgotten-and-bounda-forget---from) with the
+list of whom you forgot since the copy, saved before the restore.
 
 Under a running app, restore in place, in one transaction, so the app sees the database as it was
 or as the copy has it, never half restored:

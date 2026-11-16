@@ -425,16 +425,17 @@ bounda forget c-42 --category marketing --actor ops-ana
 bounda forget c-42 --actor ops-ana
 ```
 
-`bounda personal-data export <person>` writes, as JSON, what `app.exportPersonalData` answers:
-every record that names the person, with each field's category, and every category's basis and
-retention (see [Exporting a person's data](/guides/personal-data/#exporting-a-persons-data)). It
-streams it, reading and writing a page of records at a time, however long the person's history,
-and reads no faster than its output takes it. It prints to standard output; with
-`--output <file>` it writes the file instead, readable by its owner alone, beside it as
-`<file>.partial` until the export is whole, then moved into place, so a failed export leaves no
-file. An export that fails once it started printing, as when the person is forgotten, restricted
-or redacted meanwhile (`CONCURRENCY_CONFLICT`), has printed a document cut short, which is not
-valid JSON, and exits `2`: run it again. It is recorded in the access log like any export.
+`bounda personal-data export <person>` writes, as JSON, what `app.exportPersonalData` answers: every
+record that names the person, with each field's category, every category's basis, purposes, sources
+and retention, and the person's rights (see [Exporting a person's
+data](/guides/personal-data/#exporting-a-persons-data)). It streams it, reading and writing a page
+of records at a time, however long the person's history, and reads no faster than its output takes
+it. It prints to standard output; with `--output <file>` it writes the file instead, readable by its
+owner alone, beside it as `<file>.partial` until the export is whole, then moved into place, so a
+failed export leaves no file. An export that fails once it started printing, as when the person is
+forgotten, restricted or redacted meanwhile (`CONCURRENCY_CONFLICT`), has printed a document cut
+short, which is not valid JSON, and exits `2`: run it again. It is recorded in the access log like
+any export.
 
 `bounda forget <person>` forgets the person as a whole, as `app.forget` does, and prints
 `forgot c-42`; with `--category`, repeated for several, only those categories, as when a consent is
@@ -445,12 +446,13 @@ on each record the fields a restriction covers.
 
 ## `bounda personal-data inventory`
 
-Prints the record of processing activities of article 30 of the GDPR, as far as the modules and
-the configuration say it: the categories of personal data with their basis and retention, every
-event, command, process state and read model that holds personal data, whose and where, every
-recipient, what the runtime keeps about persons and for how long, and the fields marked
-`notPersonal`. It loads the project as `bounda rebuild` does and opens no database. See
-[The record of processing activities](/guides/personal-data/#the-record-of-processing-activities).
+Prints the record of processing activities of article 30 of the GDPR, as far as the modules and the
+configuration say it: the categories of personal data with their basis, purposes, sources and
+retention, the automated decisions, every event, command, process state and read model that holds
+personal data, whose and where, every recipient, what the runtime keeps about persons and for how
+long, and the fields marked `notPersonal`. It loads the project as `bounda rebuild` does and opens
+no database. See [The record of processing
+activities](/guides/personal-data/#the-record-of-processing-activities).
 
 ```bash
 bounda personal-data inventory
@@ -463,7 +465,14 @@ Personal data inventory (GDPR article 30)
 
 Categories
   default  no basis declared  kept until forgotten  0 fields
+    for: no purpose declared
+    from: no source declared
   account  contract  forgotten 2y after last activity  14 fields
+    for: Run the user's account
+    from: the person
+
+Automated decisions
+  none declared
 
 Personal data
   event user.UserRegistered, of the aggregate's id
