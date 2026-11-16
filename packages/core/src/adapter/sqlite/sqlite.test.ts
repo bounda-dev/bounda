@@ -210,6 +210,7 @@ describe("the person index of the SQLite stores", () => {
         dedupeKey: "s",
         command: testCommand("1"),
         executeAt: new Date("2026-01-01T00:00:00.000Z"),
+        scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
         context: testContext,
         persons,
       });

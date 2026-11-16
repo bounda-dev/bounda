@@ -12,6 +12,7 @@ import {
 } from "./testing/fixtures.ts";
 
 const now = new Date("2026-01-01T00:00:00.000Z");
+const later = (ms: number): Date => new Date(now.getTime() + ms);
 const record = (key: string, persons: readonly KeyedPerson[]) => ({
   key,
   answer: testAnswer(key),
@@ -55,31 +56,67 @@ describe("deferWrites", () => {
     expect(await answerOf("bo", storage)).toEqual(testAnswer("bo"));
   });
 
-  it("reseals an answer it holds back or the live store holds, on flush", async () => {
+  it("lists and erases what it holds back and what the live store holds, filing it elsewhere on flush", async () => {
     const storage = await memory().createStorage();
-    await storage.personalKeys.add("c-1", "default", stored("1"));
-    await storage.idempotencyStore.put(record("live", [held("c-1", "1")]));
+    await storage.idempotencyStore.put(record("live", []));
+    await storage.idempotencyStore.put(record("plain", []));
     const { stores, flush } = deferWrites(storage);
-    await stores.idempotencyStore.put(record("held", [held("c-1", "1")]));
-    const resealed = { answer: testAnswer("again"), persons: [held("c-1", "1")], now };
-    for (const key of ["live", "held"]) {
-      expect(await stores.idempotencyStore.reseal({ ...resealed, key })).toBe(true);
-      expect((await stores.idempotencyStore.get({ key, now }))?.answer).toEqual(
-        testAnswer("again"),
-      );
+    await stores.idempotencyStore.put(record("held", []));
+    expect((await stores.idempotencyStore.list({ now })).map(({ key }) => key)).toEqual([
+      "held",
+      "live",
+      "plain",
+    ]);
+    expect(await stores.idempotencyStore.list({ now, limit: 1, offset: 1 })).toHaveLength(1);
+    await stores.idempotencyStore.erase({ key: "live", now });
+    await stores.idempotencyStore.erase({ key: "held", now });
+    await stores.idempotencyStore.erase({ key: "plain", filed: "hmac", now });
+    await stores.idempotencyStore.erase({ key: "none", now });
+    for (const key of ["live", "held", "hmac"]) {
+      expect((await stores.idempotencyStore.get({ key, now }))?.answer).toBeNull();
     }
-    expect(await stores.idempotencyStore.reseal({ ...resealed, key: "none" })).toBe(false);
+    expect(await stores.idempotencyStore.get({ key: "plain", now })).toBeNull();
     expect((await storage.idempotencyStore.get({ key: "live", now }))?.answer).toEqual(
       testAnswer("live"),
     );
     await flush(storage);
-    for (const key of ["live", "held"]) {
-      expect((await storage.idempotencyStore.get({ key, now }))?.answer).toEqual(
-        testAnswer("again"),
-      );
-    }
-    await stores.idempotencyStore.forget("c-1");
-    expect(await stores.idempotencyStore.reseal({ ...resealed, key: "held" })).toBe(false);
+    expect(
+      (await storage.idempotencyStore.list({ now })).map(({ key, answer }) => [key, answer]),
+    ).toEqual([
+      ["held", null],
+      ["hmac", null],
+      ["live", null],
+    ]);
+  });
+
+  it("lists and erases only what has not expired, and keeps a live record where it files one", async () => {
+    const storage = await memory().createStorage();
+    await storage.idempotencyStore.put(record("live", []));
+    const { stores } = deferWrites(storage);
+    await stores.idempotencyStore.put({
+      ...record("short", []),
+      expiresAt: later(1).toISOString(),
+    });
+    await stores.idempotencyStore.put(record("plain", []));
+    expect((await stores.idempotencyStore.list({ now: later(1) })).map(({ key }) => key)).toEqual([
+      "live",
+      "plain",
+    ]);
+    expect((await stores.idempotencyStore.list({ now, offset: 1 })).map(({ key }) => key)).toEqual([
+      "plain",
+      "short",
+    ]);
+    await stores.idempotencyStore.erase({ key: "short", now: later(1) });
+    expect((await stores.idempotencyStore.get({ key: "short", now }))?.answer).toEqual(
+      testAnswer("short"),
+    );
+    await stores.idempotencyStore.erase({ key: "plain", filed: "live", now });
+    expect(await stores.idempotencyStore.get({ key: "plain", now })).toBeNull();
+    expect((await stores.idempotencyStore.get({ key: "live", now }))?.answer).toEqual(
+      testAnswer("live"),
+    );
+    await stores.idempotencyStore.erase({ key: "plain", filed: "elsewhere", now });
+    expect(await stores.idempotencyStore.get({ key: "elsewhere", now })).toBeNull();
   });
 
   it("forgets and withdraws only what names a person under a key outside the ones kept", async () => {
@@ -97,6 +134,7 @@ describe("deferWrites", () => {
         dedupeKey: key,
         command: testCommand("c-1"),
         executeAt: now,
+        scheduledAt: now,
         context: testContext,
         persons: [held("c-1", fingerprint)],
       });
@@ -131,6 +169,7 @@ describe("deferWrites", () => {
       dedupeKey: "live",
       command: testCommand("c-1"),
       executeAt: now,
+      scheduledAt: now,
       context: testContext,
       persons,
     });
@@ -140,6 +179,7 @@ describe("deferWrites", () => {
       dedupeKey: "held",
       command: testCommand("c-1"),
       executeAt: now,
+      scheduledAt: now,
       context: testContext,
       persons,
     });

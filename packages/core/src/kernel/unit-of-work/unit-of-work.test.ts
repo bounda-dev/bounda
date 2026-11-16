@@ -213,6 +213,7 @@ describe("createUnitOfWork", () => {
     dedupeKey,
     command: { type: "Remind", aggregateId: "1", payload: {} },
     executeAt: now,
+    scheduledAt: now,
     context,
   });
 

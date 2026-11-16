@@ -532,6 +532,7 @@ describe("command pipeline", () => {
         dedupeKey: "command:id-1",
         command: { type: "PlaceOrder", payload: { orderId: "o-1", total: 42 }, aggregateId: "o-1" },
         executeAt: "2026-01-01T00:05:00.000Z",
+        scheduledAt: "2026-01-01T00:00:00.000Z",
         context: { correlationId: "id-1", causationId: "id-1", depth: 0 },
         attempts: 0,
       },

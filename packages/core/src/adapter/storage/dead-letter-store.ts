@@ -34,6 +34,13 @@ export interface StoredDeadLetter {
    * names nobody.
    */
   readonly person: string | null;
+  /**
+   * Only on process letters: the person the instance's state names, when another than `person`.
+   * The error text is sealed under their keys too, since the step read their state, and the
+   * letter names them as it names `person`: `listByPerson`, the export, a restriction and a
+   * redaction reach it, and a forget leaves it, its text unreadable.
+   */
+  readonly statePerson?: string;
   readonly errorType: DeadLetterErrorType;
   /**
    * The error's class name, `ValidationError`, or the type of what was thrown when it is no error.
@@ -44,8 +51,8 @@ export interface StoredDeadLetter {
    */
   readonly errorCode?: string;
   /**
-   * The error's message, sealed under `person`'s key, and in the clear only when `person` is
-   * `null`.
+   * The error's message, sealed under the keys of `person`, and of `statePerson` around them, and
+   * in the clear only when the letter names nobody.
    */
   readonly errorMessage: string | SealedValue;
   /**
@@ -81,7 +88,7 @@ export type NewDeadLetter = Omit<StoredDeadLetter, "status" | "resolvedAt">;
  */
 export type ResealedDeadLetter = Pick<
   StoredDeadLetter,
-  "person" | "errorMessage" | "errorStack" | "payload" | "persons"
+  "person" | "statePerson" | "errorMessage" | "errorStack" | "payload" | "persons"
 >;
 
 /**
@@ -160,21 +167,22 @@ export interface DeadLetterStore {
   updateStatus(id: string, status: DeadLetterStatus, at: Date): Promise<void>;
   remove(id: string): Promise<void>;
   /**
-   * Writes the letter's `person`, `errorMessage`, `errorStack`, `payload` and `persons` as given,
-   * one left out as none, and nothing else of it; a letter the store does not hold is skipped.
-   * Only the runtime calls it, for letters filed before their schema marked what they hold.
+   * Writes the letter's `person`, `statePerson`, `errorMessage`, `errorStack`, `payload` and
+   * `persons` as given, one left out as none, and nothing else of it; a letter the store does not
+   * hold is skipped. Only the runtime calls it, for letters filed before their schema marked what
+   * they hold.
    */
   reseal(id: string, letter: ResealedDeadLetter): Promise<void>;
   /**
-   * Every letter that names `person`, in `person` or in `persons`, whatever its status, in the
-   * order of `list`.
+   * Every letter that names `person`, in `person`, `statePerson` or `persons`, whatever its
+   * status, in the order of `list`.
    */
   listByPerson(person: string): Promise<readonly StoredDeadLetter[]>;
   /**
    * Removes every letter whose `persons` names `person` under a key outside `keep`, or read in
    * the clear, whatever its status, and resolves to them in the order of `list`. Without `keep`,
-   * every letter whose `persons` names them. A letter that names the person only in `person`
-   * stays.
+   * every letter whose `persons` names them. A letter that names the person only in `person` or
+   * `statePerson` stays.
    */
   forget(person: string, keep?: readonly string[]): Promise<readonly StoredDeadLetter[]>;
   /**

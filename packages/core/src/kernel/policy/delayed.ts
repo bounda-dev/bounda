@@ -31,6 +31,7 @@ export interface ScheduleDelayedPolicyArgs {
   readonly policy: PolicyRuntime;
   readonly delayMs: number;
   readonly event: StoredEvent;
+  readonly now: Date;
 }
 
 export interface ScheduleDelayedPolicyFunction {
@@ -45,6 +46,7 @@ export const scheduleDelayedPolicy: ScheduleDelayedPolicyFunction = ({
   policy,
   delayMs,
   event,
+  now,
 }) =>
   scheduler.schedule({
     dedupeKey: `policy:${policy.name}:${event.id}`,
@@ -60,6 +62,7 @@ export const scheduleDelayedPolicy: ScheduleDelayedPolicyFunction = ({
       } satisfies DelayedPolicyPayload,
     },
     executeAt: new Date(new Date(event.timestamp).getTime() + delayMs),
+    scheduledAt: now,
     context: causedBy(event),
   });
 

@@ -49,7 +49,9 @@ their data redacted: the same key then rejects with `IdempotentAnswerErasedError
 (`IDEMPOTENT_ANSWER_ERASED`) and runs nothing until it expires, so a late retry neither repeats the
 command nor brings back what the person had erased. The key is stored only as an HMAC under the
 database's key, its text sealed with the answer, so a key that quotes someone is never kept in the
-clear either.
+clear either. An answer sealed under other [personal-data marks](/guides/personal-data/#remembered-answers)
+than the app runs with is erased, and its key rejects the same way: a deploy that changes what is
+marked personal erases the answers remembered before it.
 
 This is not the `idempotencyKey` a command handler receives: that one is the command's own id,
 for the provider the handler calls, the same across the runs a concurrency conflict causes

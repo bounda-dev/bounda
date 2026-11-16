@@ -352,6 +352,7 @@ describe("memory adapter", () => {
       dedupeKey: "command:kept",
       command: { type: "Remind", aggregateId: "1", payload: {} },
       executeAt: now,
+      scheduledAt: now,
       context,
     });
     await storage.deadLetterStore.add(letter("kept"));
@@ -392,6 +393,7 @@ describe("memory adapter", () => {
           dedupeKey: "command:lost",
           command: { type: "Remind", aggregateId: "1", payload: {} },
           executeAt: now,
+          scheduledAt: now,
           context,
         });
         await tx.deadLetterStore.add(letter("lost"));

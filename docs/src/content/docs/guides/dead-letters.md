@@ -93,7 +93,10 @@ The message of an error a handler throws may quote what the handler read of a pe
 ana@example.com`. So a letter also names the `person` its work was about, the one the event names
 for a policy, process or recipient letter and the one the command's payload names for a scheduled command,
 and stores the message and the stack encrypted with that person's key, as a
-[personal field](/guides/personal-data/) is. A letter that names nobody keeps them in the clear:
+[personal field](/guides/personal-data/) is. A process letter whose event names one person while
+the state of its instance names another names that one too, as `statePerson`, and its text is
+encrypted under the keys of both, one inside the other: forgetting either leaves it unreadable, and
+either finds it in their [export](/guides/personal-data/#exporting-a-persons-data). A letter that names nobody keeps them in the clear:
 a process deadline's, a policy's or process's for an event without personal fields, or whose
 fields were forgotten before the handler read them, and a scheduled command's whose payload holds
 no marked field. A letter filed before the fields its work holds were marked is sealed in place

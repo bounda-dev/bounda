@@ -73,9 +73,13 @@ reason, rather than deriving them from today's event.
 - When an event is read, for a command, a policy, a process, a projection or a rebuild, the
   upcasters from its stored version on are applied to the payload. What reaches `evolve` and the
   handlers is always the current shape, stamped with the current version. Nothing is rewritten
-  in the store.
+  in the store, but for an event of a type that marks
+  [personal data](/guides/personal-data/#marking-a-field-later): the worker rewrites it in its
+  current shape, so the fields marked today are sealed under the names they have today, once no
+  instance of the previous code runs.
 - An event written with a version this code does not know, because a newer deploy wrote it,
-  is refused with an error naming the event. Roll forward, never back, once new events exist.
+  is refused with an error naming the event. Roll forward, never back, once new events exist, or
+  once events were rewritten in a newer shape.
 
 The types keep you honest in one direction: the last upcaster must return the current payload, so
 a change to `payload` in the event module fails to compile until the upcast module catches up.

@@ -54,6 +54,7 @@ import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
 import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
 import { logClearFields } from "./personal-data/clear-fields.ts";
+import { createEarlierAnswers } from "./personal-data/earlier-answers.ts";
 import { openEncryptedFiles } from "./personal-data/encrypted-files.ts";
 import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
 import { createFileEncryptions } from "./personal-data/file-encryption.ts";
@@ -82,7 +83,7 @@ import {
   NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
 import { type Redactions, redactPersonalData, settleRedaction } from "./personal-data/redact.ts";
-import { marksFingerprint } from "./personal-data/resealing.ts";
+import { marksFingerprint, walkFingerprint } from "./personal-data/resealing.ts";
 import {
   createRestrictedPersonsSubscriber,
   restrictedPersonsHosts,
@@ -904,6 +905,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       recipients.all.length === 0
         ? undefined
         : createDisclosures({ recipients, storage, intentions, recordAccess, clock });
+    const marks = marksFingerprint({ aggregates, processes: processDefinitions });
+    const earlierAnswers = createEarlierAnswers({ storage, atRest: storage.atRest, clock });
     const pipeline = createCommandPipeline({
       aggregates,
       loader,
@@ -914,6 +917,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
       recordAccess,
       disclosures,
+      marks,
+      earlierAnswers,
       onRejection: (rejection) => {
         for (const observed of observers) observed.push(rejection);
       },
@@ -1081,16 +1086,19 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             clock,
             logger,
           });
-    const marks = marksFingerprint({ aggregates, processes: processDefinitions });
+    const walked = walkFingerprint({ aggregates, processes: processDefinitions });
     const backfill =
-      marks === null
+      walked === null || marks === null
         ? undefined
         : createPersonalDataBackfill({
             storage: written,
+            reading: storage.eventStore,
+            atRest: storage.atRest,
             aggregates,
             processes: processDefinitions,
             wrapping,
-            marks,
+            marks: walked,
+            answerMarks: marks,
             batchSize: config.runtime.dispatcher.batchSize,
             recordsActivity,
             clock,
@@ -1240,7 +1248,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
       },
       restores,
-      onRestored: dispatcher.restored,
+      onRestored: () => {
+        dispatcher.restored();
+        earlierAnswers.reset();
+      },
       reactive: following.map((subscriber) => subscriber.name),
       standing: dispatcher.positionOf,
       config,

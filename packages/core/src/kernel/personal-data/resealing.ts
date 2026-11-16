@@ -10,6 +10,7 @@ import {
   type PersonalDataForgottenPayload,
 } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import { upcastPayload } from "../aggregate/upcasting.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import { digest } from "../read-model/fingerprint.ts";
@@ -35,7 +36,13 @@ export interface MarksFingerprintFunction {
   (args: MarksFingerprintArgs): string | null;
 }
 
-const entryOf = (name: string, marks: PersonalMarks | null): readonly string[] =>
+// An event's schema version is named once it has upcasts: events stored in an older shape are
+// rewritten in the current one, which a new upcast changes.
+const entryOf = (
+  name: string,
+  marks: PersonalMarks | null,
+  schemaVersion = 1,
+): readonly string[] =>
   marks === null
     ? []
     : [
@@ -47,18 +54,24 @@ const entryOf = (name: string, marks: PersonalMarks | null): readonly string[] =
             const category = fieldCategory(marks, field);
             return category === DEFAULT_PERSONAL_CATEGORY ? field : [field, category];
           }),
+          ...(schemaVersion === 1 ? [] : [schemaVersion]),
         ]),
       ];
 
-/**
- * Names what every event, command and process state of the registry marks, so any change to a
- * mark names another set; `null` when nothing is marked.
- */
-export const marksFingerprint: MarksFingerprintFunction = ({ aggregates, processes }) => {
+const fingerprintOf = (
+  { aggregates, processes }: MarksFingerprintArgs,
+  versions: boolean,
+): string | null => {
   const marked: string[] = [];
   for (const aggregate of Object.values(aggregates.byName)) {
     for (const event of Object.values(aggregate.eventsByType)) {
-      marked.push(...entryOf(`event:${aggregate.name}.${event.type}`, event.personal));
+      marked.push(
+        ...entryOf(
+          `event:${aggregate.name}.${event.type}`,
+          event.personal,
+          versions ? event.schemaVersion : 1,
+        ),
+      );
     }
     for (const command of Object.values(aggregate.commands)) {
       marked.push(...entryOf(`command:${aggregate.name}.${command.type}`, command.personal));
@@ -69,6 +82,20 @@ export const marksFingerprint: MarksFingerprintFunction = ({ aggregates, process
   }
   return marked.length === 0 ? null : digest(JSON.stringify(marked.sort()));
 };
+
+/**
+ * Names what every event, command and process state of the registry marks, so any change to a
+ * mark names another set; `null` when nothing is marked. What a remembered answer is sealed
+ * under: whom and what it quotes depends on the marks alone.
+ */
+export const marksFingerprint: MarksFingerprintFunction = (args) => fingerprintOf(args, false);
+
+/**
+ * The marks, and the schema version of every marked event with upcasts: what the backfill walks
+ * once for, since a new upcast changes the shape its events are rewritten in. `null` when
+ * nothing is marked.
+ */
+export const walkFingerprint: MarksFingerprintFunction = (args) => fingerprintOf(args, true);
 
 /**
  * The key to seal a value written in the clear with, and whether no store keeps it: the person
@@ -100,9 +127,10 @@ export interface ResealKeys {
    */
   event(person: string, category: string, position: number): Promise<ChosenKey>;
   /**
-   * For a value of `category` in a stored command's payload, filed at `at` for a dead letter:
-   * their key in force when they hold one and that category was not forgotten after `at`, a new
-   * key when they hold none and it was never forgotten, and else a key no store keeps.
+   * For a value of `category` in a stored command's payload, written at `at`, when it was
+   * scheduled or filed: their key in force when they hold one and that category was not forgotten
+   * after `at`, a new key when they hold none and it was never forgotten, and else a key no store
+   * keeps. A payload nothing says the time of, `null`, is taken as written before any forgetting.
    */
   payload(person: string, category: string, at: string | null): Promise<ChosenKey>;
   /**
@@ -255,7 +283,7 @@ export const createResealKeys: CreateResealKeysFunction = ({ transaction, keys }
         current(person, category),
       ]);
       if (key === null) return last === null ? kept(person, category) : thrownAway(person);
-      return at !== null && last !== null && last.forgetting.timestamp > at
+      return last !== null && (at === null || last.forgetting.timestamp > at)
         ? thrownAway(person)
         : { key, discarded: false };
     },
@@ -514,4 +542,102 @@ export const planEventReseal: PlanEventResealFunction = ({ event, aggregates, pr
   return planned(event, marks, payload, clear, person, (named, opened, pending, keyOf) =>
     sealFields(opened, marks, pending, named, keyOf),
   );
+};
+
+export interface UpcastRewriteArgs {
+  readonly event: StoredEvent;
+  readonly aggregates: AggregatesRuntime;
+}
+
+export interface NeedsUpcastRewriteFunction {
+  (args: UpcastRewriteArgs): boolean;
+}
+
+const rewriteOf = ({ event, aggregates }: UpcastRewriteArgs) => {
+  if (event.metadata.system) return null;
+  const runtime = aggregates.byName[event.aggregateType]?.eventsByType[event.type];
+  if (runtime === undefined || runtime.personal === null) return null;
+  return event.metadata.schemaVersion < runtime.schemaVersion
+    ? { runtime, marks: runtime.personal }
+    : null;
+};
+
+/**
+ * Whether an event of a type that marks personal fields is stored in an older shape than the one
+ * its upcasts bring it to.
+ */
+export const needsUpcastRewrite: NeedsUpcastRewriteFunction = (args) => rewriteOf(args) !== null;
+
+/**
+ * An event that names nobody, rewritten in its current shape as it is: none of its marked fields
+ * holds a value.
+ */
+export interface BareRewrite {
+  readonly bare: unknown;
+  readonly schemaVersion: number;
+}
+
+/**
+ * A plan that writes the event in its current shape, at `schemaVersion`.
+ */
+export interface UpcastPlan extends ResealPlan<unknown> {
+  readonly schemaVersion: number;
+}
+
+export interface PlanUpcastResealFunction {
+  (args: UpcastRewriteArgs): UpcastPlan | BareRewrite | "unsealable" | null;
+}
+
+/**
+ * For an event of a marked type stored in an older shape: every value it holds sealed is opened,
+ * `null` when no key the person holds opens it any more, as the upcasts read it; the payload is
+ * brought to its current shape, and what the marks of today name in it is sealed as the event
+ * store seals it as it appends, under the person it was sealed for, or else the one the current
+ * shape names. `null` for any other event.
+ */
+export const planUpcastReseal: PlanUpcastResealFunction = (args) => {
+  const rewrite = rewriteOf(args);
+  if (rewrite === null) return null;
+  const { event } = args;
+  const { runtime, marks } = rewrite;
+  const { schemaVersion } = runtime;
+  const from = event.metadata.schemaVersion;
+  const shaped = (payload: unknown): unknown => upcastPayload(runtime.upcasts, from, payload);
+  const marked = (payload: unknown): readonly string[] =>
+    isRecord(payload) ? marks.fields.filter((field) => payload[field] !== undefined) : [];
+  let person = event.person;
+  if (person === null) {
+    const current = shaped(event.payload);
+    person =
+      marks.person === null
+        ? event.aggregateId
+        : isRecord(current)
+          ? personIn(current[marks.person])
+          : null;
+    if (person === null) {
+      return marked(current).length > 0 ? "unsealable" : { bare: current, schemaVersion };
+    }
+  }
+  const named = person;
+  return {
+    person: named,
+    schemaVersion,
+    opened: async (open) => {
+      const stored: Record<string, unknown> | null = isRecord(event.payload)
+        ? { ...event.payload }
+        : null;
+      for (const [field, value] of Object.entries(stored ?? {})) {
+        if (!isSealed(value) || stored === null) continue;
+        stored[field] = (await open(value))?.value ?? null;
+      }
+      const current = shaped(stored ?? event.payload);
+      const pending = marked(current);
+      return {
+        categories: categoriesOf(marks, pending),
+        movedFrom: [],
+        seal: async (keyOf) =>
+          isRecord(current) ? sealFields(current, marks, pending, named, keyOf) : current,
+      };
+    },
+  };
 };

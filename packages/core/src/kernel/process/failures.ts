@@ -22,11 +22,12 @@ import { instancePersonOf, type ProcessInstance, processAggregateType } from "./
 /**
  * What a process dead letter is about: the event whose handler failed, or a deadline standing in
  * for one, with the person it names, or else the one the instance's state names, whose key seals
- * the letter's error text.
+ * the letter's error text; and the one the state names when another, whose keys seal it too.
  */
 export interface FailureSubject
   extends Pick<StoredEvent, "id" | "type" | "aggregateType" | "aggregateId"> {
   readonly person: string | null;
+  readonly statePerson: string | null;
   /**
    * What the event was handed out with opened, and the instance loaded with, so the letter is
    * sealed under no other key.
@@ -42,7 +43,8 @@ export interface LoadedInstance {
 export interface ProcessFailures {
   /**
    * The event as a letter's subject, naming the person it names, or else the one the state of the
-   * instance `at` names; `null` for an event that belongs to no instance.
+   * instance `at` names, `null` for an event that belongs to no instance; and the one that state
+   * names when the event names another.
    */
   subjectOf(process: ProcessRuntime, event: StoredEvent, at: LoadedInstance | null): FailureSubject;
   /**
@@ -81,18 +83,22 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
   clock,
   logger,
 }) => ({
-  subjectOf: (process, event, at) => ({
-    id: event.id,
-    type: event.type,
-    aggregateType: event.aggregateType,
-    aggregateId: event.aggregateId,
-    person:
-      personOfEvent({ aggregates, event }) ??
-      (at === null ? null : instancePersonOf(process, at.instanceId, at.instance)),
-    read: [...openedUnder(event), ...(at?.instance.persons ?? [])],
-  }),
+  subjectOf: (process, event, at) => {
+    const ofState = at === null ? null : instancePersonOf(process, at.instanceId, at.instance);
+    const person = personOfEvent({ aggregates, event }) ?? ofState;
+    return {
+      id: event.id,
+      type: event.type,
+      aggregateType: event.aggregateType,
+      aggregateId: event.aggregateId,
+      person,
+      statePerson: ofState === person ? null : ofState,
+      read: [...openedUnder(event), ...(at?.instance.persons ?? [])],
+    };
+  },
   letterOf: async (process, subject, error, attempts, errorType) => {
     const person = restrictedPersonOf(error) ?? subject.person;
+    const statePerson = subject.statePerson === person ? null : subject.statePerson;
     const now = clock.now().toISOString();
     return {
       id: ids.next(),
@@ -103,8 +109,9 @@ export const createProcessFailures: CreateProcessFailuresFunction = ({
       aggregateType: subject.aggregateType,
       aggregateId: subject.aggregateId,
       person,
+      ...(statePerson === null ? {} : { statePerson }),
       errorType,
-      ...(await sealError({ error, person, keys, read: subject.read })),
+      ...(await sealError({ error, person, statePerson, keys, read: subject.read })),
       attempts,
       firstFailedAt: now,
       lastFailedAt: now,
@@ -142,6 +149,7 @@ export const deadlineSubject: DeadlineSubjectFunction = (process, instanceId, fi
   aggregateType: processAggregateType(process.name),
   aggregateId: instanceId,
   person: instancePersonOf(process, instanceId, instance),
+  statePerson: null,
   read: instance.persons,
 });
 

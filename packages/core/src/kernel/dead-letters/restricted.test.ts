@@ -197,6 +197,7 @@ describe("the retry of a restricted person's dead letters", () => {
       dedupeKey: `process-deadline:${payload.process}:${payload.aggregateId}`,
       command: { type: PROCESS_DEADLINE_COMMAND, aggregateId: "o-1", payload },
       executeAt: harness.clock.now(),
+      scheduledAt: harness.clock.now(),
       context: { correlationId: "c", causationId: "c", depth: 0 },
     });
     await storage.checkpointStore.set(
@@ -357,6 +358,41 @@ describe("the retry of a restricted person's dead letters", () => {
         ({ id }) => id,
       ),
     ).toEqual(["settled", "ok", "again", "never"]);
+  });
+
+  it("keeps the person of a process's state on a letter it files again, but for the one the refusal names now", async () => {
+    const { harness } = await setup();
+    const { deadLetterStore } = harness.storage;
+    const retries = createRestrictedRetries({
+      storage: harness.storage,
+      retries: {
+        retry: async () => {
+          throw new ProcessingRestrictedError("c-9");
+        },
+      },
+      clock: harness.clock,
+      logger: harness.logger,
+    });
+    const base = refused("other", "TouchOrder", "o-1", "c-1", "2026-01-01T00:00:00Z");
+    await deadLetterStore.add({ ...base, kind: "process", statePerson: "c-5" });
+    await deadLetterStore.add({
+      ...base,
+      id: "same",
+      kind: "process",
+      statePerson: "c-9",
+      firstFailedAt: "2026-01-01T00:01:00Z",
+    });
+    await deadLetterStore.add({ ...base, id: "none", firstFailedAt: "2026-01-01T00:02:00Z" });
+    const unit = createUnitOfWork({ storage: harness.storage });
+    await retries.retryAll({ personId: "c-1", unit, beforeEach: async () => {} });
+    await unit.commit();
+    expect(await deadLetterStore.get("other")).toMatchObject({ person: "c-9", statePerson: "c-5" });
+    expect((await deadLetterStore.get("other"))?.errorMessage).toMatchObject({
+      $personal: { person: "c-5" },
+    });
+    expect(await deadLetterStore.get("same")).toMatchObject({ person: "c-9" });
+    expect(await deadLetterStore.get("same")).not.toHaveProperty("statePerson");
+    expect(await deadLetterStore.get("none")).not.toHaveProperty("statePerson");
   });
 
   it("goes past a letter another retry settled first, and resolves", async () => {

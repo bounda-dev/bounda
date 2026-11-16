@@ -20,7 +20,7 @@ export interface CreatePostgresqlSchedulerFunction {
 }
 
 const COLUMNS =
-  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts", "persons"';
+  '"dedupe_key", "command_type", "aggregate_id", "payload", "execute_at", "context", "attempts", "persons", "scheduled_at"';
 
 const toScheduled = (row: Record<string, unknown>): ScheduledCommand => {
   const persons = row.persons as KeyedPerson[];
@@ -32,6 +32,9 @@ const toScheduled = (row: Record<string, unknown>): ScheduledCommand => {
       payload: row.payload,
     },
     executeAt: String(row.execute_at),
+    ...(row.scheduled_at === null || row.scheduled_at === undefined
+      ? {}
+      : { scheduledAt: String(row.scheduled_at) }),
     context: row.context as CausationContext,
     attempts: Number(row.attempts),
     ...(persons.length === 0 ? {} : { persons }),
@@ -78,9 +81,17 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
     );
 
   return {
-    schedule: ({ dedupeKey, command, executeAt, context, keepTimingOfSameCommand, persons = [] }) =>
+    schedule: ({
+      dedupeKey,
+      command,
+      executeAt,
+      scheduledAt,
+      context,
+      keepTimingOfSameCommand,
+      persons = [],
+    }) =>
       db.run(
-        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES ($1, $2, $3, $4, $5, $6, 0, $7, NULL, NULL, 0)
+        `INSERT INTO ${table} (${COLUMNS}, "claimed_at", "last_error", "revision") VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, NULL, NULL, 0)
        ON CONFLICT ("dedupe_key") DO UPDATE SET
          "command_type" = excluded."command_type",
          "aggregate_id" = excluded."aggregate_id",
@@ -88,6 +99,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
          "execute_at" = excluded."execute_at",
          "context" = excluded."context",
          "persons" = excluded."persons",
+         "scheduled_at" = excluded."scheduled_at",
          "attempts" = 0,
          "last_error" = NULL,
          "revision" = ${table}."revision" + 1
@@ -107,6 +119,7 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           executeAt.toISOString(),
           postgresqlDialect.encode("json", context),
           postgresqlDialect.encode("json", persons),
+          scheduledAt.toISOString(),
         ],
       ),
     cancel: (dedupeKey) => db.run(`DELETE FROM ${table} WHERE "dedupe_key" = $1`, [dedupeKey]),

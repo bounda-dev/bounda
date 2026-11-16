@@ -48,11 +48,20 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
         .filter((record) => !expired(record, now) && namesPerson(record, person))
         .sort((a, b) => (a.key < b.key ? -1 : 1))
         .map(copy),
-    reseal: async ({ key, answer, persons, now }) => {
+    list: async ({ now, limit, offset = 0 }) =>
+      [...records.values()]
+        .filter((record) => !expired(record, now))
+        .sort((a, b) => (a.key < b.key ? -1 : 1))
+        .slice(offset, limit === undefined ? undefined : offset + limit)
+        .map(copy),
+    erase: async ({ key, filed = key, now }) => {
       const record = records.get(key);
-      if (record === undefined || record.answer === null || expired(record, now)) return false;
-      records.set(key, copy({ ...record, answer, persons }));
-      return true;
+      if (record === undefined || expired(record, now)) return;
+      const existing = records.get(filed);
+      if (filed !== key) records.delete(key);
+      if (filed === key || existing === undefined || expired(existing, now)) {
+        records.set(filed, erased({ ...record, key: filed }));
+      }
     },
     clear: async () => {
       records.clear();

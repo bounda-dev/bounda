@@ -8,6 +8,7 @@ import {
 } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
+import { EARLIER_ANSWERS_FILED } from "../../kernel/personal-data/earlier-answers.ts";
 import {
   defineForgetLedger,
   type ForgetLedgerSource,
@@ -811,6 +812,71 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       "forgets again, at the worker's next pass, whoever a restore under the running app brings back",
       async () => {
         await scenario("hot");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    // A copy taken by a version that filed answers by the caller's key itself, in the clear: the
+    // app files it under the key's HMAC, erased, before a retry of it can run the command again.
+    const earlierAnswerScenario = async (restoring: "hot" | "at start"): Promise<void> => {
+      const target = await create();
+      const clock = createFixedClock(START);
+      const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+      await write(first, "ana");
+      const stores = await openedAs(first.app.config.storage).createStorage();
+      await stores.idempotencyStore.put({
+        key: "earlier-1",
+        answer: {
+          fingerprint: "fp",
+          outcome: { aggregateType: "customer", aggregateId: "zed", version: 1 },
+        },
+        expiresAt: new Date(START.getTime() + 86_400_000).toISOString(),
+        persons: [],
+        now: clock.now(),
+      });
+      await stores.checkpointStore.remove(EARLIER_ANSWERS_FILED);
+      await stores.close();
+      await target.backUp();
+      // What the app writes after the copy is how a restore under it is found.
+      await write(first, "bob");
+      if (restoring === "at start") await first.app.stop();
+      const storage = await target.restore();
+      clock.advance(60_000);
+      const restored =
+        restoring === "hot"
+          ? first
+          : await start(storage, target.forgetLedger, BEFORE_ROTATION, clock);
+      await restored.app.runUntilIdle();
+      const { email, name } = valuesOf("zed");
+      await expect(
+        restored.commands.registerCustomer?.(
+          { customerId: "zed", email, name },
+          { idempotencyKey: "earlier-1" },
+        ),
+      ).rejects.toMatchObject({ code: "IDEMPOTENT_ANSWER_ERASED" });
+      expect(
+        (await restored.app.events.read({ limit: 1_000 })).filter(
+          (event) => event.aggregateId === "zed",
+        ),
+      ).toEqual([]);
+      const after = await openedAs(restored.app.config.storage).createStorage();
+      const kept = await after.idempotencyStore.list({ now: clock.now() });
+      await after.close();
+      expect(JSON.stringify(kept)).not.toContain("earlier-1");
+    };
+
+    it(
+      "files under its key's HMAC, before a retry runs it, an answer a restored copy kept by the key itself",
+      async () => {
+        await earlierAnswerScenario("at start");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it.skipIf(!hot)(
+      "files under its key's HMAC an answer a copy restored under the running app kept by the key itself",
+      async () => {
+        await earlierAnswerScenario("hot");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

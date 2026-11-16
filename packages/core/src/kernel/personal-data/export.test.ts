@@ -401,6 +401,7 @@ describe("exportPersonalData", () => {
       dedupeKey: "command:cmd-1",
       command: { type: "RemindCustomer", aggregateId: "c-1", payload: ana.payload },
       executeAt: new Date("2026-01-02T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-02T00:00:00.000Z"),
       context: testContext,
       persons: ana.persons,
     });
@@ -408,6 +409,7 @@ describe("exportPersonalData", () => {
       dedupeKey: "command:cmd-2",
       command: { type: "RemindCustomer", aggregateId: "c-2", payload: bo.payload },
       executeAt: new Date("2026-01-02T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-02T00:00:00.000Z"),
       context: testContext,
       persons: bo.persons,
     });
@@ -453,6 +455,7 @@ describe("exportPersonalData", () => {
         commandId: "cmd-1",
         type: "RemindCustomer",
         executeAt: "2026-01-02T00:00:00.000Z",
+        scheduledAt: "2026-01-02T00:00:00.000Z",
         data: { email: "ana@example.com" },
         categories: { email: "default" },
         restricted: [],
@@ -722,6 +725,7 @@ describe("exportPersonalData", () => {
       dedupeKey: "deadline:x",
       command: { type: "RemindCustomer", aggregateId: "c-1", payload: ana.payload },
       executeAt: new Date("2026-01-02T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-02T00:00:00.000Z"),
       context: testContext,
       persons: ana.persons,
     });
@@ -752,6 +756,7 @@ describe("exportPersonalData", () => {
         commandId: "deadline:x",
         type: "RemindCustomer",
         executeAt: "2026-01-02T00:00:00.000Z",
+        scheduledAt: "2026-01-02T00:00:00.000Z",
         data: { email: null },
         categories: { email: "default" },
         restricted: [],

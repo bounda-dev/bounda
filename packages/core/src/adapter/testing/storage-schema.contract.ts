@@ -6,7 +6,7 @@ import { storageTableNameFor } from "../sql/identifiers.ts";
 import { schemaMigrationsTableFor, schemaMigrationsTableStatement } from "../sql/migrations.ts";
 import { earlierRowsFor, expectEarlierRowsTakenIn } from "./earlier-rows.ts";
 import { EARLIER_SCHEMAS, type EarlierVersion, earlierTablesFor } from "./earlier-schemas.ts";
-import { testDeadLetter } from "./fixtures.ts";
+import { testCommand, testContext, testDeadLetter } from "./fixtures.ts";
 import { contractFields } from "./table.contract.ts";
 
 /**
@@ -44,6 +44,7 @@ const LATEST = [
   { scope: "storage", version: 6 },
   { scope: "storage", version: 7 },
   { scope: "storage", version: 8 },
+  { scope: "storage", version: 9 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -156,20 +157,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 8 },
+        { scope: "storage", version: 0, latest: 9 },
         { scope: "checkpoints", version: 0, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 8 },
+        { scope: "storage", version: 0, latest: 9 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
-        { scope: "storage", version: 8, latest: 8 },
+        { scope: "storage", version: 9, latest: 9 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 7, latest: 7 },
         { scope: "tenant-keys", version: 1, latest: 1 },
@@ -226,7 +227,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 8,
+        supported: 9,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -326,6 +327,40 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
             ],
           },
         ]);
+      });
+      expect(await shapeOf(target, dialect)).toEqual(shape);
+    });
+
+    it("takes in scheduled commands stored before their time was recorded, and letters before they named the state's person", async () => {
+      const target = await create();
+      await opened(target.adapter, async (storage) => {
+        await storage.scheduler.schedule({
+          dedupeKey: "k-1",
+          command: testCommand("1"),
+          executeAt: new Date("2026-01-02T00:00:00.000Z"),
+          scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
+          context: testContext,
+        });
+        await storage.deadLetterStore.add(testDeadLetter("d-1"));
+      });
+      const shape = await shapeOf(target, dialect);
+      const table = (name: "scheduledCommands" | "deadLetters") =>
+        `"${storageTableNameFor({ prefix: target.prefix, table: name })}"`;
+      await target.execute(
+        `DROP INDEX "${storageTableNameFor({ prefix: target.prefix, table: "deadLetters" })}_state_person_idx"`,
+      );
+      await target.execute(`ALTER TABLE ${table("deadLetters")} DROP COLUMN "state_person"`);
+      await target.execute(`ALTER TABLE ${table("scheduledCommands")} DROP COLUMN "scheduled_at"`);
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'storage' AND "version" >= 9`,
+      );
+      await opened(target.adapter, async (storage) => {
+        const entry = await storage.scheduler.get("k-1");
+        expect(entry).toMatchObject({ dedupeKey: "k-1" });
+        expect(entry).not.toHaveProperty("scheduledAt");
+        const letter = await storage.deadLetterStore.get("d-1");
+        expect(letter).toMatchObject({ id: "d-1" });
+        expect(letter).not.toHaveProperty("statePerson");
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });

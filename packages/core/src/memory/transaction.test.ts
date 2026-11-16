@@ -20,6 +20,7 @@ describe("createMemoryStorageTransaction", () => {
     dedupeKey,
     command: testCommand("1"),
     executeAt: at(minutes),
+    scheduledAt: at(0),
     context: testContext,
   });
   const storage = () => memory().createStorage();

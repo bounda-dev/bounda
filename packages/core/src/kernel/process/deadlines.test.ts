@@ -1323,6 +1323,7 @@ describe("deadline entries under races and partial failures", () => {
         payload: { process: "order.gone", aggregateId: "o-1", field: "x", at: at(0) },
       },
       executeAt: new Date(t0),
+      scheduledAt: new Date(t0),
       context: { correlationId: "c", causationId: "c", depth: 0 },
     };
     await harness.storage.scheduler.schedule({

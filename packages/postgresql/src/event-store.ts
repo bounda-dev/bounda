@@ -168,12 +168,11 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
     },
     reseal: (events) =>
       db.write(async (tx) => {
-        for (const { position, payload, person } of events) {
-          await tx.run(`UPDATE ${table} SET "payload" = $1, "person" = $2 WHERE "position" = $3`, [
-            postgresqlDialect.encode("json", payload),
-            person,
-            position,
-          ]);
+        for (const { position, payload, person, schemaVersion } of events) {
+          await tx.run(
+            `UPDATE ${table} SET "payload" = $1, "person" = $2, "metadata" = CASE WHEN $4::integer IS NULL THEN "metadata" ELSE jsonb_set("metadata", '{schemaVersion}', to_jsonb($4::integer)) END WHERE "position" = $3`,
+            [postgresqlDialect.encode("json", payload), person, position, schemaVersion ?? null],
+          );
         }
       }),
   };

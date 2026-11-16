@@ -11,6 +11,12 @@ export interface ScheduledCommand {
   readonly dedupeKey: string;
   readonly command: NewCommand;
   readonly executeAt: string;
+  /**
+   * When the entry's command was scheduled, as it holds it now: what a forgetting is compared
+   * with to tell whether the payload was written before it, without opening the payload. Absent
+   * for an entry stored before Bounda recorded it.
+   */
+  readonly scheduledAt?: string;
   readonly context: CausationContext;
   readonly attempts: number;
   readonly persons?: readonly KeyedPerson[];
@@ -39,6 +45,11 @@ export interface ScheduleArgs {
   readonly dedupeKey: string;
   readonly command: NewCommand;
   readonly executeAt: Date;
+  /**
+   * The kernel clock's time. Kept with the entry while the key holds this command: scheduling
+   * exactly what it holds keeps the time it was first scheduled.
+   */
+  readonly scheduledAt: Date;
   readonly context: CausationContext;
   /**
    * When the key already holds this very command with this context, leave the entry as it is,

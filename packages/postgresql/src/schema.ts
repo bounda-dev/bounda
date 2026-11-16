@@ -176,10 +176,12 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "status" text NOT NULL,
     "resolved_at" text,
     "payload" jsonb,
-    "persons" jsonb NOT NULL DEFAULT '[]'
+    "persons" jsonb NOT NULL DEFAULT '[]',
+    "state_person" text
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "person")} ON ${tables.deadLetters} ("person")`,
+  statePersonIndexStatement(tables),
   // What the retention of resolved letters reads and purges, earliest first.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "resolved")} ON ${tables.deadLetters} ("resolved_at", "id") WHERE "resolved_at" IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS ${tables.scheduledCommands} (
@@ -194,7 +196,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "last_error" text,
     "revision" integer NOT NULL DEFAULT 0,
     "claim_id" text,
-    "persons" jsonb NOT NULL DEFAULT '[]'
+    "persons" jsonb NOT NULL DEFAULT '[]',
+    "scheduled_at" text
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "unclaimed")} ON ${tables.scheduledCommands} ("execute_at") WHERE "claimed_at" IS NULL`,
@@ -312,3 +315,11 @@ export const restrictedPersonsTableStatements: RestrictedPersonsTableStatementsF
     "position" bigint NOT NULL
   )`,
 ];
+
+export interface StatePersonIndexStatementFunction {
+  (tables: Pick<StorageTables, "deadLetters">): string;
+}
+
+// What `listByPerson` finds a process letter by when the person is its instance's state's.
+export const statePersonIndexStatement: StatePersonIndexStatementFunction = (tables) =>
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "state_person")} ON ${tables.deadLetters} ("state_person") WHERE "state_person" IS NOT NULL`;

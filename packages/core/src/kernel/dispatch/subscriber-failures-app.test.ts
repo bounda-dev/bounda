@@ -359,7 +359,7 @@ describe("the status of the app", () => {
     const { adapter } = createNodeSqliteAdapter();
     const { app } = await start(adapter);
     expect((await app.status()).schema).toEqual([
-      { database: "storage", scope: "storage", version: 8, latest: 8 },
+      { database: "storage", scope: "storage", version: 9, latest: 9 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
     ]);
     const inMemory = await start(memory());
@@ -406,7 +406,7 @@ describe("the status of the app", () => {
     await app.runUntilIdle();
     const status = await app.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 8, latest: 8 },
+      { database: "storage", scope: "storage", version: 9, latest: 9 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
       { database: "readModels.customers", scope: "checkpoints", version: 3, latest: 3 },
       { database: "forgetLedger", scope: "forget-ledger", version: 7, latest: 7 },

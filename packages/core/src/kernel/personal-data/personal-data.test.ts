@@ -516,7 +516,7 @@ describe("personal data in an app", () => {
     await app.stop();
   });
 
-  it("replays an answer kept before answers were sealed whole, filed under its key in the clear", async () => {
+  it("files an answer kept in the clear under its key's HMAC, erased, before a retry of it runs anything", async () => {
     const adapter = memory();
     const storage = await adapter.createStorage();
     const { app, clock } = await createTestApp({ registry, adapter });
@@ -535,10 +535,18 @@ describe("personal data in an app", () => {
       persons: [],
       now: clock.now(),
     });
+    const before = await storage.eventStore.lastPosition();
     const replayed = await app.commands
       .confirmCustomer(payload, { idempotencyKey: "earlier-1" })
       .catch((error: unknown) => error);
-    expect(replayed).toMatchObject({ rejected: "NotYet", message: "kept before" });
+    expect(replayed).toBeInstanceOf(IdempotentAnswerErasedError);
+    expect(await storage.eventStore.lastPosition()).toBe(before);
+    expect(await storage.idempotencyStore.get({ key: "earlier-1", now: clock.now() })).toBeNull();
+    const [filed] = await storage.idempotencyStore.list({ now: clock.now() });
+    expect(filed).toMatchObject({ answer: null, expiresAt: "2026-01-02T00:00:00.000Z" });
+    expect(JSON.stringify(await storage.idempotencyStore.list({ now: clock.now() }))).not.toContain(
+      "earlier-1",
+    );
     await app.stop();
   });
 

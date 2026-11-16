@@ -25,7 +25,7 @@ export interface CreateSqliteDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "resolved_at", "payload", "persons"';
+  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "resolved_at", "payload", "persons", "state_person"';
 
 const personsOf = (row: Record<string, unknown>): { persons?: KeyedPerson[] } => {
   const persons = JSON.parse(String(row.persons)) as KeyedPerson[];
@@ -41,6 +41,9 @@ const toLetter = (row: Record<string, unknown>): StoredDeadLetter => ({
   aggregateType: String(row.aggregate_type),
   aggregateId: String(row.aggregate_id),
   person: row.person === null || row.person === undefined ? null : String(row.person),
+  ...(row.state_person === null || row.state_person === undefined
+    ? {}
+    : { statePerson: String(row.state_person) }),
   errorType: String(row.error_type) as DeadLetterErrorType,
   errorName: String(row.error_name),
   ...(row.error_code === null || row.error_code === undefined
@@ -95,7 +98,7 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
   return {
     add: async (letter) => {
       await db.run(
-        `INSERT INTO ${table} (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', NULL, ?, ?) ON CONFLICT ("id") DO NOTHING`,
+        `INSERT INTO ${table} (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', NULL, ?, ?, ?) ON CONFLICT ("id") DO NOTHING`,
         [
           letter.id,
           letter.kind,
@@ -115,6 +118,7 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
           letter.lastFailedAt,
           letter.payload === undefined ? null : JSON.stringify(letter.payload),
           JSON.stringify(letter.persons ?? []),
+          letter.statePerson ?? null,
         ],
       );
       return (await get(letter.id)) as StoredDeadLetter;
@@ -151,11 +155,12 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]),
-    reseal: (id, { person, errorMessage, errorStack, payload, persons }) =>
+    reseal: (id, { person, statePerson, errorMessage, errorStack, payload, persons }) =>
       db.run(
-        `UPDATE ${table} SET "person" = ?, "error_message" = ?, "error_stack" = ?, "payload" = ?, "persons" = ? WHERE "id" = ?`,
+        `UPDATE ${table} SET "person" = ?, "state_person" = ?, "error_message" = ?, "error_stack" = ?, "payload" = ?, "persons" = ? WHERE "id" = ?`,
         [
           person,
+          statePerson ?? null,
           encodeErrorText(errorMessage),
           errorStack === undefined ? null : encodeErrorText(errorStack),
           payload === undefined ? null : JSON.stringify(payload),
@@ -166,8 +171,8 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
     listByPerson: async (person) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = ? OR ${names} ORDER BY "first_failed_at", "id"`,
-          [person, person],
+          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = ? OR "state_person" = ? OR ${names} ORDER BY "first_failed_at", "id"`,
+          [person, person, person],
         )
       ).map(toLetter),
     forget: async (person, keep = []) =>

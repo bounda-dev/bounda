@@ -30,6 +30,7 @@ import {
   restrictedPersonsTableStatements,
   restrictionStatements,
   type StorageTables,
+  statePersonIndexStatement,
   storageSchemaStatements,
   subscriberFailuresTableStatement,
 } from "./schema.ts";
@@ -47,6 +48,13 @@ interface AddedColumn {
 
 // Every column a table gained after Bounda 0.2.0 created it, the oldest version whose tables the
 // first migration takes in.
+// The columns migration 9 adds: when a scheduled command was scheduled, and the person a process
+// letter's instance state names. Rows stored before hold neither.
+const NINTH_COLUMNS: readonly AddedColumn[] = [
+  { table: "scheduledCommands", column: "scheduled_at", definition: "text" },
+  { table: "deadLetters", column: "state_person", definition: "text" },
+];
+
 const ADDED_COLUMNS: readonly AddedColumn[] = [
   { table: "events", column: "person", definition: "text" },
   { table: "deadLetters", column: "person", definition: "text" },
@@ -64,6 +72,7 @@ const ADDED_COLUMNS: readonly AddedColumn[] = [
   { table: "persons", column: "forgotten_at", definition: "text" },
   { table: "persons", column: "held_until", definition: "text" },
   { table: "persons", column: "attempts", definition: "integer NOT NULL DEFAULT 0" },
+  ...NINTH_COLUMNS,
 ];
 
 // Rows written before errors were named. A letter kept its text unencoded: it is named after the
@@ -250,6 +259,16 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
           [],
         );
         await tx.run(`ALTER TABLE ${tables.idempotencyKeys} DROP COLUMN "fingerprint"`, []);
+      },
+    },
+    {
+      version: 9,
+      migrate: async (tx) => {
+        for (const { table, column, definition } of NINTH_COLUMNS) {
+          if ((await columnsOf(tx, schema, tables[table])).has(column)) continue;
+          await tx.run(`ALTER TABLE ${tables[table]} ADD COLUMN "${column}" ${definition}`, []);
+        }
+        await tx.run(statePersonIndexStatement(tables), []);
       },
     },
   ],

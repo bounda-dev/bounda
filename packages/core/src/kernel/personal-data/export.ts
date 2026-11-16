@@ -109,6 +109,10 @@ export interface ExportedScheduledCommand {
   readonly commandId: string;
   readonly type: string;
   readonly executeAt: string;
+  /**
+   * When it was scheduled; absent for one stored before Bounda recorded it.
+   */
+  readonly scheduledAt?: string;
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
   readonly restricted: ExportedRestricted;
@@ -444,7 +448,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
   // A letter's error text is the person's only when it is sealed under them: one listed for the
   // persons its payload names keeps whatever its own `person` holds.
   const exportedLetter = async (letter: StoredDeadLetter): Promise<ExportedDeadLetter> => {
-    const theirs = letter.person === personId;
+    const theirs = letter.person === personId || letter.statePerson === personId;
     const data = await openedData(letter.eventType, letter.payload);
     return {
       id: letter.id,
@@ -508,6 +512,7 @@ export const exportPersonalData: ExportPersonalDataFunction = async ({
         commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
         type: entry.command.type,
         executeAt: entry.executeAt,
+        ...(entry.scheduledAt === undefined ? {} : { scheduledAt: entry.scheduledAt }),
         ...data,
         restricted: restrictedFields(data.categories),
       };

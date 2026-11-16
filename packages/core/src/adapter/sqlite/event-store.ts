@@ -142,12 +142,17 @@ export const createSqliteEventStore: CreateSqliteEventStoreFunction = ({
     },
     reseal: (events) =>
       db.write(async (tx) => {
-        for (const { position, payload, person } of events) {
-          await tx.run(`UPDATE ${table} SET "payload" = ?, "person" = ? WHERE "position" = ?`, [
-            JSON.stringify(payload),
-            person,
-            position,
-          ]);
+        for (const { position, payload, person, schemaVersion } of events) {
+          await tx.run(
+            `UPDATE ${table} SET "payload" = ?, "person" = ?, "metadata" = CASE WHEN ? IS NULL THEN "metadata" ELSE json_set("metadata", '$.schemaVersion', ?) END WHERE "position" = ?`,
+            [
+              JSON.stringify(payload),
+              person,
+              schemaVersion ?? null,
+              schemaVersion ?? null,
+              position,
+            ],
+          );
         }
       }),
   };

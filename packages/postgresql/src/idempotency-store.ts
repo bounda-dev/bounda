@@ -78,18 +78,33 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
           [person, now.toISOString()],
         )
       ).map(toRecord),
-    reseal: async ({ key, answer, persons, now }) =>
+    list: async ({ now, limit, offset = 0 }) =>
       (
         await db.all(
-          `UPDATE ${table} SET "outcome" = $1::jsonb, "persons" = $2::jsonb WHERE "key" = $3 AND "expires_at" > $4 AND "outcome" <> 'null'::jsonb RETURNING "key"`,
-          [
-            postgresqlDialect.encode("json", answer),
-            postgresqlDialect.encode("json", persons),
-            key,
-            now.toISOString(),
-          ],
+          `SELECT ${COLUMNS} FROM ${table} WHERE "expires_at" > $1 ORDER BY "key" COLLATE "C" LIMIT $2 OFFSET $3`,
+          [now.toISOString(), limit ?? null, offset],
         )
-      ).length > 0,
+      ).map(toRecord),
+    // Filing it elsewhere copies it there erased before it leaves `key`: a crash between the two
+    // leaves both, and erasing it again moves it once more.
+    erase: async ({ key, filed = key, now }) => {
+      if (filed === key) {
+        await db.run(
+          `UPDATE ${table} SET "outcome" = 'null'::jsonb, "persons" = '[]'::jsonb WHERE "key" = $1 AND "expires_at" > $2`,
+          [key, now.toISOString()],
+        );
+        return;
+      }
+      await db.run(
+        `INSERT INTO ${table} (${COLUMNS}) SELECT $1, 'null'::jsonb, "expires_at", '[]'::jsonb FROM ${table} WHERE "key" = $2 AND "expires_at" > $3
+       ON CONFLICT ("key") DO UPDATE SET "outcome" = 'null'::jsonb, "expires_at" = excluded."expires_at", "persons" = '[]'::jsonb WHERE ${table}."expires_at" <= $3`,
+        [filed, key, now.toISOString()],
+      );
+      await db.run(`DELETE FROM ${table} WHERE "key" = $1 AND "expires_at" > $2`, [
+        key,
+        now.toISOString(),
+      ]);
+    },
     clear: () => db.run(`DELETE FROM ${table}`, []),
     purge: async ({ now }) => {
       const rows = await db.all(`DELETE FROM ${table} WHERE "expires_at" <= $1 RETURNING "key"`, [

@@ -81,6 +81,11 @@ export interface ResealedEvent {
   readonly position: number;
   readonly payload: unknown;
   readonly person: string | null;
+  /**
+   * The schema version the payload is written in, for one rewritten in its current shape; the
+   * event keeps the one it has when left out.
+   */
+  readonly schemaVersion?: number;
 }
 
 export interface ReadOneArgs {
@@ -107,10 +112,11 @@ export interface EventStore {
   readByPerson(args: ReadByPersonArgs): Promise<readonly StoredEvent[]>;
   lastPosition(): Promise<number>;
   /**
-   * Replaces the payload and `person` of the event at each position given, and nothing else of
-   * it; a position the store does not hold is skipped. Every read after it, `readByPerson`
-   * included, sees the event as written again. Only the runtime calls it, to seal in place the
-   * personal fields of events written before their schema marked them.
+   * Replaces the payload and `person` of the event at each position given, and its
+   * `metadata.schemaVersion` when given, and nothing else of it; a position the store does not
+   * hold is skipped. Every read after it, `readByPerson` included, sees the event as written
+   * again. Only the runtime calls it, to seal in place the personal fields of events written before
+   * their schema marked them, or in an older shape.
    */
   reseal(events: readonly ResealedEvent[]): Promise<void>;
 }

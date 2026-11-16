@@ -895,6 +895,7 @@ describe("expectForgotten", () => {
         payload: { email: { $personal: { person: "c-1", key: "unseen", iv: "iv", data: "data" } } },
       } as never,
       executeAt: new Date("2026-01-01T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
       context: { correlationId: "c", causationId: "c" } as never,
     });
     const app = { forget: async () => ({}) } as never;

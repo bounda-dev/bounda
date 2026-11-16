@@ -383,6 +383,7 @@ describe("sqlite adapter on a file", () => {
       ["storage", 6],
       ["storage", 7],
       ["storage", 8],
+      ["storage", 9],
     ]);
   });
 

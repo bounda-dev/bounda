@@ -123,6 +123,7 @@ export const createPolicySubscriber: CreatePolicySubscriberFunction = ({
             policy,
             delayMs: policy.delayMs,
             event,
+            now: clock.now(),
           });
         }
       },

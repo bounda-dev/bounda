@@ -9,9 +9,15 @@ import { type CategoryKey, inSealingOrder, type PersonalKeys } from "./wrapped-k
 export interface SealErrorArgs {
   readonly error: unknown;
   /**
-   * Whose key the text is sealed under; with `null` it is kept in the clear.
+   * Whose key the text is sealed under; with `null`, and no `statePerson`, it is kept in the
+   * clear.
    */
   readonly person: string | null;
+  /**
+   * Whom the state of the process instance the work ran on names, when another than `person`:
+   * the text is sealed under their keys too, around `person`'s.
+   */
+  readonly statePerson?: string | null;
   readonly keys: PersonalKeys;
   /**
    * What the failed work read of anyone besides what its unit of work noted on `error`, as the
@@ -57,7 +63,11 @@ const keysToSealWith = async (
 };
 
 export interface SealUnderAllFunction {
-  (under: readonly CategoryKey[], person: string, value: string): Promise<SealedValue>;
+  (
+    under: readonly CategoryKey[],
+    person: string,
+    value: string | SealedValue,
+  ): Promise<SealedValue>;
 }
 
 /**
@@ -78,23 +88,26 @@ export const sealUnderAll: SealUnderAllFunction = async (under, person, value) =
  * work names someone, and forgetting any category of theirs, as a forget that came meanwhile,
  * still reaches it.
  */
-export const sealError: SealErrorFunction = async ({ error, person, keys, read = [] }) => {
+export const sealError: SealErrorFunction = async ({
+  error,
+  person,
+  statePerson = null,
+  keys,
+  read = [],
+}) => {
   const details = errorDetails(error);
-  const identity = errorIdentity(error);
-  if (person === null) {
-    return {
-      ...identity,
-      errorMessage: details.message,
-      ...(details.stack === undefined ? {} : { errorStack: details.stack }),
-    };
+  let errorMessage: string | SealedValue = details.message;
+  let errorStack: string | SealedValue | undefined = details.stack;
+  for (const one of new Set([person, statePerson])) {
+    if (one === null) continue;
+    const under = await keysToSealWith(keys, one, readUnder({ person: one, error, also: read }));
+    errorMessage = await sealUnderAll(under, one, errorMessage);
+    if (errorStack !== undefined) errorStack = await sealUnderAll(under, one, errorStack);
   }
-  const under = await keysToSealWith(keys, person, readUnder({ person, error, also: read }));
   return {
-    ...identity,
-    errorMessage: await sealUnderAll(under, person, details.message),
-    ...(details.stack === undefined
-      ? {}
-      : { errorStack: await sealUnderAll(under, person, details.stack) }),
+    ...errorIdentity(error),
+    errorMessage,
+    ...(errorStack === undefined ? {} : { errorStack }),
   };
 };
 

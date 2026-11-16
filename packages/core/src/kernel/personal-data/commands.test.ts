@@ -569,6 +569,7 @@ describe("personal data in delayed commands", () => {
       dedupeKey: "command:legacy",
       command: { type: "RemindCustomer", aggregateId: "c-1", payload: ana },
       executeAt: new Date("2026-01-01T00:00:30.000Z"),
+      scheduledAt: new Date("2026-01-01T00:00:30.000Z"),
       context: { correlationId: "legacy", causationId: "legacy", depth: 0 },
     });
     await app.forget("c-1");

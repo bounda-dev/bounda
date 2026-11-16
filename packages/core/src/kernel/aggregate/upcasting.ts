@@ -1,6 +1,7 @@
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import type { Upcast } from "../../modules/upcast.ts";
 import { carryOpening, retainedHidden } from "../personal-data/event-store.ts";
 import type { AggregatesRuntime } from "./runtime.ts";
 
@@ -22,6 +23,20 @@ export interface UpcastEventFunction {
   (args: UpcastEventArgs): StoredEvent;
 }
 
+export interface UpcastPayloadFunction {
+  (upcasts: readonly Upcast<never, unknown>[], from: number, payload: unknown): unknown;
+}
+
+/**
+ * A payload stored with schema version `from`, passed through the upcasts from that version on.
+ */
+export const upcastPayload: UpcastPayloadFunction = (upcasts, from, payload) => {
+  let upcast = payload;
+  for (const step of upcasts.slice(from - 1))
+    upcast = (step as (payload: unknown) => unknown)(upcast);
+  return upcast;
+};
+
 /**
  * An event written with a version this code does not know is refused: newer code wrote it, and
  * this process must not fold a payload it cannot read.
@@ -36,17 +51,11 @@ export const upcastEvent: UpcastEventFunction = ({ event, aggregates }) => {
     );
   }
   if (from === runtime.schemaVersion) return event;
-  const current = (stored: StoredEvent): StoredEvent => {
-    let payload: unknown = stored.payload;
-    for (const upcast of runtime.upcasts.slice(from - 1)) {
-      payload = (upcast as (payload: unknown) => unknown)(payload);
-    }
-    return {
-      ...stored,
-      payload,
-      metadata: { ...stored.metadata, schemaVersion: runtime.schemaVersion },
-    };
-  };
+  const current = (stored: StoredEvent): StoredEvent => ({
+    ...stored,
+    payload: upcastPayload(runtime.upcasts, from, stored.payload),
+    metadata: { ...stored.metadata, schemaVersion: runtime.schemaVersion },
+  });
   const hidden = retainedHidden(event);
   return carryOpening(event, current(event), hidden === null ? undefined : current(hidden));
 };

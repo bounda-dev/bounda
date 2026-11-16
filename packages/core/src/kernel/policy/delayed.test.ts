@@ -359,6 +359,7 @@ describe("delayed policies", () => {
           },
         },
         executeAt: harness.clock.now(),
+        scheduledAt: harness.clock.now(),
         context: { correlationId: "c", causationId: eventId, depth: 0 },
       });
     await schedule("order.renamedAway", placed?.id ?? "");
@@ -377,6 +378,7 @@ describe("delayed policies", () => {
         },
       },
       executeAt: harness.clock.now(),
+      scheduledAt: harness.clock.now(),
       context: { correlationId: "c", causationId: "beyond-the-head", depth: 0 },
     });
     await harness.worker.runOnce();
