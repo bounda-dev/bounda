@@ -5,7 +5,7 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness, type ReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
-import { ATTRIBUTES, METRICS } from "../telemetry.ts";
+import { ATTRIBUTES, METRICS, tracer } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger, orderAggregateEntry, unrecordedAccess } from "../test-support.ts";
 import { buildPolicies } from "./build-policies.ts";
@@ -228,6 +228,7 @@ describe("delayed policies", () => {
     expect(await orderEvents(harness)).toEqual(["OrderPlaced"]);
 
     const deadLetters = createDeadLetters({
+      tracer,
       recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,

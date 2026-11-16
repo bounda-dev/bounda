@@ -5,6 +5,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { RecordAccessArgs } from "../personal-data/access.ts";
 import type { ProcessDeadLetters } from "../process/dead-letter-retry.ts";
+import { tracer } from "../telemetry.ts";
 import { withPersonalKeys } from "../test-support.ts";
 import { createDeadLetters } from "./dead-letters.ts";
 import type { DeadLetterRetry } from "./retry.ts";
@@ -34,6 +35,7 @@ describe("the access log of dead letters", () => {
     });
     const recorded: Recorded[] = [];
     const deadLetters = createDeadLetters({
+      tracer,
       storage,
       retries: {} as DeadLetterRetry,
       processes: {} as Pick<ProcessDeadLetters, "parkedBehind" | "stillParked" | "abandon">,

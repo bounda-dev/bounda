@@ -38,7 +38,7 @@ import { createBoundaObject, createWorker } from "@bounda-dev/cloudflare";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
-export const Store = createBoundaObject({ registry, config });
+export class Store extends createBoundaObject({ registry, config }) {}
 export default createWorker({
   config,
   tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
@@ -59,6 +59,8 @@ export default createWorker({
 }
 ```
 
+`Store` is a class extending what `createBoundaObject` returns, so `wrangler types` gives
+`env.STORE` the object's own type, which a test reaches with `runInDurableObject`.
 `public/index.html` is a page that places orders and lists them through the API, served as a
 static asset. `npm run dev` starts `wrangler dev` on http://localhost:8787; `npm run deploy`
 deploys to your account. A React Router app runs on Cloudflare the same way, with the object
@@ -333,27 +335,37 @@ adapter with `createTestApp`, as in any Bounda project; `tests/api.test.ts` send
 the Worker with `SELF.fetch` and reaches the real Durable Object and its SQLite. The adapter's own
 suite runs every storage contract inside `workerd` too.
 
-`expectForgotten` searches the object's own SQLite through `durableObjectAdapter`, called inside
-the object with `runInDurableObject`, for the values of the person's export taken before
-`forget`:
+`witnessObjects` from `@bounda-dev/cloudflare/testing` gives the objects of the class opened from
+then on a witness, which records what each object's app seals, keeps, logs and traces and what the
+object logs itself, each object's persons apart, and what the `hosts` in front log: the Worker
+`createWorker` returns, or what `createBounda` from `@bounda-dev/react-router/cloudflare` returns.
+Inside the object, with `runInDurableObject`, `expectForgotten`, `expectRedacted` and
+`expectTenantForgotten` take the object and search its SQLite, the forget ledger its app keeps, in
+KV or elsewhere, its logs, the hosts' and its spans, with nothing passed by hand:
 
 ```ts
 import { env, runInDurableObject } from "cloudflare:test";
-import { connect, durableObjectAdapter } from "@bounda-dev/cloudflare";
+import { connect } from "@bounda-dev/cloudflare";
+import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import { expectForgotten } from "@bounda-dev/core/testing";
+import worker, { Store } from "../src/worker.ts";
+
+witnessObjects(Store, { hosts: [worker] });
 
 const stub = env.STORE.get(env.STORE.idFromName("forgets"));
 const store = connect(stub);
 // ...
-const before = await store.exportPersonalData("ada");
 await store.forget("ada");
-await runInDurableObject(stub, (_object, state) =>
-  expectForgotten(durableObjectAdapter({ storage: state.storage }), "ada", { before }),
-);
+await runInDurableObject(stub, (object) => expectForgotten(object, "ada"));
 ```
 
-Pass `durableObjectAdapter` the options the configuration gives `cloudflare()`, `tablePrefix`
-among them.
+Call `witnessObjects` at the top of the test file, before any object of the class opens: an object
+opened before has no witness, and the expectations refuse it. An object that opens again, once
+its storage is emptied or after it was evicted, keeps what the witness saw of it. A Worker with a
+`fetch` of its own logs through `hostLogger(worker, logger)` from `@bounda-dev/cloudflare`, which
+`witnessObjects` then reaches as it reaches `createWorker`'s. Without one, pass
+`expectForgotten` the object's storage through `durableObjectAdapter`, with the options the
+configuration gives `cloudflare()`, `tablePrefix` among them, and the values to look for.
 
 Types for the bindings come from `wrangler types`, which writes `worker-configuration.d.ts` from
 `wrangler.jsonc`; `dev`, `typecheck` and `check` run it, and `tsconfig.json` lists that file

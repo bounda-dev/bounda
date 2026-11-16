@@ -1,5 +1,4 @@
-import { type Adapter, type EphemeralKeys, isAdapter } from "../adapter/adapter.ts";
-import type { ForgetLedger } from "../adapter/storage/forget-ledger.ts";
+import type { Adapter, EphemeralKeys } from "../adapter/adapter.ts";
 import type { Config } from "../config/types.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import type { ConfigurationError, SnapshotError } from "../contracts/errors.ts";
@@ -12,7 +11,6 @@ import { memory } from "../memory/index.ts";
 import type { OnPersonalDataAccess } from "../modules/audit.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppPortsConfig, AppTestPorts, EnvSection } from "../register/index.ts";
-import { registerTestApp } from "./expect-forgotten.ts";
 import { testWitnessOf } from "./witness.ts";
 
 /**
@@ -130,14 +128,11 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
   const clock = createFixedClock(now);
   const ids = createSequentialIdGenerator();
   // What the witness saw on the way in, which the tables no longer show once a person is
-  // forgotten: `expectForgotten` searches it beside every table the app opened.
-  const witness = testWitnessOf(adapter);
-  const readModels = Object.entries(config.readModels ?? {});
+  // forgotten: the expectations search it beside every table the app opened.
+  const { witness } = testWitnessOf(adapter);
   // A reaction's failure stays in its dead letter, so the first port read without a value is
   // kept here for `runUntilIdle` to throw: the test fails saying what to pass.
   let missing: ConfigurationError | SnapshotError | undefined;
-  const ledgers: ForgetLedger[] = [];
-  const ledger = config.runtime?.personalData?.forgetLedger;
   const named = config.runtime?.personalData;
   // An adapter whose data outlives the process, given without keys, gets keys of its own in
   // memory: every app the test builds over it opens what an earlier one sealed.
@@ -156,37 +151,15 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       runtime: {
         ...config.runtime,
         telemetry: { errorText: "include", ...config.runtime?.telemetry },
-        personalData: {
-          ...named,
-          ...(keys ?? {}),
-          // The same observed adapter as the storage's when it is the storage's, which the app
-          // refuses.
-          ...(ledger === undefined || !isAdapter(ledger.store)
-            ? {}
-            : { forgetLedger: { ...ledger, store: witness.storage(ledger.store) } }),
-        },
+        personalData: { ...named, ...(keys ?? {}) },
       },
-      storage: witness.storage(adapter),
-      ...(config.readModels === undefined
-        ? {}
-        : {
-            readModels: Object.fromEntries(
-              readModels.map(([name, store]) => [
-                name,
-                isAdapter(store) ? witness.storage(store) : store,
-              ]),
-            ),
-          }),
+      storage: adapter,
       ports: {} as AppPortsConfig,
     },
-    logger: witness.logger(logger),
-    witness: {
-      onPersonalKey: witness.onPersonalKey,
-      onForgetLedger: (opened) => {
-        ledgers.push(opened);
-      },
-      onRedacted: witness.onRedacted,
-    },
+    logger,
+    witness,
+    // The text of errors is there only because a test app includes it, unless the test chose.
+    searchErrorText: config.runtime?.telemetry?.errorText !== undefined,
     ids,
     clock,
     env,
@@ -203,19 +176,6 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       },
     },
   });
-  let stopped = false;
-  // The adapters the app opened, whose tables `expectForgotten` searches: a file encrypted under
-  // the tenant's keys opens only through them.
-  const opened = [app.config.storage, ...Object.values(app.config.readModels)]
-    .filter(isAdapter)
-    .filter((store, index, all) => all.indexOf(store) === index);
-  const apps = {
-    witness,
-    adapters: opened,
-    ledgers,
-    stopped: () => stopped,
-    errorTextChosen: config.runtime?.telemetry?.errorText !== undefined,
-  };
   const tested: BoundaApp<R> = {
     ...app,
     runUntilIdle: async (options) => {
@@ -223,18 +183,8 @@ export const createTestApp: CreateTestAppFunction = async <R extends Registry>({
       if (missing !== undefined) throw missing;
       return result;
     },
-    // A client bound to an actor is searched as the app it came from.
-    as: (actor) => {
-      const client = app.as(actor);
-      registerTestApp(client, apps);
-      return client;
-    },
-    stop: async () => {
-      stopped = true;
-      await app.stop();
-    },
   };
-  registerTestApp(tested, apps);
+  witness.watch(tested);
   return { app: tested, clock, ids };
 };
 
@@ -243,6 +193,7 @@ export { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 export { createSequentialIdGenerator } from "../contracts/ids.ts";
 export { silentLogger } from "../contracts/logger.ts";
 export { MIN_SUBSTRING_LENGTH } from "../kernel/shared/value-search.ts";
+export type { Witness } from "../kernel/witness.ts";
 export { memory } from "../memory/index.ts";
 export type {
   ExpectForgottenFunction,
@@ -271,10 +222,4 @@ export type {
   RestrictedValueFound,
 } from "./expect-restricted.ts";
 export { expectRestricted, NotRestrictedError } from "./expect-restricted.ts";
-export type {
-  RecordedSpan,
-  RecordedSpanEvent,
-  RecordTelemetryFunction,
-  TelemetryRecording,
-} from "./telemetry.ts";
-export { recordTelemetry } from "./telemetry.ts";
+export { type CreateWitnessFunction, createWitness } from "./witness.ts";

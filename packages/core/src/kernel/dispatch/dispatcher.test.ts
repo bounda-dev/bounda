@@ -5,6 +5,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { tracer } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import {
   advanceUntilWaiting,
@@ -61,6 +62,7 @@ describe("createDispatcher", () => {
       },
     };
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -89,6 +91,7 @@ describe("createDispatcher", () => {
     const a = recorder("a");
     const b = recorder("b");
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -124,6 +127,7 @@ describe("createDispatcher", () => {
     const projection = recorder("projection:orders");
     const policies = recorder("policies", "policy");
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -164,6 +168,7 @@ describe("createDispatcher", () => {
     };
     const { logger, entries } = createRecordingLogger();
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -220,6 +225,7 @@ describe("createDispatcher", () => {
       },
     };
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -264,6 +270,7 @@ describe("createDispatcher", () => {
     };
     const { logger, entries } = createRecordingLogger();
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -328,6 +335,7 @@ describe("createDispatcher", () => {
     };
     const clock = createFixedClock();
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -365,6 +373,7 @@ describe("createDispatcher", () => {
     const clock = createFixedClock();
     const seen: StoredEvent[] = [];
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -397,6 +406,7 @@ describe("createDispatcher", () => {
     await appendMany(eventStore, 5);
     await checkpointStore.set("b", 3);
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -434,6 +444,7 @@ describe("createDispatcher", () => {
       },
     };
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -479,6 +490,7 @@ describe("createDispatcher", () => {
     const { logger, entries } = createRecordingLogger();
     const a = recorder("a");
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -513,6 +525,7 @@ describe("createDispatcher", () => {
     const clock = createFixedClock();
     const a = recorder("a");
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -563,6 +576,7 @@ describe("createDispatcher", () => {
     const clock = createFixedClock();
     const a = recorder("a");
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -616,6 +630,7 @@ describe("createDispatcher", () => {
     };
     const clock = createFixedClock();
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -669,6 +684,7 @@ describe("createDispatcher", () => {
     };
     const clock = createFixedClock();
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -703,6 +719,7 @@ describe("createDispatcher", () => {
     const { logger, entries } = createRecordingLogger();
     const a = recorder("a");
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -743,6 +760,7 @@ describe("createDispatcher", () => {
     const clock = createFixedClock();
     const a = recorder("a");
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -779,6 +797,7 @@ describe("createDispatcher", () => {
     const clock = createFixedClock();
     const a = recorder("a");
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -805,6 +824,7 @@ describe("createDispatcher", () => {
     let listener: ((position?: number) => void) | undefined;
     const a = recorder("a");
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,

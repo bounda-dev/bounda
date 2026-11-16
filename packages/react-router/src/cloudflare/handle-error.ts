@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { workersLogger } from "@bounda-dev/cloudflare";
+import { hostLogger, workersLogger } from "@bounda-dev/cloudflare";
 import { type Logger, resolveErrorText } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import { createHandleError, type HandleBoundaErrorFunction } from "../handle-error.ts";
@@ -13,17 +13,20 @@ export interface CloudflareHandleErrorArgs {
 }
 
 export interface CloudflareHandleErrorFunction {
-  (args: CloudflareHandleErrorArgs): HandleBoundaErrorFunction;
+  /**
+   * The `handleError` of `host`, what the Worker serves requests through, which a test may give a
+   * witness with `witnessObjects`.
+   */
+  (args: CloudflareHandleErrorArgs): (host: object) => HandleBoundaErrorFunction;
 }
 
 // The configuration is one bundle for every environment, so the Worker's `env` decides first, as
 // it does for the Durable Object.
-export const cloudflareHandleError: CloudflareHandleErrorFunction = ({
-  config,
-  logger = workersLogger,
-}) =>
-  createHandleError({
-    message: "bounda request failed",
-    errorText: () => resolveErrorText({ env, config: config(), ignoreInvalidEnv: true }),
-    logger: () => logger,
-  });
+export const cloudflareHandleError: CloudflareHandleErrorFunction =
+  ({ config, logger = workersLogger }) =>
+  (host) =>
+    createHandleError({
+      message: "bounda request failed",
+      errorText: () => resolveErrorText({ env, config: config(), ignoreInvalidEnv: true }),
+      logger: () => hostLogger(host, logger),
+    });

@@ -1,7 +1,13 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
-import { connect, durableObjectAdapter } from "@bounda-dev/cloudflare";
+import { connect } from "@bounda-dev/cloudflare";
+import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import { expectForgotten } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
+import worker, { Store } from "../src/worker.ts";
+
+// Every object of the class records what its app seals, logs and traces, and the Worker what it
+// logs, for expectForgotten.
+witnessObjects(Store, { hosts: [worker] });
 
 const post = (path: string, body: unknown, tenant: string) =>
   SELF.fetch(`http://example.com${path}`, {
@@ -68,11 +74,8 @@ describe("the orders API, on the Durable Object", () => {
       total: 42,
       deliveryNote: "Leave it with the porter",
     });
-    const before = await store.exportPersonalData("ada");
     await store.forget("ada");
     expect(await listOrders("forgets", "ada")).toMatchObject({ total: 42 });
-    await runInDurableObject(stub, (_object, state) =>
-      expectForgotten(durableObjectAdapter({ storage: state.storage }), "ada", { before }),
-    );
+    await runInDurableObject(stub, (object) => expectForgotten(object, "ada"));
   });
 });

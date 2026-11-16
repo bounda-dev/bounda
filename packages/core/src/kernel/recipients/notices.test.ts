@@ -11,6 +11,7 @@ import type { AppStorage } from "../events/app-event-store.ts";
 import type { RecordAccess } from "../personal-data/access.ts";
 import { deriveDeadLetterId, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { ignoredRetries } from "../shared/pending-retries.ts";
+import { tracer } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { createRecordingLogger, withPersonalKeys } from "../test-support.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
@@ -125,7 +126,7 @@ const append = async (
   });
 
 const notices = () =>
-  createRecipientNotices({ recipients: runtime, storage, config, clock, recordAccess });
+  createRecipientNotices({ tracer, recipients: runtime, storage, config, clock, recordAccess });
 
 const unit = () => ({}) as never;
 
@@ -406,6 +407,7 @@ describe("createRecipientNotices, superseded", () => {
     };
     const event = await append("ProcessingRestricted", { recipients: [notice("customer.mailer")] });
     const running = createRecipientNotices({
+      tracer,
       recipients: slow,
       storage,
       config,
@@ -470,7 +472,14 @@ describe("createRecipientDelivery", () => {
     const deliveryOn = () =>
       createRecipientDelivery({
         recipients: slow,
-        notices: createRecipientNotices({ recipients: slow, storage, config, clock, recordAccess }),
+        notices: createRecipientNotices({
+          tracer,
+          recipients: slow,
+          storage,
+          config,
+          clock,
+          recordAccess,
+        }),
         storage,
         config,
         clock,

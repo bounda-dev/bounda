@@ -23,6 +23,10 @@
       "types": "./dist/forget-ledger.d.ts",
       "default": "./dist/forget-ledger.js"
     },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

@@ -9,6 +9,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
+import { tracer } from "../telemetry.ts";
 import { keylessSealing, unrecordedAccess } from "../test-support.ts";
 import { buildQueries } from "./build-queries.ts";
 import { createQueryRunner } from "./runner.ts";
@@ -112,6 +113,7 @@ const setup = async (ports: ModulePorts = {}) => {
   await table.insert({ orderId: "o-2", customerId: "c-1", total: 25 });
   await table.insert({ orderId: "o-3", customerId: "c-2", total: 5 });
   return createQueryRunner({
+    tracer,
     queries: buildQueries({ readModels }),
     readModels,
     sealing: keylessSealing,
@@ -297,6 +299,7 @@ describe("buildQueries", () => {
       logger: silentLogger,
     });
     const runner = createQueryRunner({
+      tracer,
       queries: buildQueries({ readModels: transformed }),
       readModels: transformed,
       sealing: keylessSealing,
@@ -313,6 +316,7 @@ describe("buildQueries", () => {
     const handlerOnly = await withPayload(["actor"], false);
     expect(Object.keys(buildQueries({ readModels: handlerOnly }).byKey)).toEqual(["byActor"]);
     const handlerRunner = createQueryRunner({
+      tracer,
       queries: buildQueries({ readModels: handlerOnly }),
       readModels: handlerOnly,
       sealing: keylessSealing,

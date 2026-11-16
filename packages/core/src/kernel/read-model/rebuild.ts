@@ -26,6 +26,7 @@ import { projectBatch, projectionSubscriberName, withKeys } from "../projection/
 import { actedBy } from "../shared/causation.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
+import { type TracerFunction, tracer } from "../telemetry.ts";
 import {
   adapterForReadModel,
   compileProjections,
@@ -220,6 +221,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
       const forgotten = hierarchy?.tenantKeys.forgotten() ?? null;
       if (forgotten !== null) throw new TenantForgottenError(tenant, forgotten.at);
       return await rebuildReadModelWith({
+        tracer,
         ...args,
         config: files.config,
         wrapping: hierarchy?.wrapping ?? keylessWrapping(),
@@ -235,6 +237,7 @@ export const rebuildReadModel: RebuildReadModelFunction = async ({
 
 export interface RebuildReadModelWithArgs extends Omit<RebuildReadModelArgs, "env" | "tenant"> {
   readonly wrapping: PersonalKeyWrapping;
+  readonly tracer: TracerFunction;
   /**
    * The storage, open already, which the caller closes; opened and closed here when omitted.
    */
@@ -252,6 +255,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
   name,
   logger: rawLogger = silentLogger,
   wrapping,
+  tracer: tracerOf,
   maxEvents,
   actor,
   storage: given,
@@ -354,6 +358,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
                 sealing: { layout, keys, indexer: sealing.indexer, redacted },
                 logger,
                 errorText,
+                tracer: tracerOf,
                 budget: {
                   clock: systemClock,
                   maxMs: config.runtime.dispatcher.projectionBatchTimeMs,

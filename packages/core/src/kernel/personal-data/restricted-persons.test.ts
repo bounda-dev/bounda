@@ -3,6 +3,7 @@ import type { Adapter } from "../../adapter/adapter.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { tracer } from "../telemetry.ts";
 import {
   createRestrictedPersonsSubscriber,
   restrictedPersonsHosts,
@@ -43,6 +44,7 @@ describe("restrictedPersonsHosts", () => {
 describe("createRestrictedPersonsSubscriber", () => {
   it("is given work by the changes of restrictions alone", () => {
     const subscriber = createRestrictedPersonsSubscriber({
+      tracer,
       readModel: { name: "orders", storage: {} as never },
       logger: silentLogger,
       errorText: "omit",

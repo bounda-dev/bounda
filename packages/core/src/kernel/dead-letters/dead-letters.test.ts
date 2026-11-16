@@ -13,7 +13,7 @@ import { PROCESS_EVENTS } from "../process/lifecycle.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { SCHEDULED_COMMAND_FAILED_EVENT } from "../system-events.ts";
-import { ATTRIBUTES } from "../telemetry.ts";
+import { ATTRIBUTES, tracer } from "../telemetry.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import {
   breakNextCommit,
@@ -152,6 +152,7 @@ const setUp = async () => {
     config: { runtime: { policies: { retry: { strategy: "none" } } } },
   });
   const deadLetters: DeadLetters = createDeadLetters({
+    tracer,
     recordAccess: unrecordedAccess,
     storage: harness.storage,
     retries: harness.retries,
@@ -280,6 +281,7 @@ describe("deadLetters", () => {
       config: { runtime: { policies: { retry: { strategy: "none" }, timeout: "1h" } } },
     });
     const deadLetters = createDeadLetters({
+      tracer,
       recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,
@@ -590,6 +592,7 @@ describe("deadLetters", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     const deadLetters = createDeadLetters({
+      tracer,
       recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,
@@ -653,6 +656,7 @@ describe("deadLetters", () => {
       config: { runtime: { policies: { retry: { strategy: "none" } } } },
     });
     const deadLetters = createDeadLetters({
+      tracer,
       recordAccess: unrecordedAccess,
       storage: harness.storage,
       retries: harness.retries,

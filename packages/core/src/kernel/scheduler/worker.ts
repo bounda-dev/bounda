@@ -47,7 +47,13 @@ import {
   SCHEDULED_COMMAND_FAILED_EVENT,
   type ScheduledCommandFailedPayload,
 } from "../system-events.ts";
-import { ATTRIBUTES, actorAttribute, deadLettered, traced } from "../telemetry.ts";
+import {
+  ATTRIBUTES,
+  actorAttribute,
+  deadLettered,
+  type TracerFunction,
+  traced,
+} from "../telemetry.ts";
 import { commitWork, type UnitOfWork } from "../unit-of-work/unit-of-work.ts";
 
 export interface ScheduledCommandWorker {
@@ -139,6 +145,7 @@ export interface CreateScheduledCommandWorkerArgs {
    */
   readonly standing: (subscriber: string) => Promise<number>;
   readonly config: ResolvedConfig;
+  readonly tracer: TracerFunction;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -229,6 +236,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   reactive,
   standing,
   config,
+  tracer,
   ids,
   clock,
   logger,
@@ -508,6 +516,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     event: StoredEvent | undefined,
   ): Promise<void> =>
     traced({
+      tracer,
       errorText: config.runtime.telemetry.errorText,
       name: `bounda.scheduled ${entry.command.type}`,
       attributes: {

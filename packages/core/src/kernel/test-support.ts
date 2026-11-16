@@ -42,6 +42,7 @@ import {
 import { createPorts, type ModulePorts } from "./ports/ports.ts";
 import type { SealingSource } from "./projection/runner.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
+import { tracer } from "./telemetry.ts";
 
 interface OrderState {
   readonly status: "new" | "placed" | "paid";
@@ -354,6 +355,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
   });
   const rejections: CommandRejection[] = [];
   const pipeline = createCommandPipeline({
+    tracer: tracer,
     aggregates,
     loader,
     storage,

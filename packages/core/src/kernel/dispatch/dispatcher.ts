@@ -13,6 +13,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
+import type { TracerFunction } from "../telemetry.ts";
 import {
   type CheckpointedSubscriber,
   checkpointedByStore,
@@ -154,6 +155,7 @@ export interface CreateDispatcherArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
 }
 
 export interface DispatcherBackoff {
@@ -194,6 +196,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
   clock,
   logger,
   errorText,
+  tracer,
 }) => {
   const mutex = createMutex();
   let cancelWait: (() => void) | undefined;
@@ -205,7 +208,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
   const delivering: readonly CheckpointedSubscriber[] = subscribers.map((subscriber) =>
     "deliver" in subscriber
       ? subscriber
-      : checkpointedByStore({ subscriber, checkpointStore, logger, errorText }),
+      : checkpointedByStore({ subscriber, checkpointStore, logger, errorText, tracer }),
   );
   const read = (afterPosition: number) => eventStore.readAll({ afterPosition, limit: batchSize });
   const moving = new Set<DeliveryOutcome>(["advanced", "moved"]);

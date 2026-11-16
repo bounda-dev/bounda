@@ -8,6 +8,7 @@ import type {
   SlicedStore,
   SnapshotStore,
   Store,
+  WitnessedStore,
   WrappedStore,
 } from "./test-worker.ts";
 
@@ -23,6 +24,7 @@ declare global {
       readonly WRAPPED_STORE: DurableObjectNamespace<InstanceType<typeof WrappedStore>>;
       readonly LEDGER_STORE: DurableObjectNamespace<InstanceType<typeof LedgerStore>>;
       readonly SNAPSHOT_STORE: DurableObjectNamespace<InstanceType<typeof SnapshotStore>>;
+      readonly WITNESSED_STORE: DurableObjectNamespace<InstanceType<typeof WitnessedStore>>;
       readonly FORGET_LEDGER: KVNamespace;
       readonly TENANT_KEYS: KVNamespace;
       readonly BARE: DurableObjectNamespace<Bare>;

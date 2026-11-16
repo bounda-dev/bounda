@@ -8,7 +8,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { createLease, LEASE_MS } from "../shared/lease.ts";
-import { ATTRIBUTES, traced } from "../telemetry.ts";
+import { ATTRIBUTES, type TracerFunction, traced } from "../telemetry.ts";
 import type { AtRestSealer } from "./at-rest.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import {
@@ -142,6 +142,7 @@ export interface CreatePersonalDataBackfillArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
 }
 
 export interface CreatePersonalDataBackfillFunction {
@@ -189,6 +190,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
   clock,
   logger,
   errorText,
+  tracer,
 }) => {
   const { checkpointStore } = storage;
   const rows = rowsOf(marks);
@@ -347,6 +349,7 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
       }
     }
     const sealed = await traced({
+      tracer,
       errorText,
       name: "bounda.backfill",
       attributes: {

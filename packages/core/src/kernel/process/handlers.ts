@@ -23,7 +23,7 @@ import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import { isRecord, mergeFields } from "../shared/merge-fields.ts";
 import { withTimeout } from "../shared/timeout.ts";
 import { withPorts } from "../shared/with-ports.ts";
-import { ATTRIBUTES, actorAttribute, traced } from "../telemetry.ts";
+import { ATTRIBUTES, actorAttribute, type TracerFunction, traced } from "../telemetry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
 import type { ProcessRuntime } from "./build-processes.ts";
 import { afterFrom, type Deadline } from "./deadlines.ts";
@@ -93,6 +93,7 @@ export interface CreateProcessHandlersArgs {
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly config: ResolvedConfig;
+  readonly tracer: TracerFunction;
   readonly personalCategories: PersonalCategories;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -115,6 +116,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   aggregates,
   pipeline,
   config,
+  tracer,
   ids,
   clock,
   logger,
@@ -261,6 +263,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         within,
         async () => {
           const { returned } = await traced({
+            tracer,
             errorText: config.runtime.telemetry.errorText,
             name: `bounda.process ${process.name}`,
             attributes: {
@@ -341,6 +344,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     return runOf(reaction, () =>
       restrictedStep(process, context.actor, reads, within, async () => {
         const { returned, decided } = await traced({
+          tracer,
           errorText: config.runtime.telemetry.errorText,
           name: `bounda.process ${process.name} at ${due.field}`,
           attributes: {

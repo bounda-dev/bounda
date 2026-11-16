@@ -4,7 +4,7 @@ import type { ErrorText } from "../../config/types.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { type ErrorFields, errorFields } from "../shared/error-fields.ts";
-import { ATTRIBUTES, traced } from "../telemetry.ts";
+import { ATTRIBUTES, type TracerFunction, traced } from "../telemetry.ts";
 
 /**
  * What a subscriber does with the events it receives: keep a read model up to date, run policies,
@@ -162,6 +162,7 @@ export interface CreateCheckpointedSubscriberArgs<Claim extends CheckpointClaim>
   readonly handles?: (event: StoredEvent) => boolean;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
 }
 
 export interface CreateCheckpointedSubscriberFunction {
@@ -193,6 +194,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
   handles,
   logger,
   errorText,
+  tracer,
 }) => {
   const commit = (
     afterPosition: number,
@@ -289,6 +291,7 @@ export const createCheckpointedSubscriber: CreateCheckpointedSubscriberFunction 
       if (first === undefined || restsOn({ handles, events, batchSize }))
         return { outcome: "idle" };
       return traced({
+        tracer,
         name: `bounda.subscriber ${name}`,
         attributes: {
           [ATTRIBUTES.subscriber]: name,
@@ -319,6 +322,7 @@ export interface CheckpointedByStoreArgs {
   readonly checkpointStore: CheckpointStore;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
 }
 
 export interface CheckpointedByStoreFunction {
@@ -334,6 +338,7 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
   checkpointStore,
   logger,
   errorText,
+  tracer,
 }) =>
   createCheckpointedSubscriber({
     name: subscriber.name,
@@ -351,4 +356,5 @@ export const checkpointedByStore: CheckpointedByStoreFunction = ({
     ...(subscriber.handles === undefined ? {} : { handles: subscriber.handles }),
     logger,
     errorText,
+    tracer,
   });

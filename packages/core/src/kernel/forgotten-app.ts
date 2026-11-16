@@ -25,6 +25,7 @@ import type { PendingRetries } from "./shared/pending-retries.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
 import { runtimeText } from "./shared/runtime-text.ts";
 import { type AppStatus, readAppStatus } from "./status.ts";
+import type { TracerFunction } from "./telemetry.ts";
 
 /**
  * What an app whose tenant was forgotten still runs: the notices to the recipients of the tenant's
@@ -63,6 +64,7 @@ export interface CreateForgottenRunnerArgs {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
+  readonly tracer: TracerFunction;
 }
 
 export interface CreateForgottenRunnerFunction {
@@ -85,6 +87,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   clock,
   logger,
   errorText,
+  tracer,
 }) => {
   let discharged = false;
   const dischargeOnceTold = async (): Promise<void> => {
@@ -112,6 +115,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
     clock,
     logger,
     errorText,
+    tracer,
   });
   const retries = createRecipientLetterRetry({ storage, notices, config, ids, clock });
   const getLag = async (): Promise<AppLag> => ({
@@ -167,6 +171,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
         clock,
         logger,
         errorText,
+        tracer,
         actor,
         recordAccess,
       }),

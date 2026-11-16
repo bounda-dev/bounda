@@ -1,16 +1,26 @@
-import type { BoundaClient, CreateAppArgs, PersonalDataExport } from "@bounda-dev/core";
+import type {
+  BoundaClient,
+  CreateAppArgs,
+  Logger,
+  PersonalDataExport,
+  Witness,
+} from "@bounda-dev/core";
 import type { Adapter } from "@bounda-dev/core/adapter";
+import type { BootArgs } from "@bounda-dev/core/node";
 import type { AppTestPorts } from "@bounda-dev/core/register";
 import {
   type CreateTestAppArgs,
   type createTestApp,
+  createWitness,
   type ExpectForgottenOptions,
   type ExpectForgottenTarget,
+  type ExpectRedactedTarget,
   expectForgotten,
+  expectRedacted,
+  type expectTenantForgotten,
   type ForgottenValueFound,
   type NotForgottenError,
-  recordTelemetry,
-  type TelemetryRecording,
+  type Witness as TestingWitness,
 } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
 import type { registry } from "./fixtures/order-app/.bounda/registry.ts";
@@ -94,11 +104,10 @@ describe("expectForgotten", () => {
     void expectForgotten({ commands: {} }, "c-1");
   });
 
-  it("looks for more values, an export taken before, the telemetry and more places", () => {
+  it("looks for more values, an export taken before and more places", () => {
     expectTypeOf<ExpectForgottenOptions>().toEqualTypeOf<{
       readonly values?: readonly unknown[];
       readonly before?: PersonalDataExport;
-      readonly telemetry?: TelemetryRecording;
       readonly places?: Readonly<Record<string, unknown>>;
       readonly categories?: readonly ("default" | "delivery" | "invoices")[];
     }>();
@@ -120,9 +129,27 @@ describe("expectForgotten", () => {
     }>();
     expectTypeOf<NotForgottenError>().toExtend<Error>();
   });
+});
 
-  it("records the telemetry until stopped", () => {
-    expectTypeOf(recordTelemetry).returns.toEqualTypeOf<TelemetryRecording>();
-    expectTypeOf<TelemetryRecording["stop"]>().toEqualTypeOf<() => void>();
+describe("a witness", () => {
+  it("is what createWitness returns, the same type from core and from its testing entry", () => {
+    expectTypeOf(createWitness).returns.toEqualTypeOf<Witness>();
+    expectTypeOf<TestingWitness>().toEqualTypeOf<Witness>();
+    expectTypeOf<Witness["logger"]>().toEqualTypeOf<(logger: Logger, like?: object) => Logger>();
+    expectTypeOf<Witness["watch"]>().toEqualTypeOf<(target: object, like?: object) => void>();
+  });
+
+  it("is an option of createApp and boot, for tests", () => {
+    expectTypeOf<CreateAppArgs<typeof registry>["witness"]>().toEqualTypeOf<Witness | undefined>();
+    expectTypeOf<BootArgs<typeof registry>["witness"]>().toEqualTypeOf<Witness | undefined>();
+  });
+
+  it("stands for the apps it watched in every expectation", () => {
+    expectTypeOf<Witness>().toExtend<ExpectForgottenTarget>();
+    expectTypeOf<Witness>().toExtend<ExpectRedactedTarget>();
+    expectTypeOf<Witness>().toExtend<Parameters<typeof expectTenantForgotten>[0]>();
+    expectTypeOf<BoundaClient<typeof registry>>().toExtend<ExpectRedactedTarget>();
+    // @ts-expect-error an object that neither forgets nor watches is no target
+    void expectRedacted({ commands: {} }, "c-1");
   });
 });

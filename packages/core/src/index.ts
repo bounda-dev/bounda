@@ -147,5 +147,6 @@ export type {
   SchemaStatus,
   SubscriberFailureStatus,
 } from "./kernel/status.ts";
+export type { Witness } from "./kernel/witness.ts";
 export * from "./modules/index.ts";
 export type { AppEnv, AppRegistry, EnvSection, Register } from "./register/index.ts";

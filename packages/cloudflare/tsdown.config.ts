@@ -1,7 +1,7 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/forget-ledger.ts"],
+  entry: ["src/index.ts", "src/forget-ledger.ts", "src/testing.ts"],
   tsconfig: "tsconfig.build.json",
   unbundle: true,
   dts: true,

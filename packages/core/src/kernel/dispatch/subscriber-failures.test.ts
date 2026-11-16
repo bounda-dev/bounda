@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { memory } from "../../memory/index.ts";
+import { tracer } from "../telemetry.ts";
 import { testWrapping } from "../test-support.ts";
 import { createSubscriberFailures } from "./subscriber-failures.ts";
 
@@ -18,6 +19,7 @@ describe("createSubscriberFailures", () => {
     });
     const records: { readonly operation: string; readonly persons: Iterable<string> }[] = [];
     const failures = createSubscriberFailures({
+      tracer,
       store: storage.subscriberFailures,
       keys: testWrapping().over(storage.personalKeys),
       persons: storage.persons,
@@ -51,6 +53,7 @@ describe("createSubscriberFailures", () => {
     });
     const records: unknown[] = [];
     const failures = createSubscriberFailures({
+      tracer,
       store: storage.subscriberFailures,
       keys: testWrapping().over(storage.personalKeys),
       persons: {
@@ -103,6 +106,7 @@ describe("createSubscriberFailures", () => {
     });
     const records: { readonly persons: readonly string[]; readonly restricted: unknown }[] = [];
     const failures = createSubscriberFailures({
+      tracer,
       store: storage.subscriberFailures,
       keys: testWrapping().over(storage.personalKeys),
       persons: storage.persons,

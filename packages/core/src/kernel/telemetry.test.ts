@@ -10,7 +10,7 @@ import { createApp } from "./app.ts";
 import type { DeadLetters } from "./dead-letters/dead-letters.ts";
 import { PROCESS_DEADLINE_COMMAND } from "./process/deadlines.ts";
 import { createReactiveHarness } from "./reactive-harness.ts";
-import { ATTRIBUTES, METRICS, SPAN_EVENTS, TELEMETRY_SCOPE, traced } from "./telemetry.ts";
+import { ATTRIBUTES, METRICS, SPAN_EVENTS, TELEMETRY_SCOPE, traced, tracer } from "./telemetry.ts";
 import { type FakeTelemetry, installFakeTelemetry } from "./telemetry-fake.ts";
 import { type OrderProcessConfigArgs, orderAggregateEntry } from "./test-support.ts";
 
@@ -517,6 +517,7 @@ describe("telemetry", () => {
     let ran = false;
     await expect(
       traced({
+        tracer,
         name: `${TELEMETRY_SCOPE} test`,
         errorText: "omit",
         run: async (span) => {
@@ -529,6 +530,7 @@ describe("telemetry", () => {
     expect(ran).toBe(true);
     await expect(
       traced({
+        tracer,
         name: "fails",
         errorText: "omit",
         run: async () => {

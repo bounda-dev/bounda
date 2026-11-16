@@ -103,6 +103,10 @@ export const SPAN_EVENTS: {
 };
 
 export interface TracedArgs<T> {
+  /**
+   * The app's tracer: the global one, with the witness's copy beside it in a witnessed app.
+   */
+  readonly tracer: TracerFunction;
   readonly name: string;
   readonly attributes?: Attributes;
   readonly errorText: ErrorText;
@@ -141,8 +145,14 @@ const recordError = (span: Span, error: unknown, errorText: ErrorText): void => 
  * The span ends even when `run` rejects. Without an OpenTelemetry SDK registered this costs a
  * no-op span from the API and nothing else.
  */
-export const traced: TracedFunction = <T>({ name, attributes, errorText, run }: TracedArgs<T>) =>
-  tracer().startActiveSpan(
+export const traced: TracedFunction = <T>({
+  tracer: tracerOf,
+  name,
+  attributes,
+  errorText,
+  run,
+}: TracedArgs<T>) =>
+  tracerOf().startActiveSpan(
     name,
     attributes === undefined ? {} : { attributes },
     async (span): Promise<T> => {
@@ -158,6 +168,7 @@ export const traced: TracedFunction = <T>({ name, attributes, errorText, run }: 
   );
 
 export interface TracedOperationArgs<T> {
+  readonly tracer: TracerFunction;
   // As the client names it: `forget`, `deadLetters.retry`.
   readonly operation: string;
   readonly actor: string | undefined;
@@ -172,8 +183,15 @@ export interface TracedOperationFunction {
 /**
  * The span of a client operation that is neither a command nor a query.
  */
-export const tracedOperation: TracedOperationFunction = ({ operation, actor, errorText, run }) =>
+export const tracedOperation: TracedOperationFunction = ({
+  tracer: tracerOf,
+  operation,
+  actor,
+  errorText,
+  run,
+}) =>
   traced({
+    tracer: tracerOf,
     name: `bounda.operation ${operation}`,
     attributes: { [ATTRIBUTES.operation]: operation, ...actorAttribute(actor) },
     errorText,

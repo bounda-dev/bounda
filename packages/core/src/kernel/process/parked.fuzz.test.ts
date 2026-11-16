@@ -6,6 +6,7 @@ import type { ProcessAfterFunction, ProcessStateArgs } from "../../modules/proce
 import type { Registry } from "../../modules/registry.ts";
 import { createDeadLetters } from "../dead-letters/dead-letters.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
+import { tracer } from "../telemetry.ts";
 import {
   type OrderProcessConfigArgs,
   orderAggregateEntry,
@@ -128,6 +129,7 @@ const run = async (seed: number): Promise<void> => {
     },
   });
   const deadLetters = createDeadLetters({
+    tracer,
     recordAccess: unrecordedAccess,
     storage: harness.storage,
     retries: harness.retries,

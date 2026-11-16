@@ -8,7 +8,7 @@ import config from "../bounda.config.ts";
  * answers; policies, processes and scheduled commands run later, in the object's alarm, which it
  * arms itself.
  */
-export const Store = createBoundaObject({ registry, config });
+export class Store extends createBoundaObject({ registry, config }) {}
 
 /**
  * The Worker in front: a JSON API that routes each request to the tenant's object, picked by

@@ -1,23 +1,28 @@
-import { trace } from "@opentelemetry/api";
 import { describe, expect, it } from "vitest";
 import type { Adapter } from "../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../adapter/sqlite/node-sqlite.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import type { Table } from "../adapter/storage/table.ts";
+import type { Config } from "../config/types.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import type { LogFields } from "../contracts/logger.ts";
+import { silentLogger } from "../contracts/logger.ts";
+import { createApp } from "../kernel/app.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
+import { installFakeTelemetry } from "../kernel/telemetry-fake.ts";
+import type { Witness } from "../kernel/witness.ts";
+import { witnessHooksOf } from "../kernel/witness.ts";
 import { memory } from "../memory/index.ts";
 import type { PersonalDataForgottenEvent } from "../modules/bounda-events.ts";
 import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
-import { expectForgotten, NotForgottenError, registerTestApp } from "./expect-forgotten.ts";
+import { expectForgotten, expectTenantForgotten, NotForgottenError } from "./expect-forgotten.ts";
+import { expectRedacted, type NotRedactedError } from "./expect-redacted.ts";
 import { createTestApp } from "./index.ts";
-import { recordTelemetry } from "./telemetry.ts";
-import { testWitnessOf } from "./witness.ts";
+import { createWitness, testWitnessOf } from "./witness.ts";
 
 interface CustomerState {
   readonly email: string | null;
@@ -223,6 +228,27 @@ const chatty = {
   },
 } as const satisfies Registry;
 
+// A mailer that refuses every address, quoting it in its error.
+const refusingRegistry = {
+  ...chatty,
+  aggregates: {
+    customer: {
+      ...chatty.aggregates.customer,
+      ports: {
+        mailer: {
+          refusing: {
+            create: (): Mailer => ({
+              welcome: async (email) => {
+                throw new Error(`no mailbox for ${email}`);
+              },
+            }),
+          },
+        },
+      },
+    },
+  },
+} as const satisfies Registry;
+
 // Keeps a handle made from the email in a field it marks, and in the greeting it keeps.
 const deriving = {
   ...registry,
@@ -391,26 +417,50 @@ describe.each(adapters)("expectForgotten on %s", (_name, adapterOf) => {
     await app.stop();
   });
 
-  it("finds a value in a span, with the telemetry recorded", async () => {
-    const telemetry = recordTelemetry();
+  it("finds a value in a span the app started, with no tracer provider registered", async () => {
+    const { app } = await createTestApp({ registry, adapter: adapterOf() });
+    await app.as("ana@example.com").commands.registerCustomer(ana);
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    const error = await rejection(expectForgotten(app, "c-1"));
+    expect((error as NotForgottenError).found).toContainEqual({
+      value: "ana@example.com",
+      store: "spans",
+      row: 'span 1 ("bounda.command RegisterCustomer")',
+      field: "attributes.bounda.actor",
+    });
+    expect((error as Error).message).toContain("A span carries the value");
+    await app.stop();
+  });
+
+  it("records an app's spans beside the tracer provider registered, which still gets each, and no other app's", async () => {
+    const telemetry = installFakeTelemetry();
     try {
-      const { app } = await createTestApp({ registry, adapter: adapterOf() });
-      await app.commands.registerCustomer(ana);
-      await app.forget("c-1");
-      await app.runUntilIdle();
-      await expectForgotten(app, "c-1", { telemetry });
-      trace
-        .getTracer("test")
-        .startSpan("mail", { attributes: { to: "ana@example.com" } })
-        .end();
-      const error = await rejection(expectForgotten(app, "c-1", { telemetry }));
-      const mail = telemetry.spans.findIndex(({ name }) => name === "mail") + 1;
-      expect(error).toMatchObject({
-        found: [{ store: "spans", row: `span ${mail} ("mail")`, field: "attributes.to" }],
-      });
-      await app.stop();
+      const traced = await createTestApp({ registry });
+      const quiet = await createTestApp({ registry });
+      await traced.app.as("ana@example.com").commands.registerCustomer(ana);
+      await quiet.app.commands.registerCustomer(ana);
+      for (const { app } of [traced, quiet]) {
+        await app.forget("c-1");
+        await app.runUntilIdle();
+      }
+      await expectForgotten(quiet.app, "c-1");
+      expect(
+        ((await rejection(expectForgotten(traced.app, "c-1"))) as NotForgottenError).found,
+      ).toContainEqual(
+        expect.objectContaining({ store: "spans", field: "attributes.bounda.actor" }),
+      );
+      expect(telemetry.spans).toContainEqual(
+        expect.objectContaining({
+          name: "bounda.command RegisterCustomer",
+          attributes: expect.objectContaining({ "bounda.actor": "ana@example.com" }),
+          ended: true,
+        }),
+      );
+      await traced.app.stop();
+      await quiet.app.stop();
     } finally {
-      telemetry.stop();
+      telemetry.restore();
     }
   });
 
@@ -555,48 +605,24 @@ describe("expectForgotten", () => {
   });
 
   it("leaves out the text of errors a test app logs only because it is a test app, unless the test chose it", async () => {
-    const refusing = {
-      ...chatty,
-      aggregates: {
-        customer: {
-          ...chatty.aggregates.customer,
-          ports: {
-            mailer: {
-              refusing: {
-                create: (): Mailer => ({
-                  welcome: async (email) => {
-                    throw new Error(`no mailbox for ${email}`);
-                  },
-                }),
-              },
-            },
-          },
-        },
-      },
-    } as const satisfies Registry;
     const run = async (config: { runtime?: { telemetry?: { errorText: "include" } } }) => {
-      const telemetry = recordTelemetry();
-      try {
-        const { app } = await createTestApp({
-          registry: refusing,
-          ports: { customer: { mailer: "refusing" } },
-          config: {
-            ...config,
-            runtime: { ...config.runtime, policies: { retry: { strategy: "none" } } },
-          },
-        });
-        await app.commands.registerCustomer(ana);
-        await app.runUntilIdle();
-        await app.forget("c-1");
-        await app.runUntilIdle();
-        const outcome = await expectForgotten(app, "c-1", { telemetry }).catch(
-          (error: unknown) => error as NotForgottenError,
-        );
-        await app.stop();
-        return outcome;
-      } finally {
-        telemetry.stop();
-      }
+      const { app } = await createTestApp({
+        registry: refusingRegistry,
+        ports: { customer: { mailer: "refusing" } },
+        config: {
+          ...config,
+          runtime: { ...config.runtime, policies: { retry: { strategy: "none" } } },
+        },
+      });
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      await app.forget("c-1");
+      await app.runUntilIdle();
+      const outcome = await expectForgotten(app, "c-1").catch(
+        (error: unknown) => error as NotForgottenError,
+      );
+      await app.stop();
+      return outcome;
     };
     expect(await run({})).toBeUndefined();
     const chosen = await run({ runtime: { telemetry: { errorText: "include" } } });
@@ -615,43 +641,28 @@ describe("expectForgotten", () => {
     );
   });
 
-  it("keeps searching what is not an error's text, and every error text given an adapter", async () => {
-    const telemetry = recordTelemetry();
-    try {
-      const { app } = await createTestApp({ registry });
-      await app.commands.registerCustomer(ana);
-      await app.forget("c-1");
-      await app.runUntilIdle();
-      const span = trace
-        .getTracer("test")
-        .startSpan("mail", { attributes: { message: "ana@example.com" } });
-      span.setStatus({ code: 2, message: "no mailbox for bo@example.com" });
-      span.end();
-      const found = (
-        (await rejection(expectForgotten(app, "c-1", { telemetry }))) as NotForgottenError
-      ).found;
-      expect(found.map(({ field }) => field)).toEqual(["attributes.message"]);
-      const adapter = {
-        ...memory(),
-        inspect: async (): Promise<readonly InspectedTable[]> => [
-          { name: "t", store: null, key: [], opaque: [], rows: [] },
-        ],
-      };
-      const given = (await rejection(
-        expectForgotten(adapter, "c-1", { values: ["bo@example.com"], telemetry }),
-      )) as NotForgottenError;
-      expect(given.found.map(({ field }) => field)).toEqual(["status.message"]);
-      await app.stop();
-    } finally {
-      telemetry.stop();
-    }
+  it("keeps searching what is not an error's text in a span whose error's text it leaves out", async () => {
+    const { app } = await createTestApp({
+      registry: refusingRegistry,
+      ports: { customer: { mailer: "refusing" } },
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+    });
+    await app.as("ana@example.com").commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    const found = ((await rejection(expectForgotten(app, "c-1"))) as NotForgottenError).found;
+    const failed = found.filter(({ row }) => row.includes("bounda.policy"));
+    expect(failed).toEqual([expect.objectContaining({ field: "attributes.bounda.actor" })]);
+    expect(found.map(({ field }) => field)).not.toContain("status.message");
+    await app.stop();
   });
 
   it("refuses anything that is neither a test app nor an adapter", async () => {
     const error = await rejection(expectForgotten({ forget: async () => ({}) } as never, "c-1"));
     expect(error).toBeInstanceOf(TypeError);
     expect((error as Error).message).toBe(
-      "expectForgotten takes the app createTestApp returned, or an adapter: for an app built otherwise, pass its storage adapter with the values to look for",
+      "expectForgotten takes an app createTestApp returned or one given a witness, a client of one, a witness, a Durable Object of a class witnessObjects watches, or an adapter: for an app built without a witness, pass its storage adapter with the values to look for",
     );
   });
 
@@ -728,16 +739,6 @@ describe("expectForgotten", () => {
     await app.runUntilIdle();
     expect(await rejection(expectForgotten(support, "c-1"))).toBeInstanceOf(NotForgottenError);
     await app.stop();
-  });
-
-  it("refuses to record the telemetry while another tracer provider is registered", () => {
-    const first = recordTelemetry();
-    try {
-      expect(() => recordTelemetry()).toThrow("another one is registered globally");
-    } finally {
-      first.stop();
-    }
-    recordTelemetry().stop();
   });
 
   it("names a row by every column of its key, by its place without one, and compares key material whole", async () => {
@@ -841,50 +842,49 @@ describe("expectForgotten", () => {
   });
 
   it("names span events and numbers spans and log entries from one", async () => {
-    const telemetry = recordTelemetry();
-    try {
-      const { app } = await createTestApp({
-        registry: chatty,
-        ports: { customer: { mailer: "logging" } },
-      });
-      await app.commands.registerCustomer(ana);
-      await app.runUntilIdle();
-      await app.forget("c-1");
-      await app.runUntilIdle();
-      trace.getTracer("test").startSpan("mail").addEvent("sent", { to: "ana@example.com" }).end();
-      const found = (
-        (await rejection(expectForgotten(app, "c-1", { telemetry }))) as NotForgottenError
-      ).found;
-      const span = telemetry.spans.findIndex(({ name }) => name === "mail") + 1;
-      const event = telemetry.spanEvents.findIndex(({ name }) => name === "sent") + 1;
-      expect(found).toEqual(
-        expect.arrayContaining([
-          {
-            value: "ana@example.com",
-            store: "span events",
-            row: `event ${event} ("sent" of "mail")`,
-            field: "attributes.to",
-          },
-          expect.objectContaining({
-            store: "logs",
-            row: expect.stringMatching(/^entry [1-9]\d* \(info "welcome sent to/),
-          }),
-        ]),
-      );
-      expect(span).toBeGreaterThan(0);
-      const message = ((await rejection(expectForgotten(app, "c-1", { telemetry }))) as Error)
-        .message;
-      expect(message).toContain("A log entry quotes the value");
-      expect(message).toContain("A span carries the value");
-      await app.stop();
-    } finally {
-      telemetry.stop();
-    }
+    const { app } = await createTestApp({
+      registry: refusingRegistry,
+      ports: { customer: { mailer: "refusing" } },
+      config: {
+        runtime: { telemetry: { errorText: "include" }, policies: { retry: { strategy: "none" } } },
+      },
+    });
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    const error = (await rejection(expectForgotten(app, "c-1"))) as NotForgottenError;
+    expect(error.found).toEqual(
+      expect.arrayContaining([
+        {
+          value: "ana@example.com",
+          store: "span events",
+          row: expect.stringMatching(/^event 1 \("exception" of "bounda\.policy /),
+          field: "attributes.exception.message",
+        },
+        expect.objectContaining({
+          store: "spans",
+          row: expect.stringMatching(/^span [1-9]\d* \("bounda\.policy /),
+          field: "status.message",
+        }),
+        expect.objectContaining({
+          store: "logs",
+          row: expect.stringMatching(/^entry [1-9]\d* \(/),
+          field: "fields.errorMessage",
+        }),
+      ]),
+    );
+    expect(error.message).toContain("A log entry quotes the value");
+    expect(error.message).toContain("A span carries the value");
+    await app.stop();
   });
 
   it("refuses a value sealed under a key the test app never held, which is a bug", async () => {
     const adapter = memory();
-    const witness = testWitnessOf(adapter);
+    const witness = witnessHooksOf(testWitnessOf(adapter).witness).attach({
+      searchErrorText: true,
+      tenant: "default",
+    });
     const storage = await witness.storage(adapter).createStorage();
     await storage.scheduler.schedule({
       dedupeKey: "command:c1",
@@ -898,17 +898,260 @@ describe("expectForgotten", () => {
       scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
       context: { correlationId: "c", causationId: "c" } as never,
     });
-    const app = { forget: async () => ({}) } as never;
-    registerTestApp(app, {
-      witness,
-      adapters: [adapter],
-      ledgers: [],
-      stopped: () => false,
-      errorTextChosen: false,
-    });
+    const app = { forget: async () => ({}), exportPersonalData: async () => ({}) as never };
+    witness.onApp(app, [adapter]);
     expect(((await rejection(expectForgotten(app, "c-1"))) as Error).message).toBe(
       'expectForgotten saw a value of "c-1" sealed under a key the test app never held; report this as a bug in Bounda',
     );
+  });
+});
+
+describe("expectForgotten given an app built with a witness", () => {
+  const start = <R extends Registry>(witness: Witness, from: R, config: Partial<Config> = {}) =>
+    createApp<R>({
+      registry: from,
+      config: {
+        storage: memory(),
+        ports: { customer: { mailer: "logging" } },
+        ...config,
+      } as Config,
+      witness,
+    });
+
+  it("looks for what the app sealed with no value given, as for a test app", async () => {
+    const witness = createWitness();
+    const app = await start(witness, leaky, { ports: {} as never });
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    const error = (await rejection(expectForgotten(app, "c-1"))) as NotForgottenError;
+    expect(error.found).toEqual([
+      {
+        value: "ana@example.com",
+        store: "bounda_rm_customer_directory",
+        row: "customerId=c-1",
+        field: "greeting",
+      },
+    ]);
+    await app.stop();
+  });
+
+  it("passes once nothing of the person is left, given the app, a client of it or the witness", async () => {
+    const witness = createWitness();
+    const app = await start(witness, registry, { ports: {} as never });
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    for (const target of [app, app.as("support-1"), witness]) {
+      await expectForgotten(target, "c-1");
+    }
+    await app.stop();
+  });
+
+  it("searches what the app logged and traced, and what the host logged through the witness", async () => {
+    const witness = createWitness();
+    const app = await start(witness, chatty);
+    await app.as("ana@example.com").commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    witness.logger(silentLogger).info("host saw c-1", { to: "ana@example.com" });
+    for (const target of [app, app.as("support-1"), witness]) {
+      const found = ((await rejection(expectForgotten(target, "c-1"))) as NotForgottenError).found;
+      expect(found).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ store: "logs", field: "message" }),
+          expect.objectContaining({ store: "logs", field: "fields.to" }),
+          expect.objectContaining({ store: "spans", field: "attributes.bounda.actor" }),
+        ]),
+      );
+    }
+    await app.stop();
+  });
+
+  it("searches the text of errors the app is configured to write, which a test harness did not add", async () => {
+    const run = async (errorText: "omit" | "include") => {
+      const witness = createWitness();
+      const app = await start(witness, refusingRegistry, {
+        ports: { customer: { mailer: "refusing" } } as never,
+        runtime: { telemetry: { errorText }, policies: { retry: { strategy: "none" } } },
+      });
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      await app.forget("c-1");
+      await app.runUntilIdle();
+      const outcome = await expectForgotten(witness, "c-1").catch(
+        (error: unknown) => error as NotForgottenError,
+      );
+      await app.stop();
+      return outcome;
+    };
+    expect(await run("omit")).toBeUndefined();
+    const included = await run("include");
+    expect(included?.found.map(({ store, field }) => `${store} ${field}`)).toEqual(
+      expect.arrayContaining([
+        "logs fields.errorMessage",
+        "spans status.message",
+        "span events attributes.exception.message",
+      ]),
+    );
+  });
+
+  it("searches every app the witness watches that runs, and says when none does", async () => {
+    const witness = createWitness();
+    await expect(expectForgotten(witness, "c-1")).rejects.toThrow(
+      "expectForgotten found no app the witness watched that started: give it the witness before it starts, as createApp, boot() and createBounda take it, and check that it started",
+    );
+    const clean = await start(witness, registry, { ports: {} as never });
+    const leaking = await start(witness, leaky, { ports: {} as never });
+    for (const app of [clean, leaking]) {
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      await app.forget("c-1");
+      await app.runUntilIdle();
+    }
+    const error = (await rejection(expectForgotten(clean, "c-1"))) as NotForgottenError;
+    expect(error.found).toMatchObject([
+      { store: "bounda_rm_customer_directory", field: "greeting" },
+    ]);
+    await leaking.stop();
+    await expectForgotten(clean, "c-1");
+    await clean.stop();
+    await expect(expectForgotten(witness, "c-1")).rejects.toThrow(
+      "expectForgotten reads what the app keeps, so call it before app.stop(): an in-memory database is gone once the app stops",
+    );
+  });
+
+  it("checks a tenant's forgetting through the witness, each app it watches refusing every call", async () => {
+    const witness = createWitness();
+    const app = await start(witness, registry, { ports: {} as never });
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    await expect(expectTenantForgotten(witness)).rejects.toThrow(
+      "the app still serves calls: forget the tenant with forgetTenant first",
+    );
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await expectTenantForgotten(witness);
+    await app.stop();
+  });
+
+  it("watches an app that starts for a tenant forgotten already, and the clients it hands out", async () => {
+    const witness = createWitness();
+    const storage = memory();
+    const first = await start(witness, registry, { storage, ports: {} as never });
+    await first.commands.registerCustomer(ana);
+    await first.runUntilIdle();
+    await first.forgetTenant("default", { despiteLegalObligations: true });
+    await first.stop();
+    const again = await start(witness, registry, { storage, ports: {} as never });
+    await expectTenantForgotten(again);
+    await expectTenantForgotten(again.as("support-1").as("support-2"));
+    await again.stop();
+    await expect(expectTenantForgotten(witness)).rejects.toThrow("before app.stop()");
+  });
+
+  it("keeps each tenant's persons apart, and checks the tenant forgotten alone", async () => {
+    const witness = createWitness();
+    const tenantApp = (tenant: string) =>
+      createApp({
+        registry,
+        config: { storage: memory(), ports: {} as never },
+        tenant,
+        witness,
+      });
+    const globex = await tenantApp("globex");
+    const acme = await tenantApp("acme");
+    await globex.commands.registerCustomer({ ...ana, email: "bo@globex.example" });
+    await acme.commands.registerCustomer(ana);
+    for (const app of [globex, acme]) await app.runUntilIdle();
+    await acme.forget("c-1");
+    await acme.runUntilIdle();
+    // What is logged for globex is not searched with acme's persons; what names no tenant is, below.
+    witness.logger(silentLogger, globex.as("support-1")).info("globex saw ana@example.com");
+    await expectForgotten(witness, "c-1");
+    await expectForgotten(acme, "c-1");
+    await expect(expectForgotten(globex, "c-1")).rejects.toThrow("still holds a key");
+    await acme.forgetTenant("acme", { despiteLegalObligations: true });
+    await expectTenantForgotten(witness);
+    await expectTenantForgotten(acme.as("support-1"));
+    await expect(expectTenantForgotten(globex)).rejects.toThrow(
+      "the app still serves calls: forget the tenant with forgetTenant first",
+    );
+    witness.logger(silentLogger).info("someone saw ana@example.com");
+    await expect(expectTenantForgotten(witness)).rejects.toThrow("someone saw ana@example.com");
+    await globex.stop();
+    await acme.stop();
+  });
+
+  it("searches only the app a target was made to stand for, beside another of the same tenant", async () => {
+    const witness = createWitness();
+    const named = <R extends Registry>(from: R) =>
+      createApp<R>({
+        registry: from,
+        config: { storage: memory(), ports: {} as never },
+        tenant: "acme",
+        witness,
+      });
+    const clean = await named(registry);
+    const leaking = await named(leaky);
+    for (const app of [clean, leaking]) {
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      await app.forget("c-1");
+      await app.runUntilIdle();
+    }
+    // As a Durable Object stands for its own app.
+    const object = { forget: async () => undefined };
+    witness.watch(object, clean);
+    await expectForgotten(object, "c-1");
+    await expect(expectForgotten(witness, "c-1")).rejects.toBeInstanceOf(NotForgottenError);
+    await clean.stop();
+    await expect(expectForgotten(object, "c-1")).rejects.toThrow("before app.stop()");
+    await leaking.stop();
+  });
+
+  it("checks a redaction through the witness, finding the old value the app logged", async () => {
+    const witness = createWitness();
+    const app = await start(witness, chatty);
+    await app.commands.registerCustomer(ana);
+    await app.runUntilIdle();
+    const [registered] = (await app.exportPersonalData("c-1")).events;
+    if (registered === undefined) throw new Error("no event exported");
+    await app.redact("c-1", {
+      events: [
+        { ...registered, aggregateType: "customer", type: "CustomerRegistered", fields: ["email"] },
+      ],
+    } as never);
+    await app.runUntilIdle();
+    const error = (await rejection(expectRedacted(witness, "c-1"))) as NotRedactedError;
+    expect(error.found).toMatchObject([{ value: "ana@example.com", store: "logs" }]);
+    await app.stop();
+  });
+
+  it("is refused when it is not one createWitness made, and records nothing for an app given none", async () => {
+    await expect(
+      createApp({
+        registry,
+        config: { storage: memory() },
+        witness: { logger: (logger) => logger, watch: () => undefined },
+      }),
+    ).rejects.toThrow("witness must be what createWitness() from @bounda-dev/core/testing returns");
+    await expect(
+      createApp({
+        registry,
+        config: { storage: memory() },
+        witness: {
+          logger: (logger) => logger,
+          watch: () => undefined,
+          [Symbol.for("@bounda-dev/core/witness")]: null,
+        } as Witness,
+      }),
+    ).rejects.toThrow("witness must be what createWitness() from @bounda-dev/core/testing returns");
+    const app = await createApp({ registry, config: { storage: memory() } });
+    await expect(expectForgotten(app, "c-1")).rejects.toBeInstanceOf(TypeError);
+    await app.stop();
   });
 });
 

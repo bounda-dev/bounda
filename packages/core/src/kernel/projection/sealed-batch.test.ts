@@ -9,6 +9,7 @@ import { createDisposableKey, type PersonalKey } from "../personal-data/crypto.t
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { sealedLayoutOf } from "../read-model/sealed-rows.ts";
 import { KeysMissingError } from "../read-model/sealing-keys.ts";
+import { tracer } from "../telemetry.ts";
 import { eachPerson } from "../test-support.ts";
 import { batchPersons, createProjectionSubscriber, projectBatch, withKeys } from "./runner.ts";
 
@@ -63,6 +64,7 @@ describe("projectBatch with sealed fields", () => {
     const fetched: string[][] = [];
     const run = (transaction: Parameters<typeof projectBatch>[0]["transaction"], keys: never) =>
       projectBatch({
+        tracer,
         readModel: projecting(async ({ table }) => {
           await (table as { upsert(row: object): Promise<void> }).upsert({
             customerId: "ana",
@@ -124,6 +126,7 @@ describe("projectBatch with sealed fields", () => {
       wait: true,
       work: (transaction) =>
         projectBatch({
+          tracer,
           readModel: { name: "customers", projectionsByEvent: {} },
           events: [
             event("PersonalDataForgotten", "bounda", { fingerprints: ["f-1"], email__index: 1 }),
@@ -140,6 +143,7 @@ describe("projectBatch with sealed fields", () => {
       update: () => Promise.reject(new Error("down")),
     };
     const error = await projectBatch({
+      tracer,
       readModel: { name: "customers", projectionsByEvent: {} },
       events: [
         event("Other", "customer"),
@@ -156,6 +160,7 @@ describe("projectBatch with sealed fields", () => {
     const plain = await setUp({ id: f.string().primaryKey() });
     await expect(
       projectBatch({
+        tracer,
         readModel: { name: "customers", projectionsByEvent: {} },
         events: [event("PersonalDataForgotten", "bounda")],
         transaction: { table: failing, client: plain.storage.client, unsettled: async () => [] },
@@ -183,6 +188,7 @@ describe("projectBatch with sealed fields", () => {
       asked.length = 0;
       const { layout, storage } = await setUp(viewFields);
       await projectBatch({
+        tracer,
         readModel: projecting(async ({ client }) => {
           if (takes) void (client as { raw: unknown }).raw;
         }),
@@ -214,6 +220,7 @@ describe("createProjectionSubscriber", () => {
     ] as const) {
       const { layout, storage } = await setUp(viewFields);
       const subscriber = createProjectionSubscriber({
+        tracer,
         readModel: {
           name: "customers",
           fields: viewFields,
@@ -245,6 +252,7 @@ describe("the keys of a batch", () => {
   it("rejects with the person whose kept keys a forgetting needs, and the batch's", async () => {
     const { layout, storage } = await setUp();
     const error = await projectBatch({
+      tracer,
       readModel: { name: "customers", projectionsByEvent: {} },
       events: [
         event("PersonalDataForgotten", "bounda", { retained: ["default"], fingerprints: ["f-1"] }),

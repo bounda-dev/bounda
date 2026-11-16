@@ -1,7 +1,12 @@
 import { env, runInDurableObject } from "cloudflare:test";
-import { connect, durableObjectAdapter } from "@bounda-dev/cloudflare";
+import { connect } from "@bounda-dev/cloudflare";
+import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import { expectForgotten } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
+import { Store } from "../workers/app.ts";
+
+// Every object of the class records what its app seals, logs and traces, for expectForgotten.
+witnessObjects(Store);
 
 const storeOf = (tenant: string) => connect(env.STORE.get(env.STORE.idFromName(tenant)));
 
@@ -32,11 +37,8 @@ describe("the store, in its Durable Object", () => {
       total: 42,
       deliveryNote: "Leave it with the porter",
     });
-    const before = await store.exportPersonalData("ada");
     await store.forget("ada");
     expect((await store.queries.listOrders({ customerId: "ada" })).total).toBe(42);
-    await runInDurableObject(stub, (_object, state) =>
-      expectForgotten(durableObjectAdapter({ storage: state.storage }), "ada", { before }),
-    );
+    await runInDurableObject(stub, (object) => expectForgotten(object, "ada"));
   });
 });

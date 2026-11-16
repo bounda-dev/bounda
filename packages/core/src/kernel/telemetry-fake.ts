@@ -8,34 +8,12 @@ import {
   metrics,
   type ObservableCallback,
   type ObservableGauge,
-  type Span,
-  type SpanOptions,
-  SpanStatusCode,
-  type Tracer,
   type TracerProvider,
   trace,
 } from "@opentelemetry/api";
+import { type RecordedSpan, type RecordedSpanEvent, recordSpans } from "./span-recorder.ts";
 
-/**
- * A span as it stands: its attributes, status, the messages of the exceptions recorded on it, and
- * whether it ended.
- */
-export interface RecordedSpan {
-  readonly name: string;
-  readonly attributes: Attributes;
-  readonly status: { readonly code: SpanStatusCode; readonly message?: string };
-  readonly exceptions: readonly string[];
-  readonly ended: boolean;
-}
-
-/**
- * An event added to a span, with the span's name.
- */
-export interface RecordedSpanEvent {
-  readonly span: string;
-  readonly name: string;
-  readonly attributes: Attributes;
-}
+export type { RecordedSpan, RecordedSpanEvent };
 
 /**
  * One value a counter added, a histogram or gauge recorded, or an observable callback observed.
@@ -75,78 +53,12 @@ export interface InstallFakeTelemetryFunction {
   (): FakeTelemetry;
 }
 
-const recordingSpan = (
-  name: string,
-  attributes: Attributes,
-  spans: RecordedSpan[],
-  spanEvents: RecordedSpanEvent[],
-): Span => {
-  const record = {
-    name,
-    attributes: { ...attributes },
-    status: { code: SpanStatusCode.UNSET } as RecordedSpan["status"],
-    exceptions: [] as string[],
-    ended: false,
-  };
-  const index = spans.push(record) - 1;
-  const commit = (): void => {
-    spans[index] = {
-      name: record.name,
-      attributes: { ...record.attributes },
-      status: record.status,
-      exceptions: [...record.exceptions],
-      ended: record.ended,
-    };
-  };
-  commit();
-  const span = {
-    spanContext: () => ({ traceId: "0", spanId: "0", traceFlags: 0 }),
-    setAttribute: (key: string, value: unknown) => {
-      record.attributes[key] = value as Attributes[string];
-      commit();
-      return span;
-    },
-    setAttributes: (values: Attributes) => {
-      Object.assign(record.attributes, values);
-      commit();
-      return span;
-    },
-    addEvent: (event: string, eventAttributes: Attributes = {}) => {
-      spanEvents.push({ span: record.name, name: event, attributes: { ...eventAttributes } });
-      return span;
-    },
-    addLink: () => span,
-    addLinks: () => span,
-    setStatus: (status: RecordedSpan["status"]) => {
-      record.status = status;
-      commit();
-      return span;
-    },
-    updateName: (next: string) => {
-      record.name = next;
-      commit();
-      return span;
-    },
-    end: () => {
-      record.ended = true;
-      commit();
-    },
-    isRecording: () => true,
-    recordException: (error: unknown) => {
-      record.exceptions.push(error instanceof Error ? error.message : String(error));
-      commit();
-    },
-  } as unknown as Span;
-  return span;
-};
-
 /**
  * Registers a tracer provider and a meter provider that record into memory, so tests can assert
  * on the spans and metrics the runtime emits without an OpenTelemetry SDK.
  */
 export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
-  const spans: RecordedSpan[] = [];
-  const spanEvents: RecordedSpanEvent[] = [];
+  const { tracer, spans, spanEvents } = recordSpans();
   const counts: RecordedCount[] = [];
   const instruments: RecordedInstrument[] = [];
   const callbacks = new Map<string, ObservableCallback>();
@@ -158,15 +70,6 @@ export const installFakeTelemetry: InstallFakeTelemetryFunction = () => {
     });
   };
 
-  const tracer = {
-    startSpan: (name: string, options?: SpanOptions) =>
-      recordingSpan(name, options?.attributes ?? {}, spans, spanEvents),
-    startActiveSpan: (name: string, ...rest: unknown[]) => {
-      const fn = rest.at(-1) as (span: Span) => unknown;
-      const options = (rest.length > 1 ? rest[0] : undefined) as SpanOptions | undefined;
-      return fn(recordingSpan(name, options?.attributes ?? {}, spans, spanEvents));
-    },
-  } as unknown as Tracer;
   const tracerProvider: TracerProvider = { getTracer: () => tracer };
 
   const counter = (metric: string, options?: MetricOptions) => {

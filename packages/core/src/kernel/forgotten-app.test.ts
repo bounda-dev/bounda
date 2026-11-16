@@ -15,6 +15,7 @@ import type { Registry } from "../modules/registry.ts";
 import { type BoundaApp, createApp } from "./app.ts";
 import { createForgottenRunner } from "./forgotten-app.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
+import { tracer } from "./telemetry.ts";
 
 // One personal field, and a command that writes it.
 const registry = {
@@ -232,6 +233,7 @@ describe("the runner of a forgotten tenant", () => {
     let restored: object | null = { generation: 2 };
     let resettled = 0;
     const runner = createForgottenRunner({
+      tracer,
       storage: storage as never,
       config: resolveConfig({ storage: adapter }),
       notices: {} as never,
@@ -270,6 +272,7 @@ describe("the runner of a forgotten tenant", () => {
     const counted: unknown[] = [];
     let discharged = 0;
     const runner = createForgottenRunner({
+      tracer,
       storage: {
         ...storage,
         deadLetterStore: {
@@ -329,6 +332,7 @@ describe("the runner of a forgotten tenant", () => {
     );
     let discharged = 0;
     const runner = createForgottenRunner({
+      tracer,
       storage: storage as never,
       config: resolveConfig({ storage: adapter }),
       notices: {} as never,

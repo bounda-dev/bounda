@@ -4,6 +4,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { tracer } from "../telemetry.ts";
 import { advanceUntilWaiting, eventually } from "../test-support.ts";
 import type { CheckpointedSubscriber, Delivery, DeliveryFailure } from "./delivery.ts";
 import { createDispatcher, type Subscriber } from "./dispatcher.ts";
@@ -58,6 +59,7 @@ const setUp = async (subscribers: readonly (Subscriber | CheckpointedSubscriber)
   const { eventStore, checkpointStore } = await memory().createStorage();
   const clock = createFixedClock();
   const dispatcher = createDispatcher({
+    tracer,
     clock,
     eventStore,
     checkpointStore,
@@ -108,6 +110,7 @@ describe("the dispatcher's backoff", () => {
       { outcome: "advanced" },
     ]);
     const dispatcher = createDispatcher({
+      tracer,
       clock: createFixedClock(),
       eventStore,
       checkpointStore,
@@ -221,6 +224,7 @@ describe("the dispatcher's backoff", () => {
     const { eventStore, checkpointStore } = await memory().createStorage();
     const clock = createFixedClock();
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
@@ -271,6 +275,7 @@ describe("the dispatcher's backoff", () => {
       },
     };
     const dispatcher = createDispatcher({
+      tracer,
       clock,
       eventStore,
       checkpointStore,
