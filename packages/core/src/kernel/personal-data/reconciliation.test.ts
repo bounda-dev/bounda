@@ -837,9 +837,20 @@ describe("forgetAgain", () => {
     const storage = await memory().createStorage();
     const categories = buildPersonalCategories({
       module: {
+        automatedDecisions: {},
         categories: {
-          profile: { basis: "consent", retention: "30d" },
-          invoices: { basis: "legal-obligation", retention: "30d" },
+          profile: {
+            basis: "consent",
+            retention: "30d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+          invoices: {
+            basis: "legal-obligation",
+            retention: "30d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
         },
       },
       retention: null,
@@ -891,9 +902,20 @@ describe("forgetAgain", () => {
     const storage = await memory().createStorage();
     const categories = buildPersonalCategories({
       module: {
+        automatedDecisions: {},
         categories: {
-          profile: { basis: "consent", retention: "30d" },
-          invoices: { basis: "legal-obligation", retention: "30d" },
+          profile: {
+            basis: "consent",
+            retention: "30d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+          invoices: {
+            basis: "legal-obligation",
+            retention: "30d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
         },
       },
       retention: null,

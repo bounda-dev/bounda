@@ -119,7 +119,17 @@ const registry: Registry = {
       queries: {},
     },
   },
-  personalData: { categories: { invoices: { basis: "legal-obligation", retention: "60d" } } },
+  personalData: {
+    automatedDecisions: {},
+    categories: {
+      invoices: {
+        basis: "legal-obligation",
+        retention: "60d",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
+    },
+  },
 };
 
 const categories = buildPersonalCategories({
@@ -128,9 +138,34 @@ const categories = buildPersonalCategories({
 });
 
 const exportedCategories = {
-  default: { basis: null, retention: "30d", restrictedUntil: null },
-  invoices: { basis: "legal-obligation", retention: "60d", restrictedUntil: null },
+  default: {
+    basis: null,
+    purposes: [],
+    sources: [],
+    retention: "30d",
+    held: true,
+    keptUntil: null,
+    restrictedUntil: null,
+  },
+  invoices: {
+    basis: "legal-obligation",
+    purposes: ["Serve the person"],
+    sources: ["data-subject"],
+    retention: "60d",
+    held: true,
+    keptUntil: null,
+    restrictedUntil: null,
+  },
 };
+
+const exportedRights = [
+  { right: "access", article: "15", categories: null },
+  { right: "rectification", article: "16", categories: null },
+  { right: "erasure", article: "17", categories: ["default"] },
+  { right: "restriction", article: "18", categories: null },
+  { right: "objection", article: "21", categories: [] },
+  { right: "complaint", article: "77", categories: null },
+];
 
 const setup = async () => {
   const aggregates = buildAggregates({ registry, ports: {} });
@@ -287,6 +322,8 @@ describe("exportPersonalData", () => {
       exportedAt: "2026-01-01T00:00:00.000Z",
       position: 7,
       categories: exportedCategories,
+      rights: exportedRights,
+      automatedDecisions: [],
       restrictions: [],
       redactions: [],
       recipients: [],
@@ -870,10 +907,14 @@ describe("exportPersonalData", () => {
       recipients: NO_RECIPIENTS,
       personId: "c-1",
     });
+    const none = { held: false, keptUntil: null, restrictedUntil: null };
     expect(exported.categories).toEqual({
-      default: { basis: null, retention: null, restrictedUntil: null },
+      default: { basis: null, purposes: [], sources: [], retention: null, ...none },
     });
-    expect((await exportOf("c-1")).categories).toEqual(exportedCategories);
+    expect((await exportOf("c-1")).categories).toEqual({
+      default: { ...exportedCategories.default, ...none },
+      invoices: { ...exportedCategories.invoices, ...none },
+    });
   });
 
   it("hands out each answer remembered of the person that still opens, in the order the store files them", async () => {

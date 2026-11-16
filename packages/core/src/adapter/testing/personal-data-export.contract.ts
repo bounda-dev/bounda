@@ -259,6 +259,8 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
           exportedAt: whole.exportedAt,
           position: whole.position,
           categories: whole.categories,
+          rights: whole.rights,
+          automatedDecisions: [],
           restrictions: [],
           redactions: [],
           recipients: [],

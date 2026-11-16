@@ -569,7 +569,17 @@ describe("createRetentionSweep", () => {
   it("leaves alone a key whose person was restricted, or active again, after the list was read", async () => {
     const live = await memory().createStorage();
     let change: (() => Promise<void>) | undefined;
-    const profile = { categories: { profile: { basis: "consent", retention: "30d" } } } as const;
+    const profile = {
+      automatedDecisions: {},
+      categories: {
+        profile: {
+          basis: "consent",
+          retention: "30d",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
+      },
+    } as const;
     const { sweep, record, touch, advance, clock, forgettings, entries } = await setUp(
       {
         ...live,
@@ -608,9 +618,20 @@ describe("createRetentionSweep", () => {
   it("waits for activity it has not recorded of a key in force, never of one a forgetting kept", async () => {
     const live = await memory().createStorage();
     const legal = {
+      automatedDecisions: {},
       categories: {
-        invoices: { basis: "legal-obligation", retention: "30d" },
-        profile: { basis: "consent", retention: "30d" },
+        invoices: {
+          basis: "legal-obligation",
+          retention: "30d",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
+        profile: {
+          basis: "consent",
+          retention: "30d",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
       },
     } as const;
     const { sweep, record, touch, advance, clock, storage } = await setUp(live, {
@@ -651,7 +672,7 @@ describe("createRetentionSweep", () => {
           },
         },
       },
-      { retentionMs: null, module: { categories: {} } },
+      { retentionMs: null, module: { automatedDecisions: {}, categories: {} } },
     );
     await live.personalKeys.add("c-1", "orders", testPersonalKey("1"));
     await live.personalKeys.retain("c-1", testPersonalKey("1").fingerprint, {
@@ -679,7 +700,7 @@ describe("createRetentionSweep", () => {
         ...live,
         transact: () => Promise.reject(new Error("store down")),
       },
-      { retentionMs: null, module: { categories: {} } },
+      { retentionMs: null, module: { automatedDecisions: {}, categories: {} } },
     );
     await live.personalKeys.add("c-1", "orders", testPersonalKey("1"));
     await live.personalKeys.retain("c-1", testPersonalKey("1").fingerprint, {
@@ -1014,7 +1035,17 @@ describe("createRetentionSweep", () => {
       undefined,
       {
         retentionMs: null,
-        module: { categories: { profile: { basis: "consent", retention: "30d" } } },
+        module: {
+          automatedDecisions: {},
+          categories: {
+            profile: {
+              basis: "consent",
+              retention: "30d",
+              purposes: ["Serve the person"],
+              sources: ["data-subject"],
+            },
+          },
+        },
       },
     );
     await storage.personalKeys.add("c-1", "default", testPersonalKey("1"));
@@ -1053,7 +1084,17 @@ describe("createRetentionSweep", () => {
   it("counts a retention in calendar months to the very moment it ends, never a day early", async () => {
     const { storage, sweep, record, touch, clock } = await setUp(undefined, {
       retentionMs: null,
-      module: { categories: { profile: { basis: "consent", retention: "1mo" } } },
+      module: {
+        automatedDecisions: {},
+        categories: {
+          profile: {
+            basis: "consent",
+            retention: "1mo",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+        },
+      },
     });
     await storage.personalKeys.add("c-1", "profile", testPersonalKey("2"));
     await touch("c-1");
@@ -1072,7 +1113,17 @@ describe("createRetentionSweep", () => {
     const { storage, sweep, record, touch, forgettings, advance, clock, ids, logger, categories } =
       await setUp(undefined, {
         retentionMs: null,
-        module: { categories: { invoices: { basis: "legal-obligation", retention: "30d" } } },
+        module: {
+          automatedDecisions: {},
+          categories: {
+            invoices: {
+              basis: "legal-obligation",
+              retention: "30d",
+              purposes: ["Serve the person"],
+              sources: ["data-subject"],
+            },
+          },
+        },
       });
     await storage.personalKeys.add("c-1", "invoices", testPersonalKey("1"));
     await touch("c-1");
@@ -1120,9 +1171,20 @@ describe("createRetentionSweep", () => {
   it("destroys at once what a forgetting kept once no legal obligation keeps its category", async () => {
     const live = await memory().createStorage();
     const legal = {
+      automatedDecisions: {},
       categories: {
-        invoices: { basis: "legal-obligation", retention: "6y" },
-        orders: { basis: "legal-obligation", retention: "6y" },
+        invoices: {
+          basis: "legal-obligation",
+          retention: "6y",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
+        orders: {
+          basis: "legal-obligation",
+          retention: "6y",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
       },
     } as const;
     const kept = await setUp(live, { retentionMs: null, module: legal });
@@ -1149,7 +1211,17 @@ describe("createRetentionSweep", () => {
 
     const changed = await setUp(live, {
       retentionMs: null,
-      module: { categories: { invoices: { basis: "contract", retention: "6y" } } },
+      module: {
+        automatedDecisions: {},
+        categories: {
+          invoices: {
+            basis: "contract",
+            retention: "6y",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+        },
+      },
     });
     expect(await changed.sweep.nextDueAt()).toEqual(new Date(day(0)));
     expect(await changed.sweep.sweep(changed.clock.now())).toBe(2);
@@ -1167,7 +1239,19 @@ describe("createRetentionSweep", () => {
     let failing = true;
     const { storage, sweep, record, touch, advance, clock } = await setUp(
       failingForgets(live, () => failing),
-      { module: { categories: { profile: { basis: "consent", retention: "10d" } } } },
+      {
+        module: {
+          automatedDecisions: {},
+          categories: {
+            profile: {
+              basis: "consent",
+              retention: "10d",
+              purposes: ["Serve the person"],
+              sources: ["data-subject"],
+            },
+          },
+        },
+      },
     );
     await storage.personalKeys.add("c-1", "profile", testPersonalKey("1"));
     await touch("c-1");
@@ -1197,7 +1281,17 @@ describe("retains", () => {
     expect(retains(categoriesOf(DAY))).toBe(true);
     expect(
       retains(
-        categoriesOf(null, { categories: { profile: { basis: "consent", retention: "1d" } } }),
+        categoriesOf(null, {
+          automatedDecisions: {},
+          categories: {
+            profile: {
+              basis: "consent",
+              retention: "1d",
+              purposes: ["Serve the person"],
+              sources: ["data-subject"],
+            },
+          },
+        }),
       ),
     ).toBe(true);
   });
@@ -1298,17 +1392,39 @@ describe("the retention and the forget ledger", () => {
     const { record, touch, advance, clock, storage } = await setUp(undefined, {
       retentionMs: null,
       module: {
+        automatedDecisions: {},
         categories: {
-          profile: { basis: "consent", retention: "30d" },
-          invoices: { basis: "legal-obligation", retention: "60d" },
+          profile: {
+            basis: "consent",
+            retention: "30d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+          invoices: {
+            basis: "legal-obligation",
+            retention: "60d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
         },
       },
     });
     const due = retentionDueOf({
       categories: categoriesOf(null, {
+        automatedDecisions: {},
         categories: {
-          profile: { basis: "consent", retention: "30d" },
-          invoices: { basis: "legal-obligation", retention: "60d" },
+          profile: {
+            basis: "consent",
+            retention: "30d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+          invoices: {
+            basis: "legal-obligation",
+            retention: "60d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
         },
       }),
       batchSize: 2,
@@ -1562,7 +1678,17 @@ describe("the retention across instances", () => {
   it("leaves the categories after the one it lost its lease in to the instance that took it", async () => {
     const set = await setUp(undefined, {
       retentionMs: null,
-      module: { categories: { profile: { basis: "consent", retention: "10d" } } },
+      module: {
+        automatedDecisions: {},
+        categories: {
+          profile: {
+            basis: "consent",
+            retention: "10d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+        },
+      },
     });
     const { storage, sweepOver, clock } = set;
     for (const person of ["c-1", "c-2"]) {
@@ -1649,9 +1775,20 @@ describe("the retention across instances", () => {
 
   it("says, for each retention, how many are past it and when the next one comes due", async () => {
     const module: PersonalDataModule = {
+      automatedDecisions: {},
       categories: {
-        profile: { basis: "consent", retention: "10d" },
-        invoices: { basis: "legal-obligation", retention: "6y" },
+        profile: {
+          basis: "consent",
+          retention: "10d",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
+        invoices: {
+          basis: "legal-obligation",
+          retention: "6y",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
       },
     };
     const { storage, sweepOver, touch, record, advance, clock } = await setUp(undefined, {

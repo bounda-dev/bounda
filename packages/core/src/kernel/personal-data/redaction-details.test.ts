@@ -30,7 +30,17 @@ const setEmail = ({ event }: { event: { payload: { email: string | null } } }) =
 });
 
 const registry = {
-  personalData: { categories: { profile: { basis: "consent", retention: "2y" } } },
+  personalData: {
+    automatedDecisions: {},
+    categories: {
+      profile: {
+        basis: "consent",
+        retention: "2y",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
+    },
+  },
   aggregates: {
     customer: {
       state: { initialState: { email: null } },

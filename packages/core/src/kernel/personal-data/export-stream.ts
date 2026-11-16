@@ -2,7 +2,6 @@ import type { ReadModelStorage } from "../../adapter/adapter.ts";
 import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { retentionEnd } from "../../contracts/duration.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { AccessOutcome } from "../../modules/audit.ts";
 import {
@@ -28,7 +27,7 @@ import { PersonalDataChangedError } from "../recipients/gate.ts";
 import { recipientsOf } from "../recipients/listing.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { openAnswer } from "./answers.ts";
-import { formatRetention, type PersonalCategories } from "./categories.ts";
+import type { PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
 import { openedUnder } from "./event-store.ts";
@@ -36,7 +35,6 @@ import {
   collectPersonalDataExport,
   countPart,
   type ExportedCategories,
-  type ExportedCategory,
   type ExportedCounts,
   type ExportedData,
   type ExportedDeadLetter,
@@ -47,6 +45,7 @@ import {
   type PersonalDataExportHeader,
   type PersonalDataExportPart,
 } from "./export.ts";
+import { personalDataInformation } from "./information.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
 import { processingRestrictionsOf } from "./restriction.ts";
@@ -165,36 +164,6 @@ async function* exportedRows(
   }
 }
 
-// What a forgetting kept of a category goes once its retention has run from the activity it kept.
-const categoriesOf = async (
-  storage: AppStorage,
-  categories: PersonalCategories,
-  personId: string,
-): Promise<Readonly<Record<string, ExportedCategory>>> => {
-  const held = await storage.personalKeys.list(personId);
-  return Object.fromEntries(
-    categories.all.map(({ name, basis, retention }) => {
-      const kept =
-        retention === null
-          ? []
-          : held
-              .filter(
-                ({ category, retainedSince, lastActiveAt }) =>
-                  category === name && retainedSince !== null && lastActiveAt !== null,
-              )
-              .map(({ lastActiveAt }) => retentionEnd(Date.parse(lastActiveAt ?? ""), retention));
-      return [
-        name,
-        {
-          basis,
-          retention: retention === null ? null : formatRetention(retention),
-          restrictedUntil: kept.length === 0 ? null : new Date(Math.max(...kept)).toISOString(),
-        },
-      ];
-    }),
-  );
-};
-
 interface PersonStream {
   readonly version: number;
   readonly redactions: readonly ExportedRedaction[];
@@ -242,12 +211,17 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
   const before = await personStream(storage, personId);
   const position = await storage.eventStore.lastPosition();
   const restrictions = processingRestrictionsOf(await storage.persons.restrictions(personId));
-  const exportedCategories = await categoriesOf(storage, categories, personId);
+  const information = personalDataInformation({
+    categories,
+    keys: await storage.personalKeys.list(personId),
+    person: await storage.persons.get(personId),
+  });
+  const exportedCategories = information.categories;
   const header: PersonalDataExportHeader = {
     personId,
     exportedAt,
     position,
-    categories: exportedCategories,
+    ...information,
     restrictions,
     redactions: before.redactions,
     recipients: await recipientsOf({ storage, recipients, categories, personId }),

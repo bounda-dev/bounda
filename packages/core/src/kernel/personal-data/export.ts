@@ -1,7 +1,12 @@
 import type { DeadLetterKind } from "../../adapter/storage/dead-letter-store.ts";
 import type { DispatchOutcome } from "../../adapter/storage/idempotency-store.ts";
 import type { ExportAccess } from "../../modules/audit.ts";
-import type { LegalBasis, ProcessingRestriction } from "../../modules/personal-data.ts";
+import type {
+  AutomatedDecision,
+  LegalBasis,
+  PersonalDataSource,
+  ProcessingRestriction,
+} from "../../modules/personal-data.ts";
 import type { PersonRecipient } from "../../modules/recipient.ts";
 
 /**
@@ -25,15 +30,66 @@ export type ExportedCategories = Readonly<Record<string, string>>;
 export type ExportedRestricted = readonly string[];
 
 /**
- * A category of the app as the export tells the person of it (article 15(1) of the GDPR): why it
- * is processed, `null` for the default category, which declares no basis, and for how long after
- * their last activity it is kept, `null` when nothing forgets it for inactivity. `restrictedUntil`
- * is when what a forgetting kept of it under a legal obligation goes, `null` when it kept nothing.
+ * A category of the app as the export tells the person of it, as article 15(1) of the GDPR asks:
+ * its `basis`, `null` for the default category, which declares none; its `purposes` (a) and
+ * `sources` (g), none for the default category; and how long it is kept (d): its `retention`
+ * after their last activity, `null` when nothing forgets it for inactivity, and, for them, until
+ * when.
  */
 export interface ExportedCategory {
   readonly basis: LegalBasis | null;
+  readonly purposes: readonly string[];
+  readonly sources: readonly PersonalDataSource[];
   readonly retention: string | null;
+  /**
+   * Whether the runtime holds data of theirs in it: a key of theirs, in force or kept.
+   */
+  readonly held: boolean;
+  /**
+   * When the retention forgets what they hold of it unless they are active again before, or
+   * restricted then, which the retention waits on; `null` when it does not, or they hold none.
+   */
+  readonly keptUntil: string | null;
+  /**
+   * When what a forgetting kept of it under a legal obligation goes, unless they are restricted
+   * then, as `keptUntil`; `null` when it kept nothing.
+   */
   readonly restrictedUntil: string | null;
+}
+
+/**
+ * A right of the person over their data, as the GDPR names them: `access` (article 15),
+ * `rectification` (16), `erasure` (17), `restriction` (18), `portability` (20), `objection` (21),
+ * `withdraw-consent` (7(3)), `human-intervention` in an automated decision (22(3)), and
+ * `complaint` to a supervisory authority (77).
+ */
+export type PersonalDataRight =
+  | "access"
+  | "rectification"
+  | "erasure"
+  | "restriction"
+  | "portability"
+  | "objection"
+  | "withdraw-consent"
+  | "human-intervention"
+  | "complaint";
+
+/**
+ * A right the person has, as article 15(1)(e) and (f) ask they be told, with its article and the
+ * categories it reaches, from the basis each declares; `null` for every one of their data.
+ */
+export interface ExportedRight {
+  readonly right: PersonalDataRight;
+  readonly article: string;
+  readonly categories: readonly string[] | null;
+}
+
+/**
+ * An automated decision `app/personal-data.ts` declares on a category of theirs, as article
+ * 15(1)(h) asks: the logic involved, its significance and the envisaged consequences for them.
+ */
+export interface ExportedAutomatedDecision extends AutomatedDecision {
+  readonly name: string;
 }
 
 /**
@@ -170,6 +226,14 @@ export interface PersonalDataExport {
    */
   readonly categories: Readonly<Record<string, ExportedCategory>>;
   /**
+   * Their rights, each with the categories it reaches.
+   */
+  readonly rights: readonly ExportedRight[];
+  /**
+   * The automated decisions the app declares on a category they hold data of.
+   */
+  readonly automatedDecisions: readonly ExportedAutomatedDecision[];
+  /**
    * The restrictions the person asked for and has not had lifted, by ground; a lift announced is
    * in `events`, as `ProcessingRestrictionLiftAnnounced` with when it comes.
    */
@@ -212,6 +276,8 @@ export interface PersonalDataExportHeader
     | "exportedAt"
     | "position"
     | "categories"
+    | "rights"
+    | "automatedDecisions"
     | "restrictions"
     | "redactions"
     | "recipients"

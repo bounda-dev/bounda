@@ -2,10 +2,14 @@ import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-st
 import { parseRetention, type Retention } from "../../contracts/duration.ts";
 import { ConfigurationError, ValidationError } from "../../contracts/errors.ts";
 import {
+  AUTOMATED_DECISION_GROUNDS,
+  type AutomatedDecision,
   LEGAL_BASES,
   type LegalBasis,
   type PersonalDataModule,
+  type PersonalDataSource,
 } from "../../modules/personal-data.ts";
+import { isRecord } from "../shared/merge-fields.ts";
 
 /**
  * A category as the runtime uses it: its basis, `null` for the default category, which declares
@@ -16,6 +20,18 @@ export interface PersonalCategory {
   readonly name: string;
   readonly basis: LegalBasis | null;
   readonly retention: Retention | null;
+  /**
+   * None for the default category, which declares none.
+   */
+  readonly purposes: readonly string[];
+  readonly sources: readonly PersonalDataSource[];
+}
+
+/**
+ * An automated decision `app/personal-data.ts` declares, by its name.
+ */
+export interface DeclaredDecision extends AutomatedDecision {
+  readonly name: string;
 }
 
 /**
@@ -29,6 +45,10 @@ export interface PersonalCategories {
    */
   readonly declared: readonly PersonalCategory[];
   of(name: string): PersonalCategory | undefined;
+  /**
+   * The automated decisions `app/personal-data.ts` declares, in its order.
+   */
+  readonly decisions: readonly DeclaredDecision[];
 }
 
 export interface BuildPersonalCategoriesArgs {
@@ -44,6 +64,19 @@ export interface BuildPersonalCategoriesFunction {
 }
 
 const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+const isText = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
+const isSource = (source: unknown): source is PersonalDataSource =>
+  source === "data-subject" ||
+  source === "derived" ||
+  (isRecord(source) &&
+    (source.kind === "third-party" || source.kind === "public") &&
+    isText(source.name));
+
+const listOf = <Item>(value: unknown, is: (item: unknown) => item is Item): Item[] | null =>
+  Array.isArray(value) && value.length > 0 && value.every(is) ? [...value] : null;
 
 const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] => {
   if (module === undefined) return [];
@@ -79,7 +112,70 @@ const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] 
     if (retention.months === 0 && retention.ms <= 0) {
       throw new ConfigurationError(`${at} must keep its data for more than no time`);
     }
-    return { name, basis: category.basis, retention };
+    const purposes = listOf(category.purposes, isText);
+    if (purposes === null) {
+      throw new ConfigurationError(
+        `${at} must name its purposes, at least one, each in words for the person`,
+      );
+    }
+    const sources = listOf(category.sources, isSource);
+    if (sources === null) {
+      throw new ConfigurationError(
+        `${at} must name its sources, at least one: "data-subject", "derived", or { kind: "third-party" or "public", name }`,
+      );
+    }
+    return { name, basis: category.basis, retention, purposes, sources };
+  });
+};
+
+const decisionsIn = (
+  module: PersonalDataModule | undefined,
+  known: ReadonlySet<string>,
+): DeclaredDecision[] => {
+  if (module === undefined) return [];
+  const { automatedDecisions } = module;
+  if (
+    typeof automatedDecisions !== "object" ||
+    automatedDecisions === null ||
+    Array.isArray(automatedDecisions)
+  ) {
+    throw new ConfigurationError(
+      "app/personal-data.ts must export automatedDecisions as an object, {} when the app decides nothing about a person by automated means alone",
+    );
+  }
+  return Object.entries(automatedDecisions).map(([name, decision]) => {
+    const at = `app/personal-data.ts: automated decision "${name}"`;
+    const [first, ...rest] =
+      listOf(decision?.categories, (category): category is string =>
+        known.has(category as string),
+      ) ?? [];
+    if (first === undefined) {
+      throw new ConfigurationError(
+        `${at} must name the categories it decides on, at least one, each declared or "default"`,
+      );
+    }
+    for (const field of ["logic", "significance", "consequences"] as const) {
+      if (!isText(decision[field])) {
+        throw new ConfigurationError(`${at} must give its ${field} in words for the person`);
+      }
+    }
+    if (typeof decision.profiling !== "boolean") {
+      throw new ConfigurationError(`${at} must say whether it profiles the person`);
+    }
+    if (!AUTOMATED_DECISION_GROUNDS.includes(decision.ground)) {
+      throw new ConfigurationError(
+        `${at} must name its ground, one of ${AUTOMATED_DECISION_GROUNDS.map((ground) => `"${ground}"`).join(", ")}`,
+      );
+    }
+    return {
+      name,
+      categories: [first, ...rest],
+      logic: decision.logic,
+      significance: decision.significance,
+      consequences: decision.consequences,
+      profiling: decision.profiling,
+      ground: decision.ground,
+    };
   });
 };
 
@@ -90,11 +186,16 @@ const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] 
 export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ module, retention }) => {
   const declared = declaredIn(module);
   const all: PersonalCategory[] = [
-    { name: DEFAULT_PERSONAL_CATEGORY, basis: null, retention },
+    { name: DEFAULT_PERSONAL_CATEGORY, basis: null, retention, purposes: [], sources: [] },
     ...declared,
   ];
   const byName = new Map(all.map((category) => [category.name, category]));
-  return { all, declared, of: (name) => byName.get(name) };
+  return {
+    all,
+    declared,
+    of: (name) => byName.get(name),
+    decisions: decisionsIn(module, new Set(byName.keys())),
+  };
 };
 
 export interface CheckCategoryArgs {

@@ -1,7 +1,7 @@
 import type { EventPayloadArgs, FieldsArgs, Registry } from "@bounda-dev/core";
 
 export const registry = {
-  personalData: { categories: { contact: { basis: "consent", retention: "730d" } } },
+  personalData: { automatedDecisions: {}, categories: { contact: { basis: "consent", retention: "730d", purposes: ["Serve the person"], sources: ["data-subject"] } } },
   aggregates: {
     customer: {
       events: {

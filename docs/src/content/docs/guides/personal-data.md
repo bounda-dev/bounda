@@ -98,17 +98,64 @@ activities](#the-record-of-processing-activities) lists every decision.
 Not all of a person's data goes at the same time. A profile is kept while they are a customer; an
 invoice, for the years the law asks, even if they ask to be forgotten; a newsletter address, until
 they withdraw their consent. Each kind is a category, declared in `app/personal-data.ts` with its
-legal basis, as article 6 of the GDPR names it, and its retention:
+legal basis, as article 6 of the GDPR names it, its retention, its purposes and its sources:
 
 ```ts
 // app/personal-data.ts
 import type { PersonalData } from "./+types/personal-data";
 
 export const categories = {
-  profile: { basis: "contract", retention: "30d" },
-  marketing: { basis: "consent", retention: "730d" },
-  invoices: { basis: "legal-obligation", retention: "6y" },
+  profile: {
+    basis: "contract",
+    retention: "30d",
+    purposes: ["Run the customer's account", "Deliver their orders"],
+    sources: ["data-subject"],
+  },
+  marketing: {
+    basis: "consent",
+    retention: "730d",
+    purposes: ["Send the newsletter they signed up for"],
+    sources: ["data-subject", "derived"],
+  },
+  invoices: {
+    basis: "legal-obligation",
+    retention: "6y",
+    purposes: ["Keep the invoices tax law requires"],
+    sources: ["data-subject", { kind: "third-party", name: "Stripe" }],
+  },
 } satisfies PersonalData.Categories;
+
+export const automatedDecisions = {} satisfies PersonalData.AutomatedDecisions;
+```
+
+`purposes` say why the category is processed, in words for the person, at least one: the
+[export](#exporting-a-persons-data) hands them to them, as article 15(1)(a) asks, and the
+[record of processing activities](#the-record-of-processing-activities) lists them, as article
+30(1)(b) does. `sources` say where its data comes from, at least one, as article 15(1)(g) asks for
+data not collected from the person: `"data-subject"`, the person themselves; `"derived"`, what
+the app works out from other data of theirs, such as a score or a segment; or
+`{ kind: "third-party", name }` and `{ kind: "public", name }`, a source by its name, a provider
+or a public register. A category whose data comes from several places names each.
+
+`automatedDecisions` is what the app decides about a person by automated means alone, with legal
+or similarly significant effects for them, profiling included (article 22): `{}` for an app that
+makes none, which says so, since the export tells the person either way. Each decision, by a name
+of the app's, names the categories of data it decides on, the `logic` involved, its
+`significance` and its envisaged `consequences` for the person, in words for them, whether it
+profiles them, and its `ground`, the exception of article 22(2) that allows it: a `contract`,
+`law` or the person's `explicit-consent`:
+
+```ts
+export const automatedDecisions = {
+  payLater: {
+    categories: ["profile"],
+    logic: "A score of the orders paid on time and the amount asked for",
+    significance: "Whether the customer may pay an order a month after it arrives",
+    consequences: "Without it, the order is paid when placed",
+    profiling: true,
+    ground: "contract",
+  },
+} satisfies PersonalData.AutomatedDecisions;
 ```
 
 The basis is one of `consent`, `contract`, `legal-obligation`, `vital-interests`, `public-task` and
@@ -132,8 +179,10 @@ export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
 
 The generator registers the names, so a category the file does not declare, in `personal`,
 `.personal` or `forget`, does not compile, and `.bounda/types.ts` fails to compile while the file
-declares a category `default` or one without a basis Bounda knows or a retention; the app refuses
-to start on the same, for a project that skipped the type check. A field marked without a
+declares a category `default` or one without a basis Bounda knows, a retention, a purpose or a
+source, while it does not export `automatedDecisions`, or while a decision lacks what it must say
+or names a category the file does not declare; the app refuses to start on the same, for a project
+that skipped the type check. A field marked without a
 category is in the default category, `default`, whose retention is
 [`runtime.personalData.retention`](#inactivity) and which declares no basis: an app without
 `app/personal-data.ts` has that category alone, and behaves as if categories did not exist.
@@ -495,10 +544,32 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   exportedAt: "2026-03-01T10:00:00.000Z",
   position: 812,
   categories: {
-    default: { basis: null, retention: "730d", restrictedUntil: null },
-    profile: { basis: "contract", retention: "30d", restrictedUntil: null },
-    invoices: { basis: "legal-obligation", retention: "6y", restrictedUntil: null },
+    default: { basis: null, purposes: [], sources: [], retention: "730d", held: true,
+      keptUntil: "2028-02-28T10:00:00.000Z", restrictedUntil: null },
+    profile: { basis: "contract", purposes: ["Run the customer's account"],
+      sources: ["data-subject"], retention: "30d", held: true,
+      keptUntil: "2026-03-30T10:00:00.000Z", restrictedUntil: null },
+    invoices: { basis: "legal-obligation", purposes: ["Keep the invoices tax law requires"],
+      sources: ["data-subject", { kind: "third-party", name: "Stripe" }], retention: "6y",
+      held: true, keptUntil: "2032-02-28T10:00:00.000Z", restrictedUntil: null },
   },
+  rights: [
+    { right: "access", article: "15", categories: null },
+    { right: "rectification", article: "16", categories: null },
+    { right: "erasure", article: "17", categories: ["default", "profile"] },
+    { right: "restriction", article: "18", categories: null },
+    { right: "portability", article: "20", categories: ["profile"] },
+    { right: "objection", article: "21", categories: [] },
+    { right: "human-intervention", article: "22(3)", categories: ["profile"] },
+    { right: "complaint", article: "77", categories: null },
+  ],
+  automatedDecisions: [
+    { name: "payLater", categories: ["profile"],
+      logic: "A score of the orders paid on time and the amount asked for",
+      significance: "Whether the customer may pay an order a month after it arrives",
+      consequences: "Without it, the order is paid when placed", profiling: true,
+      ground: "contract" },
+  ],
   restrictions: [
     { ground: "accuracy-contested", categories: ["invoices"], since: "2026-02-20T09:00:00.000Z" },
   ],
@@ -553,11 +624,41 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
 }
 ```
 
-`categories` describes every category of the app, as article 15(1) of the GDPR asks: why it is
-processed, its `basis`, `null` for the default category, which declares none; how long it is kept
-after their last activity, its `retention`, `null` when nothing forgets it for inactivity; and,
-for a category a legal obligation kept past a forgetting, when what was kept goes,
-`restrictedUntil`. Every record lists the category of each field of its `data` in `categories`.
+The export says everything article 15(1) of the GDPR asks besides the data, from what the app
+declares, so nothing has to be written by hand next to it:
+
+| Article 15(1) | In the export |
+| --- | --- |
+| (a) the purposes | each category's `purposes`, with its `basis` |
+| (b) the categories of data | `categories`, and the category of each field of every record |
+| (c) the recipients, and (15(2)) the safeguards of a transfer out of the EEA | `recipients` |
+| (d) how long it is kept, or the criteria | each category's `retention`, `keptUntil` and `restrictedUntil` |
+| (e) the rights to rectification, erasure, restriction and objection | `rights` |
+| (f) the right to complain to a supervisory authority | `rights`, `complaint` |
+| (g) the source of data not collected from the person | each category's `sources` |
+| (h) automated decisions, profiling included | `automatedDecisions` |
+
+`categories` describes every category of the app: its `basis`, `null` for the default category,
+which declares none; its `purposes` and `sources`, none for the default category; how long it is
+kept after their last activity, its `retention`, `null` when nothing forgets it for inactivity;
+whether the runtime `held` data of theirs in it when the export began, a key of theirs in force or
+kept; for them, `keptUntil`, when the retention forgets what they hold of it unless they are active
+again before, the earlier of the category's own retention and the default one's, which forgets
+them as a whole, and the category's own for one kept under a legal obligation, `null` when nothing
+forgets it or they hold none; and, for a category a legal obligation kept past a forgetting, when
+what was kept goes, `restrictedUntil`. While they are [restricted](#restricting-processing), the
+retention waits for the restriction to be lifted, as `restrictions` shows, so either date is when
+it goes at the soonest. Every record lists the category of each field of its `data` in `categories`.
+
+`rights` lists their rights, each with its article and the categories it reaches, `null` for all of
+their data, from the basis each category declares: access, rectification, restriction and the
+complaint to a supervisory authority always; erasure for every category but those kept under a
+legal obligation (article 17(3)(b)); objection for those processed on `public-task` or
+`legitimate-interests` (article 21(1)), an empty list when none is; portability for those on
+`consent` or `contract` (article 20), the withdrawal of consent for those on `consent` (article
+7(3)), and human intervention for the categories of an automated decision on a `contract` or
+`explicit-consent` (article 22(3)), each only when it reaches one. `automatedDecisions` are the
+decisions [`app/personal-data.ts` declares](#categories) on a category they hold data of.
 
 `restrictions` are the [restrictions](#restricting-processing) the person asked for and has not had
 lifted, one per ground, with the categories each covers, `null` for the person as a whole, and
@@ -1525,8 +1626,10 @@ bounda personal-data inventory --markdown > record-of-processing.md
 It reads the registry and `bounda.config.ts`, as `bounda rebuild` loads them, and opens no
 database. The record lists:
 
-- each [category](#categories), with its basis and how long after the person's last activity it is
-  kept, and how many fields are in it;
+- each [category](#categories), with its basis, its purposes, its sources, how long after the
+  person's last activity it is kept, and how many fields are in it;
+- each [automated decision](#categories) the app declares, with its categories, logic,
+  significance, consequences, whether it profiles and its ground;
 - each event, command, process state and read model with a field marked `personal` or `person`:
   whose the data is (the field marked `person`, else the aggregate's or the instance's id), each
   personal field with its category and how it is kept (sealed under the person's key, sealed with a
@@ -1547,8 +1650,8 @@ database. The record lists:
 - the fields marked `notPersonal`.
 
 What it cannot know is the controller's to add: who the controller, its representative and its
-data protection officer are, the purposes in words beyond each category's basis, which categories
-of persons each person id stands for, and the security measures outside the app. `--markdown`
+data protection officer are, which categories of persons each person id stands for, and the
+security measures outside the app. `--markdown`
 writes the record as a document to complete with them.
 
 The command also says what keeps the record from being complete, and exits `1` while anything does,
@@ -1560,8 +1663,8 @@ so a CI step fails on it:
 - a field of any type, marked none of them, whose name says personal data;
 - text no mark reaches: a payload or a state that is not an object, or an object that keeps keys it
   does not declare, as `z.looseObject` and `.catchall()` do, which does not compile either;
-- personal fields in the default category, which declares no legal basis: declare
-  [categories](#categories) and give each field one;
+- personal fields in the default category, which declares no legal basis, purpose or source, so
+  a person's export cannot tell them: declare [categories](#categories) and give each field one;
 - [`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text), which puts the
   text of errors, personal data included, in logs no forgetting reaches.
 

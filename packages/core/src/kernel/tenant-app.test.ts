@@ -123,9 +123,20 @@ const registry = {
     },
   },
   personalData: {
+    automatedDecisions: {},
     categories: {
-      invoices: { basis: "legal-obligation", retention: "6y" },
-      contracts: { basis: "legal-obligation", retention: "6y" },
+      invoices: {
+        basis: "legal-obligation",
+        retention: "6y",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
+      contracts: {
+        basis: "legal-obligation",
+        retention: "6y",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
     },
   },
 } as unknown as Registry;

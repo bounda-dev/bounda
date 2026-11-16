@@ -24,9 +24,20 @@ import { createForgetIntentions } from "./intention.ts";
 const DAY_MS = 86_400_000;
 
 const declared: PersonalDataModule = {
+  automatedDecisions: {},
   categories: {
-    profile: { basis: "consent", retention: "30d" },
-    invoices: { basis: "legal-obligation", retention: "30d" },
+    profile: {
+      basis: "consent",
+      retention: "30d",
+      purposes: ["Serve the person"],
+      sources: ["data-subject"],
+    },
+    invoices: {
+      basis: "legal-obligation",
+      retention: "30d",
+      purposes: ["Serve the person"],
+      sources: ["data-subject"],
+    },
   },
 };
 

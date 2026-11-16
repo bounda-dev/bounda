@@ -4,6 +4,9 @@ import type {
   Registry as AnyRegistry,
   AppRegistry,
   AppStatus,
+  AutomatedDecision,
+  AutomatedDecisionGround,
+  AutomatedDecisions,
   BoundaApp,
   BoundaClient,
   CancelledCommand,
@@ -36,6 +39,7 @@ import type {
   EventMetadata,
   EventPayloadArgs,
   ExportedAnswer,
+  ExportedAutomatedDecision,
   ExportedCategories,
   ExportedCategory,
   ExportedData,
@@ -43,6 +47,7 @@ import type {
   ExportedEvent,
   ExportedRedaction,
   ExportedRestricted,
+  ExportedRight,
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
@@ -84,6 +89,8 @@ import type {
   PersonalDataForgottenReason,
   PersonalDataRedactedEvent,
   PersonalDataRedactedPayload,
+  PersonalDataRight,
+  PersonalDataSource,
   PersonalFunction,
   PersonalOptions,
   PersonFunction,
@@ -913,7 +920,27 @@ describe("personal data", () => {
     expectTypeOf<PersonalDataCategory>().toEqualTypeOf<{
       readonly basis: LegalBasis;
       readonly retention: RetentionInput;
+      readonly purposes: readonly [string, ...string[]];
+      readonly sources: readonly [PersonalDataSource, ...PersonalDataSource[]];
     }>();
+    expectTypeOf<PersonalDataSource>().toEqualTypeOf<
+      | "data-subject"
+      | "derived"
+      | { readonly kind: "third-party" | "public"; readonly name: string }
+    >();
+    expectTypeOf<PersonalData.AutomatedDecisions>().toEqualTypeOf<AutomatedDecisions>();
+    expectTypeOf<AutomatedDecisions>().toEqualTypeOf<Readonly<Record<string, AutomatedDecision>>>();
+    expectTypeOf<AutomatedDecision>().toEqualTypeOf<{
+      readonly categories: readonly [string, ...string[]];
+      readonly logic: string;
+      readonly significance: string;
+      readonly consequences: string;
+      readonly profiling: boolean;
+      readonly ground: AutomatedDecisionGround;
+    }>();
+    expectTypeOf<AutomatedDecisionGround>().toEqualTypeOf<
+      "contract" | "law" | "explicit-consent"
+    >();
     expectTypeOf<RetentionInput>().toEqualTypeOf<DurationInput | `${number}mo` | `${number}y`>();
     expectTypeOf<LegalBasis>().toEqualTypeOf<
       | "consent"
@@ -956,6 +983,8 @@ describe("personal data", () => {
       readonly exportedAt: string;
       readonly position: number;
       readonly categories: Readonly<Record<string, ExportedCategory>>;
+      readonly rights: readonly ExportedRight[];
+      readonly automatedDecisions: readonly ExportedAutomatedDecision[];
       readonly restrictions: readonly ProcessingRestriction[];
       readonly redactions: readonly ExportedRedaction[];
       readonly recipients: readonly PersonRecipient[];
@@ -977,6 +1006,8 @@ describe("personal data", () => {
       readonly exportedAt: string;
       readonly position: number;
       readonly categories: Readonly<Record<string, ExportedCategory>>;
+      readonly rights: readonly ExportedRight[];
+      readonly automatedDecisions: readonly ExportedAutomatedDecision[];
       readonly restrictions: readonly ProcessingRestriction[];
       readonly redactions: readonly ExportedRedaction[];
       readonly recipients: readonly PersonRecipient[];
@@ -997,6 +1028,33 @@ describe("personal data", () => {
     expectTypeOf(personalDataExportJson).toEqualTypeOf<
       (parts: AsyncIterable<PersonalDataExportPart>) => ReadableStream<Uint8Array>
     >();
+    expectTypeOf<ExportedCategory>().toEqualTypeOf<{
+      readonly basis: LegalBasis | null;
+      readonly purposes: readonly string[];
+      readonly sources: readonly PersonalDataSource[];
+      readonly retention: string | null;
+      readonly held: boolean;
+      readonly keptUntil: string | null;
+      readonly restrictedUntil: string | null;
+    }>();
+    expectTypeOf<ExportedRight>().toEqualTypeOf<{
+      readonly right: PersonalDataRight;
+      readonly article: string;
+      readonly categories: readonly string[] | null;
+    }>();
+    expectTypeOf<PersonalDataRight>().toEqualTypeOf<
+      | "access"
+      | "rectification"
+      | "erasure"
+      | "restriction"
+      | "portability"
+      | "objection"
+      | "withdraw-consent"
+      | "human-intervention"
+      | "complaint"
+    >();
+    expectTypeOf<ExportedAutomatedDecision["name"]>().toEqualTypeOf<string>();
+    expectTypeOf<ExportedAutomatedDecision>().toExtend<AutomatedDecision>();
     expectTypeOf<ExportedAnswer>().toEqualTypeOf<{
       readonly idempotencyKey: string;
       readonly expiresAt: string;
@@ -1086,11 +1144,7 @@ describe("personal data", () => {
     }>();
     expectTypeOf<ExportedData>().toEqualTypeOf<Readonly<Record<string, unknown>>>();
     expectTypeOf<ExportedCategories>().toEqualTypeOf<Readonly<Record<string, string>>>();
-    expectTypeOf<ExportedCategory>().toEqualTypeOf<{
-      readonly basis: LegalBasis | null;
-      readonly retention: string | null;
-      readonly restrictedUntil: string | null;
-    }>();
+    expectTypeOf<ExportedCategory["restrictedUntil"]>().toEqualTypeOf<string | null>();
   });
 
   it("lets every client restrict a person's processing on a ground of article 18(1) and lift it with a notice, answering like a command", () => {

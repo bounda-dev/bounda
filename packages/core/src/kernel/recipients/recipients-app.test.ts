@@ -131,9 +131,20 @@ const registryWith = ({
   if (crm !== null) recipients.crm = recipientModule("customer.crm", crm, told, failing);
   return {
     personalData: {
+      automatedDecisions: {},
       categories: {
-        contact: { basis: "consent", retention: "730d" },
-        invoices: { basis: "legal-obligation", retention: "6y" },
+        contact: {
+          basis: "consent",
+          retention: "730d",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
+        invoices: {
+          basis: "legal-obligation",
+          retention: "6y",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
       },
     },
     aggregates: {

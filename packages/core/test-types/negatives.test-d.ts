@@ -266,15 +266,55 @@ describe("what does not compile", () => {
     ];
     void forget;
     type Expect<Check extends true> = Check;
-    const year: PersonalDataCategory = { basis: "legal-obligation", retention: "6y" };
-    // @ts-expect-error a retention takes days, months or years, never weeks
-    const weeks: PersonalDataCategory = { basis: "consent", retention: "2w" };
-    void [year, weeks];
+    const year: PersonalDataCategory = {
+      basis: "legal-obligation",
+      retention: "6y",
+      purposes: ["Serve the person"],
+      sources: ["data-subject"],
+    };
+    const weeks: PersonalDataCategory = {
+      basis: "consent",
+      // @ts-expect-error a retention takes days, months or years, never weeks
+      retention: "2w",
+      purposes: ["Serve the person"],
+      sources: ["data-subject"],
+    };
+    const unsaid: PersonalDataCategory = {
+      basis: "consent",
+      retention: "1d",
+      // @ts-expect-error a category says at least one purpose
+      purposes: [],
+      // @ts-expect-error and comes from a source Bounda knows
+      sources: ["rumour"],
+    };
+    void [year, weeks, unsaid];
+    interface Profile {
+      readonly basis: "consent";
+      readonly retention: "1d";
+      readonly purposes: readonly ["Greet them"];
+      readonly sources: readonly [{ readonly kind: "third-party"; readonly name: "A broker" }];
+    }
+    interface Scoring {
+      readonly categories: readonly ["profile"];
+      readonly logic: "A score of their answers";
+      readonly significance: "Whether they may pay later";
+      readonly consequences: "Paying upfront";
+      readonly profiling: true;
+      readonly ground: "contract";
+    }
+    type Complete = Expect<
+      DeclaresPersonalData<{
+        readonly categories: { readonly profile: Profile };
+        readonly automatedDecisions: { readonly scoring: Scoring };
+      }>
+    >;
     type DeclaresDefault = {
-      readonly categories: { readonly default: { basis: "consent"; retention: "1d" } };
+      readonly categories: { readonly default: Profile };
+      readonly automatedDecisions: Readonly<Record<string, never>>;
     };
     type UnknownBasis = {
-      readonly categories: { readonly profile: { basis: "whim"; retention: "1d" } };
+      readonly categories: { readonly profile: Omit<Profile, "basis"> & { basis: "whim" } };
+      readonly automatedDecisions: Readonly<Record<string, never>>;
     };
     // @ts-expect-error "default" is the category of fields marked without one
     type Default = Expect<DeclaresPersonalData<DeclaresDefault>>;
@@ -282,7 +322,28 @@ describe("what does not compile", () => {
     type Basis = Expect<DeclaresPersonalData<UnknownBasis>>;
     // @ts-expect-error a module without categories
     type Nothing = Expect<DeclaresPersonalData<{ readonly other: true }>>;
-    const checks: [Default?, Basis?, Nothing?] = [];
+    type SilentModule = { readonly categories: { readonly profile: Profile } };
+    type UndeclaredModule = {
+      readonly categories: { readonly profile: Profile };
+      readonly automatedDecisions: {
+        readonly scoring: Omit<Scoring, "categories"> & {
+          readonly categories: readonly ["credit"];
+        };
+      };
+    };
+    type GroundlessModule = {
+      readonly categories: { readonly profile: Profile };
+      readonly automatedDecisions: {
+        readonly scoring: Omit<Scoring, "ground"> & { readonly ground: "whim" };
+      };
+    };
+    // @ts-expect-error a module that does not say whether it decides by automated means alone
+    type Silent = Expect<DeclaresPersonalData<SilentModule>>;
+    // @ts-expect-error a decision on a category the module does not declare
+    type Undeclared = Expect<DeclaresPersonalData<UndeclaredModule>>;
+    // @ts-expect-error a decision article 22(2) does not allow
+    type Groundless = Expect<DeclaresPersonalData<GroundlessModule>>;
+    const checks: [Complete?, Default?, Basis?, Nothing?, Silent?, Undeclared?, Groundless?] = [];
     void checks;
   });
 
