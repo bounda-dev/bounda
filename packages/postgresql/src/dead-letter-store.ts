@@ -161,11 +161,11 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           statePerson ?? null,
         ],
       ),
-    listByPerson: async (person) =>
+    listByPerson: async ({ person, after, limit }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = $1 OR "state_person" = $1 OR ${naming("$1")} ORDER BY "first_failed_at", "id" COLLATE "C"`,
-          [person],
+          `SELECT ${COLUMNS} FROM ${table} WHERE ("person" = $1 OR "state_person" = $1 OR ${naming("$1")}) AND ($2::text IS NULL OR "id" COLLATE "C" > $2::text) ORDER BY "id" COLLATE "C" LIMIT $3`,
+          [person, after ?? null, limit ?? null],
         )
       ).map(toLetter),
     forget: async (person, keep = []) =>

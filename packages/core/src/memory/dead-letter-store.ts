@@ -5,6 +5,7 @@ import type {
   ListDeadLettersArgs,
   StoredDeadLetter,
 } from "../adapter/storage/dead-letter-store.ts";
+import { pageByKey } from "../adapter/storage/person-page.ts";
 import { namesPerson } from "../adapter/storage/personal-key-store.ts";
 import { DeadLetterSettledError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
@@ -105,15 +106,17 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
         }),
       );
     },
-    listByPerson: async (person) =>
-      select({})
-        .filter(
+    listByPerson: async ({ person, ...page }) =>
+      pageByKey(
+        select({}).filter(
           (letter) =>
             letter.person === person ||
             letter.statePerson === person ||
             namesPerson(letter, person),
-        )
-        .map(copy),
+        ),
+        ({ id }) => id,
+        page,
+      ).map(copy),
     forget: async (person, keep) => {
       const named = select({}).filter((letter) => namesPerson(letter, person, keep));
       for (const { id } of named) letters.delete(id);

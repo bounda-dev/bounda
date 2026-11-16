@@ -1,5 +1,6 @@
 import { v4 as randomUUID } from "uuid";
 import { byExecuteAt } from "../adapter/sql/scheduling.ts";
+import { pageByKey } from "../adapter/storage/person-page.ts";
 import { namesPerson } from "../adapter/storage/personal-key-store.ts";
 import type {
   ClaimedCommand,
@@ -61,9 +62,6 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
   const release = (entry: Entry): void => {
     entries.set(entry.dedupeKey, { ...entry, claimedAt: null, claimId: null });
   };
-
-  const naming = (person: string): Entry[] =>
-    [...entries.values()].filter((entry) => namesPerson(entry, person)).sort(byExecuteAt);
 
   const store: Scheduler = {
     schedule: async ({
@@ -190,7 +188,12 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
       const entry = entries.get(dedupeKey);
       return entry === undefined ? null : toScheduled(entry);
     },
-    listByPerson: async (person) => naming(person).map(toScheduled),
+    listByPerson: async ({ person, ...page }) =>
+      pageByKey(
+        [...entries.values()].filter((entry) => namesPerson(entry, person)),
+        ({ dedupeKey }) => dedupeKey,
+        page,
+      ).map(toScheduled),
     forget: async (person, keep) => {
       const named = [...entries.values()]
         .filter((entry) => namesPerson(entry, person, keep))

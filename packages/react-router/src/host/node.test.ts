@@ -3,6 +3,7 @@ import type { BootArgs } from "@bounda-dev/core/node";
 import { RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { failure } from "../failure.ts";
+import { personalDataExportResponse } from "../personal-data-export.ts";
 import * as nodeHost from "./node.ts";
 import { createHost } from "./node.ts";
 
@@ -196,8 +197,9 @@ describe("createHost in Node", () => {
     }
   });
 
-  it("hands the plugin's module failure too, so that it imports nothing else", () => {
+  it("hands the plugin's module failure and personalDataExportResponse too, so that it imports nothing else", () => {
     expect(nodeHost.failure).toBe(failure);
+    expect(nodeHost.personalDataExportResponse).toBe(personalDataExportResponse);
   });
 
   it("acts as the actor of app/actor.ts, when the project has one", async () => {

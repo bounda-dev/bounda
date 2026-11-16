@@ -12,6 +12,7 @@ import {
   inboxLedgerContract,
   inspectionContract,
   pendingEvent,
+  personalDataExportContract,
   personalKeyStoreContract,
   personStoreContract,
   readModelRebuildContract,
@@ -37,6 +38,7 @@ const storage = async () => memory().createStorage();
 
 describe("memory adapter", () => {
   eventStoreContract({ create: storage });
+  personalDataExportContract({ create: async () => memory() });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });

@@ -26,6 +26,7 @@ import {
   inboxLedgerContract,
   inspectionContract,
   pendingEvent,
+  personalDataExportContract,
   personalKeyStoreContract,
   personStoreContract,
   readModelRebuildContract,
@@ -128,6 +129,7 @@ const tableNames = (db: DatabaseSync, prefix: string): unknown[] =>
 
 describe("the SQLite stores on node:sqlite", () => {
   eventStoreContract({ create: storage });
+  personalDataExportContract({ create: async () => nodeSqlite().adapter });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
@@ -254,8 +256,10 @@ describe("the person index of the SQLite stores", () => {
       ["c-2", "dead_letters", '["d"]'],
       ["c-3", "dead_letters", '["d"]'],
     ]);
-    expect((await storage.deadLetterStore.listByPerson("c-3")).map(({ id }) => id)).toEqual(["d"]);
-    expect(await storage.deadLetterStore.listByPerson("c-1")).toEqual([]);
+    expect(
+      (await storage.deadLetterStore.listByPerson({ person: "c-3" })).map(({ id }) => id),
+    ).toEqual(["d"]);
+    expect(await storage.deadLetterStore.listByPerson({ person: "c-1" })).toEqual([]);
   });
 
   // The query plan of every statement `work` prepares.
@@ -293,9 +297,9 @@ describe("the person index of the SQLite stores", () => {
     const plans = await plansOf(db, async () => {
       await storage.snapshotStore.forget("c-1");
       await storage.idempotencyStore.forget("c-1");
-      await storage.scheduler.listByPerson("c-1");
+      await storage.scheduler.listByPerson({ person: "c-1" });
       await storage.scheduler.forget("c-1");
-      await storage.deadLetterStore.listByPerson("c-1");
+      await storage.deadLetterStore.listByPerson({ person: "c-1" });
       await storage.deadLetterStore.forget("c-1");
     });
     const lookups = plans.filter(([sql]) => sql.includes("bounda_person_rows"));

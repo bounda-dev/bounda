@@ -50,6 +50,11 @@ export type {
 } from "./person-store.contract.ts";
 export { personStoreContract } from "./person-store.contract.ts";
 export type {
+  PersonalDataExportContractArgs,
+  PersonalDataExportContractFunction,
+} from "./personal-data-export.contract.ts";
+export { personalDataExportContract } from "./personal-data-export.contract.ts";
+export type {
   PersonalKeyStoreContractArgs,
   PersonalKeyStoreContractFunction,
 } from "./personal-key-store.contract.ts";

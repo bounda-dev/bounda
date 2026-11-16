@@ -56,6 +56,37 @@ describe("deferWrites", () => {
     expect(await answerOf("bo", storage)).toEqual(testAnswer("bo"));
   });
 
+  it("pages what it holds back with the live store's records, by key", async () => {
+    const storage = await memory().createStorage();
+    await storage.personalKeys.add("c-1", "default", stored("1"));
+    for (const key of ["a", "b", "c", "d"]) {
+      await storage.idempotencyStore.put(record(key, [held("c-1", "1")]));
+    }
+    const { stores } = deferWrites(storage);
+    await stores.idempotencyStore.put(record("a", []));
+    await stores.idempotencyStore.put(record("b", []));
+    await stores.idempotencyStore.put(record("bb", [held("c-1", "1")]));
+    await stores.idempotencyStore.put(record("e", [held("c-1", "1")]));
+    const keysOf = async (page: { readonly after?: string; readonly limit?: number }) =>
+      (await stores.idempotencyStore.listByPerson({ person: "c-1", now, ...page })).map(
+        ({ key }) => key,
+      );
+    expect(await keysOf({ limit: 2 })).toEqual(["bb", "c"]);
+    expect(await keysOf({ limit: 1 })).toEqual(["bb"]);
+    expect(await keysOf({ after: "bb", limit: 2 })).toEqual(["c", "d"]);
+    expect(await keysOf({ after: "d", limit: 2 })).toEqual(["e"]);
+    expect(await keysOf({})).toEqual(["bb", "c", "d", "e"]);
+    // A short page of the live store ends nothing: what is held back after it follows.
+    expect(await keysOf({ after: "c", limit: 3 })).toEqual(["d", "e"]);
+    expect(await keysOf({ after: "bb", limit: 3 })).toEqual(["c", "d", "e"]);
+    expect(await keysOf({ after: "e" })).toEqual([]);
+    expect(await keysOf({ limit: 0 })).toEqual([]);
+    expect(await keysOf({ limit: 3 })).toEqual(["bb", "c"]);
+    // Held back under a key the live page ends on, it takes that record's place.
+    await stores.idempotencyStore.put(record("d", [held("c-1", "1")]));
+    expect(await keysOf({ after: "bb", limit: 2 })).toEqual(["c", "d"]);
+  });
+
   it("lists and erases what it holds back and what the live store holds, filing it elsewhere on flush", async () => {
     const storage = await memory().createStorage();
     await storage.idempotencyStore.put(record("live", []));
@@ -184,11 +215,11 @@ describe("deferWrites", () => {
       persons,
     });
     await stores.deadLetterStore.add({ ...testDeadLetter("held"), kind: "scheduled", persons });
-    expect((await stores.scheduler.listByPerson("c-1")).map((entry) => entry.dedupeKey)).toEqual([
-      "live",
-    ]);
-    expect((await stores.deadLetterStore.listByPerson("c-1")).map((letter) => letter.id)).toEqual([
-      "live",
-    ]);
+    expect(
+      (await stores.scheduler.listByPerson({ person: "c-1" })).map((entry) => entry.dedupeKey),
+    ).toEqual(["live"]);
+    expect(
+      (await stores.deadLetterStore.listByPerson({ person: "c-1" })).map((letter) => letter.id),
+    ).toEqual(["live"]);
   });
 });

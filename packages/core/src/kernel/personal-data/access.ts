@@ -92,7 +92,7 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
 
 export interface RecordedFunction {
   <Result>(
-    record: (outcome: AccessOutcome) => Promise<void>,
+    record: (outcome: Exclude<AccessOutcome, "cancelled">) => Promise<void>,
     run: () => Promise<Result>,
   ): Promise<Result>;
 }

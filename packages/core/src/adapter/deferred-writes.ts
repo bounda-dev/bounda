@@ -1,6 +1,7 @@
 import type { StorageTransaction } from "./adapter.ts";
 import type { NewDeadLetter, StoredDeadLetter } from "./storage/dead-letter-store.ts";
 import { erased, type IdempotencyRecord } from "./storage/idempotency-store.ts";
+import { pageByKey } from "./storage/person-page.ts";
 import { namesPerson } from "./storage/personal-key-store.ts";
 import type { ScheduleArgs, ScheduledCommand } from "./storage/scheduler.ts";
 
@@ -140,15 +141,28 @@ export const deferWrites: DeferWritesFunction = ({
           records.set(record.key, record);
           recorded.push((target) => target.idempotencyStore.put(args));
         },
-        listByPerson: async (args) =>
-          [
-            ...held().filter(
-              (record) =>
-                new Date(record.expiresAt).getTime() > args.now.getTime() &&
-                namesPerson(record, args.person),
-            ),
-            ...(await idempotencyStore.listByPerson(args)).filter(({ key }) => !records.has(key)),
-          ].sort((a, b) => (a.key < b.key ? -1 : 1)),
+        listByPerson: async function listByPerson(args): Promise<readonly IdempotencyRecord[]> {
+          const live = await idempotencyStore.listByPerson(args);
+          // A full page ends at its last key: what `put` recorded past it belongs to a later page.
+          const until = live.length === args.limit ? live.at(-1)?.key : undefined;
+          const page = pageByKey(
+            [
+              ...held().filter(
+                (record) =>
+                  new Date(record.expiresAt).getTime() > args.now.getTime() &&
+                  namesPerson(record, args.person) &&
+                  (until === undefined || record.key <= until),
+              ),
+              ...live.filter(({ key }) => !records.has(key)),
+            ],
+            ({ key }) => key,
+            args,
+          );
+          // Every record of a full page was replaced here: the next page may still hold some.
+          return page.length === 0 && until !== undefined
+            ? listByPerson({ ...args, after: until })
+            : page;
+        },
         list: async (args) => {
           const now = args.now.getTime();
           const merged = new Map(

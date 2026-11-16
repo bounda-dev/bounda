@@ -12,9 +12,10 @@ import { refuseRestrictedRead } from "../personal-data/refusal.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
 
 /**
- * Thrown by a call to a port that tells a recipient when the person whose data the run read had
- * their stream move since: a forgetting, a restriction, a lift or a redaction the read may not
- * reflect. Nothing was handed to the port; the run is tried again and reads the data as it is now.
+ * Thrown when the person whose data was read had their stream move since: a forgetting, a
+ * restriction, a lift or a redaction the read may not reflect. By a call to a port that tells a
+ * recipient, before anything was handed to it, and by an export, once it has read everything.
+ * Either is tried again and reads the data as it is now.
  */
 export class PersonalDataChangedError extends ConcurrencyError {
   readonly personId: string;

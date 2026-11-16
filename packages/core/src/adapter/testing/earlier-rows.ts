@@ -209,12 +209,12 @@ export const expectEarlierRowsTakenIn: ExpectEarlierRowsTakenInFunction = async 
     errorMessage: '{"quoted": true}',
     payload: SCHEDULED_PAYLOAD,
   });
-  expect((await storage.deadLetterStore.listByPerson("p-2")).map(({ id }) => id)).toEqual([
-    "dl-scheduled",
-  ]);
-  expect((await storage.scheduler.listByPerson("p-2")).map(({ dedupeKey }) => dedupeKey)).toEqual([
-    "s-1",
-  ]);
+  expect(
+    (await storage.deadLetterStore.listByPerson({ person: "p-2" })).map(({ id }) => id),
+  ).toEqual(["dl-scheduled"]);
+  expect(
+    (await storage.scheduler.listByPerson({ person: "p-2" })).map(({ dedupeKey }) => dedupeKey),
+  ).toEqual(["s-1"]);
   expect(await storage.personalKeys.get("p-2", D)).toEqual(testPersonalKey("1"));
   expect(await storage.personalKeys.find("p-2", testPersonalKey("1").fingerprint)).toEqual({
     category: D,

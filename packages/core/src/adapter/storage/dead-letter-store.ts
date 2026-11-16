@@ -1,4 +1,4 @@
-import type { KeyedPerson, SealedValue } from "./personal-key-store.ts";
+import type { KeyedPerson, ListByPersonArgs, SealedValue } from "./personal-key-store.ts";
 
 /**
  * What gave up: a policy or process handler (a delayed policy run included), or a scheduled
@@ -174,10 +174,10 @@ export interface DeadLetterStore {
    */
   reseal(id: string, letter: ResealedDeadLetter): Promise<void>;
   /**
-   * Every letter that names `person`, in `person`, `statePerson` or `persons`, whatever its
-   * status, in the order of `list`.
+   * The letters that name `person`, in `person`, `statePerson` or `persons`, whatever their
+   * status, by `id`.
    */
-  listByPerson(person: string): Promise<readonly StoredDeadLetter[]>;
+  listByPerson(args: ListByPersonArgs): Promise<readonly StoredDeadLetter[]>;
   /**
    * Removes every letter whose `persons` names `person` under a key outside `keep`, or read in
    * the clear, whatever its status, and resolves to them in the order of `list`. Without `keep`,

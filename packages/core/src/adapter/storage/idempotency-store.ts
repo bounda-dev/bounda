@@ -1,5 +1,5 @@
 import type { DispatchResult, RejectedDispatch } from "../../contracts/command.ts";
-import type { KeyedPerson } from "./personal-key-store.ts";
+import type { KeyedPerson, ListByPersonArgs } from "./personal-key-store.ts";
 
 /**
  * What a dispatch answered, as the idempotency store keeps it: the result of a command that was
@@ -52,8 +52,7 @@ export interface PutIdempotencyRecordArgs extends IdempotencyRecord {
   readonly now: Date;
 }
 
-export interface ListIdempotencyRecordsArgs {
-  readonly person: string;
+export interface ListIdempotencyRecordsArgs extends ListByPersonArgs {
   /**
    * The kernel clock's time: a record expired by then is left out.
    */
@@ -109,7 +108,7 @@ export interface IdempotencyStore {
    */
   put(args: PutIdempotencyRecordArgs): Promise<void>;
   /**
-   * The records that have not expired whose `persons` names the person.
+   * The records that have not expired whose `persons` names the person, by `key`.
    */
   listByPerson(args: ListIdempotencyRecordsArgs): Promise<readonly IdempotencyRecord[]>;
   /**

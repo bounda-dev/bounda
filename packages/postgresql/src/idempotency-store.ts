@@ -71,11 +71,11 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
       );
       if (rows.length === 0) throw new IdempotencyKeyTakenError(key);
     },
-    listByPerson: async ({ person, now }) =>
+    listByPerson: async ({ person, now, after, limit }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming("$1")} AND "expires_at" > $2 ORDER BY "key"`,
-          [person, now.toISOString()],
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming("$1")} AND "expires_at" > $2 AND ($3::text IS NULL OR "key" COLLATE "C" > $3::text) ORDER BY "key" COLLATE "C" LIMIT $4`,
+          [person, now.toISOString(), after ?? null, limit ?? null],
         )
       ).map(toRecord),
     list: async ({ now, limit, offset = 0 }) =>

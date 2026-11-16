@@ -223,6 +223,7 @@ export const forgottenApp = <R extends Registry>({
     rebuildReadModel: reject,
     forget: reject,
     exportPersonalData: reject,
+    streamPersonalData: reject,
     recipientsOf: reject,
     restrict: reject,
     unrestrict: reject,

@@ -86,6 +86,9 @@ describe("cloudflareClients", () => {
     await client.forget("c-1");
     await client.forget("c-1", { categories: ["default"] });
     await client.exportPersonalData("c-1");
+    for await (const part of await client.streamPersonalData("c-1")) {
+      throw new Error(`no part was sent, got ${part.kind}`);
+    }
     await client.recipientsOf("c-1");
     await client.restrict("c-2", { ground: "accuracy-contested" });
     await client.unrestrict("c-2", { notice: "given" });
@@ -106,6 +109,7 @@ describe("cloudflareClients", () => {
       ["acme", "forget", "c-1", "read-your-writes", undefined, undefined],
       ["acme", "forget", "c-1", "read-your-writes", undefined, { categories: ["default"] }],
       ["acme", "exportPersonalData", "c-1", undefined],
+      ["acme", "streamPersonalData", "c-1", undefined],
       ["acme", "recipientsOf", "c-1", undefined],
       ["acme", "restrict", "c-2", "read-your-writes", undefined, { ground: "accuracy-contested" }],
       ["acme", "unrestrict", "c-2", "read-your-writes", undefined, { notice: "given" }],

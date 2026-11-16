@@ -45,6 +45,7 @@ import { cloudflareStorageOf, isCloudflareDefinition } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { objectClock } from "./object-clock.ts";
 import { type RpcOutcome, settle } from "./outcome.ts";
+import { partLines } from "./parts.ts";
 import type { DurableSqlStorage } from "./sql-database.ts";
 import { nextWake } from "./wake.ts";
 import { witnessOf } from "./witnesses.ts";
@@ -150,6 +151,14 @@ export interface BoundaObjectMethods {
    * Exports a person's data, as `BoundaClient.exportPersonalData` does.
    */
   exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>>;
+  /**
+   * Streams a person's data, as `BoundaClient.streamPersonalData` does: once the header is read,
+   * the parts, one JSON per line, read only as the stream is; cancelling it stops the export.
+   */
+  streamPersonalData(
+    personId: string,
+    actor?: string,
+  ): Promise<RpcOutcome<ReadableStream<Uint8Array>>>;
   /**
    * The recipients of a person's data, as `BoundaClient.recipientsOf` lists them.
    */
@@ -508,6 +517,13 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>> {
       return settle(() => this.#as(actor).exportPersonalData(personId));
+    }
+
+    streamPersonalData(
+      personId: string,
+      actor?: string,
+    ): Promise<RpcOutcome<ReadableStream<Uint8Array>>> {
+      return settle(async () => partLines(await this.#as(actor).streamPersonalData(personId)));
     }
 
     recipientsOf(

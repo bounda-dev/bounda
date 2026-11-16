@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { IdempotencyKeyTakenError } from "../../contracts/errors.ts";
 import type { Storage } from "../adapter.ts";
-import type { IdempotencyStore } from "../storage/idempotency-store.ts";
+import type { IdempotencyRecord, IdempotencyStore } from "../storage/idempotency-store.ts";
 import type { KeyedPerson, PersonalKeyStore } from "../storage/personal-key-store.ts";
 import { DEFAULT_PERSONAL_CATEGORY as D } from "../storage/personal-key-store.ts";
 import { testKeyedPerson as held, testPersonalKey as stored, testAnswer } from "./fixtures.ts";
@@ -146,6 +146,18 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
         { ...record("k2"), persons: [held("c-1", "1"), held("c-2", "2")] },
       ]);
       expect(await store.listByPerson({ person: "c", now })).toEqual([]);
+      const keysOf = (page: readonly IdempotencyRecord[]) => page.map(({ key }) => key);
+      expect(keysOf(await store.listByPerson({ person: "c-1", now, limit: 2 }))).toEqual([
+        "k0",
+        "k1",
+      ]);
+      expect(
+        keysOf(await store.listByPerson({ person: "c-1", now, after: "k1", limit: 2 })),
+      ).toEqual(["k2"]);
+      expect(await store.listByPerson({ person: "c-1", now, after: "k2" })).toEqual([]);
+      expect(
+        keysOf(await store.listByPerson({ person: "c-1", now: later(1_000), after: "k0" })),
+      ).toEqual(["k2"]);
     });
 
     it("lists every live record by key, a page at a time", async () => {

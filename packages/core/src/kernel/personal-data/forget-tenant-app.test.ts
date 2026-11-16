@@ -283,6 +283,52 @@ describe("forgetTenant", () => {
     expect(await other.app.forgetTenant("default")).toMatchObject({ tenant: "default" });
   });
 
+  it("serves nothing more once a streamed export runs into the forgetting another instance made", async () => {
+    const adapter = memory();
+    let forgetting: TenantForgottenError | null = null;
+    // A key operation that finds the tenant's key gone, as the next page's would.
+    const meeting: Adapter = {
+      ...adapter,
+      createStorage: async () => {
+        const storage = await adapter.createStorage();
+        return {
+          ...storage,
+          deadLetterStore: {
+            ...storage.deadLetterStore,
+            listByPerson: async (args) => {
+              const met = forgetting;
+              forgetting = null;
+              if (met !== null) throw met;
+              return storage.deadLetterStore.listByPerson(args);
+            },
+          },
+        };
+      },
+    };
+    const one = await createTestApp({ registry, adapter });
+    const other = await createTestApp({ registry, adapter: meeting });
+    stops.push(
+      () => one.app.stop(),
+      () => other.app.stop(),
+    );
+    await register(one.app, "c-1");
+    const parts = (await other.app.streamPersonalData("c-1"))[Symbol.asyncIterator]();
+    expect((await parts.next()).value?.kind).toBe("header");
+    const { forgottenAt } = await one.app.forgetTenant("default", {
+      despiteLegalObligations: true,
+    });
+    const met = new TenantForgottenError("default", forgottenAt);
+    forgetting = met;
+    const rest = async () => {
+      for (let next = await parts.next(); next.done !== true; next = await parts.next()) {
+        // Every part read until then is handed out.
+      }
+    };
+    await expect(rest()).rejects.toBe(met);
+    // Within TENANT_CHECK_INTERVAL_MS, and without reading the binding again.
+    await expect(other.app.exportPersonalData("c-1")).rejects.toThrow(TenantForgottenError);
+  });
+
   it("checks again at once on an instance whose clock was set back since it last checked", async () => {
     const adapter = memory();
     const one = await createTestApp({ registry, adapter });

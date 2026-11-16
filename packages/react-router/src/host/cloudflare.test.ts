@@ -8,6 +8,7 @@ import { RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, type FakeStoreNamespace, storeNamespace } from "../cloudflare/test-support.ts";
 import { failure } from "../failure.ts";
+import { personalDataExportResponse } from "../personal-data-export.ts";
 import * as cloudflareHost from "./cloudflare.ts";
 import { createHost } from "./cloudflare.ts";
 
@@ -157,8 +158,9 @@ describe("createHost under the workerd condition", () => {
     );
   });
 
-  it("hands the plugin's module failure too, so that the Worker loads nothing else", () => {
+  it("hands the plugin's module failure and personalDataExportResponse too, so that the Worker loads nothing else", () => {
     expect(cloudflareHost.failure).toBe(failure);
+    expect(cloudflareHost.personalDataExportResponse).toBe(personalDataExportResponse);
   });
 
   it("does nothing on dispose", async () => {

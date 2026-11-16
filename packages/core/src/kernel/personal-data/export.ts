@@ -1,42 +1,8 @@
-import type { ReadModelStorage } from "../../adapter/adapter.ts";
-import type { DeadLetterKind, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type { DeadLetterKind } from "../../adapter/storage/dead-letter-store.ts";
 import type { DispatchOutcome } from "../../adapter/storage/idempotency-store.ts";
-import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
-import type { Clock } from "../../contracts/clock.ts";
-import { retentionEnd } from "../../contracts/duration.ts";
-import type { StoredEvent } from "../../contracts/event.ts";
-import {
-  BOUNDA_AGGREGATE,
-  PERSONAL_DATA_REDACTED_EVENT,
-  type PersonalDataRedactedPayload,
-} from "../../modules/bounda-events.ts";
+import type { ExportAccess } from "../../modules/audit.ts";
 import type { LegalBasis, ProcessingRestriction } from "../../modules/personal-data.ts";
 import type { PersonRecipient } from "../../modules/recipient.ts";
-import type { AggregatesRuntime } from "../aggregate/runtime.ts";
-import { scheduledCommandId } from "../command/pipeline.ts";
-import type { AppStorage } from "../events/app-event-store.ts";
-import type { ProcessesRuntime } from "../process/build-processes.ts";
-import { processOfStream } from "../process/lifecycle.ts";
-import type { SealingSource } from "../projection/runner.ts";
-import type {
-  ReadModelPersonalData,
-  ReadModelRuntime,
-  ReadModelsRuntime,
-} from "../read-model/build-read-models.ts";
-import { openRow } from "../read-model/sealed-rows.ts";
-import { createSealingKeyRing, type SealingKeyRing } from "../read-model/sealing-keys.ts";
-import type { RecipientsRuntime } from "../recipients/build.ts";
-import { recipientsOf } from "../recipients/listing.ts";
-import { isRecord } from "../shared/merge-fields.ts";
-import { openAnswer } from "./answers.ts";
-import { formatRetention, type PersonalCategories } from "./categories.ts";
-import { openCommandPayload, sealedKeys } from "./commands.ts";
-import { openTextWith } from "./errors.ts";
-import { openedUnder } from "./event-store.ts";
-import { fieldCategory, type PersonalMarks } from "./marks.ts";
-import { lifecycleStateOf } from "./process-state.ts";
-import { processingRestrictionsOf } from "./restriction.ts";
-import { checkPersonId } from "./transact.ts";
 
 /**
  * The marked fields of a stored payload, as a handler reads them: a field forgotten is `null`,
@@ -196,6 +162,10 @@ export interface PersonalDataExport {
    */
   readonly exportedAt: string;
   /**
+   * The head of the stream when the export began: `events` holds those up to it.
+   */
+  readonly position: number;
+  /**
    * Every category of the app, the default one included, by name.
    */
   readonly categories: Readonly<Record<string, ExportedCategory>>;
@@ -231,358 +201,131 @@ export interface PersonalDataExport {
   readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
 }
 
-export interface ExportPersonalDataArgs {
-  /**
-   * The app's storage, whose event store opens the fields and upcasts the payloads.
-   */
-  readonly storage: AppStorage;
-  readonly aggregates: AggregatesRuntime;
-  /**
-   * Whose state schemas mark the fields their lifecycle events hold.
-   */
-  readonly processes: Pick<ProcessesRuntime, "byName">;
-  readonly readModels: ReadModelsRuntime;
-  /**
-   * What the read models' values are opened with.
-   */
-  readonly sealing: SealingSource;
-  readonly clock: Clock;
-  readonly batchSize: number;
-  readonly categories: PersonalCategories;
-  /**
-   * The recipients the app declares, which the export lists beside those the store recorded.
-   */
-  readonly recipients: RecipientsRuntime;
-  readonly personId: string;
+/**
+ * What a streamed export hands out before any record: everything of `PersonalDataExport` but its
+ * records, and the read models whose rows follow, in the order they come.
+ */
+export interface PersonalDataExportHeader
+  extends Pick<
+    PersonalDataExport,
+    | "personId"
+    | "exportedAt"
+    | "position"
+    | "categories"
+    | "restrictions"
+    | "redactions"
+    | "recipients"
+  > {
+  readonly readModels: readonly string[];
 }
 
-export interface ExportPersonalDataFunction {
-  (args: ExportPersonalDataArgs): Promise<PersonalDataExport>;
+/**
+ * One piece of a streamed export: the header first, then each record, in the order and the
+ * sections of `PersonalDataExport`: events, scheduled commands, dead letters, subscriber failures,
+ * answers, and the rows of each read model, the header's `readModels` in turn.
+ */
+export type PersonalDataExportPart =
+  | { readonly kind: "header"; readonly header: PersonalDataExportHeader }
+  | { readonly kind: "event"; readonly event: ExportedEvent }
+  | { readonly kind: "scheduledCommand"; readonly scheduledCommand: ExportedScheduledCommand }
+  | { readonly kind: "deadLetter"; readonly deadLetter: ExportedDeadLetter }
+  | { readonly kind: "subscriberFailure"; readonly subscriberFailure: ExportedSubscriberFailure }
+  | { readonly kind: "answer"; readonly answer: ExportedAnswer }
+  | { readonly kind: "row"; readonly readModel: string; readonly row: ExportedRow };
+
+/**
+ * How many records of each kind an export handed out.
+ */
+export type ExportedCounts = ExportAccess["detail"];
+
+export interface CountPartFunction {
+  (counts: ExportedCounts, part: PersonalDataExportPart): ExportedCounts;
 }
 
-interface Marked {
-  readonly data: ExportedData;
-  readonly categories: ExportedCategories;
+export const NO_EXPORTED_RECORDS: ExportedCounts = {
+  events: 0,
+  scheduledCommands: 0,
+  deadLetters: 0,
+  subscriberFailures: 0,
+  answers: 0,
+  readModelRows: 0,
+  recipients: 0,
+};
+
+export const countPart: CountPartFunction = (counts, part) => {
+  switch (part.kind) {
+    case "header":
+      return { ...counts, recipients: part.header.recipients.length };
+    case "event":
+      return { ...counts, events: counts.events + 1 };
+    case "scheduledCommand":
+      return { ...counts, scheduledCommands: counts.scheduledCommands + 1 };
+    case "deadLetter":
+      return { ...counts, deadLetters: counts.deadLetters + 1 };
+    case "subscriberFailure":
+      return { ...counts, subscriberFailures: counts.subscriberFailures + 1 };
+    case "answer":
+      return { ...counts, answers: counts.answers + 1 };
+    case "row":
+      return { ...counts, readModelRows: counts.readModelRows + 1 };
+  }
+};
+
+export interface CollectPersonalDataExportFunction {
+  (parts: AsyncIterable<PersonalDataExportPart>): Promise<PersonalDataExport>;
 }
 
-const markedFields = (marks: PersonalMarks | null, payload: unknown): Marked => {
-  if (marks === null || !isRecord(payload)) return { data: {}, categories: {} };
-  const fields = marks.fields.filter((field) => payload[field] !== undefined);
-  return {
-    data: Object.fromEntries(fields.map((field) => [field, payload[field]])),
-    categories: Object.fromEntries(fields.map((field) => [field, fieldCategory(marks, field)])),
-  };
-};
-
-// Each read model through its own storage, which may be another adapter's. Paged by primary key
-// rather than by offset, so a row a projection writes or deletes meanwhile cannot make another one
-// skip a page or repeat.
-const exportedRows = async (
-  storage: ReadModelStorage,
-  { person, personal, primaryKey }: ReadModelPersonalData,
-  { fields, layout }: Pick<ReadModelRuntime, "fields" | "layout">,
-  keys: SealingKeyRing,
-  personId: string,
-  batchSize: number,
-  restricted: (categories: ExportedCategories) => ExportedRestricted,
-): Promise<readonly ExportedRow[]> => {
-  const rows: ExportedRow[] = [];
-  await keys.fetch([personId]);
-  let page: readonly Record<string, unknown>[];
-  let after: unknown;
-  do {
-    page = await storage.table.findMany({
-      where: {
-        [person]: personId,
-        ...(after === undefined ? {} : { [primaryKey]: { gt: after } }),
-      },
-      orderBy: { field: primaryKey, direction: "asc" },
-      limit: batchSize,
-    });
-    for (const stored of page) {
-      // Every value opened, what a forgetting kept included: the export marks it restricted.
-      const { row, retainedFields } = await openRow({
-        context: { layout, keys },
-        stored,
-        hideRetained: false,
-      });
-      const held = personal.filter((field) => row[field] !== undefined);
-      const categories = Object.fromEntries(
-        held.map((field) => [field, fields[field]?.category ?? DEFAULT_PERSONAL_CATEGORY]),
-      );
-      rows.push({
-        key: row[primaryKey],
-        data: Object.fromEntries(held.map((field) => [field, row[field]])),
-        categories,
-        restricted: [
-          ...new Set([
-            ...restricted(categories),
-            ...retainedFields.filter((field) => held.includes(field)),
-          ]),
-        ],
-      });
-    }
-    after = page.at(-1)?.[primaryKey];
-    // A person field that is the primary key names one row at most, and a range on it would
-    // take the place of the person's own value.
-  } while (page.length === batchSize && person !== primaryKey);
-  return rows;
-};
-
-// What a forgetting kept of a category goes once its retention has run from the activity it kept.
-const categoriesOf = async (
-  storage: AppStorage,
-  categories: PersonalCategories,
-  personId: string,
-): Promise<Readonly<Record<string, ExportedCategory>>> => {
-  const held = await storage.personalKeys.list(personId);
-  return Object.fromEntries(
-    categories.all.map(({ name, basis, retention }) => {
-      const kept =
-        retention === null
-          ? []
-          : held
-              .filter(
-                ({ category, retainedSince, lastActiveAt }) =>
-                  category === name && retainedSince !== null && lastActiveAt !== null,
-              )
-              .map(({ lastActiveAt }) => retentionEnd(Date.parse(lastActiveAt ?? ""), retention));
-      return [
-        name,
-        {
-          basis,
-          retention: retention === null ? null : formatRetention(retention),
-          restrictedUntil: kept.length === 0 ? null : new Date(Math.max(...kept)).toISOString(),
-        },
-      ];
-    }),
-  );
-};
-
-// Nothing is locked: the export holds what each store held as it was read.
-export const exportPersonalData: ExportPersonalDataFunction = async ({
-  storage,
-  aggregates,
-  processes,
-  readModels,
-  sealing,
-  clock,
-  batchSize,
-  categories,
-  recipients,
-  personId,
-}) => {
-  checkPersonId(personId, "exportPersonalData");
-  const exportedAt = clock.now().toISOString();
-  const restrictions = processingRestrictionsOf(await storage.persons.restrictions(personId));
-  const exportedCategories = await categoriesOf(storage, categories, personId);
-  const whole = restrictions.some((restriction) => restriction.categories === null);
-  const requested = new Set<string>(
-    restrictions.flatMap((restriction) => restriction.categories ?? []),
-  );
-  const kept = new Set<string>(
-    Object.entries(exportedCategories)
-      .filter(([, category]) => category.restrictedUntil !== null)
-      .map(([name]) => name),
-  );
-  const fieldsIn = (of: ExportedCategories, covers: (category: string) => boolean) =>
-    Object.entries(of)
-      .filter(([, category]) => whole || covers(category))
-      .map(([field]) => field);
-  // What a restriction the person asked for covers.
-  const requestedFields = (of: ExportedCategories): ExportedRestricted =>
-    fieldsIn(of, (category) => requested.has(category));
-  // And what a forgetting kept, by category, for a record that does not say its key.
-  const restrictedFields = (of: ExportedCategories): ExportedRestricted =>
-    fieldsIn(of, (category) => requested.has(category) || kept.has(category));
-  // An event says the keys it was opened under: what a forgetting kept is restricted only when one
-  // of them is a key it kept, so what the person wrote after they came back is not.
-  const eventRestricted = (event: StoredEvent, of: ExportedCategories): ExportedRestricted =>
-    openedUnder(event).some(({ person, retained }) => person === personId && retained === true)
-      ? restrictedFields(of)
-      : requestedFields(of);
-  const textRestricted: ExportedRestricted =
-    restrictions.length > 0 ? ["errorMessage", "errorStack"] : [];
-  // Independent of the store's records, and often on another adapter, so read meanwhile; a
-  // failure of the store's reads first leaves this one handled, the export rejecting with that.
-  const rows = Promise.all(
-    Object.values(readModels.byName).flatMap(
-      ({ name, storage: rowsStorage, personalData, fields, layout }) =>
-        personalData === null
-          ? []
-          : [
-              exportedRows(
-                rowsStorage,
-                personalData,
-                { fields, layout },
-                createSealingKeyRing({ keys: sealing.keys, fetching: true }),
-                personId,
-                batchSize,
-                requestedFields,
-              ).then((exported) => [name, exported] as const),
-            ],
-    ),
-  );
-  rows.catch(() => undefined);
-  // A process's lifecycle event holds the fields its state marks, in that state.
-  const eventData = (event: StoredEvent): Marked => {
-    const process = processOfStream(event.aggregateType);
-    if (process === null) {
-      const marks = aggregates.byName[event.aggregateType]?.eventsByType[event.type]?.personal;
-      return markedFields(marks ?? null, event.payload);
-    }
-    return markedFields(
-      processes.byName[process]?.personal ?? null,
-      lifecycleStateOf(event.payload),
-    );
-  };
-  const commandMarks = (type: string): PersonalMarks | null =>
-    aggregates.commandsByType[type]?.command.personal ?? null;
-  // Each person's key read once for the whole export.
-  const keyOf = sealedKeys(storage.personalKeys);
-  const openText = openTextWith(keyOf);
-  const openedData = async (type: string, payload: unknown): Promise<Marked> => {
-    const opened = await openCommandPayload({ payload, keys: storage.personalKeys, keyOf });
-    return markedFields(commandMarks(type), opened.payload);
-  };
-  // A letter's error text is the person's only when it is sealed under them: one listed for the
-  // persons its payload names keeps whatever its own `person` holds.
-  const exportedLetter = async (letter: StoredDeadLetter): Promise<ExportedDeadLetter> => {
-    const theirs = letter.person === personId || letter.statePerson === personId;
-    const data = await openedData(letter.eventType, letter.payload);
-    return {
-      id: letter.id,
-      kind: letter.kind,
-      handler: letter.handler,
-      ...(theirs ? { errorMessage: await openText(letter.errorMessage) } : {}),
-      ...(theirs && letter.errorStack !== undefined
-        ? { errorStack: await openText(letter.errorStack) }
-        : {}),
-      ...data,
-      restricted: [
-        ...restrictedFields(data.categories),
-        ...(theirs
-          ? textRestricted.filter(
-              (field) => field === "errorMessage" || letter.errorStack !== undefined,
-            )
-          : []),
-      ],
-    };
-  };
-
-  const events: Omit<ExportedEvent, "redacted">[] = [];
-  const redactions: ExportedRedaction[] = [];
-  let afterPosition = 0;
-  let page: readonly StoredEvent[];
-  do {
-    page = await storage.eventStore.readByPerson({
-      person: personId,
-      afterPosition,
-      limit: batchSize,
-    });
-    for (const event of page) {
-      const data = eventData(event);
-      events.push({
-        id: event.id,
-        type: event.type,
-        aggregateType: event.aggregateType,
-        aggregateId: event.aggregateId,
-        version: event.version,
-        position: event.position,
-        timestamp: event.timestamp,
-        ...data,
-        restricted: eventRestricted(event, data.categories),
-      });
-      if (event.aggregateType === BOUNDA_AGGREGATE && event.type === PERSONAL_DATA_REDACTED_EVENT) {
-        const { events: reached } = event.payload as PersonalDataRedactedPayload;
-        redactions.push({
-          eventId: event.id,
-          at: event.timestamp,
-          events: reached.map(({ id, fields }) => ({ id, fields })),
-        });
-      }
-      afterPosition = event.position;
-    }
-  } while (page.length === batchSize);
-
-  const scheduledCommands = await Promise.all(
-    (await storage.scheduler.listByPerson(personId)).map(async (entry) => {
-      const data = await openedData(entry.command.type, entry.command.payload);
-      return {
-        commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
-        type: entry.command.type,
-        executeAt: entry.executeAt,
-        ...(entry.scheduledAt === undefined ? {} : { scheduledAt: entry.scheduledAt }),
-        ...data,
-        restricted: restrictedFields(data.categories),
-      };
-    }),
-  );
-  const deadLetters = await Promise.all(
-    (await storage.deadLetterStore.listByPerson(personId)).map(exportedLetter),
-  );
-  // One row per subscriber: few enough to read whole.
-  const subscriberFailures = await Promise.all(
-    (await storage.subscriberFailures.list())
-      .filter((failure) => failure.person === personId)
-      .map(async (failure) => ({
-        subscriber: failure.subscriber,
-        eventId: failure.eventId,
-        eventType: failure.eventType,
-        errorMessage: await openText(failure.errorMessage),
-        ...(failure.errorStack === undefined
-          ? {}
-          : { errorStack: await openText(failure.errorStack) }),
-        restricted: textRestricted.filter(
-          (field) => field === "errorMessage" || failure.errorStack !== undefined,
-        ),
-      })),
-  );
-  // An answer a key it is sealed under no longer opens holds nothing to hand out. One kept before
-  // keys were filed by their HMAC holds no key of its own, and is filed under it in the clear.
+export const collectPersonalDataExport: CollectPersonalDataExportFunction = async (parts) => {
+  let header: PersonalDataExportHeader | undefined;
+  const events: ExportedEvent[] = [];
+  const scheduledCommands: ExportedScheduledCommand[] = [];
+  const deadLetters: ExportedDeadLetter[] = [];
+  const subscriberFailures: ExportedSubscriberFailure[] = [];
   const answers: ExportedAnswer[] = [];
-  for (const record of await storage.idempotencyStore.listByPerson({
-    person: personId,
-    now: clock.now(),
-  })) {
-    const remembered =
-      record.answer === null
-        ? null
-        : await openAnswer({
-            keys: storage.personalKeys,
-            atRest: storage.atRest,
-            answer: record.answer,
-          });
-    if (remembered === null) continue;
-    answers.push({
-      idempotencyKey: remembered.key ?? record.key,
-      expiresAt: record.expiresAt,
-      outcome: remembered.outcome,
-      restricted: restrictions.length > 0 ? ["outcome"] : [],
-    });
-  }
-  answers.sort((a, b) => (a.idempotencyKey < b.idempotencyKey ? -1 : 1));
-  const redactedOf = new Map<string, Set<string>>();
-  for (const redaction of redactions) {
-    for (const { id, fields } of redaction.events) {
-      redactedOf.set(id, new Set([...(redactedOf.get(id) ?? []), ...fields]));
+  const rows = new Map<string, ExportedRow[]>();
+  for await (const part of parts) {
+    switch (part.kind) {
+      case "header":
+        if (header !== undefined) throw new Error("A personal data export has a second header");
+        header = part.header;
+        for (const name of part.header.readModels) rows.set(name, []);
+        break;
+      case "event":
+        events.push(part.event);
+        break;
+      case "scheduledCommand":
+        scheduledCommands.push(part.scheduledCommand);
+        break;
+      case "deadLetter":
+        deadLetters.push(part.deadLetter);
+        break;
+      case "subscriberFailure":
+        subscriberFailures.push(part.subscriberFailure);
+        break;
+      case "answer":
+        answers.push(part.answer);
+        break;
+      case "row": {
+        const of = rows.get(part.readModel);
+        if (of === undefined) {
+          throw new Error(
+            `A personal data export has a row of ${part.readModel}, which its header does not name`,
+          );
+        }
+        of.push(part.row);
+        break;
+      }
     }
   }
+  if (header === undefined) throw new Error("A personal data export ended before its header");
+  const { readModels: _names, ...rest } = header;
   return {
-    personId,
-    exportedAt,
-    categories: exportedCategories,
-    restrictions,
-    redactions,
-    recipients: await recipientsOf({ storage, recipients, categories, personId }),
-    events: events.map((event) => ({
-      ...event,
-      redacted: [...(redactedOf.get(event.id) ?? [])].filter((field) => field in event.data),
-    })),
+    ...rest,
+    events,
     scheduledCommands,
     deadLetters,
     subscriberFailures,
     answers,
-    readModels: Object.fromEntries(await rows),
+    readModels: Object.fromEntries(rows),
   };
 };

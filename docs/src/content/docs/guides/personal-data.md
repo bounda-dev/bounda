@@ -486,12 +486,14 @@ const exported = await app.exportPersonalData("c-42");
 
 `exportPersonalData` is on every `BoundaClient` too: the app, the Durable Object through
 `connect`, the `bounda` context of React Router. It answers what the store holds that names the
-person, for them to take away, as the right of access and the right to portability ask:
+person, for them to take away, as the right of access and the right to portability ask. It holds
+the whole export in memory: for a person with a long history, [stream it](#a-long-history).
 
 ```ts
 {
   personId: "c-42",
   exportedAt: "2026-03-01T10:00:00.000Z",
+  position: 812,
   categories: {
     default: { basis: null, retention: "730d", restrictedUntil: null },
     profile: { basis: "contract", retention: "30d", restrictedUntil: null },
@@ -576,8 +578,9 @@ one disclosed data of theirs, presumed to hold it, or declared for a category of
 categories concerned and their basis, its country and the safeguard of a transfer out of the
 European Economic Area, as article 15(1)(c) asks.
 
-`events` are every event that names the person, by its field marked `person` or its aggregate's
-id, in position order, the events of their own stream `bounda:<personId>` included; `data` holds
+`position` is the head of the stream when the export began. `events` are every event up to it that
+names the person, by its field marked `person` or its aggregate's id, in position order, the events
+of their own stream `bounda:<personId>` included; `data` holds
 the fields marked `personal` of that event, opened, and nothing else of its payload, so an event
 without such fields has an empty `data`. A process's lifecycle event names the person [its state
 names](#in-a-processs-state), and its `data` holds the personal fields of that state. `scheduledCommands` are the commands waiting to run
@@ -589,13 +592,26 @@ scheduled commands whose payload holds their fields, with its `data`. `subscribe
 last failures of the subscribers on an event that names them, kept with their error text
 encrypted with their keys (see [observability](/reference/observability/#error-text)), opened.
 `answers` are what the commands dispatched with an idempotency key that concern them answered, as
-long as each is [remembered](#remembered-answers) and opens, opened. After `forget`, the person's events and letters are still theirs, and every field and error text
+long as each is [remembered](#remembered-answers) and opens, opened, in the order the store files
+them. Scheduled commands come in the order of the scheduler's keys, and dead letters in the order
+of their ids. After `forget`, the person's events and letters are still theirs, and every field and error text
 reads as `null`, as a handler reads it. `readModels` has an entry for every read model with a field marked
 [`.person()`](#personal-data-in-read-models): the rows whose person field holds the id, each
 with its primary key as `key`, so the person can tell them apart, and its fields marked
 `.personal()` as `data`, read through the read model's own storage, which may be another
 adapter's, in pages by primary key, so a projection that writes a row meanwhile cannot make
 another skip or repeat. An empty id is refused with `ValidationError`.
+
+What the export says of the person holds for all of it: their restrictions, their redactions and
+what a forgetting left. The events stop at `position`, and every other store is read page by page
+as it stands when its turn comes, each page by a key no write changes, so nothing is skipped or
+handed out twice. When the export has read everything, it reads the person's own stream
+`bounda:<personId>` again: had they been forgotten, restricted, lifted or redacted since it began,
+the marks it read could be wrong. `exportPersonalData`, which has handed nothing out yet, reads
+them again, up to `runtime.commands.concurrencyRetries` more times, as a command does, each
+reading recorded in the access log; after those it rejects with `ConcurrencyError`
+(`CONCURRENCY_CONFLICT`), as a [streamed export](#a-long-history) does at once, and an export
+started again reads the person as they are then.
 
 Only what is marked comes out, and that is the limit to know: a field left unmarked is not
 personal data to Bounda, so the rest of `OrderPlaced` is the order's and stays out; a read model
@@ -604,9 +620,56 @@ is at the mailing provider or the search index, which `recipients` names. An app
 more than their marked fields takes this export and adds what it knows from its ports. An event stored before its
 type marked its fields is found once the [backfill](#marking-a-field-later) has sealed it.
 
+### A long history
+
+`streamPersonalData` hands out the same export a part at a time, as it reads it, a page of records
+at most held at once, whatever the person's history: years of events, many streams, large read
+models, on a request handler or a Durable Object alike. It is on every `BoundaClient`.
+
+```ts
+for await (const part of await app.streamPersonalData("c-42")) {
+  if (part.kind === "header") console.log(part.header.position);
+  if (part.kind === "event") console.log(part.event.type);
+}
+```
+
+The first part is the `header`, everything of the export but its records, and `readModels`, the
+read models whose rows follow. Then come the records, a part each, in the order and the sections
+of the export: `event`, `scheduledCommand`, `deadLetter`, `subscriberFailure`, `answer`, and `row`,
+with its `readModel`, the read models in the header's order. The promise resolves once the header
+is read, so a refusal, an empty id or a [forgotten tenant](#forgetting-a-tenant), rejects before
+anything is handed out; a later one, the `ConcurrencyError` of a person changed meanwhile, rejects
+the reading. A page is read only when the reader asks for the parts that follow, so a slow reader
+holds nothing more.
+
+`personalDataExportJson(parts)` writes the parts as the JSON document `exportPersonalData`
+answers, the text `JSON.stringify(exported, null, 2)` writes of it, as a `ReadableStream` of
+bytes: a body for a response or a file. It reads a part only when the stream is read, and
+cancelling the stream closes the parts. When a part rejects, the stream errors where the document
+was cut, so whoever reads it finds it is not valid JSON, never a shorter export that looks whole.
+
+```ts
+import { personalDataExportJson } from "@bounda-dev/core";
+
+const body = personalDataExportJson(await app.as("dpo").streamPersonalData("c-42"));
+await pipeline(Readable.fromWeb(body), createWriteStream("c-42.json", { mode: 0o600 }));
+```
+
+The [access log](#who-opened-what) records a streamed export once its reading ends, with how many
+records of each kind it handed out by then: `ok` at the end, `failed` when a part rejected, and
+`cancelled` when the reader stopped first, as `for await` does on `break` and a response body does
+when the client goes away. A reader that neither reads to the end nor stops it, a `for await` left
+hanging or an iterator dropped, leaves it unrecorded, so read it through or stop it.
+
+Every host streams it: the Durable Object through `connect`, as a stream of the parts over RPC;
+React Router with [`personalDataExportResponse`](/guides/react-router/#exporting-a-persons-data),
+a response a loader returns; and the command line with
+[`bounda personal-data export`](/reference/cli/#bounda-personal-data-export-and-bounda-forget-person).
+
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
-carries, and a dead letter by its `person`, its `statePerson` or its `persons`. `forget` and the export find those
+carries, and a dead letter by its `person`, its `statePerson` or its `persons`, every one read a
+page at a time with `listByPerson`. `forget` and the export find those
 rows, and the snapshots and remembered answers `forget` removes or erases, through an index, never by
 reading every row: PostgreSQL indexes the `persons` column itself, and SQLite, the Durable Object
 included, keeps a table of which row names which person, written and removed by the same statement
@@ -905,7 +968,7 @@ person's data in the clear records it, once per call:
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData` | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients }`, how many of each; `null` when it failed |
+| `exportPersonalData`, and `streamPersonalData` once its reading ends | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients }`, how many of each it read, before it failed or was cancelled for one that did |
 | `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
 | `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
 | `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
@@ -924,8 +987,9 @@ restricted data on a basis it named, `includeRestricted` or `processRestricted` 
 nobody; `persons` names each person once, in the order read, and at most `MAX_ACCESS_PERSONS` of
 them, with `personCount` saying how many there were in all, so a query that lists every customer
 gives a bounded record; `at` is the app's clock; `outcome` is `ok` when the call handed its result
-out and `failed` when it rejected after reading, since its error may quote what it read, as a
-handler's `cannot reach ana@example.com` does.
+out, `failed` when it rejected after reading, since its error may quote what it read, as a
+handler's `cannot reach ana@example.com` does, and `cancelled` when the reader of a
+[streamed export](#a-long-history) stopped before its end, having been handed part of it.
 
 A query is matched to its read model by the module's place, and to its persons by the rows it
 read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a

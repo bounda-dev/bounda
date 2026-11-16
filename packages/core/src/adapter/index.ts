@@ -111,6 +111,7 @@ export type {
   DueKey,
   HeldPersonalKey,
   KeyedPerson,
+  ListByPersonArgs,
   ListDueArgs,
   ListWrappedUnderArgs,
   NextDueHoldEndArgs,

@@ -210,6 +210,9 @@ describe("telemetry", () => {
     await user.unrestrict("p-2", { notice: "given" });
     await expect(user.redact("p-2", { events: [] })).rejects.toThrow();
     await user.exportPersonalData("p-2");
+    for await (const _part of await user.streamPersonalData("p-2")) {
+      // Read to its end.
+    }
     await user.recipientsOf("p-2");
     await user.deadLetters.list();
     // The bound client's type offers neither, as an operator asks those of the app.
@@ -260,6 +263,7 @@ describe("telemetry", () => {
         "restrict",
         "unrestrict",
         "exportPersonalData",
+        "streamPersonalData",
         "recipientsOf",
         "deadLetters.list",
         "deadLetters.count",
