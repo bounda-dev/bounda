@@ -51,7 +51,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.email()) }),
             handler: ({
               command,
               events,
@@ -98,15 +99,16 @@ const registry = {
     notification: {
       events: {
         notified: {
-          payload: ({ z }: EventPayloadArgs) => z.object({ customerId: z.string() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ customerId: notPersonal(z.string()) }),
           evolve: () => ({}),
         },
       },
       commands: {
         notify: {
           module: {
-            payload: ({ z, person }: CommandPayloadArgs) =>
-              z.object({ notificationId: z.string(), customerId: person(z.string()) }),
+            payload: ({ z, person, notPersonal }: CommandPayloadArgs) =>
+              z.object({ notificationId: notPersonal(z.string()), customerId: person(z.string()) }),
             handler: async ({
               command,
               events,

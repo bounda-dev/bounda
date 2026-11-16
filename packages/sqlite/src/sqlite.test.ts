@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type CommandPayloadArgs,
   ConfigurationError,
   type FieldsArgs,
   fieldBuilder as f,
@@ -481,7 +482,7 @@ describe("sqlite adapter on a file", () => {
         logs.push([message, fields]);
       },
     };
-    const v1 = { id: f.string().primaryKey(), total: f.number() };
+    const v1 = { id: f.string().primaryKey().notPersonal(), total: f.number() };
     const first = await sqlite({ path }).createReadModel<{ id: string; total: number }>({
       name: "orders",
       fields: v1,
@@ -491,7 +492,7 @@ describe("sqlite adapter on a file", () => {
     await first.close();
     expect(logs).toEqual([]);
 
-    const v2 = { ...v1, note: f.string().optional(), paid: f.boolean().index() };
+    const v2 = { ...v1, note: f.string().optional().notPersonal(), paid: f.boolean().index() };
     const second = await sqlite({ path }).createReadModel<{
       id: string;
       total: number;
@@ -521,14 +522,14 @@ describe("sqlite adapter on a file", () => {
     await expect(
       sqlite({ path }).createReadModel({
         name: "orders",
-        fields: { id: f.string().primaryKey() },
+        fields: { id: f.string().primaryKey().notPersonal() },
         logger: silentLogger,
       }),
     ).rejects.toBeInstanceOf(ConfigurationError);
     await expect(
       sqlite({ path }).createReadModel({
         name: "orders",
-        fields: { ...v2, total: f.string() },
+        fields: { ...v2, total: f.string().notPersonal() },
         logger: silentLogger,
       }),
     ).rejects.toThrow(/Changing a field's type needs a rebuild: run `bounda rebuild orders`/);
@@ -656,7 +657,8 @@ const registry = {
       commands: {
         placeOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), total: z.number() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()), total: z.number() }),
             handler: ({
               command,
               events,
@@ -668,7 +670,8 @@ const registry = {
         },
         payOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
               events.orderPaid?.(),
             ],
@@ -697,8 +700,8 @@ const registry = {
     orderSummary: {
       view: {
         fields: ({ f: fields }: FieldsArgs) => ({
-          orderId: fields.string().primaryKey(),
-          status: fields.string(),
+          orderId: fields.string().primaryKey().notPersonal(),
+          status: fields.string().notPersonal(),
           total: fields.number(),
         }),
       },

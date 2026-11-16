@@ -12,7 +12,7 @@ import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { type BoundaApp, createApp } from "../app.ts";
@@ -36,15 +36,16 @@ const registry = {
           evolve: () => ({}),
         },
         customerNoted: {
-          payload: ({ z }: EventPayloadArgs) => z.object({ note: z.string() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ note: notPersonal(z.string()) }),
           evolve: () => ({}),
         },
       },
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -56,7 +57,8 @@ const registry = {
         },
         noteCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), note: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), note: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -76,7 +78,7 @@ const registry = {
       view: {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
-          email: f.string(),
+          email: f.string().notPersonal(),
         }),
       },
       projections: {
@@ -144,8 +146,8 @@ const categorized = {
         ...customer?.commands,
         subscribeCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), topic: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), topic: notPersonal(z.string()) }),
             handler: ({
               command,
               events,

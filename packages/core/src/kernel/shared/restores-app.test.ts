@@ -11,7 +11,7 @@ import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataForgottenPayload } from "../../modules/bounda-events.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { createEphemeralKeys } from "../personal-data/ephemeral-keys.ts";
@@ -37,7 +37,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.email()) }),
             handler: ({
               command,
               events,

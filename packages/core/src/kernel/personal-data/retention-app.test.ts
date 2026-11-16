@@ -3,7 +3,7 @@ import type { Config } from "../../config/types.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataForgottenPayload } from "../../modules/bounda-events.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ReactionForgetFunction } from "../../modules/policy.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -26,7 +26,8 @@ const emits =
 
 const customerCommand = (event: string) => ({
   module: {
-    payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+    payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+      z.object({ customerId: notPersonal(z.string()) }),
     handler: emits(event),
   },
 });
@@ -115,7 +116,8 @@ const categorized = {
       commands: {
         touchCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Record<string, (payload?: unknown) => unknown> }) => [
               events.customerTouched?.({ note: "kept", nickname: "Al" }),
             ],

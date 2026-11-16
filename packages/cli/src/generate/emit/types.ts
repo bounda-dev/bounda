@@ -75,6 +75,13 @@ export interface ForgettingTypeNameFunction {
 export const forgettingTypeName: ForgettingTypeNameFunction = (readModelName) =>
   `${typeNameOf(readModelName)}Forgetting`;
 
+export interface ClassificationTypeNameFunction {
+  (moduleName: string): string;
+}
+
+export const classificationTypeName: ClassificationTypeNameFunction = (moduleName) =>
+  `${typeNameOf(moduleName)}Classification`;
+
 export interface RecipientsTypeNameFunction {
   (moduleName: string): string;
 }
@@ -187,6 +194,34 @@ const emitRecipients = (owner: PortsOwner, path: string): readonly string[] => {
       "];",
     ].join("\n"),
   ];
+};
+
+/**
+ * One check per event, command and process state of the aggregate, failing to compile while a
+ * field that can hold text is marked neither `personal`, `person` nor `notPersonal`.
+ */
+const emitAggregateClassification = (aggregate: AggregateModel, path: string): string => {
+  const checks = [
+    ...aggregate.events.map(
+      (event) =>
+        `core.ClassifiesPayload<"${aggregate.name}.${event.typeName}", ${typeofImport(path, event.path)}>`,
+    ),
+    ...aggregate.commands.map(
+      (command) =>
+        `core.ClassifiesPayload<"${aggregate.name}.${command.key}", ${typeofImport(path, command.path)}>`,
+    ),
+    ...aggregate.processes.map(
+      (process) =>
+        `core.ClassifiesState<"${aggregate.name}.${process.key}", ${typeofImport(path, process.path)}>`,
+    ),
+  ];
+  return checks.length === 0
+    ? `export type ${classificationTypeName(aggregate.name)} = [];`
+    : [
+        `export type ${classificationTypeName(aggregate.name)} = [`,
+        ...checks.map((check) => `  ${EXPECT_TYPE_NAME}<${check}>,`),
+        "];",
+      ].join("\n");
 };
 
 const implementationNames = (names: readonly string[]): string =>
@@ -335,6 +370,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
         emitState(aggregate, path, inferredStates[aggregate.name]),
         emitEvents(aggregate, path),
         emitPorts(aggregate, path),
+        emitAggregateClassification(aggregate, path),
         ...emitRecipients(aggregate, path),
       ].join("\n"),
     );
@@ -358,9 +394,9 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
   sections.push(emitMap(COMMANDS_TYPE_NAME, "CommandsFacadeOf", commandModules));
   sections.push(emitMap(REACTION_COMMANDS_TYPE_NAME, "ReactionCommandsFacadeOf", commandModules));
   if (
+    model.aggregates.length > 0 ||
     model.readModels.length > 0 ||
-    model.personalData !== undefined ||
-    portsOwners(model).some((owner) => owner.ports.some((port) => port.recipient))
+    model.personalData !== undefined
   ) {
     sections.push(`type ${EXPECT_TYPE_NAME}<Check extends true> = Check;`);
   }
@@ -372,6 +408,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
         `export type ${fieldTypesTypeName(readModel.name)} = core.FieldTypesOf<${typeofImport(path, readModel.view.path)}>;`,
         emitPorts(readModel, path),
         emitForgetting(model, readModel, path),
+        `export type ${classificationTypeName(readModel.name)} = ${EXPECT_TYPE_NAME}<core.ClassifiesColumns<"${readModel.name}", ${typeofImport(path, readModel.view.path)}>>;`,
         ...emitRecipients(readModel, path),
       ].join("\n"),
     );

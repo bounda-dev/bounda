@@ -3,7 +3,7 @@ import type { ClaimedCommand } from "../../adapter/storage/scheduler.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import type { RejectFunction } from "../../modules/command.ts";
-import type { PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { createReactiveHarness } from "../reactive-harness.ts";
@@ -1011,15 +1011,19 @@ const noteRegistry = {
     note: {
       events: {
         noteWritten: {
-          payload: ({ z }: PayloadArgs) => z.object({ text: z.string() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ text: notPersonal(z.string()) }),
           evolve: ({ state }: { state: object }) => state,
         },
       },
       commands: {
         writeNote: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ noteId: z.string(), text: z.string().transform((text) => `${text}!`) }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                noteId: notPersonal(z.string()),
+                text: notPersonal(z.string().transform((text) => `${text}!`)),
+              }),
             rejections: () => ({ Closed: "Notes are closed" }),
             handler: ({
               command,
@@ -1039,14 +1043,15 @@ const noteRegistry = {
         },
         pinNote: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ noteId: z.string(), at: z.date() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ noteId: notPersonal(z.string()), at: z.date() }),
             handler: () => [],
           },
         },
         postponeNote: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ noteId: z.string(), until: z.coerce.date() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ noteId: notPersonal(z.string()), until: z.coerce.date() }),
             handler: ({ command }: { command: { payload: unknown } }) => {
               receivedNotes.push(command.payload);
               return [];

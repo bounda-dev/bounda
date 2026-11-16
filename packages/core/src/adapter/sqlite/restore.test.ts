@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
 import { createEphemeralKeys } from "../../kernel/personal-data/ephemeral-keys.ts";
 import { createRecordingLogger } from "../../kernel/test-support.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { Adapter } from "../adapter.ts";
 import { restoreContract } from "../testing/restore.contract.ts";
@@ -85,7 +85,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), name: notPersonal(z.string()) }),
             handler: ({
               command,
               events,

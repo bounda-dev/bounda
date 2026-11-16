@@ -1,5 +1,6 @@
 /// <reference lib="esnext.disposable" />
 import {
+  type CommandPayloadArgs,
   type CreateArgs,
   DomainError,
   type EventPayloadArgs,
@@ -67,19 +68,20 @@ export const registry = {
           evolve: ({ state }: { state: OrderState }) => ({ ...state, status: "archived" as const }),
         },
         orderRemarked: {
-          payload: ({ z }: EventPayloadArgs) => z.object({ remark: z.string() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ remark: notPersonal(z.string()) }),
           evolve: ({ state }: { state: OrderState }) => state,
         },
       },
       commands: {
         placeOrder: {
           module: {
-            payload: ({ z, person }: EventPayloadArgs) =>
+            payload: ({ z, person, notPersonal }: EventPayloadArgs) =>
               z.object({
-                orderId: z.string(),
+                orderId: notPersonal(z.string()),
                 total: z.number(),
                 customer: person(z.string()),
-                note: z.string().optional(),
+                note: notPersonal(z.string().optional()),
               }),
             rejections: () => ({ AlreadyPlaced: "Order already placed" }),
             handler: ({
@@ -103,7 +105,8 @@ export const registry = {
         },
         payOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             rejections: () => ({ NotPlaced: "Only placed orders can be paid" }),
             handler: ({
               state,
@@ -121,13 +124,15 @@ export const registry = {
         },
         archiveOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Events }) => [events.orderArchived?.()],
           },
         },
         remarkOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), remark: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()), remark: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -139,7 +144,8 @@ export const registry = {
         },
         noteOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             handler: () => {
               throw new DomainError({
                 code: "Elsewhere",
@@ -174,10 +180,10 @@ export const registry = {
     orders: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          orderId: f.string().primaryKey(),
-          status: f.string(),
+          orderId: f.string().primaryKey().notPersonal(),
+          status: f.string().notPersonal(),
           total: f.number(),
-          note: f.string().optional(),
+          note: f.string().optional().notPersonal(),
         }),
         // Wrongly: it keeps the note in the clear, which a test of redaction catches.
         holdsPersonalData: false,
@@ -324,7 +330,7 @@ export const slicedRegistry = {
       view: {
         fields: ({ f }: FieldsArgs) => ({
           customer: f.string().primaryKey().person(),
-          lastOrderId: f.string(),
+          lastOrderId: f.string().notPersonal(),
         }),
       },
       projections: {

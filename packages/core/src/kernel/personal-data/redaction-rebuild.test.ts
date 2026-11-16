@@ -5,7 +5,7 @@ import type { Table } from "../../adapter/storage/table.ts";
 import type { createFixedClock } from "../../contracts/clock.ts";
 import type { LogFields, Logger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { RedactedFields } from "../../modules/redaction.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -29,21 +29,25 @@ const registry = {
       state: { initialState: {} },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ email: personal(z.string()), plan: z.string() }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ email: personal(z.string()), plan: notPersonal(z.string()) }),
           evolve: ({ state }: { state: object }) => state,
         },
         noteAdded: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ noteId: z.string(), text: personal(z.string()) }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ noteId: notPersonal(z.string()), text: personal(z.string()) }),
           evolve: ({ state }: { state: object }) => state,
         },
       },
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string(), plan: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.string()),
+                plan: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -55,8 +59,12 @@ const registry = {
         },
         addNote: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), noteId: z.string(), text: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                noteId: notPersonal(z.string()),
+                text: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -122,7 +130,7 @@ const registry = {
     plans: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          plan: f.string().primaryKey(),
+          plan: f.string().primaryKey().notPersonal(),
           customers: f.number(),
         }),
         holdsPersonalData: false,
@@ -156,7 +164,7 @@ const registry = {
     notes: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          noteId: f.string().primaryKey(),
+          noteId: f.string().primaryKey().notPersonal(),
           customerId: f.string().index().person(),
           text: f.string().personal(),
         }),
@@ -202,7 +210,10 @@ const registry = {
     // Marks nothing personal and projects no event a redaction of the email reaches.
     tally: {
       view: {
-        fields: ({ f }: FieldsArgs) => ({ kind: f.string().primaryKey(), count: f.number() }),
+        fields: ({ f }: FieldsArgs) => ({
+          kind: f.string().primaryKey().notPersonal(),
+          count: f.number(),
+        }),
         holdsPersonalData: false,
       },
       projections: {

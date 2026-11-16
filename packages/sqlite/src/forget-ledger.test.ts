@@ -5,9 +5,9 @@ import { join } from "node:path";
 import {
   type BoundaApp,
   type Clock,
+  type CommandPayloadArgs,
   createApp,
   type EventPayloadArgs,
-  type PayloadArgs,
   type PersonalDataForgottenPayload,
   type Registry,
   systemClock,
@@ -32,7 +32,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), name: notPersonal(z.string()) }),
             handler: ({
               command,
               events,

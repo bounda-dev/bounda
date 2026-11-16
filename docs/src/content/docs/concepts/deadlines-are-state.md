@@ -23,8 +23,11 @@ payment window when the order is placed and closes it as soon as the payment mov
 
 ```ts
 // order/processes/order-lifecycle/index.ts
-export const state = ({ z, deadline }: Process.StateArgs) =>
-  z.object({ paymentId: z.uuid().nullable().default(null), paymentDeadline: deadline() });
+export const state = ({ z, deadline, notPersonal }: Process.StateArgs) =>
+  z.object({
+    paymentId: notPersonal(z.uuid()).nullable().default(null),
+    paymentDeadline: deadline(),
+  });
 
 // order/processes/order-lifecycle/on-order-placed.ts (abridged)
 return { paymentId, paymentDeadline: after("72h") };

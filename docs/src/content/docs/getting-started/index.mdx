@@ -114,9 +114,9 @@ Every file exports the functions its concept needs and gets its argument types f
 // app/domain/order/commands/place-order.ts
 import type { Command } from "./+types/place-order";
 
-export const payload = ({ z, person, personal }: Command.PayloadArgs) =>
+export const payload = ({ z, person, personal, notPersonal }: Command.PayloadArgs) =>
   z.object({
-    orderId: z.uuid(),
+    orderId: notPersonal(z.uuid()),
     customerId: person(z.string().min(1)),
     total: z.number().positive(),
     deliveryNote: personal(z.string().min(1)).optional(),
@@ -162,7 +162,8 @@ Let customers cancel.
    // app/domain/order/order-cancelled.ts
    import type { Event } from "./+types/order-cancelled";
 
-   export const payload = ({ z }: Event.PayloadArgs) => z.object({ reason: z.string() });
+   export const payload = ({ z, notPersonal }: Event.PayloadArgs) =>
+     z.object({ reason: notPersonal(z.string()) });
 
    export const evolve = () => ({ status: "cancelled" as const });
    ```
@@ -176,8 +177,8 @@ Let customers cancel.
    // app/domain/order/commands/cancel-order.ts
    import type { Command } from "./+types/cancel-order";
 
-   export const payload = ({ z }: Command.PayloadArgs) =>
-     z.object({ orderId: z.uuid(), reason: z.string().min(1) });
+   export const payload = ({ z, notPersonal }: Command.PayloadArgs) =>
+     z.object({ orderId: notPersonal(z.uuid()), reason: notPersonal(z.string().min(1)) });
 
    export const rejections = ({ state }: Command.RejectionsArgs) => ({
      NotPlaced: `Only placed orders can be cancelled; this one is ${state.status ?? "new"}`,

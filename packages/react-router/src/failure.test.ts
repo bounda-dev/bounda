@@ -1,9 +1,9 @@
 import {
+  type CommandPayloadArgs,
   ConcurrencyError,
   DomainError,
   IdempotencyKeyConflictError,
   IdempotentAnswerErasedError,
-  type PayloadArgs,
   ProcessingRestrictedError,
   type RejectFunction,
   type Rejection,
@@ -24,7 +24,8 @@ const registry = {
       commands: {
         placeOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             rejections: () => ({ AlreadyPlaced: "Order already placed" }),
             handler: ({ reject }: { reject: RejectFunction<"AlreadyPlaced"> }) =>
               reject("AlreadyPlaced"),
@@ -32,7 +33,8 @@ const registry = {
         },
         noteOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()) }),
             rejections: () => ({ Closed: "Notes are closed" }),
             handler: () => {
               throw new DomainError(rejection);

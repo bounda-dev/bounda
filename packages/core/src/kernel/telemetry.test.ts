@@ -47,7 +47,7 @@ const registry = {
   },
   readModels: {
     orderSummary: {
-      view: { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey() }) },
+      view: { fields: ({ f }: FieldsArgs) => ({ orderId: f.string().primaryKey().notPersonal() }) },
       projections: {
         order: {
           orderPlaced: {

@@ -5,7 +5,7 @@ import type { Table } from "../../adapter/storage/table.ts";
 import { IdempotentAnswerErasedError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { RedactedFields } from "../../modules/redaction.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -41,8 +41,8 @@ const registry = {
       state: { initialState: { email: null } },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ email: personal(z.string()), plan: z.string() }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ email: personal(z.string()), plan: notPersonal(z.string()) }),
           evolve: setEmail,
         },
         emailCorrected: {
@@ -60,16 +60,20 @@ const registry = {
           evolve: ({ state }: { state: object }) => state,
         },
         noteAdded: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ noteId: z.string(), text: personal(z.string()) }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ noteId: notPersonal(z.string()), text: personal(z.string()) }),
           evolve: ({ state }: { state: object }) => state,
         },
       },
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string(), plan: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.string()),
+                plan: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -81,8 +85,8 @@ const registry = {
         },
         correctEmail: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -94,7 +98,8 @@ const registry = {
         },
         echoEmail: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({ state, events }: { state: { email: string | null }; events: Events }) => [
               events.emailEchoed?.({ email: state.email }),
             ],
@@ -102,8 +107,8 @@ const registry = {
         },
         issueInvoice: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), address: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), address: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -115,8 +120,12 @@ const registry = {
         },
         addNote: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), noteId: z.string(), text: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                noteId: notPersonal(z.string()),
+                text: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -130,8 +139,12 @@ const registry = {
         },
         remindCustomer: {
           module: {
-            payload: ({ z, personal }: PayloadArgs & { personal: (schema: unknown) => never }) =>
-              z.object({ customerId: z.string(), email: personal(z.string()) }),
+            payload: ({
+              z,
+              personal,
+              notPersonal,
+            }: CommandPayloadArgs & { personal: (schema: unknown) => never }) =>
+              z.object({ customerId: notPersonal(z.string()), email: personal(z.string()) }),
             handler: () => [],
           },
         },
@@ -173,7 +186,7 @@ const registry = {
     notes: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          noteId: f.string().primaryKey(),
+          noteId: f.string().primaryKey().notPersonal(),
           customerId: f.string().index().person(),
           text: f.string().personal(),
         }),

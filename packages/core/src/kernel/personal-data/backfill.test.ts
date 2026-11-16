@@ -9,7 +9,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { expectForgotten } from "../../testing/expect-forgotten.ts";
 import { createApp } from "../app.ts";
@@ -41,10 +41,10 @@ const registryOf = ({ email, name = false }: Marks): Registry =>
         state: { initialState: {} },
         events: {
           customerRegistered: {
-            payload: ({ z, personal }: EventPayloadArgs) =>
+            payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
               z.object({
-                email: email ? personal(z.email()) : z.email(),
-                name: name ? personal(z.string()) : z.string(),
+                email: email ? personal(z.email()) : notPersonal(z.email()),
+                name: name ? personal(z.string()) : notPersonal(z.string()),
               }),
             evolve: () => ({}),
           },
@@ -52,8 +52,12 @@ const registryOf = ({ email, name = false }: Marks): Registry =>
         commands: {
           registerCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ customerId: z.string(), email: z.email(), name: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({
+                  customerId: notPersonal(z.string()),
+                  email: notPersonal(z.email()),
+                  name: notPersonal(z.string()),
+                }),
               handler: ({
                 command,
                 events,
@@ -70,10 +74,10 @@ const registryOf = ({ email, name = false }: Marks): Registry =>
           },
           remindCustomer: {
             module: {
-              payload: ({ z, personal }: CommandPayloadArgs) =>
+              payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
                 z.object({
-                  customerId: z.string(),
-                  email: email ? personal(z.email()) : z.email(),
+                  customerId: notPersonal(z.string()),
+                  email: email ? personal(z.email()) : notPersonal(z.email()),
                 }),
               handler: ({ command }: { command: { payload: { email: string } } }) => {
                 if (failing.remind) {
@@ -102,10 +106,10 @@ const registryOf = ({ email, name = false }: Marks): Registry =>
         state: { initialState: {} },
         events: {
           orderPlaced: {
-            payload: ({ z, person, personal }: EventPayloadArgs) =>
+            payload: ({ z, person, personal, notPersonal }: EventPayloadArgs) =>
               z.object({
-                customerId: email ? person(z.string()) : z.string(),
-                address: email ? personal(z.string()) : z.string(),
+                customerId: email ? person(z.string()) : notPersonal(z.string()),
+                address: email ? personal(z.string()) : notPersonal(z.string()),
               }),
             evolve: () => ({}),
           },
@@ -113,8 +117,12 @@ const registryOf = ({ email, name = false }: Marks): Registry =>
         commands: {
           placeOrder: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ orderId: z.string(), customerId: z.string(), address: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({
+                  orderId: notPersonal(z.string()),
+                  customerId: notPersonal(z.string()),
+                  address: notPersonal(z.string()),
+                }),
               handler: ({
                 command,
                 events,

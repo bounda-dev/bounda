@@ -6,7 +6,7 @@ import type { DispatchResult } from "../../contracts/command.ts";
 import { PROCESSING_RESTRICTED } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -138,11 +138,11 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
       customer: {
         events: {
           customerRegistered: {
-            payload: ({ z, personal }: EventPayloadArgs) =>
+            payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
               z.object({
                 email: personal(z.email()),
                 newsletter: personal(z.email(), { category: "marketing" }).optional(),
-                plan: z.string(),
+                plan: notPersonal(z.string()),
               }),
             evolve: () => ({}),
           },
@@ -151,9 +151,9 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
             evolve: () => ({}),
           },
           invoiceIssued: {
-            payload: ({ z, personal }: EventPayloadArgs) =>
+            payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
               z.object({
-                invoiceId: z.string(),
+                invoiceId: notPersonal(z.string()),
                 address: personal(z.string(), { category: "invoices" }),
               }),
             evolve: ({
@@ -173,12 +173,12 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
         commands: {
           registerCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
                 z.object({
-                  customerId: z.string(),
-                  email: z.email(),
-                  newsletter: z.email().optional(),
-                  plan: z.string(),
+                  customerId: notPersonal(z.string()),
+                  email: notPersonal(z.email()),
+                  newsletter: notPersonal(z.email().optional()),
+                  plan: notPersonal(z.string()),
                 }),
               handler: ({
                 command,
@@ -191,19 +191,22 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
           },
           nudgeCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ customerId: notPersonal(z.string()) }),
               handler: ({ events }: { events: Events }) => [events.customerNudged?.({})],
             },
           },
           callCustomer: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ customerId: notPersonal(z.string()) }),
               handler: ({ events }: { events: Events }) => [events.customerCalled?.({})],
             },
           },
           printInvoice: {
             module: {
-              payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({ customerId: notPersonal(z.string()) }),
               handler: ({ state }: { state: { address?: string | null } }) => {
                 printed.push(state.address ?? null);
                 return [];
@@ -212,8 +215,12 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
           },
           issueInvoice: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ customerId: z.string(), invoiceId: z.string(), address: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({
+                  customerId: notPersonal(z.string()),
+                  invoiceId: notPersonal(z.string()),
+                  address: notPersonal(z.string()),
+                }),
               handler: ({
                 command,
                 events,
@@ -295,7 +302,7 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
           fields: ({ f }: FieldsArgs) => ({
             customerId: f.string().primaryKey().person(),
             email: f.string().optional().personal(),
-            plan: f.string().index(),
+            plan: f.string().index().notPersonal(),
           }),
         },
         projections: {
@@ -386,7 +393,7 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
       invoices: {
         view: {
           fields: ({ f }: FieldsArgs) => ({
-            invoiceId: f.string().primaryKey(),
+            invoiceId: f.string().primaryKey().notPersonal(),
             customerId: f.string().index().person(),
             address: f.string().optional().personal({ category: "invoices" }),
           }),

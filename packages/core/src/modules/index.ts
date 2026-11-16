@@ -86,10 +86,14 @@ export type {
   ZodApi,
 } from "./payload.ts";
 export type {
+  ClassifiesColumns,
+  ClassifiesPayload,
+  ClassifiesState,
   CommandPersonalFunction,
   CommandPersonalSchema,
   ForgetsPersonalData,
   HasPersonalFields,
+  HoldsText,
   NotPersonalFunction,
   NotPersonalSchema,
   PersonalFunction,

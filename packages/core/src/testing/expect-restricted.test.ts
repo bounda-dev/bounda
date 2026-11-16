@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Table } from "../adapter/storage/table.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { expectRestricted, NotRestrictedError } from "./expect-restricted.ts";
@@ -23,7 +23,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.email()) }),
             handler: ({
               command,
               events,

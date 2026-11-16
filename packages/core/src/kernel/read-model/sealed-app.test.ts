@@ -4,7 +4,7 @@ import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { ReadClient, Table } from "../../adapter/storage/table.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -38,14 +38,14 @@ const registry = {
       state: { initialState: {} },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ email: personal(z.string()), plan: z.string() }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ email: personal(z.string()), plan: notPersonal(z.string()) }),
           evolve: () => ({}),
         },
         invoiceIssued: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
             z.object({
-              invoiceId: z.string(),
+              invoiceId: notPersonal(z.string()),
               address: personal(z.string(), { category: "invoices" as never }),
             }),
           evolve: () => ({}),
@@ -54,8 +54,12 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string(), plan: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.string()),
+                plan: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -72,8 +76,12 @@ const registry = {
         },
         issueInvoice: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), invoiceId: z.string(), address: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                invoiceId: notPersonal(z.string()),
+                address: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -100,7 +108,7 @@ const registry = {
           customerId: f.string().primaryKey().person(),
           email: f.string().personal().unique(),
           note: f.string().optional().personal(),
-          plan: f.string(),
+          plan: f.string().notPersonal(),
         }),
       },
       projections: {
@@ -143,7 +151,7 @@ const registry = {
     invoices: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
-          invoiceId: f.string().primaryKey(),
+          invoiceId: f.string().primaryKey().notPersonal(),
           customerId: f.string().index().person(),
           address: f.string().personal({ category: "invoices" as never }),
         }),
@@ -375,7 +383,7 @@ describe("a read model whose personal fields change, on SQLite", () => {
               customerId: f.string().primaryKey().person(),
               email: email(f),
               note: f.string().optional().personal(),
-              plan: f.string(),
+              plan: f.string().notPersonal(),
             }),
           },
           projections: {

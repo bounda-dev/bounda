@@ -4,7 +4,7 @@ import { resolveConfig } from "../../config/schema.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { Upcasts } from "../../modules/upcast.ts";
 import { createApp } from "../app.ts";
@@ -39,8 +39,10 @@ const registry = {
       events: {
         ...order.events,
         orderPlaced: {
-          payload: ({ z }: PayloadArgs) =>
-            z.object({ money: z.object({ amount: z.number(), currency: z.string() }) }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({
+              money: notPersonal(z.object({ amount: z.number(), currency: z.string() })),
+            }),
           evolve: ({
             state,
             event,
@@ -59,7 +61,8 @@ const registry = {
         ...order.commands,
         placeOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ orderId: z.string(), amount: z.number() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ orderId: notPersonal(z.string()), amount: z.number() }),
             handler: ({
               command,
               events,
@@ -213,7 +216,12 @@ describe("an app over events stored with an older shape", () => {
       ...registry,
       readModels: {
         totals: {
-          view: { fields: ({ f }) => ({ orderId: f.string().primaryKey(), amount: f.number() }) },
+          view: {
+            fields: ({ f }) => ({
+              orderId: f.string().primaryKey().notPersonal(),
+              amount: f.number(),
+            }),
+          },
           projections: {
             order: {
               orderPlaced: {

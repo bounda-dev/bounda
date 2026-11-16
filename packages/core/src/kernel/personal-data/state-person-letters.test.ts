@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ValidationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { isSealed } from "./crypto.ts";
@@ -22,18 +22,18 @@ const registry = {
     order: {
       events: {
         orderPlaced: {
-          payload: ({ z, person, personal }: EventPayloadArgs) =>
+          payload: ({ z, person, personal, notPersonal }: EventPayloadArgs) =>
             z.object({
-              orderId: z.string(),
+              orderId: notPersonal(z.string()),
               customerId: person(z.string()),
               email: personal(z.email()),
             }),
           evolve: () => ({}),
         },
         orderPacked: {
-          payload: ({ z, person, personal }: EventPayloadArgs) =>
+          payload: ({ z, person, personal, notPersonal }: EventPayloadArgs) =>
             z.object({
-              orderId: z.string(),
+              orderId: notPersonal(z.string()),
               customerId: person(z.string()),
               address: personal(z.string()),
             }),
@@ -47,8 +47,12 @@ const registry = {
       commands: {
         placeOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ orderId: z.string(), customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                orderId: notPersonal(z.string()),
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.email()),
+              }),
             handler: ({
               command,
               events,
@@ -60,8 +64,12 @@ const registry = {
         },
         packOrder: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ orderId: z.string(), customerId: z.string(), address: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                orderId: notPersonal(z.string()),
+                customerId: notPersonal(z.string()),
+                address: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,

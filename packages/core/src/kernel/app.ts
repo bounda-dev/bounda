@@ -53,6 +53,7 @@ import { createAccessLog, recorded } from "./personal-data/access.ts";
 import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
 import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
+import { checkClassification } from "./personal-data/classification.ts";
 import { logClearFields } from "./personal-data/clear-fields.ts";
 import { createEarlierAnswers } from "./personal-data/earlier-answers.ts";
 import { openEncryptedFiles } from "./personal-data/encrypted-files.ts";
@@ -779,6 +780,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     ].some((entry) => Object.keys(entry.recipients ?? {}).length > 0);
     const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
     checkReadModelPersons({ registry, aggregates });
+    checkClassification(registry);
     const processDefinitions = buildProcesses({ registry, aggregates, config });
     // The hierarchy owns the store from here, closing it when it fails.
     filesStore = null;

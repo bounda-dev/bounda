@@ -15,7 +15,7 @@ import type {
   ProcessingRestrictedEvent,
 } from "../../modules/bounda-events.ts";
 import type { RejectFunction } from "../../modules/command.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten } from "../../testing/index.ts";
@@ -47,15 +47,16 @@ const registry = {
       state: { initialState: { email: null, name: "" } satisfies CustomerState },
       events: {
         customerRegistered: {
-          payload: ({ z, personal }: EventPayloadArgs) =>
-            z.object({ email: personal(z.email()), name: z.string() }),
+          payload: ({ z, personal, notPersonal }: EventPayloadArgs) =>
+            z.object({ email: personal(z.email()), name: notPersonal(z.string()) }),
           evolve: ({ event }: { event: { payload: { email: string | null; name: string } } }) => ({
             email: event.payload.email,
             name: event.payload.name,
           }),
         },
         customerGreeted: {
-          payload: ({ z }: EventPayloadArgs) => z.object({ to: z.string().nullable() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ to: notPersonal(z.string().nullable()) }),
           evolve: ({ state }: { state: CustomerState }) => state,
         },
         customerReminded: {
@@ -67,8 +68,12 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.email(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.email()),
+                name: notPersonal(z.string()),
+              }),
             handler: ({
               command,
               events,
@@ -80,7 +85,8 @@ const registry = {
         },
         confirmCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             rejections: ({ state }: { state: CustomerState }) => ({
               NotYet: `${state.email ?? "This customer"} cannot be confirmed yet`,
             }),
@@ -89,7 +95,8 @@ const registry = {
         },
         greetCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({
               state,
               events,
@@ -101,7 +108,8 @@ const registry = {
         },
         remindCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: async ({
               state,
               events,
@@ -162,19 +170,19 @@ const registry = {
           evolve: () => ({}),
         },
         invited: {
-          payload: ({ z }: EventPayloadArgs) =>
-            z.object({ customerId: z.string(), email: z.email() }),
+          payload: ({ z, notPersonal }: EventPayloadArgs) =>
+            z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.email()) }),
           evolve: () => ({}),
         },
       },
       commands: {
         subscribe: {
           module: {
-            payload: ({ z, person }: EventPayloadArgs) =>
+            payload: ({ z, person, notPersonal }: EventPayloadArgs) =>
               z.object({
-                newsletterId: z.string(),
+                newsletterId: notPersonal(z.string()),
                 customerId: person(z.string()),
-                email: z.email(),
+                email: notPersonal(z.email()),
               }),
             handler: ({
               command,
@@ -187,8 +195,12 @@ const registry = {
         },
         invite: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ newsletterId: z.string(), customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({
+                newsletterId: notPersonal(z.string()),
+                customerId: notPersonal(z.string()),
+                email: notPersonal(z.email()),
+              }),
             handler: ({
               command,
               events,
@@ -208,8 +220,8 @@ const registry = {
       view: {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
-          email: f.string().optional(),
-          name: f.string(),
+          email: f.string().optional().notPersonal(),
+          name: f.string().notPersonal(),
         }),
       },
       projections: {

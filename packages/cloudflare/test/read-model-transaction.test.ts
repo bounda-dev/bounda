@@ -47,7 +47,7 @@ describe("read model tables in a Durable Object", () => {
       await table.upsert(order("2"));
       await open(contractFields);
       expect(evolved).toEqual([]);
-      const unique = { ...contractFields, status: f.string().unique() };
+      const unique = { ...contractFields, status: f.string().unique().notPersonal() };
       await expect(open(unique)).rejects.toThrow(/UNIQUE/);
       await table.update({ orderId: "1" }, { status: "one" });
       await open(unique);

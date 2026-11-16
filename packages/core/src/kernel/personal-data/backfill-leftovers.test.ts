@@ -7,7 +7,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { expectForgotten } from "../../testing/expect-forgotten.ts";
 import { createApp } from "../app.ts";
@@ -33,17 +33,17 @@ const registryOf = (version: 1 | 2): Registry => {
         state: { initialState: {} },
         events: {
           contactAdded: {
-            payload: ({ z, person, personal }: EventPayloadArgs) =>
+            payload: ({ z, person, personal, notPersonal }: EventPayloadArgs) =>
               marked
                 ? z.object({ personId: person(z.string()), email: personal(z.email()) })
-                : z.object({ personId: z.string(), mail: z.email() }),
+                : z.object({ personId: notPersonal(z.string()), mail: notPersonal(z.email()) }),
             evolve: () => ({}),
           },
           contactNoted: {
-            payload: ({ z, person, personal }: EventPayloadArgs) =>
+            payload: ({ z, person, personal, notPersonal }: EventPayloadArgs) =>
               z.object({
-                personId: marked ? person(z.string()) : z.string(),
-                note: marked ? personal(z.string()) : z.string(),
+                personId: marked ? person(z.string()) : notPersonal(z.string()),
+                note: marked ? personal(z.string()) : notPersonal(z.string()),
               }),
             evolve: () => ({}),
           },
@@ -65,8 +65,12 @@ const registryOf = (version: 1 | 2): Registry => {
         commands: {
           addContact: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ contactId: z.string(), personId: z.string(), email: z.email() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({
+                  contactId: notPersonal(z.string()),
+                  personId: notPersonal(z.string()),
+                  email: notPersonal(z.email()),
+                }),
               handler: ({
                 command,
                 events,
@@ -88,8 +92,12 @@ const registryOf = (version: 1 | 2): Registry => {
           },
           noteContact: {
             module: {
-              payload: ({ z }: PayloadArgs) =>
-                z.object({ contactId: z.string(), personId: z.string(), note: z.string() }),
+              payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                z.object({
+                  contactId: notPersonal(z.string()),
+                  personId: notPersonal(z.string()),
+                  note: notPersonal(z.string()),
+                }),
               handler: ({
                 command,
                 events,
@@ -106,11 +114,11 @@ const registryOf = (version: 1 | 2): Registry => {
           },
           remindContact: {
             module: {
-              payload: ({ z, personal }: CommandPayloadArgs) =>
+              payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
                 z.object({
-                  contactId: z.string(),
-                  personId: z.string(),
-                  email: marked ? personal(z.email()) : z.email(),
+                  contactId: notPersonal(z.string()),
+                  personId: notPersonal(z.string()),
+                  email: marked ? personal(z.email()) : notPersonal(z.email()),
                 }),
               handler: () => [],
             },
@@ -129,10 +137,14 @@ const registryOf = (version: 1 | 2): Registry => {
                 completedBy: [],
                 timeout: "48h",
               }),
-              state: ({ z, person, personal }: EventPayloadArgs) =>
+              state: ({ z, person, personal, notPersonal }: EventPayloadArgs) =>
                 z.object({
-                  agentId: (marked ? person(z.string()) : z.string()).nullable().default(null),
-                  agentPhone: (marked ? personal(z.string()) : z.string()).nullable().default(null),
+                  agentId: (marked ? person(z.string()) : notPersonal(z.string()))
+                    .nullable()
+                    .default(null),
+                  agentPhone: (marked ? personal(z.string()) : notPersonal(z.string()))
+                    .nullable()
+                    .default(null),
                 }),
             },
             handlers: {

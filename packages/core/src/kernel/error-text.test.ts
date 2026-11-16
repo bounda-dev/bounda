@@ -49,8 +49,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z, personal }: CommandPayloadArgs) =>
-              z.object({ customerId: z.string(), email: personal(z.email()) }),
+            payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: personal(z.email()) }),
             handler: ({ command, events }: { command: Registered; events: Builders }) => [
               events.customerRegistered?.(command.payload),
             ],
@@ -58,15 +58,15 @@ const registry = {
         },
         greetCustomer: {
           module: {
-            payload: ({ z, personal }: CommandPayloadArgs) =>
-              z.object({ customerId: z.string(), email: personal(z.email()) }),
+            payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: personal(z.email()) }),
             handler: ({ command }: { command: Registered }) => refuse(command.payload.email),
           },
         },
         remindCustomer: {
           module: {
-            payload: ({ z, personal }: CommandPayloadArgs) =>
-              z.object({ customerId: z.string(), email: personal(z.email()) }),
+            payload: ({ z, personal, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: personal(z.email()) }),
             handler: ({ command }: { command: Registered }) => refuse(command.payload.email),
           },
         },

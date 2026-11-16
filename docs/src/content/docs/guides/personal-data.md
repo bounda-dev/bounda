@@ -38,10 +38,10 @@ identifies them:
 // app/domain/order/order-placed.ts
 import type { Event } from "./+types/order-placed";
 
-export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
+export const payload = ({ z, personal, person, notPersonal }: Event.PayloadArgs) =>
   z.object({
     customerId: person(z.string()),
-    lines: z.array(z.object({ sku: z.string(), quantity: z.int().positive() })),
+    lines: notPersonal(z.array(z.object({ sku: z.string(), quantity: z.int().positive() }))),
     deliveryNote: personal(z.string()).optional(),
   });
 ```
@@ -79,6 +79,19 @@ enum cannot carry text, so they need none; `instant()` and `deadline()` in a pro
 moment and need none either. In a read model every `f.string()` column needs one, whatever its
 projections write, since the column holds any text the database is given, and an `f.json<T>()`
 column once `T` can hold text. A query's payload needs none: a query is never stored.
+
+The check is the compiler's: `.bounda/types.ts` fails to compile at `<Aggregate>Classification`
+or `<ReadModel>Classification` while one is missing, with a message naming each field, such as
+`order.OrderPlaced: field note can hold text; mark it personal(), person() or notPersonal()`. It
+fails the same way on text no mark can reach: a payload or a state that is not an object, or an
+object that keeps keys it does not declare (`z.looseObject`, `.catchall()`), since a mark sits on
+a declared top-level field. The app refuses to start on the same with `ConfigurationError`, for a
+project that skipped the type check; that check reads the schemas themselves, so it cannot see the
+output of a `.transform()` or the `T` of a JSON column, which only the compiler reads.
+
+The rule is there so personal data is never stored because nobody looked: a field added to a
+payload is decided when it is written, personal or not, and the [record of processing
+activities](#the-record-of-processing-activities) lists every decision.
 
 ## Categories
 
@@ -179,8 +192,8 @@ the same way, with `personal` and `person` from its own `PayloadArgs`:
 // app/domain/customer/commands/remind-customer.ts
 import type { Command } from "./+types/remind-customer";
 
-export const payload = ({ z, personal }: Command.PayloadArgs) =>
-  z.object({ customerId: z.string(), email: personal(z.email()) });
+export const payload = ({ z, personal, notPersonal }: Command.PayloadArgs) =>
+  z.object({ customerId: notPersonal(z.string()), email: personal(z.email()) });
 ```
 
 Wherever the command is stored, the marked fields are encrypted with the key of the person it
@@ -718,7 +731,7 @@ import type { View } from "./+types/view";
 export const fields = ({ f }: View.FieldsArgs) => ({
   customerId: f.string().primaryKey().person(),
   email: f.string().personal().unique(),
-  plan: f.string(),
+  plan: f.string().notPersonal(),
 });
 ```
 
@@ -741,7 +754,7 @@ its view that it keeps nothing of anyone's data, nor anything derived from it:
 import type { View } from "./+types/view";
 
 export const fields = ({ f }: View.FieldsArgs) => ({
-  day: f.string().primaryKey(),
+  day: f.string().primaryKey().notPersonal(),
   orders: f.number(),
   total: f.number(),
 });
@@ -1478,10 +1491,11 @@ The command also says what keeps the record from being complete, and exits `1` w
 so a CI step fails on it:
 
 - a field that can hold text and is [marked](#fields-that-hold-no-personal-data) neither
-  `personal`, `person` nor `notPersonal`;
+  `personal`, `person` nor `notPersonal`, which only a project that skipped the type check can
+  have;
 - a field of any type, marked none of them, whose name says personal data;
 - text no mark reaches: a payload or a state that is not an object, or an object that keeps keys it
-  does not declare, as `z.looseObject` and `.catchall()` do;
+  does not declare, as `z.looseObject` and `.catchall()` do, which does not compile either;
 - personal fields in the default category, which declares no legal basis: declare
   [categories](#categories) and give each field one;
 - [`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text), which puts the

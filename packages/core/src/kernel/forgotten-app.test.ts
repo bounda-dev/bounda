@@ -10,7 +10,7 @@ import {
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../modules/payload.ts";
 import type { Registry } from "../modules/registry.ts";
 import { type BoundaApp, createApp } from "./app.ts";
 import { createForgottenRunner } from "./forgotten-app.ts";
@@ -30,8 +30,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) =>
-              z.object({ customerId: z.string(), email: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.string()) }),
             handler: ({
               command,
               events,

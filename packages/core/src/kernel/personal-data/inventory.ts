@@ -9,7 +9,12 @@ import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import { schemaArgs } from "../aggregate/build-aggregates.ts";
 import { processStateArgs } from "../process/deadlines.ts";
 import { buildPersonalCategories, formatRetention } from "./categories.ts";
-import { classifySchema, classifyView, type FieldClassification } from "./classification.ts";
+import {
+  classifySchema,
+  classifyView,
+  type FieldClassification,
+  schemaOf,
+} from "./classification.ts";
 import { looksPersonal } from "./looks-personal.ts";
 import { fieldCategory, personalMarksOf } from "./marks.ts";
 
@@ -281,9 +286,6 @@ const reviewSchema = (
     database,
   });
 };
-
-const schemaOf = (build: unknown, args: object): z.ZodType | null =>
-  typeof build === "function" ? (build(args) as z.ZodType) : null;
 
 const sealingOf = (field: FieldsRecord[string]): InventorySealing =>
   field.clear ? "clear" : field.isIndexed || field.isUnique ? "sealed-indexed" : "sealed";

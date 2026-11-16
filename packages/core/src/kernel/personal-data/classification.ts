@@ -1,7 +1,11 @@
 import { z } from "zod";
+import { ConfigurationError } from "../../contracts/errors.ts";
+import { capitalize } from "../../modules/naming.ts";
 import { type PersonalMark, personalMarkOf } from "../../modules/personal.ts";
-import type { FieldMark, FieldsRecord } from "../../modules/view.ts";
-import { isInstantField } from "../process/deadlines.ts";
+import type { Registry } from "../../modules/registry.ts";
+import { type FieldMark, type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
+import { schemaArgs } from "../aggregate/build-aggregates.ts";
+import { isInstantField, processStateArgs } from "../process/deadlines.ts";
 
 // `instant` for a moment of a process state, which needs no mark.
 export type FieldClassification = PersonalMark | { readonly mark: "instant" } | null;
@@ -112,3 +116,69 @@ export const classifyView: ClassifyViewFunction = (fields) =>
     mark: field.mark,
     holdsText: field.type === "string",
   }));
+
+export interface SchemaOfFunction {
+  (build: unknown, args: object): z.ZodType | null;
+}
+
+// A module's `payload` or `state`, built as the runtime builds it; `null` without one.
+export const schemaOf: SchemaOfFunction = (build, args) =>
+  typeof build === "function" ? (build(args) as z.ZodType) : null;
+
+// The same messages as `.bounda/types.ts`, whose check finds all this finds.
+const schemaProblems = (name: string, schema: z.ZodType | null): string[] => {
+  if (schema === null) return [];
+  const classified = classifySchema(schema);
+  const fields = classified.fields
+    .filter((field) => field.classification === null && field.holdsText)
+    .map(
+      (field) =>
+        `${name}: field ${field.name} can hold text; mark it personal(), person() or notPersonal()`,
+    );
+  if (!classified.unmarkableText) return fields;
+  return [
+    schema instanceof z.ZodObject
+      ? `${name} keeps keys it does not declare, which no mark reaches; use z.object or z.strictObject`
+      : `${name} is not an object, so no mark reaches the text it holds; make it z.object({ ... })`,
+    ...fields,
+  ];
+};
+
+export interface CheckClassificationFunction {
+  (registry: Registry): void;
+}
+
+export const checkClassification: CheckClassificationFunction = (registry) => {
+  const problems: string[] = [];
+  for (const [aggregate, entry] of Object.entries(registry.aggregates)) {
+    for (const [key, module] of Object.entries(entry.events)) {
+      problems.push(
+        ...schemaProblems(`${aggregate}.${capitalize(key)}`, schemaOf(module.payload, schemaArgs)),
+      );
+    }
+    for (const [key, command] of Object.entries(entry.commands)) {
+      problems.push(
+        ...schemaProblems(`${aggregate}.${key}`, schemaOf(command.module.payload, schemaArgs)),
+      );
+    }
+    for (const [key, process] of Object.entries(entry.processes)) {
+      problems.push(
+        ...schemaProblems(`${aggregate}.${key}`, schemaOf(process.module.state, processStateArgs)),
+      );
+    }
+  }
+  for (const [name, entry] of Object.entries(registry.readModels)) {
+    for (const column of classifyView(entry.view.fields({ f: fieldBuilder }))) {
+      if (column.mark === null && column.holdsText) {
+        problems.push(
+          `Read model ${name}: column ${column.name} can hold text; mark it .personal(), .person() or .notPersonal()`,
+        );
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new ConfigurationError(
+      `Every field that can hold text is marked personal, person or notPersonal:\n  ${problems.join("\n  ")}`,
+    );
+  }
+};

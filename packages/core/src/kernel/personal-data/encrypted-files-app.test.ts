@@ -4,7 +4,7 @@ import type { FileEncryptionState } from "../../adapter/storage/encrypted-file.t
 import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
 import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { migrateTables } from "../migrate.ts";
@@ -26,7 +26,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), name: notPersonal(z.string()) }),
             handler: ({
               command,
               events,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { silentLogger } from "../../contracts/logger.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createTestApp } from "../../testing/index.ts";
 
@@ -36,7 +36,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), email: z.email() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), email: notPersonal(z.email()) }),
             handler: ({
               command,
               events,
@@ -48,14 +49,16 @@ const registry = {
         },
         touchCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({ events }: { events: Builders }) => [events.customerTouched?.({})],
           },
         },
         // Quotes what its state holds of the customer, in a plain string.
         checkCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()) }),
             handler: ({ state }: { state: CustomerState }) => {
               throw `cannot check ${state.email ?? "nobody"}`;
             },

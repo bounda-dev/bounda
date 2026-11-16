@@ -2,6 +2,7 @@ import type { z } from "zod";
 import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { AppPersonalCategory } from "../register/index.ts";
+import type { FieldMark } from "./view.ts";
 
 declare const personalBrand: unique symbol;
 declare const personBrand: unique symbol;
@@ -296,3 +297,119 @@ export type ForgetsPersonalData<
             : [ClearKeys<FieldsOf<View>>] extends [never]
               ? true
               : `Read model ${Name} keeps fields marked .personal({ clear: true }), so it needs projections/bounda/personal-data-forgotten.ts`;
+
+type Depth = [never, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+// A pattern, as `string` or a template literal, keys a record by any text; a literal or a union
+// of literals keys it by those alone.
+type StringHoldsText<Text extends string> =
+  Record<never, never> extends Record<Text, true> ? true : false;
+
+type HoldsTextIn<Value, Level extends number> = Value extends string
+  ? StringHoldsText<Value>
+  : Value extends number | bigint | boolean | symbol | null | undefined | Date
+    ? false
+    : Value extends ReadonlyMap<infer Key, infer Item>
+      ? HoldsText<Key, Level> | HoldsText<Item, Level>
+      : Value extends ReadonlySet<infer Item>
+        ? HoldsText<Item, Level>
+        : Value extends readonly (infer Item)[]
+          ? HoldsText<Item, Level>
+          : Value extends (...args: never) => unknown
+            ? false
+            :
+                | HoldsText<Extract<keyof Value, string>, Level>
+                | { [Key in keyof Value]-?: HoldsText<Value[Key], Level> }[keyof Value];
+
+/**
+ * Whether a value of type `Value` can hold free text: a string that is not one of a set of
+ * literals, `unknown` or `any`, or anything that can contain one, the keys of a record included.
+ * A nesting deeper than it reads counts as text.
+ */
+export type HoldsText<Value, Level extends number = 10> = [Level] extends [never]
+  ? true
+  : 0 extends 1 & Value
+    ? true
+    : unknown extends Value
+      ? true
+      : true extends HoldsTextIn<Value, Depth[Level]>
+        ? true
+        : false;
+
+type Classified<Schema> = Schema extends
+  | { readonly [personalBrand]: true }
+  | { readonly [personBrand]: true }
+  | { readonly [notPersonalBrand]: true }
+  | { readonly "~instant": true }
+  ? true
+  : ClassifiedInside<Unwrapped<Schema>>;
+
+type ClassifiedInside<Inner> = [Inner] extends [never] ? false : Classified<Inner>;
+
+type SchemaHoldsText<Schema> = Schema extends z.ZodType
+  ? true extends HoldsText<z.input<Schema>> | HoldsText<z.output<Schema>>
+    ? true
+    : false
+  : false;
+
+type UnclassifiedFields<Shape> = {
+  [Key in keyof Shape]: Classified<Shape[Key]> extends true
+    ? never
+    : SchemaHoldsText<Shape[Key]> extends true
+      ? Key
+      : never;
+}[keyof Shape];
+
+type Classification<Name extends string, Schema> = [Schema] extends [never]
+  ? never
+  : Schema extends z.ZodObject<infer Shape>
+    ?
+        | (string extends keyof z.output<Schema>
+            ? `${Name} keeps keys it does not declare, which no mark reaches; use z.object or z.strictObject`
+            : never)
+        | `${Name}: field ${Extract<UnclassifiedFields<Shape>, string>} can hold text; mark it personal(), person() or notPersonal()`
+    : SchemaHoldsText<Schema> extends true
+      ? `${Name} is not an object, so no mark reaches the text it holds; make it z.object({ ... })`
+      : never;
+
+type Checked<Messages> = [Messages] extends [never] ? true : Messages;
+
+/**
+ * `true` when every top-level field of an event's or a command's payload that can hold text is
+ * marked `personal`, `person` or `notPersonal`, and the payload is an object that keeps only the
+ * keys it declares; otherwise a message for each field left undecided, which the generator's
+ * `.bounda/types.ts` fails to compile on. `Name` names the module in the messages.
+ */
+export type ClassifiesPayload<Name extends string, Module> = Checked<
+  Classification<Name, SchemaOf<Module>>
+>;
+
+/**
+ * `ClassifiesPayload` for a process module's `state`, where `instant()` and `deadline()` fields
+ * need no mark.
+ */
+export type ClassifiesState<Name extends string, Module> = Checked<
+  Classification<Name, StateSchemaOf<Module>>
+>;
+
+type UnclassifiedColumns<Fields> = {
+  [Key in keyof Fields]: Fields[Key] extends { readonly mark: FieldMark }
+    ? never
+    : Fields[Key] extends { readonly type: "string" }
+      ? Key
+      : Fields[Key] extends { readonly type: "json"; readonly _value?: infer Value }
+        ? true extends HoldsText<Value>
+          ? Key
+          : never
+        : never;
+}[keyof Fields];
+
+/**
+ * `true` when every `string` column of a read model's view, and every `json` one whose value can
+ * hold text, is marked `.personal()`, `.person()` or `.notPersonal()`; otherwise a message for each
+ * column left undecided, which the generator's `.bounda/types.ts` fails to compile on.
+ */
+export type ClassifiesColumns<
+  Name extends string,
+  View,
+> = Checked<`Read model ${Name}: column ${Extract<UnclassifiedColumns<FieldsOf<View>>, string>} can hold text; mark it .personal(), .person() or .notPersonal()`>;

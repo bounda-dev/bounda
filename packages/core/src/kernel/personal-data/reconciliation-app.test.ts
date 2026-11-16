@@ -18,7 +18,7 @@ import type {
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
 } from "../../modules/bounda-events.ts";
-import type { EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
@@ -49,7 +49,8 @@ const registry = {
       commands: {
         registerCustomer: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ customerId: z.string(), name: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ customerId: notPersonal(z.string()), name: notPersonal(z.string()) }),
             handler: ({
               command,
               events,
@@ -69,7 +70,7 @@ const registry = {
       view: {
         fields: ({ f }: FieldsArgs) => ({
           customerId: f.string().primaryKey().person(),
-          name: f.string(),
+          name: f.string().notPersonal(),
         }),
       },
       projections: {

@@ -24,7 +24,7 @@ export const registry = {
   readModels: {
     ...base.readModels,
     failingTotals: {
-      view: { fields: ({ f }: FieldsArgs) => ({ counterId: f.string().primaryKey() }) },
+      view: { fields: ({ f }: FieldsArgs) => ({ counterId: f.string().primaryKey().notPersonal() }) },
       projections: {
         counter: {
           incremented: {

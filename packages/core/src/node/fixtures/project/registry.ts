@@ -1,4 +1,4 @@
-import type { PayloadArgs } from "../../../modules/payload.ts";
+import type { CommandPayloadArgs } from "../../../modules/payload.ts";
 import type { Registry } from "../../../modules/registry.ts";
 
 interface State {
@@ -17,7 +17,8 @@ export const registry = {
       commands: {
         increment: {
           module: {
-            payload: ({ z }: PayloadArgs) => z.object({ counterId: z.string() }),
+            payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+              z.object({ counterId: notPersonal(z.string()) }),
             handler: ({ events }: { events: { incremented: () => unknown } }) => [
               events.incremented(),
             ],
