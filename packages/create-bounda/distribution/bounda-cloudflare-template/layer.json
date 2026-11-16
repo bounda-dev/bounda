@@ -1,7 +1,5 @@
 {
   "name": "bounda-cloudflare-template",
-  "layout": "project",
-  "pin": "range",
   "license": true,
   "gitignore": ["test-results/", "playwright-report/"],
   "package": {

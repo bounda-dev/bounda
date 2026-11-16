@@ -1,14 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  alignVersions,
-  appendLines,
-  mergeManifest,
-  pinExact,
-  resolveCatalog,
-  setCompatibilityDate,
-  syncpackPins,
-  targetCompatibilityDate,
-} from "./transform.ts";
+import { appendLines, mergeManifest, resolveCatalog } from "./transform.ts";
 
 describe("mergeManifest", () => {
   it("merges objects key by key, puts description after name and sorts dependencies", () => {
@@ -63,7 +54,7 @@ describe("mergeManifest", () => {
   });
 });
 
-describe("resolveCatalog and pinExact", () => {
+describe("resolveCatalog", () => {
   it("turns catalog specifiers into caret ranges and leaves the rest", () => {
     const manifest = resolveCatalog(
       { dependencies: { a: "catalog:" }, devDependencies: { b: "^2.0.0", c: "catalog:" } },
@@ -73,92 +64,6 @@ describe("resolveCatalog and pinExact", () => {
       dependencies: { a: "^1.0.0" },
       devDependencies: { b: "^2.0.0", c: "^3.1.4" },
     });
-  });
-
-  it("drops caret and tilde operators at the start of a specifier only", () => {
-    expect(
-      pinExact({
-        dependencies: { a: "^1.0.0", b: "~2.0.0", c: "3.0.0", d: "npm:e@^4.0.0" },
-        scripts: { x: "^y" },
-      }),
-    ).toEqual({
-      dependencies: { a: "1.0.0", b: "2.0.0", c: "3.0.0", d: "npm:e@^4.0.0" },
-      scripts: { x: "^y" },
-    });
-  });
-
-  it("leaves a dependency field that is not a map alone", () => {
-    expect(pinExact({ dependencies: null, devDependencies: ["a"] })).toEqual({
-      dependencies: null,
-      devDependencies: ["a"],
-    });
-  });
-});
-
-describe("alignVersions", () => {
-  it("prefers a pin for the package, then the version most neighbours use, then its own", () => {
-    const aligned = alignVersions({
-      manifest: {
-        dependencies: { "@bounda-dev/core": "0.1.0" },
-        devDependencies: { typescript: "7.0.2", vitest: "4.1.11", wrangler: "4.200.0" },
-      },
-      neighbours: [
-        { devDependencies: { typescript: "5.9.3", vitest: "3.2.7", wrangler: "4.136.1" } },
-        { devDependencies: { typescript: "5.9.3", vitest: "4.1.10" } },
-        { dependencies: { vitest: "4.1.10" } },
-      ],
-      pinned: { typescript: "7.0.2" },
-    });
-    expect(aligned).toEqual({
-      dependencies: { "@bounda-dev/core": "0.1.0" },
-      devDependencies: { typescript: "7.0.2", vitest: "4.1.10", wrangler: "4.136.1" },
-    });
-  });
-});
-
-describe("syncpackPins", () => {
-  it("collects the pinned versions of the groups that name the package, first group first", () => {
-    const pins = syncpackPins({
-      packageName: "bounda-event-sourcing-template",
-      config: {
-        versionGroups: [
-          {
-            packages: ["bounda-event-sourcing-template"],
-            dependencies: ["typescript"],
-            pinVersion: "7.0.2",
-          },
-          { packages: ["other-template"], dependencies: ["zod"], pinVersion: "3.25.67" },
-          { packages: ["*"], dependencies: ["vite"], pinVersion: "^7.0.0" },
-          {
-            packages: ["bounda-event-sourcing-template"],
-            dependencies: ["typescript", 42],
-            pinVersion: "5.9.3",
-          },
-          { packages: ["bounda-event-sourcing-template"], dependencies: ["vite"] },
-          "not a group",
-        ],
-      },
-    });
-    expect(Object.entries(pins)).toEqual([["typescript", "7.0.2"]]);
-    expect(syncpackPins({ packageName: "x", config: {} })).toEqual({});
-  });
-});
-
-describe("compatibility dates", () => {
-  it("rewrites the date of a wrangler.jsonc and nothing else", () => {
-    const wrangler = '{\n  // a comment\n  "compatibility_date": "2026-09-21",\n  "name": "x"\n}\n';
-    expect(setCompatibilityDate(wrangler, "2025-10-08")).toBe(
-      '{\n  // a comment\n  "compatibility_date": "2025-10-08",\n  "name": "x"\n}\n',
-    );
-    expect(() => setCompatibilityDate("{}", "2025-10-08")).toThrow("no compatibility_date");
-  });
-
-  it("reads the date the templates linter requires", () => {
-    expect(targetCompatibilityDate('const TARGET_COMPATIBILITY_DATE = "2025-10-08";')).toBe(
-      "2025-10-08",
-    );
-    expect(targetCompatibilityDate('TARGET_COMPATIBILITY_DATE="2024-01-02"')).toBe("2024-01-02");
-    expect(() => targetCompatibilityDate("const OTHER = 1;")).toThrow("not found");
   });
 });
 
