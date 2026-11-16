@@ -36,8 +36,7 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
   // What `handleError` reads: it cannot wait for an import, which the Worker may cancel once the
   // response is sent, so until the first request has imported it only the `env` decides.
   let imported: Config | undefined;
-  let served: Bounda<R> | undefined;
-  served = serve<R>(
+  return serve<R>(
     async () => {
       if (importTenant === undefined) {
         throw new ConfigurationError(
@@ -63,8 +62,7 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
         consistency,
       });
     },
-    cloudflareHandleError({ config: () => imported, host: () => served }),
+    cloudflareHandleError({ config: () => imported }),
     importActor === undefined ? undefined : actorOfModule(importActor),
   );
-  return served;
 };

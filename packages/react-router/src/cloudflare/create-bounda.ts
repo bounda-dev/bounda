@@ -68,8 +68,5 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
 }: CreateBoundaArgs): Bounda<R> => {
   checkConsistency(consistency);
   const clientOf = cloudflareClients<R>({ env, config, tenant, consistency });
-  let served: Bounda<R> | undefined;
-  const handleError = cloudflareHandleError({ config: () => config, logger, host: () => served });
-  served = serve(() => clientOf, handleError, actor);
-  return served;
+  return serve(() => clientOf, cloudflareHandleError({ config: () => config, logger }), actor);
 };

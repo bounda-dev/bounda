@@ -10,29 +10,23 @@ export interface CloudflareHandleErrorArgs {
    */
   readonly config: () => Config | undefined;
   readonly logger?: Logger | undefined;
-  /**
-   * What the Worker serves requests through, which a test may give a witness with
-   * `witnessObjects`, `undefined` until it exists.
-   */
-  readonly host: () => object | undefined;
 }
 
 export interface CloudflareHandleErrorFunction {
-  (args: CloudflareHandleErrorArgs): HandleBoundaErrorFunction;
+  /**
+   * The `handleError` of `host`, what the Worker serves requests through, which a test may give a
+   * witness with `witnessObjects`.
+   */
+  (args: CloudflareHandleErrorArgs): (host: object) => HandleBoundaErrorFunction;
 }
 
 // The configuration is one bundle for every environment, so the Worker's `env` decides first, as
 // it does for the Durable Object.
-export const cloudflareHandleError: CloudflareHandleErrorFunction = ({
-  config,
-  logger = workersLogger,
-  host,
-}) =>
-  createHandleError({
-    message: "bounda request failed",
-    errorText: () => resolveErrorText({ env, config: config(), ignoreInvalidEnv: true }),
-    logger: () => {
-      const served = host();
-      return served === undefined ? logger : hostLogger(served, logger);
-    },
-  });
+export const cloudflareHandleError: CloudflareHandleErrorFunction =
+  ({ config, logger = workersLogger }) =>
+  (host) =>
+    createHandleError({
+      message: "bounda request failed",
+      errorText: () => resolveErrorText({ env, config: config(), ignoreInvalidEnv: true }),
+      logger: () => hostLogger(host, logger),
+    });

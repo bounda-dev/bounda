@@ -156,6 +156,11 @@ describe("a Durable Object of a class witnessObjects watches", () => {
     expect(witnessOf(inherited)).toBe(witness);
     expect(witnessOf(apart)).toBe(own);
     expect(own).not.toBe(witness);
+    // A host follows the class watched last.
+    const host = {};
+    witnessObjects(WitnessedStore, { hosts: [host] });
+    witnessObjects(apart, { hosts: [host] });
+    expect(witnessOf(host)).toBe(own);
   });
 
   it("searches what the Worker in front logs, with every object's persons", async () => {

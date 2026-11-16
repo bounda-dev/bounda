@@ -33,7 +33,8 @@ export const witnessObjects: WitnessObjectsFunction = (objectClass, { hosts = []
     ? (Reflect.get(objectClass, WITNESS) as Witness)
     : undefined;
   const witness = known ?? createWitness();
-  if (known === undefined) Object.defineProperty(objectClass, WITNESS, { value: witness });
+  // Defining the same value again is allowed, as the class's own stays.
+  Object.defineProperty(objectClass, WITNESS, { value: witness });
   for (const host of hosts) {
     Object.defineProperty(host, WITNESS, { value: witness, configurable: true });
   }

@@ -9,14 +9,14 @@ import type { ClientOfFunction } from "./clients.ts";
 export interface ServeFunction {
   <R extends Registry>(
     load: () => ClientOfFunction<R> | Promise<ClientOfFunction<R>>,
-    handleError: HandleBoundaErrorFunction,
+    handleErrorOf: (host: object) => HandleBoundaErrorFunction,
     actor?: ActorFunction,
   ): Bounda<R>;
 }
 
 export const serve: ServeFunction = <R extends Registry>(
   load: () => ClientOfFunction<R> | Promise<ClientOfFunction<R>>,
-  handleError: HandleBoundaErrorFunction,
+  handleErrorOf: (host: object) => HandleBoundaErrorFunction,
   actor?: ActorFunction,
 ): Bounda<R> => {
   const bounda = createContext<BoundaClient<R>>();
@@ -38,5 +38,12 @@ export const serve: ServeFunction = <R extends Registry>(
   };
 
   // The app lives in its Durable Objects: nothing runs in the Worker to stop.
-  return { bounda, boundaMiddleware, dispose: async () => {}, handleError };
+  const served: Bounda<R> = {
+    bounda,
+    boundaMiddleware,
+    dispose: async () => {},
+    handleError: (error, args) => handleError(error, args),
+  };
+  const handleError = handleErrorOf(served);
+  return served;
 };
