@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Adapter } from "../adapter/adapter.ts";
 import type { Table } from "../adapter/storage/table.ts";
-import { ConfigurationError } from "../contracts/errors.ts";
+import { ConcurrencyError, ConfigurationError } from "../contracts/errors.ts";
 import { memory } from "../memory/index.ts";
 import { MAX_ACCESS_PERSONS, type OnPersonalDataAccessArgs } from "../modules/audit.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
+import { RESTRICTION_GROUNDS } from "../modules/personal-data.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
@@ -395,7 +396,7 @@ describe("the access log", () => {
     ]);
   });
 
-  it("records an export that fails after it started reading as failed, with no counts", async () => {
+  it("records an export that fails after it started reading as failed, with what it read by then", async () => {
     const base = memory();
     const rowsDown = new Error("rows down");
     const failingRows: Adapter = {
@@ -432,9 +433,98 @@ describe("the access log", () => {
         at: AT,
         outcome: "failed",
         restricted: null,
-        detail: null,
+        detail: {
+          events: 0,
+          scheduledCommands: 0,
+          deadLetters: 0,
+          subscriberFailures: 0,
+          answers: 0,
+          readModelRows: 0,
+          recipients: 0,
+        },
       },
     ]);
+  });
+
+  it("records an export whose header fails to read as failed, having handed nothing out", async () => {
+    const base = memory();
+    const down = new Error("persons down");
+    const failing: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        return {
+          ...storage,
+          persons: { ...storage.persons, restrictions: () => Promise.reject(down) },
+        };
+      },
+    };
+    const records: OnPersonalDataAccessArgs[] = [];
+    const { app } = await createTestApp({
+      registry: registryWith(),
+      adapter: failing,
+      onPersonalDataAccess: (args) => {
+        records.push(args);
+      },
+    });
+    await expect(app.streamPersonalData("ana")).rejects.toBe(down);
+    expect(records.map(({ access }) => [access.operation, access.outcome, access.detail])).toEqual([
+      [
+        "exportPersonalData",
+        "failed",
+        {
+          events: 0,
+          scheduledCommands: 0,
+          deadLetters: 0,
+          subscriberFailures: 0,
+          answers: 0,
+          readModelRows: 0,
+          recipients: 0,
+        },
+      ],
+    ]);
+  });
+
+  it("reads an export the person's changes overtook again, as many times as a command is, then gives up", async () => {
+    const base = memory();
+    let overtake: (() => Promise<unknown>) | null = null;
+    const overtaking: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        return {
+          ...storage,
+          eventStore: {
+            ...storage.eventStore,
+            readByPerson: async (args) => {
+              if (args.afterPosition === 0) await overtake?.();
+              return storage.eventStore.readByPerson(args);
+            },
+          },
+        };
+      },
+    };
+    const records: OnPersonalDataAccessArgs[] = [];
+    const { app } = await createTestApp({
+      registry: registryWith(),
+      adapter: overtaking,
+      config: { runtime: { commands: { concurrencyRetries: 1 } } },
+      onPersonalDataAccess: (args) => {
+        records.push(args);
+      },
+    });
+    const grounds = [...RESTRICTION_GROUNDS];
+    // Each reading is overtaken by a restriction on another ground.
+    overtake = async () => {
+      const ground = grounds.shift();
+      if (ground !== undefined) await app.restrict("ana", { ground });
+    };
+    await expect(app.exportPersonalData("ana")).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(
+      records
+        .filter(({ access }) => access.operation === "exportPersonalData")
+        .map(({ access }) => access.outcome),
+    ).toEqual(["failed", "failed"]);
   });
 
   it("records a query that another composes, as the actor of the outer one, and not the outer one when its read model has no personal field", async () => {

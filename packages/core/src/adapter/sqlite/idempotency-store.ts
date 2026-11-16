@@ -62,11 +62,11 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
       );
       if (rows.length === 0) throw new IdempotencyKeyTakenError(key);
     },
-    listByPerson: async ({ person, now }) =>
+    listByPerson: async ({ person, now, after, limit }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE ${named} AND "expires_at" > ? ORDER BY "key"`,
-          [person, now.toISOString()],
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${named} AND "expires_at" > ? AND (? IS NULL OR "key" > ?) ORDER BY "key" LIMIT ?`,
+          [person, now.toISOString(), after ?? null, after ?? null, limit ?? -1],
         )
       ).map(toRecord),
     list: async ({ now, limit, offset = 0 }) =>

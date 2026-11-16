@@ -168,11 +168,11 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
           id,
         ],
       ),
-    listByPerson: async (person) =>
+    listByPerson: async ({ person, after, limit }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE "person" = ? OR "state_person" = ? OR ${names} ORDER BY "first_failed_at", "id"`,
-          [person, person, person],
+          `SELECT ${COLUMNS} FROM ${table} WHERE ("person" = ? OR "state_person" = ? OR ${names}) AND (? IS NULL OR "id" > ?) ORDER BY "id" LIMIT ?`,
+          [person, person, person, after ?? null, after ?? null, limit ?? -1],
         )
       ).map(toLetter),
     forget: async (person, keep = []) =>

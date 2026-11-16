@@ -3,6 +3,7 @@ import {
   type IdempotencyRecord,
   type IdempotencyStore,
 } from "../adapter/storage/idempotency-store.ts";
+import { pageByKey } from "../adapter/storage/person-page.ts";
 import { type KeyedPerson, namesPerson } from "../adapter/storage/personal-key-store.ts";
 import { IdempotencyKeyTakenError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
@@ -43,11 +44,14 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
       }
       records.set(record.key, copy(record.persons.every(holds) ? record : erased(record)));
     },
-    listByPerson: async ({ person, now }) =>
-      [...records.values()]
-        .filter((record) => !expired(record, now) && namesPerson(record, person))
-        .sort((a, b) => (a.key < b.key ? -1 : 1))
-        .map(copy),
+    listByPerson: async ({ person, now, ...page }) =>
+      pageByKey(
+        [...records.values()].filter(
+          (record) => !expired(record, now) && namesPerson(record, person),
+        ),
+        ({ key }) => key,
+        page,
+      ).map(copy),
     list: async ({ now, limit, offset = 0 }) =>
       [...records.values()]
         .filter((record) => !expired(record, now))

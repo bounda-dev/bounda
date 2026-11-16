@@ -366,7 +366,7 @@ describe.each(adapters)("a process state with personal fields on %s", (_name, ad
     clock.advance(HOUR_MS);
     await app.runUntilIdle();
 
-    const [letter] = await storage.deadLetterStore.listByPerson("c-1");
+    const [letter] = await storage.deadLetterStore.listByPerson({ person: "c-1" });
     expect(letter?.eventType).toBe("bounda.ProcessDeadline");
     expect(isSealed(letter?.errorMessage)).toBe(true);
     expect((await app.deadLetters.list())[0]?.errorMessage).toBe(

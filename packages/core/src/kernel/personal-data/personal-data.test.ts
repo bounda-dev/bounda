@@ -596,21 +596,25 @@ describe("personal data in an app", () => {
     expect(remembered).toHaveLength(2);
     expect(JSON.stringify(remembered)).not.toContain(registered.eventIds[0]);
     expect(JSON.stringify(remembered)).not.toContain("register-1");
+    // In the order the store files them, by the HMAC of their keys.
     const answers = (await app.exportPersonalData("c-1")).answers;
-    expect(answers).toEqual([
-      {
-        idempotencyKey: "confirm-1",
-        expiresAt: expect.any(String),
-        outcome: rejected,
-        restricted: [],
-      },
-      {
-        idempotencyKey: "register-1",
-        expiresAt: expect.any(String),
-        outcome: registered,
-        restricted: [],
-      },
-    ]);
+    expect(answers).toHaveLength(2);
+    expect(answers).toEqual(
+      expect.arrayContaining([
+        {
+          idempotencyKey: "confirm-1",
+          expiresAt: expect.any(String),
+          outcome: rejected,
+          restricted: [],
+        },
+        {
+          idempotencyKey: "register-1",
+          expiresAt: expect.any(String),
+          outcome: registered,
+          restricted: [],
+        },
+      ]),
+    );
     expect((await app.exportPersonalData("c-2")).answers).toEqual([]);
 
     await app.restrict("c-1", { ground: "accuracy-contested" });

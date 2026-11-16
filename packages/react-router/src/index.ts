@@ -13,4 +13,6 @@ export { createBounda, DEFAULT_TENANT_APPS, DEFAULT_TENANT_IDLE_MS } from "./cre
 export type { Failure, FailureFunction } from "./failure.ts";
 export { failure } from "./failure.ts";
 export type { HandleBoundaErrorFunction } from "./handle-error.ts";
+export type { PersonalDataExportResponseFunction } from "./personal-data-export.ts";
+export { personalDataExportResponse } from "./personal-data-export.ts";
 export type { TenantFunction } from "./tenant.ts";

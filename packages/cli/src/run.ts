@@ -11,6 +11,7 @@ import {
   MAX_ACTOR_LENGTH,
   migrateTables,
   parseDuration,
+  personalDataExportJson,
   personalDataInventory,
   RESTRICTION_GROUNDS,
   type Registry,
@@ -33,6 +34,7 @@ import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
+import { writeToFile, writeToOutput } from "./export-output.ts";
 import {
   expireKvLedger,
   type KvLedgerModule,
@@ -49,7 +51,8 @@ import { formatConventionError, formatReport, formatWarnings } from "./reporter.
 import { formatFiles, formatRecipients, formatSchema, formatStatus } from "./status-output.ts";
 
 export interface Output {
-  write(text: string): void;
+  // `false`, as a Node stream answers, when it holds more than it should until it drains.
+  write(text: string): unknown;
 }
 
 export interface RunCliArgs {
@@ -329,19 +332,29 @@ const runDiscardDeadLetter = (
     return EXIT_OK;
   });
 
-// Printed whole: it is what the person asked for, and goes where the operator sends stdout.
+interface ExportOptions extends ActingOptions {
+  readonly output?: string;
+}
+
+// Written as it is read, whatever the person's history: what they asked for, where the operator
+// sends it.
 const runExport = (
   personId: string,
-  options: ActingOptions,
+  options: ExportOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    line(
-      stdout,
-      JSON.stringify(await actingAs(app, options).exportPersonalData(personId), null, 2),
-    );
+    const body = personalDataExportJson(await actingAs(app, options).streamPersonalData(personId));
+    if (options.output === undefined) {
+      await writeToOutput(stdout, body);
+      stdout.write("\n");
+    } else {
+      const path = resolve(cwd, options.output);
+      await writeToFile(path, body);
+      line(stderr, `exported ${personId} to ${path}`);
+    }
     return EXIT_OK;
   });
 
@@ -1146,17 +1159,6 @@ export const runCli: RunCliFunction = async ({
 
   actingOptions(
     program
-      .command("export")
-      .description(
-        "print, as JSON, everything the store holds that names a person, with each field's category, basis and retention; recorded in the access log",
-      )
-      .argument("<person>", "the id of the person to export"),
-  ).action(async (personId: string, options: ActingOptions) => {
-    exitCode = await runExport(personId, options, cwd, stdout, stderr);
-  });
-
-  actingOptions(
-    program
       .command("restrict")
       .description(
         "restrict the processing of a person's data on a ground of article 18(1), or of some categories of theirs: from then on it is only kept",
@@ -1223,7 +1225,7 @@ export const runCli: RunCliFunction = async ({
 
   const personalData = program
     .command("personal-data")
-    .description("describe the personal data the app processes");
+    .description("describe the personal data the app processes, and export a person's");
   projectOptions(
     personalData
       .command("inventory")
@@ -1234,6 +1236,20 @@ export const runCli: RunCliFunction = async ({
       .addOption(new Option("--markdown", "print it as a Markdown document").default(false)),
   ).action(async (options: InventoryOptions) => {
     exitCode = await runInventory(options, cwd, stdout, stderr);
+  });
+  actingOptions(
+    personalData
+      .command("export")
+      .description(
+        "write, as JSON, everything the store holds that names a person, with each field's category, basis and retention, read and written a page at a time; recorded in the access log",
+      )
+      .argument("<person>", "the id of the person to export")
+      .option(
+        "--output <file>",
+        "write it to this file, readable by its owner alone, and only once whole, instead of printing it",
+      ),
+  ).action(async (personId: string, options: ExportOptions) => {
+    exitCode = await runExport(personId, options, cwd, stdout, stderr);
   });
 
   program

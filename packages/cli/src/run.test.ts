@@ -752,8 +752,12 @@ describe("bounda forgotten and bounda forget", () => {
     await app.commands.join({ memberId, name: "Ivo" });
     await app.stop();
 
-    const exported = await cli(["export", memberId, "--actor", "operator-1"], fixture);
+    const exported = await cli(
+      ["personal-data", "export", memberId, "--actor", "operator-1"],
+      fixture,
+    );
     expect(exported.code).toBe(EXIT_OK);
+    expect(exported.stdout.endsWith("}\n")).toBe(true);
     const data = JSON.parse(exported.stdout) as PersonalDataExport;
     expect(data.personId).toBe(memberId);
     expect(data.recipients).toEqual([]);
@@ -769,6 +773,19 @@ describe("bounda forgotten and bounda forget", () => {
     });
     expect(data.categories.default).toMatchObject({ basis: null, restrictedUntil: null });
     expect(data.events.length).toBeGreaterThan(0);
+    const into = join(await list(), "export.json");
+    const saved = await cli(["personal-data", "export", memberId, "--output", into], fixture);
+    expect(saved).toMatchObject({ code: EXIT_OK, stdout: "" });
+    expect(besidesLogs(saved.stderr)).toBe(`exported ${memberId} to ${into}\n`);
+    expect(JSON.parse(await readFile(into, "utf8"))).toEqual({
+      ...data,
+      exportedAt: expect.any(String),
+    });
+    if (process.platform !== "win32") expect((await stat(into)).mode & 0o777).toBe(0o600);
+    const empty = await cli(["personal-data", "export", "", "--output", `${into}.again`], fixture);
+    expect(empty.code).toBe(EXIT_FAILURE);
+    await expect(stat(`${into}.again`)).rejects.toThrow();
+    await expect(stat(`${into}.again.partial`)).rejects.toThrow();
 
     const unknown = await cli(["forget", memberId, "--category", "marketing"], fixture);
     expect(unknown.code).not.toBe(EXIT_OK);
@@ -1438,7 +1455,10 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     expect(status.stdout).toMatch(new RegExp(`^tenant: ${tenant}, forgotten at \\S+$`, "m"));
     const again = await cli(["forget-tenant", tenant, ...config, "--yes"], fixture);
     expect(again.code).toBe(EXIT_OK);
-    const exported = await cli(["export", "m-1", ...config, "--tenant", tenant], fixture);
+    const exported = await cli(
+      ["personal-data", "export", "m-1", ...config, "--tenant", tenant],
+      fixture,
+    );
     expect(exported.code).toBe(EXIT_FAILURE);
     expect(besidesLogs(exported.stderr)).toMatch(
       new RegExp(`^error: Tenant ${tenant} was forgotten at \\S+\n$`),

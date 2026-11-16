@@ -68,6 +68,10 @@ export const recordingStub = (): {
         exports.push(args);
         return answer();
       },
+      streamPersonalData: async (...args) => {
+        exports.push(["stream", ...args]);
+        return { ok: true, value: new Blob([]).stream() };
+      },
       recipientsOf: async (...args) => {
         exports.push(args);
         return answer();

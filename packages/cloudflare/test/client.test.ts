@@ -70,9 +70,12 @@ describe("connect", () => {
     const { stub, exports } = recordingStub();
     await connect<typeof registry>(stub).exportPersonalData("c-1");
     await connect<typeof registry>(stub).as("dpo").recipientsOf("c-1");
+    const parts = await connect<typeof registry>(stub).as("dpo").streamPersonalData("c-1");
+    for await (const part of parts) throw new Error(`no part was sent, got ${part.kind}`);
     expect(exports).toEqual([
       ["c-1", undefined],
       ["c-1", "dpo"],
+      ["stream", "c-1", "dpo"],
     ]);
   });
 

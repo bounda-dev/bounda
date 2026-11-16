@@ -14,6 +14,7 @@ import type { Bounda } from "../create-bounda.ts";
 import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 export { failure } from "../failure.ts";
+export { personalDataExportResponse } from "../personal-data-export.ts";
 export type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 /**

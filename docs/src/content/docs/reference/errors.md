@@ -47,8 +47,10 @@ dead letter with `errorType: "retriable_exhausted"`.
   whether or not they hold a new key by then; after `runtime.commands.concurrencyRetries` runs of
   the command. Also a call to a port that tells a [recipient](/guides/personal-data/#recipients)
   of data whose person was forgotten, restricted, lifted or redacted since it was read, before the
-  port is reached, its `streamId` the person's stream `bounda:<personId>`. `streamId`,
-  `expectedVersion`, `actualVersion`.
+  port is reached, its `streamId` the person's stream `bounda:<personId>`; and an
+  [export](/guides/personal-data/#exporting-a-persons-data) of a person forgotten, restricted,
+  lifted or redacted while it read, once it has read everything, which an export started again
+  reads as they are then. `streamId`, `expectedVersion`, `actualVersion`.
 - **`TENANT_FORGOTTEN`** (`TenantForgottenError`). The app's tenant was
   [forgotten](/guides/personal-data/#forgetting-a-tenant): every command, query, export and other
   call of its app rejects with it, here or on any instance once it has seen the forgetting, and the

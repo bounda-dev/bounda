@@ -303,7 +303,7 @@ const cancelHolding = async (
 ): Promise<readonly CancelledCommand[]> => {
   const { transaction, keys, aggregates, personId, matcher } = args;
   const cancelled: CancelledCommand[] = [];
-  for (const entry of await transaction.scheduler.listByPerson(personId)) {
+  for (const entry of await transaction.scheduler.listByPerson({ person: personId })) {
     const marks = aggregates.commandsByType[entry.command.type]?.command.personal ?? null;
     if (marks === null) continue;
     const { payload } = await openCommandPayload({ payload: entry.command.payload, keys, keyOf });
@@ -327,7 +327,7 @@ const sealLetters = async (
   const { transaction, keys, aggregates, personId, matcher, disposable } = args;
   const open = openTextWith(keyOf);
   const removed: RemovedDeadLetter[] = [];
-  for (const letter of await transaction.deadLetterStore.listByPerson(personId)) {
+  for (const letter of await transaction.deadLetterStore.listByPerson({ person: personId })) {
     const marks =
       letter.kind === "scheduled"
         ? (aggregates.commandsByType[letter.handler]?.command.personal ?? null)

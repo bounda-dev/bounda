@@ -26,6 +26,7 @@ import {
   inboxLedgerContract,
   inspectionContract,
   pendingEvent,
+  personalDataExportContract,
   personalKeyStoreContract,
   personStoreContract,
   readModelRebuildContract,
@@ -121,6 +122,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     dialect: "postgresql",
   });
   eventStoreContract({ create: openStorage });
+  personalDataExportContract({ create: async () => fresh() });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });

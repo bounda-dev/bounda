@@ -666,9 +666,11 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
         limit: 10,
       });
       expect(event?.payload).toEqual({ email: sealed });
-      expect((await storage.scheduler.listByPerson("c-1"))[0]?.command.payload).toEqual({
-        email: sealed,
-      });
+      expect((await storage.scheduler.listByPerson({ person: "c-1" }))[0]?.command.payload).toEqual(
+        {
+          email: sealed,
+        },
+      );
       expect(await storage.deadLetterStore.get("d1")).toMatchObject({
         person: "c-1",
         errorMessage: sealed,

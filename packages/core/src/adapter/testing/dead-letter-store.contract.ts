@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeadLetterSettledError } from "../../contracts/errors.ts";
-import type { DeadLetterStore, NewDeadLetter } from "../storage/dead-letter-store.ts";
+import type {
+  DeadLetterStore,
+  NewDeadLetter,
+  StoredDeadLetter,
+} from "../storage/dead-letter-store.ts";
 import type { KeyedPerson } from "../storage/personal-key-store.ts";
 import { testKeyedPerson as held, testSealedValue as sealed } from "./fixtures.ts";
 
@@ -280,16 +284,26 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.get("d")).not.toHaveProperty("persons");
       expect(await store.get("e")).not.toHaveProperty("persons");
 
-      const named = await store.listByPerson("c-1");
+      const named = await store.listByPerson({ person: "c-1" });
       expect(named.map((letter) => [letter.id, letter.status])).toEqual([
-        ["b", "discarded"],
         ["a", "failed"],
+        ["b", "discarded"],
       ]);
-      expect(await store.listByPerson("c")).toEqual([]);
+      expect(await store.listByPerson({ person: "c" })).toEqual([]);
+      const idsOf = (page: readonly StoredDeadLetter[]) => page.map(({ id }) => id);
+      expect(idsOf(await store.listByPerson({ person: "c-1", limit: 1 }))).toEqual(["a"]);
+      expect(idsOf(await store.listByPerson({ person: "c-1", after: "a", limit: 1 }))).toEqual([
+        "b",
+      ]);
+      expect(await store.listByPerson({ person: "c-1", after: "b" })).toEqual([]);
+      expect(idsOf(await store.listByPerson({ person: "c-2", after: "", limit: 5 }))).toEqual([
+        "b",
+        "c",
+      ]);
       expect(await store.count()).toBe(5);
 
       const forgotten = await store.forget("c-1");
-      expect(forgotten).toEqual(named);
+      expect(forgotten).toEqual([...named].reverse());
       expect(forgotten).toEqual([
         {
           ...scheduled("b", "2026-01-01T00:01:00.000Z", [held("c-2", "2"), held("c-1", "1")]),
@@ -300,7 +314,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       ]);
       expect((await store.list()).map((kept) => kept.id)).toEqual(["c", "d", "e"]);
       expect(await store.forget("c-1")).toEqual([]);
-      expect(await store.listByPerson("c-1")).toEqual([]);
+      expect(await store.listByPerson({ person: "c-1" })).toEqual([]);
     });
 
     it("forgets the letters that name a person under a key outside those kept, or in the clear", async () => {
@@ -341,7 +355,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect((await store.get("policy"))?.errorMessage).toEqual(sealed("c-1", "1"));
     });
 
-    it("lists the letters that name a person in their work or in their payload, in the order of list", async () => {
+    it("lists the letters that name a person in their work or in their payload, by id", async () => {
       await store.add(
         letter("process", {
           kind: "process",
@@ -365,14 +379,14 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       await store.add(letter("nobody"));
       await store.updateStatus("process", "retried", resolvedAt);
 
-      const named = await store.listByPerson("c-1");
+      const named = await store.listByPerson({ person: "c-1" });
       expect(named.map(({ id, status }) => [id, status])).toEqual([
-        ["scheduled", "failed"],
         ["process", "retried"],
+        ["scheduled", "failed"],
       ]);
-      expect(named[1]).toEqual(await store.get("process"));
-      expect((await store.listByPerson("c-2")).map(({ id }) => id)).toEqual(["other"]);
-      expect(await store.listByPerson("c-3")).toEqual([]);
+      expect(named[0]).toEqual(await store.get("process"));
+      expect((await store.listByPerson({ person: "c-2" })).map(({ id }) => id)).toEqual(["other"]);
+      expect(await store.listByPerson({ person: "c-3" })).toEqual([]);
     });
 
     it("names the person of a process's state beside the person of its work: lists it for either, and forgets it for neither", async () => {
@@ -389,8 +403,13 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       await store.add(letter("policy", { person: "c-1", errorMessage: sealed("c-1", "1") }));
       expect(await store.get("process")).toMatchObject({ person: "c-1", statePerson: "c-2" });
       expect(await store.get("policy")).not.toHaveProperty("statePerson");
-      expect((await store.listByPerson("c-2")).map(({ id }) => id)).toEqual(["process"]);
-      expect((await store.listByPerson("c-1")).map(({ id }) => id)).toEqual(["policy", "process"]);
+      expect((await store.listByPerson({ person: "c-2" })).map(({ id }) => id)).toEqual([
+        "process",
+      ]);
+      expect((await store.listByPerson({ person: "c-1" })).map(({ id }) => id)).toEqual([
+        "policy",
+        "process",
+      ]);
       expect(await store.forget("c-2")).toEqual([]);
       expect(await store.forget("c-1")).toEqual([]);
       await store.reseal("policy", {
@@ -398,10 +417,10 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
         statePerson: "c-3",
         errorMessage: sealed("c-3", "3"),
       });
-      expect((await store.listByPerson("c-3")).map(({ id }) => id)).toEqual(["policy"]);
+      expect((await store.listByPerson({ person: "c-3" })).map(({ id }) => id)).toEqual(["policy"]);
       await store.reseal("process", { person: "c-1", errorMessage: text });
       expect(await store.get("process")).not.toHaveProperty("statePerson");
-      expect(await store.listByPerson("c-2")).toEqual([]);
+      expect(await store.listByPerson({ person: "c-2" })).toEqual([]);
     });
 
     it("reseals a letter in place, whatever its status, keeping the rest of it", async () => {
@@ -438,7 +457,7 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
         persons: [held("c-2", "2")],
       });
       expect(await store.get("missing")).toBeNull();
-      expect((await store.listByPerson("c-1")).map(({ id }) => id)).toEqual(["p"]);
+      expect((await store.listByPerson({ person: "c-1" })).map(({ id }) => id)).toEqual(["p"]);
       expect((await store.forget("c-2")).map(({ id }) => id)).toEqual(["s"]);
       expect(await store.forget("c-1")).toEqual([]);
     });

@@ -20,7 +20,7 @@ import {
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
-import type { OnPersonalDataAccess } from "../modules/audit.ts";
+import type { AccessOutcome, OnPersonalDataAccess } from "../modules/audit.ts";
 import type {
   ForgetOptions,
   RestrictOptions,
@@ -57,7 +57,13 @@ import { checkClassification } from "./personal-data/classification.ts";
 import { logClearFields } from "./personal-data/clear-fields.ts";
 import { createEarlierAnswers } from "./personal-data/earlier-answers.ts";
 import { openEncryptedFiles } from "./personal-data/encrypted-files.ts";
-import { exportPersonalData, type PersonalDataExport } from "./personal-data/export.ts";
+import {
+  collectPersonalDataExport,
+  NO_EXPORTED_RECORDS,
+  type PersonalDataExport,
+  type PersonalDataExportPart,
+} from "./personal-data/export.ts";
+import { recordedParts, streamPersonalData } from "./personal-data/export-stream.ts";
 import { createFileEncryptions } from "./personal-data/file-encryption.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import {
@@ -128,7 +134,7 @@ import {
 } from "./read-model/rebuild.ts";
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { buildRecipients } from "./recipients/build.ts";
-import { createDisclosures } from "./recipients/gate.ts";
+import { createDisclosures, PersonalDataChangedError } from "./recipients/gate.ts";
 import { recipientsOf as listRecipientsOf, recipientStatuses } from "./recipients/listing.ts";
 import {
   createRecipientCatchUp,
@@ -234,9 +240,24 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * A field left unmarked and whatever a policy sent out are not in it. Recorded in the access log
    * before it settles, whether it resolves or fails after it started reading: `app/audit.ts`'s
    * `onPersonalDataAccess`, or the app's logger at `info` without it; rejects with what the hook
-   * throws. Rejects with `ValidationError` an empty id, recording nothing.
+   * throws. Rejects with `ValidationError` an empty id, recording nothing. When the person was
+   * forgotten, restricted, lifted or redacted while it read, it reads them again, each reading
+   * recorded, and rejects with `ConcurrencyError` after `runtime.commands.concurrencyRetries` more.
+   * Holds the whole export in memory: for a long history, `streamPersonalData`.
    */
   exportPersonalData(personId: string): Promise<PersonalDataExport>;
+  /**
+   * The same export, handed out a part at a time as it is read, a page of records at most held at
+   * once, whatever the person's history: the header first, then every record, section by section,
+   * which `personalDataExportJson` writes as the same JSON document. Resolves once the header is
+   * read, so a refusal rejects before anything is handed out. Recorded in the access log when the
+   * reading ends, with what it handed out by then: `ok` at the end, `failed` when a part rejects,
+   * `cancelled` when its reader stops early, as `for await` does on `break` or a response body
+   * when the client goes away. A reader that neither ends nor stops it leaves it unrecorded.
+   * Rejects the reading with `ConcurrencyError` when the person was forgotten, restricted, lifted
+   * or redacted while it read, once everything was read: a new export reads them as they are.
+   */
+  streamPersonalData(personId: string): Promise<AsyncIterable<PersonalDataExportPart>>;
   /**
    * The recipients of a person's data, as the export lists them, for the person to be told of on
    * request (article 19): those disclosed data of theirs, recorded as the port called them, with
@@ -1538,10 +1559,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }
     };
     tenantCheck = ensureLive;
+    // What a call that ran into the tenant's forgetting does, as another instance's makes a key
+    // operation throw: enters it here too.
+    const onTenantForgotten = (): void => {
+      if (hierarchy !== null) enterQuietly(hierarchy);
+    };
     const guarded: <T>(value: T) => T =
       hierarchy === null
         ? (value) => value
-        : guardClient({ ensureLive, onForgotten: () => enterQuietly(hierarchy) });
+        : guardClient({ ensureLive, onForgotten: onTenantForgotten });
     const forgetThisTenant = async (
       name: string,
       { despiteLegalObligations = false }: ForgetTenantOptions = {},
@@ -1609,34 +1635,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const clientAs = (
       actor: string | undefined,
     ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => {
-      const exportAs = async (personId: string): Promise<PersonalDataExport> => {
+      const streamAs = async (personId: string): Promise<AsyncIterable<PersonalDataExportPart>> => {
         checkPersonId(personId, "exportPersonalData");
-        let exported: PersonalDataExport | undefined;
-        return recorded(
-          (outcome) =>
-            recordAccess({
-              operation: "exportPersonalData",
-              detail:
-                exported === undefined
-                  ? null
-                  : {
-                      events: exported.events.length,
-                      scheduledCommands: exported.scheduledCommands.length,
-                      deadLetters: exported.deadLetters.length,
-                      subscriberFailures: exported.subscriberFailures.length,
-                      answers: exported.answers.length,
-                      readModelRows: Object.values(exported.readModels).reduce(
-                        (sum, rows) => sum + rows.length,
-                        0,
-                      ),
-                      recipients: exported.recipients.length,
-                    },
-              actor,
-              persons: [personId],
-              outcome,
-            }),
-          async () => {
-            exported = await exportPersonalData({
+        const record = (outcome: AccessOutcome, detail = NO_EXPORTED_RECORDS) =>
+          recordAccess({
+            operation: "exportPersonalData",
+            detail,
+            actor,
+            persons: [personId],
+            outcome,
+          });
+        const parts = await recorded(
+          // Only a failure is recorded here: the reading of what resolves records how it ends.
+          async (outcome) => {
+            if (outcome === "failed") await record(outcome);
+          },
+          () =>
+            streamPersonalData({
               storage,
               aggregates,
               processes: processDefinitions,
@@ -1647,10 +1662,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               categories: personalCategories,
               recipients,
               personId,
-            });
-            return exported;
-          },
+            }),
         );
+        return recordedParts(parts, record, (error) => {
+          if (error instanceof TenantForgottenError) onTenantForgotten();
+        });
       };
       return {
         commands: createCommandsFacade({
@@ -1753,7 +1769,27 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             errorText,
             operation: "exportPersonalData",
             actor,
-            run: () => exportAs(personId),
+            run: async () => {
+              // Nothing is handed out before the whole is read: an export the person's changes
+              // overtook reads them again, as a command does.
+              for (let attempt = 0; ; attempt += 1) {
+                try {
+                  return await collectPersonalDataExport(await streamAs(personId));
+                } catch (error) {
+                  const again =
+                    error instanceof PersonalDataChangedError && attempt < concurrencyRetries;
+                  if (!again) throw error;
+                }
+              }
+            },
+          }),
+        streamPersonalData: (personId) =>
+          tracedOperation({
+            tracer: appTracer,
+            errorText,
+            operation: "streamPersonalData",
+            actor,
+            run: () => streamAs(personId),
           }),
         restrict: (personId, options) =>
           tracedOperation({
@@ -1873,6 +1909,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         rebuildReadModel: (name) => gate.rebuildReadModel(name),
         forget: (personId, options) => gate.forget(personId, options),
         exportPersonalData: (personId) => gate.exportPersonalData(personId),
+        streamPersonalData: (personId) => gate.streamPersonalData(personId),
         recipientsOf: (personId) => gate.recipientsOf(personId),
         restrict: (personId, options) => gate.restrict(personId, options),
         unrestrict: (personId, options) => gate.unrestrict(personId, options),

@@ -54,7 +54,7 @@ the same way.
 ## Who runs a command
 
 `--actor <id>` names who runs a command that acts or reads personal data: `rebuild`,
-`dead-letters list`, `retry` and `discard`, `status`, `export` and `forget`. The command acts as that id, as
+`dead-letters list`, `retry` and `discard`, `status`, `personal-data export` and `forget`. The command acts as that id, as
 [`client.as(actor)`](/concepts/ids-causation-and-correlation/#who-acts) does in code: the events it
 writes carry it in their metadata, its log lines name it, and so does every access log record it
 causes.
@@ -413,21 +413,28 @@ way.
 Exit codes: `0` migrated, `1` bad arguments, `2` the configuration could not be loaded or a
 migration failed.
 
-## `bounda export` and `bounda forget <person>`
+## `bounda personal-data export` and `bounda forget <person>`
 
 Answer a person's request from the command line. Both boot the project as `bounda dead-letters`
 does, and act as `--actor`.
 
 ```bash
-bounda export c-42 --actor ops-ana > c-42.json
+bounda personal-data export c-42 --actor ops-ana --output c-42.json
+bounda personal-data export c-42 --actor ops-ana | jq '.events | length'
 bounda forget c-42 --category marketing --actor ops-ana
 bounda forget c-42 --actor ops-ana
 ```
 
-`bounda export <person>` prints, as JSON, what `app.exportPersonalData` answers: every record that
-names the person, with each field's category, and every category's basis and retention (see
-[Exporting a person's data](/guides/personal-data/#exporting-a-persons-data)). It is recorded in the
-access log like any export.
+`bounda personal-data export <person>` writes, as JSON, what `app.exportPersonalData` answers:
+every record that names the person, with each field's category, and every category's basis and
+retention (see [Exporting a person's data](/guides/personal-data/#exporting-a-persons-data)). It
+streams it, reading and writing a page of records at a time, however long the person's history,
+and reads no faster than its output takes it. It prints to standard output; with
+`--output <file>` it writes the file instead, readable by its owner alone, beside it as
+`<file>.partial` until the export is whole, then moved into place, so a failed export leaves no
+file. An export that fails once it started printing, as when the person is forgotten, restricted
+or redacted meanwhile (`CONCURRENCY_CONFLICT`), has printed a document cut short, which is not
+valid JSON, and exits `2`: run it again. It is recorded in the access log like any export.
 
 `bounda forget <person>` forgets the person as a whole, as `app.forget` does, and prints
 `forgot c-42`; with `--category`, repeated for several, only those categories, as when a consent is
@@ -563,7 +570,7 @@ data](/guides/personal-data/#correcting-a-persons-data)): it boots the project a
 dead-letters` does, and acts as `--actor`.
 
 ```bash
-bounda export c-42 \
+bounda personal-data export c-42 \
   | jq -c '.events[] | select(.data.email == "ana@old.example")
       | {aggregateType, aggregateId, type, id, fields: ["email"]}' > wrong.jsonl
 bounda redact c-42 --from wrong.jsonl --actor ops-ana
@@ -618,7 +625,8 @@ forgot again 1 of 3 listed; the rest hold no key the line names, or this store h
 | `--from <file>` | `forget` | What `bounda forgotten` printed, or one person's id a line; not with a person |
 | `--category <name>` | `forget <person>` | Forget only this category of the person; repeat it for several |
 | `--root`, `--config`, `--registry`, `--error-text` | all | As for `bounda rebuild` |
-| `--actor <id>` | `export`, `forget` | Who acts, named in each `PersonalDataForgotten`, its log line and the access log |
+| `--actor <id>` | `personal-data export`, `forget` | Who acts, named in each `PersonalDataForgotten`, its log line and the access log |
+| `--output <file>` | `personal-data export` | Write the export to this file, once whole, instead of standard output |
 
 Exit codes: `0` done, `1` bad arguments, or a person and `--from` both or neither, `2` the project
 could not be loaded, the export or the forget failed, or the file could not be read or has a line
@@ -741,7 +749,8 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `app.as(actor).rebuildReadModel(name)`. `bounda status` is `app.status()`, and its failures' text
 `app.as(actor).subscriberFailures.list()`; `bounda migrate` is `migrateTables({ config })` from
 `@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
-or `app.as(actor).deadLetters`, `bounda export` is `app.as(actor).exportPersonalData(person)`,
+or `app.as(actor).deadLetters`, `bounda personal-data export` is
+`personalDataExportJson(await app.as(actor).streamPersonalData(person))`,
 `bounda forget <person>` is `app.as(actor).forget(person, { categories })`,
 `bounda forget --from` is `app.forgetAgain(entries, { actor })`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey()`

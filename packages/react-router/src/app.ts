@@ -2,6 +2,7 @@ import { APP_MODULE_ID } from "./app-module.ts";
 import type { Bounda } from "./create-bounda.ts";
 
 export { failure } from "./failure.ts";
+export { personalDataExportResponse } from "./personal-data-export.ts";
 
 const missing = (): never => {
   throw new Error(

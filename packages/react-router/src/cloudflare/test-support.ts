@@ -19,7 +19,7 @@ export interface FakeStoreNamespace {
 
 /**
  * A stand-in for a Bounda Durable Object's namespace whose stubs record their calls and answer
- * each with an empty success.
+ * each with an empty success: a stream with no part for `streamPersonalData`.
  */
 export const storeNamespace = (): FakeStoreNamespace => {
   const calls: unknown[][] = [];
@@ -44,6 +44,10 @@ export const storeNamespace = (): FakeStoreNamespace => {
       rebuildReadModel: record("rebuildReadModel"),
       forget: record("forget"),
       exportPersonalData: record("exportPersonalData"),
+      streamPersonalData: async (...args: unknown[]) => {
+        calls.push([tenant, "streamPersonalData", ...args]);
+        return { ok: true, value: new Blob([]).stream() };
+      },
       recipientsOf: record("recipientsOf"),
       restrict: record("restrict"),
       unrestrict: record("unrestrict"),

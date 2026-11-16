@@ -205,11 +205,11 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
       ]);
       return row === undefined ? null : toScheduled(row);
     },
-    listByPerson: async (person) =>
+    listByPerson: async ({ person, after, limit }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming("$1")} ORDER BY "execute_at", "dedupe_key" COLLATE "C"`,
-          [person],
+          `SELECT ${COLUMNS} FROM ${table} WHERE ${naming("$1")} AND ($2::text IS NULL OR "dedupe_key" COLLATE "C" > $2::text) ORDER BY "dedupe_key" COLLATE "C" LIMIT $3`,
+          [person, after ?? null, limit ?? null],
         )
       ).map(toScheduled),
     forget: async (person, keep = []) =>

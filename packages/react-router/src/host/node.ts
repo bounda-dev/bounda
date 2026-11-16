@@ -12,6 +12,7 @@ import { type TenantFunction, tenantOfModule } from "../tenant.ts";
 import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 export { failure } from "../failure.ts";
+export { personalDataExportResponse } from "../personal-data-export.ts";
 export type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 // What Node says when `bounda.config.ts` imports `@bounda-dev/cloudflare`.

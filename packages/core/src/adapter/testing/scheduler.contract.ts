@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ScheduledClaimLostError } from "../../contracts/errors.ts";
 import type { KeyedPerson } from "../storage/personal-key-store.ts";
-import type { ClaimedCommand, ScheduleArgs, Scheduler } from "../storage/scheduler.ts";
+import type {
+  ClaimedCommand,
+  ScheduleArgs,
+  ScheduledCommand,
+  Scheduler,
+} from "../storage/scheduler.ts";
 import { testKeyedPerson as held, testCommand, testContext, testSealedValue } from "./fixtures.ts";
 
 export interface SchedulerContractArgs {
@@ -644,9 +649,9 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(listed.find((entry) => entry.dedupeKey === "c")).not.toHaveProperty("persons");
       expect(listed.find((entry) => entry.dedupeKey === "e")).not.toHaveProperty("persons");
 
-      const named = await scheduler.listByPerson("c-1");
-      expect(named.map((entry) => entry.dedupeKey)).toEqual(["d", "a"]);
-      expect(named[1]).toEqual({
+      const named = await scheduler.listByPerson({ person: "c-1" });
+      expect(named.map((entry) => entry.dedupeKey)).toEqual(["a", "d"]);
+      expect(named[0]).toEqual({
         dedupeKey: "a",
         command: testCommand("a"),
         executeAt: at(1_000).toISOString(),
@@ -655,7 +660,17 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         attempts: 0,
         persons: [held("c-1", "1")],
       });
-      expect(await scheduler.listByPerson("c")).toEqual([]);
+      expect(await scheduler.listByPerson({ person: "c" })).toEqual([]);
+      const keysOf = (page: readonly ScheduledCommand[]) => page.map((entry) => entry.dedupeKey);
+      expect(keysOf(await scheduler.listByPerson({ person: "c-1", limit: 1 }))).toEqual(["a"]);
+      expect(keysOf(await scheduler.listByPerson({ person: "c-1", after: "a", limit: 1 }))).toEqual(
+        ["d"],
+      );
+      expect(await scheduler.listByPerson({ person: "c-1", after: "d" })).toEqual([]);
+      expect(keysOf(await scheduler.listByPerson({ person: "c-1", after: "" }))).toEqual([
+        "a",
+        "d",
+      ]);
       expect((await scheduler.list()).map((entry) => entry.dedupeKey)).toHaveLength(5);
 
       const forgotten = await scheduler.forget("c-1");
@@ -673,7 +688,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       await expect(scheduler.complete(claimed)).rejects.toBeInstanceOf(ScheduledClaimLostError);
       expect(await scheduler.forget("c-1")).toEqual([]);
       expect(await scheduler.forget("c")).toEqual([]);
-      expect(await scheduler.listByPerson("c-1")).toEqual([]);
+      expect(await scheduler.listByPerson({ person: "c-1" })).toEqual([]);
     });
 
     it("forgets the commands that name a person under a key outside those kept, or in the clear", async () => {
@@ -776,10 +791,9 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
         },
       ]);
       expect(await scheduler.claimDue({ now: at(1_500), limit: 10, leaseMs: 60_000 })).toEqual([]);
-      expect((await scheduler.listByPerson("c-1")).map((entry) => entry.dedupeKey)).toEqual([
-        "a",
-        "b",
-      ]);
+      expect(
+        (await scheduler.listByPerson({ person: "c-1" })).map((entry) => entry.dedupeKey),
+      ).toEqual(["a", "b"]);
       await scheduler.complete(retried);
       expect((await scheduler.forget("c-1")).map((entry) => entry.dedupeKey)).toEqual(["b"]);
       expect(await scheduler.list()).toEqual([]);
@@ -807,7 +821,7 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       const [kept] = await scheduler.list();
       expect(kept?.command.payload).toEqual(newer);
       expect(kept).not.toHaveProperty("persons");
-      expect(await scheduler.listByPerson("c-1")).toEqual([]);
+      expect(await scheduler.listByPerson({ person: "c-1" })).toEqual([]);
       await scheduler.reseal({ dedupeKey: "a", from: newer, payload: { email: "x" }, persons: [] });
       const [rewritten] = await scheduler.list();
       expect(rewritten?.command.payload).toEqual({ email: "x" });

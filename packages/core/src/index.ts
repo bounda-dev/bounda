@@ -71,7 +71,11 @@ export type {
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
   PersonalDataExport,
+  PersonalDataExportHeader,
+  PersonalDataExportPart,
 } from "./kernel/personal-data/export.ts";
+export type { PersonalDataExportJsonFunction } from "./kernel/personal-data/export-json.ts";
+export { personalDataExportJson } from "./kernel/personal-data/export-json.ts";
 export { FILE_ENCRYPTION_RETRY_MS } from "./kernel/personal-data/file-encryption.ts";
 export type {
   ForgetTenantOptions,

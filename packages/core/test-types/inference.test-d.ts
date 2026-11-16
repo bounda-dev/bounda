@@ -77,6 +77,8 @@ import type {
   PersonalDataCategories,
   PersonalDataCategory,
   PersonalDataExport,
+  PersonalDataExportHeader,
+  PersonalDataExportPart,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
   PersonalDataForgottenReason,
@@ -142,6 +144,7 @@ import {
   idempotencyKeyFor,
   MAX_ACCESS_PERSONS,
   MAX_ACTOR_LENGTH,
+  personalDataExportJson,
 } from "@bounda-dev/core";
 import type {
   Adapter,
@@ -809,7 +812,7 @@ describe("personal data", () => {
       readonly answers: number;
       readonly readModelRows: number;
       readonly recipients: number;
-    } | null>();
+    }>();
     expectTypeOf<
       Extract<PersonalDataAccess, { operation: "disclosure" }>["detail"]
     >().toEqualTypeOf<{
@@ -830,7 +833,7 @@ describe("personal data", () => {
       Extract<PersonalDataAccess, { operation: "recipientsOf" }>["detail"]
     >().toEqualTypeOf<{ readonly recipients: number } | null>();
     expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<AccessOutcome>();
-    expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed">();
+    expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed" | "cancelled">();
     expectTypeOf<
       Extract<PersonalDataAccess, { operation: "query" }>["unattributed"]
     >().toEqualTypeOf<boolean>();
@@ -951,6 +954,7 @@ describe("personal data", () => {
     expectTypeOf<PersonalDataExport>().toEqualTypeOf<{
       readonly personId: string;
       readonly exportedAt: string;
+      readonly position: number;
       readonly categories: Readonly<Record<string, ExportedCategory>>;
       readonly restrictions: readonly ProcessingRestriction[];
       readonly redactions: readonly ExportedRedaction[];
@@ -962,6 +966,37 @@ describe("personal data", () => {
       readonly answers: readonly ExportedAnswer[];
       readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
     }>();
+    expectTypeOf<BoundaClient["streamPersonalData"]>().toEqualTypeOf<
+      (personId: string) => Promise<AsyncIterable<PersonalDataExportPart>>
+    >();
+    expectTypeOf<BoundaApp["streamPersonalData"]>().toEqualTypeOf<
+      BoundaClient["streamPersonalData"]
+    >();
+    expectTypeOf<PersonalDataExportHeader>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly exportedAt: string;
+      readonly position: number;
+      readonly categories: Readonly<Record<string, ExportedCategory>>;
+      readonly restrictions: readonly ProcessingRestriction[];
+      readonly redactions: readonly ExportedRedaction[];
+      readonly recipients: readonly PersonRecipient[];
+      readonly readModels: readonly string[];
+    }>();
+    expectTypeOf<PersonalDataExportPart>().toEqualTypeOf<
+      | { readonly kind: "header"; readonly header: PersonalDataExportHeader }
+      | { readonly kind: "event"; readonly event: ExportedEvent }
+      | { readonly kind: "scheduledCommand"; readonly scheduledCommand: ExportedScheduledCommand }
+      | { readonly kind: "deadLetter"; readonly deadLetter: ExportedDeadLetter }
+      | {
+          readonly kind: "subscriberFailure";
+          readonly subscriberFailure: ExportedSubscriberFailure;
+        }
+      | { readonly kind: "answer"; readonly answer: ExportedAnswer }
+      | { readonly kind: "row"; readonly readModel: string; readonly row: ExportedRow }
+    >();
+    expectTypeOf(personalDataExportJson).toEqualTypeOf<
+      (parts: AsyncIterable<PersonalDataExportPart>) => ReadableStream<Uint8Array>
+    >();
     expectTypeOf<ExportedAnswer>().toEqualTypeOf<{
       readonly idempotencyKey: string;
       readonly expiresAt: string;

@@ -27,7 +27,8 @@ interface AccessRecord {
   readonly at: string;
   /**
    * `ok` when the operation handed its result out; `failed` when it rejected after reading, with
-   * an error that may quote what it read.
+   * an error that may quote what it read; `cancelled` when the reader of a streamed export stopped
+   * before its end, having been handed part of it.
    */
   readonly outcome: AccessOutcome;
   /**
@@ -41,7 +42,7 @@ interface AccessRecord {
 /**
  * How an operation that read personal data ended.
  */
-export type AccessOutcome = "ok" | "failed";
+export type AccessOutcome = "ok" | "failed" | "cancelled";
 
 /**
  * The persons whose restricted data an operation opened, and the basis it named, as article 18(2)
@@ -71,8 +72,8 @@ export interface QueryAccess extends AccessRecord {
 }
 
 /**
- * `exportPersonalData`, with how many records of each kind it handed out; `detail` is `null` when
- * it failed, having handed nothing out.
+ * `exportPersonalData` or `streamPersonalData`, with how many records of each kind it handed out,
+ * all of them for one that failed or was cancelled before its end.
  */
 export interface ExportAccess extends AccessRecord {
   readonly operation: "exportPersonalData";
@@ -84,7 +85,7 @@ export interface ExportAccess extends AccessRecord {
     readonly answers: number;
     readonly readModelRows: number;
     readonly recipients: number;
-  } | null;
+  };
 }
 
 /**

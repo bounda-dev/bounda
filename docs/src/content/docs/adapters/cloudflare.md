@@ -284,8 +284,10 @@ export default {
 `connect(stub)` gives a `BoundaClient`, the type `@bounda-dev/core` gives to what a request sees
 of an app wherever it runs: the same `commands` and `queries` as `app.commands` and
 `app.queries`, typed from your modules, plus `getLag()`, `status()`, `events`, `deadLetters`,
-`subscriberFailures`, `rebuildReadModel`, `forget`, `exportPersonalData`, `restrict` and
-`unrestrict`. `bounda status` runs where Node can open the store, so a Durable Object's is read
+`subscriberFailures`, `rebuildReadModel`, `forget`, `exportPersonalData`, `streamPersonalData`,
+`restrict` and `unrestrict`. `streamPersonalData` crosses RPC as a stream of the export's parts,
+read on the object a page at a time as the Worker reads them, and stopped when the Worker stops
+reading, so a person's long history never has to fit in one RPC answer. `bounda status` runs where Node can open the store, so a Durable Object's is read
 through `status()`, from an admin route of the Worker, say.
 Its commands resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })`
 resolves them once their events are stored, for a request that reads nothing after it. A refusal comes

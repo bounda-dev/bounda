@@ -31,6 +31,7 @@ import {
   type UnrestrictOptions,
 } from "@bounda-dev/core";
 import { unwrap } from "./outcome.ts";
+import { partsOf } from "./parts.ts";
 
 /**
  * The methods of a Bounda object's stub that `connect` calls. Structural on purpose: a stub from
@@ -75,6 +76,7 @@ export interface BoundaStub {
     options?: ForgetOptions,
   ): PromiseLike<unknown>;
   exportPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
+  streamPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
   recipientsOf(personId: string, actor?: string): PromiseLike<unknown>;
   restrict(
     personId: string,
@@ -190,6 +192,8 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       unwrap<StoredDispatch>(stub.forget(personId, consistency, actor, options)),
     exportPersonalData: (personId) =>
       unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor)),
+    streamPersonalData: async (personId) =>
+      partsOf(await unwrap<ReadableStream<Uint8Array>>(stub.streamPersonalData(personId, actor))),
     recipientsOf: (personId) =>
       unwrap<readonly PersonRecipient[]>(stub.recipientsOf(personId, actor)),
     restrict: (personId, options) =>

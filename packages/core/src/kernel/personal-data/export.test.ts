@@ -22,7 +22,7 @@ import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { createDisposableKey, seal } from "./crypto.ts";
 import { sealError } from "./errors.ts";
-import { exportPersonalData } from "./export.ts";
+import { exportPersonalData } from "./export-stream.ts";
 
 const NO_RECIPIENTS: RecipientsRuntime = { all: [], byPort: {}, byOwner: {} };
 
@@ -285,6 +285,7 @@ describe("exportPersonalData", () => {
     expect(exported).toStrictEqual({
       personId: "c-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
+      position: 7,
       categories: exportedCategories,
       restrictions: [],
       redactions: [],
@@ -405,6 +406,22 @@ describe("exportPersonalData", () => {
       context: testContext,
       persons: ana.persons,
     });
+    // Stored before Bounda recorded when a command was scheduled.
+    await storage.scheduler.schedule({
+      dedupeKey: "command:cmd-0",
+      command: { type: "RemindCustomer", aggregateId: "c-1", payload: ana.payload },
+      executeAt: new Date("2026-01-03T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-03T00:00:00.000Z"),
+      context: testContext,
+      persons: ana.persons,
+    });
+    const listByPerson = storage.scheduler.listByPerson;
+    Object.assign(storage.scheduler, {
+      listByPerson: async (args: Parameters<typeof listByPerson>[0]) =>
+        (await listByPerson(args)).map(({ scheduledAt, ...entry }) =>
+          entry.dedupeKey === "command:cmd-0" ? entry : { ...entry, scheduledAt },
+        ),
+    });
     await storage.scheduler.schedule({
       dedupeKey: "command:cmd-2",
       command: { type: "RemindCustomer", aggregateId: "c-2", payload: bo.payload },
@@ -450,7 +467,15 @@ describe("exportPersonalData", () => {
     });
 
     const exported = await exportOf("c-1");
-    expect(exported.scheduledCommands).toEqual([
+    expect(exported.scheduledCommands).toStrictEqual([
+      {
+        commandId: "cmd-0",
+        type: "RemindCustomer",
+        executeAt: "2026-01-03T00:00:00.000Z",
+        data: { email: "ana@example.com" },
+        categories: { email: "default" },
+        restricted: [],
+      },
       {
         commandId: "cmd-1",
         type: "RemindCustomer",
@@ -766,23 +791,69 @@ describe("exportPersonalData", () => {
   });
 
   it("tells until when what a forgetting kept of a category under a legal obligation stays restricted", async () => {
-    const { exportOf, place, storage } = await setup();
+    const { exportOf, place, register, storage } = await setup();
+    await register("c-1", "ana@example.com");
     await place("o-1", { customerId: "c-1", note: "ring twice", total: 10 });
-    const [invoice] = (await storage.personalKeys.list("c-1")).filter(
-      ({ category }) => category === "invoices",
-    );
-    await storage.personalKeys.retain("c-1", invoice?.key.fingerprint ?? "", {
+    // Their keys in force know their last activity, which keeps nothing restricted.
+    await storage.personalKeys.touch("c-1", "2026-01-08T00:00:00.000Z");
+    const invoiceKey = async () =>
+      (await storage.personalKeys.list("c-1")).find(
+        ({ category, retainedSince }) => category === "invoices" && retainedSince === null,
+      )?.key.fingerprint ?? "";
+    await storage.personalKeys.retain("c-1", await invoiceKey(), {
       since: "2026-01-10T00:00:00.000Z",
       lastActiveAt: "2026-01-05T00:00:00.000Z",
     });
-    const exported = await exportOf("c-1");
-    expect(exported.categories).toEqual({
+    const kept = await exportOf("c-1");
+    expect(kept.categories).toEqual({
       ...exportedCategories,
       invoices: { ...exportedCategories.invoices, restrictedUntil: "2026-03-06T00:00:00.000Z" },
     });
-    expect(exported.events.map(({ data, categories }) => [data, categories])).toEqual([
-      [{ note: "ring twice" }, { note: "invoices" }],
+    expect(
+      kept.events.map(({ data, categories, restricted }) => [data, categories, restricted]),
+    ).toEqual([
+      [{ email: "ana@example.com" }, { email: "default" }, []],
+      [{ note: "ring twice" }, { note: "invoices" }, ["note"]],
     ]);
+    // They came back, and what they wrote since is not what the law kept; kept again later, the
+    // latest end is when nothing kept is left.
+    await place("o-2", { customerId: "c-1", note: "back again", total: 20 });
+    const back = await exportOf("c-1");
+    expect(back.events.map(({ data, restricted }) => [data, restricted])).toEqual([
+      [{ email: "ana@example.com" }, []],
+      [{ note: "ring twice" }, ["note"]],
+      [{ note: "back again" }, []],
+    ]);
+    await storage.personalKeys.retain("c-1", await invoiceKey(), {
+      since: "2026-01-20T00:00:00.000Z",
+      lastActiveAt: "2026-01-15T00:00:00.000Z",
+    });
+    expect((await exportOf("c-1")).categories.invoices?.restrictedUntil).toBe(
+      "2026-03-16T00:00:00.000Z",
+    );
+  });
+
+  it("keeps nothing restricted for a category kept without a retention", async () => {
+    const { storage, aggregates, readModels, register } = await setup();
+    await register("c-1", "ana@example.com");
+    const [key] = await storage.personalKeys.list("c-1");
+    await storage.personalKeys.retain("c-1", key?.key.fingerprint ?? "", {
+      since: "2026-01-10T00:00:00.000Z",
+      lastActiveAt: "2026-01-05T00:00:00.000Z",
+    });
+    const exported = await exportPersonalData({
+      storage,
+      aggregates,
+      readModels,
+      sealing: { keys: storage.personalKeys, indexer: null, redactions: async () => [] },
+      processes: { byName: {} },
+      clock: createFixedClock(),
+      batchSize: 2,
+      categories: buildPersonalCategories({ module: undefined, retention: null }),
+      recipients: NO_RECIPIENTS,
+      personId: "c-1",
+    });
+    expect(exported.categories.default?.restrictedUntil).toBeNull();
   });
 
   it("names the default category without a basis, and without a retention when the app sets none", async () => {
@@ -805,7 +876,7 @@ describe("exportPersonalData", () => {
     expect((await exportOf("c-1")).categories).toEqual(exportedCategories);
   });
 
-  it("hands out each answer remembered of the person that still opens, by key", async () => {
+  it("hands out each answer remembered of the person that still opens, in the order the store files them", async () => {
     const { storage, exportOf } = await setup();
     const keys = storage.personalKeys;
     const own = await keys.create("c-1", "default");
@@ -836,9 +907,11 @@ describe("exportPersonalData", () => {
         now,
       });
     };
-    // Filed in another order than their keys sort in, as an HMAC files them.
+    // Filed in another order than their keys sort in, as an HMAC files them: the export keeps the
+    // store's.
     await remember("h-1", "confirm-3");
     await remember("h-3", "confirm-1");
+    const sealedAnswer = (await storage.idempotencyStore.get({ key: "h-1", now }))?.answer ?? null;
     // Sealed under a key the person no longer holds: nothing of it opens.
     await storage.idempotencyStore.put({
       key: "h-2",
@@ -852,15 +925,24 @@ describe("exportPersonalData", () => {
       expiresAt: "2026-01-02T00:00:00.000Z",
       now,
     });
+    // Erased with a forgetting, the key alone kept taken.
+    await storage.idempotencyStore.put({
+      key: "h-0",
+      answer: sealedAnswer,
+      persons: [{ person: "c-1", fingerprint: "forgotten" }],
+      expiresAt: "2026-01-02T00:00:00.000Z",
+      now,
+    });
+    expect((await storage.idempotencyStore.get({ key: "h-0", now }))?.answer).toBeNull();
     expect((await exportOf("c-1")).answers).toEqual([
       {
-        idempotencyKey: "confirm-1",
+        idempotencyKey: "confirm-3",
         expiresAt: "2026-01-02T00:00:00.000Z",
         outcome,
         restricted: [],
       },
       {
-        idempotencyKey: "confirm-3",
+        idempotencyKey: "confirm-1",
         expiresAt: "2026-01-02T00:00:00.000Z",
         outcome,
         restricted: [],

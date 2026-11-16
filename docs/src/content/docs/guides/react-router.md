@@ -153,6 +153,31 @@ changes: in an existing project, `react-router reveal entry.server` writes the d
 to start from. Without the file, or when it does not export `handleError`, the `bounda()` plugin warns
 when the dev server or the build starts.
 
+## Exporting a person's data
+
+A loader answers a person's [export](/guides/personal-data/#exporting-a-persons-data) as a file
+to save with `personalDataExportResponse`, which streams it as it is read, however long their
+history, on Node and on Cloudflare alike:
+
+```ts
+// app/routes/privacy.export.$personId.ts
+import { bounda, personalDataExportResponse } from "@bounda-dev/react-router/app";
+import type { Route } from "./+types/privacy.export.$personId";
+
+export const loader = async ({ params, context }: Route.LoaderArgs) =>
+  personalDataExportResponse(context.get(bounda).as("dpo"), params.personId);
+```
+
+The response is the JSON document of `personalDataExportJson`, with `content-disposition`
+`attachment; filename="personal-data.json"`, which names no person, and `cache-control: no-store`,
+so no cache between keeps a copy; a third argument adds to it, as a `ResponseInit`, its headers
+over these. A refusal, such as an empty id or a forgotten tenant, rejects before the response is
+made, for `failure` or the route's `ErrorBoundary`. A later one, a `ConcurrencyError` when the
+person was forgotten, restricted or redacted while it was read, cuts the body short: what the
+browser saved is not valid JSON, and a new request exports the person as they are then. When the
+browser goes away, the body is cancelled, which stops the export where it was and records it in
+the access log as `cancelled`.
+
 ## When the client goes away
 
 A command keeps going when the browser closes the tab: the request has already arrived, and

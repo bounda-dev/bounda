@@ -163,6 +163,16 @@ export interface SealedValue {
   readonly $personal: PersonalEnvelope;
 }
 
+/**
+ * A page of the records that name a person, by the key each store orders them by: those after
+ * `after` when given, at most `limit` of them when given.
+ */
+export interface ListByPersonArgs {
+  readonly person: string;
+  readonly after?: string | undefined;
+  readonly limit?: number | undefined;
+}
+
 export interface KeyedPersonIdFunction {
   (held: KeyedPerson): string;
 }

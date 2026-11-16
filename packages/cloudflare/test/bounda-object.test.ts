@@ -1,5 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { type PersonalDataExportPart, personalDataExportJson } from "@bounda-dev/core";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
 import { masterKey } from "@bounda-dev/core/config";
 import { expectForgotten, expectRedacted } from "@bounda-dev/core/testing";
@@ -163,6 +164,31 @@ describe("a Bounda Durable Object", () => {
     expect(await rejection(store.recipientsOf(""))).toMatchObject({ name: "ValidationError" });
     const refused = await rejection(store.exportPersonalData(""));
     expect(refused).toMatchObject({ name: "ValidationError", code: "VALIDATION_FAILED" });
+  });
+
+  it("streams a person's export over RPC, as the export answers it, and the JSON of it", async () => {
+    const { store } = open();
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "no bell" });
+    await store.commands.placeOrder({ orderId: "o-2", total: 9, customer: "ada", note: "ring" });
+    const whole = await store.exportPersonalData("ada");
+    const parts: PersonalDataExportPart[] = [];
+    for await (const part of await store.streamPersonalData("ada")) parts.push(part);
+    expect(parts.map(({ kind }) => kind)).toEqual([
+      "header",
+      "event",
+      "event",
+      ...Object.values(whole.readModels).flatMap((rows) => rows.map(() => "row")),
+    ]);
+    const body = personalDataExportJson(await store.streamPersonalData("ada"));
+    expect(JSON.parse(await new Response(body).text())).toEqual(whole);
+    // Stopping early stops the export on the object, which records it so.
+    for await (const part of await store.as("dpo").streamPersonalData("ada")) {
+      if (part.kind === "event") break;
+    }
+    expect(await rejection(store.streamPersonalData(""))).toMatchObject({
+      name: "ValidationError",
+      code: "VALIDATION_FAILED",
+    });
   });
 
   it("redacts a marked field in its SQLite, so the old value reads nowhere and the export lists the redaction", async () => {
