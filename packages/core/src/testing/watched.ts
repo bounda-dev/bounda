@@ -39,8 +39,11 @@ export const scopesOf: ScopesOfFunction = (expectation, target) => {
     }
     return [{ data: null, running: [], adapters: [target], ledgers: [], logs: [], traces: [] }];
   }
-  const { witness, tenant } = watched;
-  const apps = witness.apps.filter((app) => tenant === null || app.tenant === tenant);
+  const { witness, tenant, app: own } = watched;
+  const apps =
+    own === undefined
+      ? witness.apps.filter((app) => tenant === null || app.tenant === tenant)
+      : [own];
   if (apps.length === 0) {
     throw new Error(
       `${expectation} found no app the witness watched that started: give it the witness before it starts, as createApp, boot() and createBounda take it, and check that it started`,

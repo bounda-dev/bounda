@@ -84,6 +84,11 @@ export interface TestWitness {
 export interface WatchedTarget {
   readonly witness: TestWitness;
   readonly tenant: string | null;
+  /**
+   * The one app a target made to stand for it stands for, as a Durable Object for its own: not
+   * another of the same tenant, which may be another object of that name.
+   */
+  readonly app?: WatchedApp;
 }
 
 export interface TestWitnessOfFunction {
@@ -164,6 +169,8 @@ const createTestWitness = (): TestWitness => {
   };
 
   let self: TestWitness;
+  // The app each client `onApp` was told of is.
+  const ownApps = new WeakMap<object, WatchedApp>();
   const watch = (target: object, tenant: string | null): void => {
     targets.set(target, { witness: self, tenant });
   };
@@ -188,6 +195,7 @@ const createTestWitness = (): TestWitness => {
           watched = { client, tenant, adapters, ledgers, stopped: false };
           apps.push(watched);
           watch(client, tenant);
+          ownApps.set(client, watched);
         },
         onStopped: () => {
           if (watched !== undefined) watched.stopped = true;
@@ -201,12 +209,13 @@ const createTestWitness = (): TestWitness => {
     logger: (logger: Logger, like?: object) =>
       recording(logger, true, (like === undefined ? undefined : targets.get(like)?.tenant) ?? null),
     watch: (target: object, like?: object) => {
+      const known = like === undefined ? undefined : targets.get(like);
+      const app = like === undefined ? undefined : ownApps.get(like);
       targets.set(
         target,
-        (like === undefined ? undefined : targets.get(like)) ?? {
-          witness: self,
-          tenant: null,
-        },
+        known === undefined
+          ? { witness: self, tenant: null }
+          : { ...known, ...(app === undefined ? {} : { app }) },
       );
     },
     [WITNESS_HOOKS]: hooks,

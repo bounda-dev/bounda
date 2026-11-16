@@ -1085,6 +1085,33 @@ describe("expectForgotten given an app built with a witness", () => {
     await acme.stop();
   });
 
+  it("searches only the app a target was made to stand for, beside another of the same tenant", async () => {
+    const witness = createWitness();
+    const named = <R extends Registry>(from: R) =>
+      createApp<R>({
+        registry: from,
+        config: { storage: memory(), ports: {} as never },
+        tenant: "acme",
+        witness,
+      });
+    const clean = await named(registry);
+    const leaking = await named(leaky);
+    for (const app of [clean, leaking]) {
+      await app.commands.registerCustomer(ana);
+      await app.runUntilIdle();
+      await app.forget("c-1");
+      await app.runUntilIdle();
+    }
+    // As a Durable Object stands for its own app.
+    const object = { forget: async () => undefined };
+    witness.watch(object, clean);
+    await expectForgotten(object, "c-1");
+    await expect(expectForgotten(witness, "c-1")).rejects.toBeInstanceOf(NotForgottenError);
+    await clean.stop();
+    await expect(expectForgotten(object, "c-1")).rejects.toThrow("before app.stop()");
+    await leaking.stop();
+  });
+
   it("checks a redaction through the witness, finding the old value the app logged", async () => {
     const witness = createWitness();
     const app = await start(witness, chatty);
