@@ -135,7 +135,7 @@ describe("a witness", () => {
   it("is what createWitness returns, the same type from core and from its testing entry", () => {
     expectTypeOf(createWitness).returns.toEqualTypeOf<Witness>();
     expectTypeOf<TestingWitness>().toEqualTypeOf<Witness>();
-    expectTypeOf<Witness["logger"]>().toEqualTypeOf<(logger: Logger) => Logger>();
+    expectTypeOf<Witness["logger"]>().toEqualTypeOf<(logger: Logger, like?: object) => Logger>();
     expectTypeOf<Witness["watch"]>().toEqualTypeOf<(target: object, like?: object) => void>();
   });
 

@@ -9,8 +9,10 @@ import {
 } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
 import { connect } from "../src/client.ts";
+import { cloudflare } from "../src/definition.ts";
 import { witnessObjects } from "../src/testing.ts";
-import { objectWitnessesOf } from "../src/witnesses.ts";
+import { witnessOf } from "../src/witnesses.ts";
+import { createWorker } from "../src/worker.ts";
 import type { quietRegistry } from "./app.ts";
 import { WitnessedStore } from "./test-worker.ts";
 
@@ -108,6 +110,16 @@ describe("a Durable Object of a class witnessObjects watches", () => {
         "logs message",
       ]),
     );
+    // Another object sees none of what this one logged.
+    const other = fresh();
+    await connect<typeof quietRegistry>(other).commands.placeOrder({
+      orderId: "o-1",
+      total: 5,
+      customer: "ada",
+    });
+    await runInDurableObject(other, (object) =>
+      expectForgotten(object, "ada", { values: ["bounda rebuild finished"] }),
+    );
   });
 
   it("checks a redaction and a tenant's forgetting given the object", async () => {
@@ -134,24 +146,56 @@ describe("a Durable Object of a class witnessObjects watches", () => {
     await runInDurableObject(stub, (object) => expectTenantForgotten(object));
   });
 
-  it("is one witness per object, made once however often the class is watched", () => {
-    const witnesses = objectWitnessesOf(WitnessedStore);
-    witnessObjects(WitnessedStore);
-    expect(objectWitnessesOf(WitnessedStore)).toBe(witnesses);
-    expect(witnesses?.of("a")).toBe(witnesses?.of("a"));
-    expect(witnesses?.of("a")).not.toBe(witnesses?.of("b"));
-  });
-
-  it("watches a class extending a watched one as its parent, or apart once watched itself", () => {
+  it("is one witness for the class, however often watched, and another for a subclass watched itself", () => {
+    const witness = witnessObjects(WitnessedStore);
+    expect(witnessObjects(WitnessedStore)).toBe(witness);
+    expect(witnessOf(WitnessedStore)).toBe(witness);
     const inherited = class extends WitnessedStore {};
     const apart = class extends WitnessedStore {};
-    witnessObjects(apart);
-    const parent = objectWitnessesOf(WitnessedStore);
-    expect(objectWitnessesOf(inherited)).toBe(parent);
-    expect(objectWitnessesOf(apart)).not.toBe(parent);
-    const own = objectWitnessesOf(apart)?.of("a");
-    expect(own).toEqual(expect.objectContaining({ logger: expect.any(Function) }));
-    expect(own).not.toBe(parent?.of("a"));
+    const own = witnessObjects(apart);
+    expect(witnessOf(inherited)).toBe(witness);
+    expect(witnessOf(apart)).toBe(own);
+    expect(own).not.toBe(witness);
+  });
+
+  it("searches what the Worker in front logs, with every object's persons", async () => {
+    const worker = createWorker({
+      config: {
+        storage: cloudflare({ binding: "WITNESSED_STORE" }),
+        runtime: { telemetry: { errorText: "include" } },
+      },
+      tenantOf: () => {
+        throw new Error("no store for ada@example.com");
+      },
+    });
+    const witness = witnessObjects(WitnessedStore, { hosts: [worker] });
+    expect(witnessOf(worker)).toBe(witness);
+    const request = new Request("http://example.com/commands/placeOrder", {
+      method: "POST",
+      body: JSON.stringify({ orderId: "o-1", total: 1, customer: "ada" }),
+    });
+    const response = await worker.fetch?.(
+      request as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      {} as ExecutionContext,
+    );
+    expect(response?.status).toBe(500);
+    const stub = fresh();
+    await connect<typeof quietRegistry>(stub).commands.placeOrder({
+      orderId: "o-1",
+      total: 7,
+      customer: "ada",
+    });
+    const error = (await runInDurableObject(stub, (object) =>
+      rejection(expectForgotten(object, "ada", { values: ["ada@example.com"] })),
+    )) as NotForgottenError;
+    expect(error.found).toContainEqual(
+      expect.objectContaining({
+        store: "logs",
+        row: expect.stringContaining('"bounda worker request failed"'),
+        field: "fields.errorMessage",
+      }),
+    );
   });
 
   it("leaves an object of a class it does not watch to be refused", async () => {

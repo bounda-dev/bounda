@@ -1,6 +1,9 @@
 import { cloudflare } from "@bounda-dev/cloudflare";
-import { ConfigurationError, type Consistency, type Registry } from "@bounda-dev/core";
+import { witnessObjects } from "@bounda-dev/cloudflare/testing";
+import { ConfigurationError, type Consistency, createApp, type Registry } from "@bounda-dev/core";
+import { memory } from "@bounda-dev/core/memory";
 import type { ImportModuleFunction } from "@bounda-dev/core/node";
+import { expectForgotten, type NotForgottenError } from "@bounda-dev/core/testing";
 import { RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env, type FakeStoreNamespace, storeNamespace } from "../cloudflare/test-support.ts";
@@ -9,6 +12,25 @@ import * as cloudflareHost from "./cloudflare.ts";
 import { createHost } from "./cloudflare.ts";
 
 const registry = { aggregates: {}, readModels: {} } as Registry;
+
+// What a witness `witnessObjects` gave `host` found of an email the host logged, beside an app.
+const searchedThrough = async (
+  host: object,
+  log: () => Promise<unknown>,
+): Promise<readonly string[]> => {
+  const witness = witnessObjects(class {} as never, { hosts: [host] });
+  const app = await createApp({
+    registry: { aggregates: {}, readModels: {} } as Registry,
+    config: { storage: memory() },
+    witness,
+  });
+  await log();
+  const error = (await expectForgotten(witness, "c-1", { values: ["ana@example.com"] }).catch(
+    (caught: unknown) => caught,
+  )) as NotForgottenError;
+  await app.stop();
+  return error.found.map(({ store, field }) => `${store} ${field}`);
+};
 
 const middlewareArgs = () => {
   const context = new RouterContextProvider();
@@ -217,6 +239,24 @@ describe("createHost under the workerd condition: handleError", () => {
       ).toEqual([line]);
     },
   );
+
+  it("logs through the witness witnessObjects gave it", async () => {
+    const host = createHost({
+      registry,
+      importConfig: async () => ({
+        default: { storage: cloudflare(), runtime: { telemetry: { errorText: "include" } } },
+      }),
+      importTenant: async () => ({ tenant: () => "acme" }),
+      consistency: "eventual",
+    });
+    await host.boundaMiddleware(middlewareArgs().args, async () => undefined);
+    const found = await searchedThrough(host, () =>
+      logged(() =>
+        host.handleError(new Error("ana@example.com"), { request: new Request("http://w/a") }),
+      ),
+    );
+    expect(found).toEqual(["logs fields.errorMessage", "logs fields.errorStack"]);
+  });
 
   // A Worker may cancel an import still pending once its response is sent.
   it("never imports the configuration itself: before the first request only the env decides", async () => {

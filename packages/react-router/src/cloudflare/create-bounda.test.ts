@@ -1,15 +1,39 @@
 import { cloudflare } from "@bounda-dev/cloudflare";
+import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import {
   type AppRegistry,
   type BoundaClient,
   ConfigurationError,
   type Consistency,
+  createApp,
   idempotencyKeyFor,
+  type Registry,
 } from "@bounda-dev/core";
+import { memory } from "@bounda-dev/core/memory";
+import { expectForgotten, type NotForgottenError } from "@bounda-dev/core/testing";
 import { type RouterContext, RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createBounda } from "./create-bounda.ts";
 import { env, storeNamespace } from "./test-support.ts";
+
+// What a witness `witnessObjects` gave `host` found of an email the host logged, beside an app.
+const searchedThrough = async (
+  host: object,
+  log: () => Promise<unknown>,
+): Promise<readonly string[]> => {
+  const witness = witnessObjects(class {} as never, { hosts: [host] });
+  const app = await createApp({
+    registry: { aggregates: {}, readModels: {} } as Registry,
+    config: { storage: memory() },
+    witness,
+  });
+  await log();
+  const error = (await expectForgotten(witness, "c-1", { values: ["ana@example.com"] }).catch(
+    (caught: unknown) => caught,
+  )) as NotForgottenError;
+  await app.stop();
+  return error.found.map(({ store, field }) => `${store} ${field}`);
+};
 
 const middlewareArgs = () => {
   const context = new RouterContextProvider();
@@ -209,6 +233,21 @@ describe("createBounda on Cloudflare: handleError", () => {
       ]);
     },
   );
+
+  it("logs through the witness witnessObjects gave it", async () => {
+    env.STORE = storeNamespace().namespace;
+    const { lines, logger } = recording();
+    const bounda = createBounda({
+      config: { storage: cloudflare(), runtime: { telemetry: { errorText: "include" } } },
+      tenant: () => "default",
+      logger,
+    });
+    const found = await searchedThrough(bounda, () =>
+      bounda.handleError(new Error("ana@example.com"), { request: new Request("http://w/a") }),
+    );
+    expect(found).toEqual(["logs fields.errorMessage", "logs fields.errorStack"]);
+    expect(lines).toHaveLength(1);
+  });
 
   it("logs one JSON line per entry by default, as Workers Logs reads them", async () => {
     env.STORE = storeNamespace().namespace;

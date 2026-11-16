@@ -2357,9 +2357,10 @@ write it. An app given none records nothing and costs nothing; a witness is for 
 keeps all it saw for as long as it is reachable.
 
 A Durable Object runs its app in `workerd`, from the Worker's module, which a test does not build:
-`witnessObjects` from `@bounda-dev/cloudflare/testing` gives every object of a class it opens from
-then on a witness of its own, and the expectations take the object inside `runInDurableObject`
-(see [Testing on Cloudflare](/adapters/cloudflare/#testing)).
+`witnessObjects` from `@bounda-dev/cloudflare/testing` gives the objects of a class it opens from
+then on a witness, each object's persons apart, and the hosts it names, the Worker in front or
+React Router's `createBounda` on Cloudflare, log through it too; the expectations take the object
+inside `runInDurableObject` (see [Testing on Cloudflare](/adapters/cloudflare/#testing)).
 
 `expectForgotten` also takes an adapter instead, and then searches that adapter's tables for
 `values` and `before` alone: for a copy of a database restored from before the forgetting, or the

@@ -47,7 +47,7 @@ import { objectClock } from "./object-clock.ts";
 import { type RpcOutcome, settle } from "./outcome.ts";
 import type { DurableSqlStorage } from "./sql-database.ts";
 import { nextWake } from "./wake.ts";
-import { objectWitnessesOf } from "./witnesses.ts";
+import { witnessOf } from "./witnesses.ts";
 
 export interface CreateBoundaObjectArgs<R extends Registry> {
   readonly registry: R;
@@ -282,20 +282,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 }: CreateBoundaObjectArgs<R>): BoundaObjectClass => {
   return class BoundaObject extends DurableObject implements BoundaObjectMethods {
     #app: BoundaApp<R> | undefined;
-    // What the object logs itself: through its witness too, when `witnessObjects` gave it one.
-    readonly #logger: Logger;
+    // What the object logs itself: through its witness too, once its app opened, when
+    // `witnessObjects` gave its class one.
+    #logger: Logger = logger;
     readonly #witness: Witness | undefined;
 
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
       super(ctx, env);
-      this.#witness = objectWitnessesOf(new.target)?.of(ctx.id.toString());
-      this.#witness?.watch(this);
-      this.#logger = this.#witness === undefined ? logger : this.#witness.logger(logger);
+      this.#witness = witnessOf(new.target);
       void ctx.blockConcurrencyWhile(() => this.#open(env));
     }
 
     async #open(env: Cloudflare.Env): Promise<void> {
-      this.#app = await createApp<R>({
+      const app = await createApp<R>({
         registry,
         // The configuration is one bundle for every environment, so `.dev.vars` decides in
         // development.
@@ -315,6 +314,11 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         ...(ids === undefined ? {} : { ids }),
         ...(this.#witness === undefined ? {} : { witness: this.#witness }),
       });
+      this.#app = app;
+      // The object stands for its own app, of its own tenant, among every object the witness
+      // watches.
+      this.#witness?.watch(this, app);
+      this.#logger = this.#witness?.logger(logger, app) ?? logger;
     }
 
     #ready(): BoundaApp<R> {

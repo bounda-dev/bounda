@@ -1068,15 +1068,19 @@ describe("expectForgotten given an app built with a witness", () => {
     for (const app of [globex, acme]) await app.runUntilIdle();
     await acme.forget("c-1");
     await acme.runUntilIdle();
+    // What is logged for globex is not searched with acme's persons; what names no tenant is, below.
+    witness.logger(silentLogger, globex.as("support-1")).info("globex saw ana@example.com");
     await expectForgotten(witness, "c-1");
     await expectForgotten(acme, "c-1");
-    await expect(expectForgotten(globex, "c-1")).rejects.toThrow('"c-1" still holds a key');
+    await expect(expectForgotten(globex, "c-1")).rejects.toThrow("still holds a key");
     await acme.forgetTenant("acme", { despiteLegalObligations: true });
     await expectTenantForgotten(witness);
     await expectTenantForgotten(acme.as("support-1"));
     await expect(expectTenantForgotten(globex)).rejects.toThrow(
       "the app still serves calls: forget the tenant with forgetTenant first",
     );
+    witness.logger(silentLogger).info("someone saw ana@example.com");
+    await expect(expectTenantForgotten(witness)).rejects.toThrow("someone saw ana@example.com");
     await globex.stop();
     await acme.stop();
   });

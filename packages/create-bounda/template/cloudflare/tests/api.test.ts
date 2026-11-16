@@ -3,10 +3,11 @@ import { connect } from "@bounda-dev/cloudflare";
 import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import { expectForgotten } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
-import { Store } from "../src/worker.ts";
+import worker, { Store } from "../src/worker.ts";
 
-// Every object of the class records what its app seals, logs and traces, for expectForgotten.
-witnessObjects(Store);
+// Every object of the class records what its app seals, logs and traces, and the Worker what it
+// logs, for expectForgotten.
+witnessObjects(Store, { hosts: [worker] });
 
 const post = (path: string, body: unknown, tenant: string) =>
   SELF.fetch(`http://example.com${path}`, {

@@ -22,9 +22,10 @@ export type WatchedClient = Pick<BoundaClient, "exportPersonalData">;
 export interface Witness {
   /**
    * `logger`, whose every entry the witness keeps for the expectations to search: for what a host
-   * or a test logs beside the app.
+   * or a test logs beside the app. Its entries are searched with every tenant's persons, or with
+   * those of the tenant `like` stands for, an app or a client.
    */
-  logger(logger: Logger): Logger;
+  logger(logger: Logger, like?: object): Logger;
   /**
    * Makes `target` stand for the witness in the expectations, or for what `like` stands for, an
    * app or a client: for a host that serves the app behind an object of its own, as

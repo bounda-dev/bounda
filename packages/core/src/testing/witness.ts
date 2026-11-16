@@ -198,7 +198,8 @@ const createTestWitness = (): TestWitness => {
   };
 
   const witness = {
-    logger: (logger: Logger) => recording(logger, true, null),
+    logger: (logger: Logger, like?: object) =>
+      recording(logger, true, (like === undefined ? undefined : targets.get(like)?.tenant) ?? null),
     watch: (target: object, like?: object) => {
       targets.set(
         target,

@@ -14,6 +14,7 @@ import type { BoundaStub } from "./client.ts";
 import { cloudflareStorageOf } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { unwrap } from "./outcome.ts";
+import { hostLogger } from "./witnesses.ts";
 
 export interface TenantOfFunction {
   (request: Request): string | Promise<string>;
@@ -203,13 +204,15 @@ export const createWorker: CreateWorkerFunction = ({
 }) => {
   const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
-  return {
+  // Through the witness `witnessObjects` gives the Worker in a test.
+  const log = (): Logger => hostLogger(worker, logger);
+  const worker: ExportedHandler<Cloudflare.Env> = {
     // A rotation of the master key rewraps a tenant's key in the tenant's own object, the one
     // writer of its record: each one still under a previous master key is woken to do it.
     scheduled: async (_controller, env) => {
       const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
       if (namespace === undefined) {
-        logger.error("bounda worker has no such binding", { binding });
+        log().error("bounda worker has no such binding", { binding });
         return;
       }
       if (config.runtime?.personalData?.tenantKeys === undefined) return;
@@ -233,13 +236,13 @@ export const createWorker: CreateWorkerFunction = ({
         for (const [index, outcome] of woken.entries()) {
           if (outcome.status === "fulfilled") continue;
           failed += 1;
-          logger.error("bounda worker could not wake a tenant's object", {
+          log().error("bounda worker could not wake a tenant's object", {
             tenant: batch[index],
             ...errorFields({ error: outcome.reason, errorText }),
           });
         }
       }
-      logger.info(
+      log().info(
         tenants.length === 0
           ? "bounda worker found no tenant left under a previous master key"
           : "bounda worker woke the tenants still under a previous master key",
@@ -264,7 +267,7 @@ export const createWorker: CreateWorkerFunction = ({
       }
       const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
       if (namespace === undefined) {
-        logger.error("bounda worker has no such binding", { binding });
+        log().error("bounda worker has no such binding", { binding });
         return failure("INTERNAL", "Internal error", 500);
       }
       try {
@@ -274,7 +277,7 @@ export const createWorker: CreateWorkerFunction = ({
         const actor = await actorOf?.(request);
         if (actor !== undefined && !isActor(actor)) {
           // Not the caller's mistake, and the value may be what must not be logged, such as an email.
-          logger.error("bounda worker actorOf named no valid actor", { path: url.pathname });
+          log().error("bounda worker actorOf named no valid actor", { path: url.pathname });
           return failure("INTERNAL", "Internal error", 500);
         }
         const result = await unwrap(
@@ -294,7 +297,7 @@ export const createWorker: CreateWorkerFunction = ({
             ...(typeof rejected === "string" ? { rejected } : {}),
           });
         }
-        logger.error("bounda worker request failed", {
+        log().error("bounda worker request failed", {
           path: url.pathname,
           // The object refuses a `BOUNDA_ERROR_TEXT` it does not know, and the request fails with
           // that: logging the failure must not throw instead.
@@ -307,4 +310,5 @@ export const createWorker: CreateWorkerFunction = ({
       }
     },
   };
+  return worker;
 };

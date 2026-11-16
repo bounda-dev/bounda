@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { workersLogger } from "@bounda-dev/cloudflare";
+import { hostLogger, workersLogger } from "@bounda-dev/cloudflare";
 import { type Logger, resolveErrorText } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import { createHandleError, type HandleBoundaErrorFunction } from "../handle-error.ts";
@@ -10,6 +10,11 @@ export interface CloudflareHandleErrorArgs {
    */
   readonly config: () => Config | undefined;
   readonly logger?: Logger | undefined;
+  /**
+   * What the Worker serves requests through, which a test may give a witness with
+   * `witnessObjects`, `undefined` until it exists.
+   */
+  readonly host: () => object | undefined;
 }
 
 export interface CloudflareHandleErrorFunction {
@@ -21,9 +26,13 @@ export interface CloudflareHandleErrorFunction {
 export const cloudflareHandleError: CloudflareHandleErrorFunction = ({
   config,
   logger = workersLogger,
+  host,
 }) =>
   createHandleError({
     message: "bounda request failed",
     errorText: () => resolveErrorText({ env, config: config(), ignoreInvalidEnv: true }),
-    logger: () => logger,
+    logger: () => {
+      const served = host();
+      return served === undefined ? logger : hostLogger(served, logger);
+    },
   });

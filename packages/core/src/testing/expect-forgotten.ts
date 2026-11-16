@@ -1,4 +1,4 @@
-import { type Adapter, isAdapter } from "../adapter/adapter.ts";
+import type { Adapter } from "../adapter/adapter.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 import { TenantForgottenError } from "../contracts/errors.ts";

@@ -335,20 +335,22 @@ adapter with `createTestApp`, as in any Bounda project; `tests/api.test.ts` send
 the Worker with `SELF.fetch` and reaches the real Durable Object and its SQLite. The adapter's own
 suite runs every storage contract inside `workerd` too.
 
-`witnessObjects` from `@bounda-dev/cloudflare/testing` gives every object of the class opened from
-then on a witness of its own, which records what its app seals, keeps, logs and traces and what
-the object logs itself. Inside the object, with `runInDurableObject`, `expectForgotten`,
-`expectRedacted` and `expectTenantForgotten` take the object and search its SQLite, the forget
-ledger its app keeps, in KV or elsewhere, its logs and its spans, with nothing passed by hand:
+`witnessObjects` from `@bounda-dev/cloudflare/testing` gives the objects of the class opened from
+then on a witness, which records what each object's app seals, keeps, logs and traces and what the
+object logs itself, each object's persons apart, and what the `hosts` in front log: the Worker
+`createWorker` returns, or what `createBounda` from `@bounda-dev/react-router/cloudflare` returns.
+Inside the object, with `runInDurableObject`, `expectForgotten`, `expectRedacted` and
+`expectTenantForgotten` take the object and search its SQLite, the forget ledger its app keeps, in
+KV or elsewhere, its logs, the hosts' and its spans, with nothing passed by hand:
 
 ```ts
 import { env, runInDurableObject } from "cloudflare:test";
 import { connect } from "@bounda-dev/cloudflare";
 import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import { expectForgotten } from "@bounda-dev/core/testing";
-import { Store } from "../src/worker.ts";
+import worker, { Store } from "../src/worker.ts";
 
-witnessObjects(Store);
+witnessObjects(Store, { hosts: [worker] });
 
 const stub = env.STORE.get(env.STORE.idFromName("forgets"));
 const store = connect(stub);
@@ -359,7 +361,9 @@ await runInDurableObject(stub, (object) => expectForgotten(object, "ada"));
 
 Call `witnessObjects` at the top of the test file, before any object of the class opens: an object
 opened before has no witness, and the expectations refuse it. An object that opens again, once
-its storage is emptied or after it was evicted, keeps the witness it had. Without one, pass
+its storage is emptied or after it was evicted, keeps what the witness saw of it. A Worker with a
+`fetch` of its own logs through `hostLogger(worker, logger)` from `@bounda-dev/cloudflare`, which
+`witnessObjects` then reaches as it reaches `createWorker`'s. Without one, pass
 `expectForgotten` the object's storage through `durableObjectAdapter`, with the options the
 configuration gives `cloudflare()`, `tablePrefix` among them, and the values to look for.
 
