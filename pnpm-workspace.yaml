@@ -11,7 +11,7 @@ catalog:
   "@biomejs/biome": 2.6.7
   "@cloudflare/vite-plugin": 1.69.1
   "@cloudflare/vitest-plugin": 1.8.1
-  "@cloudflare/workers-types": 5.20261112.1
+  "@cloudflare/workers-types": 5.20261113.1
   "@opentelemetry/api": 1.10.0
   "@changesets/cli": 3.0.3
   "@clack/prompts": 1.9.0
