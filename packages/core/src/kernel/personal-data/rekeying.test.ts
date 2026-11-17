@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PERSONAL_CATEGORY as D } from "../../adapter/storage/personal-key-store.ts";
 import { memory } from "../../memory/index.ts";
 import { keysOver, newStoredKey } from "../test-support.ts";
@@ -108,3 +108,30 @@ describe("createRekeying", () => {
     expect(await rekeying.persons(current)).toBe(current);
   });
 });
+
+describe("createRekeying, what it names and reads", () => {
+  it("names the key of a value sealed whole, none of text in the clear", async () => {
+    const { sealed, rekeying } = await setUpNamed();
+    expect(rekeying.named(sealed)).toEqual([["ana", sealed.$personal.key]]);
+    expect(rekeying.named("in the clear")).toEqual([]);
+  });
+
+  it("reads no key for a person named in the clear, and keeps one named under a key now gone", async () => {
+    const { keys, sealed, rekeying } = await setUpNamed();
+    await keys.remove("ana", sealed.$personal.key);
+    const opened = vi.spyOn(keys, "opened");
+    const persons = [
+      { person: "bob", fingerprint: null },
+      { person: "ana", fingerprint: sealed.$personal.key },
+    ];
+    expect(await rekeying.persons(persons)).toBe(persons);
+    expect(opened.mock.calls.map(([person]) => person)).toEqual(["ana"]);
+  });
+});
+
+async function setUpNamed() {
+  const keys = keysOver((await memory().createStorage()).personalKeys);
+  const key = await keys.create("ana", D);
+  const sealed = await seal({ key, person: "ana", category: D, value: "ana@x" });
+  return { keys, sealed, rekeying: createRekeying(keys) };
+}

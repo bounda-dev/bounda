@@ -46,6 +46,7 @@ describe("createSealingKeyRing", () => {
     const disposable = await ring.forWrite("cy", "invoices", null);
     expect(disposable).not.toBe(inForce);
     const nobody = await ring.forWrite(null, "default", null);
+    expect(nobody.fingerprint).toEqual(expect.any(String));
     expect([inForce, newer, older]).not.toContain(nobody);
     expect(await ring.forWrite(null, "default", null)).toBe(nobody);
     expect(await ring.forOpen("ana", older.fingerprint)).toBe(older);

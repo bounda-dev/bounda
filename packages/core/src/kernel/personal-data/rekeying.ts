@@ -90,7 +90,7 @@ export const createRekeying: CreateRekeyingFunction = (keys) => {
   };
 
   const named = (value: unknown): readonly (readonly [string, string])[] => {
-    if (!isRecord(value))
+    if (isSealed(value) || !isRecord(value))
       return sealedIn(value).map(({ $personal }) => [$personal.person, $personal.key]);
     return Object.entries(value).flatMap(([name, inner]) =>
       name === STATE && isRecord(inner)

@@ -133,8 +133,13 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
   const supersededHeld = (person: string): HeldPersonalKey[] =>
     [...superseded.values()]
       .filter((old) => old.person === person)
-      .sort((a, b) => (a.fingerprint < b.fingerprint ? -1 : 1))
       .flatMap((old) => supersededHeldOf(old) ?? []);
+  const keyEntries = createStoreEntries(keys, (id: string) => id);
+  const supersededEntries = createStoreEntries(superseded, (id: string) => id);
+  const entriesOf = (id: string) =>
+    id.startsWith(SUPERSEDED_ENTRY)
+      ? { entries: supersededEntries, at: id.slice(SUPERSEDED_ENTRY.length) }
+      : { entries: keyEntries, at: id };
   const of = (person: string): KeptPersonalKey[] =>
     [...keys.values()].filter((kept) => kept.person === person);
   const inForce = (person: string, category: string): KeptPersonalKey | undefined =>
@@ -365,22 +370,14 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
     },
     // A superseded key's entry is named apart, since a transaction puts back each it changes.
     entries: {
-      ...createStoreEntries(keys, (id: string) => id),
-      read: (id) =>
-        id.startsWith(SUPERSEDED_ENTRY)
-          ? superseded.get(id.slice(SUPERSEDED_ENTRY.length))
-          : keys.get(id),
+      read: (id) => entriesOf(id).entries.read(entriesOf(id).at),
       putBack: (id, before, after) => {
-        const [map, at] = id.startsWith(SUPERSEDED_ENTRY)
-          ? [superseded as Map<string, unknown>, id.slice(SUPERSEDED_ENTRY.length)]
-          : [keys as Map<string, unknown>, id];
-        if (map.get(at) !== after) return;
-        if (before === undefined) map.delete(at);
-        else map.set(at, before);
+        const { entries, at } = entriesOf(id);
+        entries.putBack(at, before, after);
       },
       list: () => [
-        ...keys.entries(),
-        ...[...superseded.entries()].map(([at, old]) => [`${SUPERSEDED_ENTRY}${at}`, old] as const),
+        ...keyEntries.list(),
+        ...supersededEntries.list().map(([at, old]) => [`${SUPERSEDED_ENTRY}${at}`, old] as const),
       ],
     },
     keyRows: () => [...keys.values()].map((kept) => ({ ...kept })),

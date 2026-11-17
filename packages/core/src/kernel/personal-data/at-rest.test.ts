@@ -94,3 +94,13 @@ describe("sealedSnapshots", () => {
     await opened.close();
   });
 });
+
+describe("sealedSnapshots under a key no longer held", () => {
+  it("takes a state sealed under another key for no snapshot", async () => {
+    const stores = await storage();
+    const before = sealedSnapshots(stores.snapshotStore, createAtRestSealer(await baseKey()));
+    await before.put({ ...stream, version: 1, fingerprint: "f", state: "{}", persons: [] });
+    const after = sealedSnapshots(stores.snapshotStore, createAtRestSealer(await baseKey()));
+    expect(await after.get(stream)).toBeNull();
+  });
+});

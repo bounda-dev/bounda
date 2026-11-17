@@ -9,6 +9,8 @@ import type { RedactedFields } from "../../modules/redaction.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten, expectRedacted } from "../../testing/index.ts";
+import { settledMark } from "../read-model/sealed-settle.ts";
+import { epochMark, epochNumber } from "./blind-index.ts";
 import { RESEAL_SWITCH_MS } from "./reseal.ts";
 
 interface CustomerRow {
@@ -153,7 +155,17 @@ const fingerprintsIn = (tables: readonly InspectedTable[], fingerprints: Readonl
   );
 
 const setUp = async (adapter: Adapter) => {
-  const { app, clock } = await createTestApp({ registry, adapter });
+  const logged: string[] = [];
+  const { app, clock } = await createTestApp({
+    registry,
+    adapter,
+    logger: {
+      debug: () => {},
+      info: (message) => logged.push(message),
+      warn: () => {},
+      error: () => {},
+    },
+  });
   stops.push(() => app.stop());
   const commands = app.commands as unknown as Record<
     string,
@@ -184,7 +196,7 @@ const setUp = async (adapter: Adapter) => {
     clock.advance(RESEAL_SWITCH_MS);
     await app.runUntilIdle();
   };
-  return { app, clock, adapter, queries, register, emailOf, keyFingerprints, reseal };
+  return { app, clock, adapter, logged, queries, register, emailOf, keyFingerprints, reseal };
 };
 
 describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapterOf) => {
@@ -279,10 +291,65 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     });
   });
 
+  it("rebuilds a table under the database's key in force, starting over one paused under the previous, and marks which", async () => {
+    const { app, adapter, register } = await setUp(adapterOf());
+    await register("ana");
+    await register("bob");
+    await register("cy");
+    const stores = await adapter.createStorage();
+    const settled = await stores.checkpointStore.get(settledMark("customers"));
+    expect(await app.rebuildReadModel("customers", { maxEvents: 1 })).toMatchObject({
+      done: false,
+    });
+    await app.rotateTenantKey({ reseal: true });
+    expect(await app.rebuildReadModel("customers")).toEqual({
+      events: 3,
+      position: 3,
+      done: true,
+    });
+    const inForce = (await adapter.inspect())
+      .find(({ store }) => store === "indexKeys")
+      ?.rows.find(({ scope }) => scope === "app");
+    expect(await stores.checkpointStore.get(epochMark("customers"))).toBe(
+      await epochNumber(String(inForce?.fingerprint)),
+    );
+    const resettled = await stores.checkpointStore.get(settledMark("customers"));
+    expect(resettled).not.toBe(settled);
+    // As an instance that starts would settle it: it leaves it as it is.
+    const { app: started } = await createTestApp({ registry, adapter });
+    stops.push(() => started.stop());
+    await started.runUntilIdle();
+    expect(await stores.checkpointStore.get(settledMark("customers"))).toBe(resettled);
+  });
+
+  it("indexes a table first written while the keys are replaced under the new key, and marks it", async () => {
+    const { app, adapter, register, queries } = await setUp(adapterOf());
+    await app.rotateTenantKey({ reseal: true });
+    await register("ana");
+    await register("bob");
+    const inForce = (await adapter.inspect())
+      .find(({ store }) => store === "indexKeys")
+      ?.rows.find(({ scope }) => scope === "app");
+    const stores = await adapter.createStorage();
+    expect(await stores.checkpointStore.get(epochMark("customers"))).toBe(
+      await epochNumber(String(inForce?.fingerprint)),
+    );
+    expect(await queries.byEmail?.({ email: "bob@example.com" })).toMatchObject({
+      customerId: "bob",
+    });
+  });
+
   it("serves every read while the keys are replaced, and refuses another rotation and the retirement meanwhile", async () => {
-    const { app, queries, register, emailOf } = await setUp(adapterOf());
+    const { app, clock, adapter, logged, queries, register, emailOf } = await setUp(adapterOf());
     await register("ana");
     await app.rotateTenantKey({ reseal: true });
+    const rotatedAt = clock.now().getTime();
+    expect(logged).toContain(
+      "tenant key rotated; every key that seals personal data is replaced in the background",
+    );
+    // The database's key is replaced by the call itself, the old one kept as the previous.
+    const indexKeys = (await adapter.inspect()).find(({ store }) => store === "indexKeys");
+    expect(indexKeys?.rows.map(({ scope }) => scope).sort()).toEqual(["app", "previous"]);
     await expect(app.rotateTenantKey()).rejects.toMatchObject({
       code: "VALIDATION_FAILED",
       message:
@@ -300,6 +367,7 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     });
     await app.runUntilIdle();
     expect((await app.status()).keyRotation?.reseal).toMatchObject({ step: "replacing" });
+    expect(await app.nextDueAt()).toEqual(new Date(rotatedAt + RESEAL_SWITCH_MS));
     // The keys are replaced, nothing is sealed again yet: the old ones still open it.
     expect(await emailOf("ana")).toEqual({ email: "ana@example.com" });
     expect(await queries.byEmail?.({ email: "ana@example.com" })).toMatchObject({

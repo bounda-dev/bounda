@@ -264,9 +264,8 @@ export const createPersonalDataReseal: CreatePersonalDataResealFunction = ({
       switched = await checkpoints.get(ROWS.switched);
     }
     if (at < Math.max(since, switched) + RESEAL_SWITCH_MS) return false;
-    const { kid, previous } = await wrapping.kids();
-    const older = previous.filter((each) => each !== kid);
-    return (await storage.personalKeys.countWrappedUnder({ kids: older })) === 0;
+    const { previous } = await wrapping.kids();
+    return (await storage.personalKeys.countWrappedUnder({ kids: previous })) === 0;
   };
 
   const rewriteEvents = async (
@@ -601,12 +600,14 @@ export const createPersonalDataReseal: CreatePersonalDataResealFunction = ({
 
   const dueAt = async (at: number): Promise<number> => {
     switch (await step()) {
-      case "replacing": {
-        const switched = await checkpoints.get(ROWS.switched);
-        return switched === 0 ? at : Math.max(at, switched + RESEAL_SWITCH_MS);
-      }
+      // Due at once while the database's key is not switched, its row reading 0.
+      case "replacing":
+        return Math.max(at, (await checkpoints.get(ROWS.switched)) + RESEAL_SWITCH_MS);
+      // Without a previous key, nothing waits for the answers filed under it.
       case "expiring":
-        return Math.max(at, await checkpoints.get(ROWS.answersUntil));
+        return (await storage.indexKeys.previous()) === null
+          ? at
+          : Math.max(at, await checkpoints.get(ROWS.answersUntil));
       default:
         return at;
     }
@@ -614,7 +615,9 @@ export const createPersonalDataReseal: CreatePersonalDataResealFunction = ({
 
   return {
     begin: async () => {
+      // Without its row, the step is the first.
       for (const row of [
+        ROWS.step,
         ROWS.cursor,
         ROWS.switched,
         ROWS.answersUntil,
@@ -622,7 +625,6 @@ export const createPersonalDataReseal: CreatePersonalDataResealFunction = ({
       ]) {
         await checkpoints.remove(row);
       }
-      await checkpoints.set(ROWS.step, numberOf("replacing"));
       await checkpoints.set(ROWS.started, clock.now().getTime());
       idleUntil = Number.NEGATIVE_INFINITY;
       logger.warn("personal data reseal started: every key that seals it will be replaced");

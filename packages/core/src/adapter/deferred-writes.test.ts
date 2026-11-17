@@ -145,6 +145,19 @@ describe("deferWrites", () => {
       persons,
       now,
     });
+    expect((await stores.idempotencyStore.get({ key: "other", now }))?.answer).toEqual(
+      testAnswer("other"),
+    );
+    // A record filed elsewhere since it was read is no longer here to reseal.
+    await stores.idempotencyStore.erase({ key: "other", filed: "moved", now });
+    await stores.idempotencyStore.reseal({
+      key: "other",
+      from: testAnswer("other"),
+      answer: resealed,
+      persons,
+      now,
+    });
+    expect(await stores.idempotencyStore.get({ key: "other", now })).toBeNull();
     await stores.idempotencyStore.reseal({
       key: "live",
       from: testAnswer("live"),
@@ -156,18 +169,13 @@ describe("deferWrites", () => {
       answer: resealed,
       persons,
     });
-    expect((await stores.idempotencyStore.get({ key: "other", now }))?.answer).toEqual(
-      testAnswer("other"),
-    );
     expect((await storage.idempotencyStore.get({ key: "live", now }))?.answer).toEqual(
       testAnswer("live"),
     );
     await flush(storage);
     expect((await storage.idempotencyStore.get({ key: "live", now }))?.answer).toEqual(resealed);
     expect((await storage.idempotencyStore.get({ key: "held", now }))?.answer).toEqual(resealed);
-    expect((await storage.idempotencyStore.get({ key: "other", now }))?.answer).toEqual(
-      testAnswer("other"),
-    );
+    expect(await storage.idempotencyStore.get({ key: "other", now })).toBeNull();
   });
 
   it("lists and erases only what has not expired, and keeps a live record where it files one", async () => {

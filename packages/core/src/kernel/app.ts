@@ -133,6 +133,7 @@ import {
   rebuildsPassed,
   rebuiltMark,
 } from "./read-model/rebuild.ts";
+import { createResealReadModels } from "./read-model/reseal-read-models.ts";
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { buildRecipients } from "./recipients/build.ts";
 import { createDisclosures, PersonalDataChangedError } from "./recipients/gate.ts";
@@ -1203,7 +1204,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             wrapping,
             tenantKeys: hierarchy.tenantKeys,
             databaseKey,
-            readModels: { advance: (from) => rebuildForReseal(from) },
+            readModels: createResealReadModels({
+              readModels: Object.values(readModels.byName),
+              rebuild: (name, options) => rebuild(name, options),
+              maxEvents: config.runtime.dispatcher.batchSize * REDACTION_REBUILD_BATCHES,
+            }),
             batchSize: config.runtime.dispatcher.batchSize,
             clock,
             logger,
@@ -1218,7 +1223,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             tenantKeys: hierarchy.tenantKeys,
             master: hierarchy.master,
             wrapping,
-            ...(reseal === undefined ? {} : { reseal }),
+            reseal,
             clock,
             logger,
           });
@@ -1531,25 +1536,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         wrapping,
         ...options,
       });
-    // A reseal's read models: each one holding personal data is rebuilt by a rebuild that started
-    // past `from`, once the stream is sealed again and every instance indexes under the database's
-    // key in force, which the rebuild puts the table under; one slice a call.
-    const rebuildForReseal = async (from: number): Promise<"progressed" | "ready"> => {
-      for (const { name, storage: own, layout } of Object.values(readModels.byName)) {
-        if (layout.personal.length === 0) continue;
-        if ((await own.checkpointStore.get(rebuiltMark(name))) >= from) continue;
-        try {
-          await rebuild(name, {
-            maxEvents: config.runtime.dispatcher.batchSize * REDACTION_REBUILD_BATCHES,
-          });
-        } catch (error) {
-          // Another instance's slice, or a rebuild run by hand, took over and goes on.
-          if (!(error instanceof RebuildSupersededError)) throw error;
-        }
-        return "progressed";
-      }
-      return "ready";
-    };
     const keysFor = (operation: string): NonNullable<typeof hierarchy> => {
       if (hierarchy === null) {
         throw new ConfigurationError(

@@ -230,6 +230,8 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
         answer: resealed,
         persons,
       });
+      await store.reseal({ key: "none", from: sealed, answer: resealed, persons, now });
+      expect(await store.get({ key: "none", now })).toBeNull();
       await store.erase({ key: "k1", now });
       await store.reseal({ key: "k1", from: resealed, answer: sealed, persons, now });
       expect(await store.get({ key: "k1", now })).toEqual(erasedAt("k1"));

@@ -205,3 +205,56 @@ describe("openDatabaseKey", () => {
     expect(await epochNumber("a")).toBe(numbers[0]);
   });
 });
+
+describe("openDatabaseKey across a reseal", () => {
+  it("opens the previous key a reseal keeps when it starts, and unwraps a key it holds once", async () => {
+    const store = createMemoryIndexKeyStore();
+    const clock = createFixedClock();
+    const tenantKeys = await openTestTenantKeys();
+    const wrapping = wrappingUnder(tenantKeys);
+    const first = await openDatabaseKey({ store, wrapping, clock });
+    const args = { readModel: "customers", field: "email", type: "string" as const, value: "a@x" };
+    const before = await first.indexer.index(args);
+    const from = (await store.get()) as NonNullable<Awaited<ReturnType<typeof store.get>>>;
+    const to = (await wrapping.generate()).stored;
+    await store.supersede(from, to, await wrapping.wrapped(from), clock.now());
+    const base = vi.spyOn(wrapping, "derivationBase");
+    const started = await openDatabaseKey({ store, wrapping, clock });
+    expect(base).toHaveBeenCalledTimes(2);
+    expect((await started.indexer.indexAll(args))[1]).toBe(before);
+    await started.refresh();
+    expect(base).toHaveBeenCalledTimes(2);
+    // Calls at the same instant read the store once.
+    const get = vi.spyOn(store, "get");
+    await started.indexer.index(args);
+    await started.indexer.index(args);
+    expect(get).not.toHaveBeenCalled();
+    // A store emptied, as forgetting the tenant leaves it, keeps the keys held.
+    await store.clear();
+    await started.refresh();
+    expect(started.indexer.epoch).toBe(to.fingerprint);
+    vi.restoreAllMocks();
+  });
+
+  it("fails to open what neither key sealed with the cipher's own error", async () => {
+    const store = createMemoryIndexKeyStore();
+    const clock = createFixedClock();
+    const opened = await openDatabaseKey({
+      store,
+      wrapping: wrappingUnder(await openTestTenantKeys()),
+      clock,
+    });
+    const other = await openDatabaseKey({
+      store: createMemoryIndexKeyStore(),
+      wrapping: wrappingUnder(await openTestTenantKeys()),
+      clock,
+    });
+    const error = await opened.atRest.open(await other.atRest.seal("x")).catch((caught) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(TypeError);
+  });
+
+  it("numbers an epoch by the first 31 bits of its SHA-256", async () => {
+    expect(await epochNumber("a")).toBe(1251442962);
+  });
+});

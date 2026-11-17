@@ -361,6 +361,28 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.personalKeys.predecessors("c-1", ["f-1b"])).toEqual(["f-1"]);
     });
 
+    it("destroys the keys a reseal replaced with the rest, or not at all", async () => {
+      const at = "2026-03-01T00:00:00.000Z";
+      await storage.personalKeys.add("c-1", D, stored("1"));
+      await storage.transact((tx) =>
+        tx.personalKeys.supersede("c-1", stored("1"), { ...stored("1b"), at }),
+      );
+      await expect(
+        storage.transact(async (tx) => {
+          expect(await tx.personalKeys.countSuperseded()).toBe(1);
+          expect(await tx.personalKeys.destroySuperseded()).toBe(1);
+          expect(await tx.personalKeys.countSuperseded()).toBe(0);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect((await storage.personalKeys.find("c-1", "f-1"))?.key).toEqual(stored("1"));
+      expect(await storage.personalKeys.countSuperseded()).toBe(1);
+      await storage.transact(async (tx) => {
+        await tx.personalKeys.destroySuperseded();
+      });
+      expect(await storage.personalKeys.find("c-1", "f-1")).toBeNull();
+    });
+
     it("restricts and unrestricts a person with the rest, or not at all", async () => {
       const work = async (tx: StorageTransaction) => {
         expect(

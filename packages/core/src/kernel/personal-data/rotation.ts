@@ -116,7 +116,9 @@ export interface CreateKeyRotationArgs {
    * While a reseal replaces the persons' keys, the rotation replaces those it finds rather than
    * rewrapping them.
    */
-  readonly reseal?: Pick<PersonalDataReseal, "active" | "replacing" | "replace" | "status">;
+  readonly reseal?:
+    | Pick<PersonalDataReseal, "active" | "replacing" | "replace" | "status">
+    | undefined;
   readonly clock: Clock;
   readonly logger: Logger;
 }
@@ -193,6 +195,8 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   const pause = createPause();
   let rewrappedAny = false;
   let masterReported = false;
+  // Whether the store failed this pass a write no row can hold: the pass ends paused.
+  let stalled = false;
 
   // A reseal says itself when the older versions can be retired.
   const report = async (set: RotationSet): Promise<void> => {
@@ -233,7 +237,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
         kid: master.kid,
         error,
       });
-      pause.pause(clock.now().getTime());
+      stalled = true;
       return false;
     }
   };
@@ -263,7 +267,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   };
 
   // Resolves whether the database's keys are wrapped under the version in force now; a failure is
-  // logged and pauses the rotation, which does not complete before they are rewrapped.
+  // logged and stalls the pass, and the rotation does not complete before they are rewrapped.
   const rewrapIndex = async (set: RotationSet): Promise<boolean> => {
     if (indexKeys === undefined) return true;
     let rewrapped = true;
@@ -272,7 +276,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
         rewrapped = (await indexKeys.rewrap(due, await wrapping.wrapped(due))) && rewrapped;
       } catch (error) {
         logger.error("the database's key could not be rewrapped", { kid: due.kid, error });
-        pause.pause(clock.now().getTime());
+        stalled = true;
         return false;
       }
     }
@@ -317,6 +321,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
 
   const sweep = async (now: Date): Promise<number> => {
     const at = now.getTime();
+    stalled = false;
     const mastered = await rewrapUnderMaster();
     const set = await currentSet();
     const lease = leaseOf(set.leaseRow);
@@ -356,7 +361,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       if (outcome.rewrapped) rewrapped += 1;
       kept &&= outcome.kept;
     }
-    pause.settle(at, kept);
+    pause.settle(at, kept && !stalled);
     if (rewrapped > 0) rewrappedAny = true;
     return rewrapped;
   };
@@ -421,10 +426,10 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       const { kid, previous } = await tenantKeys.kids();
       const versions = previous.filter((each) => each !== kid);
       if (versions.length === 0) return true;
-      const index = [(await indexKeys?.get()) ?? null, (await indexKeys?.previous()) ?? null];
+      const index = [(await indexKeys?.get())?.kid, (await indexKeys?.previous())?.kid];
       return (
         (await keys.countWrappedUnder({ kids: versions })) === 0 &&
-        index.every((key) => key === null || !versions.includes(key.kid ?? ""))
+        !versions.some((version) => index.includes(version))
       );
     },
     release: async () => {

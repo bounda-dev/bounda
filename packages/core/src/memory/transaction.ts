@@ -171,9 +171,8 @@ const trackedPersonalKeys = (
         () => personalKeys.remove(person, fingerprint),
       );
     },
-    supersede: async (person, from, to) => {
-      removed.add(id(person, from.fingerprint));
-      return trackedAll(
+    supersede: async (person, from, to) =>
+      trackedAll(
         [
           id(person, from.fingerprint),
           id(person, to.fingerprint),
@@ -181,8 +180,7 @@ const trackedPersonalKeys = (
           ...(await supersededIds(person, from.fingerprint)),
         ],
         () => personalKeys.supersede(person, from, to),
-      );
-    },
+      ),
     predecessors: (person, fingerprints) => personalKeys.predecessors(person, fingerprints),
     countSuperseded: () => personalKeys.countSuperseded(),
     destroySuperseded: async () =>

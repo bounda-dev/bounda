@@ -577,6 +577,22 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
         "f-kept",
         "f-old",
       ]);
+      expect(await store.predecessors("c-1", [])).toEqual([]);
+      // Another person's keys are theirs alone.
+      await store.add("c-2", D, stored("other"));
+      await store.supersede("c-2", stored("other"), superseding("other-new"));
+      expect(await store.predecessors("c-1", ["f-other-new"])).toEqual([]);
+      const many = await store.listMany(["c-1", "c-2"]);
+      expect(
+        many.get("c-2")?.map(({ key, successor }) => [key.fingerprint, successor ?? null]),
+      ).toEqual(
+        expect.arrayContaining([
+          ["f-other-new", null],
+          ["f-other", "f-other-new"],
+        ]),
+      );
+      expect(many.get("c-2")).toHaveLength(2);
+      expect(many.get("c-1")).toHaveLength(4);
     });
 
     it("never supersedes a key forgotten or replaced since it was read", async () => {
