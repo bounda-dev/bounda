@@ -29,7 +29,6 @@ const header = (readModels: readonly string[]): PersonalDataExportPart => ({
     rights: [{ right: "access", article: "15", categories: null }],
     automatedDecisions: [],
     restrictions: [],
-    redactions: [],
     recipients: [],
     readModels,
   } satisfies PersonalDataExportHeader,
@@ -48,6 +47,15 @@ const answer: PersonalDataExportPart = {
     expiresAt: "2026-01-02T00:00:00.000Z",
     outcome: { aggregateType: "member", aggregateId: "ana", rejected: "Taken", message: "taken" },
     restricted: [],
+  },
+};
+
+const redaction: PersonalDataExportPart = {
+  kind: "redaction",
+  redaction: {
+    eventId: "r-1",
+    at: "2026-01-01T00:00:00.000Z",
+    events: [{ id: "e-1", fields: ["note"] }],
   },
 };
 
@@ -79,6 +87,8 @@ describe("personalDataExportJson", () => {
       [header(["a", "b"]), answer, row("a", "1"), row("b", "2")],
       [header(["a"]), answer],
       [header(["a"]), failure, failure, answer, row("a", "1")],
+      [header([]), redaction],
+      [header(["a"]), redaction, redaction, failure, row("a", "1")],
     ]) {
       const collected = await collectPersonalDataExport(from(parts));
       expect(await textOf(parts)).toBe(JSON.stringify(collected, null, 2));
@@ -94,6 +104,9 @@ describe("personalDataExportJson", () => {
     );
     await expect(textOf([header(["a"]), row("z", "1")])).rejects.toThrow(
       "out of the order of its sections",
+    );
+    await expect(textOf([header([]), answer, redaction])).rejects.toThrow(
+      "A personal data export has a redaction out of the order of its sections",
     );
     await expect(textOf([header([]), header([])])).rejects.toThrow("a second header");
     await expect(textOf([answer])).rejects.toThrow(
@@ -138,9 +151,10 @@ describe("the parts of an export", () => {
   });
 
   it("are counted by kind as they are handed out", () => {
-    const parts = [header(["a"]), failure, failure, answer, row("a", "1")];
+    const parts = [header(["a"]), redaction, failure, failure, answer, row("a", "1")];
     const counted = parts.reduce(countPart, NO_EXPORTED_RECORDS);
     expect(counted).toEqual({
+      redactions: 1,
       events: 0,
       scheduledCommands: 0,
       deadLetters: 0,

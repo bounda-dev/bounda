@@ -67,6 +67,19 @@ export interface OpenedUnderFunction {
  */
 export const openedUnder: OpenedUnderFunction = (event) => openings.get(event) ?? [];
 
+// The fields of each event handed out that a redaction sealed for good, by the event.
+const sealedForGood = new WeakMap<StoredEvent, readonly string[]>();
+
+export interface RedactedInFunction {
+  (event: StoredEvent): readonly string[];
+}
+
+/**
+ * The fields of `event` a redaction sealed for good, as their envelopes say: they read `null`.
+ * None for an event this store did not hand out.
+ */
+export const redactedIn: RedactedInFunction = (event) => sealedForGood.get(event) ?? [];
+
 // Each event handed out with a field opened under a key a forgetting kept, by the event: the same
 // event with those fields `null`, as work that names no basis for them reads it.
 const hiddenRetained = new WeakMap<StoredEvent, StoredEvent>();
@@ -101,7 +114,9 @@ export interface CarryOpeningFunction {
  */
 export const carryOpening: CarryOpeningFunction = (from, to, hidden) => {
   openings.set(to, openedUnder(from));
+  sealedForGood.set(to, redactedIn(from));
   if (hidden !== undefined) {
+    sealedForGood.set(hidden, redactedIn(from));
     openings.set(
       hidden,
       openedUnder(from).filter(({ retained }) => retained !== true),
@@ -224,18 +239,20 @@ export const withPersonalData: WithPersonalDataFunction = ({
   };
 
   // `read` gets each person whose fields opened, with the key that opened them; `kept`, the
-  // fields opened under a key a forgetting kept.
+  // fields opened under a key a forgetting kept; `redacted`, those a redaction sealed for good.
   const openFields = async (
     fields: Readonly<Record<string, unknown>>,
     key: OpeningKey,
     read: Map<string, KeyedPerson>,
     kept: string[],
+    redacted: string[],
   ): Promise<Record<string, unknown>> => {
     const unsealed: Record<string, unknown> = { ...fields };
     for (const field in fields) {
       const value = fields[field];
       if (!isSealed(value)) continue;
-      const { person, key: sealedUnder } = (value as SealedValue).$personal;
+      const { person, key: sealedUnder, redacted: gone } = (value as SealedValue).$personal;
+      if (gone === true) redacted.push(field);
       const personal = await key(person, sealedUnder);
       unsealed[field] = await unseal({ key: personal, sealed: value as SealedValue });
       if (personal !== null) {
@@ -266,22 +283,26 @@ export const withPersonalData: WithPersonalDataFunction = ({
   ): Promise<StoredEvent> => {
     const read = new Map<string, KeyedPerson>();
     const kept: string[] = [];
+    const redacted: string[] = [];
     const fields = await openFields(
       where === "state" ? (lifecycleStateOf(payload) ?? {}) : payload,
       key,
       read,
       kept,
+      redacted,
     );
     const placed = (open: Record<string, unknown>): Record<string, unknown> =>
       where === "state" ? { ...payload, state: open } : open;
     for (const [id, held] of read) opened.set(id, held);
     const result = { ...event, payload: placed(fields) };
     openings.set(result, [...read.values()]);
+    sealedForGood.set(result, redacted);
     if (kept.length > 0) {
       const hidden = {
         ...event,
         payload: placed({ ...fields, ...Object.fromEntries(kept.map((field) => [field, null])) }),
       };
+      sealedForGood.set(hidden, redacted);
       openings.set(
         hidden,
         [...read.values()].filter(({ retained }) => retained !== true),

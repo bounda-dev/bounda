@@ -52,6 +52,10 @@ export interface LoadArgs {
   readonly aggregateType: string;
   readonly aggregateId: string;
   readonly fromVersion?: number;
+  /**
+   * The last version read, for a window of the stream; `version` is still the stream's head.
+   */
+  readonly toVersion?: number;
 }
 
 export interface LoadResult {

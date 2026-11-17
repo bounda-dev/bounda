@@ -302,6 +302,30 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect(loaded.version).toBe(3);
     });
 
+    it("loads a window of versions, still reporting the stream's head", async () => {
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: [1, 2, 3, 4].map((version) => pendingEvent({ aggregateId: "1", version })),
+      });
+      const window = async (fromVersion: number | undefined, toVersion: number) => {
+        const loaded = await store.load({
+          aggregateType: "order",
+          aggregateId: "1",
+          ...(fromVersion === undefined ? {} : { fromVersion }),
+          toVersion,
+        });
+        return [loaded.events.map((event) => event.version), loaded.version];
+      };
+      expect(await window(2, 3)).toEqual([[2, 3], 4]);
+      expect(await window(undefined, 2)).toEqual([[1, 2], 4]);
+      expect(await window(1, 1)).toEqual([[1], 4]);
+      expect(await window(3, 9)).toEqual([[3, 4], 4]);
+      expect(await window(3, 2)).toEqual([[], 4]);
+      expect(await window(5, 9)).toEqual([[], 4]);
+    });
+
     it("reads one event of a stream by its id, and null for an id the stream does not hold", async () => {
       await store.append({
         aggregateType: "order",

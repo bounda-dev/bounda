@@ -201,6 +201,7 @@ const redactFields = async (
       person: personId,
       category: redacted.category,
       value: redacted.value,
+      redacted: true,
     });
     values.push(redacted);
     fields.push(field);
@@ -393,7 +394,13 @@ export const quotingText: QuotingTextFunction = async (
   const stack = errorStack === undefined ? null : await open(errorStack);
   if (![message, stack].some((text) => text !== null && matcher.quotedIn(text))) return null;
   const sealed = (text: string | null) =>
-    seal({ key: disposable, person: personId, category: DEFAULT_PERSONAL_CATEGORY, value: text });
+    seal({
+      key: disposable,
+      person: personId,
+      category: DEFAULT_PERSONAL_CATEGORY,
+      value: text,
+      redacted: true,
+    });
   return {
     errorMessage: await sealed(message),
     ...(errorStack === undefined ? {} : { errorStack: await sealed(stack) }),

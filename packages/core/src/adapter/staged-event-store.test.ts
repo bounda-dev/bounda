@@ -97,6 +97,30 @@ describe("createStagedEventStore", () => {
     expect(loaded.version).toBe(3);
   });
 
+  it("loads a window of versions across the base store's events and the staged ones", async () => {
+    const { base, staged } = await setUp();
+    await base.append({
+      ...order,
+      expectedVersion: 1,
+      events: [pendingEvent({ aggregateId: "1", version: 2, type: "OrderPaid" })],
+    });
+    await staged.append({
+      ...order,
+      expectedVersion: 2,
+      events: [
+        pendingEvent({ aggregateId: "1", version: 3, type: "OrderShipped" }),
+        pendingEvent({ aggregateId: "1", version: 4, type: "OrderArchived" }),
+      ],
+    });
+    const window = async (fromVersion: number, toVersion: number) => {
+      const loaded = await staged.load({ ...order, fromVersion, toVersion });
+      return [loaded.events.map((event) => event.version), loaded.version];
+    };
+    expect(await window(1, 1)).toEqual([[1], 4]);
+    expect(await window(2, 3)).toEqual([[2, 3], 4]);
+    expect(await window(4, 9)).toEqual([[4], 4]);
+  });
+
   it("keeps the view at the version it first met a stream at, however the base store moves", async () => {
     const { base, staged } = await setUp();
     await staged.append({

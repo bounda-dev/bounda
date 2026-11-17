@@ -331,6 +331,8 @@ export interface SealArgs {
   readonly person: string;
   readonly category: string;
   readonly value: unknown;
+  // For a redaction, whose key is let go at once: the envelope says the value is gone for good.
+  readonly redacted?: boolean;
 }
 
 export interface SealFunction {
@@ -342,7 +344,7 @@ export interface SealFunction {
  * the fingerprint's. The envelope names the category unless it is the default one, as every
  * envelope sealed before categories existed reads.
  */
-export const seal: SealFunction = async ({ key, person, category, value }) => {
+export const seal: SealFunction = async ({ key, person, category, value, redacted = false }) => {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   iv[0] = (iv[0] ?? 0) | SEAL_IV_MARK;
   const encrypted = await crypto.subtle.encrypt(
@@ -357,6 +359,7 @@ export const seal: SealFunction = async ({ key, person, category, value }) => {
       key: key.fingerprint,
       iv: toBase64(iv),
       data: toBase64(new Uint8Array(encrypted)),
+      ...(redacted ? { redacted: true } : {}),
     },
   };
 };

@@ -1,10 +1,11 @@
-import type { PersonalDataExportPart } from "./export.ts";
+import type { PersonalDataExportPart, PersonalDataExportRecord } from "./export.ts";
 
 export interface PersonalDataExportJsonFunction {
   (parts: AsyncIterable<PersonalDataExportPart>): ReadableStream<Uint8Array>;
 }
 
 const SECTIONS = [
+  ["redaction", "redactions"],
   ["event", "events"],
   ["scheduledCommand", "scheduledCommands"],
   ["deadLetter", "deadLetters"],
@@ -14,10 +15,10 @@ const SECTIONS = [
 
 const READ_MODELS = SECTIONS.length;
 
-type RecordPart = Exclude<PersonalDataExportPart, { readonly kind: "header" }>;
-
-const recordOf = (part: Exclude<RecordPart, { readonly kind: "row" }>): unknown => {
+const recordOf = (part: Exclude<PersonalDataExportRecord, { readonly kind: "row" }>): unknown => {
   switch (part.kind) {
+    case "redaction":
+      return part.redaction;
     case "event":
       return part.event;
     case "scheduledCommand":
@@ -52,7 +53,7 @@ const arrayWriter = (indent: string) => {
   };
 };
 
-const outOfOrder = (part: RecordPart): Error =>
+const outOfOrder = (part: PersonalDataExportRecord): Error =>
   new Error(`A personal data export has a ${part.kind} out of the order of its sections`);
 
 // What follows the header: each section, and each read model the header names, opened when its
@@ -87,7 +88,7 @@ const documentWriter = (names: readonly string[]) => {
     return text;
   };
   return {
-    record: (part: RecordPart): string => {
+    record: (part: PersonalDataExportRecord): string => {
       if (part.kind === "row") {
         const to = names.indexOf(part.readModel);
         if (to === -1 || to < readModel) throw outOfOrder(part);

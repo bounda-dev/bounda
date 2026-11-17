@@ -3,12 +3,16 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
-import type { PersonalDataExportPart } from "../../kernel/personal-data/export.ts";
+import type {
+  PersonalDataExport,
+  PersonalDataExportPart,
+} from "../../kernel/personal-data/export.ts";
 import { personalDataExportJson } from "../../kernel/personal-data/export-json.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
 import { defineTenantKeyStore } from "../../kernel/personal-data/tenant-key-source.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
+import { PERSONAL_DATA_REDACTED_EVENT } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -109,11 +113,41 @@ const registry = {
 
 const BATCH_SIZE = 4;
 const NOTES = 9 * BATCH_SIZE + 1;
+const REDACTED = 2 * BATCH_SIZE + 1;
+
+const redactable = ({
+  aggregateType,
+  aggregateId,
+  type,
+  id,
+}: PersonalDataExport["events"][number]) => ({
+  aggregateType,
+  aggregateId,
+  type,
+  id,
+  fields: ["note"],
+});
+
+// The most records the export held at once while it was read whole, and how many it handed out.
+const held = async (app: BoundaApp, reads: Reads) => {
+  reads.read = 0;
+  reads.largest = 0;
+  let handed = 0;
+  let records = 0;
+  for await (const part of await app.streamPersonalData("ana")) {
+    if (part.kind !== "header") handed += 1;
+    records = Math.max(records, reads.read - handed);
+    if (handed === 1) expect(reads.read).toBeLessThanOrEqual(BATCH_SIZE);
+  }
+  return { handed, records };
+};
 
 // How many records the export's reads brought back, and how many parts it handed out: the
-// difference is what it holds at once.
+// difference is what it holds at once. A load of the person's own stream counts its redactions,
+// which become parts, and every event it brought back towards the largest read.
 interface Reads {
   read: number;
+  largest: number;
   // Run once, before the next page of the person's events is read.
   meanwhile?: (() => Promise<void>) | undefined;
 }
@@ -125,6 +159,7 @@ const counted = <Args extends unknown[], Item>(
   return async (...args: Args): Promise<readonly Item[]> => {
     const items = await read(...args);
     reads.read += items.length;
+    reads.largest = Math.max(reads.largest, items.length);
     return items;
   };
 };
@@ -137,6 +172,14 @@ const countingReads = (adapter: Adapter, reads: Reads): Adapter => ({
       ...storage,
       eventStore: {
         ...storage.eventStore,
+        load: async (args) => {
+          const loaded = await storage.eventStore.load(args);
+          reads.read += loaded.events.filter(
+            ({ type }) => type === PERSONAL_DATA_REDACTED_EVENT,
+          ).length;
+          reads.largest = Math.max(reads.largest, loaded.events.length);
+          return loaded;
+        },
         readByPerson: counted(reads, async (args) => {
           const meanwhile = reads.meanwhile;
           reads.meanwhile = undefined;
@@ -192,7 +235,7 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
     });
 
     const open = async () => {
-      const reads: Reads = { read: 0 };
+      const reads: Reads = { read: 0, largest: 0 };
       const accesses: PersonalDataAccess[] = [];
       const app = await createApp({
         registry: {
@@ -262,7 +305,6 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
           rights: whole.rights,
           automatedDecisions: [],
           restrictions: [],
-          redactions: [],
           recipients: [],
           readModels: ["notes"],
         },
@@ -288,16 +330,47 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
     it("holds no more than a page of records at once, whatever the history", async () => {
       const { app, reads, note } = await open();
       await history(note, app);
-      reads.read = 0;
-      let handed = 0;
-      let most = 0;
-      for await (const part of await app.streamPersonalData("ana")) {
-        if (part.kind !== "header") handed += 1;
-        most = Math.max(most, reads.read - handed);
-        if (handed === 1) expect(reads.read).toBeLessThanOrEqual(BATCH_SIZE);
+      const most = await held(app, reads);
+      expect(most.handed).toBe(2 * (NOTES + 3) + 4);
+      expect(most.records).toBeLessThanOrEqual(BATCH_SIZE);
+      expect(reads.largest).toBeLessThanOrEqual(BATCH_SIZE);
+    });
+
+    it("holds no more than a page of a heavily redacted history, each event saying what was redacted", async () => {
+      const { app, reads, note } = await open();
+      await history(note, app);
+      const { events } = await app.exportPersonalData("ana");
+      // One redaction an event, and one of several at once.
+      const notes = events.slice(0, REDACTED).map(redactable);
+      for (const target of notes.slice(0, -BATCH_SIZE)) {
+        await app.redact("ana", { events: [target] } as never);
       }
-      expect(handed).toBe(2 * (NOTES + 3) + 4);
-      expect(most).toBeLessThanOrEqual(BATCH_SIZE);
+      await app.redact("ana", { events: notes.slice(-BATCH_SIZE) } as never);
+      await app.runUntilIdle();
+      const whole = await app.exportPersonalData("ana");
+      expect(whole.redactions).toHaveLength(REDACTED - BATCH_SIZE + 1);
+      expect(whole.redactions.at(-1)?.events.map(({ id }) => id)).toEqual(
+        notes.slice(-BATCH_SIZE).map(({ id }) => id),
+      );
+      expect(whole.events.filter(({ redacted }) => redacted.length > 0)).toEqual(
+        notes.map(({ id }) =>
+          expect.objectContaining({ id, data: { note: null }, redacted: ["note"] }),
+        ),
+      );
+      const most = await held(app, reads);
+      expect(most.handed).toBe(
+        whole.redactions.length +
+          whole.events.length +
+          whole.scheduledCommands.length +
+          whole.deadLetters.length +
+          whole.subscriberFailures.length +
+          whole.answers.length +
+          (whole.readModels.notes?.length ?? 0),
+      );
+      expect(most.records).toBeLessThanOrEqual(BATCH_SIZE);
+      expect(reads.largest).toBeLessThanOrEqual(BATCH_SIZE);
+      const text = await textOf(personalDataExportJson(await app.streamPersonalData("ana")));
+      expect(text).toBe(JSON.stringify(whole, null, 2));
     });
 
     it("leaves out the events past its head, and fails once the person's own stream moves while it reads", async () => {
@@ -355,7 +428,14 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
       const exported = await app.exportPersonalData("ana");
       expect(exported.redactions).toHaveLength(1);
       expect(exported.events[0]?.redacted).toEqual(["note"]);
-      expect(accesses.map(({ outcome }) => outcome)).toEqual(["ok", "failed", "ok"]);
+      expect(accesses.map(({ outcome }) => outcome)).toEqual([
+        "started",
+        "started",
+        "ok",
+        "failed",
+        "started",
+        "ok",
+      ]);
     });
 
     it("records how the reading ended, with what it handed out by then", async () => {
@@ -372,22 +452,65 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
       await reader.cancel();
       await textOf(personalDataExportJson(await app.streamPersonalData("bob")));
       expect(accesses).toEqual([
+        expect.objectContaining({ actor: "support-7", outcome: "started" }),
         expect.objectContaining({
           actor: "support-7",
           outcome: "cancelled",
           detail: expect.objectContaining({ events: 2, readModelRows: 0 }),
         }),
+        expect.objectContaining({ actor: null, outcome: "started" }),
         expect.objectContaining({
           actor: null,
           outcome: "cancelled",
           detail: expect.objectContaining({ events: 0 }),
         }),
+        expect.objectContaining({ persons: ["bob"], outcome: "started" }),
         expect.objectContaining({
           persons: ["bob"],
           outcome: "ok",
           detail: expect.objectContaining({ events: 1, readModelRows: 1 }),
         }),
       ]);
+      const ids = accesses.map((access) =>
+        access.operation === "exportPersonalData" ? access.detail.exportId : null,
+      );
+      expect(ids.filter((_, index) => index % 2 === 0)).toEqual(
+        ids.filter((_, index) => index % 2 === 1),
+      );
+      expect(new Set(ids).size).toBe(3);
+    });
+
+    it("records an export as it starts, before its header is handed out, so one nobody reads to the end is recorded", async () => {
+      const { app, note, accesses } = await open();
+      await history(note, app);
+      accesses.length = 0;
+      const parts = (await app.as("support-7").streamPersonalData("ana"))[Symbol.asyncIterator]();
+      expect(accesses).toEqual([
+        {
+          operation: "exportPersonalData",
+          actor: "support-7",
+          persons: ["ana"],
+          personCount: 1,
+          at: "2026-03-01T00:00:00.000Z",
+          outcome: "started",
+          restricted: null,
+          detail: {
+            exportId: expect.any(String),
+            redactions: 0,
+            events: 0,
+            scheduledCommands: 0,
+            deadLetters: 0,
+            subscriberFailures: 0,
+            answers: 0,
+            readModelRows: 0,
+            recipients: 0,
+          },
+        },
+      ]);
+      await parts.next();
+      await parts.next();
+      // Left there, neither read to its end nor stopped: its start is all the log holds of it.
+      expect(accesses.map(({ outcome }) => outcome)).toEqual(["started"]);
     });
   });
 };

@@ -3,7 +3,7 @@ import type { StoredDeadLetter } from "../../adapter/storage/dead-letter-store.t
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
-import type { AccessOutcome } from "../../modules/audit.ts";
+import type { ExportOutcome } from "../../modules/audit.ts";
 import {
   BOUNDA_AGGREGATE,
   PERSONAL_DATA_REDACTED_EVENT,
@@ -30,7 +30,7 @@ import { openAnswer } from "./answers.ts";
 import type { PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith } from "./errors.ts";
-import { openedUnder } from "./event-store.ts";
+import { openedUnder, redactedIn } from "./event-store.ts";
 import {
   collectPersonalDataExport,
   countPart,
@@ -44,6 +44,7 @@ import {
   type PersonalDataExport,
   type PersonalDataExportHeader,
   type PersonalDataExportPart,
+  type PersonalDataExportRecord,
 } from "./export.ts";
 import { personalDataInformation } from "./information.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
@@ -79,8 +80,14 @@ export interface StreamPersonalDataArgs {
   readonly personId: string;
 }
 
+// The header, read whole, and every record, each read only as it is asked for.
+export interface StreamedExport {
+  readonly header: PersonalDataExportHeader;
+  readonly records: AsyncGenerator<PersonalDataExportRecord, void, undefined>;
+}
+
 export interface StreamPersonalDataFunction {
-  (args: StreamPersonalDataArgs): Promise<AsyncGenerator<PersonalDataExportPart, void, undefined>>;
+  (args: StreamPersonalDataArgs): Promise<StreamedExport>;
 }
 
 interface Marked {
@@ -122,7 +129,7 @@ async function* exportedRows(
   personId: string,
   batchSize: number,
   restricted: (categories: ExportedCategories) => ExportedRestricted,
-): AsyncGenerator<PersonalDataExportPart & { readonly kind: "row" }, void, undefined> {
+): AsyncGenerator<PersonalDataExportRecord & { readonly kind: "row" }, void, undefined> {
   // Holds the person's keys alone, each read once.
   const keys = createSealingKeyRing({ keys: sealing.keys, fetching: true });
   let after: unknown;
@@ -164,31 +171,45 @@ async function* exportedRows(
   }
 }
 
-interface PersonStream {
-  readonly version: number;
-  readonly redactions: readonly ExportedRedaction[];
-}
+// The version of the person's own stream, whose events are the runtime's about them: read alone,
+// however many they are.
+const personVersion = async (storage: AppStorage, personId: string): Promise<number> =>
+  (
+    await storage.eventStore.load({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: personId,
+      fromVersion: Number.MAX_SAFE_INTEGER,
+    })
+  ).version;
 
-// The runtime's events about the person: few, one per right they exercised.
-const personStream = async (storage: AppStorage, personId: string): Promise<PersonStream> => {
-  const { events, version } = await storage.eventStore.load({
-    aggregateType: BOUNDA_AGGREGATE,
-    aggregateId: personId,
-  });
-  return {
-    version,
-    redactions: events
-      .filter((event) => event.type === PERSONAL_DATA_REDACTED_EVENT)
-      .map((event) => ({
+// The redactions of the person's own stream up to `version`, a window of it at a time.
+async function* exportedRedactions(
+  storage: AppStorage,
+  personId: string,
+  version: number,
+  batchSize: number,
+): AsyncGenerator<PersonalDataExportRecord & { readonly kind: "redaction" }, void, undefined> {
+  for (let from = 1; from <= version; from += batchSize) {
+    const { events } = await storage.eventStore.load({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: personId,
+      fromVersion: from,
+      toVersion: Math.min(from + batchSize - 1, version),
+    });
+    for (const event of events) {
+      if (event.type !== PERSONAL_DATA_REDACTED_EVENT) continue;
+      const redaction: ExportedRedaction = {
         eventId: event.id,
         at: event.timestamp,
         events: (event.payload as PersonalDataRedactedPayload).events.map(({ id, fields }) => ({
           id,
           fields,
         })),
-      })),
-  };
-};
+      };
+      yield { kind: "redaction", redaction };
+    }
+  }
+}
 
 // Resolves once the header is read, so a refusal rejects before anything is handed out. What the
 // person's own stream says of them holds for the whole export: a change to it since the start,
@@ -208,7 +229,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
   checkPersonId(personId, "exportPersonalData");
   const exportedAt = clock.now().toISOString();
   // The person's stream before the head: whatever it gains after this, the end finds.
-  const before = await personStream(storage, personId);
+  const before = await personVersion(storage, personId);
   const position = await storage.eventStore.lastPosition();
   const restrictions = processingRestrictionsOf(await storage.persons.restrictions(personId));
   const information = personalDataInformation({
@@ -223,7 +244,6 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     position,
     ...information,
     restrictions,
-    redactions: before.redactions,
     recipients: await recipientsOf({ storage, recipients, categories, personId }),
     readModels: Object.values(readModels.byName)
       .filter(({ personalData }) => personalData !== null)
@@ -257,14 +277,6 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
       : requestedFields(of);
   const textRestricted: ExportedRestricted =
     restrictions.length > 0 ? ["errorMessage", "errorStack"] : [];
-  // The ids of the events redacted and their fields, never a value: what each event says in
-  // `redacted`.
-  const redactedOf = new Map<string, Set<string>>();
-  for (const redaction of before.redactions) {
-    for (const { id, fields } of redaction.events) {
-      redactedOf.set(id, new Set([...(redactedOf.get(id) ?? []), ...fields]));
-    }
-  }
   // A process's lifecycle event holds the fields its state marks, in that state.
   const eventData = (event: StoredEvent): Marked => {
     const process = processOfStream(event.aggregateType);
@@ -318,8 +330,8 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     };
   };
 
-  async function* parts(): AsyncGenerator<PersonalDataExportPart, void, undefined> {
-    yield { kind: "header", header };
+  async function* records(): AsyncGenerator<PersonalDataExportRecord, void, undefined> {
+    yield* exportedRedactions(storage, personId, before, batchSize);
     let afterPosition = 0;
     let page: readonly StoredEvent[];
     do {
@@ -343,7 +355,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
             timestamp: event.timestamp,
             ...data,
             restricted: eventRestricted(event, data.categories),
-            redacted: [...(redactedOf.get(event.id) ?? [])].filter((field) => field in data.data),
+            redacted: redactedIn(event).filter((field) => field in data.data),
           },
         };
         afterPosition = event.position;
@@ -352,7 +364,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     yield* rest();
   }
 
-  async function* rest(): AsyncGenerator<PersonalDataExportPart, void, undefined> {
+  async function* rest(): AsyncGenerator<PersonalDataExportRecord, void, undefined> {
     for await (const entries of paged(
       (after) =>
         storage.scheduler.listByPerson({
@@ -462,37 +474,47 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
         requestedFields,
       );
     }
-    const after = await personStream(storage, personId);
-    if (after.version !== before.version) {
-      throw new PersonalDataChangedError(personId, before.version, after.version);
-    }
+    const after = await personVersion(storage, personId);
+    if (after !== before) throw new PersonalDataChangedError(personId, before, after);
   }
 
-  return parts();
+  return { header, records: records() };
 };
+
+async function* exportParts({
+  header,
+  records,
+}: StreamedExport): AsyncGenerator<PersonalDataExportPart, void, undefined> {
+  yield { kind: "header", header };
+  yield* records;
+}
 
 export interface ExportPersonalDataFunction {
   (args: StreamPersonalDataArgs): Promise<PersonalDataExport>;
 }
 
 export const exportPersonalData: ExportPersonalDataFunction = async (args) =>
-  collectPersonalDataExport(await streamPersonalData(args));
+  collectPersonalDataExport(exportParts(await streamPersonalData(args)));
 
-export interface RecordedPartsFunction {
-  (
-    parts: AsyncIterable<PersonalDataExportPart>,
-    record: (outcome: AccessOutcome, counts: ExportedCounts) => Promise<void>,
-    onError: (error: unknown) => void,
-  ): AsyncGenerator<PersonalDataExportPart, void, undefined>;
+export interface RecordedExportArgs {
+  readonly streamed: StreamedExport;
+  readonly record: (outcome: ExportOutcome, counts: ExportedCounts) => Promise<void>;
+  readonly onError: (error: unknown) => void;
 }
 
-// Recorded however the reading ends, with what was handed out by then: whole, failed, or stopped
-// by its reader. A record that fails rejects in place of the error, as `recorded` does.
-export const recordedParts: RecordedPartsFunction = async function* (parts, record, onError) {
-  let counts = NO_EXPORTED_RECORDS;
-  let outcome: AccessOutcome = "cancelled";
+export interface RecordedExportFunction {
+  (args: RecordedExportArgs): Promise<AsyncGenerator<PersonalDataExportPart, void, undefined>>;
+}
+
+async function* ended(
+  { streamed: { header, records }, record, onError }: RecordedExportArgs,
+  started: ExportedCounts,
+): AsyncGenerator<PersonalDataExportPart, void, undefined> {
+  let counts = started;
+  let outcome: ExportOutcome = "cancelled";
   try {
-    for await (const part of parts) {
+    yield { kind: "header", header };
+    for await (const part of records) {
       counts = countPart(counts, part);
       yield part;
     }
@@ -504,4 +526,14 @@ export const recordedParts: RecordedPartsFunction = async function* (parts, reco
   } finally {
     await record(outcome, counts);
   }
+}
+
+// Recorded `started` before the header is handed out, so an export its reader leaves unread, or
+// whose process dies, is recorded all the same; then however the reading ends, with what was
+// handed out by then: whole, failed, or stopped by its reader. A record that fails rejects in place
+// of what it records, as `recorded` does.
+export const recordedExport: RecordedExportFunction = async (args) => {
+  const started = countPart(NO_EXPORTED_RECORDS, { kind: "header", header: args.streamed.header });
+  await args.record("started", started);
+  return ended(args, started);
 };

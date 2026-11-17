@@ -12,7 +12,6 @@ const header: PersonalDataExportPart = {
     rights: [],
     automatedDecisions: [],
     restrictions: [],
-    redactions: [],
     recipients: [],
     readModels: [],
   },
@@ -25,6 +24,15 @@ const answer: PersonalDataExportPart = {
     expiresAt: "2026-01-02T00:00:00.000Z",
     outcome: { aggregateType: "order", aggregateId: "o-1", rejected: "Taken", message: "é" },
     restricted: [],
+  },
+};
+
+const redaction: PersonalDataExportPart = {
+  kind: "redaction",
+  redaction: {
+    eventId: "r-1",
+    at: "2026-01-01T00:00:00.000Z",
+    events: [{ id: "e-1", fields: ["note"] }],
   },
 };
 
@@ -49,7 +57,11 @@ async function* source(
 
 describe("the parts of a streamed export over RPC", () => {
   it("arrive as they were written, whatever their text holds", async () => {
-    expect(await collect(partsOf(partLines(source([header, answer]))))).toEqual([header, answer]);
+    expect(await collect(partsOf(partLines(source([header, redaction, answer]))))).toEqual([
+      header,
+      redaction,
+      answer,
+    ]);
     // Split anywhere, inside a character too.
     const bytes = new TextEncoder().encode(
       `${JSON.stringify(header)}\n${JSON.stringify(answer)}\n`,

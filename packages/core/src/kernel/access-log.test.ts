@@ -214,26 +214,40 @@ describe("the access log", () => {
       ],
       customerPlans: [],
     });
-    expect(accesses()).toEqual([
-      {
-        operation: "exportPersonalData",
-        actor: "operator-1",
-        persons: ["ana"],
-        personCount: 1,
-        at: AT,
-        outcome: "ok",
-        restricted: null,
-        detail: {
-          events: 1,
-          scheduledCommands: 0,
-          deadLetters: 1,
-          subscriberFailures: 0,
-          answers: 0,
-          readModelRows: 1,
-          recipients: 0,
-        },
+    const exportId = expect.any(String);
+    const record = (outcome: string, handed: number) => ({
+      operation: "exportPersonalData",
+      actor: "operator-1",
+      persons: ["ana"],
+      personCount: 1,
+      at: AT,
+      outcome,
+      restricted: null,
+      detail: {
+        exportId,
+        redactions: 0,
+        events: handed,
+        scheduledCommands: 0,
+        deadLetters: handed,
+        subscriberFailures: 0,
+        answers: 0,
+        readModelRows: handed,
+        recipients: 0,
       },
-    ]);
+    });
+    expect(accesses()).toEqual([record("started", 0), record("ok", 1)]);
+    const [started, ended] = accesses();
+    expect(started?.operation === "exportPersonalData" && started.detail.exportId).toBe(
+      ended?.operation === "exportPersonalData" && ended.detail.exportId,
+    );
+    await app.exportPersonalData("ana");
+    expect(
+      new Set(
+        accesses().map((access) =>
+          access.operation === "exportPersonalData" ? access.detail.exportId : null,
+        ),
+      ).size,
+    ).toBe(2);
     expect(records[0]).toMatchObject({
       env: { AUDIT_URL: "https://audit.example" },
       tenant: "shop-1",
@@ -424,25 +438,29 @@ describe("the access log", () => {
     await expect(app.exportPersonalData("")).rejects.toThrow(
       "exportPersonalData needs the id of the person",
     );
-    expect(records.map(({ access }) => access)).toEqual([
-      {
-        operation: "exportPersonalData",
-        actor: "operator-1",
-        persons: ["ana"],
-        personCount: 1,
-        at: AT,
-        outcome: "failed",
-        restricted: null,
-        detail: {
-          events: 0,
-          scheduledCommands: 0,
-          deadLetters: 0,
-          subscriberFailures: 0,
-          answers: 0,
-          readModelRows: 0,
-          recipients: 0,
-        },
+    const failed = {
+      operation: "exportPersonalData",
+      actor: "operator-1",
+      persons: ["ana"],
+      personCount: 1,
+      at: AT,
+      outcome: "failed",
+      restricted: null,
+      detail: {
+        exportId: expect.any(String),
+        redactions: 0,
+        events: 0,
+        scheduledCommands: 0,
+        deadLetters: 0,
+        subscriberFailures: 0,
+        answers: 0,
+        readModelRows: 0,
+        recipients: 0,
       },
+    };
+    expect(records.map(({ access }) => access)).toEqual([
+      { ...failed, outcome: "started" },
+      failed,
     ]);
   });
 
@@ -473,6 +491,8 @@ describe("the access log", () => {
         "exportPersonalData",
         "failed",
         {
+          exportId: expect.any(String),
+          redactions: 0,
           events: 0,
           scheduledCommands: 0,
           deadLetters: 0,
@@ -524,7 +544,66 @@ describe("the access log", () => {
       records
         .filter(({ access }) => access.operation === "exportPersonalData")
         .map(({ access }) => access.outcome),
-    ).toEqual(["failed", "failed"]);
+    ).toEqual(["started", "failed", "started", "failed"]);
+  });
+
+  it("records a streamed export as it starts, so one its reader leaves unread is recorded too", async () => {
+    const { app, register, accesses } = await setUp();
+    await register("ana");
+    await app.runUntilIdle();
+    const parts = (await app.as("operator-1").streamPersonalData("ana"))[Symbol.asyncIterator]();
+    await parts.next();
+    await parts.next();
+    expect(accesses()).toEqual([
+      expect.objectContaining({
+        operation: "exportPersonalData",
+        actor: "operator-1",
+        persons: ["ana"],
+        outcome: "started",
+        detail: expect.objectContaining({ events: 0, recipients: 0 }),
+      }),
+    ]);
+    await parts.return?.(undefined);
+    expect(accesses().map(({ outcome }) => outcome)).toEqual(["started", "cancelled"]);
+    expect(accesses()[1]).toMatchObject({ detail: { events: 1 } });
+  });
+
+  it("hands nothing out, and reads no record, when its start cannot be recorded", async () => {
+    const base = memory();
+    const reads: string[] = [];
+    const counting: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        return {
+          ...storage,
+          eventStore: {
+            ...storage.eventStore,
+            readByPerson: async (args) => {
+              reads.push(args.person);
+              return storage.eventStore.readByPerson(args);
+            },
+          },
+        };
+      },
+    };
+    const { app } = await createTestApp({
+      registry: registryWith(),
+      adapter: counting,
+      config: { runtime: { policies: { retry: { strategy: "none" } } } },
+      onPersonalDataAccess: () => {
+        throw new Error("audit sink down");
+      },
+    });
+    await app.commands.registerCustomer({
+      customerId: "ana",
+      email: "ana@example.com",
+      plan: "pro",
+    });
+    await app.runUntilIdle().catch(() => undefined);
+    reads.length = 0;
+    await expect(app.streamPersonalData("ana")).rejects.toThrow("audit sink down");
+    expect(reads).toEqual([]);
   });
 
   it("records a query that another composes, as the actor of the outer one, and not the outer one when its read model has no personal field", async () => {
@@ -593,7 +672,10 @@ describe("the access log", () => {
       config: { storage: memory() },
     });
     await app.as("operator-1").exportPersonalData("ana");
-    expect(records.map(({ access }) => access.operation)).toEqual(["exportPersonalData"]);
+    expect(records.map(({ access }) => [access.operation, access.outcome])).toEqual([
+      ["exportPersonalData", "started"],
+      ["exportPersonalData", "ok"],
+    ]);
     await app.stop();
   });
 
