@@ -1,3 +1,5 @@
+import type { Config } from "../config/types.ts";
+
 /**
  * What `bounda.config.ts` holds under `storage` and `readModels`: an adapter's name and options.
  * An adapter factory such as `sqlite({ path })` returns the full `Adapter`, which adds the store
@@ -13,6 +15,13 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
    * it next to every holder and record kept there.
    */
   readonly location?: string;
+  /**
+   * Refuses, with `ConfigurationError`, a configuration this adapter cannot serve, such as a read
+   * model kept apart from where the adapter says the data lives. Run every time a configuration
+   * is resolved, for `storage` and each of `readModels`: an app refuses to start on it, and so does
+   * the record of processing (`personalDataInventory`).
+   */
+  readonly check?: (config: Config) => void;
 }
 
 export interface IsAdapterDefinitionFunction {

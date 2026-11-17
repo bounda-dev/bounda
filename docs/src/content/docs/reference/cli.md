@@ -507,7 +507,7 @@ declares no legal basis, and logs that carry the text of errors.
 | --- | --- |
 | `0` | The record is complete |
 | `1` | It has findings, printed with it; or the command line is wrong |
-| `2` | The project failed to load |
+| `2` | The project failed to load, or its configuration is one the app refuses to start on, such as a read model on `cloudflare()` in another [jurisdiction](/adapters/cloudflare/#data-location) than `storage` |
 
 ## `bounda recipients`
 

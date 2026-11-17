@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
 import { checkObjectJurisdiction, namespaceIn } from "../src/jurisdiction.ts";
-import { tenantStub } from "../src/tenant-stub.ts";
+import { boundaNamespace, tenantStub } from "../src/tenant-stub.ts";
 import type { quietRegistry } from "./app.ts";
 import { recordingStub } from "./recording-stub.ts";
 
@@ -84,6 +84,25 @@ describe("checkObjectJurisdiction", () => {
     expect(() =>
       checkObjectJurisdiction({ id: idIn("us"), jurisdiction: "eu", namespace: env.BARE }),
     ).toThrow("created in jurisdiction us");
+  });
+});
+
+describe("boundaNamespace", () => {
+  it("is the namespace through the binding, narrowed to the jurisdiction cloudflare() names", () => {
+    const within = {};
+    const config = { storage: cloudflare({ binding: "SPY", jurisdiction: "eu" }) };
+    expect(boundaNamespace({ config, env: { SPY: holding(within) } })).toBe(within);
+    expect(boundaNamespace({ config: { storage: cloudflare() }, env })).toBe(env.STORE);
+  });
+
+  it("refuses a read model on cloudflare() in another jurisdiction than storage", () => {
+    const config = {
+      storage: cloudflare({ jurisdiction: "eu" }),
+      readModels: { orders: cloudflare() },
+    };
+    expect(() => boundaNamespace({ config, env })).toThrow(
+      "The read model orders lives in the tenant's Durable Object",
+    );
   });
 });
 

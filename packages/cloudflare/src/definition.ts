@@ -44,7 +44,10 @@ export interface CloudflareFunction {
 
 /**
  * Storage in the SQLite of the Durable Object the app runs in: events, ledgers and read models,
- * all in one object. Throws `ConfigurationError` for a `jurisdiction` that is not a name.
+ * all in one object. Throws `ConfigurationError` for a `jurisdiction` that is not a name; a
+ * configuration that puts it beside another storage, or a read model on it in another
+ * jurisdiction than `storage`, is refused wherever it is resolved, the record of processing
+ * included.
  */
 export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options } = {}) => {
   // A Worker's code is not always type-checked.
@@ -59,6 +62,7 @@ export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options }
     name: "cloudflare",
     options: { ...options, binding },
     ...(jurisdiction === undefined ? {} : { location: `jurisdiction ${jurisdiction}` }),
+    check: (config) => void cloudflareStorageOf(config),
   };
 };
 

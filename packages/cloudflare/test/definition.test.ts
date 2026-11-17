@@ -1,4 +1,5 @@
 import { ConfigurationError } from "@bounda-dev/core";
+import { memory } from "@bounda-dev/core/memory";
 import { describe, expect, it } from "vitest";
 import { cloudflare, cloudflareStorageOf, isCloudflareDefinition } from "../src/definition.ts";
 
@@ -8,6 +9,7 @@ describe("cloudflare", () => {
       kind: "bounda-adapter",
       name: "cloudflare",
       options: { binding: "STORE" },
+      check: expect.any(Function),
     });
     expect(cloudflare({ binding: "ORDERS", tablePrefix: "app_" }).options).toEqual({
       binding: "ORDERS",
@@ -21,6 +23,7 @@ describe("cloudflare", () => {
       name: "cloudflare",
       options: { binding: "STORE", jurisdiction: "eu" },
       location: "jurisdiction eu",
+      check: expect.any(Function),
     });
   });
 
@@ -69,5 +72,19 @@ describe("isCloudflareDefinition", () => {
     ]) {
       expect(isCloudflareDefinition(value)).toBe(false);
     }
+  });
+});
+
+describe("cloudflare()'s check", () => {
+  it("refuses wherever a configuration is resolved what cloudflareStorageOf refuses", () => {
+    const storage = cloudflare({ jurisdiction: "eu" });
+    const apart = cloudflare();
+    expect(() => storage.check?.({ storage, readModels: { orders: storage } })).not.toThrow();
+    expect(() => apart.check?.({ storage, readModels: { orders: apart } })).toThrow(
+      "The read model orders lives in the tenant's Durable Object",
+    );
+    expect(() => apart.check?.({ storage: memory(), readModels: { orders: apart } })).toThrow(
+      "set storage to cloudflare()",
+    );
   });
 });

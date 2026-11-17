@@ -265,6 +265,9 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
     throw new ConfigurationError(`Invalid bounda.config.ts:\n${formatIssues(result.error.issues)}`);
   }
   const parsed = result.data;
+  for (const definition of [parsed.storage, ...Object.values(parsed.readModels ?? {})]) {
+    definition.check?.(config);
+  }
   const baseCommands = resolveCommands(parsed.runtime?.commands, DEFAULT_COMMANDS);
   const basePolicies = resolvePolicies(parsed.runtime?.policies, DEFAULT_POLICIES);
   const baseProcesses = resolveProcesses(parsed.runtime?.processes, DEFAULT_PROCESSES);

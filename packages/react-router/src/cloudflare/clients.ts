@@ -1,8 +1,8 @@
 import {
   type BoundaStub,
+  boundaNamespace,
   connect,
   isCloudflareDefinition,
-  tenantStub,
 } from "@bounda-dev/cloudflare";
 import {
   type BoundaClient,
@@ -67,12 +67,7 @@ export const cloudflareClients: CloudflareClientsFunction = <R extends Registry>
       "React Router on Cloudflare serves an app that runs in a Durable Object: set storage to cloudflare() in bounda.config.ts",
     );
   }
-  const { binding } = config.storage.options;
-  if (Reflect.get(env, binding) === undefined) {
-    throw new ConfigurationError(
-      `The Worker has no binding "${binding}": bind the Bounda Durable Object under that name in wrangler.jsonc, or name its binding with cloudflare({ binding })`,
-    );
-  }
+  const namespace = boundaNamespace({ config, env });
   if (typeof tenant !== "function") {
     throw new ConfigurationError(
       'tenant must be a function that names the store of a request, such as () => "default"',
@@ -89,7 +84,7 @@ export const cloudflareClients: CloudflareClientsFunction = <R extends Registry>
               `tenant must name the store of a request with a string, got ${JSON.stringify(name)}`,
             );
           }
-          return tenantStub({ config, env, tenant: name });
+          return namespace.get(namespace.idFromName(name)) as unknown as BoundaStub;
         });
       return stub;
     };

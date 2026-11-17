@@ -121,9 +121,10 @@ describe("createWorker", () => {
     ]);
   });
 
-  it("reaches every tenant's object in the jurisdiction the config names", async () => {
+  it("reaches every tenant's object in the jurisdiction the config names, narrowed once per env", async () => {
     const { stub, commands } = recordingStub();
     const reached: string[] = [];
+    const narrowed: string[] = [];
     const namespace = (where: string) => ({
       idFromName: (name: string) => {
         reached.push(`${where}:${name}`);
@@ -131,22 +132,34 @@ describe("createWorker", () => {
       },
       get: () => stub,
     });
-    const spy = { ...namespace("anywhere"), jurisdiction: (name: string) => namespace(name) };
+    const spy = {
+      ...namespace("anywhere"),
+      jurisdiction: (name: string) => {
+        narrowed.push(name);
+        return namespace(name);
+      },
+    };
     const worker = createWorker({
       config: { storage: cloudflare({ binding: "SPY", jurisdiction: "eu" }) },
       tenantOf: () => "acme",
     });
-    const response = await worker.fetch?.(
-      new Request("https://bounda.test/commands/payOrder", {
-        method: "POST",
-        body: JSON.stringify({ orderId: "o-1" }),
-      }) as Request<unknown, IncomingRequestCfProperties>,
-      { SPY: spy } as unknown as Cloudflare.Env,
-      createExecutionContext(),
-    );
-    expect(response?.status).toBe(200);
-    expect(reached).toEqual(["eu:acme"]);
-    expect(commands).toHaveLength(1);
+    const send = (bindings: object) =>
+      worker.fetch?.(
+        new Request("https://bounda.test/commands/payOrder", {
+          method: "POST",
+          body: JSON.stringify({ orderId: "o-1" }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        bindings as Cloudflare.Env,
+        createExecutionContext(),
+      );
+    const bindings = { SPY: spy };
+    expect((await send(bindings))?.status).toBe(200);
+    expect((await send(bindings))?.status).toBe(200);
+    expect(narrowed).toEqual(["eu"]);
+    expect((await send({ SPY: spy }))?.status).toBe(200);
+    expect(narrowed).toEqual(["eu", "eu"]);
+    expect(reached).toEqual(["eu:acme", "eu:acme", "eu:acme"]);
+    expect(commands).toHaveLength(3);
   });
 
   it("answers a 500 and logs it when the binding the config names is missing", async () => {

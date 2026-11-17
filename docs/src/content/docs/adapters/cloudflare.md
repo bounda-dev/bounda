@@ -254,8 +254,9 @@ global stream.
 [jurisdiction](https://developers.cloudflare.com/durable-objects/reference/data-location/) every
 tenant's object is created in, such as `"eu"`: Cloudflare then runs it and keeps its SQLite only
 there, whichever part of the world its requests come from. It is the one place that says so, and
-everything that reaches an object follows it: `createWorker`, the React Router hosts, and
-`tenantStub({ config, env, tenant })` for a Worker of your own. The same name in two jurisdictions
+everything that reaches an object follows it: `createWorker`, the React Router hosts, and, for a
+Worker of your own, `tenantStub({ config, env, tenant })`, or `boundaNamespace({ config, env })`
+resolved once where the Worker starts. The same name in two jurisdictions
 is two objects, so a tenant reached in another, by `env.STORE.idFromName` written by hand, say,
 would have its data split between them; the object checks where it was created before it stores
 anything, and one created in another jurisdiction than the configuration's, or in one when the
@@ -266,7 +267,8 @@ configuration names none, refuses to start with a `ConfigurationError`.
   [tenant keys](#tenant-keys), the new object refuses to start instead, since the tenant's key
   belongs to the old one.
 - A read model that `readModels` puts on `cloudflare()` lives in the tenant's object, so its
-  `cloudflare()` names the same jurisdiction as `storage`, or none when `storage` names none.
+  `cloudflare()` names the same jurisdiction as `storage`, or none when `storage` names none. The
+  app refuses to start on one that names another, and so does `bounda personal-data inventory`.
 - `workerd` has no jurisdictions where it runs locally, under `wrangler dev`, `vite dev` and the
   tests: there every object stays on your machine and the setting is ignored.
 - The jurisdiction holds the object, not the Worker in front of it, which runs near each request,

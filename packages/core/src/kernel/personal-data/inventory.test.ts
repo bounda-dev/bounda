@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Config } from "../../config/types.ts";
+import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
@@ -275,6 +276,21 @@ describe("personalDataInventory", () => {
       config: { ...config, storage: pinned, readModels: { customers: memory() } },
     });
     expect(apart.holders.find(({ name }) => name === "customers")?.location).toBeNull();
+  });
+
+  it("refuses a configuration its adapters refuse, as the app does at start", () => {
+    const refusing = {
+      ...memory(),
+      check: () => {
+        throw new ConfigurationError("The read model customers is kept in another jurisdiction");
+      },
+    };
+    expect(() =>
+      personalDataInventory({
+        registry,
+        config: { ...config, readModels: { customers: refusing } },
+      }),
+    ).toThrow("The read model customers is kept in another jurisdiction");
   });
 
   it("lists the fields declared not personal", () => {

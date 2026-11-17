@@ -198,6 +198,44 @@ describe("cloudflareClients", () => {
     );
   });
 
+  it("refuses, before any request, a read model on cloudflare() in another jurisdiction than storage", () => {
+    expect(() =>
+      cloudflareClients({
+        env: { STORE: storeNamespace().namespace },
+        config: {
+          storage: cloudflare({ jurisdiction: "eu" }),
+          readModels: { orders: cloudflare() },
+        },
+        tenant: byWorkspace,
+        consistency: "read-your-writes",
+      }),
+    ).toThrow("The read model orders lives in the tenant's Durable Object");
+  });
+
+  it("narrows the namespace to the jurisdiction once, for every request", async () => {
+    const store = storeNamespace();
+    const narrowed: string[] = [];
+    const clientOf = cloudflareClients<Registry>({
+      env: {
+        STORE: {
+          ...store.namespace,
+          jurisdiction: (name: string) => {
+            narrowed.push(name);
+            return store.namespace.jurisdiction(name);
+          },
+        },
+      },
+      config: { storage: cloudflare({ jurisdiction: "eu" }) },
+      tenant: byWorkspace,
+      consistency: "eventual",
+    });
+    for (const workspace of ["acme", "globex"]) {
+      await Reflect.get(clientOf(requestArgs({ workspace })).queries, "getOrder")({});
+    }
+    expect(narrowed).toEqual(["eu"]);
+    expect(store.calls.map(([tenant]) => tenant)).toEqual(["eu/acme", "eu/globex"]);
+  });
+
   it("refuses a tenant that is not a function", () => {
     expect(() =>
       cloudflareClients({

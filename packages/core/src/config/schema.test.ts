@@ -44,6 +44,23 @@ const message = (config: unknown): string => {
 };
 
 describe("resolveConfig", () => {
+  it("runs the check of storage and of every read model's adapter, and refuses what they refuse", () => {
+    const checked: string[] = [];
+    const checking = (name: string, refusal?: string): AdapterDefinition => ({
+      ...memory(),
+      check: (config) => {
+        checked.push(`${name}:${config.storage === storage}`);
+        if (refusal !== undefined) throw new ConfigurationError(refusal);
+      },
+    });
+    const storage = checking("storage");
+    resolveConfig({ storage, readModels: { orders: checking("orders") } });
+    expect(checked).toEqual(["storage:true", "orders:true"]);
+    expect(() =>
+      resolveConfig({ storage, readModels: { orders: checking("orders", "kept elsewhere") } }),
+    ).toThrow(new ConfigurationError("kept elsewhere"));
+  });
+
   it("fills every default from a minimal config", () => {
     const resolved = resolveConfig({ storage: sqlite });
     expect(resolved.storage).toBe(sqlite);

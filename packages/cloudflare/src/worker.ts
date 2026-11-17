@@ -14,7 +14,7 @@ import type { BoundaStub } from "./client.ts";
 import { cloudflareStorageOf } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { unwrap } from "./outcome.ts";
-import { boundaNamespace } from "./tenant-stub.ts";
+import { findBoundaNamespace } from "./tenant-stub.ts";
 import { hostLogger } from "./witnesses.ts";
 
 export interface TenantOfFunction {
@@ -205,13 +205,19 @@ export const createWorker: CreateWorkerFunction = ({
 }) => {
   const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
+  // One namespace per `env` the Worker is handed, rather than one per request.
+  const namespaces = new WeakMap<object, DurableObjectNamespace | undefined>();
+  const namespaceOf = (env: object): DurableObjectNamespace | undefined => {
+    if (!namespaces.has(env)) namespaces.set(env, findBoundaNamespace({ config, env }));
+    return namespaces.get(env);
+  };
   // Through the witness `witnessObjects` gives the Worker in a test.
   const log = (): Logger => hostLogger(worker, logger);
   const worker: ExportedHandler<Cloudflare.Env> = {
     // A rotation of the master key rewraps a tenant's key in the tenant's own object, the one
     // writer of its record: each one still under a previous master key is woken to do it.
     scheduled: async (_controller, env) => {
-      const namespace = boundaNamespace({ config, env });
+      const namespace = namespaceOf(env);
       if (namespace === undefined) {
         log().error("bounda worker has no such binding", { binding });
         return;
@@ -266,7 +272,7 @@ export const createWorker: CreateWorkerFunction = ({
         }
         return failure("INVALID_JSON", "The body is not JSON", 400);
       }
-      const namespace = boundaNamespace({ config, env });
+      const namespace = namespaceOf(env);
       if (namespace === undefined) {
         log().error("bounda worker has no such binding", { binding });
         return failure("INTERNAL", "Internal error", 500);

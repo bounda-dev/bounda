@@ -115,4 +115,27 @@ describe("bounda binary end to end", () => {
       location: "jurisdiction eu",
     });
   }, 60_000);
+
+  it("refuses the record of a Cloudflare project the app would refuse to start", async () => {
+    const refused = run(
+      process.execPath,
+      [
+        join(repoRoot, "packages/cli/src/cli.ts"),
+        "personal-data",
+        "inventory",
+        "--config",
+        "bounda.mismatched.config.ts",
+      ],
+      {
+        cwd: join(repoRoot, "packages/cli/src/fixtures/cloudflare-project"),
+        env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      },
+    );
+    await expect(refused).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining(
+        "The read model customers lives in the tenant's Durable Object, in the jurisdiction storage names",
+      ),
+    });
+  }, 60_000);
 });
