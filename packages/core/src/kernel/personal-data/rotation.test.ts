@@ -1208,7 +1208,7 @@ describe("the tenant's key under the master key", () => {
 describe("settled", () => {
   it("says whether any key, a person's or the database's, is still under an older version", async () => {
     const storage = await memory().createStorage();
-    const wrapper = fakeWrapper("new", ["old", "new"]);
+    const wrapper = fakeWrapper("new", ["old", "older", "new"]);
     const rotation = createKeyRotation({
       keys: storage.personalKeys,
       indexKeys: storage.indexKeys,

@@ -83,6 +83,10 @@ describe("storedWhere", () => {
       email__index: { in: ['customers.email="a@x"', 'customers.email="b@x"'] },
     });
     expect(await storedWhere({ context, where: { email: null } })).toEqual({ email__index: null });
+    // Only `in` reads a list as the values it may be: given to `ne`, it is one value.
+    expect(await storedWhere({ context, where: { email: { ne: ["a@x"] } } })).toEqual({
+      email__index: { ne: 'customers.email=["a@x"]' },
+    });
     expect(await storedWhere({ context, where: undefined })).toBeUndefined();
   });
 

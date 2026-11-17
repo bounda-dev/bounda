@@ -154,11 +154,12 @@ const fingerprintsIn = (tables: readonly InspectedTable[], fingerprints: Readonl
     }),
   );
 
-const setUp = async (adapter: Adapter) => {
+const setUp = async (adapter: Adapter, batchSize?: number) => {
   const logged: string[] = [];
   const { app, clock } = await createTestApp({
     registry,
     adapter,
+    ...(batchSize === undefined ? {} : { config: { runtime: { dispatcher: { batchSize } } } }),
     logger: {
       debug: () => {},
       info: (message) => logged.push(message),
@@ -320,6 +321,14 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     stops.push(() => started.stop());
     await started.runUntilIdle();
     expect(await stores.checkpointStore.get(settledMark("customers"))).toBe(resettled);
+  });
+
+  it("rebuilds the read models in slices of several of the dispatcher's batches", async () => {
+    const { app, register, reseal } = await setUp(adapterOf(), 1);
+    await register("ana");
+    await register("bob");
+    await reseal();
+    expect((await app.status()).keyRotation?.reseal).toMatchObject({ step: "complete" });
   });
 
   it("indexes a table first written while the keys are replaced under the new key, and marks it", async () => {

@@ -582,7 +582,10 @@ describe("createPersonalDataReseal", () => {
       calls: [...get("eventStore.readOne", 2), "eventStore.reseal"],
       outside: ["ana", "ana'", "bob", "bob'"],
     });
+    // A batch with nothing sealed opens no transaction.
+    const transactions = vi.mocked(storage.transact).mock.calls.length;
     expect(await pass()).toEqual({ done: 2, calls: [], outside: [] });
+    expect(vi.mocked(storage.transact).mock.calls.length).toBe(transactions);
     expect(await pass()).toEqual({ done: 1, calls: [], outside: [] });
     expect((await reseal.status())?.step).toBe("scheduled");
     expect(await pass()).toEqual({
@@ -723,6 +726,7 @@ describe("createPersonalDataReseal", () => {
     expect((await storage.indexKeys.previous())?.fingerprint).toBe(from.fingerprint);
     expect((await storage.indexKeys.get())?.fingerprint).toBe(to?.fingerprint);
     expect(await row("switched")).toBe(switched);
+    expect(generated).toHaveBeenCalledTimes(2);
     // A pass while the keys are replaced switches nothing again.
     await tenantKeys.rotate();
     refresh.mockClear();

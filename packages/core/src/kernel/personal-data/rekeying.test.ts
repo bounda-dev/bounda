@@ -91,6 +91,23 @@ describe("createRekeying", () => {
     expect(await rekeying.payload(after)).toBe(after);
     expect(await rekeying.payload("not a record")).toBe("not a record");
     expect(rekeying.named(payload).map(([person]) => person)).toEqual(["ana", "ana", "ana"]);
+    // Only `state` is read inside: a value nested in another record is not a field of the payload.
+    expect(rekeying.named({ address: { email: await sealed("ana@x") }, state: "done" })).toEqual(
+      [],
+    );
+  });
+
+  it("turns into null what a superseded key sealed once the key in its place is gone too", async () => {
+    const { keys, replaced, rekeying } = await setUp();
+    const { old, fresh } = await replaced("ana");
+    const before = await seal({ key: old, person: "ana", category: D, value: "ana@x" });
+    const opened = keys.opened.bind(keys);
+    vi.spyOn(keys, "opened").mockImplementation(async (person, fingerprint) =>
+      fingerprint === fresh.fingerprint ? null : opened(person, fingerprint),
+    );
+    const after = await rekeying.sealed(before);
+    expect(after.$personal.person).toBe("ana");
+    expect([old.fingerprint, fresh.fingerprint]).not.toContain(after.$personal.key);
   });
 
   it("names each person under the key in place of the one a record named them under", async () => {
