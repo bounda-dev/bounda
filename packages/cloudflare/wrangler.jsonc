@@ -23,7 +23,9 @@
       { "name": "LEDGER_STORE", "class_name": "LedgerStore" },
       { "name": "SNAPSHOT_STORE", "class_name": "SnapshotStore" },
       { "name": "WITNESSED_STORE", "class_name": "WitnessedStore" },
-      { "name": "BARE", "class_name": "Bare" }
+      { "name": "BARE", "class_name": "Bare" },
+      { "name": "EU_STORE", "class_name": "EuStore" },
+      { "name": "UNBOUND_EU_STORE", "class_name": "UnboundEuStore" }
     ]
   },
   "migrations": [
@@ -34,6 +36,7 @@
     { "tag": "v5", "new_sqlite_classes": ["WrappedStore"] },
     { "tag": "v6", "new_sqlite_classes": ["LedgerStore"] },
     { "tag": "v7", "new_sqlite_classes": ["SnapshotStore"] },
-    { "tag": "v8", "new_sqlite_classes": ["WitnessedStore"] }
+    { "tag": "v8", "new_sqlite_classes": ["WitnessedStore"] },
+    { "tag": "v9", "new_sqlite_classes": ["EuStore", "UnboundEuStore"] }
   ]
 }

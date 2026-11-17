@@ -25,7 +25,7 @@ app/routes/home.tsx         a loader that queries and an action that dispatches
 app/root.tsx                mounts boundaMiddleware
 app/entry.server.tsx        React Router's entry, with Bounda's handleError
 app/tenant.ts               names the Durable Object each request reaches
-bounda.config.ts            storage: cloudflare()
+bounda.config.ts            storage: cloudflare({ jurisdiction: "eu" })
 .dev.vars                   the master key, and the text of errors in the logs, for development
 workers/app.ts              the Worker: React Router, and the Durable Object class
 vite.config.ts              plugins: [cloudflare(), bounda(), reactRouter()]
@@ -38,6 +38,12 @@ Every request reaches the store `app/tenant.ts` names: `default`, for all of the
 everyone is a choice; to keep each customer's data apart, name theirs there, from the URL or the
 signed-in user. The [React Router guide](https://docs.bounda.dev/guides/react-router/#on-cloudflare)
 has the details.
+
+Every object is created in the EU and never leaves it, as `jurisdiction: "eu"` in
+`bounda.config.ts` says. An object never moves: to place each one near its first request
+instead, take that line out before the first deploy. `vite dev` and the tests run in workerd,
+which keeps every object on your machine. See
+[data location](https://docs.bounda.dev/adapters/cloudflare/#data-location).
 
 `app/entry.server.tsx` exports Bounda's `handleError`, so what a loader or an action throws is
 logged without its message, which may quote personal data, unless `BOUNDA_ERROR_TEXT=include`

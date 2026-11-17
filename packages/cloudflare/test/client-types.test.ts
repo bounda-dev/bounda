@@ -11,8 +11,11 @@ import type {
 } from "@bounda-dev/core";
 import type { CreateTestAppArgs } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
-import { connect } from "../src/client.ts";
+import { type BoundaStub, connect } from "../src/client.ts";
+import { cloudflare } from "../src/definition.ts";
+import { tenantStub } from "../src/tenant-stub.ts";
 import type { regionRegistry, registry } from "./app.ts";
+import type { Store } from "./test-worker.ts";
 
 describe("connect", () => {
   it("types commands and queries from the registry, as app.commands and app.queries are", () => {
@@ -47,6 +50,19 @@ describe("connect", () => {
       void connect(env.STORE.get(env.STORE.newUniqueId()), { consistency: "eventually" });
     };
     void calls;
+  });
+});
+
+describe("tenantStub", () => {
+  it("types the stub as the object's class when given one, and as what connect takes otherwise", () => {
+    const config = { storage: cloudflare() };
+    const typed = () => tenantStub<InstanceType<typeof Store>>({ config, env, tenant: "a" });
+    expectTypeOf<ReturnType<typeof typed>>().toEqualTypeOf<
+      DurableObjectStub<InstanceType<typeof Store>>
+    >();
+    expectTypeOf<ReturnType<typeof typed>>().toExtend<BoundaStub>();
+    const untyped = () => tenantStub({ config, env, tenant: "a" });
+    expectTypeOf<ReturnType<typeof untyped>>().toEqualTypeOf<DurableObjectStub & BoundaStub>();
   });
 });
 

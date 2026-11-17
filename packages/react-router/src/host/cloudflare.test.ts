@@ -84,6 +84,19 @@ describe("createHost under the workerd condition", () => {
     ]);
   });
 
+  it("serves the tenant's store in the jurisdiction bounda.config.ts names", async () => {
+    const { bounda, boundaMiddleware } = createHost({
+      registry,
+      importConfig: async () => ({ default: { storage: cloudflare({ jurisdiction: "eu" }) } }),
+      importTenant: async () => ({ tenant: () => "acme" }),
+      consistency: "eventual",
+    });
+    const { context, args } = middlewareArgs();
+    await boundaMiddleware(args, async () => undefined);
+    await Reflect.get(context.get(bounda).queries, "getOrder")({});
+    expect(store.calls).toEqual([["eu/acme", "query", "getOrder", {}, undefined, undefined]]);
+  });
+
   it("acts as the actor of app/actor.ts, when the project has one, over RPC", async () => {
     const { bounda, boundaMiddleware } = createHost({
       registry,

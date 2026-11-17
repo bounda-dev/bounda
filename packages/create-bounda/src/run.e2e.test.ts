@@ -446,7 +446,9 @@ describe("a project created by create-bounda", () => {
       ["edge", "--runtime", "cloudflare", "--yes", "--no-git", "--no-install"],
       { runtime: "cloudflare", framework: "none" },
     );
-    expect(await readFile(join(project, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
+    expect(await readFile(join(project, "bounda.config.ts"), "utf8")).toContain(
+      `cloudflare({ jurisdiction: "eu" })`,
+    );
     expect(await readFile(join(project, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
     expect(await readFile(join(project, ".dev.vars"), "utf8")).toMatch(
       /^BOUNDA_MASTER_KEY=[A-Za-z0-9+/]{43}=$/m,
@@ -457,6 +459,23 @@ describe("a project created by create-bounda", () => {
       [join(project, "node_modules/@bounda-dev/cli/dist/cli.js"), "generate"],
       { cwd: project },
     );
+    // The record of processing reads the modules in Node, which import the Workers runtime, and
+    // says where the objects keep the data.
+    const inventory = await run(
+      process.execPath,
+      [
+        join(project, "node_modules/@bounda-dev/cli/dist/cli.js"),
+        "personal-data",
+        "inventory",
+        "--json",
+      ],
+      { cwd: project },
+    );
+    expect(JSON.parse(inventory.stdout)).toMatchObject({
+      records: expect.arrayContaining([
+        { name: "persons", where: "cloudflare", location: "jurisdiction eu", keptFor: null },
+      ]),
+    });
     const wrangler = join(project, "node_modules/wrangler/bin/wrangler.js");
     await run(process.execPath, [wrangler, "types"], { cwd: project });
     await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {

@@ -65,6 +65,18 @@ describe("cloudflareClients", () => {
     expect(tenants).toEqual(["acme", "default"]);
   });
 
+  it("reaches the store in the jurisdiction the config names", async () => {
+    const store = storeNamespace();
+    const clientOf = cloudflareClients<Registry>({
+      env: { STORE: store.namespace },
+      config: { storage: cloudflare({ jurisdiction: "eu" }) },
+      tenant: byWorkspace,
+      consistency: "eventual",
+    });
+    await Reflect.get(clientOf(requestArgs({ workspace: "acme" })).queries, "getOrder")({});
+    expect(store.calls).toEqual([["eu/acme", "query", "getOrder", {}, undefined, undefined]]);
+  });
+
   it("sends every operation of the client to the store", async () => {
     const store = storeNamespace();
     const client = cloudflareClients<Registry>({

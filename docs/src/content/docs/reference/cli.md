@@ -451,7 +451,10 @@ configuration say it: the categories of personal data with their basis, purposes
 retention, the automated decisions, every event, command, process state and read model that holds
 personal data, whose and where, every recipient, what the runtime keeps about persons and for how
 long, and the fields marked `notPersonal`. It loads the project as `bounda rebuild` does and opens
-no database. See [The record of processing
+no database; in a Cloudflare project it reads modules that import the Workers runtime, without
+running them. Where each holder and record is kept names the database's adapter, and where it
+keeps the data when its configuration pins it, such as `cloudflare, jurisdiction eu` for
+[Durable Objects in the EU](/adapters/cloudflare/#data-location). See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
 
 ```bash

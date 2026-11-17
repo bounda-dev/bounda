@@ -1,5 +1,6 @@
 import type {
   Bare,
+  EuStore,
   LedgerStore,
   ProcessStore,
   QuietStore,
@@ -8,6 +9,7 @@ import type {
   SlicedStore,
   SnapshotStore,
   Store,
+  UnboundEuStore,
   WitnessedStore,
   WrappedStore,
 } from "./test-worker.ts";
@@ -28,6 +30,8 @@ declare global {
       readonly FORGET_LEDGER: KVNamespace;
       readonly TENANT_KEYS: KVNamespace;
       readonly BARE: DurableObjectNamespace<Bare>;
+      readonly EU_STORE: DurableObjectNamespace<InstanceType<typeof EuStore>>;
+      readonly UNBOUND_EU_STORE: DurableObjectNamespace<InstanceType<typeof UnboundEuStore>>;
       readonly STORE_REGION: string;
       readonly BOUNDA_MASTER_KEY: string;
     }

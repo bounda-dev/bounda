@@ -407,12 +407,18 @@ Economic Area its `safeguard`: `adequacy` (article 45), `standard-contractual-cl
 `recipientsOf` tell the person where their data went and on what it rests, 15(2), and the record of
 processing lists every transfer.
 
+On Cloudflare, `cloudflare({ jurisdiction: "eu" })` keeps every tenant's Durable Object, its
+events, read models and keys, in the EU. Every way Bounda reaches an object follows it, an object
+created elsewhere refuses to start, so no tenant has part of its data outside, and the record of
+processing says where each holder is kept. `create-bounda` writes it. See
+[Data location](/adapters/cloudflare/#data-location).
+
 Left to the controller: the safeguard itself, the clauses signed and the transfer impact
-assessment, and where the app's own data lives. Bounda does not choose where a database is: a
-PostgreSQL server, a SQLite file and their backups are where the app puts them. On Cloudflare,
-`createWorker` and React Router's Cloudflare host reach each tenant's Durable Object through the
-binding as it is, and offer no [jurisdiction](https://developers.cloudflare.com/durable-objects/reference/data-location/)
-to keep it in, such as the EU.
+assessment, and where the rest of the app's data lives. Bounda does not choose where a database
+is: a PostgreSQL server, a SQLite file and their backups are where the app puts them. On
+Cloudflare, the jurisdiction holds the objects, not the Worker that serves each request near it,
+nor the tenant keys and the forget ledger in KV, wrapped keys and pseudonymous ids that KV keeps
+wherever it does.
 
 ## Remedies (articles 77 to 82)
 

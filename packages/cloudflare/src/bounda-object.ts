@@ -42,6 +42,7 @@ import type { Config } from "@bounda-dev/core/config";
 import { durableObjectAdapter } from "./adapter.ts";
 import type { RedactRequest } from "./client.ts";
 import { cloudflareStorageOf, isCloudflareDefinition } from "./definition.ts";
+import { checkObjectJurisdiction } from "./jurisdiction.ts";
 import { workersLogger } from "./logger.ts";
 import { objectClock } from "./object-clock.ts";
 import { type RpcOutcome, settle } from "./outcome.ts";
@@ -273,12 +274,14 @@ const ownFunction = <F extends (...args: never[]) => unknown>(
  * models in the object's SQLite, with no background loop. A command updates the read models
  * before it resolves unless the caller asks for `"eventual"` consistency; policies, processes,
  * scheduled commands and retries run in the object's alarm, which it arms itself for whatever
- * comes next. One object is one store: give each tenant its own with `idFromName(tenant)`. Port
+ * comes next. One object is one store: give each tenant its own, reached with `tenantStub`. Port
  * implementations receive the object's `env` in `create`, once per object, and that name as
  * `tenant`, the id itself for an object reached through an id without a name; the tenant's key,
  * under `runtime.personalData.tenantKeys`, goes by the same. `BOUNDA_ERROR_TEXT`
  * in that `env`, such as `.dev.vars` sets in development, overrides `runtime.telemetry.errorText`;
- * any value but `"omit"` or `"include"` fails the object's start with `ConfigurationError`.
+ * any value but `"omit"` or `"include"` fails the object's start with `ConfigurationError`, as
+ * does an object created in another jurisdiction than the one `cloudflare()` names, or in one
+ * when it names none, before anything is stored in it.
  */
 export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registry>({
   registry,
@@ -303,6 +306,12 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
     }
 
     async #open(env: Cloudflare.Env): Promise<void> {
+      const { binding, jurisdiction } = cloudflareStorageOf(config).options;
+      checkObjectJurisdiction({
+        id: this.ctx.id,
+        jurisdiction,
+        namespace: Reflect.get(env, binding) as DurableObjectNamespace | undefined,
+      });
       const app = await createApp<R>({
         registry,
         // The configuration is one bundle for every environment, so `.dev.vars` decides in

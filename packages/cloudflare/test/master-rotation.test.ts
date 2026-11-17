@@ -1,8 +1,11 @@
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { masterKey } from "@bounda-dev/core/config";
 import { describe, expect, it, vi } from "vitest";
 import { connect } from "../src/client.ts";
-import { KV_TENANT_KEYS_ROOT } from "../src/tenant-keys.ts";
+import { cloudflare } from "../src/definition.ts";
+import { KV_TENANT_KEYS_ROOT, kvTenantKeys } from "../src/tenant-keys.ts";
+import { createWorker } from "../src/worker.ts";
 import type { quietRegistry } from "./app.ts";
 import worker from "./test-worker.ts";
 
@@ -111,5 +114,50 @@ describe("a rotation of the master key on Cloudflare", () => {
       .filter(({ message }) => message === "bounda worker could not wake a tenant's object");
     expect(woken.map(({ tenant }) => tenant)).toEqual(["0-intruder"]);
     await env.TENANT_KEYS.delete(key("0-intruder"));
+  });
+
+  it("wakes them in the jurisdiction the config names", async () => {
+    const tenant = "rewrap-in-eu";
+    await connect<typeof quietRegistry>(
+      env.STORE.get(env.STORE.idFromName(tenant)),
+    ).commands.placeOrder({
+      orderId: "o-1",
+      total: 1,
+      customer: "ada",
+    });
+    await wrappedUnder(tenant, "previous-master");
+    const woken: string[] = [];
+    const inEu = {
+      idFromName: (name: string) => {
+        woken.push(name);
+        return name;
+      },
+      get: () => ({ wake: async () => ({ ok: true, value: undefined }) }),
+    };
+    const elsewhere = () => {
+      throw new Error("reached outside the jurisdiction");
+    };
+    const spy = {
+      idFromName: elsewhere,
+      jurisdiction: (name: string) => (name === "eu" ? inEu : elsewhere()),
+    };
+    const euWorker = createWorker({
+      config: {
+        storage: cloudflare({ binding: "SPY", jurisdiction: "eu" }),
+        runtime: {
+          personalData: {
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+          },
+        },
+      },
+      tenantOf: () => "default",
+    });
+    await euWorker.scheduled?.(
+      {} as ScheduledController,
+      Object.assign(Object.create(env) as object, { SPY: spy }) as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(woken).toContain(tenant);
   });
 });

@@ -1646,7 +1646,8 @@ database. The record lists:
   [blind index](#sealed-at-rest), or [in the clear](#in-the-clear)), and where its copies go: the
   event store, the aggregate's [snapshots](/concepts/long-streams/#snapshots) when it takes them,
   scheduled commands and dead letters for a command, the read model's table, each in the database
-  its adapter names;
+  its adapter names, and where that database keeps it when its configuration pins it, such as
+  [a Durable Object jurisdiction](/adapters/cloudflare/#data-location);
 - each [recipient](#recipients): its port, name, kind, country, the safeguard of a transfer out
   of the European Economic Area, and the categories it receives;
 - what the runtime keeps about persons besides those fields: their keys, their activity and

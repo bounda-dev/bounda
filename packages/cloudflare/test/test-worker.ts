@@ -157,6 +157,32 @@ export const RegionStore = createBoundaObject({
 });
 
 /**
+ * The app without policies or processes, kept in the EU, which workerd cannot do: its own binding
+ * in its `env` tells it so, and it starts without one.
+ */
+export const EuStore = createBoundaObject({
+  registry: quietRegistry,
+  config: {
+    storage: cloudflare({ binding: "EU_STORE", jurisdiction: "eu" }),
+    runtime: { personalData: keys },
+  },
+  clock,
+});
+
+/**
+ * The same, with no binding of its own in its `env`: nothing tells it workerd has no
+ * jurisdictions, so it refuses to start outside the EU.
+ */
+export const UnboundEuStore = createBoundaObject({
+  registry: quietRegistry,
+  config: {
+    storage: cloudflare({ binding: "UNBOUND", jurisdiction: "eu" }),
+    runtime: { personalData: keys },
+  },
+  clock,
+});
+
+/**
  * An object with no app in it: an empty SQLite for the storage contracts.
  */
 export class Bare extends DurableObject {}

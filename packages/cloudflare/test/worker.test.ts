@@ -121,6 +121,34 @@ describe("createWorker", () => {
     ]);
   });
 
+  it("reaches every tenant's object in the jurisdiction the config names", async () => {
+    const { stub, commands } = recordingStub();
+    const reached: string[] = [];
+    const namespace = (where: string) => ({
+      idFromName: (name: string) => {
+        reached.push(`${where}:${name}`);
+        return name;
+      },
+      get: () => stub,
+    });
+    const spy = { ...namespace("anywhere"), jurisdiction: (name: string) => namespace(name) };
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "SPY", jurisdiction: "eu" }) },
+      tenantOf: () => "acme",
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/commands/payOrder", {
+        method: "POST",
+        body: JSON.stringify({ orderId: "o-1" }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      { SPY: spy } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(200);
+    expect(reached).toEqual(["eu:acme"]);
+    expect(commands).toHaveLength(1);
+  });
+
   it("answers a 500 and logs it when the binding the config names is missing", async () => {
     const errors: unknown[][] = [];
     const worker = createWorker({
@@ -145,6 +173,26 @@ describe("createWorker", () => {
     expect(await response?.json()).toEqual({
       error: { code: "INTERNAL", message: "Internal error" },
     });
+    expect(errors).toEqual([["bounda worker has no such binding", { binding: "MISSING" }]]);
+  });
+
+  it("logs the missing binding on its schedule too, and wakes nothing", async () => {
+    const errors: unknown[][] = [];
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "MISSING" }) },
+      tenantOf: () => "acme",
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: (...entry) => void errors.push(entry),
+      },
+    });
+    await worker.scheduled?.(
+      {} as ScheduledController,
+      {} as Cloudflare.Env,
+      createExecutionContext(),
+    );
     expect(errors).toEqual([["bounda worker has no such binding", { binding: "MISSING" }]]);
   });
 

@@ -6,13 +6,18 @@ export const env: Record<string, unknown> = {};
 
 export class DurableObject {}
 
+interface FakeNamespace {
+  idFromName(name: string): string;
+  get(id: string): BoundaStub;
+}
+
 export interface FakeStoreNamespace {
-  readonly namespace: {
-    idFromName(name: string): string;
-    get(id: string): BoundaStub;
+  readonly namespace: FakeNamespace & {
+    jurisdiction(jurisdiction: string): FakeNamespace;
   };
   /**
-   * Every call a store received, after the name of its tenant.
+   * Every call a store received, after the name of its tenant, written `<jurisdiction>/<name>`
+   * for an object reached in a jurisdiction.
    */
   readonly calls: unknown[][];
 }
@@ -57,5 +62,15 @@ export const storeNamespace = (): FakeStoreNamespace => {
       retireTenantKeys: record("retireTenantKeys"),
     };
   };
-  return { calls, namespace: { idFromName: (name) => name, get: stubOf } };
+  return {
+    calls,
+    namespace: {
+      idFromName: (name) => name,
+      get: stubOf,
+      jurisdiction: (jurisdiction) => ({
+        idFromName: (name) => `${jurisdiction}/${name}`,
+        get: stubOf,
+      }),
+    },
+  };
 };

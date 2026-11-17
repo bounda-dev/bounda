@@ -7,6 +7,12 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
   readonly kind: "bounda-adapter";
   readonly name: Name;
   readonly options: Options;
+  /**
+   * Where the database keeps its data, when the definition pins it, such as `"jurisdiction eu"`
+   * for Durable Objects held in the EU. The record of processing (`personalDataInventory`) states
+   * it next to every holder and record kept there.
+   */
+  readonly location?: string;
 }
 
 export interface IsAdapterDefinitionFunction {

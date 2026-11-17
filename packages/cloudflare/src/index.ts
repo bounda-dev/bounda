@@ -44,6 +44,8 @@ export type {
   KvTenantKeysOptions,
 } from "./tenant-keys.ts";
 export { createKvTenantKeyStore, KV_TENANT_KEYS_ROOT, kvTenantKeys } from "./tenant-keys.ts";
+export type { TenantStubArgs, TenantStubFunction } from "./tenant-stub.ts";
+export { tenantStub } from "./tenant-stub.ts";
 export type { HostLoggerFunction } from "./witnesses.ts";
 export { hostLogger } from "./witnesses.ts";
 export type {
