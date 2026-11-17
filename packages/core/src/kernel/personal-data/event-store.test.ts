@@ -21,10 +21,11 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { keysOver, newStoredKey, removeKeys } from "../test-support.ts";
-import { isSealed } from "./crypto.ts";
+import { createDisposableKey, isSealed, seal } from "./crypto.ts";
 import {
   hidingRetained,
   openedUnder,
+  redactedIn,
   retainedHidden,
   withoutRetained,
   withPersonalData,
@@ -537,6 +538,80 @@ describe("withPersonalData", () => {
     await removeKeys(storage.personalKeys, "c-1");
     const [forgotten] = await store.readAll({ afterPosition: 0, limit: 1 });
     expect(openedUnder(forgotten as StoredEvent)).toEqual([]);
+  });
+
+  it("tells the fields of each event it hands out a redaction sealed for good, through an upcast and with what a forgetting kept hidden", async () => {
+    const storage = await memory().createStorage();
+    const upcast = {
+      aggregates: {
+        customer: {
+          ...registry.aggregates.customer,
+          upcasts: {
+            customerBilled: {
+              upcasts: [(payload: object) => ({ ...payload, email: "none" })],
+            },
+          },
+        },
+      },
+      readModels: {},
+    } as Registry;
+    const aggregates = buildAggregates({ registry: upcast, ports: {} });
+    const sealing = withPersonalData({
+      eventStore: storage.eventStore,
+      aggregates,
+      processes: { byName: {} },
+      keys: keysOver(storage.personalKeys),
+    });
+    const store = withUpcasting({ eventStore: sealing, aggregates });
+    const billed = (version: number) =>
+      pendingEvent({
+        aggregateType: "customer",
+        aggregateId: "c-1",
+        version,
+        type: "CustomerBilled",
+        payload: { name: "Ana", iban: "ES00" },
+      });
+    await sealing.append({
+      aggregateType: "customer",
+      aggregateId: "c-1",
+      expectedVersion: 0,
+      events: [billed(1), billed(2)],
+    });
+    const [first] = await storage.eventStore.readAll({ afterPosition: 0, limit: 1 });
+    const stored = first?.payload as Readonly<Record<string, SealedValue>>;
+    const name = await seal({
+      key: await createDisposableKey(),
+      person: "c-1",
+      category: "profile",
+      value: "Ana",
+      redacted: true,
+    });
+    expect(name.$personal.redacted).toBe(true);
+    expect(stored.iban?.$personal).not.toHaveProperty("redacted");
+    await storage.eventStore.reseal([
+      { position: first?.position ?? 0, payload: { ...stored, name }, person: "c-1" },
+    ]);
+
+    const [redacted, whole] = await store.readAll({ afterPosition: 0, limit: 10 });
+    expect(redacted?.payload).toEqual({ name: null, iban: "ES00", email: "none" });
+    expect(redactedIn(redacted as StoredEvent)).toEqual(["name"]);
+    expect(redactedIn(whole as StoredEvent)).toEqual([]);
+    expect(redactedIn({ ...(redacted as StoredEvent) })).toEqual([]);
+    const [opened] = await sealing.readByPerson({ person: "c-1", afterPosition: 0, limit: 1 });
+    expect(redactedIn(opened as StoredEvent)).toEqual(["name"]);
+
+    const invoices = await storage.personalKeys.get("c-1", "invoices");
+    await storage.personalKeys.retain("c-1", invoices?.fingerprint ?? "", {
+      since: "2026-02-01T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    const [kept] = await store.readAll({ afterPosition: 0, limit: 1 });
+    const hidden = withoutRetained(kept as StoredEvent);
+    expect(hidden.payload).toEqual({ name: null, iban: null, email: "none" });
+    expect(redactedIn(kept as StoredEvent)).toEqual(["name"]);
+    expect(redactedIn(hidden)).toEqual(["name"]);
+    const [direct] = await sealing.readAll({ afterPosition: 0, limit: 1 });
+    expect(redactedIn(withoutRetained(direct as StoredEvent))).toEqual(["name"]);
   });
 
   it("hides what a forgetting kept in a process's state as in an event's payload", async () => {

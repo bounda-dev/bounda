@@ -680,6 +680,9 @@ describe("redact, in detail", () => {
     });
     expect(isSealed(second?.errorMessage)).toBe(true);
     expect(isSealed(second?.errorStack)).toBe(true);
+    for (const text of [first?.errorMessage, second?.errorMessage, second?.errorStack]) {
+      expect(text).toMatchObject({ $personal: { redacted: true } });
+    }
     expect(third).toMatchObject({ errorMessage: "refused", errorStack: "at nowhere" });
   });
 

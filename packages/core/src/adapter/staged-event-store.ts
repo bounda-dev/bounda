@@ -86,8 +86,13 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
   };
 
   return {
-    load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
-      const stored = await base.load({ aggregateType, aggregateId, fromVersion });
+    load: async ({ aggregateType, aggregateId, fromVersion = 1, toVersion = Infinity }) => {
+      const stored = await base.load({
+        aggregateType,
+        aggregateId,
+        fromVersion,
+        ...(toVersion === Infinity ? {} : { toVersion }),
+      });
       const key = streamId({ aggregateType, aggregateId });
       const staged =
         streams.get(key) ??
@@ -108,7 +113,9 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
       return {
         events: [
           ...stored.events.filter((event) => event.version <= staged.base),
-          ...staged.events.filter((event) => event.version >= fromVersion),
+          ...staged.events.filter(
+            (event) => event.version >= fromVersion && event.version <= toVersion,
+          ),
         ],
         version: staged.base + staged.events.length,
         ...(stored.opened === undefined ? {} : { opened: stored.opened }),

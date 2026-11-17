@@ -239,17 +239,17 @@ export interface PersonalDataExport {
    */
   readonly restrictions: readonly ProcessingRestriction[];
   /**
-   * The redactions of the person's data, in the order they were made; each event they reached says
-   * which of its fields in `redacted`.
-   */
-  readonly redactions: readonly ExportedRedaction[];
-  /**
    * The recipients of their data, or the categories of recipients, as article 15(1)(c) asks: each
    * port's recipient that was disclosed data of theirs, may hold it, or may receive it, with the
    * categories concerned and their basis, its country and the safeguard of a transfer out of the
    * European Economic Area. Each event of `bounda:<personId>` names in `recipients` whom it told.
    */
   readonly recipients: readonly PersonRecipient[];
+  /**
+   * The redactions of the person's data, in the order they were made; each event they reached says
+   * which of its fields in `redacted`.
+   */
+  readonly redactions: readonly ExportedRedaction[];
   readonly events: readonly ExportedEvent[];
   readonly scheduledCommands: readonly ExportedScheduledCommand[];
   readonly deadLetters: readonly ExportedDeadLetter[];
@@ -279,7 +279,6 @@ export interface PersonalDataExportHeader
     | "rights"
     | "automatedDecisions"
     | "restrictions"
-    | "redactions"
     | "recipients"
   > {
   readonly readModels: readonly string[];
@@ -287,11 +286,12 @@ export interface PersonalDataExportHeader
 
 /**
  * One piece of a streamed export: the header first, then each record, in the order and the
- * sections of `PersonalDataExport`: events, scheduled commands, dead letters, subscriber failures,
- * answers, and the rows of each read model, the header's `readModels` in turn.
+ * sections of `PersonalDataExport`: redactions, events, scheduled commands, dead letters,
+ * subscriber failures, answers, and the rows of each read model, the header's `readModels` in turn.
  */
 export type PersonalDataExportPart =
   | { readonly kind: "header"; readonly header: PersonalDataExportHeader }
+  | { readonly kind: "redaction"; readonly redaction: ExportedRedaction }
   | { readonly kind: "event"; readonly event: ExportedEvent }
   | { readonly kind: "scheduledCommand"; readonly scheduledCommand: ExportedScheduledCommand }
   | { readonly kind: "deadLetter"; readonly deadLetter: ExportedDeadLetter }
@@ -299,16 +299,19 @@ export type PersonalDataExportPart =
   | { readonly kind: "answer"; readonly answer: ExportedAnswer }
   | { readonly kind: "row"; readonly readModel: string; readonly row: ExportedRow };
 
+export type PersonalDataExportRecord = Exclude<PersonalDataExportPart, { readonly kind: "header" }>;
+
 /**
  * How many records of each kind an export handed out.
  */
-export type ExportedCounts = ExportAccess["detail"];
+export type ExportedCounts = Omit<ExportAccess["detail"], "exportId">;
 
 export interface CountPartFunction {
   (counts: ExportedCounts, part: PersonalDataExportPart): ExportedCounts;
 }
 
 export const NO_EXPORTED_RECORDS: ExportedCounts = {
+  redactions: 0,
   events: 0,
   scheduledCommands: 0,
   deadLetters: 0,
@@ -322,6 +325,8 @@ export const countPart: CountPartFunction = (counts, part) => {
   switch (part.kind) {
     case "header":
       return { ...counts, recipients: part.header.recipients.length };
+    case "redaction":
+      return { ...counts, redactions: counts.redactions + 1 };
     case "event":
       return { ...counts, events: counts.events + 1 };
     case "scheduledCommand":
@@ -343,6 +348,7 @@ export interface CollectPersonalDataExportFunction {
 
 export const collectPersonalDataExport: CollectPersonalDataExportFunction = async (parts) => {
   let header: PersonalDataExportHeader | undefined;
+  const redactions: ExportedRedaction[] = [];
   const events: ExportedEvent[] = [];
   const scheduledCommands: ExportedScheduledCommand[] = [];
   const deadLetters: ExportedDeadLetter[] = [];
@@ -355,6 +361,9 @@ export const collectPersonalDataExport: CollectPersonalDataExportFunction = asyn
         if (header !== undefined) throw new Error("A personal data export has a second header");
         header = part.header;
         for (const name of part.header.readModels) rows.set(name, []);
+        break;
+      case "redaction":
+        redactions.push(part.redaction);
         break;
       case "event":
         events.push(part.event);
@@ -387,6 +396,7 @@ export const collectPersonalDataExport: CollectPersonalDataExportFunction = asyn
   const { readModels: _names, ...rest } = header;
   return {
     ...rest,
+    redactions,
     events,
     scheduledCommands,
     deadLetters,

@@ -18,7 +18,7 @@ export interface RecordAccessArgs<Op extends Operation> {
   readonly detail: (PersonalDataAccess & { readonly operation: Op })["detail"];
   readonly actor: string | undefined;
   readonly persons: Iterable<string>;
-  readonly outcome: AccessOutcome;
+  readonly outcome: (PersonalDataAccess & { readonly operation: Op })["outcome"];
   /**
    * For a query only; any other record leaves it out.
    */
@@ -92,7 +92,7 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
 
 export interface RecordedFunction {
   <Result>(
-    record: (outcome: Exclude<AccessOutcome, "cancelled">) => Promise<void>,
+    record: (outcome: AccessOutcome) => Promise<void>,
     run: () => Promise<Result>,
   ): Promise<Result>;
 }

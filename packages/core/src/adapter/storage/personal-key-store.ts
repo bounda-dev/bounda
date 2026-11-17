@@ -152,6 +152,10 @@ export interface PersonalEnvelope {
   readonly key: string;
   readonly iv: string;
   readonly data: string;
+  /**
+   * `true` for a value a redaction sealed for good, under a key no one keeps.
+   */
+  readonly redacted?: true;
 }
 
 /**

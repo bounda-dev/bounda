@@ -575,15 +575,15 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   restrictions: [
     { ground: "accuracy-contested", categories: ["invoices"], since: "2026-02-20T09:00:00.000Z" },
   ],
-  redactions: [
-    { eventId, at: "2026-02-21T09:00:00.000Z", events: [{ id, fields: ["phone"] }] },
-  ],
   recipients: [
     { port: "customer.mailer", name: "Mailchimp", kind: "processor", country: "US",
       transfer: { safeguard: "standard-contractual-clauses" }, status: "disclosed",
       categories: [{ name: "profile", basis: "contract" }],
       firstDisclosedAt: "2026-02-01T09:00:00.000Z", lastDisclosedAt: "2026-02-20T09:00:00.000Z",
       declared: true },
+  ],
+  redactions: [
+    { eventId, at: "2026-02-21T09:00:00.000Z", events: [{ id, fields: ["phone"] }] },
   ],
   events: [
     { id, type: "CustomerRegistered", aggregateType: "customer", aggregateId: "c-42",
@@ -671,15 +671,15 @@ category, or kept under a legal obligation, or every one for a person restricted
 `errorMessage` and `errorStack`, or an answer's `outcome`, while any restriction holds, since an
 error's text or a rejection's message may quote any of their data.
 
-`redactions` are the [redactions](#correcting-a-persons-data) of their data, in the order they
-were made, each with the id of its `PersonalDataRedacted`, when, and the events and fields it
-sealed, never a value: every event says in `redacted` which fields of its `data` a redaction
-sealed, and those read `null`.
-
 `recipients` are the [recipients](#recipients) of their data, as `recipientsOf` lists them: each
 one disclosed data of theirs, presumed to hold it, or declared for a category of theirs, with the
 categories concerned and their basis, its country and the safeguard of a transfer out of the
 European Economic Area, as article 15(1)(c) asks.
+
+`redactions` are the [redactions](#correcting-a-persons-data) of their data, in the order they
+were made, each with the id of its `PersonalDataRedacted`, when, and the events and fields it
+sealed, never a value: every event says in `redacted` which fields of its `data` a redaction
+sealed, and those read `null`.
 
 `position` is the head of the stream when the export began. `events` are every event up to it that
 names the person, by its field marked `person` or its aggregate's id, in position order, the events
@@ -738,8 +738,8 @@ for await (const part of await app.streamPersonalData("c-42")) {
 
 The first part is the `header`, everything of the export but its records, and `readModels`, the
 read models whose rows follow. Then come the records, a part each, in the order and the sections
-of the export: `event`, `scheduledCommand`, `deadLetter`, `subscriberFailure`, `answer`, and `row`,
-with its `readModel`, the read models in the header's order. The promise resolves once the header
+of the export: `redaction`, `event`, `scheduledCommand`, `deadLetter`, `subscriberFailure`,
+`answer`, and `row`, with its `readModel`, the read models in the header's order. The promise resolves once the header
 is read, so a refusal, an empty id or a [forgotten tenant](#forgetting-a-tenant), rejects before
 anything is handed out; a later one, the `ConcurrencyError` of a person changed meanwhile, rejects
 the reading. A page is read only when the reader asks for the parts that follow, so a slow reader
@@ -758,11 +758,13 @@ const body = personalDataExportJson(await app.as("dpo").streamPersonalData("c-42
 await pipeline(Readable.fromWeb(body), createWriteStream("c-42.json", { mode: 0o600 }));
 ```
 
-The [access log](#who-opened-what) records a streamed export once its reading ends, with how many
+The [access log](#who-opened-what) records a streamed export twice, both records with the same
+`exportId`: `started` before its header is handed out, and once its reading ends, with how many
 records of each kind it handed out by then: `ok` at the end, `failed` when a part rejected, and
 `cancelled` when the reader stopped first, as `for await` does on `break` and a response body does
-when the client goes away. A reader that neither reads to the end nor stops it, a `for await` left
-hanging or an iterator dropped, leaves it unrecorded, so read it through or stop it.
+when the client goes away. An export whose reader neither reads to the end nor stops it, a `for
+await` left hanging or an iterator dropped, or whose process dies on the way, still has its
+`started` record: alone, it says the export may have handed out anything up to the whole.
 
 Every host streams it: the Durable Object through `connect`, as a stream of the parts over RPC;
 React Router with [`personalDataExportResponse`](/guides/react-router/#exporting-a-persons-data),
@@ -772,7 +774,10 @@ a response a loader returns; and the command line with
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
 carries, and a dead letter by its `person`, its `statePerson` or its `persons`, every one read a
-page at a time with `listByPerson`. `forget` and the export find those
+page at a time with `listByPerson`. A redaction marks every value it seals for good as such in its
+envelope, so each event of a page says itself which of its fields were redacted, and the
+redactions are read from the person's own stream a window of versions at a time. `forget` and the
+export find those
 rows, and the snapshots and remembered answers `forget` removes or erases, through an index, never by
 reading every row: PostgreSQL indexes the `persons` column itself, and SQLite, the Durable Object
 included, keeps a table of which row names which person, written and removed by the same statement
@@ -1067,11 +1072,11 @@ those columns.
 ## Who opened what
 
 Accountability asks to know who opened whose personal data. Every operation that hands out a
-person's data in the clear records it, once per call:
+person's data in the clear records it, once per call, and an export once more as it starts:
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData`, and `streamPersonalData` once its reading ends | the person | `{ events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients }`, how many of each it read, before it failed or was cancelled for one that did |
+| `exportPersonalData` and `streamPersonalData`, as each starts and as it ends | the person | `{ exportId, redactions, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients }`: the export's id, the same in both records, and how many of each it handed out by then, before it failed or was cancelled for one that did |
 | `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
 | `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
 | `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
@@ -1091,8 +1096,10 @@ nobody; `persons` names each person once, in the order read, and at most `MAX_AC
 them, with `personCount` saying how many there were in all, so a query that lists every customer
 gives a bounded record; `at` is the app's clock; `outcome` is `ok` when the call handed its result
 out, `failed` when it rejected after reading, since its error may quote what it read, as a
-handler's `cannot reach ana@example.com` does, and `cancelled` when the reader of a
-[streamed export](#a-long-history) stopped before its end, having been handed part of it.
+handler's `cannot reach ana@example.com` does. An export's is `started` in the record written
+before it hands anything out, then `ok`, `failed`, or `cancelled` when the reader of a [streamed
+export](#a-long-history) stopped before its end, having been handed part of it: a `started` with no
+end of the same `exportId` is one whose reader left it, or whose process died, part way.
 
 A query is matched to its read model by the module's place, and to its persons by the rows it
 read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a
@@ -1128,9 +1135,10 @@ to start when it does not export the function, so every host gets it: `boot()`, 
 Durable Object, React Router. It receives the record with the host's `env`, the `tenant` and the
 app's logger, as a port's `create` does. A test app never calls it: `createTestApp` sends the
 records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs once the call
-has read and before it settles, whether it then hands its result out or rejects, and the call
-waits for it. When it throws, the call rejects with that error, handing out neither its result
-nor its own error: data handed out without its record is what an access log exists to rule out,
+has read and before it settles, whether it then hands its result out or rejects, and for an export
+also before its header goes out, and the call waits for it. When it throws, the call rejects with
+that error, handing out neither its result nor its own error, and an export whose start it fails
+to record hands out nothing: data handed out without its record is what an access log exists to rule out,
 so a sink that is down stops the reads it would have recorded. A retry or a discard of a dead
 letter acts first, so that its record can say how it went: with the sink down, the retry or the
 discard is done, and the call still rejects without the letter. A hook that would rather let the

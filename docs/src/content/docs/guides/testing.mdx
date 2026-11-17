@@ -307,7 +307,10 @@ const { app } = await createTestApp({
   },
 });
 await app.as("support-7").exportPersonalData("ada");
-expect(records).toMatchObject([{ operation: "exportPersonalData", actor: "support-7", persons: ["ada"] }]);
+expect(records).toMatchObject([
+  { operation: "exportPersonalData", actor: "support-7", persons: ["ada"], outcome: "started" },
+  { operation: "exportPersonalData", actor: "support-7", persons: ["ada"], outcome: "ok" },
+]);
 ```
 
 ## Nothing left behind

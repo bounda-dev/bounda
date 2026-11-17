@@ -20,7 +20,7 @@ import {
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
-import type { AccessOutcome, OnPersonalDataAccess } from "../modules/audit.ts";
+import type { ExportOutcome, OnPersonalDataAccess } from "../modules/audit.ts";
 import type {
   ForgetOptions,
   RestrictOptions,
@@ -63,7 +63,7 @@ import {
   type PersonalDataExport,
   type PersonalDataExportPart,
 } from "./personal-data/export.ts";
-import { recordedParts, streamPersonalData } from "./personal-data/export-stream.ts";
+import { recordedExport, streamPersonalData } from "./personal-data/export-stream.ts";
 import { createFileEncryptions } from "./personal-data/file-encryption.ts";
 import { forgetPersonalData, logForgotten } from "./personal-data/forget.ts";
 import {
@@ -237,10 +237,10 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * the scheduled commands that hold such fields of theirs, and the dead letters of
    * work about them, with the error text sealed under their key opened, and the rows of every read
    * model with a field marked `.person()` that name them, with their fields marked `.personal()`.
-   * A field left unmarked and whatever a policy sent out are not in it. Recorded in the access log
-   * before it settles, whether it resolves or fails after it started reading: `app/audit.ts`'s
-   * `onPersonalDataAccess`, or the app's logger at `info` without it; rejects with what the hook
-   * throws. Rejects with `ValidationError` an empty id, recording nothing. When the person was
+   * A field left unmarked and whatever a policy sent out are not in it. Recorded in the access log,
+   * `app/audit.ts`'s `onPersonalDataAccess` or the app's logger at `info` without it: as `started`
+   * once it read the header, then again before it settles, whether it resolves or fails; rejects
+   * with what the hook throws. Rejects with `ValidationError` an empty id, recording nothing. When the person was
    * forgotten, restricted, lifted or redacted while it read, it reads them again, each reading
    * recorded, and rejects with `ConcurrencyError` after `runtime.commands.concurrencyRetries` more.
    * Holds the whole export in memory: for a long history, `streamPersonalData`.
@@ -250,10 +250,11 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * The same export, handed out a part at a time as it is read, a page of records at most held at
    * once, whatever the person's history: the header first, then every record, section by section,
    * which `personalDataExportJson` writes as the same JSON document. Resolves once the header is
-   * read, so a refusal rejects before anything is handed out. Recorded in the access log when the
-   * reading ends, with what it handed out by then: `ok` at the end, `failed` when a part rejects,
+   * read and recorded in the access log as `started`, so a refusal, or a hook that throws, rejects
+   * before anything is handed out. Recorded again, with the same `exportId`, when the reading
+   * ends, with what it handed out by then: `ok` at the end, `failed` when a part rejects,
    * `cancelled` when its reader stops early, as `for await` does on `break` or a response body
-   * when the client goes away. A reader that neither ends nor stops it leaves it unrecorded.
+   * when the client goes away. One its reader neither ends nor stops keeps its `started` alone.
    * Rejects the reading with `ConcurrencyError` when the person was forgotten, restricted, lifted
    * or redacted while it read, once everything was read: a new export reads them as they are.
    */
@@ -1637,16 +1638,17 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => {
       const streamAs = async (personId: string): Promise<AsyncIterable<PersonalDataExportPart>> => {
         checkPersonId(personId, "exportPersonalData");
-        const record = (outcome: AccessOutcome, detail = NO_EXPORTED_RECORDS) =>
+        const exportId = ids.next();
+        const record = (outcome: ExportOutcome, counts = NO_EXPORTED_RECORDS) =>
           recordAccess({
             operation: "exportPersonalData",
-            detail,
+            detail: { exportId, ...counts },
             actor,
             persons: [personId],
             outcome,
           });
-        const parts = await recorded(
-          // Only a failure is recorded here: the reading of what resolves records how it ends.
+        const streamed = await recorded(
+          // Only a failure is recorded here: what resolves is recorded as it starts and ends.
           async (outcome) => {
             if (outcome === "failed") await record(outcome);
           },
@@ -1664,8 +1666,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               personId,
             }),
         );
-        return recordedParts(parts, record, (error) => {
-          if (error instanceof TenantForgottenError) onTenantForgotten();
+        return recordedExport({
+          streamed,
+          record,
+          onError: (error) => {
+            if (error instanceof TenantForgottenError) onTenantForgotten();
+          },
         });
       };
       return {

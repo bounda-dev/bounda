@@ -135,13 +135,15 @@ answers every item of article 15(1) from what the app declares, nothing written 
 It holds every event and read-model row that names the person, the scheduled commands and dead
 letters that hold their data, the text of errors sealed under them, and the answers remembered
 for their commands; restricted data comes out too, marked, since the right of access holds while a
-restriction does. The [access log](/guides/personal-data/#who-opened-what) records each export.
+restriction does. The [access log](/guides/personal-data/#who-opened-what) records each export
+before it hands anything out and again as it ends, so one cut short, or whose process died, is
+recorded too.
 
 **15(3), the copy.** The export is a JSON document. For a long history,
 [`streamPersonalData`](/guides/personal-data/#a-long-history) hands it out a part at a time,
-holding a page of records at most, and `personalDataExportJson` writes the parts as the same
-document, as a stream of bytes. React Router answers it from a loader with
-[`personalDataExportResponse`](/guides/react-router/#exporting-a-persons-data), uncached, and the
+holding a page of records at most however much of it was redacted, and `personalDataExportJson`
+writes the parts as the same document, as a stream of bytes. React Router answers it from a loader
+with [`personalDataExportResponse`](/guides/react-router/#exporting-a-persons-data), uncached, and the
 CLI with [`bounda personal-data
 export`](/reference/cli/#bounda-personal-data-export-and-bounda-forget-person), to a file readable
 by its owner alone. Charging for further copies is the app's.

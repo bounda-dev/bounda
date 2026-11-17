@@ -7,7 +7,7 @@ import type { RestrictionBasis } from "./personal-data.ts";
  */
 export const MAX_ACCESS_PERSONS = 100;
 
-interface AccessRecord {
+interface AccessRecord<Outcome extends string = AccessOutcome> {
   /**
    * Who opened the data: the actor of the client (`as`), `null` for a client that names nobody.
    */
@@ -25,12 +25,7 @@ interface AccessRecord {
    * When, on the app's clock.
    */
   readonly at: string;
-  /**
-   * `ok` when the operation handed its result out; `failed` when it rejected after reading, with
-   * an error that may quote what it read; `cancelled` when the reader of a streamed export stopped
-   * before its end, having been handed part of it.
-   */
-  readonly outcome: AccessOutcome;
+  readonly outcome: Outcome;
   /**
    * The restricted data the operation opened on a basis named explicitly, `null` when it named
    * none: a query, a dead letter or a subscriber failure read with `includeRestricted`, a command
@@ -40,9 +35,18 @@ interface AccessRecord {
 }
 
 /**
- * How an operation that read personal data ended.
+ * How an operation that read personal data ended: `ok` when it handed its result out; `failed`
+ * when it rejected after reading, with an error that may quote what it read.
  */
-export type AccessOutcome = "ok" | "failed" | "cancelled";
+export type AccessOutcome = "ok" | "failed";
+
+/**
+ * Where an export stands: `started` before it hands anything out, so one its reader leaves unread,
+ * or whose process dies, is recorded all the same; then how it ended, in a second record with the
+ * same `exportId`: `ok`, `failed`, or `cancelled` when its reader stopped before the end. A
+ * `started` with no end may have handed out anything up to the whole export.
+ */
+export type ExportOutcome = "started" | AccessOutcome | "cancelled";
 
 /**
  * The persons whose restricted data an operation opened, and the basis it named, as article 18(2)
@@ -72,12 +76,17 @@ export interface QueryAccess extends AccessRecord {
 }
 
 /**
- * `exportPersonalData` or `streamPersonalData`, with how many records of each kind it handed out,
- * all of them for one that failed or was cancelled before its end.
+ * `exportPersonalData` or `streamPersonalData`, recorded as it starts and as it ends, with how many
+ * records of each kind it handed out by then: at its start, the recipients of its header.
  */
-export interface ExportAccess extends AccessRecord {
+export interface ExportAccess extends AccessRecord<ExportOutcome> {
   readonly operation: "exportPersonalData";
   readonly detail: {
+    /**
+     * The export's own id, the same in every record of it.
+     */
+    readonly exportId: string;
+    readonly redactions: number;
     readonly events: number;
     readonly scheduledCommands: number;
     readonly deadLetters: number;
@@ -219,10 +228,10 @@ export interface OnPersonalDataAccessArgs {
 /**
  * Where the access log goes, exported from `app/audit.ts`: a log pipeline, a SIEM, a table of
  * another database. Called once per operation that reads personal data in the clear, after it
- * read and before it settles, whether it hands its result out or rejects, never sampled; the
- * operation waits for it and rejects with what it throws, handing nothing out, since data handed
- * out unrecorded defeats the log. Without `app/audit.ts`, each record goes to the app's logger at
- * `info`.
+ * read and before it settles, whether it hands its result out or rejects, and for an export also
+ * before it hands anything out; never sampled. The operation waits for it and rejects with what
+ * it throws, handing nothing out, since data handed out unrecorded defeats the log. Without
+ * `app/audit.ts`, each record goes to the app's logger at `info`.
  */
 export interface OnPersonalDataAccess {
   (args: OnPersonalDataAccessArgs): void | Promise<void>;

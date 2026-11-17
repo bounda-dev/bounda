@@ -153,10 +153,12 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
       }
       advance();
     },
-    load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
+    load: async ({ aggregateType, aggregateId, fromVersion = 1, toVersion = Infinity }) => {
       const stream = streams.get(streamId({ aggregateType, aggregateId })) ?? [];
       return {
-        events: stream.filter((event) => event.version >= fromVersion).map(restore),
+        events: stream
+          .filter((event) => event.version >= fromVersion && event.version <= toVersion)
+          .map(restore),
         version: stream.length,
       };
     },

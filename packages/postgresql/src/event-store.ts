@@ -116,11 +116,11 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         }
         return { version: actualVersion + stored.length, events: stored };
       }),
-    // A load from the first event reads one statement, whose last row is the head. From later
-    // on, the head is read first and the events bounded by it: outside a transaction, an append
-    // landing between the two reads would otherwise report a head past the events returned.
-    load: async ({ aggregateType, aggregateId, fromVersion = 1 }) => {
-      if (fromVersion <= 1) {
+    // A load of the whole stream reads one statement, whose last row is the head. A window is read
+    // after the head and bounded by it: outside a transaction, an append landing between the two
+    // reads would otherwise report a head past the events returned.
+    load: async ({ aggregateType, aggregateId, fromVersion = 1, toVersion }) => {
+      if (fromVersion <= 1 && toVersion === undefined) {
         const rows = await db.all(
           `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2 ORDER BY "version"`,
           [aggregateType, aggregateId],
@@ -129,12 +129,13 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
         return { events, version: events.at(-1)?.version ?? 0 };
       }
       const version = await currentVersion(db, aggregateType, aggregateId);
+      const last = Math.min(version, toVersion ?? version);
       const rows =
-        version < fromVersion
+        last < fromVersion
           ? []
           : await db.all(
               `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" = $2 AND "version" >= $3 AND "version" <= $4 ORDER BY "version"`,
-              [aggregateType, aggregateId, fromVersion, version],
+              [aggregateType, aggregateId, fromVersion, last],
             );
       return { events: rows.map(toStoredEvent), version };
     },

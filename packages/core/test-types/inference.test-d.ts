@@ -51,6 +51,7 @@ import type {
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
+  ExportOutcome,
   Field,
   FieldFilter,
   FieldsArgs,
@@ -812,6 +813,8 @@ describe("personal data", () => {
     expectTypeOf<
       Extract<PersonalDataAccess, { operation: "exportPersonalData" }>["detail"]
     >().toEqualTypeOf<{
+      readonly exportId: string;
+      readonly redactions: number;
       readonly events: number;
       readonly scheduledCommands: number;
       readonly deadLetters: number;
@@ -839,8 +842,12 @@ describe("personal data", () => {
     expectTypeOf<
       Extract<PersonalDataAccess, { operation: "recipientsOf" }>["detail"]
     >().toEqualTypeOf<{ readonly recipients: number } | null>();
-    expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<AccessOutcome>();
-    expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed" | "cancelled">();
+    expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<ExportOutcome>();
+    expectTypeOf<
+      Exclude<PersonalDataAccess, { operation: "exportPersonalData" }>["outcome"]
+    >().toEqualTypeOf<AccessOutcome>();
+    expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed">();
+    expectTypeOf<ExportOutcome>().toEqualTypeOf<"started" | "ok" | "failed" | "cancelled">();
     expectTypeOf<
       Extract<PersonalDataAccess, { operation: "query" }>["unattributed"]
     >().toEqualTypeOf<boolean>();
@@ -986,8 +993,8 @@ describe("personal data", () => {
       readonly rights: readonly ExportedRight[];
       readonly automatedDecisions: readonly ExportedAutomatedDecision[];
       readonly restrictions: readonly ProcessingRestriction[];
-      readonly redactions: readonly ExportedRedaction[];
       readonly recipients: readonly PersonRecipient[];
+      readonly redactions: readonly ExportedRedaction[];
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
       readonly deadLetters: readonly ExportedDeadLetter[];
@@ -1009,12 +1016,12 @@ describe("personal data", () => {
       readonly rights: readonly ExportedRight[];
       readonly automatedDecisions: readonly ExportedAutomatedDecision[];
       readonly restrictions: readonly ProcessingRestriction[];
-      readonly redactions: readonly ExportedRedaction[];
       readonly recipients: readonly PersonRecipient[];
       readonly readModels: readonly string[];
     }>();
     expectTypeOf<PersonalDataExportPart>().toEqualTypeOf<
       | { readonly kind: "header"; readonly header: PersonalDataExportHeader }
+      | { readonly kind: "redaction"; readonly redaction: ExportedRedaction }
       | { readonly kind: "event"; readonly event: ExportedEvent }
       | { readonly kind: "scheduledCommand"; readonly scheduledCommand: ExportedScheduledCommand }
       | { readonly kind: "deadLetter"; readonly deadLetter: ExportedDeadLetter }
