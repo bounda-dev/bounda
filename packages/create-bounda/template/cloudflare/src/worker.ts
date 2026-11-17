@@ -13,7 +13,7 @@ export class Store extends createBoundaObject({ registry, config }) {}
 /**
  * The Worker in front: a JSON API that routes each request to the tenant's object, picked by
  * the `x-bounda-tenant` header, over RPC. It has no authentication; an app with users writes its
- * own `fetch` and calls the object through `connect(env.STORE.get(id))`.
+ * own `fetch` and calls the object through `connect(tenantStub({ config, env, tenant }))`.
  */
 export default createWorker({
   config,

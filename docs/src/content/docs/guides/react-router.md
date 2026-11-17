@@ -419,7 +419,9 @@ request. Every tenant is its own object with its own events and read models; a s
 choice, so there is no default, and without the file the first request fails saying what to
 create.
 
-The binding is `STORE` unless the configuration names another with `cloudflare({ binding })`.
+The binding is `STORE` unless the configuration names another with `cloudflare({ binding })`, and
+every object is reached in the jurisdiction `cloudflare({ jurisdiction })` names, as
+[on the adapter](/adapters/cloudflare/#data-location): `create-bounda` writes `"eu"`.
 What runs in the Worker is a client of the object, so there is no app to boot there: the first
 request imports the configuration and `app/tenant.ts`, and `dispose()` does nothing. Policies,
 processes and scheduled commands run in the object's alarm, as

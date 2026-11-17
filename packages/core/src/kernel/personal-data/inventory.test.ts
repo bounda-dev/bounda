@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Config } from "../../config/types.ts";
+import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
@@ -184,6 +185,7 @@ describe("personalDataInventory", () => {
         fields: [{ name: "email", category: "contact", sealing: "sealed" }],
         stores: ["event-store", "snapshots"],
         database: "memory",
+        location: null,
       },
       {
         kind: "command",
@@ -192,6 +194,7 @@ describe("personalDataInventory", () => {
         fields: [{ name: "email", category: "default", sealing: "sealed" }],
         stores: ["scheduled-commands", "dead-letters"],
         database: "memory",
+        location: null,
       },
       {
         kind: "process-state",
@@ -200,6 +203,7 @@ describe("personalDataInventory", () => {
         fields: [{ name: "billingAddress", category: "invoices", sealing: "sealed" }],
         stores: ["event-store"],
         database: "memory",
+        location: null,
       },
       {
         kind: "read-model",
@@ -211,6 +215,7 @@ describe("personalDataInventory", () => {
         ],
         stores: ["read-model"],
         database: "memory",
+        location: null,
       },
     ]);
   });
@@ -228,19 +233,64 @@ describe("personalDataInventory", () => {
       },
     ]);
     expect(inventory.records).toEqual([
-      { name: "personal-keys", where: "memory", keptFor: null },
-      { name: "persons", where: "memory", keptFor: null },
-      { name: "forgettings", where: "memory", keptFor: null },
-      { name: "remembered-answers", where: "memory", keptFor: "1d" },
-      { name: "dead-letters", where: "memory", keptFor: "30d" },
-      { name: "disclosures", where: "memory", keptFor: null },
-      { name: "access-log", where: "app/audit.ts", keptFor: null },
+      { name: "personal-keys", where: "memory", location: null, keptFor: null },
+      { name: "persons", where: "memory", location: null, keptFor: null },
+      { name: "forgettings", where: "memory", location: null, keptFor: null },
+      { name: "remembered-answers", where: "memory", location: null, keptFor: "1d" },
+      { name: "dead-letters", where: "memory", location: null, keptFor: "30d" },
+      { name: "disclosures", where: "memory", location: null, keptFor: null },
+      { name: "access-log", where: "app/audit.ts", location: null, keptFor: null },
     ]);
     expect(inventory.security).toEqual({
       masterKey: false,
       tenantKeys: false,
       forgetLedger: false,
     });
+  });
+
+  it("tells where a database keeps what it holds when its definition pins it", () => {
+    const pinned = { ...memory(), location: "jurisdiction eu" };
+    const inventory = personalDataInventory({
+      registry,
+      config: { ...config, storage: pinned, readModels: { customers: pinned, totals: memory() } },
+    });
+    expect(
+      inventory.holders.map(({ name, database, location }) => [name, database, location]),
+    ).toEqual([
+      ["customer.CustomerRegistered", "memory", "jurisdiction eu"],
+      ["customer.remindCustomer", "memory", "jurisdiction eu"],
+      ["customer.onboarding", "memory", "jurisdiction eu"],
+      ["customers", "memory", "jurisdiction eu"],
+    ]);
+    expect(inventory.records.map(({ name, location }) => [name, location])).toEqual([
+      ["personal-keys", "jurisdiction eu"],
+      ["persons", "jurisdiction eu"],
+      ["forgettings", "jurisdiction eu"],
+      ["remembered-answers", "jurisdiction eu"],
+      ["dead-letters", "jurisdiction eu"],
+      ["disclosures", "jurisdiction eu"],
+      ["access-log", null],
+    ]);
+    const apart = personalDataInventory({
+      registry,
+      config: { ...config, storage: pinned, readModels: { customers: memory() } },
+    });
+    expect(apart.holders.find(({ name }) => name === "customers")?.location).toBeNull();
+  });
+
+  it("refuses a configuration its adapters refuse, as the app does at start", () => {
+    const refusing = {
+      ...memory(),
+      check: () => {
+        throw new ConfigurationError("The read model customers is kept in another jurisdiction");
+      },
+    };
+    expect(() =>
+      personalDataInventory({
+        registry,
+        config: { ...config, readModels: { customers: refusing } },
+      }),
+    ).toThrow("The read model customers is kept in another jurisdiction");
   });
 
   it("lists the fields declared not personal", () => {
@@ -393,6 +443,7 @@ describe("personalDataInventory", () => {
         fields: [{ name: "name", category: "default", sealing: "sealed" }],
         stores: ["event-store"],
         database: "memory",
+        location: null,
       },
       {
         kind: "event",
@@ -401,6 +452,7 @@ describe("personalDataInventory", () => {
         fields: [],
         stores: ["event-store"],
         database: "memory",
+        location: null,
       },
       {
         kind: "read-model",
@@ -409,6 +461,7 @@ describe("personalDataInventory", () => {
         fields: [{ name: "name", category: "default", sealing: "sealed" }],
         stores: ["read-model"],
         database: "memory",
+        location: null,
       },
       {
         kind: "read-model",
@@ -417,6 +470,7 @@ describe("personalDataInventory", () => {
         fields: [],
         stores: ["read-model"],
         database: "memory",
+        location: null,
       },
       {
         kind: "read-model",
@@ -425,14 +479,21 @@ describe("personalDataInventory", () => {
         fields: [{ name: "text", category: "default", sealing: "sealed" }],
         stores: ["read-model"],
         database: "memory",
+        location: null,
       },
     ]);
     expect(records).toContainEqual({
       name: "forget-ledger",
       where: "forget-ledger",
+      location: null,
       keptFor: "400d",
     });
-    expect(records).toContainEqual({ name: "dead-letters", where: "memory", keptFor: null });
+    expect(records).toContainEqual({
+      name: "dead-letters",
+      where: "memory",
+      location: null,
+      keptFor: null,
+    });
     expect(security).toEqual({ masterKey: true, tenantKeys: true, forgetLedger: true });
     expect(findings.map(({ message }) => message)).toEqual([
       "3 personal fields are in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one",

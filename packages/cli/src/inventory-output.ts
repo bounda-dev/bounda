@@ -112,6 +112,10 @@ const sourcesOf = ({ sources }: InventoryCategory): string =>
 const decisionOf = (decision: InventoryAutomatedDecision): string =>
   `${decision.profiling ? "profiling, " : ""}on ${decision.ground}, from ${decision.categories.join(", ")}`;
 
+// The database, and where it keeps its data when its definition pins it.
+const placed = (database: string, location: string | null): string =>
+  location === null ? database : `${database}, ${location}`;
+
 const security = (inventory: PersonalDataInventory): readonly string[] => [
   `master key: ${inventory.security.masterKey ? "named by the configuration" : "none named"}`,
   `tenant key store: ${inventory.security.tenantKeys ? "apart from the database" : "none named"}`,
@@ -148,7 +152,7 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
       lines.push(`    ${field.name}  ${field.category}  ${SEALING[field.sealing]}`);
     }
     lines.push(
-      `    kept in: ${holder.stores.map((store) => STORES[store]).join(", ")} (${holder.database})`,
+      `    kept in: ${holder.stores.map((store) => STORES[store]).join(", ")} (${placed(holder.database, holder.location)})`,
     );
   }
   lines.push("", "Recipients");
@@ -161,7 +165,7 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
   lines.push("", "Kept by the runtime");
   for (const record of inventory.records) {
     lines.push(
-      `  ${record.name}  ${RECORDS[record.name].holds}; ${keptFor(record)} (${record.where})`,
+      `  ${record.name}  ${RECORDS[record.name].holds}; ${keptFor(record)} (${placed(record.where, record.location)})`,
     );
   }
   lines.push("", "Keys", ...security(inventory).map((text) => `  ${text}`));
@@ -256,7 +260,7 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
             field?.category ?? "",
             whose(holder),
             field === null ? "" : SEALING[field.sealing],
-            `${holder.stores.map((store) => STORES[store]).join(", ")} (${holder.database})`,
+            `${holder.stores.map((store) => STORES[store]).join(", ")} (${placed(holder.database, holder.location)})`,
           ]),
         ),
       ),
@@ -290,7 +294,7 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
         record.name,
         RECORDS[record.name].holds,
         keptFor(record),
-        record.where,
+        placed(record.where, record.location),
       ]),
     ),
     "",

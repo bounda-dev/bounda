@@ -1,8 +1,9 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
-import { connect } from "@bounda-dev/cloudflare";
+import { connect, tenantStub } from "@bounda-dev/cloudflare";
 import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import { expectForgotten } from "@bounda-dev/core/testing";
 import { describe, expect, it } from "vitest";
+import config from "../bounda.config.ts";
 import worker, { Store } from "../src/worker.ts";
 
 // Every object of the class records what its app seals, logs and traces, and the Worker what it
@@ -66,7 +67,7 @@ describe("the orders API, on the Durable Object", () => {
   });
 
   it("forgets a customer in their Durable Object, leaving nothing of theirs readable", async () => {
-    const stub = env.STORE.get(env.STORE.idFromName("forgets"));
+    const stub = tenantStub<Store>({ config, env, tenant: "forgets" });
     const store = connect(stub);
     await store.commands.placeOrder({
       orderId: crypto.randomUUID(),

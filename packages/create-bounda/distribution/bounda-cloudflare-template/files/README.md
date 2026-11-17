@@ -47,7 +47,7 @@ curl -X POST localhost:8787/queries/listOrders \
 ```
 app/domain/order/           the order aggregate
 app/read/orders/            a read model
-bounda.config.ts            storage: cloudflare()
+bounda.config.ts            storage: cloudflare({ jurisdiction: "eu" })
 src/worker.ts               the Durable Object class and the HTTP API
 public/index.html           a page that uses the API, served as a static asset
 wrangler.jsonc              the binding and the SQLite migration for the object
@@ -57,8 +57,14 @@ e2e/demo.spec.ts            the page, end to end
 ```
 
 `src/worker.ts` uses `createWorker`, a JSON API with no authentication: a starting point. An app
-with users writes its own `fetch` and talks to its store with `connect(stub)`, which types
-`commands` and `queries` from your modules. Each tenant is its own object; `x-bounda-tenant`
-picks it, `default` without the header.
+with users writes its own `fetch` and talks to its store with
+`connect(tenantStub({ config, env, tenant }))`, which types `commands` and `queries` from your
+modules. Each tenant is its own object; `x-bounda-tenant` picks it, `default` without the header.
+
+Every object is created in the EU and never leaves it, as `jurisdiction: "eu"` in
+`bounda.config.ts` says. An object never moves: to place each one near its first request
+instead, take that line out before the first deploy. `wrangler dev` and the tests run in workerd,
+which keeps every object on your machine. See
+[data location](https://docs.bounda.dev/adapters/cloudflare/#data-location).
 
 `.bounda/` and `+types/` are generated; they stay out of git.

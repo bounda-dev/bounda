@@ -264,7 +264,9 @@ describe("scaffoldProject", () => {
       wrangler: "^4",
     });
     expect(await readFile(join(target, "vitest.config.ts"), "utf8")).toContain("cloudflareTest");
-    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      `cloudflare({ jurisdiction: "eu" })`,
+    );
     expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
     expect(await readFile(join(target, "wrangler.jsonc"), "utf8")).toContain(
       '"assets": { "directory": "./public" }',
@@ -362,7 +364,9 @@ describe("scaffoldProject", () => {
       'cloudflare({ viteEnvironment: { name: "ssr" } })',
     );
     expect(await readFile(join(target, "vitest.config.ts"), "utf8")).toContain("cloudflareTest");
-    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain("cloudflare()");
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      `cloudflare({ jurisdiction: "eu" })`,
+    );
     const wrangler = await readFile(join(target, "wrangler.jsonc"), "utf8");
     expect(wrangler).toContain('"name": "web-edge"');
     expect(wrangler).toContain('"main": "./workers/app.ts"');

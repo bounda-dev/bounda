@@ -49,6 +49,7 @@ import { formatInventory, formatInventoryMarkdown } from "./inventory-output.ts"
 import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
 import { formatFiles, formatRecipients, formatSchema, formatStatus } from "./status-output.ts";
+import { standInWorkersRuntime } from "./workers-runtime.ts";
 
 export interface Output {
   // `false`, as a Node stream answers, when it holds more than it should until it drains.
@@ -723,13 +724,15 @@ interface InventoryOptions extends ProjectOptions {
   readonly markdown: boolean;
 }
 
-// Read from the modules and the configuration alone: nothing opens the database.
+// Read from the modules and the configuration alone: nothing opens the database, nor runs what
+// a Cloudflare project imports from its runtime.
 const runInventory = async (
   options: InventoryOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> => {
+  standInWorkersRuntime();
   const project = await load(options, cwd, logTo(stderr), stderr);
   if (project === undefined) return EXIT_FAILURE;
   let inventory: ReturnType<typeof personalDataInventory>;

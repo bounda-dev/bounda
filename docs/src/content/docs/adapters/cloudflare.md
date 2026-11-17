@@ -29,7 +29,7 @@ That gives you the order app of [Getting started](/getting-started/) with three 
 import { cloudflare } from "@bounda-dev/cloudflare";
 import { defineConfig } from "@bounda-dev/core/config";
 
-export default defineConfig({ storage: cloudflare() });
+export default defineConfig({ storage: cloudflare({ jurisdiction: "eu" }) });
 ```
 
 ```ts
@@ -59,6 +59,7 @@ export default createWorker({
 }
 ```
 
+`jurisdiction: "eu"` keeps every object in the EU: see [Data location](#data-location).
 `Store` is a class extending what `createBoundaObject` returns, so `wrangler types` gives
 `env.STORE` the object's own type, which a test reaches with `runInDurableObject`.
 `public/index.html` is a page that places orders and lists them through the API, served as a
@@ -122,7 +123,7 @@ export const create: CreateImplementation<Notifier> = ({ env }) => (message) =>
 implementation can serve each tenant with its own account or key
 ([an account per tenant](/guides/calling-the-outside-world/#an-account-per-tenant)). An object
 reached through an id without a name, from `newUniqueId` or `idFromString`, has no `tenant`; the
-Worker of `createWorker` and the React Router host always address it by name.
+Worker of `createWorker`, the React Router host and `tenantStub` always address it by name.
 
 `bounda.config.ts` can choose an implementation from the same variables, since `env` from
 `cloudflare:workers` is readable when the Worker imports it:
@@ -247,10 +248,44 @@ Cloudflare app scales: one object handles in the order of a thousand requests a 
 [How Bounda runs](/concepts/how-it-runs/) explains why the way out is more stores, not a split
 global stream.
 
+## Data location
+
+`cloudflare({ jurisdiction })` names the
+[jurisdiction](https://developers.cloudflare.com/durable-objects/reference/data-location/) every
+tenant's object is created in, such as `"eu"`: Cloudflare then runs it and keeps its SQLite only
+there, whichever part of the world its requests come from. It is the one place that says so, and
+everything that reaches an object follows it: `createWorker`, the React Router hosts, and, for a
+Worker of your own, `tenantStub({ config, env, tenant })`, or `boundaNamespace({ config, env })`
+resolved once where the Worker starts. The same name in two jurisdictions
+is two objects, so a tenant reached in another, by `env.STORE.idFromName` written by hand, say,
+would have its data split between them; the object checks where it was created before it stores
+anything, and one created in another jurisdiction than the configuration's, or in one when the
+configuration names none, refuses to start with a `ConfigurationError`.
+
+- Choose before the first deploy. An object never moves: with a jurisdiction added later, every
+  tenant is reached in a new, empty object, and its data stays in the old one. With
+  [tenant keys](#tenant-keys), the new object refuses to start instead, since the tenant's key
+  belongs to the old one.
+- A read model that `readModels` puts on `cloudflare()` lives in the tenant's object, so its
+  `cloudflare()` names the same jurisdiction as `storage`, or none when `storage` names none. The
+  app refuses to start on one that names another, and so does `bounda personal-data inventory`.
+- `workerd` has no jurisdictions where it runs locally, under `wrangler dev`, `vite dev` and the
+  tests: there every object stays on your machine and the setting is ignored.
+- The jurisdiction holds the object, not the Worker in front of it, which runs near each request,
+  nor what lives in KV: [tenant keys](#tenant-keys) and the [forget ledger](#the-forget-ledger)
+  are wrapped keys and pseudonymous ids, kept wherever KV keeps them.
+- [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) says where
+  each holder is kept: `cloudflare, jurisdiction eu`.
+
+`create-bounda` writes `jurisdiction: "eu"`: Bounda's defaults favour personal data staying in
+the European Union, and an object placed elsewhere cannot be moved later. Take it out for an
+audience far from Europe, before the first deploy.
+
 ## The HTTP API
 
 `createWorker({ config, tenantOf })` serves one app as JSON, through the Durable Object binding
-`cloudflare()` names: `STORE` unless `cloudflare({ binding })` says otherwise.
+`cloudflare()` names, `STORE` unless `cloudflare({ binding })` says otherwise, and in its
+[jurisdiction](#data-location).
 
 | Request | Answer |
 | --- | --- |
@@ -266,15 +301,18 @@ before it is read.
 It has **no authentication** and no operator endpoint, on purpose: it is a starting point. For
 the same reason it never [forgets](/guides/personal-data/) anyone, which cannot be undone, nor
 restricts anyone's processing. An app with users writes its own `fetch` and talks to a store with
-`connect`, whose `forget`, `restrict` and `unrestrict` it calls behind its own authentication:
+`connect`, whose `forget`, `restrict` and `unrestrict` it calls behind its own authentication.
+`tenantStub` reaches the tenant's object as `createWorker` does, through the binding and in the
+jurisdiction the configuration names:
 
 ```ts
-import { connect } from "@bounda-dev/cloudflare";
+import { connect, tenantStub } from "@bounda-dev/cloudflare";
+import config from "../bounda.config.ts";
 
 export default {
   async fetch(request, env) {
     const tenant = await tenantOfUser(request); // your authentication
-    const store = connect(env.STORE.get(env.STORE.idFromName(tenant)));
+    const store = connect(tenantStub({ config, env, tenant }));
     await store.commands.placeOrder({ orderId, customerId, total });
     return Response.json(await store.queries.listOrders({ customerId }));
   },
@@ -306,7 +344,7 @@ the same client acting as that id: every call sends it over RPC, and the object 
 commands record it on their events, and `forget`, `restrict` and `unrestrict` on theirs.
 
 ```ts
-const store = connect(env.STORE.get(env.STORE.idFromName(tenant))).as(user.id);
+const store = connect(tenantStub({ config, env, tenant })).as(user.id);
 await store.commands.placeOrder({ orderId, customerId, total });
 ```
 
@@ -347,14 +385,15 @@ KV or elsewhere, its logs, the hosts' and its spans, with nothing passed by hand
 
 ```ts
 import { env, runInDurableObject } from "cloudflare:test";
-import { connect } from "@bounda-dev/cloudflare";
+import { connect, tenantStub } from "@bounda-dev/cloudflare";
 import { witnessObjects } from "@bounda-dev/cloudflare/testing";
 import { expectForgotten } from "@bounda-dev/core/testing";
+import config from "../bounda.config.ts";
 import worker, { Store } from "../src/worker.ts";
 
 witnessObjects(Store, { hosts: [worker] });
 
-const stub = env.STORE.get(env.STORE.idFromName("forgets"));
+const stub = tenantStub<Store>({ config, env, tenant: "forgets" });
 const store = connect(stub);
 // ...
 await store.forget("ada");
@@ -377,7 +416,8 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
 
 ## Limits worth knowing
 
-- **One object lives in one region.** Users far from it pay the latency on every command.
+- **One object lives in one region**, inside its [jurisdiction](#data-location) when the
+  configuration names one. Users far from it pay the latency on every command.
 - **A projection must not wait on anything but its read model.** Each batch runs inside the
   object's storage transaction, and while one is open the runtime holds the object's other
   events back. A projection that awaits a `fetch` or a timer can then wait forever for an event

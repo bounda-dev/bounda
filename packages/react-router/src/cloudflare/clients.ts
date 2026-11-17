@@ -1,4 +1,9 @@
-import { type BoundaStub, connect, isCloudflareDefinition } from "@bounda-dev/cloudflare";
+import {
+  type BoundaStub,
+  boundaNamespace,
+  connect,
+  isCloudflareDefinition,
+} from "@bounda-dev/cloudflare";
 import {
   type BoundaClient,
   ConfigurationError,
@@ -25,11 +30,6 @@ export interface ClientOfFunction<R extends Registry> {
 
 export interface CloudflareClientsFunction {
   <R extends Registry>(args: CloudflareClientsArgs): ClientOfFunction<R>;
-}
-
-interface StoreNamespace {
-  idFromName(name: string): unknown;
-  get(id: unknown): BoundaStub;
 }
 
 const lazyStub = (stubOf: () => Promise<BoundaStub>): BoundaStub => ({
@@ -67,13 +67,7 @@ export const cloudflareClients: CloudflareClientsFunction = <R extends Registry>
       "React Router on Cloudflare serves an app that runs in a Durable Object: set storage to cloudflare() in bounda.config.ts",
     );
   }
-  const { binding } = config.storage.options;
-  const namespace = Reflect.get(env, binding) as StoreNamespace | undefined;
-  if (namespace === undefined) {
-    throw new ConfigurationError(
-      `The Worker has no binding "${binding}": bind the Bounda Durable Object under that name in wrangler.jsonc, or name its binding with cloudflare({ binding })`,
-    );
-  }
+  const namespace = boundaNamespace({ config, env });
   if (typeof tenant !== "function") {
     throw new ConfigurationError(
       'tenant must be a function that names the store of a request, such as () => "default"',
@@ -90,7 +84,7 @@ export const cloudflareClients: CloudflareClientsFunction = <R extends Registry>
               `tenant must name the store of a request with a string, got ${JSON.stringify(name)}`,
             );
           }
-          return namespace.get(namespace.idFromName(name));
+          return namespace.get(namespace.idFromName(name)) as unknown as BoundaStub;
         });
       return stub;
     };

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import type { PersonalDataInventory } from "@bounda-dev/core";
 import { afterAll, describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
@@ -94,5 +95,47 @@ describe("bounda binary end to end", () => {
     expect(stderr).toContain("the app writes to the console\n");
     expect(stderr).toContain("[bounda] info bounda app created");
     expect(stderr).toContain("[bounda] info personal data accessed");
+  }, 60_000);
+
+  it("prints the record of a Cloudflare project, whose modules import the Workers runtime, and where its objects keep the data", async () => {
+    const { stdout } = await run(
+      process.execPath,
+      [join(repoRoot, "packages/cli/src/cli.ts"), "personal-data", "inventory", "--json"],
+      {
+        cwd: join(repoRoot, "packages/cli/src/fixtures/cloudflare-project"),
+        env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      },
+    );
+    const { holders, records } = JSON.parse(stdout) as PersonalDataInventory;
+    expect(new Set(holders.map(({ database, location }) => `${database}, ${location}`))).toEqual(
+      new Set(["cloudflare, jurisdiction eu"]),
+    );
+    expect(records.find(({ name }) => name === "persons")).toMatchObject({
+      where: "cloudflare",
+      location: "jurisdiction eu",
+    });
+  }, 60_000);
+
+  it("refuses the record of a Cloudflare project the app would refuse to start", async () => {
+    const refused = run(
+      process.execPath,
+      [
+        join(repoRoot, "packages/cli/src/cli.ts"),
+        "personal-data",
+        "inventory",
+        "--config",
+        "bounda.mismatched.config.ts",
+      ],
+      {
+        cwd: join(repoRoot, "packages/cli/src/fixtures/cloudflare-project"),
+        env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      },
+    );
+    await expect(refused).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining(
+        "The read model customers lives in the tenant's Durable Object, in the jurisdiction storage names",
+      ),
+    });
   }, 60_000);
 });

@@ -14,6 +14,7 @@ import type { BoundaStub } from "./client.ts";
 import { cloudflareStorageOf } from "./definition.ts";
 import { workersLogger } from "./logger.ts";
 import { unwrap } from "./outcome.ts";
+import { findBoundaNamespace } from "./tenant-stub.ts";
 import { hostLogger } from "./witnesses.ts";
 
 export interface TenantOfFunction {
@@ -30,7 +31,7 @@ export interface ActorOfFunction {
 export interface CreateWorkerArgs {
   /**
    * The app's configuration, with `storage: cloudflare()`, whose `binding` names the Bounda
-   * Durable Object's binding.
+   * Durable Object's binding and whose `jurisdiction`, when it names one, holds every object.
    */
   readonly config: Config;
   /**
@@ -176,7 +177,7 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
 
 /**
  * A Worker that exposes one Bounda app as JSON over HTTP, a store per tenant, through the binding
- * `cloudflare()` names:
+ * and in the jurisdiction `cloudflare()` names, as `tenantStub` reaches it:
  *
  * - `POST /commands/<name>` with the payload as the body, `?delay=10m` to schedule it, answers
  *   the dispatch result, once the read models reflect it unless `consistency` is `"eventual"`;
@@ -204,13 +205,19 @@ export const createWorker: CreateWorkerFunction = ({
 }) => {
   const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
+  // One namespace per `env` the Worker is handed, rather than one per request.
+  const namespaces = new WeakMap<object, DurableObjectNamespace | undefined>();
+  const namespaceOf = (env: object): DurableObjectNamespace | undefined => {
+    if (!namespaces.has(env)) namespaces.set(env, findBoundaNamespace({ config, env }));
+    return namespaces.get(env);
+  };
   // Through the witness `witnessObjects` gives the Worker in a test.
   const log = (): Logger => hostLogger(worker, logger);
   const worker: ExportedHandler<Cloudflare.Env> = {
     // A rotation of the master key rewraps a tenant's key in the tenant's own object, the one
     // writer of its record: each one still under a previous master key is woken to do it.
     scheduled: async (_controller, env) => {
-      const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
+      const namespace = namespaceOf(env);
       if (namespace === undefined) {
         log().error("bounda worker has no such binding", { binding });
         return;
@@ -265,7 +272,7 @@ export const createWorker: CreateWorkerFunction = ({
         }
         return failure("INVALID_JSON", "The body is not JSON", 400);
       }
-      const namespace = Reflect.get(env, binding) as DurableObjectNamespace | undefined;
+      const namespace = namespaceOf(env);
       if (namespace === undefined) {
         log().error("bounda worker has no such binding", { binding });
         return failure("INTERNAL", "Internal error", 500);

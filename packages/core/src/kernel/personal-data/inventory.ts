@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ResolvedConfig } from "../../config/types.ts";
 import { capitalize } from "../../modules/naming.ts";
@@ -72,6 +73,11 @@ export interface InventoryHolder {
    * The name of the adapter of the database that keeps them.
    */
   readonly database: string;
+  /**
+   * Where that database keeps them, as its adapter's definition pins it (`location`); `null`
+   * when it pins nothing.
+   */
+  readonly location: string | null;
 }
 
 export interface InventoryCategory {
@@ -140,6 +146,11 @@ export interface InventoryRecord {
    * `"app/audit.ts"` for the access log.
    */
   readonly where: string;
+  /**
+   * Where that database keeps it, as its adapter's definition pins it (`location`); `null` when
+   * it pins nothing, and for the ledger and the access log.
+   */
+  readonly location: string | null;
   /**
    * How long an entry is kept, as configuration writes it, when a setting bounds it; `null`
    * otherwise.
@@ -265,13 +276,23 @@ const review = (
   }
 };
 
+interface KeptIn {
+  readonly database: string;
+  readonly location: string | null;
+}
+
+const keptIn = (definition: AdapterDefinition): KeptIn => ({
+  database: definition.name,
+  location: definition.location ?? null,
+});
+
 const reviewSchema = (
   collected: Collected,
   kind: Exclude<InventoryHolderKind, "read-model">,
   holder: string,
   schema: z.ZodType,
   stores: readonly InventoryStore[],
-  database: string,
+  kept: KeptIn,
 ): void => {
   const classified = classifySchema(schema);
   review(
@@ -301,7 +322,7 @@ const reviewSchema = (
       sealing: "sealed",
     })),
     stores,
-    database,
+    ...kept,
   });
 };
 
@@ -310,7 +331,7 @@ const sealingOf = (field: FieldsRecord[string]): InventorySealing =>
 
 const collect = (registry: Registry, config: ResolvedConfig): Collected => {
   const collected: Collected = { holders: [], notPersonal: [], findings: [] };
-  const storage = config.storage.name;
+  const storage = keptIn(config.storage);
   for (const [aggregate, entry] of Object.entries(registry.aggregates)) {
     const snapshots = config.forAggregate(aggregate).snapshot !== null;
     for (const [key, module] of Object.entries(entry.events)) {
@@ -366,7 +387,7 @@ const collect = (registry: Registry, config: ResolvedConfig): Collected => {
         sealing: sealingOf(definition),
       })),
       stores: ["read-model"],
-      database: config.readModels[name]?.name ?? storage,
+      ...(config.readModels[name] === undefined ? storage : keptIn(config.readModels[name])),
     });
   }
   return collected;
@@ -393,37 +414,40 @@ const recordsOf = (
   config: ResolvedConfig,
   recipients: readonly InventoryRecipient[],
 ): InventoryRecord[] => {
-  const storage = config.storage.name;
+  const { database: storage, location } = keptIn(config.storage);
   const ledger = config.runtime.personalData.forgetLedger;
   return [
-    { name: "personal-keys", where: storage, keptFor: null },
-    { name: "persons", where: storage, keptFor: null },
-    { name: "forgettings", where: storage, keptFor: null },
+    { name: "personal-keys", where: storage, location, keptFor: null },
+    { name: "persons", where: storage, location, keptFor: null },
+    { name: "forgettings", where: storage, location, keptFor: null },
     {
       name: "remembered-answers",
       where: storage,
+      location,
       keptFor: msText(config.runtime.commands.idempotencyKeyLifetimeMs),
     },
     {
       name: "dead-letters",
       where: storage,
+      location,
       keptFor: msText(config.runtime.deadLetters.retentionMs),
     },
     ...(recipients.length === 0
       ? []
-      : [{ name: "disclosures" as const, where: storage, keptFor: null }]),
+      : [{ name: "disclosures" as const, where: storage, location, keptFor: null }]),
     ...(ledger === null
       ? []
       : [
           {
             name: "forget-ledger" as const,
             where: "forget-ledger",
+            location: null,
             keptFor: msText(ledger.keepForMs),
           },
         ]),
     ...(registry.audit === undefined
       ? []
-      : [{ name: "access-log" as const, where: "app/audit.ts", keptFor: null }]),
+      : [{ name: "access-log" as const, where: "app/audit.ts", location: null, keptFor: null }]),
   ];
 };
 

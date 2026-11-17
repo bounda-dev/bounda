@@ -2,7 +2,9 @@ import { cloudflare, kvTenantKeys } from "@bounda-dev/cloudflare";
 import { defineConfig, masterKey } from "@bounda-dev/core/config";
 
 export default defineConfig({
-  storage: cloudflare(),
+  // Every tenant's object is created in the EU and never leaves it. An object never moves: choose
+  // before the first deploy, or leave it out to place each object near its first request.
+  storage: cloudflare({ jurisdiction: "eu" }),
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
