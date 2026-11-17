@@ -1515,6 +1515,10 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     );
     const retired = await cli(["tenant-key", "retire", ...config, "--tenant", tenant], fixture);
     expect(retired.code).toBe(EXIT_FAILURE);
+    const help = await cli(["tenant-key", "rotate", "--help"], fixture);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "--reseal after a leak of the persons' keys themselves: replace every key that seals personal data, and the database's key, and seal it all again under the new ones",
+    );
   });
 
   it("forgets a tenant whose persons hold keys a legal obligation keeps only when told to", async () => {
