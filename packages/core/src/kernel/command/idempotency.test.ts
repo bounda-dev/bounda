@@ -382,6 +382,7 @@ describe("a command dispatched with an idempotency key", () => {
       persons: [],
       now,
     });
+    // Each caught as it starts: one may reject while the other is awaited.
     for (const dispatched of [
       harness.pipeline.dispatch({ ...placeOrder, ...withKey("req-1") }),
       harness.pipeline.dispatchUnattended({
@@ -390,8 +391,8 @@ describe("a command dispatched with an idempotency key", () => {
         ...withKey("req-1"),
         within: createUnitOfWork({ storage: harness.storage }),
       }),
-    ]) {
-      const refused = await dispatched.catch((error: unknown) => error);
+    ].map((started) => started.catch((error: unknown) => error))) {
+      const refused = await dispatched;
       expect(refused).toBeInstanceOf(IdempotentAnswerErasedError);
       expect(refused).toMatchObject({ code: "IDEMPOTENT_ANSWER_ERASED", idempotencyKey: "req-1" });
       expect((refused as Error).message).toMatch(
