@@ -131,11 +131,16 @@ describe("tenantStub", () => {
   });
 
   it("refuses a Worker without the binding, or an app that does not run in a Durable Object", () => {
-    expect(() =>
-      tenantStub({ config: { storage: cloudflare({ binding: "MISSING" }) }, env, tenant: "a" }),
-    ).toThrow(
-      'The Worker has no binding "MISSING": bind the Bounda Durable Object under that name in wrangler.jsonc, or name its binding with cloudflare({ binding })',
-    );
+    for (const storage of [
+      cloudflare({ binding: "MISSING" }),
+      cloudflare({ binding: "MISSING", jurisdiction: "eu" }),
+    ]) {
+      expect(() => tenantStub({ config: { storage }, env, tenant: "a" })).toThrow(
+        new ConfigurationError(
+          'The Worker has no binding "MISSING": bind the Bounda Durable Object under that name in wrangler.jsonc, or name its binding with cloudflare({ binding })',
+        ),
+      );
+    }
     expect(() => tenantStub({ config: { storage: memory() }, env, tenant: "a" })).toThrow(
       ConfigurationError,
     );
