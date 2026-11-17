@@ -58,9 +58,20 @@ const registryOf = (category: "marketing" | "billing" | undefined): Registry =>
     },
     readModels: {},
     personalData: {
+      automatedDecisions: {},
       categories: {
-        marketing: { basis: "consent", retention: "2y" },
-        billing: { basis: "contract", retention: "2y" },
+        marketing: {
+          basis: "consent",
+          retention: "2y",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
+        billing: {
+          basis: "contract",
+          retention: "2y",
+          purposes: ["Serve the person"],
+          sources: ["data-subject"],
+        },
       },
     },
   }) as unknown as Registry;

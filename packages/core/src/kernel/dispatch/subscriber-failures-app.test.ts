@@ -160,7 +160,17 @@ const categorized = {
       },
     },
   },
-  personalData: { categories: { marketing: { basis: "consent", retention: "2y" } } },
+  personalData: {
+    automatedDecisions: {},
+    categories: {
+      marketing: {
+        basis: "consent",
+        retention: "2y",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
+    },
+  },
 } as unknown as Registry;
 
 const SUBSCRIBER = "projection:customers";

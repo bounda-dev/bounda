@@ -29,7 +29,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/processes/<process>/at-<deadline>.ts`, `at-timeout.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
 | `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes; without it, the app's logger |
-| `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis and retention; without it, every personal field is in the default category |
+| `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis, retention, purposes and sources, and `automatedDecisions`, `satisfies PersonalData.AutomatedDecisions`, `{}` for none; without it, every personal field is in the default category |
 | `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data, `.notPersonal()` on those that hold none; `holdsPersonalData = false` (optional) to state it keeps nothing of anyone's data though it projects events with personal fields |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once its view keeps a field in the clear with `.personal({ clear: true })`, or a projection of the read model sees a field marked `personal` and the view marks no field `.personal()` |
@@ -88,7 +88,9 @@ object or keeps keys it does not declare, naming each
 The app refuses to start on the same rules, with `ConfigurationError`. The generated registry is checked against
 `Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
 fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
-declares a category named `default`, or one without a basis Bounda knows or a retention, and a
+declares a category named `default`, or one without a basis Bounda knows, a retention, a purpose
+or a source, while it exports no `automatedDecisions`, or one of them lacks what it must say or
+names a category the file does not declare, and a
 category that `personal({ category })`, `.personal({ category })` or `forget` names and the file
 does not declare does not compile where it is written. `<Owner>Recipients` fails to compile while a
 port's module declares a `recipient` and lacks one of its six handlers, naming the port and the
@@ -125,7 +127,10 @@ Some rules need the modules themselves, so the app checks them when it is create
   app, or that two ports name;
 - an `app/personal-data.ts` whose `categories` is not an object, declares `default`, names a
   category with anything but letters, digits, `-` and `_` after a first letter, or gives one a
-  basis article 6 does not name or a retention that is not a duration longer than none; a field
+  basis article 6 does not name, a retention that is not a duration longer than none, no purpose
+  in words or a source Bounda does not know; whose `automatedDecisions` is not an object, or has a
+  decision without categories it declares, a `logic`, `significance` or `consequences` in words,
+  a `profiling` that is true or false, or a ground article 22(2) names; a field
   marked personal in a category the file does not declare;
 - a `payload`, `repository`, process `state` or `correlate` export that is not a function;
 - a configuration that names a port, an implementation, an aggregate or a read model that does

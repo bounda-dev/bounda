@@ -28,17 +28,74 @@ export const LEGAL_BASES: readonly LegalBasis[] = [
 ];
 
 /**
- * A category of personal data as `app/personal-data.ts` declares it: why it is processed, and for
- * how long after the person's last activity it is kept, after which the runtime forgets it, as
- * `forget(person, { categories })` does, with `reason: "retention"`: a duration string or
- * milliseconds, as the configuration's durations, or whole calendar months or years, `"6y"`,
- * which end on the same day of the month, or at the end of the month's last day when it has no
- * such day.
+ * Where data of a category comes from, as article 15(1)(g) asks the person be told of data not
+ * collected from them: the person themselves (`"data-subject"`), what the app works out from other
+ * data of theirs (`"derived"`), or a source by its name, a `third-party` or a `public` one.
+ */
+export type PersonalDataSource =
+  | "data-subject"
+  | "derived"
+  | { readonly kind: "third-party" | "public"; readonly name: string };
+
+/**
+ * A category of personal data as `app/personal-data.ts` declares it: on which basis it is
+ * processed, and for how long after the person's last activity it is kept, after which the
+ * runtime forgets it, as `forget(person, { categories })` does, with `reason: "retention"`: a
+ * duration string or milliseconds, as the configuration's durations, or whole calendar months or
+ * years, `"6y"`, which end on the same day of the month, or at the end of the month's last day
+ * when it has no such day. `purposes` and `sources` are what the person's export tells them of it.
  */
 export interface PersonalDataCategory {
   readonly basis: LegalBasis;
   readonly retention: RetentionInput;
+  /**
+   * Why it is processed, in words for the person: article 15(1)(a). At least one.
+   */
+  readonly purposes: readonly [string, ...string[]];
+  /**
+   * Where it comes from: article 15(1)(g). At least one.
+   */
+  readonly sources: readonly [PersonalDataSource, ...PersonalDataSource[]];
 }
+
+/**
+ * What allows a decision based solely on automated processing, as article 22(2) names the
+ * exceptions: it is needed for a `contract` with the person, authorised by `law`, or based on
+ * their `explicit-consent`. On a contract or consent the person may ask for a human to step in
+ * (article 22(3)), which the export tells them.
+ */
+export type AutomatedDecisionGround = "contract" | "law" | "explicit-consent";
+
+/**
+ * Every ground, in the order of article 22(2).
+ */
+export const AUTOMATED_DECISION_GROUNDS: readonly AutomatedDecisionGround[] = [
+  "contract",
+  "law",
+  "explicit-consent",
+];
+
+/**
+ * A decision the app makes about a person by automated means alone, with legal or similarly
+ * significant effects for them, profiling included, as article 22(1) means it: on which
+ * categories of their data, meaningful information about its `logic`, its `significance` and its
+ * envisaged `consequences` for the person, as article 15(1)(h) asks them be told, whether it
+ * profiles them, and its `ground`.
+ */
+export interface AutomatedDecision {
+  readonly categories: readonly [string, ...string[]];
+  readonly logic: string;
+  readonly significance: string;
+  readonly consequences: string;
+  readonly profiling: boolean;
+  readonly ground: AutomatedDecisionGround;
+}
+
+/**
+ * What `app/personal-data.ts` exports as `automatedDecisions`: each decision by a name of the
+ * app's, `{}` for an app that makes none.
+ */
+export type AutomatedDecisions = Readonly<Record<string, AutomatedDecision>>;
 
 /**
  * What `app/personal-data.ts` exports as `categories`: each category by its name, which
@@ -52,6 +109,7 @@ export type PersonalDataCategories = Readonly<Record<string, PersonalDataCategor
  */
 export interface PersonalDataModule {
   readonly categories: PersonalDataCategories;
+  readonly automatedDecisions: AutomatedDecisions;
 }
 
 /**
@@ -77,6 +135,19 @@ type CategoriesOf<Module> = Module extends { readonly categories: infer Categori
   ? Categories
   : never;
 
+type DecisionsOf<Module> = Module extends { readonly automatedDecisions: infer Decisions }
+  ? Decisions
+  : never;
+
+// The categories the module's decisions name that it does not declare, `never` when none.
+type UndeclaredIn<Module> = {
+  [Name in keyof DecisionsOf<Module>]: DecisionsOf<Module>[Name] extends {
+    readonly categories: readonly (infer Category)[];
+  }
+    ? Exclude<Category, PersonalCategoriesOf<Module> | typeof DEFAULT_PERSONAL_CATEGORY>
+    : never;
+}[keyof DecisionsOf<Module>];
+
 /**
  * The names of the categories an `app/personal-data.ts` module declares, which the generator
  * registers so `personal({ category })` and `forget` take only those.
@@ -84,17 +155,24 @@ type CategoriesOf<Module> = Module extends { readonly categories: infer Categori
 export type PersonalCategoriesOf<Module> = Extract<keyof CategoriesOf<Module>, string>;
 
 /**
- * `true` when an `app/personal-data.ts` module exports `categories` as Bounda reads them, and
- * declares no category `default`; otherwise a message saying what to change, which the
- * generator's `.bounda/types.ts` fails to compile on.
+ * `true` when an `app/personal-data.ts` module exports `categories` and `automatedDecisions` as
+ * Bounda reads them, declares no category `default`, and its decisions name only categories it
+ * declares or `"default"`; otherwise a message saying what to change, which the generator's
+ * `.bounda/types.ts` fails to compile on.
  */
 export type DeclaresPersonalData<Module> = [CategoriesOf<Module>] extends [never]
-  ? "app/personal-data.ts must export categories, each with its basis and its retention"
+  ? "app/personal-data.ts must export categories, each with its basis, retention, purposes and sources"
   : CategoriesOf<Module> extends PersonalDataCategories
     ? typeof DEFAULT_PERSONAL_CATEGORY extends PersonalCategoriesOf<Module>
       ? 'app/personal-data.ts declares "default", the category of fields marked without one; name it otherwise'
-      : true
-    : "app/personal-data.ts declares a category without a basis Bounda knows or a retention";
+      : [DecisionsOf<Module>] extends [never]
+        ? "app/personal-data.ts must export automatedDecisions, {} when the app decides nothing about a person by automated means alone"
+        : DecisionsOf<Module> extends AutomatedDecisions
+          ? [UndeclaredIn<Module>] extends [never]
+            ? true
+            : "app/personal-data.ts has an automated decision on a category it does not declare"
+          : "app/personal-data.ts declares an automated decision without its categories, logic, significance, consequences, profiling or ground"
+    : "app/personal-data.ts declares a category without a basis Bounda knows, a retention, a purpose or a source";
 
 /**
  * Why a person's processing is restricted, as article 18(1) of the GDPR names the cases:

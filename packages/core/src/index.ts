@@ -60,6 +60,7 @@ export type {
 export { withEncryptedFiles } from "./kernel/personal-data/encrypted-files.ts";
 export type {
   ExportedAnswer,
+  ExportedAutomatedDecision,
   ExportedCategories,
   ExportedCategory,
   ExportedData,
@@ -67,12 +68,14 @@ export type {
   ExportedEvent,
   ExportedRedaction,
   ExportedRestricted,
+  ExportedRight,
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
   PersonalDataExport,
   PersonalDataExportHeader,
   PersonalDataExportPart,
+  PersonalDataRight,
 } from "./kernel/personal-data/export.ts";
 export type { PersonalDataExportJsonFunction } from "./kernel/personal-data/export-json.ts";
 export { personalDataExportJson } from "./kernel/personal-data/export-json.ts";
@@ -83,6 +86,7 @@ export type {
 } from "./kernel/personal-data/forgotten-tenant.ts";
 export { TENANT_CHECK_INTERVAL_MS } from "./kernel/personal-data/forgotten-tenant.ts";
 export type {
+  InventoryAutomatedDecision,
   InventoryCategory,
   InventoryField,
   InventoryFinding,

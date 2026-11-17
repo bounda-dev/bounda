@@ -1,4 +1,6 @@
 import type {
+  InventoryAutomatedDecision,
+  InventoryCategory,
   InventoryHolder,
   InventoryHolderKind,
   InventoryRecord,
@@ -6,6 +8,7 @@ import type {
   InventorySealing,
   InventoryStore,
   PersonalDataInventory,
+  PersonalDataSource,
 } from "@bounda-dev/core";
 
 export interface FormatInventoryFunction {
@@ -94,6 +97,21 @@ const basisOf = (basis: string | null): string => basis ?? "no basis declared";
 const retentionOf = (retention: string | null): string =>
   retention === null ? "kept until forgotten" : `forgotten ${retention} after last activity`;
 
+const sourceOf = (source: PersonalDataSource): string => {
+  if (source === "data-subject") return "the person";
+  if (source === "derived") return "derived by the app";
+  return `${source.name} (${source.kind === "public" ? "public source" : "third party"})`;
+};
+
+const purposesOf = ({ purposes }: InventoryCategory): string =>
+  purposes.length === 0 ? "no purpose declared" : purposes.join("; ");
+
+const sourcesOf = ({ sources }: InventoryCategory): string =>
+  sources.length === 0 ? "no source declared" : sources.map(sourceOf).join(", ");
+
+const decisionOf = (decision: InventoryAutomatedDecision): string =>
+  `${decision.profiling ? "profiling, " : ""}on ${decision.ground}, from ${decision.categories.join(", ")}`;
+
 const security = (inventory: PersonalDataInventory): readonly string[] => [
   `master key: ${inventory.security.masterKey ? "named by the configuration" : "none named"}`,
   `tenant key store: ${inventory.security.tenantKeys ? "apart from the database" : "none named"}`,
@@ -108,6 +126,18 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
   for (const category of inventory.categories) {
     lines.push(
       `  ${category.name}  ${basisOf(category.basis)}  ${retentionOf(category.retention)}  ${plural(category.fields, "field")}`,
+      `    for: ${purposesOf(category)}`,
+      `    from: ${sourcesOf(category)}`,
+    );
+  }
+  lines.push("", "Automated decisions");
+  if (inventory.automatedDecisions.length === 0) lines.push("  none declared");
+  for (const decision of inventory.automatedDecisions) {
+    lines.push(
+      `  ${decision.name}  ${decisionOf(decision)}`,
+      `    logic: ${decision.logic}`,
+      `    significance: ${decision.significance}`,
+      `    consequences: ${decision.consequences}`,
     );
   }
   lines.push("", "Personal data");
@@ -169,19 +199,46 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
   const lines: string[] = [
     "# Record of processing activities",
     "",
-    "What the app's code and configuration say for article 30 of the GDPR. The controller, its representative and data protection officer, the purposes in words and the security measures outside the app are the controller's to add.",
+    "What the app's code and configuration say for article 30 of the GDPR. The controller, its representative and data protection officer, and the security measures outside the app are the controller's to add.",
     "",
     "## Categories of personal data",
     "",
     ...table(
-      ["Category", "Legal basis", "Time limit for erasure", "Fields"],
+      ["Category", "Legal basis", "Purposes", "Sources", "Time limit for erasure", "Fields"],
       inventory.categories.map((category) => [
         category.name,
         basisOf(category.basis),
+        purposesOf(category),
+        sourcesOf(category),
         retentionOf(category.retention),
         String(category.fields),
       ]),
     ),
+    "",
+    "## Automated decisions",
+    "",
+    ...(inventory.automatedDecisions.length === 0
+      ? ["The app makes no decision about a person by automated means alone."]
+      : table(
+          [
+            "Decision",
+            "Categories",
+            "Profiling",
+            "Ground",
+            "Logic",
+            "Significance",
+            "Consequences",
+          ],
+          inventory.automatedDecisions.map((decision) => [
+            decision.name,
+            decision.categories.join(", "),
+            decision.profiling ? "yes" : "no",
+            decision.ground,
+            decision.logic,
+            decision.significance,
+            decision.consequences,
+          ]),
+        )),
     "",
     "## Where personal data is kept",
     "",

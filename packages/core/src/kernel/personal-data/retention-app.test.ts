@@ -129,7 +129,17 @@ const categorized = {
     },
   },
   readModels: {},
-  personalData: { categories: { profile: { basis: "consent", retention: "10d" } } },
+  personalData: {
+    automatedDecisions: {},
+    categories: {
+      profile: {
+        basis: "consent",
+        retention: "10d",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
+    },
+  },
 } as unknown as Registry;
 
 const retention: Omit<Config, "storage" | "ports"> = {

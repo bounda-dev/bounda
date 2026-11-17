@@ -2,7 +2,11 @@ import type { z } from "zod";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ResolvedConfig } from "../../config/types.ts";
 import { capitalize } from "../../modules/naming.ts";
-import type { LegalBasis } from "../../modules/personal-data.ts";
+import type {
+  AutomatedDecision,
+  LegalBasis,
+  PersonalDataSource,
+} from "../../modules/personal-data.ts";
 import type { RecipientKind, TransferSafeguard } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
@@ -77,6 +81,11 @@ export interface InventoryCategory {
    */
   readonly basis: LegalBasis | null;
   /**
+   * None for the default category.
+   */
+  readonly purposes: readonly string[];
+  readonly sources: readonly PersonalDataSource[];
+  /**
    * How long after the person's last activity the category is forgotten, as configuration writes
    * it; `null` when nothing forgets it for inactivity.
    */
@@ -85,6 +94,10 @@ export interface InventoryCategory {
    * How many personal fields are in it.
    */
   readonly fields: number;
+}
+
+export interface InventoryAutomatedDecision extends AutomatedDecision {
+  readonly name: string;
 }
 
 export interface InventoryRecipient {
@@ -171,6 +184,11 @@ export interface InventoryFinding {
  */
 export interface PersonalDataInventory {
   readonly categories: readonly InventoryCategory[];
+  /**
+   * The decisions `app/personal-data.ts` says the app makes about a person by automated means
+   * alone, by name.
+   */
+  readonly automatedDecisions: readonly InventoryAutomatedDecision[];
   readonly holders: readonly InventoryHolder[];
   readonly recipients: readonly InventoryRecipient[];
   readonly records: readonly InventoryRecord[];
@@ -429,7 +447,7 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
       kind: "no-basis",
       holder: null,
       field: null,
-      message: `${unbased} personal field${unbased === 1 ? " is" : "s are"} in the default category, which declares no legal basis; declare categories in app/personal-data.ts and give each field one`,
+      message: `${unbased} personal field${unbased === 1 ? " is" : "s are"} in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one`,
     });
   }
   if (resolved.runtime.telemetry.errorText === "include") {
@@ -446,9 +464,12 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
     categories: categories.all.map((category) => ({
       name: category.name,
       basis: category.basis,
+      purposes: category.purposes,
+      sources: category.sources,
       retention: category.retention === null ? null : formatRetention(category.retention),
       fields: counts.get(category.name) ?? 0,
     })),
+    automatedDecisions: categories.decisions,
     holders: collected.holders,
     recipients,
     records: recordsOf(registry, resolved, recipients),

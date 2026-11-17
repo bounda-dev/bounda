@@ -1,0 +1,207 @@
+import { describe, expect, it } from "vitest";
+import type { StoredPerson } from "../../adapter/storage/person-store.ts";
+import type { HeldPersonalKey } from "../../adapter/storage/personal-key-store.ts";
+import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
+import type { PersonalDataModule } from "../../modules/personal-data.ts";
+import { buildPersonalCategories } from "./categories.ts";
+import { personalDataInformation } from "./information.ts";
+
+const said = { purposes: ["Serve the person"], sources: ["data-subject"] } as const;
+
+const scoring = {
+  categories: ["profile"],
+  logic: "A score of their answers",
+  significance: "Whether they may pay later",
+  consequences: "Paying upfront",
+  profiling: true,
+  ground: "contract",
+} as const;
+
+const module = {
+  categories: {
+    profile: { basis: "contract", retention: "30d", ...said },
+    invoices: { basis: "legal-obligation", retention: "60d", ...said },
+    newsletter: { basis: "consent", retention: "10d", ...said },
+    fraud: { basis: "legitimate-interests", retention: "90d", ...said },
+    census: { basis: "public-task", retention: "1y", ...said },
+  },
+  automatedDecisions: {
+    scoring,
+    vetting: { ...scoring, categories: ["fraud", "census"], ground: "law" },
+    targeting: { ...scoring, categories: ["newsletter"], ground: "explicit-consent" },
+  },
+} as unknown as PersonalDataModule;
+
+const categories = buildPersonalCategories({
+  module,
+  retention: { months: 0, ms: 20 * 86_400_000 },
+});
+
+const key = (
+  category: string,
+  lastActiveAt: string | null,
+  retainedSince: string | null = null,
+): HeldPersonalKey => ({
+  category,
+  key: testPersonalKey(category),
+  retainedSince,
+  lastActiveAt,
+});
+
+const person = (
+  lastActiveAt: string | null,
+  restrictedSince: string | null = null,
+): StoredPerson => ({
+  person: "ana",
+  restrictedSince,
+  lastActiveAt,
+  position: 1,
+  forgottenAt: null,
+  hold: null,
+});
+
+describe("personalDataInformation", () => {
+  it("tells each category's basis, purposes, sources and retention, and whether the person holds data of it", () => {
+    const { categories: told } = personalDataInformation({
+      categories,
+      keys: [key("profile", null)],
+      person: null,
+    });
+    expect(told.default).toEqual({
+      basis: null,
+      purposes: [],
+      sources: [],
+      retention: "20d",
+      held: false,
+      keptUntil: null,
+      restrictedUntil: null,
+    });
+    expect(told.profile).toEqual({
+      basis: "contract",
+      ...said,
+      retention: "30d",
+      held: true,
+      keptUntil: null,
+      restrictedUntil: null,
+    });
+    expect(told.newsletter?.held).toBe(false);
+  });
+
+  it("tells until when each category is kept unless they are active again, the whole person going first", () => {
+    const { categories: told } = personalDataInformation({
+      categories,
+      keys: [
+        key("default", "2026-01-01T00:00:00.000Z"),
+        key("profile", "2026-01-01T00:00:00.000Z"),
+        key("newsletter", "2026-01-01T00:00:00.000Z"),
+        key("invoices", "2026-01-01T00:00:00.000Z"),
+        key("census", null),
+      ],
+      person: person("2026-01-01T00:00:00.000Z"),
+    });
+    // The person as a whole, after the default category's retention.
+    expect(told.default?.keptUntil).toBe("2026-01-21T00:00:00.000Z");
+    expect(told.profile?.keptUntil).toBe("2026-01-21T00:00:00.000Z");
+    // Sooner on its own.
+    expect(told.newsletter?.keptUntil).toBe("2026-01-11T00:00:00.000Z");
+    // Kept past the whole forgetting, by law.
+    expect(told.invoices?.keptUntil).toBe("2026-03-02T00:00:00.000Z");
+    // Without activity of its own, as the whole goes.
+    expect(told.census?.keptUntil).toBe("2026-01-21T00:00:00.000Z");
+    expect(told.fraud?.keptUntil).toBeNull();
+  });
+
+  it("tells no end while nothing forgets them: without activity, retention or keys in force", () => {
+    const keys = [key("profile", "2026-01-01T00:00:00.000Z")];
+    const told = (args: Partial<Parameters<typeof personalDataInformation>[0]>) =>
+      personalDataInformation({ categories, keys, person: null, ...args }).categories;
+    expect(told({}).profile?.keptUntil).toBe("2026-01-31T00:00:00.000Z");
+    // Restricted, the same end, which the retention waits on until the restriction is lifted.
+    expect(
+      told({ person: person("2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z") }).profile
+        ?.keptUntil,
+    ).toBe("2026-01-21T00:00:00.000Z");
+    expect(told({ keys: [key("profile", null)] }).profile?.keptUntil).toBeNull();
+    expect(
+      told({ keys: [key("profile", "2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z")] })
+        .profile,
+    ).toMatchObject({ held: true, keptUntil: null, restrictedUntil: "2026-01-31T00:00:00.000Z" });
+    const noRetention = buildPersonalCategories({ module: undefined, retention: null });
+    expect(
+      personalDataInformation({
+        categories: noRetention,
+        keys: [key("default", "2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z")],
+        person: person("2026-01-01T00:00:00.000Z"),
+      }).categories.default,
+    ).toMatchObject({ held: true, keptUntil: null, restrictedUntil: null });
+  });
+
+  it("tells until when what forgettings kept stays, the latest of them", () => {
+    const { categories: told } = personalDataInformation({
+      categories,
+      keys: [
+        key("invoices", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z"),
+        key("invoices", "2026-02-01T00:00:00.000Z", "2026-02-02T00:00:00.000Z"),
+        key("invoices", "2026-01-15T00:00:00.000Z", "2026-01-16T00:00:00.000Z"),
+      ],
+      person: null,
+    });
+    expect(told.invoices).toMatchObject({
+      held: true,
+      restrictedUntil: "2026-04-02T00:00:00.000Z",
+    });
+  });
+
+  it("tells each right with the categories it reaches, by their basis, and the decisions on what they hold", () => {
+    const { rights, automatedDecisions } = personalDataInformation({
+      categories,
+      keys: [key("profile", null), key("fraud", null)],
+      person: null,
+    });
+    expect(rights).toEqual([
+      { right: "access", article: "15", categories: null },
+      { right: "rectification", article: "16", categories: null },
+      {
+        right: "erasure",
+        article: "17",
+        categories: ["default", "profile", "newsletter", "fraud", "census"],
+      },
+      { right: "restriction", article: "18", categories: null },
+      { right: "portability", article: "20", categories: ["profile", "newsletter"] },
+      { right: "objection", article: "21", categories: ["fraud", "census"] },
+      { right: "withdraw-consent", article: "7(3)", categories: ["newsletter"] },
+      { right: "human-intervention", article: "22(3)", categories: ["profile"] },
+      { right: "complaint", article: "77", categories: null },
+    ]);
+    expect(automatedDecisions).toEqual([
+      { name: "scoring", ...scoring },
+      { name: "vetting", ...scoring, categories: ["fraud", "census"], ground: "law" },
+    ]);
+  });
+
+  it("leaves out the rights that reach none of the app's categories, and decisions on what they do not hold", () => {
+    const plain = buildPersonalCategories({
+      module: {
+        categories: { invoices: { basis: "legal-obligation", retention: "6y", ...said } },
+        automatedDecisions: {
+          vetting: { ...scoring, categories: ["invoices"], ground: "explicit-consent" },
+        },
+      } as unknown as PersonalDataModule,
+      retention: null,
+    });
+    const { rights, automatedDecisions } = personalDataInformation({
+      categories: plain,
+      keys: [],
+      person: null,
+    });
+    expect(rights.map(({ right, categories: reached }) => [right, reached])).toEqual([
+      ["access", null],
+      ["rectification", null],
+      ["erasure", ["default"]],
+      ["restriction", null],
+      ["objection", []],
+      ["complaint", null],
+    ]);
+    expect(automatedDecisions).toEqual([]);
+  });
+});

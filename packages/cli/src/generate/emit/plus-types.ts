@@ -347,7 +347,10 @@ const personalDataFiles = (model: ProjectModel, typesPath: string): GeneratedFil
         render(plusTypesPath(model.personalData.path), typesPath, {
           imports: { generated: false, module: null },
           namespace: "PersonalData",
-          members: [["Categories", "core.PersonalDataCategories"]],
+          members: [
+            ["Categories", "core.PersonalDataCategories"],
+            ["AutomatedDecisions", "core.AutomatedDecisions"],
+          ],
         }),
       ];
 

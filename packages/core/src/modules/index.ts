@@ -105,6 +105,9 @@ export type {
   PersonSchema,
 } from "./personal.ts";
 export type {
+  AutomatedDecision,
+  AutomatedDecisionGround,
+  AutomatedDecisions,
   DeclaresPersonalData,
   ForgetOptions,
   LegalBasis,
@@ -113,6 +116,7 @@ export type {
   PersonalDataCategories,
   PersonalDataCategory,
   PersonalDataModule,
+  PersonalDataSource,
   ProcessingRestriction,
   RestrictionBasis,
   RestrictionGround,
@@ -120,7 +124,12 @@ export type {
   RestrictOptions,
   UnrestrictOptions,
 } from "./personal-data.ts";
-export { LEGAL_BASES, RESTRICTION_BASES, RESTRICTION_GROUNDS } from "./personal-data.ts";
+export {
+  AUTOMATED_DECISION_GROUNDS,
+  LEGAL_BASES,
+  RESTRICTION_BASES,
+  RESTRICTION_GROUNDS,
+} from "./personal-data.ts";
 export type { PolicyHandlerArgs, PolicyModule, ReactionForgetFunction } from "./policy.ts";
 export type {
   CreateArgs,

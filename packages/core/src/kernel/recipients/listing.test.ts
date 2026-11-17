@@ -9,9 +9,20 @@ import { recipientStatuses, recipientsOf } from "./listing.ts";
 
 const categories = buildPersonalCategories({
   module: {
+    automatedDecisions: {},
     categories: {
-      contact: { basis: "consent", retention: "730d" },
-      invoices: { basis: "legal-obligation", retention: "6y" },
+      contact: {
+        basis: "consent",
+        retention: "730d",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
+      invoices: {
+        basis: "legal-obligation",
+        retention: "6y",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
     },
   },
   retention: null,

@@ -21,9 +21,20 @@ const noop = () => [];
 
 const registry = {
   personalData: {
+    automatedDecisions: {},
     categories: {
-      contact: { basis: "consent", retention: "730d" },
-      invoices: { basis: "legal-obligation", retention: "6y" },
+      contact: {
+        basis: "consent",
+        retention: "730d",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
+      invoices: {
+        basis: "legal-obligation",
+        retention: "6y",
+        purposes: ["Serve the person"],
+        sources: ["data-subject"],
+      },
     },
   },
   aggregates: {
@@ -133,13 +144,34 @@ const config: Config = {
 
 // Built in each test, which a mutation tool's run of that test sees.
 describe("personalDataInventory", () => {
-  it("lists every category with its basis, its retention and how many fields it holds", () => {
+  it("lists every category with its basis, purposes, sources, retention and how many fields it holds", () => {
     const inventory = personalDataInventory({ registry, config });
+    const said = { purposes: ["Serve the person"], sources: ["data-subject"] };
     expect(inventory.categories).toEqual([
-      { name: "default", basis: null, retention: "2y", fields: 2 },
-      { name: "contact", basis: "consent", retention: "730d", fields: 2 },
-      { name: "invoices", basis: "legal-obligation", retention: "6y", fields: 1 },
+      { name: "default", basis: null, purposes: [], sources: [], retention: "2y", fields: 2 },
+      { name: "contact", basis: "consent", ...said, retention: "730d", fields: 2 },
+      { name: "invoices", basis: "legal-obligation", ...said, retention: "6y", fields: 1 },
     ]);
+    expect(inventory.automatedDecisions).toEqual([]);
+  });
+
+  it("lists the decisions the app makes about a person by automated means alone", () => {
+    const scoring = {
+      categories: ["contact"],
+      logic: "A score of their answers",
+      significance: "Whether they are offered the newsletter",
+      consequences: "No newsletter",
+      profiling: true,
+      ground: "explicit-consent",
+    } as const;
+    const inventory = personalDataInventory({
+      registry: {
+        ...registry,
+        personalData: { ...registry.personalData, automatedDecisions: { scoring } },
+      } as Registry,
+      config,
+    });
+    expect(inventory.automatedDecisions).toEqual([{ name: "scoring", ...scoring }]);
   });
 
   it("lists what holds personal data, whose, where and how it is kept", () => {
@@ -403,7 +435,7 @@ describe("personalDataInventory", () => {
     expect(records).toContainEqual({ name: "dead-letters", where: "memory", keptFor: null });
     expect(security).toEqual({ masterKey: true, tenantKeys: true, forgetLedger: true });
     expect(findings.map(({ message }) => message)).toEqual([
-      "3 personal fields are in the default category, which declares no legal basis; declare categories in app/personal-data.ts and give each field one",
+      "3 personal fields are in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one",
     ]);
   });
 
@@ -427,7 +459,7 @@ describe("personalDataInventory", () => {
       config: { storage: memory() },
     });
     expect(findings.map(({ message }) => message)).toEqual([
-      "1 personal field is in the default category, which declares no legal basis; declare categories in app/personal-data.ts and give each field one",
+      "1 personal field is in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one",
     ]);
   });
 
