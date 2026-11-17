@@ -93,19 +93,19 @@ row; a policy that sent it to the shipping provider gave it to a system of its o
 key makes the event unreadable and does nothing to those.
 
 So a read model says which of its columns are copies, with `.personal()`, and whose, with
-`.person()`, and the runtime seals those columns under the person's key as it seals the events:
-the same key deletion that makes the event unreadable makes the row's copy unreadable, in the live
-table and in every backup of it, whatever the read model's projections do. The person's export
-carries those rows too, since the right of access covers everything kept about them and not only
-the log. A column that SQL must sort is kept in the clear on purpose, and then the read model must
-project `PersonalDataForgotten`, as must one that copies a personal field into a column it does not
-mark: the generator fails the build of one that does not. The runtime's own copies are its job:
-[snapshots](/concepts/long-streams/#snapshots), which hold an aggregate's state in the clear,
-go with the key, in the same transaction. The outside world is told too: a port that sends personal
-data out declares its [recipient](/guides/personal-data/#recipients), the runtime records whose data
-each call hands it, and tells it, through the port, to erase the contact at the mailing provider or
-the profile the search index holds, as [keeping an external index](/guides/calling-the-outside-world/#keeping-an-external-index)
-does on the way in.
+`.person()`, and the runtime seals those columns under the person's key as it seals the events: the
+same key deletion that makes the event unreadable makes the row's copy unreadable, in the live table
+and in every backup of it, whatever the read model's projections do. The person's export carries
+those rows too, since the right of access covers everything kept about them and not only the log. A
+column that SQL must sort is kept in the clear on purpose, and then the read model must project
+`PersonalDataForgotten`, or the generator fails the build; and every column that can hold text is
+marked one way or the other, so no copy sits in one nobody decided on. The runtime's own copies are
+its job: [snapshots](/concepts/long-streams/#snapshots), which hold an aggregate's state with its
+fields opened, go with the key, in the same transaction. The outside world is told too: a port that
+sends personal data out declares its [recipient](/guides/personal-data/#recipients), the runtime
+records whose data each call hands it, and tells it, through the port, to erase the contact at the
+mailing provider or the profile the search index holds, as [keeping an external
+index](/guides/calling-the-outside-world/#keeping-an-external-index) does on the way in.
 
 And every handler that reads a personal field reads it as `T | null`. The `null` is not a style
 choice: it is what makes the compiler find every place that assumed the data would always be
@@ -137,9 +137,10 @@ Bounda's choice sits with Axon's, with three differences. The key is per person,
 database as the events, so that forgetting is one transaction, an adapter's backup and restore
 keep the two together and a test needs no second store; what makes that safe is envelope
 encryption, the practice of AWS and Google Cloud KMS, Rails and Laravel: each key is stored
-wrapped under a master key the database never holds, read from the host's environment or kept in
-a KMS, so a copy of the database opens nothing without it. Keeping the keys in another store
-would split forgetting across two systems; deriving them from the master key would leave nothing
+wrapped under the tenant's key, kept in a store apart from the database and wrapped in turn under
+a master key read from the host's environment or kept in a KMS, so a copy of the database opens
+nothing without both. Keeping the persons' keys in another store would split forgetting across
+two systems; deriving them from the master key would leave nothing
 to destroy. The forgotten value is `null`, in the type as in the data, rather than a
 replacement the type hides. And forgetting is an event, because the read models and the policies
 have work to do when it happens.
@@ -155,11 +156,11 @@ have work to do when it happens.
   it is a copy of the data of everyone it holds, including a person forgotten after it was taken.
   With a [forget ledger](/guides/personal-data/#backups), a record of every forgetting kept
   outside the database, the app forgets those persons again when it starts on the restored copy,
-  so a restore is no longer outside; a backup that sits unrestored still is. Rotating the master
-  key and destroying the old one once those backups expire makes them unreadable as a whole.
-  Without a master key, a backup opens on its own.
+  so a restore is no longer outside; a backup that sits unrestored still is. Rotating the tenant's
+  key and retiring the older version once those backups expire makes them unreadable as a whole,
+  and forgetting a tenant makes what every copy of its database sealed unreadable at once.
 - **Errors.** A dead letter keeps the error a handler threw, its message and stack encrypted with
-  the key of the person the work names, so one that quotes a decrypted field is unreadable once
+  the keys of the person the work names, so one that quotes a decrypted field is unreadable once
   they are forgotten; what the stream and the stores keep of a failure is the error's class and
   code. A command's payload marked `personal` is encrypted where it is stored, scheduled or
   dead-lettered, and `forget` cancels it; a payload left unmarked is not.
@@ -175,6 +176,8 @@ have work to do when it happens.
 
 - [Personal data](/guides/personal-data/): the guide, with `personal`, `person`, `forget` and
   the read model's part.
+- [GDPR rights in Bounda](/reference/gdpr/): the regulation article by article, what Bounda
+  answers and what is left to the app.
 - [Your projection should not call anyone](/concepts/projections-call-no-one/), for why the
   data a projection shows has to be in the event.
 - Mathias Verraes,
