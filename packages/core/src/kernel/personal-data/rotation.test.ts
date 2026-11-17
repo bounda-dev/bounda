@@ -954,6 +954,7 @@ describe("the key rotation across instances", () => {
       previous: ["old"],
       pending: 2,
       completeAt: null,
+      reseal: null,
     });
     await rotation.sweep(clock.now());
     await rotation.sweep(clock.now());
@@ -962,6 +963,7 @@ describe("the key rotation across instances", () => {
       previous: ["old"],
       pending: 0,
       completeAt: clock.now().toISOString(),
+      reseal: null,
     });
   });
 });

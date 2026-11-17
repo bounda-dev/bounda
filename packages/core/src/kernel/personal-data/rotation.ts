@@ -11,6 +11,7 @@ import { digest } from "../read-model/fingerprint.ts";
 import { createLease } from "../shared/lease.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import type { CryptoKeyWrapper } from "./key-wrapper.ts";
+import type { PersonalDataReseal, ResealStatus } from "./reseal.ts";
 import type { TenantKeys } from "./tenant-keys.ts";
 import type { PersonalKeyWrapping } from "./wrapped-keys.ts";
 
@@ -62,6 +63,11 @@ export interface KeyRotationStatus {
    * When a pass last found none left, `null` while one is.
    */
   readonly completeAt: string | null;
+  /**
+   * Where the reseal under way, or the last, stands: `null` when the tenant's data was never
+   * resealed.
+   */
+  readonly reseal: ResealStatus | null;
 }
 
 export interface KeyRotation {
@@ -106,6 +112,11 @@ export interface CreateKeyRotationArgs {
   readonly tenantKeys: Pick<TenantKeys, "kids" | "rewrapUnderMaster" | "underPreviousMaster">;
   readonly master: Pick<CryptoKeyWrapper, "kid" | "previous">;
   readonly wrapping: Pick<PersonalKeyWrapping, "kids" | "wrapped">;
+  /**
+   * While a reseal replaces the persons' keys, the rotation replaces those it finds rather than
+   * rewrapping them.
+   */
+  readonly reseal?: Pick<PersonalDataReseal, "active" | "replacing" | "replace" | "status">;
   readonly clock: Clock;
   readonly logger: Logger;
 }
@@ -148,6 +159,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   tenantKeys,
   master,
   wrapping,
+  reseal,
   clock,
   logger,
 }) => {
@@ -182,7 +194,9 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   let rewrappedAny = false;
   let masterReported = false;
 
-  const report = (set: RotationSet): void => {
+  // A reseal says itself when the older versions can be retired.
+  const report = async (set: RotationSet): Promise<void> => {
+    if ((await reseal?.active()) === true) return;
     if (set.versions.length > 0) {
       logger.info(
         "no key is wrapped under an older version of the tenant's key any more; retire them",
@@ -228,7 +242,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   const complete = async (set: RotationSet, markedAt: number, at: number): Promise<void> => {
     completeUntil = at + ROTATION_CHECK_INTERVAL_MS;
     if (!(await checkpoints.compareAndSet(set.marker, markedAt, at))) return;
-    if (markedAt === 0) report(set);
+    if (markedAt === 0) await report(set);
     // The lease of another set lapsed at its position, as long ago as its mark was renewed.
     for (const { subscriber, position } of await checkpoints.list()) {
       if (
@@ -242,41 +256,51 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     }
   };
 
-  // The database's key while it is wrapped under anything but the version in force, `null` once
-  // it is not.
-  const indexDue = async (set: RotationSet): Promise<StoredPersonalKey | null> => {
-    const key = (await indexKeys?.get()) ?? null;
-    return key !== null && set.kids.includes(key.kid) ? key : null;
+  // The database's keys, in force and previous, wrapped under anything but the version in force.
+  const indexDue = async (set: RotationSet): Promise<readonly StoredPersonalKey[]> => {
+    const keys = [(await indexKeys?.get()) ?? null, (await indexKeys?.previous()) ?? null];
+    return keys.filter((key) => key !== null && set.kids.includes(key.kid)) as StoredPersonalKey[];
   };
 
-  // Resolves whether the database's key is wrapped under the version in force now; a failure is
-  // logged and pauses the rotation, which does not complete before it is rewrapped.
+  // Resolves whether the database's keys are wrapped under the version in force now; a failure is
+  // logged and pauses the rotation, which does not complete before they are rewrapped.
   const rewrapIndex = async (set: RotationSet): Promise<boolean> => {
-    const due = await indexDue(set);
-    if (due === null || indexKeys === undefined) return true;
-    try {
-      return await indexKeys.rewrap(due, await wrapping.wrapped(due));
-    } catch (error) {
-      logger.error("the database's key could not be rewrapped", { kid: due.kid, error });
-      pause.pause(clock.now().getTime());
-      return false;
+    if (indexKeys === undefined) return true;
+    let rewrapped = true;
+    for (const due of await indexDue(set)) {
+      try {
+        rewrapped = (await indexKeys.rewrap(due, await wrapping.wrapped(due))) && rewrapped;
+      } catch (error) {
+        logger.error("the database's key could not be rewrapped", { kid: due.kid, error });
+        pause.pause(clock.now().getTime());
+        return false;
+      }
     }
+    return rewrapped;
   };
 
-  // Resolves whether the store kept the hold; one it could not keep pauses the rotation.
+  // Resolves whether the store kept the hold; one it could not keep pauses the rotation. A key a
+  // reseal replaces is kept superseded rather than rewrapped.
   const rewrap = async (
     row: PersonalKeyRow,
     at: number,
+    replacing: boolean,
   ): Promise<{ readonly rewrapped: boolean; readonly kept: boolean }> => {
     try {
+      if (replacing && reseal !== undefined) {
+        return { rewrapped: await reseal.replace(row), kept: true };
+      }
       const to = await wrapping.wrapped(row.key);
       return { rewrapped: await keys.rewrap(row.person, row.key, to), kept: true };
     } catch (error) {
-      logger.error("personal key could not be rewrapped", {
-        personId: row.person,
-        kid: row.key.kid,
-        error,
-      });
+      logger.error(
+        replacing ? "personal key could not be replaced" : "personal key could not be rewrapped",
+        {
+          personId: row.person,
+          kid: row.key.kid,
+          error,
+        },
+      );
     }
     try {
       await keys.hold(row.person, row.key, holdAfter({ held: row.hold, at, failed: true }));
@@ -322,12 +346,13 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
       restUntil = Math.min(heldUntil.getTime(), at + ROTATION_CHECK_INTERVAL_MS);
     }
     if (markedAt > 0) await checkpoints.remove(set.marker);
+    const replacing = (await reseal?.replacing()) ?? false;
     let rewrapped = 0;
     let kept = true;
     for (const row of due) {
       // A lease that lapsed while this instance stalled was taken by another, which goes on.
       if (!(await lease.take(clock.now().getTime()))) break;
-      const outcome = await rewrap(row, at);
+      const outcome = await rewrap(row, at, replacing);
       if (outcome.rewrapped) rewrapped += 1;
       kept &&= outcome.kept;
     }
@@ -343,7 +368,7 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     const set = await currentSet();
     if ((await checkpoints.get(set.marker)) > 0) return { next: null, until: later };
     const [due] = await keys.listWrappedUnder({ kids: set.kids, releasedBy: now, limit: 1 });
-    if (due !== undefined || (await indexDue(set)) !== null) return { next: at, until: later };
+    if (due !== undefined || (await indexDue(set)).length > 0) return { next: at, until: later };
     const heldUntil = (await keys.nextHoldEnd({ kids: set.kids, after: now }))?.getTime() ?? null;
     return { next: heldUntil, until: Math.min(heldUntil ?? later, later) };
   };
@@ -378,26 +403,28 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     },
     status: async () => {
       const set = await currentSet();
-      const [pending, markedAt, index] = await Promise.all([
+      const [pending, markedAt, index, resealed] = await Promise.all([
         keys.countWrappedUnder({ kids: set.kids }),
         checkpoints.get(set.marker),
         indexDue(set),
+        reseal?.status() ?? null,
       ]);
       return {
         kid: set.kid,
         previous: set.versions,
-        pending: pending + (index === null ? 0 : 1),
+        pending: pending + index.length,
         completeAt: markedAt === 0 ? null : new Date(markedAt).toISOString(),
+        reseal: resealed,
       };
     },
     settled: async () => {
       const { kid, previous } = await tenantKeys.kids();
       const versions = previous.filter((each) => each !== kid);
       if (versions.length === 0) return true;
-      const index = (await indexKeys?.get()) ?? null;
+      const index = [(await indexKeys?.get()) ?? null, (await indexKeys?.previous()) ?? null];
       return (
         (await keys.countWrappedUnder({ kids: versions })) === 0 &&
-        (index === null || !versions.includes(index.kid ?? ""))
+        index.every((key) => key === null || !versions.includes(key.kid ?? ""))
       );
     },
     release: async () => {

@@ -2,7 +2,7 @@ import type { StoredPersonalField } from "../../adapter/storage/sealed-fields.ts
 import type { FindManyArgs, Table, Where } from "../../adapter/storage/table.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import {
-  indexOf,
+  indexesOf,
   type OpenedRow,
   openRow,
   type SealingContext,
@@ -47,12 +47,17 @@ export const storedWhere: StoredWhereFunction = async ({ context, where }) => {
         `Read model "${context.layout.readModel}": field "${name}" is sealed at rest and has no blind index, so where cannot match it; give it .index() or .unique()`,
       );
     }
-    const index = (given: unknown) =>
-      given === null || given === undefined
-        ? Promise.resolve(given)
-        : indexOf({ context, field, value: given });
+    // A value's index under each key the table may be under: one alone but during a reseal.
+    const indexes = (given: unknown): Promise<readonly string[]> =>
+      indexesOf({ context, field, value: given });
+    const blank = (given: unknown): given is null | undefined =>
+      given === null || given === undefined;
     if (!isOperators(field, value)) {
-      stored[field.indexField] = await index(value);
+      if (blank(value)) stored[field.indexField] = value;
+      else {
+        const all = await indexes(value);
+        stored[field.indexField] = all.length === 1 ? all[0] : { in: all };
+      }
       continue;
     }
     const operators: Record<string, unknown> = {};
@@ -62,10 +67,16 @@ export const storedWhere: StoredWhereFunction = async ({ context, where }) => {
           `Read model "${context.layout.readModel}": field "${name}" is sealed at rest, so where matches it by equality, ne or in, never by "${operator}"`,
         );
       }
-      operators[operator] =
-        operator === "in" && Array.isArray(given)
-          ? await Promise.all(given.map(index))
-          : await index(given);
+      if (operator === "in" && Array.isArray(given)) {
+        operators.in = (
+          await Promise.all(given.map((item) => (blank(item) ? [item] : indexes(item))))
+        ).flat();
+      } else if (blank(given)) operators[operator] = given;
+      else {
+        const all = await indexes(given);
+        if (all.length === 1) operators[operator] = all[0];
+        else operators.nin = all;
+      }
     }
     stored[field.indexField] = operators;
   }

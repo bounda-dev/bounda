@@ -217,6 +217,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             table: tables.personalKeys,
             persons: tables.persons,
             restrictions: tables.restrictions,
+            superseded: tables.supersededKeys,
             dialect: sqliteDialect,
           }),
           persons: createSqlPersonStore({

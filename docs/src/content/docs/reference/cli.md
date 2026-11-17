@@ -311,7 +311,10 @@ recipients
   kept it from being encrypted, which [`bounda rekey`](#bounda-rekey) does once it can.
 - the [backfill](/guides/personal-data/#marking-a-field-later) of personal data, the forget
   ledger's [reconciliation](/guides/personal-data/#what-the-runtime-does-with-it), the
-  [rotation](/guides/personal-data/#rotating-the-tenants-key) of the tenant's key, the
+  [rotation](/guides/personal-data/#rotating-the-tenants-key) of the tenant's key, followed, once
+  the tenant's data was [resealed](/guides/personal-data/#recovering-from-a-full-compromise), by a
+  `reseal` line with the step under way, since when and how many old keys it still keeps, or
+  `complete` and when; the
   [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
   letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
   The retention has a line for the app's, which forgets persons as a whole, under `default`, and
@@ -692,6 +695,21 @@ retired Wn3eT1aaK8sL0dXy: a backup with keys wrapped under them opens nothing pe
 `retire` refuses while a key is still wrapped under an older version, and until twice the key
 cache's time after the version in force was created.
 
+`rotate --reseal` [recovers from a full compromise](/guides/personal-data/#recovering-from-a-full-compromise)
+of the database, the tenant key store and the master key: besides the new version, the worker
+replaces every key that seals personal data and the database's key, seals everything again under
+the new ones and destroys the old. `bounda status` names the step under way on its `reseal` line;
+`rotate` and `retire` are refused until the old keys are destroyed, and `rotate --reseal` until it
+is complete.
+
+```bash
+bounda tenant-key rotate --tenant acme --reseal
+```
+
+```
+tenant key 4Hq8Vd0eN1xZ7cRm in force; the worker replaces every key that seals personal data and seals it all again under the new ones, which bounda status follows, then retire 7Kx0Qw9zR2bV1mPq with bounda tenant-key retire
+```
+
 `rewrap-master` serves a [rotation of the master key](/guides/personal-data/#rotating-the-master-key):
 it rewraps under the master key in force the key of every tenant the tenant key store holds,
 whether their apps run or not, and names each one it rewrapped. It exits with `2` while any tenant
@@ -706,7 +724,9 @@ bounda tenant-key rewrap-master
 rewrapped acme
 rewrapped globex
 2 tenant key(s) rewrapped; none is left under a previous master key: remove them
-``` Both take `--root`, `--config`, `--registry`,
+```
+
+Both take `--root`, `--config`, `--registry`,
 `--error-text`, `--actor` and `--tenant`. Exit codes: `0` done, `1` bad arguments, `2` the project
 could not be loaded or the call was refused.
 
@@ -765,7 +785,7 @@ or `app.as(actor).deadLetters`, `bounda personal-data export` is
 `personalDataExportJson(await app.as(actor).streamPersonalData(person))`,
 `bounda forget <person>` is `app.as(actor).forget(person, { categories })`,
 `bounda forget --from` is `app.forgetAgain(entries, { actor })`, `bounda forget-tenant` is
-`app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey()`
+`app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
 `rewrapTenantKeys({ config, env })` for `rewrap-master`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from

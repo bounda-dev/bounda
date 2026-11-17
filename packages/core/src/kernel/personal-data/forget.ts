@@ -137,6 +137,12 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
   // commands go before the dead letters: a worker giving one up writes its letter and settles its
   // claim together, so either this waits for it and then finds the letter, or the claim is lost
   // and the letter rolls back.
+  // The keys a reseal replaced by those asked go with them, and are named with them: a read model
+  // not rebuilt since, or a copy restored from before the reseal, holds them.
+  const replaced = await transaction.personalKeys.predecessors(
+    personId,
+    asked.map(({ key }) => key.fingerprint),
+  );
   const gone = new Set<string>();
   const expired = new Set<string>();
   let destroyed = 0;
@@ -159,7 +165,11 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
   // given after it in force; that key's category is then neither whole nor forgotten.
   const after = await transaction.personalKeys.list(personId);
   const inForce = after.filter(({ retainedSince }) => retainedSince === null);
-  const keep = inForce.map(({ key }) => key.fingerprint);
+  const inForceKeys = inForce.map(({ key }) => key.fingerprint);
+  const keep = [
+    ...inForceKeys,
+    ...(await transaction.personalKeys.predecessors(personId, inForceKeys)),
+  ];
   const inForceAfter = new Set(inForce.map(({ category }) => category));
   const retainedAfter = new Set(
     after.filter(({ retainedSince }) => retainedSince !== null).map(({ category }) => category),
@@ -177,7 +187,7 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
   const payload: PersonalDataForgottenPayload = {
     personId,
     reason: intention.reason,
-    whole: scope.kind === "whole" && keep.length === 0,
+    whole: scope.kind === "whole" && inForceKeys.length === 0,
     categories: named.filter(
       (category) =>
         gone.has(category) || (!retainedAfter.has(category) && !inForceAfter.has(category)),
@@ -186,7 +196,7 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
       ? []
       : named.filter((category) => retainedAfter.has(category))) as PersonalCategoryName[],
     expired: [...expired] as PersonalCategoryName[],
-    fingerprints: asked.map(({ key }) => key.fingerprint),
+    fingerprints: [...asked.map(({ key }) => key.fingerprint), ...replaced],
     cancelledCommands: cancelled.map(({ dedupeKey, command }) => ({
       commandId: scheduledCommandId(dedupeKey) ?? dedupeKey,
       type: command.type,

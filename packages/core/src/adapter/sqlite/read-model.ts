@@ -326,7 +326,7 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
             }) as Promise<readonly Row[]>,
         });
       }),
-    commit: async ({ subscriber, position }) => {
+    commit: async ({ subscriber, position, marks = {} }) => {
       try {
         await db.write(async (tx) => {
           await fenced(tx);
@@ -336,6 +336,7 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
           }
           const store = checkpointsIn(tx);
           await store.set(subscriber, position);
+          for (const [mark, value] of Object.entries(marks)) await store.set(mark, value);
           await store.remove(progress);
         });
         logger.info("read model rebuild committed", { readModel: name, table });

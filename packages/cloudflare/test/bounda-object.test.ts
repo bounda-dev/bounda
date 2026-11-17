@@ -714,7 +714,7 @@ describe("a Bounda Durable Object", () => {
     outage.projection = false;
     const status = await store.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 9, latest: 9 },
+      { database: "storage", scope: "storage", version: 10, latest: 10 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
     ]);
     expect(status.subscriberFailures).toContainEqual(

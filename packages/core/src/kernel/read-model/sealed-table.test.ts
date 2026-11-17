@@ -25,6 +25,9 @@ const fields: FieldsRecord = {
 const indexer: BlindIndexer = {
   epoch: "epoch-1",
   index: async ({ readModel, field, value }) => `${readModel}.${field}=${JSON.stringify(value)}`,
+  forTable: async () => indexer,
+  pinned: async () => ({ ...indexer, number: 1 }),
+  indexAll: async (args) => [await indexer.index(args)],
 };
 
 const keysOf = (retained: readonly string[] = []): SealingKeys => {
@@ -81,6 +84,34 @@ describe("storedWhere", () => {
     });
     expect(await storedWhere({ context, where: { email: null } })).toEqual({ email__index: null });
     expect(await storedWhere({ context, where: undefined })).toBeUndefined();
+  });
+
+  it("matches a value under each database key a reseal keeps, a table being under one of them", async () => {
+    const { context } = await setUp();
+    const twoKeys = {
+      ...context,
+      indexer: {
+        ...indexer,
+        indexAll: async (args: Parameters<BlindIndexer["indexAll"]>[0]) => [
+          `new:${await indexer.index(args)}`,
+          `old:${await indexer.index(args)}`,
+        ],
+      },
+    };
+    expect(await storedWhere({ context: twoKeys, where: { email: "a@x" } })).toEqual({
+      email__index: { in: ['new:customers.email="a@x"', 'old:customers.email="a@x"'] },
+    });
+    expect(
+      await storedWhere({ context: twoKeys, where: { email: { in: ["a@x", null] } } }),
+    ).toEqual({
+      email__index: { in: ['new:customers.email="a@x"', 'old:customers.email="a@x"', null] },
+    });
+    expect(
+      await storedWhere({ context: twoKeys, where: { email: { ne: "a@x" }, born: { ne: null } } }),
+    ).toEqual({
+      email__index: { nin: ['new:customers.email="a@x"', 'old:customers.email="a@x"'] },
+      born__index: { ne: null },
+    });
   });
 
   it("refuses a sealed field without a blind index, and a range on one with it", async () => {
@@ -172,6 +203,14 @@ describe("sealedClient", () => {
     expect(await blindIndex("email", "a@x")).toBe('customers.email="a@x"');
     await expect(blindIndex("note", "x")).rejects.toThrow(
       'Read model "customers": field "note" has no blind index; only a field marked .personal() with .index() or .unique() has one',
+    );
+    const blindIndexes = sealedClient({ context, client: storage.client }).blindIndexes as (
+      field: string,
+      value: unknown,
+    ) => Promise<readonly string[]>;
+    expect(await blindIndexes("email", "a@x")).toEqual(['customers.email="a@x"']);
+    await expect(blindIndexes("note", "x")).rejects.toThrow(
+      'Read model "customers": field "note" has no blind index',
     );
   });
 });

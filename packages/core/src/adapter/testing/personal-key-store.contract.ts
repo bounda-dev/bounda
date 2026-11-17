@@ -522,5 +522,145 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       ).toHaveLength(5);
       expect(await store.releaseHolds()).toBe(1);
     });
+
+    const AT = "2026-03-01T00:00:00.000Z";
+    const superseding = (name: string, kid = "k-new") => ({ ...wrapped(name, kid), at: AT });
+
+    it("supersedes a key the person still holds, in force or retained, finding the old one beside the new", async () => {
+      await store.add("c-1", D, stored("old"));
+      await store.add("c-1", "invoices", stored("kept"));
+      const kept = { since: "2026-02-01T00:00:00.000Z", lastActiveAt: "2026-01-15T00:00:00.000Z" };
+      await store.retain("c-1", "f-kept", kept);
+      expect(await store.supersede("c-1", stored("old"), superseding("new"))).toBe(true);
+      expect(await store.supersede("c-1", stored("kept"), superseding("kept-new"))).toBe(true);
+      expect(await store.get("c-1", D)).toEqual(wrapped("new", "k-new"));
+      expect((await store.list("c-1")).map(({ key }) => key.fingerprint)).toEqual([
+        "f-kept-new",
+        "f-new",
+      ]);
+      expect(await store.find("c-1", "f-old")).toEqual({
+        category: D,
+        key: stored("old"),
+        retainedSince: null,
+        lastActiveAt: null,
+        successor: "f-new",
+      });
+      expect(await store.find("c-1", "f-kept")).toEqual({
+        category: "invoices",
+        key: stored("kept"),
+        retainedSince: kept.since,
+        lastActiveAt: kept.lastActiveAt,
+        successor: "f-kept-new",
+      });
+      expect(await store.find("c-1", "f-kept-new")).toEqual({
+        category: "invoices",
+        key: wrapped("kept-new", "k-new"),
+        retainedSince: kept.since,
+        lastActiveAt: kept.lastActiveAt,
+      });
+      expect(
+        (await store.listMany(["c-1"]))
+          .get("c-1")
+          ?.map(({ key, successor }) => [key.fingerprint, successor ?? null])
+          .sort(),
+      ).toEqual(
+        [
+          ["f-kept", "f-kept-new"],
+          ["f-kept-new", null],
+          ["f-new", null],
+          ["f-old", "f-new"],
+        ].sort(),
+      );
+      expect(await store.countSuperseded()).toBe(2);
+      expect([...(await store.kids())].sort()).toEqual(["k-new", null].sort());
+      expect(await store.predecessors("c-1", ["f-new", "f-kept-new", "f-none"])).toEqual([
+        "f-kept",
+        "f-old",
+      ]);
+    });
+
+    it("never supersedes a key forgotten or replaced since it was read", async () => {
+      await store.add("c-1", D, stored("old"));
+      expect(
+        await store.supersede("c-1", { ...stored("old"), key: "stale" }, superseding("a")),
+      ).toBe(false);
+      expect(await store.supersede("c-2", stored("old"), superseding("b"))).toBe(false);
+      expect(await store.supersede("c-1", stored("old"), superseding("new"))).toBe(true);
+      expect(await store.supersede("c-1", stored("old"), superseding("again"))).toBe(false);
+      expect(await store.get("c-1", D)).toEqual(wrapped("new", "k-new"));
+    });
+
+    it("keeps each superseded key naming the key in force when one supersedes the next", async () => {
+      await store.add("c-1", D, stored("1"));
+      await store.supersede("c-1", stored("1"), superseding("2"));
+      await store.supersede("c-1", wrapped("2", "k-new"), superseding("3", "k-third"));
+      expect((await store.find("c-1", "f-1"))?.successor).toBe("f-3");
+      expect((await store.find("c-1", "f-2"))?.successor).toBe("f-3");
+      expect(await store.predecessors("c-1", ["f-3"])).toEqual(["f-1", "f-2"]);
+    });
+
+    it("forgets the superseded keys with the key in their place, and all of them when it clears", async () => {
+      await store.add("c-1", D, stored("old"));
+      await store.add("c-2", D, stored("other"));
+      await store.supersede("c-1", stored("old"), superseding("new"));
+      await store.supersede("c-2", stored("other"), superseding("other-new"));
+      expect(await store.remove("c-1", "f-new")).toBe(true);
+      expect(await store.find("c-1", "f-old")).toBeNull();
+      expect(await store.predecessors("c-1", ["f-new"])).toEqual([]);
+      expect(await store.countSuperseded()).toBe(1);
+      expect(await store.clear()).toBe(1);
+      expect(await store.find("c-2", "f-other")).toBeNull();
+      expect(await store.countSuperseded()).toBe(0);
+    });
+
+    it("destroys every superseded key, keeping its fingerprint only", async () => {
+      await store.add("c-1", D, stored("old"));
+      await store.supersede("c-1", stored("old"), superseding("new"));
+      expect(await store.destroySuperseded()).toBe(1);
+      expect(await store.destroySuperseded()).toBe(0);
+      expect(await store.countSuperseded()).toBe(0);
+      expect(await store.find("c-1", "f-old")).toBeNull();
+      expect(await store.kids()).toEqual(["k-new"]);
+      expect(await store.predecessors("c-1", ["f-new"])).toEqual(["f-old"]);
+      expect(await store.find("c-1", "f-new")).not.toBeNull();
+    });
+
+    it("keeps the previous key of the blind indexes beside the one in force once superseded, until dropped", async () => {
+      const at = new Date("2026-01-01T00:00:00.000Z");
+      const first = { key: "a2V5", fingerprint: "ZnA=", kid: "k-1" };
+      const next = { key: "bmV4dA==", fingerprint: "bnA=", kid: "k-2" };
+      await indexKeys.add(first, at);
+      expect(await indexKeys.previous()).toBeNull();
+      expect(
+        await indexKeys.supersede(
+          { ...first, key: "c3RhbGU=" },
+          next,
+          { key: "eA==", kid: "k-2" },
+          at,
+        ),
+      ).toBe(false);
+      expect(await indexKeys.supersede(first, next, { key: "eA==", kid: "k-2" }, at)).toBe(true);
+      expect(await indexKeys.get()).toEqual(next);
+      const previous = { key: "eA==", fingerprint: "ZnA=", kid: "k-2" };
+      expect(await indexKeys.previous()).toEqual(previous);
+      expect(
+        await indexKeys.supersede(
+          next,
+          { ...next, fingerprint: "b3Q=" },
+          { key: "eQ==", kid: "k-2" },
+          at,
+        ),
+      ).toBe(false);
+      expect(await indexKeys.rewrap(previous, { key: "eg==", kid: "k-3" })).toBe(true);
+      expect(await indexKeys.previous()).toEqual({ ...previous, key: "eg==", kid: "k-3" });
+      expect(await indexKeys.dropPrevious(previous)).toBe(false);
+      expect(await indexKeys.dropPrevious({ ...previous, key: "eg==", kid: "k-3" })).toBe(true);
+      expect(await indexKeys.previous()).toBeNull();
+      expect(await indexKeys.get()).toEqual(next);
+      await indexKeys.supersede(next, first, { key: "eA==", kid: "k-2" }, at);
+      await indexKeys.clear();
+      expect(await indexKeys.get()).toBeNull();
+      expect(await indexKeys.previous()).toBeNull();
+    });
   });
 };

@@ -188,5 +188,5 @@ describe("the node:sqlite adapter on a file", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

@@ -42,12 +42,32 @@ describe("createSealingKeyRing", () => {
     expect(await ring.forWrite("ana", "default", null)).toBe(inForce);
     expect(await ring.forWrite("ana", "invoices", null)).toBe(newer);
     expect(await ring.forWrite("bo", "invoices", null)).toBe(older);
+    // A person without a key gets one no one keeps, as does a row that names nobody.
     const disposable = await ring.forWrite("cy", "invoices", null);
     expect(disposable).not.toBe(inForce);
-    expect(await ring.forWrite(null, "default", null)).toBe(disposable);
+    const nobody = await ring.forWrite(null, "default", null);
+    expect([inForce, newer, older]).not.toContain(nobody);
+    expect(await ring.forWrite(null, "default", null)).toBe(nobody);
     expect(await ring.forOpen("ana", older.fingerprint)).toBe(older);
     expect(await ring.forOpen("ana", "gone")).toBeNull();
     expect(fetched).toEqual(["ana", "bo", "cy"]);
+  });
+
+  it("opens under a key a reseal superseded, and never writes under one", async () => {
+    const replaced = await key();
+    const inForce = await key();
+    const ring = createSealingKeyRing({
+      keys: eachPerson(() => [
+        held("default", { ...replaced, successor: inForce.fingerprint }),
+        held("default", inForce),
+      ]),
+      fetching: true,
+    });
+    expect(await ring.forWrite("ana", "default", null)).toBe(inForce);
+    expect((await ring.forOpen("ana", replaced.fingerprint))?.fingerprint).toBe(
+      replaced.fingerprint,
+    );
+    expect(await ring.kept("ana", "default")).toBe(false);
   });
 
   it("throws for a person it has not fetched, naming them, until it fetches them", async () => {
@@ -160,6 +180,7 @@ describe("a ring's reads", () => {
     const asked: string[][] = [];
     const ring = createSealingKeyRing({
       keys: {
+        discarded: () => createDisposableKey(),
         heldAllOf: async (persons) => {
           asked.push([...persons]);
           return new Map(

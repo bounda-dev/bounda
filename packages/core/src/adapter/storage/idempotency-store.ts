@@ -64,6 +64,10 @@ export interface ListAllIdempotencyRecordsArgs {
    * The kernel clock's time: a record expired by then is left out.
    */
   readonly now: Date;
+  /**
+   * Only the records filed after this key, which pages through them while others come and go.
+   */
+  readonly after?: string;
   readonly limit?: number;
   readonly offset?: number;
 }
@@ -75,6 +79,20 @@ export interface EraseIdempotencyRecordArgs {
    * caller's key itself, before keys were filed by their HMAC.
    */
   readonly filed?: string;
+  /**
+   * The kernel clock's time: a record expired by then is left as it is.
+   */
+  readonly now: Date;
+}
+
+export interface ResealIdempotencyRecordArgs {
+  readonly key: string;
+  /**
+   * The answer as it was read, which the record must still hold.
+   */
+  readonly from: StoredAnswer;
+  readonly answer: StoredAnswer;
+  readonly persons: readonly KeyedPerson[];
   /**
    * The kernel clock's time: a record expired by then is left as it is.
    */
@@ -122,6 +140,12 @@ export interface IdempotencyStore {
    * calls it, for answers sealed under other marks or filed by the caller's key.
    */
   erase(args: EraseIdempotencyRecordArgs): Promise<void>;
+  /**
+   * Writes the record under `key` again with `answer` and `persons`, only while it holds `from`
+   * and has not expired: an answer erased or replaced meanwhile is left as it is. Only the runtime
+   * calls it, to seal answers under new keys.
+   */
+  reseal(args: ResealIdempotencyRecordArgs): Promise<void>;
   /**
    * Removes the records expired by `now`, and resolves to how many.
    */

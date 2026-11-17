@@ -36,7 +36,7 @@ export interface IntendArgs {
   /**
    * Where the keys the person holds now are read, outside any transaction.
    */
-  readonly keys: Pick<PersonalKeyStore, "list">;
+  readonly keys: Pick<PersonalKeyStore, "list" | "predecessors">;
 }
 
 export interface ForgetIntentions {
@@ -143,7 +143,9 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
       const forgottenAt = clock.now().toISOString();
       if (ledger === null) return { eventId, forgottenAt, reason };
       const covered = coveredBy(scope, await keys.list(personId));
-      const fingerprints = covered.map(({ key }) => key.fingerprint);
+      const held = covered.map(({ key }) => key.fingerprint);
+      // With the keys a reseal replaced by them, which a copy restored from before it holds.
+      const fingerprints = [...held, ...(await keys.predecessors(personId, held))];
       await record({
         personId,
         categories: askedFor(scope, covered),

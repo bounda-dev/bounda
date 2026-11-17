@@ -33,6 +33,7 @@ export type {
   ForgetLedgerLag,
   PersonalDataBackfillLag,
   RebuildReadModelOptions,
+  RotateTenantKeyOptions,
   RunUntilIdleOptions,
   RunUntilIdleResult,
   TenantKeyVersions,
@@ -122,6 +123,8 @@ export type {
   ForgetLedgerReconciliationStatus,
 } from "./kernel/personal-data/reconciliation.ts";
 export { FORGET_LEDGER_GRACE_MS } from "./kernel/personal-data/reconciliation.ts";
+export type { ResealStatus, ResealStep } from "./kernel/personal-data/reseal.ts";
+export { RESEAL_SWITCH_MS } from "./kernel/personal-data/reseal.ts";
 export type { IncludeRestrictedOptions } from "./kernel/personal-data/restricted-reads.ts";
 export type {
   CategoryRetentionStatus,

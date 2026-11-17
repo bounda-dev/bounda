@@ -27,6 +27,7 @@ import { personOfEvent } from "../personal-data/persons.ts";
 import type { ForgetLedgerReconciliation } from "../personal-data/reconciliation.ts";
 import { REDACTION_SCRUB_COMMAND, type RedactionScrubPayload } from "../personal-data/redaction.ts";
 import { restrictedPersonOf } from "../personal-data/refusal.ts";
+import type { PersonalDataReseal } from "../personal-data/reseal.ts";
 import {
   LIFT_RESTRICTION_COMMAND,
   type LiftRestrictionPayload,
@@ -103,6 +104,10 @@ export interface CreateScheduledCommandWorkerArgs {
    * Swept on every pass; absent without `runtime.personalData.keyWrapper`.
    */
   readonly rotation?: KeyRotation | undefined;
+  /**
+   * Swept on every pass; absent without `runtime.personalData.keyWrapper`.
+   */
+  readonly reseal?: PersonalDataReseal | undefined;
   /**
    * Swept on every pass, which reconciles only when one is due; absent without
    * `runtime.personalData.forgetLedger`.
@@ -226,6 +231,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   retention,
   letterRetention,
   rotation,
+  reseal,
   reconciliation,
   intentions,
   backfill,
@@ -687,6 +693,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     await Promise.all([
       retention?.restored(first),
       rotation?.restored(first),
+      reseal?.restored(),
       reconciled ? undefined : reconciliation?.restored(first),
       backfill?.restored(first),
     ]);
@@ -743,6 +750,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       await purgeExpiredKeys(claimedAt);
       const forgotten = (await retention?.sweep(claimedAt)) ?? 0;
       const rewrapped = (await rotation?.sweep(claimedAt)) ?? 0;
+      const resealed = (await reseal?.sweep(claimedAt)) ?? 0;
       const forgottenAgain = (await reconciliation?.sweep(claimedAt)) ?? 0;
       // A forgetting the ledger holds and the database does not: the database went back, though
       // the generation did not show it, as for a copy taken just before a forget.
@@ -759,6 +767,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         due.length +
         forgotten +
         rewrapped +
+        resealed +
         forgottenAgain +
         purged +
         backfilled +
@@ -791,6 +800,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         backfill?.release(),
         retention?.release(),
         rotation?.release(),
+        reseal?.release(),
         letterRetention?.release(),
       ]);
     },

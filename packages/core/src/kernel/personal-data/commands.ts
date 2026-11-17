@@ -1,7 +1,14 @@
 import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { isRecord } from "../shared/merge-fields.ts";
-import { isSealed, type PersonalKey, refuseSealed, seal, unseal } from "./crypto.ts";
+import {
+  heldFingerprint,
+  isSealed,
+  type PersonalKey,
+  refuseSealed,
+  seal,
+  unseal,
+} from "./crypto.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import type { PersonalKeys } from "./wrapped-keys.ts";
 
@@ -143,8 +150,8 @@ export const openCommandPayload: OpenCommandPayloadFunction = async ({
     if (key === null) forgotten = true;
     else {
       const held: KeyedPerson = key.retained
-        ? { person, fingerprint: key.fingerprint, retained: true }
-        : { person, fingerprint: key.fingerprint };
+        ? { person, fingerprint: heldFingerprint(key), retained: true }
+        : { person, fingerprint: heldFingerprint(key) };
       opened.set(keyedPersonId(held), held);
     }
     unsealed[field] = await unseal({ key, sealed: value });

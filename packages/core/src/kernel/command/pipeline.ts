@@ -214,6 +214,9 @@ interface Idempotency {
   readonly key: string;
   // What the store files the key under: its HMAC, or the key itself in an app without keys.
   readonly filed: string;
+  // Where it may be filed already: `filed`, then under the database's previous key while a reseal
+  // keeps it, so an answer remembered before the reseal is still found.
+  readonly filings: readonly string[];
   readonly fingerprint: string;
 }
 
@@ -575,6 +578,12 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     commands.add(1, { [ATTRIBUTES.commandType]: type, [ATTRIBUTES.outcome]: outcome });
   };
 
+  const filingsOf = async (key: string): Promise<Pick<Idempotency, "filed" | "filings">> => {
+    if (storage.atRest === null) return { filed: key, filings: [key] };
+    const filings = await storage.atRest.lookups(key);
+    return { filed: filings[0] ?? key, filings };
+  };
+
   // `rejected` answers a rejection inside the command's span, where its log line belongs.
   const send = async <Rejected>(
     {
@@ -607,7 +616,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         ? undefined
         : {
             key,
-            filed: storage.atRest === null ? key : await storage.atRest.lookup(key),
+            ...(await filingsOf(key)),
             fingerprint: await fingerprintOf({
               type,
               payload,
@@ -805,8 +814,15 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       run: async (span): Promise<DispatchResult | Rejected> => {
         const replay = async (): Promise<DispatchResult | Rejected | null> => {
           if (idempotency === undefined) return null;
-          const { filed } = idempotency;
-          let found = await stores.idempotencyStore.get({ key: filed, now: clock.now() });
+          const { filed, filings } = idempotency;
+          const filedAnywhere = async () => {
+            for (const at of filings) {
+              const record = await stores.idempotencyStore.get({ key: at, now: clock.now() });
+              if (record !== null) return record;
+            }
+            return null;
+          };
+          let found = await filedAnywhere();
           // A key filed by itself, as before keys were filed by their HMAC, is found once it is
           // filed under it.
           if (found === null && !earlierAnswers.settled()) {

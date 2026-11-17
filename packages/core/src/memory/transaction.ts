@@ -22,6 +22,7 @@ import type { SnapshotStore } from "../adapter/storage/snapshot-store.ts";
 import type { StoreEntries } from "./entries.ts";
 import type { MemoryEventStore } from "./event-store.ts";
 import { blankPerson } from "./person-store.ts";
+import { SUPERSEDED_ENTRY } from "./personal-key-store.ts";
 import type { KeptRecipientStore } from "./recipient-store.ts";
 
 export interface CreateMemoryStorageTransactionArgs {
@@ -137,6 +138,25 @@ const trackedPersonalKeys = (
   const tracked = trackedBy(undos);
   const id = (person: string, fingerprint: string): string =>
     keyedPersonId({ person, fingerprint });
+  const supersededId = (person: string, fingerprint: string): string =>
+    `${SUPERSEDED_ENTRY}${id(person, fingerprint)}`;
+  // Several entries at once, each put back as `tracked` puts one back.
+  const trackedAll = async <Result>(
+    ids: readonly string[],
+    write: () => Promise<Result>,
+  ): Promise<Result> => {
+    const before = ids.map((at) => entries.read(at));
+    const written = write();
+    ids.forEach((at, index) => {
+      const after = entries.read(at);
+      undos.push(() => entries.putBack(at, before[index], after));
+    });
+    return written;
+  };
+  const supersededIds = async (person: string, fingerprint: string): Promise<string[]> =>
+    (await personalKeys.predecessors(person, [fingerprint])).map((old) =>
+      supersededId(person, old),
+    );
   return {
     get: (person, category) => personalKeys.get(person, category),
     find: (person, fingerprint) => personalKeys.find(person, fingerprint),
@@ -146,10 +166,33 @@ const trackedPersonalKeys = (
       tracked(entries, id(person, key.fingerprint), () => personalKeys.add(person, category, key)),
     remove: async (person, fingerprint) => {
       removed.add(id(person, fingerprint));
-      return tracked(entries, id(person, fingerprint), () =>
-        personalKeys.remove(person, fingerprint),
+      return trackedAll(
+        [id(person, fingerprint), ...(await supersededIds(person, fingerprint))],
+        () => personalKeys.remove(person, fingerprint),
       );
     },
+    supersede: async (person, from, to) => {
+      removed.add(id(person, from.fingerprint));
+      return trackedAll(
+        [
+          id(person, from.fingerprint),
+          id(person, to.fingerprint),
+          supersededId(person, from.fingerprint),
+          ...(await supersededIds(person, from.fingerprint)),
+        ],
+        () => personalKeys.supersede(person, from, to),
+      );
+    },
+    predecessors: (person, fingerprints) => personalKeys.predecessors(person, fingerprints),
+    countSuperseded: () => personalKeys.countSuperseded(),
+    destroySuperseded: async () =>
+      trackedAll(
+        entries
+          .list()
+          .map(([at]) => at)
+          .filter((at) => at.startsWith(SUPERSEDED_ENTRY)),
+        () => personalKeys.destroySuperseded(),
+      ),
     retain: async (person, fingerprint, args) => {
       removed.add(id(person, fingerprint));
       return tracked(entries, id(person, fingerprint), () =>
@@ -341,6 +384,8 @@ const createUndoLog = ({
           tracked(entries.idempotencyStore, args.filed ?? args.key, () =>
             tracked(entries.idempotencyStore, args.key, () => idempotencyStore.erase(args)),
           ),
+        reseal: (args) =>
+          tracked(entries.idempotencyStore, args.key, () => idempotencyStore.reseal(args)),
         forget: async (person, keep) => {
           const named = entries.idempotencyStore
             .list()

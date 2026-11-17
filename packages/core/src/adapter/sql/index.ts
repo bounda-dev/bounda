@@ -66,7 +66,10 @@ export type {
   CreateSqlPersonalKeyStoreArgs,
   CreateSqlPersonalKeyStoreFunction,
 } from "./personal-key-store.ts";
-export { createSqlPersonalKeyStore } from "./personal-key-store.ts";
+export {
+  createSqlPersonalKeyStore,
+  supersededKeysTableStatements,
+} from "./personal-key-store.ts";
 export type { ExistingColumn } from "./read-model-schema.ts";
 export {
   columnsOf,

@@ -11,6 +11,7 @@ import {
   type NotifiedRecipient,
   type PersonalCategoryName,
   type RewrappedTenantKeys,
+  type RotateTenantKeyOptions,
   rewrapTenantKeys,
   TENANT_CHECK_INTERVAL_MS,
   TENANT_FORGOTTEN_EVENT,
@@ -82,8 +83,9 @@ describe("the tenant's client calls", () => {
       readonly eventId: string;
     }>();
     expectTypeOf<BoundaClient["rotateTenantKey"]>().toEqualTypeOf<
-      () => Promise<TenantKeyVersions>
+      (options?: RotateTenantKeyOptions) => Promise<TenantKeyVersions>
     >();
+    expectTypeOf<RotateTenantKeyOptions>().toEqualTypeOf<{ readonly reseal?: boolean }>();
     expectTypeOf<TenantKeyVersions>().toEqualTypeOf<{
       readonly kid: string;
       readonly previous: readonly string[];

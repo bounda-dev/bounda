@@ -165,4 +165,13 @@ export interface ReadClient<
     field: Field,
     value: NonNullable<Row[Field]>,
   ): Promise<string>;
+  /**
+   * Every blind index `value` may have in `field`: one, or two while a reseal moves the table to
+   * the database's new key, so `WHERE email__index IN (?, ?)` finds the row whichever it is under
+   * when the statement runs. Throws `ConfigurationError` for a field without one.
+   */
+  blindIndexes<Field extends LookupField<Row, Types>>(
+    field: Field,
+    value: NonNullable<Row[Field]>,
+  ): Promise<readonly string[]>;
 }

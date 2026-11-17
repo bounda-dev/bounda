@@ -176,6 +176,12 @@ export const tableContract: TableContractFunction = ({ create }) => {
       expect(await ids({ status: { in: ["paid", "cancelled"] } })).toEqual(["b", "d"]);
       expect(await ids({ paidAt: { in: [day(1), day(3)] } })).toEqual(["a", "c"]);
       expect(await ids({ status: { in: [] } })).toEqual([]);
+      // `nin`, which only the runtime writes, for a blind index under two keys: as `ne`, it keeps
+      // the rows without a value.
+      const none = (values: readonly unknown[]) => ({ nin: values }) as never;
+      expect(await ids({ paidAt: none([day(1), day(3)]) })).toEqual(["b", "d"]);
+      expect(await ids({ status: none(["paid", "cancelled"]) })).toEqual(["a", "c"]);
+      expect(await ids({ status: none([]) })).toEqual(["a", "b", "c", "d"]);
       expect(await ids({ total: { gt: undefined, lt: 20 } })).toEqual(["a"]);
       expect(await table.findOne({ total: { gt: 30 } })).toEqual(
         row("d", { total: 40, status: "cancelled" }),

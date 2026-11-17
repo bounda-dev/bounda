@@ -15,6 +15,7 @@ import {
 } from "../../kernel/personal-data/forget-ledger.ts";
 import type { KeyWrapperDefinition } from "../../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
+import { RESEAL_SWITCH_MS } from "../../kernel/personal-data/reseal.ts";
 import {
   defineTenantKeyStore,
   type TenantKeySource,
@@ -35,6 +36,7 @@ import { expectRedacted } from "../../testing/expect-redacted.ts";
 import { type Adapter, isAdapter } from "../adapter.ts";
 import type { AdapterDefinition } from "../adapter-definition.ts";
 import type { ForgetLedger } from "../storage/forget-ledger.ts";
+import type { InspectedStore } from "../storage/inspection.ts";
 import type { Table } from "../storage/table.ts";
 
 /**
@@ -828,6 +830,63 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       "forgets again, at the worker's next pass, whoever a restore under the running app brings back",
       async () => {
         await scenario("hot");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    // Every fingerprint of a key `store` keeps.
+    const fingerprintsOf = async (storage: Adapter, store: InspectedStore) =>
+      new Set(
+        (await storage.inspect())
+          .filter((table) => table.store === store)
+          .flatMap(({ rows }) => rows.map(({ fingerprint }) => String(fingerprint))),
+      );
+
+    it(
+      "reseals every person's data under new keys, and a copy from before forgets again whoever was forgotten since",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        for (const person of ["ana", "bob", "dan"]) await write(first, person);
+        await target.backUp();
+        const storage = openedAs(first.app.config.storage);
+        const old = await fingerprintsOf(storage, "personalKeys");
+        await first.app.rotateTenantKey({ reseal: true });
+        await first.app.runUntilIdle();
+        clock.advance(RESEAL_SWITCH_MS);
+        await first.app.runUntilIdle();
+        expect((await first.app.status()).keyRotation?.reseal).toMatchObject({ superseded: 0 });
+        // No old key is named anywhere but in the record of what superseded what.
+        for (const { name, store, rows } of await storage.inspect()) {
+          if (store === "supersededKeys") {
+            expect(rows.every((row) => row.key === null)).toBe(true);
+            continue;
+          }
+          const text = JSON.stringify(rows);
+          expect(
+            [...old].filter((fingerprint) => text.includes(fingerprint)),
+            name,
+          ).toEqual([]);
+        }
+        await expectReadable(first, "dan");
+        await expectReadable(first, "ana");
+        const bobForgotten = (await first.app.forget("bob")).eventIds;
+        await first.app.runUntilIdle();
+        await expectForgottenIn(first, "bob");
+        await first.app.stop();
+
+        // The copy holds the keys the reseal replaced: the ledger names them with bob's.
+        const restored = await start(
+          await target.restore(),
+          target.forgetLedger,
+          BEFORE_ROTATION,
+          clock,
+        );
+        await restored.app.runUntilIdle();
+        expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
+        await expectForgottenIn(restored, "bob");
+        await expectReadable(restored, "dan");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

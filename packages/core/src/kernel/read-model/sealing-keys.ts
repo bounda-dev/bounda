@@ -65,12 +65,13 @@ const chosen = (
 };
 
 export interface SealingKeyRing extends SealingKeys {
-  // Fetches every key of these persons the ring does not hold yet.
+  // Fetches every key of these persons the ring does not hold yet, with those a reseal superseded:
+  // a value it has not sealed again yet opens under the old key.
   fetch(persons: Iterable<string>): Promise<void>;
 }
 
 export interface CreateSealingKeyRingArgs {
-  readonly keys: Pick<PersonalKeys, "heldAllOf">;
+  readonly keys: Pick<PersonalKeys, "heldAllOf" | "discarded">;
   // Fetches what it lacks on its own instead of throwing `KeysMissingError`: for reads outside any
   // transaction.
   readonly fetching: boolean;
@@ -98,18 +99,22 @@ export const createSealingKeyRing: CreateSealingKeyRingFunction = ({ keys, fetch
     await fetch([person]);
     return held.get(person) ?? [];
   };
+  // What the person holds in force or kept, without the keys a reseal superseded.
+  const own = async (person: string): Promise<readonly CategoryKey[]> =>
+    (await of(person)).filter(({ key }) => key.successor === undefined);
   return {
     fetch,
     forWrite: async (person, category, event) => {
-      const key = person === null ? null : chosen(await of(person), person, category, event);
-      if (key !== null) return key;
-      disposable ??= createDisposableKey();
-      return disposable;
+      if (person === null) {
+        disposable ??= createDisposableKey();
+        return disposable;
+      }
+      return chosen(await own(person), person, category, event) ?? keys.discarded(person);
     },
     forOpen: async (person, fingerprint) =>
       (await of(person)).find(({ key }) => key.fingerprint === fingerprint)?.key ?? null,
     kept: async (person, category) =>
-      (await of(person)).some((held) => held.category === category && held.retainedSince !== null),
+      (await own(person)).some((held) => held.category === category && held.retainedSince !== null),
     categoryOf: async (person, fingerprint) =>
       (await of(person)).find(({ key }) => key.fingerprint === fingerprint)?.category ?? null,
   };
