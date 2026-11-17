@@ -1496,6 +1496,8 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     const before = JSON.parse(
       (await cli(["status", ...config, "--tenant", tenant, "--json"], fixture)).stdout,
     ).tenant.kid as string;
+    const rotated = await cli(["tenant-key", "rotate", ...config, "--tenant", tenant], fixture);
+    const [, between] = /^tenant key (\S+) in force;/.exec(rotated.stdout) ?? [];
     const resealed = await cli(
       ["tenant-key", "rotate", ...config, "--tenant", tenant, "--reseal"],
       fixture,
@@ -1504,7 +1506,7 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     expect(resealed.code).toBe(EXIT_OK);
     const [, kid] = /^tenant key (\S+) in force;/.exec(resealed.stdout) ?? [];
     expect(resealed.stdout).toBe(
-      `tenant key ${kid} in force; the worker replaces every key that seals personal data and seals it all again under the new ones, which bounda status follows, then retire ${before} with bounda tenant-key retire\n`,
+      `tenant key ${kid} in force; the worker replaces every key that seals personal data and seals it all again under the new ones, which bounda status follows, then retire ${between}, ${before} with bounda tenant-key retire\n`,
     );
     const status = await cli(["status", ...config, "--tenant", tenant], fixture);
     expect(status.stdout).toMatch(/^reseal: replacing since \S+$/m);
