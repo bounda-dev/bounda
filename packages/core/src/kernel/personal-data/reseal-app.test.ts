@@ -61,6 +61,29 @@ const registry = {
     },
   },
   readModels: {
+    // Sealed without a blind index: rebuilt all the same.
+    notes: {
+      view: {
+        fields: ({ f }: FieldsArgs) => ({
+          customerId: f.string().primaryKey().person(),
+          email: f.string().personal(),
+        }),
+      },
+      projections: {
+        customer: {
+          customerRegistered: {
+            project: ({
+              event,
+              table,
+            }: {
+              event: { aggregateId: string; payload: { email: string | null } };
+              table: Table<{ customerId: string; email: string | null }>;
+            }) => table.upsert({ customerId: event.aggregateId, email: event.payload.email }),
+          },
+        },
+      },
+      queries: {},
+    },
     customers: {
       view: {
         fields: ({ f }: FieldsArgs) => ({
@@ -234,6 +257,9 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     // Once the old keys are destroyed, the tenant's key rotates again; another reseal waits.
     await expect(app.rotateTenantKey({ reseal: true })).rejects.toMatchObject({
       code: "VALIDATION_FAILED",
+      message:
+        "A reseal of the tenant's personal data is under way: another one can start once it is complete",
+      issues: [{ path: ["reseal"], message: "Expected no reseal under way" }],
     });
     await app.rotateTenantKey();
     await app.runUntilIdle();
@@ -257,11 +283,21 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     const { app, queries, register, emailOf } = await setUp(adapterOf());
     await register("ana");
     await app.rotateTenantKey({ reseal: true });
-    await expect(app.rotateTenantKey()).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await expect(app.rotateTenantKey()).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      message:
+        "A reseal keeps the persons' keys it replaced: the tenant's key rotates again once it destroys them",
+      issues: [{ path: [], message: "Expected no reseal keeping keys" }],
+    });
     await expect(app.rotateTenantKey({ reseal: true })).rejects.toMatchObject({
       code: "VALIDATION_FAILED",
     });
-    await expect(app.retireTenantKeys()).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await expect(app.retireTenantKeys()).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      message:
+        "A reseal keeps the persons' keys it replaced, wrapped under an older version of the tenant's key: wait for it to destroy them",
+      issues: [{ path: [], message: "Expected no reseal keeping keys" }],
+    });
     await app.runUntilIdle();
     expect((await app.status()).keyRotation?.reseal).toMatchObject({ step: "replacing" });
     // The keys are replaced, nothing is sealed again yet: the old ones still open it.

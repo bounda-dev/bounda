@@ -51,7 +51,7 @@ import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts
 import { createForgottenRunner, type ForgottenRunner, forgottenApp } from "./forgotten-app.ts";
 import { createAccessLog, recorded } from "./personal-data/access.ts";
 import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
-import { epochMark, openDatabaseKey } from "./personal-data/blind-index.ts";
+import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
 import { checkClassification } from "./personal-data/classification.ts";
 import { logClearFields } from "./personal-data/clear-fields.ts";
@@ -1531,17 +1531,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         wrapping,
         ...options,
       });
-    // A reseal's read models: each one holding personal data is rebuilt from a stream sealed again,
-    // by a rebuild that started past `from`, under the database's key in force; one slice a call.
+    // A reseal's read models: each one holding personal data is rebuilt by a rebuild that started
+    // past `from`, once the stream is sealed again and every instance indexes under the database's
+    // key in force, which the rebuild puts the table under; one slice a call.
     const rebuildForReseal = async (from: number): Promise<"progressed" | "ready"> => {
-      const inForce = databaseKey === null ? null : (await databaseKey.indexer.pinned()).number;
       for (const { name, storage: own, layout } of Object.values(readModels.byName)) {
         if (layout.personal.length === 0) continue;
-        const [rebuiltAt, epoch] = await Promise.all([
-          own.checkpointStore.get(rebuiltMark(name)),
-          own.checkpointStore.get(epochMark(name)),
-        ]);
-        if (rebuiltAt >= from && (!layout.indexed || epoch === inForce)) continue;
+        if ((await own.checkpointStore.get(rebuiltMark(name))) >= from) continue;
         try {
           await rebuild(name, {
             maxEvents: config.runtime.dispatcher.batchSize * REDACTION_REBUILD_BATCHES,
@@ -1708,6 +1704,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       const { tenantKeys } = keysFor("retireTenantKeys");
       const { previous, since } = await tenantKeys.kids();
       if (previous.length === 0) return [];
+      if (reseal !== undefined && (await reseal.holdsSuperseded())) {
+        throw runtimeText(
+          new ValidationError(
+            "A reseal keeps the persons' keys it replaced, wrapped under an older version of the tenant's key: wait for it to destroy them",
+            [{ path: [], message: "Expected no reseal keeping keys" }],
+          ),
+        );
+      }
       // An instance that read the tenant's record before the rotation wraps new keys under the
       // older version until it reads it again, which it does within the key cache's time.
       if (clock.now().getTime() - Date.parse(since) < 2 * UNWRAPPED_KEY_TTL_MS) {
@@ -1715,14 +1719,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           new ValidationError(
             `The version of the tenant's key in force was created at ${since}: older versions can be retired once every instance wraps under it, twice the key cache's time after`,
             [{ path: [], message: "Expected the version in force to be older" }],
-          ),
-        );
-      }
-      if (reseal !== undefined && (await reseal.holdsSuperseded())) {
-        throw runtimeText(
-          new ValidationError(
-            "A reseal keeps the persons' keys it replaced, wrapped under an older version of the tenant's key: wait for it to destroy them",
-            [{ path: [], message: "Expected no reseal keeping keys" }],
           ),
         );
       }
