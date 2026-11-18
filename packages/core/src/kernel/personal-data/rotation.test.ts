@@ -362,6 +362,32 @@ describe("createKeyRotation", () => {
     expect((await rotation.status()).reseal).toBeNull();
   });
 
+  it("stops a pass once a version put in force since it began is what a key would go under", async () => {
+    const storage = await memory().createStorage();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const store = storage.personalKeys;
+    await addUnder(store, "old", "c-1");
+    const base = wrappingOver(wrapper);
+    const rotation = createKeyRotation({
+      keys: store,
+      checkpoints: storage.checkpointStore,
+      tenantKeys: wrapper,
+      master: testMaster,
+      wrapping: {
+        kids: () => base.kids(),
+        wrapped: async (key) => ({ ...(await base.wrapped(key)), kid: "newer" }),
+      },
+      clock,
+      logger: recordingLogger(),
+    });
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(await store.countWrappedUnder({ kids: ["old"] })).toBe(1);
+    expect(await store.countWrappedUnder({ kids: ["newer"] })).toBe(0);
+    // Nothing failed: the next pass is due at once, and reads the version anew.
+    expect(await rotation.nextDueAt()).toEqual(clock.now());
+  });
+
   it("rewraps rather than replaces once a reseal no longer replaces", async () => {
     const storage = await memory().createStorage();
     const wrapper = fakeWrapper("new", ["old"]);

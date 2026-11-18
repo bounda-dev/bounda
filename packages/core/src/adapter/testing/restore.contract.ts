@@ -21,6 +21,7 @@ import {
   type TenantKeySource,
 } from "../../kernel/personal-data/tenant-key-source.ts";
 import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
+import { UNWRAPPED_KEY_TTL_MS } from "../../kernel/personal-data/wrapped-keys.ts";
 import { GENERATION_INTERVAL_MS } from "../../kernel/shared/restores.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
@@ -887,6 +888,37 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         expect(await forgettings(restored.app, "bob")).toEqual(bobForgotten);
         await expectForgottenIn(restored, "bob");
         await expectReadable(restored, "dan");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it.skipIf(!hot)(
+      "files answers under the database's key a copy from before a reseal holds, once a restore of it is found",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        await first.app.rotateTenantKey({ reseal: true });
+        await first.app.runUntilIdle();
+        // A generation written after the copy, which tells the copy apart once it is back.
+        clock.advance(GENERATION_INTERVAL_MS);
+        await first.app.runUntilIdle();
+        await target.restore();
+        clock.advance(GENERATION_INTERVAL_MS);
+        await first.app.runUntilIdle();
+        const { email, name } = valuesOf("dan");
+        const register = () =>
+          first.commands.registerCustomer?.(
+            { customerId: "dan", email, name },
+            { idempotencyKey: "register-dan" },
+          );
+        const answer = await register();
+        await first.app.runUntilIdle();
+        // Past the time this instance takes what the store says as true: it holds no other key.
+        clock.advance(UNWRAPPED_KEY_TTL_MS);
+        expect(await register()).toEqual(answer);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

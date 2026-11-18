@@ -45,13 +45,16 @@ describe("createSealingKeyRing", () => {
     // A person without a key gets one no one keeps, as does a row that names nobody.
     const disposable = await ring.forWrite("cy", "invoices", null);
     expect(disposable).not.toBe(inForce);
+    // One for each such person, whatever they write.
+    expect(await ring.forWrite("cy", "default", null)).toBe(disposable);
+    expect(await ring.forWrite("dee", "invoices", null)).not.toBe(disposable);
     const nobody = await ring.forWrite(null, "default", null);
     expect(nobody.fingerprint).toEqual(expect.any(String));
     expect([inForce, newer, older]).not.toContain(nobody);
     expect(await ring.forWrite(null, "default", null)).toBe(nobody);
     expect(await ring.forOpen("ana", older.fingerprint)).toBe(older);
     expect(await ring.forOpen("ana", "gone")).toBeNull();
-    expect(fetched).toEqual(["ana", "bo", "cy"]);
+    expect(fetched).toEqual(["ana", "bo", "cy", "dee"]);
   });
 
   it("opens under a key a reseal superseded, and never writes under one", async () => {

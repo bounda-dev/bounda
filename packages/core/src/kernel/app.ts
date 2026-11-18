@@ -1396,9 +1396,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
       },
       restores,
-      onRestored: () => {
+      onRestored: async () => {
         dispatcher.restored();
         earlierAnswers.reset();
+        // A copy from before a reseal holds the database's keys of then, not those this instance
+        // read since.
+        await databaseKey?.refresh().catch((error: unknown) => {
+          logger.error("the database's key could not be read again", { error });
+        });
       },
       reactive: following.map((subscriber) => subscriber.name),
       standing: dispatcher.positionOf,

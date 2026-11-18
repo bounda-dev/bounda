@@ -67,7 +67,10 @@ export const storedWhere: StoredWhereFunction = async ({ context, where }) => {
           `Read model "${context.layout.readModel}": field "${name}" is sealed at rest, so where matches it by equality, ne or in, never by "${operator}"`,
         );
       }
-      if (operator === "in" && Array.isArray(given)) {
+      if (operator === "in") {
+        if (!Array.isArray(given)) {
+          throw new ConfigurationError(`Field "${name}": "in" needs an array`);
+        }
         operators.in = (
           await Promise.all(given.map((item) => (blank(item) ? [item] : indexes(item))))
         ).flat();

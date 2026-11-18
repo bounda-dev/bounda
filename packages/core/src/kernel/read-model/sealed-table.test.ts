@@ -123,6 +123,10 @@ describe("storedWhere", () => {
     await expect(storedWhere({ context, where: { note: "x" } })).rejects.toThrow(
       'Read model "customers": field "note" is sealed at rest and has no blind index, so where cannot match it; give it .index() or .unique()',
     );
+    // Refused as a field in the clear refuses it, whichever keys the table may be under.
+    await expect(storedWhere({ context, where: { email: { in: "a@x" } } })).rejects.toThrow(
+      'Field "email": "in" needs an array',
+    );
     await expect(storedWhere({ context, where: { born: { gt: new Date(0) } } })).rejects.toThrow(
       'Read model "customers": field "born" is sealed at rest, so where matches it by equality, ne or in, never by "gt"',
     );
@@ -316,9 +320,6 @@ describe("sealedTable and storedWhere at their edges", () => {
     });
     expect(await storedWhere({ context, where: { email: undefined } })).toEqual({
       email__index: undefined,
-    });
-    expect(await storedWhere({ context, where: { email: { in: "a@x" } } })).toEqual({
-      email__index: { in: 'customers.email="a@x"' },
     });
   });
 

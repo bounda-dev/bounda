@@ -284,17 +284,21 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
   };
 
   // Resolves whether the store kept the hold; one it could not keep pauses the rotation. A key a
-  // reseal replaces is kept superseded rather than rewrapped.
+  // reseal replaces is kept superseded rather than rewrapped. `moved` once a version put in force
+  // since the pass began, as a reseal puts one, is what the key would go under: the reseal may have
+  // begun after the pass read it did not, and replaces only what is under an older version, so the
+  // next pass reads it again.
   const rewrap = async (
     row: PersonalKeyRow,
     at: number,
-    replacing: boolean,
-  ): Promise<{ readonly rewrapped: boolean; readonly kept: boolean }> => {
+    { kid, replacing }: { readonly kid: string; readonly replacing: boolean },
+  ): Promise<{ readonly rewrapped: boolean; readonly kept: boolean; readonly moved?: true }> => {
     try {
       if (replacing && reseal !== undefined) {
         return { rewrapped: await reseal.replace(row), kept: true };
       }
       const to = await wrapping.wrapped(row.key);
+      if (to.kid !== kid) return { rewrapped: false, kept: true, moved: true };
       return { rewrapped: await keys.rewrap(row.person, row.key, to), kept: true };
     } catch (error) {
       logger.error(
@@ -357,7 +361,8 @@ export const createKeyRotation: CreateKeyRotationFunction = ({
     for (const row of due) {
       // A lease that lapsed while this instance stalled was taken by another, which goes on.
       if (!(await lease.take(clock.now().getTime()))) break;
-      const outcome = await rewrap(row, at, replacing);
+      const outcome = await rewrap(row, at, { kid: set.kid, replacing });
+      if (outcome.moved) break;
       if (outcome.rewrapped) rewrapped += 1;
       kept &&= outcome.kept;
     }

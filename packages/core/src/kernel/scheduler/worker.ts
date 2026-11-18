@@ -138,7 +138,7 @@ export interface CreateScheduledCommandWorkerArgs {
   /**
    * Called once a pass finds a restore, for what else counted attempts in this instance.
    */
-  readonly onRestored?: (() => void) | undefined;
+  readonly onRestored?: (() => Promise<void>) | undefined;
   /**
    * The reactive subscribers the dispatcher runs, by name: what a deadline and a restricted
    * retry wait for before they run.
@@ -688,7 +688,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     }
     purgedAt = Number.NEGATIVE_INFINITY;
     waits.clear();
-    onRestored?.();
+    await onRestored?.();
     letterRetention?.restored();
     await Promise.all([
       retention?.restored(first),

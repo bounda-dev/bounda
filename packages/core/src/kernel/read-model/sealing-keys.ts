@@ -86,6 +86,15 @@ export interface CreateSealingKeyRingFunction {
 export const createSealingKeyRing: CreateSealingKeyRingFunction = ({ keys, fetching }) => {
   const held = new Map<string, readonly CategoryKey[]>();
   let disposable: Promise<PersonalKey> | null = null;
+  // One key no store keeps per person the ring writes for without a key of their own.
+  const discarded = new Map<string, Promise<PersonalKey>>();
+  const discardedOf = (person: string): Promise<PersonalKey> => {
+    const known = discarded.get(person);
+    if (known !== undefined) return known;
+    const created = keys.discarded(person);
+    discarded.set(person, created);
+    return created;
+  };
   const fetch = async (persons: Iterable<string>): Promise<void> => {
     const missing = [...new Set(persons)].filter((person) => !held.has(person));
     if (missing.length === 0) return;
@@ -109,7 +118,7 @@ export const createSealingKeyRing: CreateSealingKeyRingFunction = ({ keys, fetch
         disposable ??= createDisposableKey();
         return disposable;
       }
-      return chosen(await own(person), person, category, event) ?? keys.discarded(person);
+      return chosen(await own(person), person, category, event) ?? discardedOf(person);
     },
     forOpen: async (person, fingerprint) =>
       (await of(person)).find(({ key }) => key.fingerprint === fingerprint)?.key ?? null,
