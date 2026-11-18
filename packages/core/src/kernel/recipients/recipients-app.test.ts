@@ -652,7 +652,7 @@ describe("recipients of personal data", () => {
   it("tells nobody of a restriction of a category no recipient received", async () => {
     const { app, register, notified } = await start();
     await register("c-1");
-    await app.restrict("c-1", { ground: "objection-pending", categories: ["invoices"] });
+    await app.restrict("c-1", { ground: "unlawful-processing", categories: ["invoices"] });
     await app.runUntilIdle();
     expect(await notified("ProcessingRestricted")).toEqual([]);
   });
@@ -871,7 +871,7 @@ describe("recipients of personal data", () => {
     await before.register("c-2");
     await before.app.forget("c-1");
     await before.app.restrict("c-2", { ground: "legal-claims", categories: ["contact"] });
-    await before.app.restrict("c-2", { ground: "objection-pending", categories: ["invoices"] });
+    await before.app.restrict("c-2", { ground: "unlawful-processing", categories: ["invoices"] });
     await before.app.runUntilIdle();
     await before.app.stop();
     const failing = new Set(["customer.mailer"]);
@@ -1162,7 +1162,7 @@ describe("recipients of personal data", () => {
   it("hands what a query reads while its read model rests behind a change of the person it does not handle", async () => {
     const { app, queries, register, shared } = await start();
     await register("c-1");
-    await app.restrict("c-1", { ground: "objection-pending", categories: ["invoices"] });
+    await app.restrict("c-1", { ground: "unlawful-processing", categories: ["invoices"] });
     await queries.shareCustomer?.({ customerId: "c-1" });
     expect(shared).toEqual(["c-1@example.com"]);
   });

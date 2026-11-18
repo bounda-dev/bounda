@@ -276,8 +276,12 @@ out, dead letters keep it sealed, and a disclosure to a recipient is refused. A 
 anyway only by [naming a basis of 18(2)](/guides/personal-data/#processing-restricted-data-anyway),
 consent, legal claims, the protection of another's rights or public interest, which the access log
 records; what a forgetting kept under an exemption of 17(3) is restricted too, and opens only on
-those or on `erasure-exemption`. `objection-pending` is refused for a category processed for
-direct marketing, since 21(3) leaves nothing to weigh. [`unrestrict`](/guides/personal-data/#lifting-a-restriction) takes a `notice`, and
+those or on `erasure-exemption`. `objection-pending` holds only what 18(1)(d) covers, an objection
+under 21(1) while it is weighed: a category on `public-task` or `legitimate-interests` not
+processed for direct marketing, which 21(3) leaves nothing to weigh, or the default category, which
+declares no basis. Another category is refused, in the types and at runtime, and so is the person as
+a whole while the app has one, since holding everything would restrict processing no objection
+reaches. [`unrestrict`](/guides/personal-data/#lifting-a-restriction) takes a `notice`, and
 announces the lift first with `ProcessingRestrictionLiftAnnounced`, so a policy tells the person
 before it happens, as 18(3) asks; the reactions that waited run once it does. `bounda restrict`
 and `bounda unrestrict` do the same from a terminal, and `expectRestricted` checks in a test that

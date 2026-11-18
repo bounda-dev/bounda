@@ -77,6 +77,7 @@ import type {
   NotifiedRecipient,
   NotPersonalFunction,
   NotPersonalSchema,
+  ObjectionPendingCategory,
   OnPersonalDataAccess,
   OnPersonalDataAccessArgs,
   OrderableField,
@@ -1272,10 +1273,26 @@ describe("personal data", () => {
     expectTypeOf<RestrictionBasis>().toEqualTypeOf<
       "consent" | "legal-claims" | "protection-of-rights" | "public-interest" | "erasure-exemption"
     >();
-    expectTypeOf<RestrictOptions>().toEqualTypeOf<{
-      readonly ground: RestrictionGround;
-      readonly categories?: readonly PersonalCategoryName[];
-    }>();
+    // The fixture declares no category on public-task or legitimate-interests: objection-pending
+    // holds "default" alone, named.
+    expectTypeOf<ObjectionPendingCategory>().toEqualTypeOf<"default">();
+    expectTypeOf<RestrictOptions>().toEqualTypeOf<
+      | {
+          readonly ground: "accuracy-contested" | "unlawful-processing" | "legal-claims";
+          readonly categories?: readonly PersonalCategoryName[];
+        }
+      | { readonly ground: "objection-pending"; readonly categories: readonly "default"[] }
+    >();
+    const restrict = (app: BoundaClient) => [
+      app.restrict("c-1", { ground: "objection-pending", categories: ["default"] }),
+      app.restrict("c-1", { ground: "accuracy-contested" }),
+      app.restrict("c-1", { ground: "legal-claims", categories: ["delivery"] }),
+      // @ts-expect-error a category no objection under article 21(1) is weighed for
+      app.restrict("c-1", { ground: "objection-pending", categories: ["delivery"] }),
+      // @ts-expect-error the person as a whole, while the app has categories it is not weighed for
+      app.restrict("c-1", { ground: "objection-pending" }),
+    ];
+    void restrict;
     expectTypeOf<UnrestrictOptions["notice"]>().toEqualTypeOf<DurationInput | "given">();
     expectTypeOf<UnrestrictOptions["ground"]>().toEqualTypeOf<RestrictionGround | undefined>();
     expectTypeOf<ProcessingRestriction>().toEqualTypeOf<{

@@ -647,10 +647,12 @@ from each category's basis and [purposes](#purposes-and-exemptions):
 | `objection-to-direct-marketing` | 21(2) | for `direct-marketing` | forgets the categories at once: nothing is weighed |
 | `objection-to-research-or-statistics` | 21(6) | for `scientific-or-historical-research` or `statistics`, but on `public-task` | forgets the categories it reaches |
 
-An objection to direct marketing is never held pending: `restrict` with `objection-pending` that
-names a category for `direct-marketing` is refused with `ValidationError`, since article 21(3)
-stops that processing with nothing to weigh, and no exemption keeps such a category past a
-forgetting, so `forget(person, { categories })` erases it at once.
+Only an objection under 21(1) is weighed, so only it is held pending: `restrict` with
+`objection-pending` is refused with `ValidationError`, and does not compile, for a category on
+another basis or for `direct-marketing`, since article 21(3) stops that processing with nothing to
+weigh and 21(6) leaves nothing but a task in the public interest, which is `public-task`. No
+exemption keeps a category for direct marketing past a forgetting, so
+`forget(person, { categories })` erases it at once.
 
 Once the app upholds an objection, it forgets with `objection`:
 
@@ -1538,7 +1540,7 @@ await app.catchUpReadModels({ through: restricted });
 | `accuracy-contested` | (a) | the person contests the accuracy of their data, while it is verified |
 | `unlawful-processing` | (b) | the processing was unlawful and the person asked to keep the data rather than erase it |
 | `legal-claims` | (c) | the app no longer needs the data and the person needs it for a legal claim |
-| `objection-pending` | (d) | the person objected under article 21(1), while the objection is weighed; never of a category for [direct marketing](#after-an-objection) |
+| `objection-pending` | (d) | the person objected under article 21(1), while the objection is weighed: only of a category on `public-task` or `legitimate-interests`, not for [direct marketing](#after-an-objection), or `default` |
 
 Without `categories` the person is restricted as a whole; `restrict("c-42", { ground:
 "accuracy-contested", categories: ["contact"] })` restricts those [categories](#categories) alone,
@@ -1550,8 +1552,12 @@ and every restriction the person has after it, ids and names alone, and it resol
 command, so `catchUpReadModels({ through })` waits for the read models, and the Durable Object and
 React Router wait for them themselves unless `consistency` is `"eventual"`. A restriction that adds
 nothing appends nothing and resolves without events. An empty id, a ground the article does not
-name, categories that are empty or that the app does not have, or `objection-pending` of a category
-for `direct-marketing` are refused with `ValidationError`.
+name, or categories that are empty or that the app does not have are refused with
+`ValidationError`, and so is `objection-pending` of a category an objection under 21(1) is not
+weighed for: one on another basis than `public-task` or `legitimate-interests`, or for
+`direct-marketing`, whose objection weighs nothing. The person as a whole is held on it only while
+every category of the app is weighed; otherwise it names the categories the objection reaches, and
+the types refuse the call without them. `default`, which declares no basis, may be held.
 
 What a [forgetting kept under an exemption of article 17(3)](#categories) is restricted too,
 without anyone asking: kept for what the exemption serves alone, and for nothing else, until its

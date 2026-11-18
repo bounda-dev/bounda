@@ -8,6 +8,7 @@ import {
   type ForgetsPersonalData,
   type ImplementationModule,
   type Instant,
+  type ObjectionPendingCategoriesOf,
   type PersonalDataCategories,
   type PersonalDataCategory,
   type PolicyModule,
@@ -670,6 +671,26 @@ describe("what does not compile", () => {
     type Kept3 = Expect<DeclaresPersonalData<DisputedMarketing>>;
     // @ts-expect-error a purpose Bounda does not know
     type Unknown = Expect<DeclaresPersonalData<UnknownPurpose>>;
+    type Weighing = {
+      readonly categories: {
+        readonly weighed: Base & { readonly basis: "legitimate-interests" };
+        readonly census: Base & { readonly basis: "public-task" };
+        readonly offers: Base & {
+          readonly basis: "legitimate-interests";
+          readonly processedFor: readonly ["direct-marketing"];
+        };
+        readonly served: Base & { readonly basis: "contract" };
+        readonly counted: Base & {
+          readonly basis: "contract";
+          readonly processedFor: readonly ["statistics"];
+        };
+      };
+    };
+    expectTypeOf<ObjectionPendingCategoriesOf<Weighing>>().toEqualTypeOf<"weighed" | "census">();
+    // From a declaration with `satisfies`, the literals the check reads stay.
+    expectTypeOf<
+      ObjectionPendingCategoriesOf<{ readonly categories: typeof categories }>
+    >().toEqualTypeOf<"census">();
     const unserved =
       "app/personal-data.ts declares special data on archiving-research-or-statistics without naming in processedFor the purpose of article 89(1) it serves" as const;
     const unfounded =

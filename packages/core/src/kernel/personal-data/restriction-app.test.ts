@@ -590,11 +590,11 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await register("ana");
     await commands.issueInvoice?.({ customerId: "ana", invoiceId: "i-1", address: "1 Main St" });
     await app.runUntilIdle();
-    await app.restrict("ana", { ground: "objection-pending", categories: ["invoices"] });
+    await app.restrict("ana", { ground: "unlawful-processing", categories: ["invoices"] });
     await app.catchUpReadModels();
     expect(await queries.invoicesOf?.({ customerId: "ana" })).toEqual([]);
     expect(await queries.customersOnPlan?.({ plan: "pro" })).toEqual(["ana"]);
-    await app.restrict("ana", { ground: "objection-pending", categories: ["marketing"] });
+    await app.restrict("ana", { ground: "unlawful-processing", categories: ["marketing"] });
     await app.catchUpReadModels();
     expect(await queries.customersOnPlan?.({ plan: "pro" })).toEqual(["ana"]);
     await app.stop();
@@ -662,7 +662,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
       adapter: adapterOf(),
       reportBasis: "legal-claims",
     });
-    await app.restrict("ana", { ground: "objection-pending" });
+    await app.restrict("ana", { ground: "unlawful-processing" });
     await commands.registerCustomer?.(
       { customerId: "ana", email: "ana@example.com", plan: "pro" },
       { processRestricted: "consent" },
@@ -730,7 +730,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.restrict("ana", { ground: "accuracy-contested" });
     await app.unrestrict("ana", { notice: "7d" });
     await app.restrict("ana", { ground: "accuracy-contested", categories: ["marketing"] });
-    await app.restrict("ana", { ground: "objection-pending" });
+    await app.restrict("ana", { ground: "unlawful-processing" });
     clock.advance(7 * DAY_MS);
     await app.runUntilIdle();
     expect(await queries.customerCount?.()).toBe(0);
@@ -853,7 +853,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.runUntilIdle();
     expect(called).toEqual(["ana"]);
     await commands.callCustomer?.({ customerId: "ana" });
-    await app.restrict("ana", { ground: "objection-pending" });
+    await app.restrict("ana", { ground: "unlawful-processing" });
     await app.runUntilIdle();
     expect(called).toEqual(["ana"]);
     expect((await app.deadLetters.list()).map(({ handler }) => handler)).toContain(

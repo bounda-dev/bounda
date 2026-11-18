@@ -585,7 +585,9 @@ and prints `restricted c-42 on accuracy-contested`; with `--category`, repeated 
 those categories, and prints `restricted invoices of c-42 on legal-claims`. A restriction that adds
 nothing prints `c-42 was restricted on accuracy-contested already`. Without `--ground`, or with
 one the article does not name, it fails before booting; a category the app does not have fails
-with `VALIDATION_FAILED`.
+with `VALIDATION_FAILED`, and so does `objection-pending` of a category no objection under article
+21(1) is weighed for, or of the person as a whole while the app has one (see [Restricting
+processing](/guides/personal-data/#restricting-processing)).
 
 `bounda unrestrict <person> --notice <duration|given>` lifts the person's restrictions: with a
 duration, it announces the lift, for the app to tell the person, and lifts it that long after,

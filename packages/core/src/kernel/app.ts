@@ -284,7 +284,9 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * that adds nothing appends nothing and resolves without events. `forget` and the export stay
    * allowed. Rejects with `ValidationError` an empty id, a ground article 18(1) does not name,
    * categories that are empty or that the app does not have, or `objection-pending` of a category
-   * for `direct-marketing`, which an objection stops at once.
+   * no objection under article 21(1) is weighed for, one not on `public-task` or
+   * `legitimate-interests` or for `direct-marketing`, or of the person as a whole while the app has
+   * such a category.
    */
   restrict(personId: string, options: RestrictOptions): Promise<StoredDispatch>;
   /**

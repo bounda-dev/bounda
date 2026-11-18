@@ -440,6 +440,15 @@ export const objectable: ObjectableFunction = (category) =>
   category.processedFor.includes("direct-marketing") ||
   researched(category);
 
+// Whether an objection under article 21(1) reaches the category and is weighed for it, which is
+// what restricting it while the objection is weighed asks (article 18(1)(d)): on `public-task` or
+// `legitimate-interests`, but not for direct marketing, which nothing weighs. The default category
+// declares no basis to tell by, so it may be held.
+export const pendsObjection: ObjectableFunction = (category) =>
+  category.basis === null ||
+  ((category.basis === "public-task" || category.basis === "legitimate-interests") &&
+    !category.processedFor.includes("direct-marketing"));
+
 export interface CheckCategoryArgs {
   readonly categories: PersonalCategories;
   readonly category: string;

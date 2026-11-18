@@ -117,6 +117,8 @@ export type {
   ErasureExemption,
   ForgetOptions,
   LegalBasis,
+  ObjectionPendingCategoriesOf,
+  ObjectionPendingCategory,
   PersonalCategoriesOf,
   PersonalCategoryName,
   PersonalDataCategories,

@@ -1,6 +1,6 @@
 import type { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store.ts";
 import type { DurationInput, RetentionInput } from "../contracts/duration.ts";
-import type { AppPersonalCategory } from "../register/index.ts";
+import type { AppPersonalCategory, AppRegistry } from "../register/index.ts";
 
 /**
  * The lawful basis of processing a category of personal data, as article 6(1) of the GDPR names
@@ -511,8 +511,9 @@ export type DeclaresPersonalData<Module> = [CategoriesOf<Module>] extends [never
  * `accuracy-contested`, while the controller verifies data the person says is wrong (a);
  * `unlawful-processing`, processing that was unlawful and the person asked to keep rather than
  * erase (b); `legal-claims`, data the controller no longer needs and the person needs for a legal
- * claim (c); `objection-pending`, while an objection under article 21(1) is weighed (d), never of a
- * category for `direct-marketing`, whose objection weighs nothing.
+ * claim (c); `objection-pending`, while an objection under article 21(1) is weighed (d), only of a
+ * category on `public-task` or `legitimate-interests` not for `direct-marketing`, whose objection
+ * weighs nothing.
  */
 export type RestrictionGround =
   | "accuracy-contested"
@@ -565,17 +566,63 @@ export interface ProcessingRestriction {
   readonly since: string;
 }
 
+// The categories of a module an objection under article 21(1) reaches and is weighed for: on
+// public-task or legitimate-interests, and not for direct marketing.
+type WeighedIn<Module> = {
+  [Name in keyof CategoriesOf<Module>]: CategoriesOf<Module>[Name] extends {
+    readonly basis: "public-task" | "legitimate-interests";
+  }
+    ? CategoriesOf<Module>[Name] extends { readonly processedFor: readonly (infer Purpose)[] }
+      ? "direct-marketing" extends Purpose
+        ? never
+        : Name
+      : Name
+    : never;
+}[keyof CategoriesOf<Module>];
+
 /**
- * What `restrict(personId, options)` takes besides the person.
+ * The names of the categories an `app/personal-data.ts` module declares that an objection under
+ * article 21(1) reaches and is weighed for: on `public-task` or `legitimate-interests`, and not for
+ * `direct-marketing`.
  */
-export interface RestrictOptions {
-  readonly ground: RestrictionGround;
-  /**
-   * Restricts these categories of the person alone, as when they contest the accuracy of one kind
-   * of data. Without it, the person as a whole is restricted, every category included.
-   */
-  readonly categories?: readonly PersonalCategoryName[];
-}
+export type ObjectionPendingCategoriesOf<Module> = Extract<WeighedIn<Module>, string>;
+
+/**
+ * A category `restrict` holds with `objection-pending`, while an objection under article 21(1) is
+ * weighed (article 18(1)(d)): one `app/personal-data.ts` declares on `public-task` or
+ * `legitimate-interests`, and not for `direct-marketing`, or `"default"`, which declares no basis.
+ */
+export type ObjectionPendingCategory = string extends AppPersonalCategory
+  ? PersonalCategoryName
+  :
+      | (AppRegistry extends { readonly personalData: infer Module }
+          ? ObjectionPendingCategoriesOf<Module>
+          : never)
+      | typeof DEFAULT_PERSONAL_CATEGORY;
+
+/**
+ * What `restrict(personId, options)` takes besides the person. `objection-pending` holds only
+ * categories an objection under article 21(1) is weighed for, so it names them, unless every
+ * category of the app is one.
+ */
+export type RestrictOptions =
+  | {
+      readonly ground: Exclude<RestrictionGround, "objection-pending">;
+      /**
+       * Restricts these categories of the person alone, as when they contest the accuracy of one
+       * kind of data. Without it, the person as a whole is restricted, every category included.
+       */
+      readonly categories?: readonly PersonalCategoryName[];
+    }
+  | ([Exclude<PersonalCategoryName, ObjectionPendingCategory>] extends [never]
+      ? {
+          readonly ground: "objection-pending";
+          readonly categories?: readonly ObjectionPendingCategory[];
+        }
+      : {
+          readonly ground: "objection-pending";
+          readonly categories: readonly ObjectionPendingCategory[];
+        });
 
 /**
  * How long before the lift the person is told, as `unrestrict` takes it: a duration, after which
