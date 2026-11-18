@@ -107,13 +107,14 @@ const libsqlAdapter = (
           openCopy: async (copy: string) =>
             openLibsqlCopy({
               copy,
+              // A file in the clear has no key; one under the tenant's keys was opened under the key
+              // in force, and a copy may be under an earlier one, or from before it was encrypted.
               keys:
                 keyed === null
-                  ? [encryptionKey ?? null]
+                  ? [null]
                   : [
-                      ...[await keyed.keys.current(), ...(await keyed.keys.previous())].flatMap(
-                        (key) => (key === null ? [] : [key.key]),
-                      ),
+                      keyed.inForce.key,
+                      ...(await keyed.keys.previous()).map(({ key }) => key),
                       null,
                     ],
             }),

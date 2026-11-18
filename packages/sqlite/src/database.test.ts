@@ -58,6 +58,31 @@ describe("createSqliteDatabase on a file", () => {
   });
 });
 
+describe("createSqliteDatabase after a statement fails", () => {
+  it("opens the client's connections afresh after a busy statement on a file, and only then", async () => {
+    for (const wal of [true, false]) {
+      let reconnected = 0;
+      const execute = async (statement: string | { readonly sql: string }): Promise<ResultSet> => {
+        const sql = typeof statement === "string" ? statement : statement.sql;
+        if (sql === "BUSY") throw failure("SQLITE_BUSY");
+        if (sql === "BAD") throw failure("SQLITE_ERROR");
+        return empty;
+      };
+      const client = {
+        execute,
+        reconnect: () => {
+          reconnected += 1;
+        },
+      } as unknown as Client;
+      const { db } = createSqliteDatabase(client, { local: true, wal });
+      await expect(db.run("BAD", [])).rejects.toMatchObject({ code: "SQLITE_ERROR" });
+      expect(reconnected).toBe(0);
+      await expect(db.run("BUSY", [])).rejects.toMatchObject({ code: "SQLITE_BUSY" });
+      expect(reconnected).toBe(wal ? 1 : 0);
+    }
+  });
+});
+
 // Another process's write transaction on the file, held for `holdMs`: resolves once it holds the
 // lock, and `done` once it committed.
 const foreignWrite = async (path: string, holdMs: number) => {
