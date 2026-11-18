@@ -182,10 +182,11 @@ export const payload = ({ z, personal, person }: Event.PayloadArgs) =>
 The generator registers the names, so a category the file does not declare, in `personal`,
 `.personal` or `forget`, does not compile, and `.bounda/types.ts` fails to compile while the file
 declares a category `default` or one without a basis Bounda knows, a retention, a purpose or a
-source, while it does not export `automatedDecisions`, or while a decision lacks what it must say
-or names a category the file does not declare; the app refuses to start on the same, for a project
-that skipped the type check. A field marked without a
-category is in the default category, `default`, whose retention is
+source, or with [special or criminal data](#special-categories-and-criminal-data) it does not
+declare as Bounda reads it, while it does not export `automatedDecisions`, or while a decision lacks
+what it must say, names a category the file does not declare, or decides on special data as article
+22(4) does not allow; the app refuses to start on the same, for a project that skipped the type
+check. A field marked without a category is in the default category, `default`, whose retention is
 [`runtime.personalData.retention`](#inactivity) and which declares no basis: an app without
 `app/personal-data.ts` has that category alone, and behaves as if categories did not exist.
 
@@ -212,6 +213,74 @@ and the kept one goes on its own once its retention has passed, with a `Personal
 that names the category in `expired`. Whether a key is kept that way, and since when, is recorded
 on its row. A category whose retention had already run out at the forgetting is forgotten with the
 rest.
+
+### Special categories and criminal data
+
+Article 9 of the GDPR forbids processing special categories of data unless a condition of 9(2)
+lifts the prohibition, and article 10 allows data on criminal convictions and offences only under
+official authority or a law. A category that holds such data says so, besides its basis of article
+6, which it still needs:
+
+```ts
+export const categories = {
+  allergies: {
+    basis: "contract",
+    retention: "1y",
+    purposes: ["Leave out of each order what the customer cannot eat"],
+    sources: ["data-subject"],
+    special: { kinds: ["health"], condition: "explicit-consent" },
+  },
+  vetting: {
+    basis: "legal-obligation",
+    retention: "6y",
+    purposes: ["Check the drivers the law requires to have no record"],
+    sources: [{ kind: "public", name: "The criminal records register" }],
+    criminal: { authority: "law" },
+  },
+} satisfies PersonalData.Categories;
+```
+
+`special` names the `kinds` of article 9(1) the category holds, at least one:
+`racial-or-ethnic-origin`, `political-opinions`, `religious-or-philosophical-beliefs`,
+`trade-union-membership`, `genetic`, `biometric` (processed to identify a person uniquely),
+`health` and `sex-life-or-sexual-orientation`; and the `condition` of article 9(2) it is processed
+on: `explicit-consent` (a), `employment-and-social-protection` (b), `vital-interests` (c),
+`not-for-profit-body` (d), `made-public` (e), `legal-claims` (f), `substantial-public-interest`
+(g), `health-or-social-care` (h), `public-health` (i) or `archiving-research-or-statistics` (j).
+`criminal` names the `authority` of article 10 it is processed under: an `official-authority`, or
+a `law` that provides appropriate safeguards. A category may declare both. Data the GDPR names
+apart is best kept in a category of its own, with its own retention, so it is forgotten and
+restricted on its own.
+
+A category on `legal-obligation` cannot rest its special data on `explicit-consent`: a forgetting
+keeps it for the obligation, while a withdrawn consent leaves no condition to keep it on. The
+[export](#exporting-a-persons-data) tells the person each category's `special` and `criminal`, and
+its `rights` follow the condition where the GDPR makes them differ: special data on
+`explicit-consent` can be withdrawn and is portable, as consent is, whatever the basis. The
+[record of processing activities](#the-record-of-processing-activities) lists them, and flags a
+field marked personal whose name says special or criminal data, such as `allergies` or
+`criminalRecord`, in a category that does not declare it.
+
+An [automated decision](#categories) on a category that declares special data is allowed only when
+that category's condition is `explicit-consent` or `substantial-public-interest`, and must say its
+`measures`, the suitable measures that safeguard the person, in words for them (article 22(4)):
+
+```ts
+export const automatedDecisions = {
+  substitution: {
+    categories: ["allergies"],
+    logic: "A product the customer cannot eat is swapped for the closest one they can",
+    significance: "What the customer receives",
+    consequences: "An order with other products than those chosen",
+    profiling: false,
+    ground: "explicit-consent",
+    measures: "The customer sees each swap before the order ships and can refuse it",
+  },
+} satisfies PersonalData.AutomatedDecisions;
+```
+
+Any other decision may say its `measures` too, those of article 22(3), and the export hands them
+to the person with the decision.
 
 ### Changing a category
 
@@ -546,12 +615,14 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   exportedAt: "2026-03-01T10:00:00.000Z",
   position: 812,
   categories: {
-    default: { basis: null, purposes: [], sources: [], retention: "730d", held: true,
-      keptUntil: "2028-02-28T10:00:00.000Z", restrictedUntil: null },
-    profile: { basis: "contract", purposes: ["Run the customer's account"],
-      sources: ["data-subject"], retention: "30d", held: true,
-      keptUntil: "2026-03-30T10:00:00.000Z", restrictedUntil: null },
-    invoices: { basis: "legal-obligation", purposes: ["Keep the invoices tax law requires"],
+    default: { basis: null, special: null, criminal: null, purposes: [], sources: [],
+      retention: "730d", held: true, keptUntil: "2028-02-28T10:00:00.000Z",
+      restrictedUntil: null },
+    profile: { basis: "contract", special: null, criminal: null,
+      purposes: ["Run the customer's account"], sources: ["data-subject"], retention: "30d",
+      held: true, keptUntil: "2026-03-30T10:00:00.000Z", restrictedUntil: null },
+    invoices: { basis: "legal-obligation", special: null, criminal: null,
+      purposes: ["Keep the invoices tax law requires"],
       sources: ["data-subject", { kind: "third-party", name: "Stripe" }], retention: "6y",
       held: true, keptUntil: "2032-02-28T10:00:00.000Z", restrictedUntil: null },
   },
@@ -631,36 +702,40 @@ declares, so nothing has to be written by hand next to it:
 
 | Article 15(1) | In the export |
 | --- | --- |
-| (a) the purposes | each category's `purposes`, with its `basis` |
+| (a) the purposes | each category's `purposes`, with its `basis` and, for special or criminal data, its `special` condition or `criminal` authority |
 | (b) the categories of data | `categories`, and the category of each field of every record |
 | (c) the recipients, and (15(2)) the safeguards of a transfer out of the EEA | `recipients` |
 | (d) how long it is kept, or the criteria | each category's `retention`, `keptUntil` and `restrictedUntil` |
 | (e) the rights to rectification, erasure, restriction and objection | `rights` |
 | (f) the right to complain to a supervisory authority | `rights`, `complaint` |
 | (g) the source of data not collected from the person | each category's `sources` |
-| (h) automated decisions, profiling included | `automatedDecisions` |
+| (h) automated decisions, profiling included | `automatedDecisions`, with their `measures` on special categories of data |
 
 `categories` describes every category of the app: its `basis`, `null` for the default category,
-which declares none; its `purposes` and `sources`, none for the default category; how long it is
-kept after their last activity, its `retention`, `null` when nothing forgets it for inactivity;
-whether the runtime `held` data of theirs in it when the export began, a key of theirs in force or
-kept; for them, `keptUntil`, when the retention forgets what they hold of it unless they are active
-again before, the earlier of the category's own retention and the default one's, which forgets
-them as a whole, and the category's own for one kept under a legal obligation, `null` when nothing
-forgets it or they hold none; and, for a category a legal obligation kept past a forgetting, when
-what was kept goes, `restrictedUntil`. While they are [restricted](#restricting-processing), the
-retention waits for the restriction to be lifted, as `restrictions` shows, so either date is when
-it goes at the soonest. Every record lists the category of each field of its `data` in `categories`.
+which declares none; its [`special`](#special-categories-and-criminal-data) categories of data, with
+their condition of article 9(2), and the authority it processes `criminal` data under, each `null`
+when it holds none; its `purposes` and `sources`, none for the default category; how long it is kept
+after their last activity, its `retention`, `null` when nothing forgets it for inactivity; whether
+the runtime `held` data of theirs in it when the export began, a key of theirs in force or kept; for
+them, `keptUntil`, when the retention forgets what they hold of it unless they are active again
+before, the earlier of the category's own retention and the default one's, which forgets them as a
+whole, and the category's own for one kept under a legal obligation, `null` when nothing forgets it
+or they hold none; and, for a category a legal obligation kept past a forgetting, when what was kept
+goes, `restrictedUntil`. While they are [restricted](#restricting-processing), the retention waits
+for the restriction to be lifted, as `restrictions` shows, so either date is when it goes at the
+soonest. Every record lists the category of each field of its `data` in `categories`.
 
 `rights` lists their rights, each with its article and the categories it reaches, `null` for all of
 their data, from the basis each category declares: access, rectification, restriction and the
-complaint to a supervisory authority always; erasure for every category but those kept under a
-legal obligation (article 17(3)(b)); objection for those processed on `public-task` or
+complaint to a supervisory authority always; erasure for every category but those kept under a legal
+obligation (article 17(3)(b)); objection for those processed on `public-task` or
 `legitimate-interests` (article 21(1)), an empty list when none is; portability for those on
-`consent` or `contract` (article 20), the withdrawal of consent for those on `consent` (article
-7(3)), and human intervention for the categories of an automated decision on a `contract` or
-`explicit-consent` (article 22(3)), each only when it reaches one. `automatedDecisions` are the
-decisions [`app/personal-data.ts` declares](#categories) on a category they hold data of.
+`consent` or `contract`, or whose special data rests on `explicit-consent` (article 20(1)(a)), the
+withdrawal of consent for those on `consent` or whose special data rests on `explicit-consent`
+(article 7(3)), and human intervention for the categories of an automated decision on a `contract`
+or `explicit-consent` (article 22(3)), each only when it reaches one. `automatedDecisions` are the
+decisions [`app/personal-data.ts` declares](#categories) on a category they hold data of, with their
+`measures` when they declare them.
 
 `restrictions` are the [restrictions](#restricting-processing) the person asked for and has not had
 lifted, one per ground, with the categories each covers, `null` for the person as a whole, and
@@ -1636,10 +1711,13 @@ bounda personal-data inventory --markdown > record-of-processing.md
 It reads the registry and `bounda.config.ts`, as `bounda rebuild` loads them, and opens no
 database. The record lists:
 
-- each [category](#categories), with its basis, its purposes, its sources, how long after the
-  person's last activity it is kept, and how many fields are in it;
+- each [category](#categories), with its basis, the [special categories of data and the criminal
+  data](#special-categories-and-criminal-data) it holds, with their condition or authority, its
+  purposes, its sources, how long after the person's last activity it is kept, and how many fields
+  are in it;
 - each [automated decision](#categories) the app declares, with its categories, logic,
-  significance, consequences, whether it profiles and its ground;
+  significance, consequences, whether it profiles, its ground, the special data it decides on and
+  its measures;
 - each event, command, process state and read model with a field marked `personal` or `person`:
   whose the data is (the field marked `person`, else the aggregate's or the instance's id), each
   personal field with its category and how it is kept (sealed under the person's key, sealed with a
@@ -1672,6 +1750,9 @@ so a CI step fails on it:
   `personal`, `person` nor `notPersonal`, which only a project that skipped the type check can
   have;
 - a field of any type, marked none of them, whose name says personal data;
+- a field marked `personal`, or `.personal()` in a read model, whose name says special categories of
+  data or criminal data, in a category that does not
+  [declare them](#special-categories-and-criminal-data);
 - text no mark reaches: a payload or a state that is not an object, or an object that keeps keys it
   does not declare, as `z.looseObject` and `.catchall()` do, which does not compile either;
 - personal fields in the default category, which declares no legal basis, purpose or source, so
@@ -1689,6 +1770,17 @@ online or device identifier (`ip`, `userAgent`, `cookie`, `deviceId`), a locatio
 and free text written about someone (`note`, `comment`, `message`, `bio`). Words are read apart, so
 `birthDate`, `birth_date` and `birthdate` all match, while `latency` never matches `lat`. A field the
 list names wrongly, such as `welcomeEmailSentAt`, takes `notPersonal` like any other.
+
+A field marked personal is held to a stricter list, of the words that, in data about a person, say
+special data: of health (`health`, `medical`, `diagnosis`, `disability`, `pregnancy`, `allergy`,
+`medication`), `genetic` and `dna`, `biometric`, origin (`ethnicity`, `ethnic`, `racial`), belief
+(`religion`, `religious`, `political`), `tradeUnion`, sex life or orientation (`sexuality`,
+`sexualOrientation`, `sexLife`), which a category must declare `special` for, and of criminal
+records (`criminal`, `offence`, `offense`), which it must declare `criminal` for; `conviction`
+names a belief as well as a sentence, so either will do. Data that reveals a special category
+indirectly is of that category too, as the Court of Justice held (C-184/20, *OT*), so a
+`politicalParty` or a `healthInsuranceNumber` is. `race` and `orientation` are left off it, since
+a race may be run and an orientation may be a direction.
 
 ## Where the keys live
 

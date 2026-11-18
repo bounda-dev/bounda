@@ -109,6 +109,8 @@ export type {
   AutomatedDecision,
   AutomatedDecisionGround,
   AutomatedDecisions,
+  CriminalDataAuthority,
+  CriminalOffenceData,
   DeclaresPersonalData,
   ForgetOptions,
   LegalBasis,
@@ -123,13 +125,19 @@ export type {
   RestrictionGround,
   RestrictionNotice,
   RestrictOptions,
+  SpecialCategoryCondition,
+  SpecialCategoryData,
+  SpecialCategoryKind,
   UnrestrictOptions,
 } from "./personal-data.ts";
 export {
   AUTOMATED_DECISION_GROUNDS,
+  CRIMINAL_DATA_AUTHORITIES,
   LEGAL_BASES,
   RESTRICTION_BASES,
   RESTRICTION_GROUNDS,
+  SPECIAL_CATEGORY_CONDITIONS,
+  SPECIAL_CATEGORY_KINDS,
 } from "./personal-data.ts";
 export type { PolicyHandlerArgs, PolicyModule, ReactionForgetFunction } from "./policy.ts";
 export type {

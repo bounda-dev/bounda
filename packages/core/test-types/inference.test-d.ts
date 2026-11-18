@@ -25,6 +25,8 @@ import type {
   CountryCode,
   CreateArgs,
   CreateImplementation,
+  CriminalDataAuthority,
+  CriminalOffenceData,
   DeadLetter,
   DeadLetterAccess,
   DeadLetterKind,
@@ -136,6 +138,9 @@ import type {
   ScheduledDispatch,
   SchemaStatus,
   SetFilter,
+  SpecialCategoryCondition,
+  SpecialCategoryData,
+  SpecialCategoryKind,
   StoredDispatch,
   StoredEvent,
   SubscriberFailure,
@@ -147,12 +152,15 @@ import type {
   Where,
 } from "@bounda-dev/core";
 import {
+  CRIMINAL_DATA_AUTHORITIES,
   checkActor,
   fieldBuilder,
   idempotencyKeyFor,
   MAX_ACCESS_PERSONS,
   MAX_ACTOR_LENGTH,
   personalDataExportJson,
+  SPECIAL_CATEGORY_CONDITIONS,
+  SPECIAL_CATEGORY_KINDS,
 } from "@bounda-dev/core";
 import type {
   Adapter,
@@ -890,7 +898,9 @@ describe("personal data", () => {
       readonly retained: readonly PersonalCategoryName[];
       readonly presumed: boolean;
     }>();
-    expectTypeOf<PersonalCategoryName>().toEqualTypeOf<"default" | "delivery" | "invoices">();
+    expectTypeOf<PersonalCategoryName>().toEqualTypeOf<
+      "default" | "delivery" | "invoices" | "dietary"
+    >();
     expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
     expectTypeOf<
       AuditOnPersonalDataForgotten.HandlerArgs["event"]["payload"]["reason"]
@@ -921,7 +931,7 @@ describe("personal data", () => {
   });
 
   it("names the categories app/personal-data.ts declares, and checks the declaration", () => {
-    expectTypeOf<PersonalCategory>().toEqualTypeOf<"delivery" | "invoices">();
+    expectTypeOf<PersonalCategory>().toEqualTypeOf<"delivery" | "invoices" | "dietary">();
     expectTypeOf<PersonalDataDeclaration>().toEqualTypeOf<true>();
     expectTypeOf<PersonalData.Categories>().toEqualTypeOf<PersonalDataCategories>();
     expectTypeOf<PersonalDataCategory>().toEqualTypeOf<{
@@ -929,7 +939,42 @@ describe("personal data", () => {
       readonly retention: RetentionInput;
       readonly purposes: readonly [string, ...string[]];
       readonly sources: readonly [PersonalDataSource, ...PersonalDataSource[]];
+      readonly special?: SpecialCategoryData;
+      readonly criminal?: CriminalOffenceData;
     }>();
+    expectTypeOf<SpecialCategoryData>().toEqualTypeOf<{
+      readonly kinds: readonly [SpecialCategoryKind, ...SpecialCategoryKind[]];
+      readonly condition: SpecialCategoryCondition;
+    }>();
+    expectTypeOf<SpecialCategoryKind>().toEqualTypeOf<
+      | "racial-or-ethnic-origin"
+      | "political-opinions"
+      | "religious-or-philosophical-beliefs"
+      | "trade-union-membership"
+      | "genetic"
+      | "biometric"
+      | "health"
+      | "sex-life-or-sexual-orientation"
+    >();
+    expectTypeOf<SpecialCategoryCondition>().toEqualTypeOf<
+      | "explicit-consent"
+      | "employment-and-social-protection"
+      | "vital-interests"
+      | "not-for-profit-body"
+      | "made-public"
+      | "legal-claims"
+      | "substantial-public-interest"
+      | "health-or-social-care"
+      | "public-health"
+      | "archiving-research-or-statistics"
+    >();
+    expectTypeOf(SPECIAL_CATEGORY_KINDS).toEqualTypeOf<readonly SpecialCategoryKind[]>();
+    expectTypeOf(SPECIAL_CATEGORY_CONDITIONS).toEqualTypeOf<readonly SpecialCategoryCondition[]>();
+    expectTypeOf<CriminalOffenceData>().toEqualTypeOf<{
+      readonly authority: CriminalDataAuthority;
+    }>();
+    expectTypeOf<CriminalDataAuthority>().toEqualTypeOf<"official-authority" | "law">();
+    expectTypeOf(CRIMINAL_DATA_AUTHORITIES).toEqualTypeOf<readonly CriminalDataAuthority[]>();
     expectTypeOf<PersonalDataSource>().toEqualTypeOf<
       | "data-subject"
       | "derived"
@@ -937,14 +982,22 @@ describe("personal data", () => {
     >();
     expectTypeOf<PersonalData.AutomatedDecisions>().toEqualTypeOf<AutomatedDecisions>();
     expectTypeOf<AutomatedDecisions>().toEqualTypeOf<Readonly<Record<string, AutomatedDecision>>>();
+    // The app's categories, so a decision's keep their names and an undeclared one is refused.
     expectTypeOf<AutomatedDecision>().toEqualTypeOf<{
-      readonly categories: readonly [string, ...string[]];
+      readonly categories: readonly [PersonalCategoryName, ...PersonalCategoryName[]];
       readonly logic: string;
       readonly significance: string;
       readonly consequences: string;
       readonly profiling: boolean;
       readonly ground: AutomatedDecisionGround;
+      readonly measures?: string;
     }>();
+    expectTypeOf<AutomatedDecision<"profile">["categories"]>().toEqualTypeOf<
+      readonly ["profile", ..."profile"[]]
+    >();
+    expectTypeOf<
+      typeof import("./fixtures/order-app/app/personal-data.ts")["automatedDecisions"]["substitution"]["categories"]
+    >().toEqualTypeOf<["dietary", "delivery"]>();
     expectTypeOf<AutomatedDecisionGround>().toEqualTypeOf<
       "contract" | "law" | "explicit-consent"
     >();
@@ -961,7 +1014,7 @@ describe("personal data", () => {
       PersonalOptions | undefined
     >();
     expectTypeOf<PersonalOptions>().toEqualTypeOf<{
-      readonly category?: "delivery" | "invoices";
+      readonly category?: "delivery" | "invoices" | "dietary";
     }>();
     expectTypeOf<OrderPlaced.EvolveArgs["event"]["payload"]["note"]>().toEqualTypeOf<
       string | null | undefined
@@ -973,7 +1026,7 @@ describe("personal data", () => {
       (personId: string, options?: ForgetOptions) => Promise<StoredDispatch>
     >();
     expectTypeOf<ForgetOptions>().toEqualTypeOf<{
-      readonly categories?: readonly ("default" | "delivery" | "invoices")[];
+      readonly categories?: readonly ("default" | "delivery" | "invoices" | "dietary")[];
     }>();
     expectTypeOf<BoundaApp["forget"]>().toEqualTypeOf<BoundaClient["forget"]>();
   });
@@ -1037,6 +1090,8 @@ describe("personal data", () => {
     >();
     expectTypeOf<ExportedCategory>().toEqualTypeOf<{
       readonly basis: LegalBasis | null;
+      readonly special: SpecialCategoryData | null;
+      readonly criminal: CriminalOffenceData | null;
       readonly purposes: readonly string[];
       readonly sources: readonly PersonalDataSource[];
       readonly retention: string | null;
@@ -1061,7 +1116,8 @@ describe("personal data", () => {
       | "complaint"
     >();
     expectTypeOf<ExportedAutomatedDecision["name"]>().toEqualTypeOf<string>();
-    expectTypeOf<ExportedAutomatedDecision>().toExtend<AutomatedDecision>();
+    expectTypeOf<ExportedAutomatedDecision>().toExtend<AutomatedDecision<string>>();
+    expectTypeOf<ExportedAutomatedDecision["measures"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<ExportedAnswer>().toEqualTypeOf<{
       readonly idempotencyKey: string;
       readonly expiresAt: string;

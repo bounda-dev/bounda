@@ -5,7 +5,7 @@ import {
 } from "../../adapter/storage/personal-key-store.ts";
 import { type Retention, retentionEnd } from "../../contracts/duration.ts";
 import type { LegalBasis } from "../../modules/personal-data.ts";
-import { formatRetention, type PersonalCategories } from "./categories.ts";
+import { formatRetention, type PersonalCategories, type PersonalCategory } from "./categories.ts";
 import type {
   ExportedAutomatedDecision,
   ExportedCategory,
@@ -39,11 +39,21 @@ const earliest = (ends: readonly (number | null)[]): number | null => {
   return known.length === 0 ? null : Math.min(...known);
 };
 
-// The categories a right reaches: those whose basis it holds on.
-const onBases = (categories: PersonalCategories, bases: readonly LegalBasis[]): string[] =>
-  categories.declared
-    .filter(({ basis }) => bases.includes(basis as LegalBasis))
-    .map(({ name }) => name);
+// The categories a right reaches: the declared ones it holds on.
+const reaching = (
+  categories: PersonalCategories,
+  holds: (category: PersonalCategory) => boolean,
+): string[] => categories.declared.filter(holds).map(({ name }) => name);
+
+const onBases =
+  (...bases: readonly LegalBasis[]) =>
+  ({ basis }: PersonalCategory): boolean =>
+    bases.includes(basis as LegalBasis);
+
+// Consent, or special categories of data on explicit consent, which the GDPR treats alike for
+// withdrawal (article 7(3)) and portability (article 20(1)(a)), whatever the basis.
+const onConsent = (category: PersonalCategory): boolean =>
+  category.basis === "consent" || category.special?.condition === "explicit-consent";
 
 export const personalDataInformation: PersonalDataInformationFunction = ({
   categories,
@@ -56,7 +66,7 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
     categories.of(DEFAULT_PERSONAL_CATEGORY)?.retention ?? null,
   );
   const exported: Record<string, ExportedCategory> = {};
-  for (const { name, basis, purposes, sources, retention } of categories.all) {
+  for (const { name, basis, purposes, sources, retention, special, criminal } of categories.all) {
     const theirs = keys.filter(({ category }) => category === name);
     const live = theirs.filter(({ retainedSince }) => retainedSince === null);
     const kept = theirs.flatMap(({ retainedSince, lastActiveAt }) => {
@@ -73,6 +83,8 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
           : earliest([own, whole]);
     exported[name] = {
       basis,
+      special,
+      criminal,
       purposes,
       sources,
       retention: retention === null ? null : formatRetention(retention),
@@ -108,17 +120,20 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
     ...optional({
       right: "portability",
       article: "20",
-      categories: onBases(categories, ["consent", "contract"]),
+      categories: reaching(
+        categories,
+        (category) => onConsent(category) || onBases("contract")(category),
+      ),
     }),
     {
       right: "objection",
       article: "21",
-      categories: onBases(categories, ["public-task", "legitimate-interests"]),
+      categories: reaching(categories, onBases("public-task", "legitimate-interests")),
     },
     ...optional({
       right: "withdraw-consent",
       article: "7(3)",
-      categories: onBases(categories, ["consent"]),
+      categories: reaching(categories, onConsent),
     }),
     ...optional({ right: "human-intervention", article: "22(3)", categories: intervention }),
     { right: "complaint", article: "77", categories: null },

@@ -5,8 +5,10 @@ import type { Config, ResolvedConfig } from "../../config/types.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type {
   AutomatedDecision,
+  CriminalOffenceData,
   LegalBasis,
   PersonalDataSource,
+  SpecialCategoryData,
 } from "../../modules/personal-data.ts";
 import type { RecipientKind, TransferSafeguard } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -20,7 +22,7 @@ import {
   type FieldClassification,
   schemaOf,
 } from "./classification.ts";
-import { looksPersonal } from "./looks-personal.ts";
+import { looksPersonal, looksSpecial } from "./looks-personal.ts";
 import { fieldCategory, personalMarksOf } from "./marks.ts";
 
 /**
@@ -87,6 +89,14 @@ export interface InventoryCategory {
    */
   readonly basis: LegalBasis | null;
   /**
+   * The special categories of data it holds and their condition of article 9(2); `null` for none.
+   */
+  readonly special: SpecialCategoryData | null;
+  /**
+   * The authority of article 10 it processes criminal data under; `null` for none.
+   */
+  readonly criminal: CriminalOffenceData | null;
+  /**
    * None for the default category.
    */
   readonly purposes: readonly string[];
@@ -102,7 +112,7 @@ export interface InventoryCategory {
   readonly fields: number;
 }
 
-export interface InventoryAutomatedDecision extends AutomatedDecision {
+export interface InventoryAutomatedDecision extends AutomatedDecision<string> {
   readonly name: string;
 }
 
@@ -167,13 +177,16 @@ export interface InventoryNotPersonal {
 /**
  * Why the record is not complete: `unclassified`, a field that can hold text and is marked
  * neither personal nor not; `looks-personal`, an unmarked field whose name says personal data;
- * `unmarkable`, text a mark cannot reach (a payload that is not an object, or an object that keeps
- * keys it does not declare); `no-basis`, personal fields in the default category, which declares
- * no legal basis; `error-text`, logs that carry the text of errors, which may quote personal data.
+ * `looks-special`, a personal field whose name says special categories of data (article 9) or
+ * criminal data (article 10), in a category that does not declare them; `unmarkable`, text a mark
+ * cannot reach (a payload that is not an object, or an object that keeps keys it does not
+ * declare); `no-basis`, personal fields in the default category, which declares no legal basis;
+ * `error-text`, logs that carry the text of errors, which may quote personal data.
  */
 export type InventoryFindingKind =
   | "unclassified"
   | "looks-personal"
+  | "looks-special"
   | "unmarkable"
   | "no-basis"
   | "error-text";
@@ -465,6 +478,26 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
     }
   }
   const findings = [...collected.findings];
+  for (const holder of collected.holders) {
+    for (const field of holder.fields) {
+      const category = categories.of(field.category);
+      const said = looksSpecial(field.name).find(
+        ({ special, criminal }) =>
+          !((special && category?.special) || (criminal && category?.criminal)),
+      );
+      if (said === undefined) continue;
+      const data = [
+        ...(said.special ? ["special categories of data (article 9)"] : []),
+        ...(said.criminal ? ["criminal data (article 10)"] : []),
+      ].join(" or ");
+      findings.push({
+        kind: "looks-special",
+        holder: holder.name,
+        field: field.name,
+        message: `${holder.name}: field "${field.name}" is named like ${data} ("${said.word}") and is in the category "${field.category}", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category`,
+      });
+    }
+  }
   const unbased = counts.get("default") ?? 0;
   if (unbased > 0) {
     findings.push({
@@ -488,6 +521,8 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
     categories: categories.all.map((category) => ({
       name: category.name,
       basis: category.basis,
+      special: category.special,
+      criminal: category.criminal,
       purposes: category.purposes,
       sources: category.sources,
       retention: category.retention === null ? null : formatRetention(category.retention),

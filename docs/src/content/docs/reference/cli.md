@@ -426,16 +426,16 @@ bounda forget c-42 --actor ops-ana
 ```
 
 `bounda personal-data export <person>` writes, as JSON, what `app.exportPersonalData` answers: every
-record that names the person, with each field's category, every category's basis, purposes, sources
-and retention, and the person's rights (see [Exporting a person's
-data](/guides/personal-data/#exporting-a-persons-data)). It streams it, reading and writing a page
-of records at a time, however long the person's history, and reads no faster than its output takes
-it. It prints to standard output; with `--output <file>` it writes the file instead, readable by its
-owner alone, beside it as `<file>.partial` until the export is whole, then moved into place, so a
-failed export leaves no file. An export that fails once it started printing, as when the person is
-forgotten, restricted or redacted meanwhile (`CONCURRENCY_CONFLICT`), has printed a document cut
-short, which is not valid JSON, and exits `2`: run it again. It is recorded in the access log like
-any export.
+record that names the person, with each field's category, every category's basis, special categories
+of data and criminal data, purposes, sources and retention, and the person's rights (see [Exporting
+a person's data](/guides/personal-data/#exporting-a-persons-data)). It streams it, reading and
+writing a page of records at a time, however long the person's history, and reads no faster than its
+output takes it. It prints to standard output; with `--output <file>` it writes the file instead,
+readable by its owner alone, beside it as `<file>.partial` until the export is whole, then moved
+into place, so a failed export leaves no file. An export that fails once it started printing, as
+when the person is forgotten, restricted or redacted meanwhile (`CONCURRENCY_CONFLICT`), has printed
+a document cut short, which is not valid JSON, and exits `2`: run it again. It is recorded in the
+access log like any export.
 
 `bounda forget <person>` forgets the person as a whole, as `app.forget` does, and prints
 `forgot c-42`; with `--category`, repeated for several, only those categories, as when a consent is
@@ -447,14 +447,16 @@ on each record the fields a restriction covers.
 ## `bounda personal-data inventory`
 
 Prints the record of processing activities of article 30 of the GDPR, as far as the modules and the
-configuration say it: the categories of personal data with their basis, purposes, sources and
-retention, the automated decisions, every event, command, process state and read model that holds
-personal data, whose and where, every recipient, what the runtime keeps about persons and for how
-long, and the fields marked `notPersonal`. It loads the project as `bounda rebuild` does and opens
-no database; in a Cloudflare project it reads modules that import the Workers runtime, without
-running them. Where each holder and record is kept names the database's adapter, and where it
-keeps the data when its configuration pins it, such as `cloudflare, jurisdiction eu` for
-[Durable Objects in the EU](/adapters/cloudflare/#data-location). See [The record of processing
+configuration say it: the categories of personal data with their basis, the special categories of
+data and the criminal data they hold, with their condition or authority, their purposes, sources and
+retention, the automated decisions, with the special data they decide on and their measures, every
+event, command, process state and read model that holds personal data, whose and where, every
+recipient, what the runtime keeps about persons and for how long, and the fields marked
+`notPersonal`. It loads the project as `bounda rebuild` does and opens no database; in a Cloudflare
+project it reads modules that import the Workers runtime, without running them. Where each holder
+and record is kept names the database's adapter, and where it keeps the data when its configuration
+pins it, such as `cloudflare, jurisdiction eu` for [Durable Objects in the
+EU](/adapters/cloudflare/#data-location). See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
 
 ```bash
@@ -492,8 +494,9 @@ Complete: every field is classified
 
 The record ends with what keeps it from being complete, one finding a line: a field that can hold
 text and is marked neither `personal`, `person` nor `notPersonal`, a field whose name says personal
-data and is not marked, text no mark reaches, personal fields in the default category, which
-declares no legal basis, and logs that carry the text of errors.
+data and is not marked, a personal field whose name says special categories of data or criminal data
+in a category that does not declare them, text no mark reaches, personal fields in the default
+category, which declares no legal basis, and logs that carry the text of errors.
 
 | Option | Meaning |
 | --- | --- |

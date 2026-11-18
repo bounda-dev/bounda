@@ -1,13 +1,22 @@
 import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-store.ts";
+import { describeNames } from "../../config/ports.ts";
 import { parseRetention, type Retention } from "../../contracts/duration.ts";
 import { ConfigurationError, ValidationError } from "../../contracts/errors.ts";
 import {
   AUTOMATED_DECISION_GROUNDS,
   type AutomatedDecision,
+  CRIMINAL_DATA_AUTHORITIES,
+  type CriminalOffenceData,
+  DECIDABLE_CONDITIONS,
   LEGAL_BASES,
   type LegalBasis,
   type PersonalDataModule,
   type PersonalDataSource,
+  SPECIAL_CATEGORY_CONDITIONS,
+  SPECIAL_CATEGORY_KINDS,
+  type SpecialCategoryCondition,
+  type SpecialCategoryData,
+  type SpecialCategoryKind,
 } from "../../modules/personal-data.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 
@@ -25,12 +34,20 @@ export interface PersonalCategory {
    */
   readonly purposes: readonly string[];
   readonly sources: readonly PersonalDataSource[];
+  /**
+   * `null` for a category without special categories of data (article 9), as the default one.
+   */
+  readonly special: SpecialCategoryData | null;
+  /**
+   * `null` for a category without data on criminal convictions and offences (article 10).
+   */
+  readonly criminal: CriminalOffenceData | null;
 }
 
 /**
  * An automated decision `app/personal-data.ts` declares, by its name.
  */
-export interface DeclaredDecision extends AutomatedDecision {
+export interface DeclaredDecision extends AutomatedDecision<string> {
   readonly name: string;
 }
 
@@ -78,6 +95,41 @@ const isSource = (source: unknown): source is PersonalDataSource =>
 const listOf = <Item>(value: unknown, is: (item: unknown) => item is Item): Item[] | null =>
   Array.isArray(value) && value.length > 0 && value.every(is) ? [...value] : null;
 
+const specialOf = (special: unknown, at: string): SpecialCategoryData | null => {
+  if (special === undefined) return null;
+  const kinds = isRecord(special)
+    ? listOf(special.kinds, (kind): kind is SpecialCategoryKind =>
+        SPECIAL_CATEGORY_KINDS.includes(kind as SpecialCategoryKind),
+      )
+    : null;
+  if (!isRecord(special) || kinds === null) {
+    throw new ConfigurationError(
+      `${at} must name the special categories of data it holds, at least one of ${describeNames(SPECIAL_CATEGORY_KINDS)}`,
+    );
+  }
+  const { condition } = special;
+  if (!SPECIAL_CATEGORY_CONDITIONS.includes(condition as SpecialCategoryCondition)) {
+    throw new ConfigurationError(
+      `${at} must name the condition of article 9(2) it processes special categories of data on, one of ${describeNames(SPECIAL_CATEGORY_CONDITIONS)}`,
+    );
+  }
+  return {
+    kinds: kinds as [SpecialCategoryKind, ...SpecialCategoryKind[]],
+    condition: condition as SpecialCategoryCondition,
+  };
+};
+
+const criminalOf = (criminal: unknown, at: string): CriminalOffenceData | null => {
+  if (criminal === undefined) return null;
+  const authority = isRecord(criminal) ? criminal.authority : undefined;
+  if (!CRIMINAL_DATA_AUTHORITIES.includes(authority as CriminalOffenceData["authority"])) {
+    throw new ConfigurationError(
+      `${at} must name the authority of article 10 it processes criminal data under, one of ${describeNames(CRIMINAL_DATA_AUTHORITIES)}`,
+    );
+  }
+  return { authority: authority as CriminalOffenceData["authority"] };
+};
+
 const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] => {
   if (module === undefined) return [];
   const { categories } = module;
@@ -98,7 +150,7 @@ const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] 
     }
     if (!LEGAL_BASES.includes(category?.basis)) {
       throw new ConfigurationError(
-        `${at} must name its basis, one of ${LEGAL_BASES.map((basis) => `"${basis}"`).join(", ")}`,
+        `${at} must name its basis, one of ${describeNames(LEGAL_BASES)}`,
       );
     }
     let retention: Retention;
@@ -124,13 +176,20 @@ const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] 
         `${at} must name its sources, at least one: "data-subject", "derived", or { kind: "third-party" or "public", name }`,
       );
     }
-    return { name, basis: category.basis, retention, purposes, sources };
+    const special = specialOf(category.special, at);
+    if (category.basis === "legal-obligation" && special?.condition === "explicit-consent") {
+      throw new ConfigurationError(
+        `${at} is on legal-obligation, which keeps its data past a forgetting, and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+      );
+    }
+    const criminal = criminalOf(category.criminal, at);
+    return { name, basis: category.basis, retention, purposes, sources, special, criminal };
   });
 };
 
 const decisionsIn = (
   module: PersonalDataModule | undefined,
-  known: ReadonlySet<string>,
+  known: ReadonlyMap<string, PersonalCategory>,
 ): DeclaredDecision[] => {
   if (module === undefined) return [];
   const { automatedDecisions } = module;
@@ -164,17 +223,37 @@ const decisionsIn = (
     }
     if (!AUTOMATED_DECISION_GROUNDS.includes(decision.ground)) {
       throw new ConfigurationError(
-        `${at} must name its ground, one of ${AUTOMATED_DECISION_GROUNDS.map((ground) => `"${ground}"`).join(", ")}`,
+        `${at} must name its ground, one of ${describeNames(AUTOMATED_DECISION_GROUNDS)}`,
+      );
+    }
+    const { measures } = decision;
+    if (measures !== undefined && !isText(measures)) {
+      throw new ConfigurationError(`${at} must give its measures in words for the person`);
+    }
+    const categories: [string, ...string[]] = [first, ...rest];
+    const special = [...known.values()].flatMap(({ name: category, special: data }) =>
+      data === null || !categories.includes(category) ? [] : [{ category, ...data }],
+    );
+    const unallowed = special.find(({ condition }) => !DECIDABLE_CONDITIONS.includes(condition));
+    if (unallowed !== undefined) {
+      throw new ConfigurationError(
+        `${at} decides on special categories of data of "${unallowed.category}", processed on "${unallowed.condition}"; article 22(4) allows it only on ${describeNames(DECIDABLE_CONDITIONS)}`,
+      );
+    }
+    if (special.length > 0 && measures === undefined) {
+      throw new ConfigurationError(
+        `${at} decides on special categories of data and must give the measures that safeguard the person, in words for them (article 22(4))`,
       );
     }
     return {
       name,
-      categories: [first, ...rest],
+      categories,
       logic: decision.logic,
       significance: decision.significance,
       consequences: decision.consequences,
       profiling: decision.profiling,
       ground: decision.ground,
+      ...(measures === undefined ? {} : { measures }),
     };
   });
 };
@@ -186,7 +265,15 @@ const decisionsIn = (
 export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ module, retention }) => {
   const declared = declaredIn(module);
   const all: PersonalCategory[] = [
-    { name: DEFAULT_PERSONAL_CATEGORY, basis: null, retention, purposes: [], sources: [] },
+    {
+      name: DEFAULT_PERSONAL_CATEGORY,
+      basis: null,
+      retention,
+      purposes: [],
+      sources: [],
+      special: null,
+      criminal: null,
+    },
     ...declared,
   ];
   const byName = new Map(all.map((category) => [category.name, category]));
@@ -194,7 +281,7 @@ export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ modul
     all,
     declared,
     of: (name) => byName.get(name),
-    decisions: decisionsIn(module, new Set(byName.keys())),
+    decisions: decisionsIn(module, byName),
   };
 };
 

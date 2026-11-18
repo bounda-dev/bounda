@@ -98,27 +98,10 @@ const TERMS: readonly string[] = [
   "voice",
   "height",
   "weight",
-  // Special categories (article 9) and criminal records (article 10).
-  "health",
-  "medical",
-  "diagnosis",
-  "disability",
-  "pregnancy",
-  "allergy",
-  "allergies",
-  "medication",
-  "genetic",
-  "biometric",
-  "ethnicity",
+  // Special categories (article 9) and criminal records (article 10) are in `SPECIAL` and
+  // `CRIMINAL`, but for these two, which also name a contest and a direction.
   "race",
-  "religion",
-  "political",
-  "sexuality",
   "orientation",
-  "criminal",
-  "conviction",
-  "offence",
-  "offense",
   // Free text about someone.
   "note",
   "notes",
@@ -129,7 +112,37 @@ const TERMS: readonly string[] = [
   "biography",
 ];
 
-const KNOWN = new Set(TERMS);
+// Words that, in the name of a field marked personal, say the data is of a special category
+// (article 9), as data that reveals it indirectly is (CJEU, C-184/20), or relates to criminal
+// convictions and offences (article 10). `conviction` names a belief as well as a sentence.
+const SPECIAL: ReadonlySet<string> = new Set([
+  "health",
+  "medical",
+  "diagnosis",
+  "disability",
+  "pregnancy",
+  "allergy",
+  "allergies",
+  "medication",
+  "genetic",
+  "dna",
+  "biometric",
+  "ethnicity",
+  "ethnic",
+  "racial",
+  "religion",
+  "religious",
+  "political",
+  "tradeunion",
+  "sexuality",
+  "sexualorientation",
+  "sexlife",
+  "conviction",
+]);
+
+const CRIMINAL: ReadonlySet<string> = new Set(["criminal", "conviction", "offence", "offense"]);
+
+const KNOWN = new Set([...TERMS, ...SPECIAL, ...CRIMINAL]);
 
 const wordsOf = (name: string): readonly string[] =>
   name
@@ -142,11 +155,35 @@ export interface LooksPersonalFunction {
   (field: string): string | null;
 }
 
+const candidatesOf = (field: string): readonly string[] => {
+  const words = wordsOf(field);
+  return [...words, ...words.slice(1).map((word, index) => `${words[index]}${word}`)];
+};
+
 /**
  * The word of a field's name that names personal data, `null` when none does.
  */
-export const looksPersonal: LooksPersonalFunction = (field) => {
-  const words = wordsOf(field);
-  const candidates = [...words, ...words.slice(1).map((word, index) => `${words[index]}${word}`)];
-  return candidates.find((candidate) => KNOWN.has(candidate)) ?? null;
-};
+export const looksPersonal: LooksPersonalFunction = (field) =>
+  candidatesOf(field).find((candidate) => KNOWN.has(candidate)) ?? null;
+
+/**
+ * A word of a field's name that says special categories of data or criminal data, and which of the
+ * two a category must declare for it: either, for a word that says both.
+ */
+export interface SpecialWord {
+  readonly word: string;
+  readonly special: boolean;
+  readonly criminal: boolean;
+}
+
+export interface LooksSpecialFunction {
+  (field: string): readonly SpecialWord[];
+}
+
+/**
+ * Every word of a field's name that says special categories of data or criminal data, in order.
+ */
+export const looksSpecial: LooksSpecialFunction = (field) =>
+  candidatesOf(field)
+    .filter((candidate) => SPECIAL.has(candidate) || CRIMINAL.has(candidate))
+    .map((word) => ({ word, special: SPECIAL.has(word), criminal: CRIMINAL.has(word) }));

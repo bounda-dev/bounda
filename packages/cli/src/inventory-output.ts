@@ -1,14 +1,17 @@
-import type {
-  InventoryAutomatedDecision,
-  InventoryCategory,
-  InventoryHolder,
-  InventoryHolderKind,
-  InventoryRecord,
-  InventoryRecordName,
-  InventorySealing,
-  InventoryStore,
-  PersonalDataInventory,
-  PersonalDataSource,
+import {
+  type CriminalOffenceData,
+  type InventoryAutomatedDecision,
+  type InventoryCategory,
+  type InventoryHolder,
+  type InventoryHolderKind,
+  type InventoryRecord,
+  type InventoryRecordName,
+  type InventorySealing,
+  type InventoryStore,
+  type PersonalDataInventory,
+  type PersonalDataSource,
+  SPECIAL_CATEGORY_CONDITIONS,
+  type SpecialCategoryData,
 } from "@bounda-dev/core";
 
 export interface FormatInventoryFunction {
@@ -116,6 +119,30 @@ const decisionOf = (decision: InventoryAutomatedDecision): string =>
 const placed = (database: string, location: string | null): string =>
   location === null ? database : `${database}, ${location}`;
 
+// A condition with its point of article 9(2), from (a) to (j) in the order the article gives them.
+const conditionOf = ({ condition }: SpecialCategoryData): string =>
+  `${condition} (article 9(2)(${String.fromCharCode(97 + SPECIAL_CATEGORY_CONDITIONS.indexOf(condition))}))`;
+
+const specialOf = (special: SpecialCategoryData): string =>
+  `${special.kinds.join(", ")}, on ${conditionOf(special)}`;
+
+const criminalOf = ({ authority }: CriminalOffenceData): string =>
+  `under ${authority} (article 10)`;
+
+// What of the categories a decision decides on holds special categories of data, which article
+// 22(4) restricts.
+const specialDecidedOn = (
+  decision: InventoryAutomatedDecision,
+  inventory: PersonalDataInventory,
+): string =>
+  inventory.categories
+    .flatMap(({ name, special }) =>
+      special === null || !decision.categories.includes(name)
+        ? []
+        : [`${name} (${specialOf(special)})`],
+    )
+    .join("; ");
+
 const security = (inventory: PersonalDataInventory): readonly string[] => [
   `master key: ${inventory.security.masterKey ? "named by the configuration" : "none named"}`,
   `tenant key store: ${inventory.security.tenantKeys ? "apart from the database" : "none named"}`,
@@ -133,15 +160,24 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
       `    for: ${purposesOf(category)}`,
       `    from: ${sourcesOf(category)}`,
     );
+    if (category.special !== null) {
+      lines.push(`    special categories (article 9): ${specialOf(category.special)}`);
+    }
+    if (category.criminal !== null) {
+      lines.push(`    criminal data: ${criminalOf(category.criminal)}`);
+    }
   }
   lines.push("", "Automated decisions");
   if (inventory.automatedDecisions.length === 0) lines.push("  none declared");
   for (const decision of inventory.automatedDecisions) {
+    const special = specialDecidedOn(decision, inventory);
     lines.push(
       `  ${decision.name}  ${decisionOf(decision)}`,
       `    logic: ${decision.logic}`,
       `    significance: ${decision.significance}`,
       `    consequences: ${decision.consequences}`,
+      ...(special === "" ? [] : [`    special categories (article 22(4)): ${special}`]),
+      ...(decision.measures === undefined ? [] : [`    measures: ${decision.measures}`]),
     );
   }
   lines.push("", "Personal data");
@@ -208,10 +244,21 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
     "## Categories of personal data",
     "",
     ...table(
-      ["Category", "Legal basis", "Purposes", "Sources", "Time limit for erasure", "Fields"],
+      [
+        "Category",
+        "Legal basis",
+        "Special categories (article 9)",
+        "Criminal data (article 10)",
+        "Purposes",
+        "Sources",
+        "Time limit for erasure",
+        "Fields",
+      ],
       inventory.categories.map((category) => [
         category.name,
         basisOf(category.basis),
+        category.special === null ? "none" : specialOf(category.special),
+        category.criminal === null ? "none" : criminalOf(category.criminal),
         purposesOf(category),
         sourcesOf(category),
         retentionOf(category.retention),
@@ -232,6 +279,8 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
             "Logic",
             "Significance",
             "Consequences",
+            "Special categories (article 22(4))",
+            "Measures",
           ],
           inventory.automatedDecisions.map((decision) => [
             decision.name,
@@ -241,6 +290,8 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
             decision.logic,
             decision.significance,
             decision.consequences,
+            specialDecidedOn(decision, inventory) || "none",
+            decision.measures ?? "none declared",
           ]),
         )),
     "",

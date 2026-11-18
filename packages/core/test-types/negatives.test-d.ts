@@ -1,4 +1,5 @@
 import {
+  type AutomatedDecisions,
   type BoundaClient,
   type DeclaresPersonalData,
   DomainError,
@@ -344,6 +345,159 @@ describe("what does not compile", () => {
     // @ts-expect-error a decision article 22(2) does not allow
     type Groundless = Expect<DeclaresPersonalData<GroundlessModule>>;
     const checks: [Complete?, Default?, Basis?, Nothing?, Silent?, Undeclared?, Groundless?] = [];
+    void checks;
+  });
+
+  it("special categories of data or criminal data without what articles 9, 10 and 22(4) ask", () => {
+    type Expect<Check extends true> = Check;
+    const said = {
+      basis: "contract",
+      retention: "1y",
+      purposes: ["Treat them"],
+      sources: ["data-subject"],
+    } as const;
+    const care: PersonalDataCategory = {
+      ...said,
+      special: { kinds: ["health", "genetic"], condition: "health-or-social-care" },
+      criminal: { authority: "law" },
+    };
+    const gossip: PersonalDataCategory = {
+      ...said,
+      // @ts-expect-error a special category article 9(1) does not list
+      special: { kinds: ["gossip"], condition: "explicit-consent" },
+    };
+    const kindless: PersonalDataCategory = {
+      ...said,
+      // @ts-expect-error at least one special category
+      special: { kinds: [], condition: "explicit-consent" },
+    };
+    const unconditioned: PersonalDataCategory = {
+      ...said,
+      // @ts-expect-error a condition of article 9(2)
+      special: { kinds: ["health"] },
+    };
+    const whim: PersonalDataCategory = {
+      ...said,
+      // @ts-expect-error a condition article 9(2) does not name
+      special: { kinds: ["health"], condition: "whim" },
+    };
+    const unauthorised: PersonalDataCategory = {
+      ...said,
+      // @ts-expect-error an authority article 10 does not name
+      criminal: { authority: "court" },
+    };
+    void [care, gossip, kindless, unconditioned, whim, unauthorised];
+    const decisions = {
+      triage: {
+        categories: ["care"],
+        logic: "A score",
+        significance: "How soon",
+        consequences: "Later",
+        profiling: true,
+        ground: "contract",
+      },
+    } satisfies AutomatedDecisions<"care">;
+    const undeclared = {
+      triage: {
+        // @ts-expect-error a decision names categories the app declares
+        categories: ["credit"],
+        logic: "A score",
+        significance: "How soon",
+        consequences: "Later",
+        profiling: true,
+        ground: "contract",
+      },
+    } satisfies AutomatedDecisions<"care">;
+    void [decisions, undeclared];
+    interface Care {
+      readonly basis: "contract";
+      readonly retention: "1y";
+      readonly purposes: readonly ["Treat them"];
+      readonly sources: readonly ["data-subject"];
+      readonly special: {
+        readonly kinds: readonly ["health"];
+        readonly condition: "explicit-consent";
+      };
+    }
+    interface Triage {
+      readonly categories: readonly ["care", "default"];
+      readonly logic: "A score of their symptoms";
+      readonly significance: "How soon they are seen";
+      readonly consequences: "A later appointment";
+      readonly profiling: true;
+      readonly ground: "explicit-consent";
+      readonly measures: "A nurse reviews it";
+    }
+    type Public = Omit<Care, "special"> & {
+      readonly special: {
+        readonly kinds: readonly ["biometric"];
+        readonly condition: "substantial-public-interest";
+      };
+    };
+    type Treated = Omit<Care, "special"> & {
+      readonly special: {
+        readonly kinds: readonly ["health"];
+        readonly condition: "health-or-social-care";
+      };
+    };
+    type Convictions = Omit<Care, "special"> & { readonly criminal: { readonly authority: "law" } };
+    type Complete = Expect<
+      DeclaresPersonalData<{
+        readonly categories: {
+          readonly care: Care;
+          readonly public: Public;
+          readonly treated: Treated;
+          readonly record: Convictions;
+        };
+        readonly automatedDecisions: {
+          readonly triage: Triage;
+          readonly gate: Omit<Triage, "categories"> & {
+            readonly categories: readonly ["public"];
+          };
+          readonly vetting: Omit<Triage, "categories" | "measures"> & {
+            readonly categories: readonly ["record", "default"];
+          };
+        };
+      }>
+    >;
+    type KeptModule = {
+      readonly categories: {
+        readonly care: Omit<Care, "basis"> & { readonly basis: "legal-obligation" };
+      };
+      readonly automatedDecisions: Readonly<Record<string, never>>;
+    };
+    type UnallowedModule = {
+      readonly categories: { readonly care: Care; readonly treated: Treated };
+      readonly automatedDecisions: {
+        readonly triage: Omit<Triage, "categories"> & {
+          readonly categories: readonly ["care", "treated"];
+        };
+      };
+    };
+    type UnmeasuredModule = {
+      readonly categories: { readonly care: Care };
+      readonly automatedDecisions: { readonly triage: Omit<Triage, "measures"> };
+    };
+    type UnknownKindModule = {
+      readonly categories: {
+        readonly care: Omit<Care, "special"> & {
+          readonly special: {
+            readonly kinds: readonly ["gossip"];
+            readonly condition: "made-public";
+          };
+        };
+      };
+      readonly automatedDecisions: Readonly<Record<string, never>>;
+    };
+    // @ts-expect-error special data kept past a forgetting on consent a withdrawal ends
+    type Kept = Expect<DeclaresPersonalData<KeptModule>>;
+    // @ts-expect-error a decision on special data article 22(4) does not allow
+    type Unallowed = Expect<DeclaresPersonalData<UnallowedModule>>;
+    // @ts-expect-error a decision on special data without its measures
+    type Unmeasured = Expect<DeclaresPersonalData<UnmeasuredModule>>;
+    // @ts-expect-error a special category Bounda does not know
+    type UnknownKind = Expect<DeclaresPersonalData<UnknownKindModule>>;
+    const checks: [Complete?, Kept?, Unallowed?, Unmeasured?, UnknownKind?] = [];
     void checks;
   });
 

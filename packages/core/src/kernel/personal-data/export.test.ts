@@ -140,6 +140,8 @@ const categories = buildPersonalCategories({
 const exportedCategories = {
   default: {
     basis: null,
+    special: null,
+    criminal: null,
     purposes: [],
     sources: [],
     retention: "30d",
@@ -149,6 +151,8 @@ const exportedCategories = {
   },
   invoices: {
     basis: "legal-obligation",
+    special: null,
+    criminal: null,
     purposes: ["Serve the person"],
     sources: ["data-subject"],
     retention: "60d",
@@ -909,7 +913,15 @@ describe("exportPersonalData", () => {
     });
     const none = { held: false, keptUntil: null, restrictedUntil: null };
     expect(exported.categories).toEqual({
-      default: { basis: null, purposes: [], sources: [], retention: null, ...none },
+      default: {
+        basis: null,
+        special: null,
+        criminal: null,
+        purposes: [],
+        sources: [],
+        retention: null,
+        ...none,
+      },
     });
     expect((await exportOf("c-1")).categories).toEqual({
       default: { ...exportedCategories.default, ...none },
