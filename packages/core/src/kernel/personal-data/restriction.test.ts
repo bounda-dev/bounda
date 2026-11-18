@@ -52,6 +52,13 @@ const categories = buildPersonalCategories({
         sources: ["data-subject"],
         processedFor: ["direct-marketing"],
       },
+      mailings: {
+        basis: "consent",
+        retention: "1y",
+        purposes: ["Mail them offers"],
+        sources: ["data-subject"],
+        processedFor: ["direct-marketing"],
+      },
     },
   },
   retention: null,
@@ -312,6 +319,9 @@ describe("restrictProcessing", () => {
         ),
       );
     }
+    await expect(
+      restrict("c-1", { ground: "objection-pending", categories: ["offers", "mailings"] }),
+    ).rejects.toThrow("restrict holds objection-pending for direct marketing (offers, mailings)");
     expect(await storage.eventStore.lastPosition()).toBe(0);
     await restrict("c-1", { ground: "accuracy-contested", categories: ["offers"] });
     await restrict("c-1", { ground: "objection-pending", categories: ["marketing"] });

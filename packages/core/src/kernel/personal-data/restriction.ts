@@ -469,14 +469,21 @@ export const restrictProcessing: RestrictProcessingFunction = async ({
     options?.categories === undefined
       ? null
       : checkCategoryNames({ categories: known, asked: options.categories, operation: "restrict" });
-  const marketed = (categories ?? []).filter((category) =>
-    known.of(category)?.processedFor.includes("direct-marketing"),
-  );
-  if (ground === "objection-pending" && marketed.length > 0) {
-    throw new ValidationError(
-      `restrict holds objection-pending for direct marketing (${marketed.join(", ")}), which an objection stops with nothing to weigh (article 21(3)): forget those categories instead`,
-      [{ path: ["categories"], message: "Expected categories not processed for direct-marketing" }],
+  if (ground === "objection-pending" && categories !== null) {
+    const marketed = categories.filter((category) =>
+      known.of(category)?.processedFor.includes("direct-marketing"),
     );
+    if (marketed.length > 0) {
+      throw new ValidationError(
+        `restrict holds objection-pending for direct marketing (${marketed.join(", ")}), which an objection stops with nothing to weigh (article 21(3)): forget those categories instead`,
+        [
+          {
+            path: ["categories"],
+            message: "Expected categories not processed for direct-marketing",
+          },
+        ],
+      );
+    }
   }
   const changed = await change({
     storage,

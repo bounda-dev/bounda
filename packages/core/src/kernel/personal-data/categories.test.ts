@@ -457,6 +457,19 @@ describe("buildPersonalCategories", () => {
     ).toBe(
       `${at} is kept past a forgetting (archiving-research-or-statistics), and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
     );
+    expect(
+      refusal({
+        news: {
+          basis: "legal-obligation",
+          ...said,
+          special: consented,
+          processedFor: ["statistics"],
+          erasureExemption: "archiving-research-or-statistics",
+        },
+      }),
+    ).toBe(
+      `${at} is kept past a forgetting (legal-obligation, archiving-research-or-statistics), and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+    );
     const marketing = (exemptions: string) =>
       `${at} is kept past a forgetting (${exemptions}), and cannot be processed for direct-marketing, which an objection stops at once (article 21(3))`;
     expect(
