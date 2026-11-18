@@ -70,6 +70,34 @@ describe("openDatabaseKey", () => {
     expect(await after.indexer.index(args)).toBe(index);
   });
 
+  it("opens the key it rewrapped under the version in force, though the earlier one is retired at once", async () => {
+    const store = createMemoryIndexKeyStore();
+    const clock = createFixedClock();
+    const tenantKeys = await openTestTenantKeys();
+    const before = await openDatabaseKey({ store, wrapping: wrappingUnder(tenantKeys), clock });
+    const args = { readModel: "customers", field: "email", type: "string" as const, value: "a@x" };
+    const index = await before.indexer.index(args);
+    const rotated = await tenantKeys.rotate();
+    const retired: string[] = [];
+    // Another instance retires the earlier version as soon as nothing is wrapped under it.
+    const retiring = {
+      ...store,
+      rewrap: async (...rewrap: Parameters<typeof store.rewrap>) => {
+        const done = await store.rewrap(...rewrap);
+        retired.push(...(await tenantKeys.retire()));
+        return done;
+      },
+    };
+    const after = await openDatabaseKey({
+      store: retiring,
+      wrapping: wrappingUnder(tenantKeys),
+      clock,
+    });
+    expect(retired).toHaveLength(1);
+    expect(store.rows()[0]?.kid).toBe(rotated);
+    expect(await after.indexer.index(args)).toBe(index);
+  });
+
   it("replaces a key a version of Bounda before tenant keys created, so its indexes are computed anew", async () => {
     const store = createMemoryIndexKeyStore();
     const clock = createFixedClock();

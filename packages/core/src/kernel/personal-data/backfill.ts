@@ -301,9 +301,10 @@ export const createPersonalDataBackfill: CreatePersonalDataBackfillFunction = ({
   // category, so these walk again from the first event, as when a deploy goes back to them.
   const walkedSince = (started: number, listed: readonly BackfillRow[]): boolean =>
     listed.some(({ owner, name, position }) => {
-      // Marks started at the same moment are ordered by name, so only one of them walks again.
+      // Marks started at the same moment are ordered by name, so only one of them walks again. The
+      // row of these marks holds `started` itself, so it is never later.
       const later = position > started || (position === started && owner > marks);
-      return owner !== marks && name === "started" && later;
+      return name === "started" && later;
     });
 
   const report = (): void => {

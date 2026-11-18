@@ -242,11 +242,12 @@ jobs:
           retention-days: 14
 
   # The shards of a package add up to the report of a whole run: its score in the summary, and on
-  # main the whole report on the dashboard, as the dashboard reporter sends one.
+  # main the whole report on the dashboard, as the dashboard reporter sends one. It runs once the
+  # shards ran, whether or not they passed, and is skipped with them when `check` failed.
   mutation-report:
     name: Mutation report (${{ matrix.package }})
     needs: [changes, mutation]
-    if: ${{ !cancelled() && needs.changes.outputs.sharded != '[]' }}
+    if: ${{ !cancelled() && needs.changes.outputs.sharded != '[]' && (needs.mutation.result == 'success' || needs.mutation.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
