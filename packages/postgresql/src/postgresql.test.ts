@@ -1028,6 +1028,8 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         "CREATE INDEX snapshots_persons_idx ON public.snapshots USING gin (persons jsonb_path_ops)",
         "CREATE UNIQUE INDEX snapshots_pkey ON public.snapshots USING btree (aggregate_type, aggregate_id)",
         "CREATE UNIQUE INDEX subscriber_failures_pkey ON public.subscriber_failures USING btree (subscriber)",
+        "CREATE UNIQUE INDEX superseded_keys_pkey ON public.superseded_keys USING btree (person, fingerprint)",
+        "CREATE INDEX superseded_keys_successor_idx ON public.superseded_keys USING btree (person, successor)",
         "CREATE UNIQUE INDEX tenancy_pkey ON public.tenancy USING btree (scope)",
       ]);
     } finally {

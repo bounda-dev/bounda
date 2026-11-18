@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -178,12 +178,16 @@ describe("the node:sqlite adapter on a file", () => {
     );
     try {
       expect(await Promise.all(workers.map(next))).toEqual(Array(CONNECTIONS).fill("loaded"));
+      // Migrated once, each migration a commit synced to disk, and copied for every round as a
+      // restore would bring it back.
+      const copy = join(directory, "copy.sqlite");
+      const { adapter, db } = createNodeSqliteAdapter(copy);
+      await (await adapter.createStorage()).close();
+      db.exec("PRAGMA journal_mode = DELETE");
+      db.close();
       for (let round = 0; round < ROUNDS; round += 1) {
         const path = join(directory, `restored-${round}.sqlite`);
-        const { adapter, db } = createNodeSqliteAdapter(path);
-        await (await adapter.createStorage()).close();
-        db.exec("PRAGMA journal_mode = DELETE");
-        db.close();
+        await copyFile(copy, path);
 
         expect(await openAtOnce(workers, path)).toEqual(Array(CONNECTIONS).fill("opened"));
         const check = new DatabaseSync(path);
@@ -194,5 +198,5 @@ describe("the node:sqlite adapter on a file", () => {
       await Promise.all(workers.map((worker) => worker.terminate()));
       await rm(directory, { recursive: true, force: true });
     }
-  }, 20_000);
+  });
 });
