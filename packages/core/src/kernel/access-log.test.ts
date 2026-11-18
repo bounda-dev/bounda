@@ -490,6 +490,7 @@ describe("the access log", () => {
       },
     });
     await expect(app.streamPersonalData("ana")).rejects.toBe(down);
+    expect(records.map(({ access }) => access.persons)).toEqual([["ana"]]);
     expect(records.map(({ access }) => [access.operation, access.outcome, access.detail])).toEqual([
       [
         "exportPersonalData",

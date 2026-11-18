@@ -149,18 +149,16 @@ export const projectBatch: ProjectBatchFunction = async ({
   const started = clock.now().getTime();
   let current: StoredEvent | null = null;
   let raw = false;
-  // The keys of the rows the event's projections opened: an error they throw may quote any of
+  // The values of the rows the event's projections read: an error they throw may quote any of
   // them, so it is sealed under those persons too.
-  let opened: KeyedPerson[] = [];
-  const keys: SealingKeys = {
-    ...sealing.keys,
-    forOpen: async (person, fingerprint) => {
-      const key = await sealing.keys.forOpen(person, fingerprint);
-      if (key !== null) opened.push({ person, fingerprint });
-      return key;
+  let opened: KeyedPerson[];
+  const context: SealingContext = {
+    ...sealing,
+    event: () => current,
+    onOpen: (read) => {
+      opened.push(read);
     },
   };
-  const context: SealingContext = { ...sealing, keys, event: () => current };
   const table = sealedTable({ context, table: transaction.table });
   const client = sealedClient({
     context,

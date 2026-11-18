@@ -489,12 +489,9 @@ export const createResealBatches: CreateResealBatchesFunction = ({
       );
       discarded ||= thrownAway;
       person = named;
-      if (typeof errorMessage === "string") {
-        errorMessage = await sealUnderAll(under, named, errorMessage);
-      }
-      if (typeof errorStack === "string") {
-        errorStack = await sealUnderAll(under, named, errorStack);
-      }
+      // Around what the work's other readers sealed it under already, if anyone.
+      errorMessage = await sealUnderAll(under, named, errorMessage);
+      if (errorStack !== undefined) errorStack = await sealUnderAll(under, named, errorStack);
     }
     if (statePerson !== null) {
       const { keys: under, discarded: thrownAway } = await keys.errorText(

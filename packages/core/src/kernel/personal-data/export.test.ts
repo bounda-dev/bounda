@@ -1192,6 +1192,42 @@ describe("exportPersonalData", () => {
     for await (const _ of withholding.records);
     expect(withholding.others()).toEqual([]);
 
+    expect(letters(opened).map(({ id }) => id)).toEqual(["dl-1", "dl-2", "dl-3", "dl-4"]);
+    expect(opened.deadLetters.map(({ restricted }) => restricted)).toEqual([[], [], [], []]);
+    expect(opened.answers[0]?.restricted).toEqual([]);
+
+    // Opened while the other person is restricted, it says so; held back, nothing of it is.
+    await storage.persons.restrict("c-2", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date("2026-01-03T00:00:00.000Z"),
+    });
+    const restricted = await exportOf("c-1", 2, true);
+    expect(restricted.deadLetters.map(({ id, restricted: covered }) => [id, covered])).toEqual([
+      ["dl-1", []],
+      ["dl-2", ["errorMessage", "errorStack"]],
+      ["dl-3", ["errorMessage", "errorStack"]],
+      ["dl-4", ["errorMessage"]],
+    ]);
+    expect(restricted.subscriberFailures[0]?.restricted).toEqual(["errorMessage", "errorStack"]);
+    expect(restricted.answers[0]?.restricted).toEqual(["idempotencyKey", "outcome"]);
+    const held = await exportOf("c-1");
+    expect(held.deadLetters.map(({ restricted: covered }) => covered)).toEqual([[], [], [], []]);
+    expect(held.answers[0]?.restricted).toEqual([]);
+    await storage.persons.restrict("c-1", {
+      ground: "accuracy-contested",
+      categories: null,
+      since: new Date("2026-01-03T00:00:00.000Z"),
+    });
+    expect((await exportOf("c-1", 2, true)).answers[0]?.restricted).toEqual([
+      "outcome",
+      "idempotencyKey",
+    ]);
+    expect((await exportOf("c-1", 2, true)).deadLetters[2]?.restricted).toEqual([
+      "errorMessage",
+      "errorStack",
+    ]);
+
     // Once anyone it is sealed under is forgotten, nothing of it opens, and nothing is held back.
     for (const { key } of await storage.personalKeys.list("c-2")) {
       await storage.personalKeys.remove("c-2", key.fingerprint);
@@ -1229,5 +1265,37 @@ describe("exportPersonalData", () => {
       }),
     ]);
     expect((await exportOf("c-1")).deadLetters).toEqual([]);
+  });
+
+  it("hands a failure whose event named nobody the text of whom its delivery read alone, as theirs", async () => {
+    const { exportOf, storage, register } = await setup();
+    await register("c-2", "bea@example.com");
+    const [bea] = await storage.personalKeys.list("c-2");
+    const { errorStack: _stack, ...sealed } = await sealError({
+      error: new Error("cannot index bea@example.com"),
+      person: null,
+      keys: keysOver(storage.personalKeys),
+      read: [{ person: "c-2", fingerprint: bea?.key.fingerprint ?? null }],
+    });
+    await storage.subscriberFailures.record({
+      subscriber: "projection:a",
+      position: 1,
+      eventId: "e-1",
+      eventType: "CustomerRegistered",
+      person: null,
+      ...sealed,
+      failedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect((await exportOf("c-2")).subscriberFailures).toStrictEqual([
+      {
+        subscriber: "projection:a",
+        eventId: "e-1",
+        eventType: "CustomerRegistered",
+        errorMessage: "cannot index bea@example.com",
+        restricted: [],
+        withheld: [],
+      },
+    ]);
+    expect((await exportOf("c-1")).subscriberFailures).toEqual([]);
   });
 });

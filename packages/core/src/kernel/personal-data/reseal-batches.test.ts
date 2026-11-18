@@ -826,6 +826,15 @@ describe("what the backfill rewrites and names beyond the marks of a field", () 
     await storage.deadLetterStore.add(filed("l-9", { eventId: "gone" }));
     await storage.deadLetterStore.add(filed("l-10", { handler: "shop.unknown" }));
     await storage.deadLetterStore.add(filed("l-11", { handler: "shop.unmarked" }));
+    const readOnly = { $personal: { person: "r-2", key: "k", iv: "i", data: "d" } };
+    await storage.deadLetterStore.add(
+      filed("l-13", {
+        handler: "shop.unknown",
+        readPersons: ["r-2"],
+        errorMessage: readOnly,
+        errorStack: readOnly,
+      }),
+    );
     await storage.deadLetterStore.add(
       filed("l-12", {
         aggregateType: stream,
@@ -838,7 +847,7 @@ describe("what the backfill rewrites and names beyond the marks of a field", () 
 
     const batches = reseal(storage);
     const sealed = await batches.letters(await storage.deadLetterStore.list(), started);
-    expect(sealed.resealed).toBe(8);
+    expect(sealed.resealed).toBe(9);
     expect(sealed.discarded).toBe(1);
     const after = new Map(
       (await storage.deadLetterStore.list()).map((letter) => [letter.id, letter]),
@@ -868,6 +877,10 @@ describe("what the backfill rewrites and names beyond the marks of a field", () 
     for (const id of ["l-10", "l-11"]) {
       expect(after.get(id)).toMatchObject({ person: "c-1" });
       expect(after.get(id)).not.toHaveProperty("statePerson");
+    }
+    expect(after.get("l-13")).toMatchObject({ person: "c-1", readPersons: ["r-2"] });
+    for (const text of [after.get("l-13")?.errorMessage, after.get("l-13")?.errorStack]) {
+      expect(text).toMatchObject({ $personal: { person: "c-1" } });
     }
     expect(after.get("l-12")).toMatchObject({ person: "c-1", statePerson: "a-5" });
 

@@ -29,7 +29,7 @@ import { isRecord } from "../shared/merge-fields.ts";
 import { openAnswer } from "./answers.ts";
 import type { PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
-import { type OpenTextFunction, openTextWith } from "./errors.ts";
+import { type OpenTextFunction, openTextWith, textPersons } from "./errors.ts";
 import { openedUnder, redactedIn } from "./event-store.ts";
 import {
   collectPersonalDataExport,
@@ -50,6 +50,7 @@ import {
 import { personalDataInformation } from "./information.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
+import { restrictedAmong } from "./restricted-reads.ts";
 import { processingRestrictionsOf } from "./restriction.ts";
 import { checkPersonId } from "./transact.ts";
 
@@ -318,30 +319,39 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
   };
   // Everyone else whose data a value opened in spite of article 15(4) may quote.
   const others = new Set<string>();
+  const restrictedOther = restrictedAmong(storage.persons);
   // What of a value sealed under `sealedUnder` the person gets, as `fields`: all of it when it is
   // sealed under them alone; when it is sealed under someone else too, it may quote their data, so
-  // it is held back, reading `null`, unless `includeWithheld` opens it. A value no key opens any
-  // more holds nothing to hold back.
-  const shared = <Opened extends Record<string, unknown>>(
+  // it is held back, reading `null`, unless `includeWithheld` opens it, restricted while one of
+  // those others is. A value no key opens any more holds nothing to hold back.
+  const shared = async <Opened extends Record<string, unknown>>(
     sealedUnder: readonly string[],
     opened: Opened,
     fields: readonly (keyof Opened & string)[],
-  ): {
+  ): Promise<{
     readonly values: { readonly [Field in keyof Opened]: Opened[Field] | null };
     readonly withheld: readonly ExportedWithheld[];
-  } => {
+    readonly restricted: ExportedRestricted;
+  }> => {
     const elsewhere = sealedUnder.filter((person) => person !== personId);
     const held = fields.filter((field) => opened[field] !== null);
-    if (elsewhere.length === 0 || held.length === 0) return { values: opened, withheld: [] };
-    const withheld = held.map((field) => ({ field, ...WITHHELD_FOR_OTHERS }));
-    if (includeWithheld) {
-      for (const person of elsewhere) others.add(person);
-      return { values: opened, withheld };
+    if (elsewhere.length === 0 || held.length === 0) {
+      return { values: opened, withheld: [], restricted: [] };
     }
-    return {
-      values: { ...opened, ...Object.fromEntries(held.map((field) => [field, null])) },
-      withheld,
-    };
+    const withheld = held.map((field) => ({ field, ...WITHHELD_FOR_OTHERS }));
+    if (!includeWithheld) {
+      return {
+        values: { ...opened, ...Object.fromEntries(held.map((field) => [field, null])) },
+        withheld,
+        restricted: [],
+      };
+    }
+    let restricted = false;
+    for (const person of elsewhere) {
+      others.add(person);
+      if (await restrictedOther(person)) restricted = true;
+    }
+    return { values: opened, withheld, restricted: restricted ? held : [] };
   };
   // An error's text, opened, as the person gets it.
   const exportedText = async (
@@ -353,7 +363,11 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
       errorMessage: await openText(errorMessage),
       ...(errorStack === undefined ? {} : { errorStack: await openText(errorStack) }),
     };
-    return shared(sealedUnder, opened, errorStack === undefined ? ["errorMessage"] : TEXT_FIELDS);
+    return await shared(
+      sealedUnder,
+      opened,
+      errorStack === undefined ? ["errorMessage"] : TEXT_FIELDS,
+    );
   };
   // A letter's error text is the person's only when it is sealed under them: one listed for the
   // persons its payload names keeps whatever its own `person` holds.
@@ -361,11 +375,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     { openText, openedData }: ReturnType<typeof opener>,
     letter: StoredDeadLetter,
   ): Promise<ExportedDeadLetter> => {
-    const sealedUnder = [
-      ...(letter.person === null ? [] : [letter.person]),
-      ...(letter.statePerson === undefined ? [] : [letter.statePerson]),
-      ...(letter.readPersons ?? []),
-    ];
+    const sealedUnder = textPersons(letter);
     const theirs = sealedUnder.includes(personId);
     const text = theirs ? await exportedText(openText, sealedUnder, letter) : null;
     const data = await openedData(letter.eventType, letter.payload);
@@ -376,12 +386,15 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
       ...text?.values,
       ...data,
       restricted: [
-        ...restrictedFields(data.categories),
-        ...(theirs
-          ? textRestricted.filter(
-              (field) => field === "errorMessage" || letter.errorStack !== undefined,
-            )
-          : []),
+        ...new Set([
+          ...restrictedFields(data.categories),
+          ...(theirs
+            ? textRestricted.filter(
+                (field) => field === "errorMessage" || letter.errorStack !== undefined,
+              )
+            : []),
+          ...(text?.restricted ?? []),
+        ]),
       ],
       withheld: text?.withheld ?? [],
     };
@@ -464,10 +477,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     // One row per subscriber: few enough to read whole.
     const { openText } = opener();
     for (const failure of await storage.subscriberFailures.list()) {
-      const sealedUnder = [
-        ...(failure.person === null ? [] : [failure.person]),
-        ...(failure.readPersons ?? []),
-      ];
+      const sealedUnder = textPersons(failure);
       if (!sealedUnder.includes(personId)) continue;
       const text = await exportedText(openText, sealedUnder, failure);
       yield {
@@ -478,9 +488,14 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
           eventType: failure.eventType,
           errorMessage: text.values.errorMessage,
           ...(text.values.errorStack === undefined ? {} : { errorStack: text.values.errorStack }),
-          restricted: textRestricted.filter(
-            (field) => field === "errorMessage" || failure.errorStack !== undefined,
-          ),
+          restricted: [
+            ...new Set([
+              ...textRestricted.filter(
+                (field) => field === "errorMessage" || failure.errorStack !== undefined,
+              ),
+              ...text.restricted,
+            ]),
+          ],
           withheld: text.withheld,
         },
       };
@@ -509,7 +524,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
                 answer: record.answer,
               });
         if (remembered === null) continue;
-        const { values, withheld } = shared(
+        const opened = await shared(
           record.persons.map(({ person }) => person),
           { idempotencyKey: remembered.key ?? record.key, outcome: remembered.outcome },
           ANSWER_FIELDS,
@@ -517,11 +532,13 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
         yield {
           kind: "answer",
           answer: {
-            idempotencyKey: values.idempotencyKey,
+            idempotencyKey: opened.values.idempotencyKey,
             expiresAt: record.expiresAt,
-            outcome: values.outcome,
-            restricted: restrictions.length > 0 ? ["outcome"] : [],
-            withheld,
+            outcome: opened.values.outcome,
+            restricted: [
+              ...new Set([...(restrictions.length > 0 ? ["outcome"] : []), ...opened.restricted]),
+            ],
+            withheld: opened.withheld,
           },
         };
       }

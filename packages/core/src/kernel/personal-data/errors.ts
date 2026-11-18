@@ -144,3 +144,22 @@ export const openTextWith: OpenTextWithFunction = (keyOf) => {
   };
   return open;
 };
+
+export interface SealedText {
+  readonly person: string | null;
+  readonly statePerson?: string;
+  readonly readPersons?: readonly string[];
+}
+
+export interface TextPersonsFunction {
+  (sealed: SealedText): string[];
+}
+
+/**
+ * Everyone a dead letter's or a subscriber failure's error text is sealed under.
+ */
+export const textPersons: TextPersonsFunction = ({ person, statePerson, readPersons = [] }) => [
+  ...(person === null ? [] : [person]),
+  ...(statePerson === undefined ? [] : [statePerson]),
+  ...readPersons,
+];

@@ -1,3 +1,4 @@
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import { isRetainedKey } from "../../adapter/storage/restricted-persons.ts";
 import {
   RETAINED_KEY_PREFIX,
@@ -62,6 +63,8 @@ export interface SealingContext {
   readonly indexer: BlindIndexer | null;
   // The event being projected, `null` outside a projection.
   readonly event: () => StoredEvent | null;
+  // Told of each personal value a read opens, with the key it was written under.
+  readonly onOpen?: (read: KeyedPerson) => void;
 }
 
 const keyText = (key: PersonalKey): string =>
@@ -192,7 +195,7 @@ export interface OpenedRow {
 }
 
 export interface OpenRowArgs {
-  readonly context: Pick<SealingContext, "layout" | "keys">;
+  readonly context: Pick<SealingContext, "layout" | "keys" | "onOpen">;
   // As the adapter decoded it: any of the stored fields, others a statement selected.
   readonly stored: Row;
   // Leaves the values under a key a forgetting kept unopened, as `null`.
@@ -208,7 +211,7 @@ export interface OpenRowFunction {
 // went around the runtime leaves, reads as `null`: nothing in the clear comes out of a sealed
 // column.
 export const openRow: OpenRowFunction = async ({
-  context: { layout, keys },
+  context: { layout, keys, onOpen },
   stored,
   hideRetained,
 }) => {
@@ -220,10 +223,25 @@ export const openRow: OpenRowFunction = async ({
   for (const field of layout.personal) {
     delete row[field.keyField];
     if (field.indexField !== null) delete row[field.indexField];
-    if (isRetainedKey(stored[field.keyField])) retainedFields.add(field.field);
-    if (!field.sealed || !(field.field in stored)) continue;
+    const keyText = stored[field.keyField];
+    if (isRetainedKey(keyText)) retainedFields.add(field.field);
     const value = stored[field.field];
     if (value === undefined || value === null) continue;
+    if (!field.sealed) {
+      // A value in the clear is the row's person's, under the key its key field names.
+      if (typeof own === "string" && typeof keyText === "string") {
+        onOpen?.(
+          isRetainedKey(keyText)
+            ? {
+                person: own,
+                fingerprint: keyText.slice(RETAINED_KEY_PREFIX.length),
+                retained: true,
+              }
+            : { person: own, fingerprint: keyText },
+        );
+      }
+      continue;
+    }
     const envelope = parseEnvelope(value);
     if (envelope === null) {
       row[field.field] = null;
@@ -232,10 +250,16 @@ export const openRow: OpenRowFunction = async ({
     persons.add(envelope.$personal.person);
     const key = await keys.forOpen(envelope.$personal.person, envelope.$personal.key);
     if (key?.retained === true) retainedFields.add(field.field);
-    row[field.field] =
-      key === null || (key.retained && hideRetained)
-        ? null
-        : typed(field.definition.type, await unseal({ key, sealed: envelope }));
+    if (key === null || (key.retained && hideRetained)) {
+      row[field.field] = null;
+      continue;
+    }
+    onOpen?.({
+      person: envelope.$personal.person,
+      fingerprint: envelope.$personal.key,
+      ...(key.retained ? { retained: true as const } : {}),
+    });
+    row[field.field] = typed(field.definition.type, await unseal({ key, sealed: envelope }));
   }
   return {
     row,

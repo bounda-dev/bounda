@@ -7,7 +7,7 @@ import type { ErrorText } from "../../config/types.ts";
 import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { sealedKeys } from "../personal-data/commands.ts";
-import { openTextWith } from "../personal-data/errors.ts";
+import { openTextWith, textPersons } from "../personal-data/errors.ts";
 import {
   checkIncludeRestricted,
   type IncludeRestrictedOptions,
@@ -68,10 +68,7 @@ export interface CreateSubscriberFailuresFunction {
 
 // Everyone a failure's text is sealed under.
 const personsOf = (failures: readonly StoredSubscriberFailure[]): string[] =>
-  failures.flatMap(({ person, readPersons = [] }) => [
-    ...(person === null ? [] : [person]),
-    ...readPersons,
-  ]);
+  failures.flatMap(textPersons);
 
 export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
   store,

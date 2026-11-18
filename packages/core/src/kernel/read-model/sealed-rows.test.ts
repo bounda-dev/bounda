@@ -162,6 +162,74 @@ describe("sealedValues and openRow", () => {
     expect(withoutPerson.persons).toEqual(["bo"]);
   });
 
+  it("tells whoever asks of each value it opens, sealed or in the clear, with the key it is under", async () => {
+    const { keys, keyOf } = keysOf(["bo"]);
+    const opened: unknown[] = [];
+    const context = {
+      layout,
+      keys,
+      indexer: null,
+      event: () => null,
+      onOpen: (read: unknown) => {
+        opened.push(read);
+      },
+    };
+    const ana = await sealedValues({
+      context,
+      values: { id: "a", customerId: "ana", email: "a@x", phone: "1" },
+      person: "ana",
+      whole: true,
+    });
+    const anaKey = await keyOf("ana");
+    await openRow({ context, stored: ana, hideRetained: false });
+    expect(opened).toEqual([
+      { person: "ana", fingerprint: anaKey.fingerprint },
+      { person: "ana", fingerprint: anaKey.fingerprint },
+    ]);
+    const bo = await sealedValues({
+      context,
+      values: { id: "b", customerId: "bo", email: "b@x", phone: "2" },
+      person: "bo",
+      whole: true,
+    });
+    const boKey = await keyOf("bo");
+    opened.length = 0;
+    await openRow({ context, stored: bo, hideRetained: false });
+    expect(opened).toEqual([
+      { person: "bo", fingerprint: boKey.fingerprint, retained: true },
+      { person: "bo", fingerprint: boKey.fingerprint, retained: true },
+    ]);
+    opened.length = 0;
+    await openRow({ context, stored: bo, hideRetained: true });
+    expect(opened).toEqual([{ person: "bo", fingerprint: boKey.fingerprint, retained: true }]);
+    opened.length = 0;
+    // Nothing to read, a key gone, a clear value without its key field or its person: no one.
+    await openRow({
+      context,
+      stored: { id: "c", customerId: "cai", email: ana.email, phone: null, phone__key: "k" },
+      hideRetained: false,
+    });
+    await openRow({
+      context,
+      stored: { id: "d", customerId: "dan", phone: "3", phone__key: null },
+      hideRetained: false,
+    });
+    await openRow({
+      context,
+      stored: { id: "e", phone: "4", phone__key: "k" },
+      hideRetained: false,
+    });
+    expect(opened).toEqual([{ person: "ana", fingerprint: anaKey.fingerprint }]);
+    opened.length = 0;
+    const gone = { $personal: { ...parseEnvelope(bo.email)?.$personal, key: "gone" } };
+    await openRow({
+      context,
+      stored: { ...ana, email: JSON.stringify(gone) },
+      hideRetained: false,
+    });
+    expect(opened).toEqual([{ person: "ana", fingerprint: anaKey.fingerprint }]);
+  });
+
   it("reads a date that is no string as it is, and a value that is no envelope or not JSON as null", async () => {
     const { keys } = keysOf();
     const context = { layout, keys, indexer: null, event: () => null };

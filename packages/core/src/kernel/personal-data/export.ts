@@ -29,7 +29,8 @@ export type ExportedCategories = Readonly<Record<string, string>>;
  * hands it out): the fields of `data` by name, of a category restricted, or kept under an erasure
  * exemption, or every one for a person restricted as a whole; and `errorMessage` and
  * `errorStack` for an error's text, which may quote any of their data, while any restriction
- * holds.
+ * holds. With `includeWithheld`, also each value it opened that is sealed under someone else
+ * whose processing is restricted.
  */
 export type ExportedRestricted = readonly string[];
 
@@ -256,7 +257,7 @@ export interface ExportedAnswer {
   readonly outcome: DispatchOutcome | null;
   /**
    * `["outcome"]` while any restriction of the person holds: the answer may quote any of their
-   * data.
+   * data; and as `ExportedRestricted` says with `includeWithheld`.
    */
   readonly restricted: ExportedRestricted;
   /**
@@ -413,20 +414,11 @@ export const NO_EXPORTED_RECORDS: ExportedCounts = {
   withheld: 0,
 };
 
-const withholding = (part: PersonalDataExportPart): number => {
-  switch (part.kind) {
-    case "deadLetter":
-      return part.deadLetter.withheld.length > 0 ? 1 : 0;
-    case "subscriberFailure":
-      return part.subscriberFailure.withheld.length > 0 ? 1 : 0;
-    case "answer":
-      return part.answer.withheld.length > 0 ? 1 : 0;
-    default:
-      return 0;
-  }
-};
+// A record that held a value back under article 15(4) counts in `withheld` too.
+const withheld = (counts: ExportedCounts, held: readonly unknown[]): number =>
+  counts.withheld + (held.length > 0 ? 1 : 0);
 
-const countKind: CountPartFunction = (counts, part) => {
+export const countPart: CountPartFunction = (counts, part) => {
   switch (part.kind) {
     case "header":
       return { ...counts, recipients: part.header.recipients.length };
@@ -437,18 +429,27 @@ const countKind: CountPartFunction = (counts, part) => {
     case "scheduledCommand":
       return { ...counts, scheduledCommands: counts.scheduledCommands + 1 };
     case "deadLetter":
-      return { ...counts, deadLetters: counts.deadLetters + 1 };
+      return {
+        ...counts,
+        deadLetters: counts.deadLetters + 1,
+        withheld: withheld(counts, part.deadLetter.withheld),
+      };
     case "subscriberFailure":
-      return { ...counts, subscriberFailures: counts.subscriberFailures + 1 };
+      return {
+        ...counts,
+        subscriberFailures: counts.subscriberFailures + 1,
+        withheld: withheld(counts, part.subscriberFailure.withheld),
+      };
     case "answer":
-      return { ...counts, answers: counts.answers + 1 };
+      return {
+        ...counts,
+        answers: counts.answers + 1,
+        withheld: withheld(counts, part.answer.withheld),
+      };
     case "row":
       return { ...counts, readModelRows: counts.readModelRows + 1 };
   }
 };
-
-export const countPart: CountPartFunction = (counts, part) =>
-  countKind({ ...counts, withheld: counts.withheld + withholding(part) }, part);
 
 export interface CollectPersonalDataExportFunction {
   (parts: AsyncIterable<PersonalDataExportPart>): Promise<PersonalDataExport>;

@@ -46,14 +46,14 @@ export const readUnder: ReadUnderFunction = ({ person, error, also = [] }) => {
 };
 
 export interface ReadersOfFunction {
-  (error: unknown, also?: readonly KeyedPerson[]): readonly string[];
+  (error: unknown, also: readonly KeyedPerson[]): readonly string[];
 }
 
 /**
  * Everyone the failed work read data of under a key, what its unit noted on `error` and `also`,
  * each once, in code point order.
  */
-export const readersOf: ReadersOfFunction = (error, also = []) =>
+export const readersOf: ReadersOfFunction = (error, also) =>
   [
     ...new Set(
       [...(readsByError.get(Object(error)) ?? []), ...also]

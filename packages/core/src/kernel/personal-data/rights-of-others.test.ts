@@ -275,6 +275,17 @@ describe("text the work wrote while it read data of someone else", () => {
 
   it("quoting a value of theirs a redaction seals is sealed for good, still naming them", async () => {
     const { app, storage, letter } = await referred();
+    // Kept in the clear, by work whose event named nobody and that read nothing under a key.
+    await storage.subscriberFailures.record({
+      subscriber: "projection:copies",
+      position: 1,
+      eventId: "e-1",
+      eventType: "MemberReferred",
+      person: null,
+      errorName: "Error",
+      errorMessage: "copied Bea Sanz",
+      failedAt: "2026-01-01T00:00:00.000Z",
+    });
     const joined = (await app.exportPersonalData("bea")).events.filter(
       ({ type }) => type === "MemberJoined",
     );
@@ -293,6 +304,23 @@ describe("text the work wrote while it read data of someone else", () => {
     expect(await app.deadLetters.get(letter.id)).toMatchObject({ errorMessage: null });
     expect(await app.subscriberFailures.get("projection:members")).toMatchObject({
       errorMessage: null,
+    });
+    expect(await app.subscriberFailures.get("projection:copies")).toMatchObject({
+      errorMessage: null,
+    });
+    await app.stop();
+  });
+
+  it("of a projection, about a row whose person is forgotten, names nobody for it", async () => {
+    const { app, storage, commands } = await setup();
+    await app.forget("bea");
+    await commands.referMember?.({ memberId: "ana", referredId: "bea", note: "a friend" });
+    await app.runUntilIdle();
+    const failure = await storage.subscriberFailures.get("projection:members");
+    expect(failure).toMatchObject({ person: "ana" });
+    expect(failure).not.toHaveProperty("readPersons");
+    expect(await app.subscriberFailures.get("projection:members")).toMatchObject({
+      errorMessage: "cannot list nobody",
     });
     await app.stop();
   });

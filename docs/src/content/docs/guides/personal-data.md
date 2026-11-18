@@ -933,7 +933,8 @@ Text the app's code wrote is another matter: an error a handler threw, or a reje
 remembered, may quote whatever the work read, and Bounda knows whose data that was. A dead letter's
 error text, and a subscriber's last failure's, is encrypted under the keys of everyone whose data
 the work read: the person its event names, the one its process state names, those whose aggregates
-the commands it dispatched loaded, and those whose rows a projection read through its `table`. The
+the commands it dispatched loaded, and those whose rows a projection read through its `table`,
+sealed or in the clear. The
 letter names them in `person`, `statePerson` and `readPersons`, the failure in `person` and
 `readPersons`. A remembered rejection is encrypted under everyone whose data the state it was
 decided on held, and the person the command touches. Each of them finds the record in their
@@ -967,7 +968,8 @@ const review = await app.as("dpo").exportPersonalData("c-42", { includeWithheld:
 [`personalDataExportResponse`](/guides/react-router/#exporting-a-persons-data) and
 [`bounda personal-data export --include-withheld`](/reference/cli/#bounda-personal-data-export-and-bounda-forget-person).
 The [access log](#who-opened-what) records `includeWithheld`, and names, after the person,
-everyone else whose data the values it opened may quote. Never hand such an export to the person as
+everyone else whose data the values it opened may quote; a value opened of someone whose processing
+is [restricted](#restricting-processing) is named in its record's `restricted` too. Never hand such an export to the person as
 it is: hand them the one without it, and what the controller decided to release.
 
 What a handler took from a port and quoted, or a projection read through `client.raw`, Bounda

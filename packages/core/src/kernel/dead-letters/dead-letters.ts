@@ -12,7 +12,7 @@ import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-data/commands.ts";
-import { openTextWith } from "../personal-data/errors.ts";
+import { openTextWith, textPersons } from "../personal-data/errors.ts";
 import {
   checkIncludeRestricted,
   type IncludeRestrictedOptions,
@@ -101,12 +101,7 @@ export interface CreateDeadLettersFunction {
 // The persons the error's text is sealed under, and those whose fields a payload holds.
 const personsOf = (
   letter: Pick<StoredDeadLetter, "person" | "statePerson" | "readPersons" | "persons">,
-): string[] => [
-  ...(letter.person === null ? [] : [letter.person]),
-  ...(letter.statePerson === undefined ? [] : [letter.statePerson]),
-  ...(letter.readPersons ?? []),
-  ...(letter.persons ?? []).map(({ person }) => person),
-];
+): string[] => [...textPersons(letter), ...(letter.persons ?? []).map(({ person }) => person)];
 
 export const createDeadLetters: CreateDeadLettersFunction = ({
   storage,
