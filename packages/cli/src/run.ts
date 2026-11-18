@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
-  ConfigurationError,
   checkActor,
   type DeadLetterKind,
   type DeadLetterStatus,
@@ -856,6 +855,7 @@ const runRestore = async (
   const project = await load(options, cwd, logger, stderr);
   if (project === undefined) return EXIT_FAILURE;
   const { config, tenant } = project;
+  let unsupported: string | null = null;
   try {
     await withEncryptedFiles({
       config,
@@ -863,16 +863,20 @@ const runRestore = async (
       logger,
       ...(tenant === undefined ? {} : { tenant }),
       work: async ({ storage }) => {
-        if (!isAdapter(storage) || storage.restore === undefined) {
-          throw new ConfigurationError(
-            `storage "${storage.name}" is restored with its engine's own tools: see https://docs.bounda.dev/guides/backups/`,
-          );
-        }
-        await storage.restore({ copy: resolve(cwd, copy) });
+        if (!isAdapter(storage) || storage.restore === undefined) unsupported = storage.name;
+        else await storage.restore({ copy: resolve(cwd, copy) });
       },
     });
   } catch (error) {
     return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
+  }
+  // Names the adapter alone: printed in full.
+  if (unsupported !== null) {
+    line(
+      stderr,
+      `error: storage "${unsupported}" is restored with its engine's own tools: see https://docs.bounda.dev/guides/backups/`,
+    );
+    return EXIT_FAILURE;
   }
   line(
     stdout,

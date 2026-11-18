@@ -279,10 +279,12 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         head = await events.lastPosition();
         await watchHead(head);
         seen = stored;
-        // Counted where it was made: no generation went back, and no mark tells it.
+        // One counted where it was made moved the generation past the mark; one the mark tells came
+        // after, as a copy of a database that held it.
         const unclaimed = await checkpoints.get(RESTORE_TAKEN_BY_FIRST);
         foundAtStart = unclaimed > 0 && unclaimed === stored.restores ? unclaimed : 0;
-        const restored = foundAtStart > 0 ? { first: true } : await compareWithMark(stored);
+        const restored =
+          (await compareWithMark(stored)) ?? (foundAtStart > 0 ? { first: true } : null);
         // A mark only goes up: past a restore it is already higher.
         await raise(stored.generation);
         return restored;

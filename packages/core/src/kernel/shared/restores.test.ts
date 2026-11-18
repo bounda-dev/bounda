@@ -84,6 +84,17 @@ describe("createRestoreWatch", () => {
     },
   );
 
+  it("still counts at start a restore the ledger's mark tells, over a restore counted in place the copy held", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    await restoredInPlace(checkpointStore, 3);
+    await ledger.raiseMark(RESTORE_MARK, 20);
+    const watch = watchOver();
+    expect(await watch.start()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(4);
+    await watch.started();
+    expect(await watchOver().start()).toBeNull();
+  });
+
   it("takes nothing once a start found nothing, and logs a store it could not take it in", async () => {
     const { checkpointStore, entries, watchOver } = await setUp({
       marks: false,

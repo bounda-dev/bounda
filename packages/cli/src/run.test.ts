@@ -1940,7 +1940,7 @@ describe("bounda restore", () => {
     expect(refused.stderr).toContain(
       `error: The copy at ${join(fixture, "refused.db")} is not one`,
     );
-    const memory = await cli(["restore", "app.db", "--error-text"], fixture);
+    const memory = await cli(["restore", "app.db"], fixture);
     expect(memory.code).toBe(EXIT_FAILURE);
     expect(memory.stderr).toContain(
       'error: storage "memory" is restored with its engine\'s own tools: see https://docs.bounda.dev/guides/backups/',
