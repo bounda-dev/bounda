@@ -1316,6 +1316,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       // The header alone was read.
       if (none) await vouchAfter(readModelNames)();
     }
+    // What the runtime keeps of handlers that failed opens personal data too: its reads are vouched
+    // for as a query's are.
+    const vouchedRead =
+      <Args extends unknown[], Read>(read: (...args: Args) => Promise<Read>) =>
+      async (...args: Args): Promise<Read> => {
+        const value = await read(...args);
+        await vouchAfter([])();
+        return value;
+      };
     // A restore is settled once the ledger is reconciled with it and the read models projected
     // what that committed again; what was read before then is refused.
     const settleRestore = async (): Promise<void> => {
@@ -1862,6 +1871,26 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           },
         });
       };
+      const failures = createSubscriberFailures({
+        tracer: appTracer,
+        store: written.subscriberFailures,
+        keys: storage.personalKeys,
+        persons: storage.persons,
+        actor,
+        recordAccess,
+        errorText,
+      });
+      const letters = createDeadLetters({
+        tracer: appTracer,
+        storage,
+        retries,
+        processes,
+        clock,
+        logger,
+        errorText,
+        actor,
+        recordAccess,
+      });
       return {
         commands: createCommandsFacade({
           aggregates,
@@ -1877,27 +1906,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: status,
           }),
-        subscriberFailures: createSubscriberFailures({
-          tracer: appTracer,
-          store: written.subscriberFailures,
-          keys: storage.personalKeys,
-          persons: storage.persons,
-          actor,
-          recordAccess,
-          errorText,
-        }),
+        subscriberFailures: {
+          ...failures,
+          list: vouchedRead(failures.list),
+          get: vouchedRead(failures.get),
+        },
         events,
-        deadLetters: createDeadLetters({
-          tracer: appTracer,
-          storage,
-          retries,
-          processes,
-          clock,
-          logger,
-          errorText,
-          actor,
-          recordAccess,
-        }),
+        deadLetters: { ...letters, list: vouchedRead(letters.list), get: vouchedRead(letters.get) },
         rebuildReadModel: (name) =>
           tracedOperation({
             tracer: appTracer,

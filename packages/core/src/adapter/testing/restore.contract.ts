@@ -1747,6 +1747,17 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
             cause: { message: "the ledger is down" },
           });
         }
+        // What the runtime keeps of handlers that failed opens personal data as a query does.
+        await expect(first.app.deadLetters.list()).rejects.toBeInstanceOf(RestoreUnreconciledError);
+        await expect(first.app.deadLetters.get("none")).rejects.toBeInstanceOf(
+          RestoreUnreconciledError,
+        );
+        await expect(first.app.subscriberFailures.list()).rejects.toBeInstanceOf(
+          RestoreUnreconciledError,
+        );
+        await expect(first.app.subscriberFailures.get("none")).rejects.toBeInstanceOf(
+          RestoreUnreconciledError,
+        );
         state.failing = false;
         // The read under way when the ledger answers was read before it.
         await expect(first.queries.getCustomer?.({ customerId: "ana" })).rejects.toMatchObject({

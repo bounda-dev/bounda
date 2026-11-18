@@ -2443,7 +2443,7 @@ ledger it cannot read fails the start with
 starting again tries again. The CLI's commands that start the app need the ledger then;
 `bounda forgotten` does not, since it reads the event store alone. Availability now depends on the
 ledger's: give it a store at least as available as the database. While it runs, a strict app also
-checks after every query and export that the database did not go back to an earlier copy, and
+checks after every query, export and read of the dead letters that the database did not go back to an earlier copy, and
 hands out nothing read from one before the ledger is reconciled with it: see [strict
 reads](/guides/backups/#strict-reads).
 

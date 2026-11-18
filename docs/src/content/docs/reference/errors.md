@@ -114,7 +114,8 @@ dead letter with `errorType: "retriable_exhausted"`.
   the app does not start, since a person a restored backup brought back could be read. `cause` is
   the ledger's error. Starting again tries again.
 - **`RESTORE_UNRECONCILED`** (`RestoreUnreconciledError`; a read's answer). Thrown, when
-  `runtime.personalData.forgetLedger.strict` is set, by a query or export that found the database
+  `runtime.personalData.forgetLedger.strict` is set, by a query, an export or a read of the dead letters or the subscribers' failures that found the
+  database
   [restored from an earlier copy](/guides/backups/#strict-reads), or that ran before the forget
   ledger was reconciled with one: nothing it read is handed out. `cause` is the ledger's error when
   it could not be read. Transient: the same read succeeds once the ledger is reconciled and the read

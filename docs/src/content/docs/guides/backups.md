@@ -126,9 +126,10 @@ catches up as one.
 
 ## Strict reads
 
-With a [strict](/guides/personal-data/#what-the-runtime-does-with-it) forget ledger, every query and
-export checks after it read that the database did not go back meanwhile, by the same counters and
-newest event the passes check, and that the read model's database of its own stands where it did.
+With a [strict](/guides/personal-data/#what-the-runtime-does-with-it) forget ledger, every query,
+export, and read of the dead letters and of the subscribers' failures checks after it read that the
+database did not go back meanwhile, by the same counters and newest event the passes check, and
+that the read model's database of its own stands where it did.
 A restore found then, or one the ledger is not yet reconciled with, refuses the read with
 [`RESTORE_UNRECONCILED`](/reference/errors/#codes), the ledger's error as its `cause` when it could
 not be read: the reconciliation runs at once, and the read models project what it committed again
