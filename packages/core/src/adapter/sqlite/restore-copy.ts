@@ -144,10 +144,9 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
       table: storageTablesFor(prefix).checkpoints,
       dialect: sqliteDialect,
     });
-    const counted = held.some(({ scope }) => scope === "checkpoints");
-    const before = counted
+    const before = held.some(({ scope }) => scope === "checkpoints")
       ? await Promise.all([checkpoints.get(RESTORES_FOUND), checkpoints.get(RESTORE_GENERATION)])
-      : [0, 0];
+      : undefined;
     // A foreign key between two tables is checked once both hold the copy's rows.
     await tx.run("PRAGMA defer_foreign_keys = ON", []);
     const current = await schemaOf(tx);
@@ -180,9 +179,9 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
     });
     // Counted here, past what the copy and the database held, for the first instance that finds it
     // to take: a running one by the count it read, a stopped one when it starts, ledger or not.
-    if (counted) {
-      const restores = Math.max(before[0] ?? 0, await checkpoints.get(RESTORES_FOUND)) + 1;
-      const generation = Math.max(before[1] ?? 0, await checkpoints.get(RESTORE_GENERATION)) + 1;
+    if (before !== undefined) {
+      const restores = Math.max(before[0], await checkpoints.get(RESTORES_FOUND)) + 1;
+      const generation = Math.max(before[1], await checkpoints.get(RESTORE_GENERATION)) + 1;
       await checkpoints.set(RESTORES_FOUND, restores);
       await checkpoints.set(RESTORE_GENERATION, generation);
       await checkpoints.set(RESTORE_TAKEN_BY_FIRST, restores);

@@ -107,15 +107,19 @@ describe("createRestoreWatch", () => {
       }),
     });
     const nothing = watchOver();
-    await nothing.start();
+    expect(await nothing.start()).toBeNull();
     await nothing.started();
     expect(entries).toEqual([]);
     await restoredInPlace(checkpointStore, 2);
     const found = watchOver();
     await found.start();
     await found.started();
-    expect(entries.map(({ message }) => message)).toEqual([
-      "the restore found at start could not be taken",
+    expect(entries).toEqual([
+      expect.objectContaining({
+        level: "error",
+        message: "the restore found at start could not be taken",
+        fields: expect.objectContaining({ errorName: "Error" }),
+      }),
     ]);
   });
 
@@ -129,6 +133,16 @@ describe("createRestoreWatch", () => {
     const found = await Promise.all([one.check(at(1)), other.check(at(1))]);
     expect(found.map((each) => each?.first).sort()).toEqual([false, true]);
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+  });
+
+  it("lets no running instance take a count a copy left behind, the restore it finds being another", async () => {
+    const { checkpointStore, watchOver } = await setUp({ marks: false });
+    const watch = watchOver();
+    await watch.check(at(0));
+    await checkpointStore.set(RESTORES_FOUND, 2);
+    await checkpointStore.set(RESTORE_TAKEN_BY_FIRST, 1);
+    expect(await watch.check(at(1))).toEqual({ first: false });
+    expect(await checkpointStore.get(RESTORE_TAKEN_BY_FIRST)).toBe(1);
   });
 
   it("takes nothing a copy of an older count left behind", async () => {
