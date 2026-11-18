@@ -1959,6 +1959,31 @@ describe("bounda restore", () => {
     );
   });
 
+  it("reads no runtime a configuration leaves out, opens the files of the tenant --tenant names, and fails on a project that does not load", async () => {
+    const bare = await cli(["restore", "app.db", "--config", "restore-bare.config.ts"], fixture);
+    expect(bare.code).toBe(EXIT_OK);
+    expect(restoredFrom().at(-1)).toBe(join(fixture, "app.db"));
+    process.env.ENCRYPTED_MASTER = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
+      "base64",
+    );
+    try {
+      const encrypted = await cli(
+        ["restore", "app.db", "--config", "encrypted.config.ts", "--tenant", "umbrella"],
+        fixture,
+      );
+      expect(encrypted.code).toBe(EXIT_FAILURE);
+      expect((Reflect.get(globalThis, "encryptedOpenedFor") as string[]).at(-1)).toBe("umbrella");
+      expect((Reflect.get(globalThis, "encryptedKeysOf") as string[]).at(-1)).toBe("umbrella");
+    } finally {
+      delete process.env.ENCRYPTED_MASTER;
+    }
+    const missing = await cli(["restore", "app.db", "--config", "missing.config.ts"], fixture);
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stdout).toBe("");
+    // The one line that says why it did not load.
+    expect(missing.stderr).toMatch(/^error: [^\n]*\n$/);
+  });
+
   it("documents itself in its help", async () => {
     const help = await cli(["restore", "--help"], fixture);
     expect(help.code).toBe(EXIT_OK);
@@ -1966,6 +1991,9 @@ describe("bounda restore", () => {
       "put a copy of a SQLite file back in place, in one transaction through the app's own engine",
     );
     expect(help.stdout).toContain("<copy>");
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "the copy of the database file, taken with VACUUM INTO or the sqlite3 shell",
+    );
   });
 });
 

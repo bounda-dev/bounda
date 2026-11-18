@@ -8,6 +8,9 @@ import { memory } from "@bounda-dev/core/memory";
 // clear until `ENCRYPTED_FREE` is set, as one another connection holds.
 const openedFor: string[] = [];
 Reflect.set(globalThis, "encryptedOpenedFor", openedFor);
+// The tenant of each set of keys it was handed.
+const keysOf: string[] = [];
+Reflect.set(globalThis, "encryptedKeysOf", keysOf);
 const keys = memory().createTenantKeyStore();
 Reflect.set(globalThis, "encryptedKeys", keys);
 const database = memory();
@@ -17,6 +20,7 @@ const encrypted = (tenant: string): Adapter => ({
   encryptedFile: {
     database: "app.db",
     open: async ({ keys: access }) => {
+      keysOf.push(access.tenant);
       if ((await access.current()) !== null) openedFor.push(tenant);
       let state: "current" | "clear" = "clear";
       return {
