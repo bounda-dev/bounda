@@ -80,10 +80,13 @@ const seeded = async (path: string, rows: number): Promise<NodeSqliteAdapter> =>
   `);
   const note = sqlite.db.prepare("INSERT INTO notes (text, data) VALUES (?, ?)");
   const tag = sqlite.db.prepare("INSERT INTO tags (name, count) VALUES (?, ?)");
+  // In one transaction: a commit per row waits on the disk, longest on Windows.
+  sqlite.db.exec("BEGIN");
   for (let index = 0; index < rows; index += 1) {
     note.run(`note ${index}`, new Uint8Array([index % 256, 7]));
     tag.run(`tag ${index}`, Number.MAX_SAFE_INTEGER - index);
   }
+  sqlite.db.exec("COMMIT");
   // Removed rows leave the counter past the last id, as the copy's must come back.
   sqlite.db.exec(`DELETE FROM notes WHERE id > ${rows - 3}`);
   return sqlite;
