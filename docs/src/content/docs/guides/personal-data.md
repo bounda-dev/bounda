@@ -2442,7 +2442,10 @@ ledger it cannot read fails the start with
 [`FORGET_LEDGER_UNRECONCILED`](/reference/errors/#codes), the ledger's error as its `cause`;
 starting again tries again. The CLI's commands that start the app need the ledger then;
 `bounda forgotten` does not, since it reads the event store alone. Availability now depends on the
-ledger's: give it a store at least as available as the database.
+ledger's: give it a store at least as available as the database. While it runs, a strict app also
+checks after every query and export that the database did not go back to an earlier copy, and
+hands out nothing read from one before the ledger is reconciled with it: see [strict
+reads](/guides/backups/#strict-reads).
 
 A strict app loses no forgetting to a restore: each is in the ledger before it commits. One that is
 not strict loses only a forgetting whose intention the ledger did not take, while it was down or
@@ -2536,7 +2539,7 @@ and `bounda status` counts the restores found. How it is found depends on when t
 
 | The copy was restored | Found by | What is guaranteed |
 | --- | --- | --- |
-| under the running app | every instance, on its next pass, before it delivers an event or claims a scheduled command, or within five seconds in the `web` role | Any copy taken before the last write the instances saw, or before the newest event an instance read or committed. A copy taken after both differs from the database in nothing but waits, which the jobs read again anyway. |
+| under the running app | every instance, on its next pass, before it delivers an event or claims a scheduled command, or within five seconds in the `web` role; with a strict ledger, also after every query and export | Any copy taken before the last write the instances saw, or before the newest event an instance read or committed. A copy taken after both differs from the database in nothing but waits, which the jobs read again anyway. |
 | while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, or before a forgetting the ledger holds and the copy does not. Only after a crash can a copy of the last five seconds of writes, with no forgetting among them, go unseen: it differs from the database in waits alone. |
 | while the app was stopped, without a ledger | `bounda restored`, which you run after restoring | What you declare: the database alone cannot tell a copy from itself. |
 

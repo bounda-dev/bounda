@@ -35,6 +35,11 @@ export interface RestrictedPersonsStore {
    */
   advance(person: string, position: number): Promise<boolean>;
   /**
+   * Removes every person and position: what the runtime does before it reads the stream again from
+   * the start, when the database was restored from a copy whose stream went elsewhere.
+   */
+  clear(): Promise<void>;
+  /**
    * Replaces what the person asked to restrict with `restrictions`.
    */
   request(

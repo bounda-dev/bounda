@@ -233,7 +233,9 @@ categories to name.
 [forget ledger](/guides/personal-data/#the-forget-ledger), kept outside the database, forgets them
 again before the restored app serves anything, and the runtime [finds a
 restore](/guides/personal-data/#restores) under a running app or, with a ledger, while it was
-stopped. A backup that sits unrestored is put beyond use by
+stopped; a [strict](/guides/backups/#strict-reads) ledger hands out nothing read from a copy before
+it is reconciled with it, and a read model in a database of its own restored from another moment
+serves [nothing it should not](/guides/backups/#read-models-in-another-database). A backup that sits unrestored is put beyond use by
 [retiring the tenant's older keys](/guides/personal-data/#old-backups) once it expires. See
 [Backups and restores](/guides/backups/).
 
@@ -400,7 +402,9 @@ organised by the controllers it serves, which Bounda does not know.
   only what it may see. What it does not see, a column kept in the clear read around the client, is
   in the [limitations](/reference/limitations/#the-access-log).
 - **Restoring availability, 32(1)(c).** [Backups and restores](/guides/backups/) has the steps for
-  each engine, and the runtime forgets again, after a restore, whoever the copy brought back.
+  each engine, `bounda restore` puts a SQLite copy back under a running app in one transaction, and
+  the runtime forgets again, after a restore, whoever the copy brought back, before a read model
+  restored from another moment than the stream serves anything.
 - **Testing, 32(1)(d).** `expectForgotten`, `expectRedacted`, `expectRestricted` and
   `expectTenantForgotten` run in any test runner, on a test app or, through
   [`createWitness`](/guides/personal-data/#an-app-built-otherwise), on the app as it boots.

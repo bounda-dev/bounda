@@ -56,15 +56,10 @@ describe("restoring a node:sqlite database", () => {
         backUp: async () => {
           db.exec(`VACUUM INTO '${copy}'`);
         },
-        // In place, through SQLite's backup API, as the sqlite3 shell's .restore does: the app's
-        // connection sees the copy at its next statement.
+        // In place, in one write transaction on the app's own connection, as `bounda restore`
+        // does: the app sees the database as it was or as the copy has it.
         restore: async () => {
-          const source = new DatabaseSync(copy, { readOnly: true });
-          try {
-            await backup(source, path);
-          } finally {
-            source.close();
-          }
+          await adapter.restore?.({ copy });
           return adapter;
         },
       };

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  ConfigurationError,
   checkActor,
   type DeadLetterKind,
   type DeadLetterStatus,
@@ -840,6 +841,48 @@ const runRestored = (
     return EXIT_OK;
   });
 
+// In place, through the adapter's own engine, then counted as `bounda restored` counts it when no
+// forget ledger's mark tells the instances: running ones find it at their next pass anyway.
+const runRestore = async (
+  copy: string,
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const logger = logTo(stderr);
+  const project = await load(options, cwd, logger, stderr);
+  if (project === undefined) return EXIT_FAILURE;
+  const { config, tenant } = project;
+  try {
+    await withEncryptedFiles({
+      config,
+      env: process.env,
+      logger,
+      ...(tenant === undefined ? {} : { tenant }),
+      work: async ({ storage }) => {
+        if (!isAdapter(storage) || storage.restore === undefined) {
+          throw new ConfigurationError(
+            `storage "${storage.name}" is restored with its engine's own tools: see https://docs.bounda.dev/guides/backups/`,
+          );
+        }
+        await storage.restore({ copy: resolve(cwd, copy) });
+      },
+    });
+  } catch (error) {
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
+  }
+  line(stdout, `restored ${copy} in place, in one transaction`);
+  if (config.runtime?.personalData?.forgetLedger !== undefined) {
+    line(
+      stdout,
+      "the forget ledger's mark tells the app: running instances find the restore at their next pass, and a stopped app when it starts",
+    );
+    return EXIT_OK;
+  }
+  return runRestored(options, cwd, stdout, stderr);
+};
+
 // Opens every database file the configuration encrypts under the tenant's keys, as a start would,
 // which encrypts under the key in force a file left in the clear or under an earlier key, and
 // tries again on any still waiting: what an operator runs once the file is the process's alone.
@@ -1348,6 +1391,20 @@ export const runCli: RunCliFunction = async ({
       ),
   ).action(async (options: ProjectOptions) => {
     exitCode = await runRewrapMaster(options, cwd, stdout, stderr);
+  });
+
+  projectOptions(
+    program
+      .command("restore")
+      .argument(
+        "<copy>",
+        "the copy of the database file, taken with VACUUM INTO or the sqlite3 shell",
+      )
+      .description(
+        "put a copy of a SQLite file back in place, in one transaction through the app's own engine, under a running app or not; without a forget ledger, then say it was restored",
+      ),
+  ).action(async (copy: string, options: ProjectOptions) => {
+    exitCode = await runRestore(copy, options, cwd, stdout, stderr);
   });
 
   projectOptions(

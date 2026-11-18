@@ -71,6 +71,16 @@ export interface CreateQueryRunnerArgs {
    * the events after it that it does not handle, which its rows reflect as they are.
    */
   readonly standing: (subscriber: string) => Promise<number>;
+  /**
+   * Throw to refuse what a query of the read model would hand out: `before` it reads, and `after`
+   * each of its reads, the repository's and the handler's.
+   */
+  readonly vouch?: QueryVouch;
+}
+
+export interface QueryVouch {
+  before(readModel: string): Promise<void>;
+  after(readModel: string): Promise<void>;
 }
 
 export interface CreateQueryRunnerFunction {
@@ -87,6 +97,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
   tracer,
   disclosures,
   standing,
+  vouch,
 }) => {
   // The stores of a read model as a query reads them: sealed values opened, with the keys fetched
   // for this query alone, and, with a field marked `.person()`, the rows of restricted persons
@@ -125,6 +136,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
       },
       run: async () => {
         const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
+        await vouch?.before(query.readModel);
         const stores = storesOf(readModel, restrictionViewOf(includeRestricted));
         const { table, client } = stores;
         if (query.repository !== null && isRecord(parsed)) {
@@ -149,6 +161,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
                   table,
                   actor,
                 });
+          await vouch?.after(query.readModel);
           const args = {
             query: { type, payload: parsed },
             repositoryData,
@@ -173,9 +186,11 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
             }) ??
             ports[query.readModel] ??
             {};
-          return query.handler(
+          const answer = await query.handler(
             Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
           );
+          await vouch?.after(query.readModel);
+          return answer;
         };
         // Recorded once its handler settles, before its result or error is handed out, naming
         // the persons of the rows it read: a handler may reshape what it read, so its result

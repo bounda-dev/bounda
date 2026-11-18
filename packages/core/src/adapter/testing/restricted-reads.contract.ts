@@ -214,6 +214,38 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       expect(await plain.restricted.unrestricted.count()).toBe(1);
     });
 
+    it("forgets every person and position once cleared, and rolls the clearing back with its transaction", async () => {
+      await write(async (store) => {
+        await store.request("ana", [{ ground: "legal-claims", categories: null }]);
+        await store.request("bo", [{ ground: "legal-claims", categories: ["profile"] }]);
+        await store.advance("ana", 9);
+      });
+      await expect(
+        write(async (store) => {
+          await store.clear();
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await orders.restricted.among(["ana", "bo"], "unrestricted")).toEqual(
+        new Set(["ana", "bo"]),
+      );
+      await write((store) => store.clear());
+      expect(await orders.restricted.among(["ana", "bo", "cy"], "unrestricted")).toEqual(new Set());
+      expect(await found(orders.restricted.unrestricted)).toEqual([
+        "o-1",
+        "o-2",
+        "o-3",
+        "o-4",
+        "o-5",
+      ]);
+      // A stream read again from the start moves the person from its first event.
+      const moved: boolean[] = [];
+      await write(async (store) => {
+        moved.push(await store.advance("ana", 1));
+      });
+      expect(moved).toEqual([true]);
+    });
+
     it("moves each person only forward, and rolls the move back with its transaction", async () => {
       const moved: boolean[] = [];
       const advance = (person: string, position: number) =>

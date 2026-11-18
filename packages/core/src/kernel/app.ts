@@ -14,6 +14,7 @@ import {
   ConfigurationError,
   ForgetLedgerUnreconciledError,
   RebuildSupersededError,
+  RestoreUnreconciledError,
   TenantForgottenError,
   ValidationError,
 } from "../contracts/errors.ts";
@@ -125,6 +126,7 @@ import {
   checkReadModelPersons,
   readModelsMarkPersonal,
 } from "./read-model/build-read-models.ts";
+import { createReadModelDatabases, watchedDatabasesOf } from "./read-model/read-model-databases.ts";
 import {
   pendingRebuilds,
   REDACTION_REBUILD_BATCHES,
@@ -1054,6 +1056,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       disclosures,
       // The dispatcher is built further down; a query only asks once the app is assembled.
       standing: (subscriber) => dispatcher.positionOf(subscriber),
+      vouch: {
+        before: (readModel) => vouchBefore([readModel])(),
+        after: (readModel) => vouchAfter([readModel])(),
+      },
     });
     const processes = createProcessRunner({
       tracer: appTracer,
@@ -1247,6 +1253,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             errorText,
           });
+    // Why the ledger could not be reconciled with the restore, for what a strict app refuses.
+    const reconcileAfterRestore = async () => {
+      const result = await reconciliation?.reconcile(clock.now());
+      if (result !== undefined && typeof result !== "number" && unreconciled !== null) {
+        unreconciled = { cause: result.failed };
+      }
+      return result;
+    };
     // A restore found outside a worker's pass: the jobs start over and the ledger is reconciled
     // at once, unless this instance's worker handled it already. Resolves how many it forgot. It
     // reads the worker, built after the dispatcher, only when called: no pass runs before.
@@ -1257,8 +1271,73 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       if (forgetLedger === null) {
         await written.recipients.presumeThrough(await written.eventStore.lastPosition());
       }
-      const forgotten = await reconciliation?.reconcile(clock.now());
+      const forgotten = await reconcileAfterRestore();
       return typeof forgotten === "number" ? forgotten : 0;
+    };
+    // The databases that hold read models and not the stream, each restored apart from it.
+    const readModelAdapter = (name: string) => adapterForReadModel({ name, config });
+    const ownDatabase = (name: string): boolean => readModelAdapter(name) !== config.storage;
+    const hosts = restrictedPersonsHosts({
+      readModels: Object.values(readModels.byName),
+      adapterOf: readModelAdapter,
+    });
+    const readModelDatabases = createReadModelDatabases({
+      databases: watchedDatabasesOf({
+        readModels: Object.values(readModels.byName),
+        hosts,
+        adapterOf: readModelAdapter,
+        storage: config.storage,
+        logger,
+      }),
+      events: written.eventStore,
+      reached: written.checkpointStore,
+      logger,
+    });
+    // A restore this instance found, until the forget ledger is reconciled with it: a strict app
+    // hands out nothing it reads meanwhile.
+    let unreconciled: { readonly cause?: unknown } | null = null;
+    const strict = forgetLedger?.config.strict === true;
+    let settling: Promise<unknown> | null = null;
+    // What a read hands out is vouched for: a read model of a database not back where it stood is
+    // refused, and a strict app checks after every read, the newest event seen included, that the
+    // database did not go back meanwhile and that the ledger is reconciled with any restore found.
+    const vouchBefore = (names: readonly string[]) => async (): Promise<void> => {
+      for (const name of names) await readModelDatabases.vouch(name);
+    };
+    const readModelNames = Object.keys(readModels.byName);
+    // An export's records, each vouched for once read, before it is handed out.
+    async function* vouchedRecords<Part>(records: AsyncIterable<Part>): AsyncGenerator<Part> {
+      let none = true;
+      for await (const part of records) {
+        none = false;
+        await vouchAfter(readModelNames)();
+        yield part;
+      }
+      // The header alone was read.
+      if (none) await vouchAfter(readModelNames)();
+    }
+    // A restore is settled once the ledger is reconciled with it and the read models projected
+    // what that committed again; what was read before then is refused.
+    const settleRestore = async (): Promise<void> => {
+      const result = await reconcileAfterRestore();
+      if (typeof result !== "number") return;
+      await dispatcher.catchUp("projection");
+      unreconciled = null;
+    };
+    const vouchAfter = (names: readonly string[]) => async (): Promise<void> => {
+      if (!strict) return;
+      const found = await restores.check(clock.now());
+      if (found !== null) await restartFound(found);
+      if (found !== null || unreconciled !== null) {
+        if (unreconciled !== null) {
+          settling ??= settleRestore().finally(() => {
+            settling = null;
+          });
+          await settling;
+        }
+        throw new RestoreUnreconciledError(unreconciled?.cause);
+      }
+      for (const name of names) await readModelDatabases.vouch(name, { fresh: true });
     };
     // A pass checks first whether the tenant was forgotten elsewhere, once the check exists.
     let tenantCheck: () => Promise<void> = async () => undefined;
@@ -1275,13 +1354,17 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             errorText,
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+            marked: ownDatabase(readModel.name),
           }),
         ),
-        ...restrictedPersonsHosts({
-          readModels: Object.values(readModels.byName),
-          adapterOf: (name) => adapterForReadModel({ name, config }),
-        }).map((readModel) =>
-          createRestrictedPersonsSubscriber({ tracer: appTracer, readModel, logger, errorText }),
+        ...hosts.map((readModel) =>
+          createRestrictedPersonsSubscriber({
+            tracer: appTracer,
+            readModel,
+            logger,
+            errorText,
+            marked: ownDatabase(readModel.name),
+          }),
         ),
         ...following,
         ...Object.values(aggregates.byName)
@@ -1322,6 +1405,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await fileEncryptions.settle();
         const found = await restores.check(clock.now());
         if (found !== null) await restartFound(found);
+        // A read model's database restored apart from the stream is projected back before it serves.
+        await readModelDatabases.check();
       },
       clock,
       logger,
@@ -1399,6 +1484,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       onRestored: async () => {
         dispatcher.restored();
         earlierAnswers.reset();
+        readModelDatabases.restored();
+        unreconciled = {};
         // A copy from before a reseal holds the database's keys of then, not those this instance
         // read since.
         await databaseKey?.refresh().catch((error: unknown) => {
@@ -1498,6 +1585,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           if (found !== null && (await restartFound(found)) > 0) {
             await dispatcher.catchUp("projection");
           }
+          await readModelDatabases.check();
           next();
         });
       };
@@ -1527,6 +1615,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }
         await dispatcher.catchUp("projection");
       }
+      if (typeof forgotten === "number") unreconciled = null;
+    }
+    // Nor before a read model whose database of its own was restored apart from the stream is back
+    // where it stood, or projected again from the start when it holds what another stream wrote.
+    if (!(await readModelDatabases.check())) {
+      await dispatcher.catchUp("projection");
+      await readModelDatabases.check();
     }
     const rebuild = (
       name: string,
@@ -1739,6 +1834,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             persons: [personId],
             outcome,
           });
+        await vouchBefore(readModelNames)();
         const streamed = await recorded(
           // Only a failure is recorded here: what resolves is recorded as it starts and ends.
           async (outcome) => {
@@ -1759,7 +1855,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             }),
         );
         return recordedExport({
-          streamed,
+          streamed: { ...streamed, records: vouchedRecords(streamed.records) },
           record,
           onError: (error) => {
             if (error instanceof TenantForgottenError) onTenantForgotten();
@@ -2074,6 +2170,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             const runner = await entering?.catch(() => null);
             await Promise.all([background, runner?.stop()]);
             await restores.flush();
+            await readModelDatabases.flush();
             try {
               await readModels.close();
             } finally {

@@ -1,4 +1,4 @@
-import { isAdapter, type Storage } from "../../adapter/adapter.ts";
+import { type Adapter, isAdapter, type Storage } from "../../adapter/adapter.ts";
 import type { Checkpoint, CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import { checkConfigNames } from "../../config/names.ts";
 import { resolveConfig } from "../../config/schema.ts";
@@ -30,12 +30,14 @@ import { type TracerFunction, tracer } from "../telemetry.ts";
 import {
   adapterForReadModel,
   compileProjections,
+  type ReadModelRuntime,
   readModelsMarkPersonal,
 } from "./build-read-models.ts";
 import { digest, fingerprintReadModel } from "./fingerprint.ts";
 import { sealedLayoutOf } from "./sealed-rows.ts";
 import { layoutDigest, settledMark } from "./sealed-settle.ts";
 import { openReadModelSealing } from "./sealing.ts";
+import { eventMark, streamMarkOf } from "./stream-marks.ts";
 
 export interface RebuildReadModelArgs {
   readonly registry: Registry;
@@ -146,6 +148,50 @@ export const rebuildsPassed: RebuildsPassedFunction = ({ checkpoints, name, posi
     (checkpoint) =>
       !checkpoint.subscriber.startsWith(progressPrefix(name)) || checkpoint.position >= position,
   );
+
+export interface ResetReadModelArgs {
+  readonly readModel: Pick<ReadModelRuntime, "name" | "storage" | "layout">;
+  /**
+   * The adapter the read model lives on.
+   */
+  readonly adapter: Adapter;
+  readonly logger: Logger;
+}
+
+export interface ResetReadModelFunction {
+  (args: ResetReadModelArgs): Promise<void>;
+}
+
+/**
+ * Empties the read model's live table and moves its projection back to the start, in one
+ * transaction holding its lock, so it projects the whole stream again there: every rebuild of it
+ * under way is fenced off first, and what a paused one kept is dropped.
+ */
+export const resetReadModel: ResetReadModelFunction = async ({ readModel, adapter, logger }) => {
+  const { name, storage, layout } = readModel;
+  const fencing = await adapter.rebuildReadModel<Record<string, unknown>>({
+    name,
+    fields: layout.stored,
+    logger,
+    progress: `${progressPrefix(name)}reset`,
+  });
+  await fencing.abort();
+  const subscriber = projectionSubscriberName(name);
+  await storage.transact({
+    subscriber,
+    wait: true,
+    work: async ({ table, checkpointStore }) => {
+      await table.delete({});
+      for (const { subscriber: row } of await checkpointStore.list()) {
+        if (row.startsWith(progressPrefix(name))) await checkpointStore.remove(row);
+      }
+      await checkpointStore.remove(startedMark(name));
+      await checkpointStore.remove(rebuiltMark(name));
+      await checkpointStore.remove(streamMarkOf(subscriber));
+      await checkpointStore.set(subscriber, 0);
+    },
+  });
+};
 
 /**
  * Rebuilds one read model from the whole stream without taking it offline. The projections run
@@ -324,6 +370,8 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
     });
     const { batchSize } = config.runtime.dispatcher;
     let { position } = rebuild;
+    // The id of the event at `position`, once a batch reached it.
+    let last: string | undefined;
     const budget = maxEvents ?? Number.POSITIVE_INFINITY;
     let events = 0;
     try {
@@ -383,13 +431,23 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
         });
         events += done;
         position = batch[done - 1]?.position ?? position;
+        last = batch[done - 1]?.id ?? last;
         logger.debug("read model rebuild progressed", { readModel: name, position, events });
       }
+      const subscriber = projectionSubscriberName(name);
+      // In a database of its own, the checkpoint is marked with the event it stands at, as the
+      // projection marks it.
+      const own = config.readModels[name];
+      const at =
+        own === undefined || own === config.storage || position === 0
+          ? undefined
+          : (last ?? (await eventStore.readAll({ afterPosition: position - 1, limit: 1 }))[0]?.id);
       // The table it puts in place is as this layout and key would settle it.
       await rebuild.commit({
-        subscriber: projectionSubscriberName(name),
+        subscriber,
         position,
         marks: {
+          ...(at === undefined ? {} : { [streamMarkOf(subscriber)]: eventMark(at) }),
           ...(layout.personal.length === 0
             ? {}
             : { [settledMark(name)]: layoutDigest({ layout, epoch: indexer?.epoch ?? null }) }),

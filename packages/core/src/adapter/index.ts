@@ -10,6 +10,7 @@ export type {
   ReadModelTransactArgs,
   ReadModelTransacted,
   ReadModelTransaction,
+  RestoreArgs,
   SchemaScopeName,
   SchemaVersion,
   Storage,

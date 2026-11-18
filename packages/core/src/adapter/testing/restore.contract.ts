@@ -3,6 +3,8 @@ import type { RuntimeRole } from "../../config/types.ts";
 import { type Clock, createFixedClock } from "../../contracts/clock.ts";
 import {
   ForgetLedgerUnreconciledError,
+  ReadModelRestoringError,
+  RestoreUnreconciledError,
   TenantForgottenError,
   ValidationError,
 } from "../../contracts/errors.ts";
@@ -59,9 +61,10 @@ export interface RestoreTarget {
   /**
    * Puts the copy back, and resolves to the storage an app opens on it from then on: `storage`
    * itself for a restore made in place. Called with an app open on `storage` only when the
-   * contract's `hot` is `true`, and after it stopped otherwise.
+   * contract's `hot` is `true`, given then the adapter that app opened, through which a file the
+   * tenant's keys encrypt is restored; and after it stopped otherwise.
    */
-  restore(): Promise<Adapter>;
+  restore(opened?: Adapter): Promise<Adapter>;
 }
 
 export interface RestoreContractArgs {
@@ -752,7 +755,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       let storage: Adapter;
       let restored: Started;
       if (restoring === "hot") {
-        storage = await target.restore();
+        storage = await target.restore(openedAs(rotated.app.config.storage));
       } else {
         await rotated.app.stop();
         storage = await target.restore();
@@ -905,7 +908,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         // A generation written after the copy, which tells the copy apart once it is back.
         clock.advance(GENERATION_INTERVAL_MS);
         await first.app.runUntilIdle();
-        await target.restore();
+        await target.restore(openedAs(first.app.config.storage));
         clock.advance(GENERATION_INTERVAL_MS);
         await first.app.runUntilIdle();
         const { email, name } = valuesOf("dan");
@@ -947,7 +950,9 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       // What the app writes after the copy is how a restore under it is found.
       await write(first, "bob");
       if (restoring === "at start") await first.app.stop();
-      const storage = await target.restore();
+      const storage = await target.restore(
+        restoring === "hot" ? openedAs(first.app.config.storage) : undefined,
+      );
       clock.advance(60_000);
       const restored =
         restoring === "hot"
@@ -1118,7 +1123,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const anaForgotten = (await web.app.forget("ana")).eventIds;
         await web.app.catchUpReadModels();
         await expectForgottenIn(web, "ana");
-        await target.restore();
+        await target.restore(openedAs(web.app.config.storage));
         clock.advance(GENERATION_INTERVAL_MS);
         // Its watch reconciles and catches the read models up by itself.
         await vi.waitFor(
@@ -1520,6 +1525,235 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         await restored.app.runUntilIdle();
         expect(await redactions(restored.app, "ana")).toEqual([eventId]);
         await expectRedactedIn(restored, "ana", email);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    // An app whose read model of contacts, emails in the clear, lives in a database of its own.
+    const openSplit = async (
+      storage: Adapter,
+      rows: Adapter,
+      forgetLedger: ForgetLedgerSource,
+      clock: Clock,
+      { strict = false }: { readonly strict?: boolean } = {},
+    ): Promise<Started> => {
+      const app = await createApp({
+        registry: clear,
+        config: {
+          storage,
+          readModels: { contacts: rows },
+          runtime: {
+            personalData: {
+              keyWrapper: BEFORE_ROTATION,
+              tenantKeys,
+              forgetLedger: { store: forgetLedger, reconcileEvery: RECONCILE_EVERY_MS, strict },
+            },
+            policies: { retry: { strategy: "none" } },
+          },
+        },
+        clock,
+        env,
+      });
+      stops.push(() => app.stop());
+      return {
+        app,
+        commands: app.commands as unknown as Commands,
+        queries: app.queries as unknown as Queries,
+      };
+    };
+
+    const contactOf = (
+      { app }: Started,
+      person: string,
+      options?: { readonly includeRestricted: "legal-claims" },
+    ): Promise<unknown> =>
+      (
+        app.queries as unknown as Record<
+          string,
+          (payload: unknown, options?: unknown) => Promise<unknown>
+        >
+      ).contactOf?.({ customerId: person }, options) ?? Promise.resolve(undefined);
+
+    // ana and bob registered before the copy of the stream; eve after it, ana was forgotten and bob
+    // restricted after it: the read model's database holds what the stream the restore undoes
+    // wrote, and the copy's positions are taken again by what the ledger commits once more.
+    const aheadOfTheCopy = async (strict: boolean) => {
+      const storageTarget = await create();
+      const rowsTarget = await create();
+      const clock = createFixedClock(START);
+      const first = await openSplit(
+        storageTarget.storage,
+        rowsTarget.storage,
+        storageTarget.forgetLedger,
+        clock,
+        { strict },
+      );
+      for (const person of ["ana", "bob"]) await write(first, person);
+      await storageTarget.backUp();
+      await write(first, "eve");
+      await first.app.forget("ana");
+      await first.app.restrict("bob", { ground: "accuracy-contested" });
+      await first.app.runUntilIdle();
+      expect(await contactOf(first, "eve")).toEqual({
+        customerId: "eve",
+        email: valuesOf("eve").email,
+      });
+      return { storageTarget, rowsTarget, clock, first };
+    };
+
+    // What the read model serves once the stream is restored: nobody the copy does not hold, nobody
+    // forgotten since, and nobody restricted since unless a basis is named.
+    const expectContactsOfTheCopy = async (restored: Started): Promise<void> => {
+      expect(await contactOf(restored, "eve")).toBeNull();
+      expect(await contactOf(restored, "ana")).toBeNull();
+      expect(await contactOf(restored, "bob")).toBeNull();
+      expect(await contactOf(restored, "bob", { includeRestricted: "legal-claims" })).toEqual({
+        customerId: "bob",
+        email: valuesOf("bob").email,
+      });
+      await expectForgotten(openedAs(restored.app.config.readModels.contacts), "ana", {
+        values: [valuesOf("ana").email],
+      });
+      await expectForgotten(openedAs(restored.app.config.readModels.contacts), "eve", {
+        values: [valuesOf("eve").email],
+      });
+    };
+
+    it(
+      "projects again from the start, before it serves, a read model in a database of its own that holds what the stream a restore undid wrote",
+      async () => {
+        const { storageTarget, rowsTarget, clock, first } = await aheadOfTheCopy(false);
+        await first.app.stop();
+        const storage = await storageTarget.restore();
+        const restored = await openSplit(
+          storage,
+          rowsTarget.storage,
+          storageTarget.forgetLedger,
+          clock,
+        );
+        await expectContactsOfTheCopy(restored);
+        await restored.app.unrestrict("bob", { notice: "given" });
+        await restored.app.runUntilIdle();
+        expect(await contactOf(restored, "bob")).toEqual({
+          customerId: "bob",
+          email: valuesOf("bob").email,
+        });
+        await write(restored, "fay");
+        expect(await contactOf(restored, "fay")).toEqual({
+          customerId: "fay",
+          email: valuesOf("fay").email,
+        });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it.skipIf(!hot)(
+      "refuses, in a strict app, a query read from a stream restored under it, and serves the read model in a database of its own once projected again",
+      async () => {
+        const { storageTarget, first } = await aheadOfTheCopy(true);
+        await storageTarget.restore(openedAs(first.app.config.storage));
+        await expect(first.app.exportPersonalData("bob")).rejects.toMatchObject({
+          code: "RESTORE_UNRECONCILED",
+        });
+        // Settled before the refusal: the ledger reconciled with the copy, the read model holding
+        // the stream the restore undid projected again from the start.
+        await expectContactsOfTheCopy(first);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    // ana registered and was projected, the read model's database was copied, and ana forgotten.
+    const behindTheStream = async (strict: boolean) => {
+      const storageTarget = await create();
+      const rowsTarget = await create();
+      const clock = createFixedClock(START);
+      const first = await openSplit(
+        storageTarget.storage,
+        rowsTarget.storage,
+        storageTarget.forgetLedger,
+        clock,
+        { strict },
+      );
+      await write(first, "ana");
+      await write(first, "bob");
+      await rowsTarget.backUp();
+      await first.app.forget("ana");
+      await first.app.runUntilIdle();
+      expect(await contactOf(first, "ana")).toBeNull();
+      return { storageTarget, rowsTarget, clock, first };
+    };
+
+    it(
+      "catches up, before it serves, a read model in a database of its own restored from before a forgetting",
+      async () => {
+        const { storageTarget, rowsTarget, clock, first } = await behindTheStream(false);
+        await first.app.stop();
+        const rows = await rowsTarget.restore();
+        const restored = await openSplit(
+          storageTarget.storage,
+          rows,
+          storageTarget.forgetLedger,
+          clock,
+        );
+        expect(await contactOf(restored, "ana")).toBeNull();
+        expect(await contactOf(restored, "bob")).toEqual({
+          customerId: "bob",
+          email: valuesOf("bob").email,
+        });
+        await expectForgotten(openedAs(restored.app.config.readModels.contacts), "ana", {
+          values: [valuesOf("ana").email],
+        });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it.skipIf(!hot)(
+      "refuses, in a strict app, a query of a read model whose database of its own was restored under it from before a forgetting, until it caught up",
+      async () => {
+        const { rowsTarget, first } = await behindTheStream(true);
+        await rowsTarget.restore(openedAs(first.app.config.readModels.contacts));
+        const refused = contactOf(first, "ana");
+        await expect(refused).rejects.toBeInstanceOf(ReadModelRestoringError);
+        await expect(refused).rejects.toMatchObject({ readModel: "contacts" });
+        await first.app.runUntilIdle();
+        expect(await contactOf(first, "ana")).toBeNull();
+        expect(await contactOf(first, "bob")).toEqual({
+          customerId: "bob",
+          email: valuesOf("bob").email,
+        });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it.skipIf(!hot)(
+      "refuses every read of a strict app while the ledger cannot be reconciled with a restore under it, and serves once it is",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, state } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock, {
+          strict: true,
+        });
+        await write(first, "ana");
+        await target.backUp();
+        await first.app.forget("ana");
+        await first.app.runUntilIdle();
+        state.failing = true;
+        await target.restore(openedAs(first.app.config.storage));
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const refused = first.queries.getCustomer?.({ customerId: "ana" });
+          await expect(refused).rejects.toBeInstanceOf(RestoreUnreconciledError);
+          await expect(refused).rejects.toMatchObject({
+            cause: { message: "the ledger is down" },
+          });
+        }
+        state.failing = false;
+        // The read under way when the ledger answers was read before it.
+        await expect(first.queries.getCustomer?.({ customerId: "ana" })).rejects.toMatchObject({
+          code: "RESTORE_UNRECONCILED",
+        });
+        expect(await first.queries.getCustomer?.({ customerId: "ana" })).toBeNull();
+        await expectForgottenIn(first, "ana");
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

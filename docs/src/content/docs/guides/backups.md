@@ -26,8 +26,10 @@ operator does, and what the runtime then guarantees.
   [reseal](/guides/personal-data/#recovering-from-a-full-compromise), the backups taken before it
   hold the keys that leaked: keep the versions they need only as long as you may restore one, and
   reseal again after restoring it.
-- Keep the read models that live in [another database](/reference/configuration/) on the same
-  schedule as the storage, and restore both to the same moment.
+- Back up the read models that live in [another database](/reference/configuration/) on the
+  same schedule as the storage. Restoring them from another moment than the stream is safe, as
+  [read models in another database](#read-models-in-another-database) says, but a read model that
+  has to be projected again serves nothing until it is.
 
 ## Taking a backup
 
@@ -46,7 +48,7 @@ At start, stop the app, put the copy back and start it:
 
 - **SQLite.** Copy the backup to the database's path, or next to it and point `path` at it. On
   Windows a libSQL file can stay locked after the adapter closes, until the process exits: replace
-  it only once the app's process has stopped, or restore in place through SQL as below.
+  it only once the app's process has stopped, or run `bounda restore` as below.
 - **PostgreSQL.** `pg_restore`, or a point-in-time restore to another server and `url` pointed at
   it.
 - **Durable Object.** `ctx.storage.onNextSessionRestoreBookmark(bookmark)` with a bookmark from
@@ -63,10 +65,28 @@ list of whom you forgot since the copy, saved before the restore.
 Under a running app, restore in place, in one transaction, so the app sees the database as it was
 or as the copy has it, never half restored:
 
-- **SQLite.** In one write transaction on the app's own engine. Stop the app first to restore a
-  libSQL database with the `sqlite3` shell's `.restore`: SQLite's backup API, run by another
-  library on a file libSQL has open, left it corrupted in our tests.
+- **SQLite.** From the project's root, with the app running or not:
+
+  ```bash
+  bounda restore /backups/app.db
+  ```
+
+  It opens the copy, under the tenant's keys when the file is encrypted, and puts every table,
+  index and trigger of it back in one write transaction through libSQL, the app's own engine,
+  bringing Bounda's tables to the versions the database held; a copy of another tenant's database,
+  or one a newer version of Bounda migrated, is refused and nothing changes. Without a forget ledger
+  it then records the restore, as `bounda restored` does. A statement of the app that waits for the
+  transaction past the busy timeout fails, as one that met any other lock does.
+  `adapter.restore({ copy })` is the same in code.
 - **PostgreSQL.** `pg_restore --clean --if-exists --single-transaction --schema <schema>`.
+
+The `sqlite3` shell's `.restore` writes the file from another process in one transaction too, and
+leaves it whole: in our tests, with libSQL writing to it all along, it passed `PRAGMA
+integrity_check` every time. What it broke was libSQL's connection: a statement that waited for it
+past the busy timeout left the connection inside a transaction no other one saw, which went on
+writing what was lost when it closed, and held the file's lock. The adapter opens its connections
+afresh after such a wait, so any long write from another process leaves the app as it was;
+`bounda restore` also opens a copy encrypted under the tenant's keys, which the shell cannot.
 
 Every instance finds it on its next pass, before the pass delivers any event or claims any
 scheduled command, and an instance in the `web` role within five seconds;
@@ -77,15 +97,52 @@ the database went back to an earlier copy; background jobs start over
 ```
 
 and reads the ledger at once. A request served between the restore and that pass reads the copy as
-it is. A Durable Object has no running app to restore under: restoring its storage restarts it.
+it is, unless the ledger is [strict](#strict-reads). A Durable Object has no running app to restore
+under: restoring its storage restarts it.
 An app without a forget ledger logs an error as well, since it has no record of whom to forget.
+
+## Read models in another database
+
+A read model in a [database of its own](/reference/configuration/) is restored apart from the
+stream, and can come back from another moment than it:
+
+- **Behind the stream**, its copy older than the stream's: it holds rows of persons forgotten or
+  restricted since. Bounda keeps, in the storage's database, the furthest checkpoint each of its
+  subscribers reached, and a read model whose database stands behind it serves nothing until it
+  is back there.
+- **Ahead of the stream**, the stream restored from an earlier copy: it holds rows of persons the
+  stream no longer has, and its checkpoint stands past positions the stream takes again, so the
+  forgettings the ledger commits once more would never reach it. Every checkpoint in such a
+  database is marked with the event it stands at; a mark the stream does not hold at that position
+  empties the read model and projects it again from the start, and its database's copy of who is
+  restricted with it.
+
+Both are found at start, before the app serves anything, which waits for those read models to be
+projected back; and while it runs, on every pass, and within five seconds in the `web` role. Until
+then a query of such a read model, or an export, is refused with
+[`READ_MODEL_RESTORING`](/reference/errors/#codes): try again once it caught up. A copy taken in the
+five seconds before a checkpoint was recorded differs from it as a projection that lags does, and
+catches up as one.
+
+## Strict reads
+
+With a [strict](/guides/personal-data/#what-the-runtime-does-with-it) forget ledger, every query and
+export checks after it read that the database did not go back meanwhile, by the same counters and
+newest event the passes check, and that the read model's database of its own stands where it did.
+A restore found then, or one the ledger is not yet reconciled with, refuses the read with
+[`RESTORE_UNRECONCILED`](/reference/errors/#codes), the ledger's error as its `cause` when it could
+not be read: the reconciliation runs at once, and the read models project what it committed again
+before anything is served. The read after succeeds. Each read costs the reads of the check, shared
+by the reads that run at once.
 
 ## What is guaranteed
 
-Bounda's restore tests run this on SQLite (node:sqlite and libSQL), PostgreSQL and the Durable
-Object, with the app stopped and, where the engine allows it, running: persons write their data,
-a backup is taken, some are forgotten, the master key rotates, more is written, and the copy is
-restored; and a backup is taken, the tenant is forgotten, and the copy is restored.
+Bounda's restore tests run this on SQLite (node:sqlite and libSQL, in the clear and encrypted),
+PostgreSQL and the Durable Object, with the app stopped and, where the engine allows it, running:
+persons write their data, a backup is taken, some are forgotten, the master key rotates, more is
+written, and the copy is restored; a backup is taken, the tenant is forgotten, and the copy is
+restored; and the stream and a read model's database of its own are each restored from another
+moment than the other.
 
 - **Whoever was forgotten after the copy is forgotten again,** their `PersonalDataForgotten`
   committed once more under the id, time and reason the ledger recorded before it first committed:
@@ -128,6 +185,11 @@ restored; and a backup is taken, the tenant is forgotten, and the copy is restor
   goes on with it from the step the copy holds, and one taken before it holds the keys the reseal
   replaced: whoever a forgetting since named is forgotten again all the same, since the ledger
   names the keys a reseal replaced along with those that took their place.
+- **A read model in a database of its own** serves, once the restore is found, nobody the stream
+  does not hold, nobody forgotten or restricted since, and everyone else, whichever of the two was
+  restored, and from whichever moment.
+- **A strict app hands out nothing it read from a copy** restored under it before the ledger is
+  reconciled with it.
 - **The app goes on:** projections stay current, new persons register, `forget` and the rotation
   work, and the next normal start forgets nobody again. A failed reconciliation the copy
   remembers does not hold the restored start back, and `bounda status` counts the restore.
@@ -163,6 +225,8 @@ describe("my adapter", () => {
 });
 ```
 
-`hot` says whether the engine restores in place under a running app. Each forgotten person is
+`hot` says whether the engine restores in place under a running app; `restore` is then given the
+adapter the app opened, through which a file encrypted under the tenant's keys restores, as
+`bounda restore` does. Each forgotten person is
 checked with [`expectForgotten`](/guides/personal-data/#in-tests) over the adapter's `inspect`, every table
 under its prefix, and over what the app reads back of them.
