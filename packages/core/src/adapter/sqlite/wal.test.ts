@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -115,78 +115,88 @@ describe("switchToWal", () => {
 const CONNECTIONS = 6;
 const ROUNDS = 3;
 
-// Each worker loads the adapter, waits at the gate with the others, then opens its storage: the
-// first statements of every connection meet on the file at the same moment.
+// Each worker loads the adapter once, which is most of what the test costs, and for every file it
+// is sent waits at that file's gate with the others, then opens its storage: the first statements
+// of every connection meet on the file at the same moment.
 const WORKER = `
 const { workerData, parentPort } = require("node:worker_threads");
-import(workerData.module).then(async ({ createNodeSqliteAdapter }) => {
+import(workerData.module).then(({ createNodeSqliteAdapter }) => {
+  parentPort.on("message", async ({ path, gate }) => {
+    parentPort.postMessage("waiting");
+    Atomics.wait(new Int32Array(gate), 0, 0);
+    try {
+      const { adapter, db } = createNodeSqliteAdapter(path);
+      const storage = await adapter.createStorage();
+      await storage.close();
+      db.close();
+      parentPort.postMessage("opened");
+    } catch (error) {
+      parentPort.postMessage(String(error));
+    }
+  });
   parentPort.postMessage("loaded");
-  Atomics.wait(new Int32Array(workerData.gate), 0, 0);
-  try {
-    const { adapter, db } = createNodeSqliteAdapter(workerData.path);
-    const storage = await adapter.createStorage();
-    await storage.close();
-    db.close();
-    parentPort.postMessage("opened");
-  } catch (error) {
-    parentPort.postMessage(String(error));
-  }
 });
 `;
 
-const openAtOnce = async (path: string): Promise<readonly string[]> => {
+// The worker's next message, its error, or its exit.
+const next = (worker: Worker): Promise<string> =>
+  new Promise((resolve) => {
+    const settle = (outcome: string): void => {
+      worker.off("message", settle);
+      worker.off("error", onError);
+      worker.off("exit", onExit);
+      resolve(outcome);
+    };
+    const onError = (error: Error): void => settle(String(error));
+    const onExit = (code: number): void => settle(`exited with ${code}`);
+    worker.on("message", settle);
+    worker.on("error", onError);
+    worker.on("exit", onExit);
+  });
+
+const openAtOnce = async (workers: readonly Worker[], path: string): Promise<readonly string[]> => {
   const gate = new SharedArrayBuffer(4);
-  const workers = Array.from(
-    { length: CONNECTIONS },
-    () =>
-      new Worker(WORKER, {
-        eval: true,
-        workerData: { module: new URL("./node-sqlite.ts", import.meta.url).href, path, gate },
-      }),
-  );
-  const outcomes = workers.map(
-    (worker) =>
-      new Promise<string>((resolve) => {
-        worker.on("message", (message: string) => {
-          if (message !== "loaded") resolve(message);
-        });
-        worker.on("error", (error) => resolve(String(error)));
-      }),
-  );
-  await Promise.all(
-    workers.map(
-      (worker) =>
-        new Promise<void>((resolve) => {
-          worker.once("message", () => resolve());
-          worker.once("error", () => resolve());
-        }),
-    ),
-  );
+  const arrived = workers.map(next);
+  for (const worker of workers) worker.postMessage({ path, gate });
+  const waiting = await Promise.all(arrived);
+  const outcomes = workers.map(next);
   Atomics.store(new Int32Array(gate), 0, 1);
   Atomics.notify(new Int32Array(gate), 0);
-  const results = await Promise.all(outcomes);
-  await Promise.all(workers.map((worker) => worker.terminate()));
-  return results;
+  return waiting.every((message) => message === "waiting") ? Promise.all(outcomes) : waiting;
 };
 
 describe("the node:sqlite adapter on a file", () => {
   it("opens a file not in WAL yet, such as one just restored, from several connections at once", async () => {
     const directory = await mkdtemp(join(tmpdir(), "bounda-wal-"));
+    const workers = Array.from(
+      { length: CONNECTIONS },
+      () =>
+        new Worker(WORKER, {
+          eval: true,
+          workerData: { module: new URL("./node-sqlite.ts", import.meta.url).href },
+        }),
+    );
     try {
+      expect(await Promise.all(workers.map(next))).toEqual(Array(CONNECTIONS).fill("loaded"));
+      // Migrated once, each migration a commit synced to disk, and copied for every round as a
+      // restore would bring it back.
+      const copy = join(directory, "copy.sqlite");
+      const { adapter, db } = createNodeSqliteAdapter(copy);
+      await (await adapter.createStorage()).close();
+      db.exec("PRAGMA journal_mode = DELETE");
+      db.close();
       for (let round = 0; round < ROUNDS; round += 1) {
         const path = join(directory, `restored-${round}.sqlite`);
-        const { adapter, db } = createNodeSqliteAdapter(path);
-        await (await adapter.createStorage()).close();
-        db.exec("PRAGMA journal_mode = DELETE");
-        db.close();
+        await copyFile(copy, path);
 
-        expect(await openAtOnce(path)).toEqual(Array(CONNECTIONS).fill("opened"));
+        expect(await openAtOnce(workers, path)).toEqual(Array(CONNECTIONS).fill("opened"));
         const check = new DatabaseSync(path);
         expect(check.prepare("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
         check.close();
       }
     } finally {
+      await Promise.all(workers.map((worker) => worker.terminate()));
       await rm(directory, { recursive: true, force: true });
     }
-  }, 20_000);
+  });
 });

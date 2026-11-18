@@ -87,8 +87,8 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
               ? moved
               : {
                   ...held,
-                  firstAt: row.firstAt < held.firstAt ? row.firstAt : held.firstAt,
-                  lastAt: row.lastAt > held.lastAt ? row.lastAt : held.lastAt,
+                  firstAt: (row.firstAt < held.firstAt ? row : held).firstAt,
+                  lastAt: (row.lastAt > held.lastAt ? row : held).lastAt,
                 },
           );
         }

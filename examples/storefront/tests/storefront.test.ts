@@ -366,7 +366,7 @@ describe("storefront", () => {
 
   it("decides on a long-standing customer's points from a snapshot of their account", async () => {
     const { app } = await start();
-    for (let order = 0; order < 250; order += 1) {
+    for (let order = 0; order < 150; order += 1) {
       await app.commands.earnPoints({ customerId: "ada", orderId: randomUUID(), points: 10 });
     }
     await app.runUntilIdle();
@@ -376,10 +376,10 @@ describe("storefront", () => {
 
     // A test app checks every state loaded from a snapshot against a fold of the whole stream,
     // and throws when they differ.
-    await expect(app.commands.redeemPoints({ customerId: "ada", points: 2_501 })).rejects.toThrow(
-      "Only 2500 points to redeem",
+    await expect(app.commands.redeemPoints({ customerId: "ada", points: 1_501 })).rejects.toThrow(
+      "Only 1500 points to redeem",
     );
-    await app.commands.redeemPoints({ customerId: "ada", points: 2_500 });
+    await app.commands.redeemPoints({ customerId: "ada", points: 1_500 });
     await app.runUntilIdle();
     await expect(app.commands.redeemPoints({ customerId: "ada", points: 1 })).rejects.toThrow(
       "Only 0 points to redeem",

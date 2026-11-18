@@ -113,6 +113,22 @@ describe("systemClock", () => {
       vi.useRealTimers();
     }
   });
+
+  it("arms one platform timer for a wait as long as one can take", () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const longest = 2 ** 31 - 1;
+      const calls: string[] = [];
+      systemClock.after(longest, () => calls.push("due"));
+      vi.advanceTimersByTime(longest);
+      expect(calls).toEqual(["due"]);
+      expect(setTimeoutSpy.mock.calls.map(([, delay]) => delay)).toEqual([longest]);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("createFixedClock", () => {

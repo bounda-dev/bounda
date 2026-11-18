@@ -737,6 +737,23 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       ]);
     });
 
+    it("reseals a payload into any JSON, a top-level boolean or array of booleans included", async () => {
+      const payloads: readonly unknown[] = [true, [true, false], "plain", 0];
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "1",
+        expectedVersion: 0,
+        events: payloads.map((_, index) =>
+          pendingEvent({ aggregateId: "1", version: index + 1, payload: {} }),
+        ),
+      });
+      await store.reseal(
+        payloads.map((payload, index) => ({ position: index + 1, payload, person: null })),
+      );
+      const { events } = await store.load({ aggregateType: "order", aggregateId: "1" });
+      expect(events.map((event) => event.payload)).toEqual(payloads);
+    });
+
     it("reseals nothing for an empty list", async () => {
       await naming(1, {});
       const before = await store.readAll({ afterPosition: 0, limit: 10 });
