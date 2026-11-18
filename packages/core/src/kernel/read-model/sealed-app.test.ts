@@ -298,7 +298,7 @@ describe.each(adapters)("read models sealed at rest, %s", (_, adapterOf) => {
     await app.runUntilIdle();
     expect(await queries.invoicesOf?.({ customerId: "ana" })).toEqual([]);
     expect(
-      await queries.invoicesOf?.({ customerId: "ana" }, { includeRestricted: "legal-obligation" }),
+      await queries.invoicesOf?.({ customerId: "ana" }, { includeRestricted: "erasure-exemption" }),
     ).toEqual([{ invoiceId: "i-1", customerId: "ana", address: "1 Old St" }]);
     clock.set(new Date(clock.now().getTime() + 3 * 365 * DAY));
     await invoice("ana", "i-2", "2 New St");
@@ -353,12 +353,12 @@ describe.each(adapters)("read models sealed at rest, %s", (_, adapterOf) => {
     await app.forget("ana");
     await app.runUntilIdle();
     accesses.length = 0;
-    await queries.invoicesOf?.({ customerId: "ana" }, { includeRestricted: "legal-obligation" });
+    await queries.invoicesOf?.({ customerId: "ana" }, { includeRestricted: "erasure-exemption" });
     expect(accesses).toEqual([
       expect.objectContaining({
         operation: "query",
         persons: ["ana"],
-        restricted: { basis: "legal-obligation", persons: ["ana"], personCount: 1 },
+        restricted: { basis: "erasure-exemption", persons: ["ana"], personCount: 1 },
       }),
     ]);
   });

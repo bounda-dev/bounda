@@ -66,6 +66,7 @@ export type {
   ExportedCategory,
   ExportedData,
   ExportedDeadLetter,
+  ExportedErasureExemption,
   ExportedEvent,
   ExportedRedaction,
   ExportedRestricted,

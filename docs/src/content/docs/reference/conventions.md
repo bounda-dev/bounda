@@ -29,7 +29,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/processes/<process>/at-<deadline>.ts`, `at-timeout.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
 | `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes; without it, the app's logger |
-| `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis, retention, purposes, sources and any special or criminal data, and `automatedDecisions`, `satisfies PersonalData.AutomatedDecisions`, `{}` for none; without it, every personal field is in the default category |
+| `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis, retention, purposes, sources, any special or criminal data, the purposes the GDPR has rules for and an exemption from erasure they claim, and `automatedDecisions`, `satisfies PersonalData.AutomatedDecisions`, `{}` for none; without it, every personal field is in the default category |
 | `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data, `.notPersonal()` on those that hold none; `holdsPersonalData = false` (optional) to state it keeps nothing of anyone's data though it projects events with personal fields |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once its view keeps a field in the clear with `.personal({ clear: true })`, or a projection of the read model sees a field marked `personal` and the view marks no field `.personal()` |
@@ -90,7 +90,12 @@ The app refuses to start on the same rules, with `ConfigurationError`. The gener
 fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
 declares a category named `default`, or one without a basis Bounda knows, a retention, a purpose
 or a source, or with special or criminal data without a kind, condition or authority Bounda knows,
-or one on `legal-obligation` whose special data rests on `explicit-consent`, while it exports no
+or with a purpose in `processedFor` or an `erasureExemption` Bounda does not know; special data on
+`archiving-research-or-statistics` without a purpose of article 89(1) in `processedFor`; an
+`erasureExemption` that does not apply, on `consent`, `public-health` without special data on
+`health-or-social-care` or `public-health`, or `archiving-research-or-statistics` without a purpose
+of article 89(1); or a category an exemption of article 17(3) keeps past a forgetting whose special
+data rests on `explicit-consent`, or that is processed for `direct-marketing`; while it exports no
 `automatedDecisions`, or one of them lacks what it must say, names a category the file does not
 declare, or decides on special data on a condition other than `explicit-consent` or
 `substantial-public-interest`, or without its `measures` (article 22(4)), and a
@@ -132,8 +137,11 @@ Some rules need the modules themselves, so the app checks them when it is create
   category with anything but letters, digits, `-` and `_` after a first letter, or gives one a
   basis article 6 does not name, a retention that is not a duration longer than none, no purpose
   in words or a source Bounda does not know, `special` data without kinds of article 9(1) or a
-  condition of article 9(2), `criminal` data without an authority of article 10, or special data on
-  `explicit-consent` with `legal-obligation`; whose `automatedDecisions` is not an object, or has a
+  condition of article 9(2), `criminal` data without an authority of article 10, a `processedFor`
+  without purposes Bounda knows, special data on `archiving-research-or-statistics` without a
+  purpose of article 89(1), an `erasureExemption` Bounda does not know or that does not apply, or a
+  category an exemption of article 17(3) keeps past a forgetting with special data on
+  `explicit-consent` or processed for `direct-marketing`; whose `automatedDecisions` is not an object, or has a
   decision without categories it declares, a `logic`, `significance` or `consequences` in words,
   a `profiling` that is true or false, or a ground article 22(2) names, `measures` that are not in
   words, or one on special data whose condition is neither `explicit-consent` nor

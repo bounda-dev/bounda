@@ -33,6 +33,7 @@ export interface IntendArgs {
   readonly personId: string;
   readonly reason: PersonalDataForgottenReason;
   readonly scope: ForgetScope;
+  readonly ends?: EndsKeptFunction;
   /**
    * Where the keys the person holds now are read, outside any transaction.
    */
@@ -60,20 +61,32 @@ export interface ForgetIntentions {
 }
 
 export interface CoveredByFunction {
-  (scope: ForgetScope, held: readonly HeldPersonalKey[]): readonly HeldPersonalKey[];
+  (
+    scope: ForgetScope,
+    held: readonly HeldPersonalKey[],
+    ends?: EndsKeptFunction,
+  ): readonly HeldPersonalKey[];
+}
+
+/**
+ * Whether the forgetting ends what an earlier one kept of the category, as an objection does.
+ */
+export interface EndsKeptFunction {
+  (category: string): boolean;
 }
 
 /**
  * The keys a forgetting of `scope` covers among those the person holds: every one in force for the
  * person as a whole, those in force of the categories named, or the keys named by fingerprint,
- * whatever they are.
+ * whatever they are, and, of the categories `ends` names, those an earlier forgetting kept.
  */
-export const coveredBy: CoveredByFunction = (scope, held) =>
+export const coveredBy: CoveredByFunction = (scope, held, ends = () => false) =>
   scope.kind === "keys"
     ? held.filter(({ key }) => scope.fingerprints.includes(key.fingerprint))
     : held.filter(
         ({ category, retainedSince }) =>
-          retainedSince === null && (scope.kind === "whole" || scope.categories.includes(category)),
+          (retainedSince === null || ends(category)) &&
+          (scope.kind === "whole" || scope.categories.includes(category)),
       );
 
 // What the ledger keeps a forgetting asked for: the categories of the keys in force it names by
@@ -138,11 +151,11 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
       "forget ledger did not take the forgetting; it commits, and the stream copies it",
     );
   return {
-    intend: async ({ personId, reason, scope, keys }) => {
+    intend: async ({ personId, reason, scope, ends, keys }) => {
       const eventId = ids.next();
       const forgottenAt = clock.now().toISOString();
       if (ledger === null) return { eventId, forgottenAt, reason };
-      const covered = coveredBy(scope, await keys.list(personId));
+      const covered = coveredBy(scope, await keys.list(personId), ends);
       const held = covered.map(({ key }) => key.fingerprint);
       // With the keys a reseal replaced by them, which a copy restored from before it holds.
       const fingerprints = [...held, ...(await keys.predecessors(personId, held))];

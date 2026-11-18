@@ -267,9 +267,11 @@ describe("dead letters of work that names a person", () => {
     ]);
     const id = sealed[0]?.id ?? "";
     expect(await app.deadLetters.get(id)).toMatchObject({ errorMessage: null, restricted: true });
-    expect(await app.deadLetters.get(id, { includeRestricted: "legal-obligation" })).toMatchObject({
-      restricted: true,
-    });
+    expect(await app.deadLetters.get(id, { includeRestricted: "erasure-exemption" })).toMatchObject(
+      {
+        restricted: true,
+      },
+    );
     const opened = await app.deadLetters.get(id, { includeRestricted: "consent" });
     expect(opened).toMatchObject({
       errorMessage: "mailer refuses ana@example.com",
@@ -288,7 +290,7 @@ describe("dead letters of work that names a person", () => {
     await app.stop();
   });
 
-  it("keeps sealed a scheduled command's fields a forgetting kept, and opens them on legal-obligation, recorded with their person", async () => {
+  it("keeps sealed a scheduled command's fields a forgetting kept, and opens them on erasure-exemption, recorded with their person", async () => {
     const { app, storage, clock, accesses } = await setup();
     await app.commands.registerCustomer(ana);
     await app.commands.remindCustomer(ana, { delay: "1m" });
@@ -306,12 +308,15 @@ describe("dead letters of work that names a person", () => {
     });
     expect(
       (
-        await app.deadLetters.list({ kind: "scheduled" }, { includeRestricted: "legal-obligation" })
+        await app.deadLetters.list(
+          { kind: "scheduled" },
+          { includeRestricted: "erasure-exemption" },
+        )
       )[0],
     ).toMatchObject({ payload: { email: "ana@example.com" } });
     expect(accesses.at(-1)).toEqual({
       operation: "deadLetters.list",
-      restricted: { basis: "legal-obligation", persons: ["c-1"], personCount: 1 },
+      restricted: { basis: "erasure-exemption", persons: ["c-1"], personCount: 1 },
     });
     await app.deadLetters.get(stored?.id ?? "", { includeRestricted: "consent" });
     expect(accesses.at(-1)).toEqual({

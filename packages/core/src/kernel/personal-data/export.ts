@@ -4,10 +4,12 @@ import type { ExportAccess } from "../../modules/audit.ts";
 import type {
   AutomatedDecision,
   CriminalOffenceData,
+  ErasureExemption,
   LegalBasis,
   PersonalDataSource,
   ProcessingRestriction,
   SpecialCategoryData,
+  SpecificPurpose,
 } from "../../modules/personal-data.ts";
 import type { PersonRecipient } from "../../modules/recipient.ts";
 
@@ -24,27 +26,48 @@ export type ExportedCategories = Readonly<Record<string, string>>;
 
 /**
  * What of a record a restriction covers, so the person sees what is only kept (article 15 still
- * hands it out): the fields of `data` by name, of a category restricted, or kept under a legal
- * obligation, or every one for a person restricted as a whole; and `errorMessage` and
+ * hands it out): the fields of `data` by name, of a category restricted, or kept under an erasure
+ * exemption, or every one for a person restricted as a whole; and `errorMessage` and
  * `errorStack` for an error's text, which may quote any of their data, while any restriction
  * holds.
  */
 export type ExportedRestricted = readonly string[];
 
 /**
+ * An exemption of article 17(3) that keeps a category past a forgetting, with its point:
+ * `legal-obligation` and `public-task` 17(3)(b), `public-health` (c),
+ * `archiving-research-or-statistics` (d), `legal-claims` (e).
+ */
+export interface ExportedErasureExemption {
+  readonly exemption: ErasureExemption;
+  readonly article: string;
+}
+
+export const EXEMPTION_ARTICLES: Readonly<Record<ErasureExemption, string>> = {
+  "legal-obligation": "17(3)(b)",
+  "public-task": "17(3)(b)",
+  "public-health": "17(3)(c)",
+  "archiving-research-or-statistics": "17(3)(d)",
+  "legal-claims": "17(3)(e)",
+};
+
+/**
  * A category of the app as the export tells the person of it, as article 15(1) of the GDPR asks:
  * its `basis`, `null` for the default category, which declares none; the special categories of
  * data it holds and their condition of article 9(2) (`special`), and the authority it processes
- * criminal data under, article 10 (`criminal`), each `null` when it holds none; its `purposes` (a)
- * and `sources` (g), none for the default category; and how long it is kept (d): its `retention`
- * after their last activity, `null` when nothing forgets it for inactivity, and, for them, until
- * when.
+ * criminal data under, article 10 (`criminal`), each `null` when it holds none; its `purposes` (a),
+ * those among them the GDPR has rules of its own for (`processedFor`), and its `sources` (g), none
+ * for the default category; the exemptions of article 17(3) that keep it past their erasure,
+ * none when erasure reaches it; and how long it is kept (d): its `retention` after their last
+ * activity, `null` when nothing forgets it for inactivity, and, for them, until when.
  */
 export interface ExportedCategory {
   readonly basis: LegalBasis | null;
   readonly special: SpecialCategoryData | null;
   readonly criminal: CriminalOffenceData | null;
   readonly purposes: readonly string[];
+  readonly processedFor: readonly SpecificPurpose[];
+  readonly erasureExemptions: readonly ExportedErasureExemption[];
   readonly sources: readonly PersonalDataSource[];
   readonly retention: string | null;
   /**
@@ -57,7 +80,7 @@ export interface ExportedCategory {
    */
   readonly keptUntil: string | null;
   /**
-   * When what a forgetting kept of it under a legal obligation goes, unless they are restricted
+   * When what a forgetting kept of it under an erasure exemption goes, unless they are restricted
    * then, as `keptUntil`; `null` when it kept nothing.
    */
   readonly restrictedUntil: string | null;
@@ -65,7 +88,9 @@ export interface ExportedCategory {
 
 /**
  * A right of the person over their data, as the GDPR names them: `access` (article 15),
- * `rectification` (16), `erasure` (17), `restriction` (18), `portability` (20), `objection` (21),
+ * `rectification` (16), `erasure` (17), `restriction` (18), `portability` (20), `objection` on
+ * grounds of their particular situation (21(1)), `objection-to-direct-marketing`, at any time and
+ * with nothing weighed (21(2)), `objection-to-research-or-statistics` (21(6)),
  * `withdraw-consent` (7(3)), `human-intervention` in an automated decision (22(3)), and
  * `complaint` to a supervisory authority (77).
  */
@@ -76,15 +101,19 @@ export type PersonalDataRight =
   | "restriction"
   | "portability"
   | "objection"
+  | "objection-to-direct-marketing"
+  | "objection-to-research-or-statistics"
   | "withdraw-consent"
   | "human-intervention"
   | "complaint";
 
 /**
  * A right the person has, as article 15(1)(e) and (f) ask they be told, with its article and the
- * categories it reaches, from the basis each declares, and the condition of article 9(2) where it
- * changes them: special categories of data on `explicit-consent` can be withdrawn and are portable,
- * whatever the basis; `null` for every one of their data.
+ * categories it reaches, from the basis each declares, and the condition of article 9(2) and the
+ * purposes where they change them: special categories of data on `explicit-consent` can be
+ * withdrawn and are portable, whatever the basis; erasure leaves out what an exemption of article
+ * 17(3) keeps; direct marketing and research or statistics can be objected to; `null` for every
+ * one of their data.
  */
 export interface ExportedRight {
   readonly right: PersonalDataRight;

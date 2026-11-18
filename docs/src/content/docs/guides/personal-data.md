@@ -200,12 +200,23 @@ key, and each category is forgotten on its own:
   as a whole.
 - Each category is forgotten after its own [retention](#each-category-for-its-own-time).
 
-A category whose basis is `legal-obligation` outlives a `forget` while its retention, counted from
-the person's last activity, has not run out: the law that requires the data outweighs the request
-to erase it (article 17(3)(b)). Its key is kept, [restricted](#restricting-processing), and no
-longer in force: what it sealed still opens for the export, for a query that reads on
-`legal-obligation` and for work that names that basis, while a command, a policy or a process that
-names none reads it as `null`, as if forgotten; nothing new is sealed under it,
+A category an exemption of article 17(3) applies to outlives a `forget` while its retention,
+counted from the person's last activity, has not run out: erasure does not apply to what that
+exemption needs. Bounda reads the exemptions from the declaration:
+
+| Exemption | Article | The category |
+| --- | --- | --- |
+| `legal-obligation` | 17(3)(b) | is on `legal-obligation` |
+| `public-task` | 17(3)(b) | is on `public-task` |
+| `public-health` | 17(3)(c) | holds special data on `public-health`, or on `health-or-social-care` and [claims it](#purposes-and-exemptions) |
+| `archiving-research-or-statistics` | 17(3)(d) | is processed for a purpose of article 89(1) and [claims it](#purposes-and-exemptions) |
+| `legal-claims` | 17(3)(e) | holds special data on `legal-claims` |
+
+None applies on `consent`: withdrawing it leaves no basis to keep anything on (article 17(1)(b)).
+A category with an exemption keeps its key, [restricted](#restricting-processing), and no longer in
+force: what it sealed still opens for the export, for a query that reads on `erasure-exemption` and
+for work that names that basis, while a command, a policy or a process that names none reads it as
+`null`, as if forgotten; nothing new is sealed under it,
 no snapshot holds its data, a [remembered answer](#remembered-answers) sealed under it is erased,
 and the scheduled commands and dead letters that held it go with the rest. The key's last activity is fixed at the forgetting, so a person who
 comes back extends nothing kept from before: what they write afterwards gets a new key in force,
@@ -252,8 +263,9 @@ a `law` that provides appropriate safeguards. A category may declare both. Data 
 apart is best kept in a category of its own, with its own retention, so it is forgotten and
 restricted on its own.
 
-A category on `legal-obligation` cannot rest its special data on `explicit-consent`: a forgetting
-keeps it for the obligation, while a withdrawn consent leaves no condition to keep it on. The
+A category an [exemption](#categories) keeps past a forgetting cannot rest its special data on
+`explicit-consent`: a forgetting keeps it, while a withdrawn consent leaves no condition to keep it
+on. The
 [export](#exporting-a-persons-data) tells the person each category's `special` and `criminal`, and
 its `rights` follow the condition where the GDPR makes them differ: special data on
 `explicit-consent` can be withdrawn and is portable, as consent is, whatever the basis. The
@@ -282,12 +294,68 @@ export const automatedDecisions = {
 Any other decision may say its `measures` too, those of article 22(3), and the export hands them
 to the person with the decision.
 
+### Purposes and exemptions
+
+The GDPR has rules of its own for some purposes. A category processed for one says so in
+`processedFor`, besides the words of `purposes`:
+
+```ts
+export const categories = {
+  newsletter: {
+    basis: "consent",
+    retention: "730d",
+    purposes: ["Send the newsletter they signed up for"],
+    sources: ["data-subject"],
+    processedFor: ["direct-marketing"],
+  },
+  study: {
+    basis: "legitimate-interests",
+    retention: "10y",
+    purposes: ["Measure which treatments work"],
+    sources: ["derived"],
+    special: { kinds: ["health"], condition: "archiving-research-or-statistics" },
+    processedFor: ["scientific-or-historical-research", "statistics"],
+    erasureExemption: "archiving-research-or-statistics",
+  },
+} satisfies PersonalData.Categories;
+```
+
+`processedFor` takes `direct-marketing` and the purposes of article 89(1):
+`archiving-in-the-public-interest`, `scientific-or-historical-research` and `statistics`. They
+decide which [objections](#after-an-objection) the person has, which the export lists:
+
+- `direct-marketing`: an objection at any time, which stops the processing with nothing weighed,
+  whatever the basis (article 21(2) and (3)). Objecting forgets the category, so a category for
+  direct marketing holds what is processed for it alone; an address also used to deliver orders
+  goes in another category too.
+- `scientific-or-historical-research` and `statistics`: an objection on grounds of the person's
+  particular situation (article 21(6)), on every basis but `public-task`, whose task carried out for
+  reasons of public interest is the one exception the article makes. Archiving has none.
+
+Special data on `archiving-research-or-statistics` (9(2)(j)) names at least one purpose of article
+89(1), so the export can tell research from archiving.
+
+`erasureExemption` claims an exemption of article 17(3) that holds only as far as its own conditions
+do, which the rest of the declaration cannot show: `public-health`, for special data on
+`health-or-social-care` processed for reasons of public interest in the area of public health
+(17(3)(c)), and `archiving-research-or-statistics`, for a category processed for a purpose of
+article 89(1) whose objectives erasure would render impossible or seriously impair (17(3)(d)).
+Whether they do is the controller's to judge; the claim is what makes `forget` keep the category.
+An exemption that rests on the basis or the condition alone, a `legal-obligation` or a
+`public-task`, data on `public-health` or on `legal-claims`, needs no claim.
+
+Each of these does not compile, and the app refuses to start on it: special data on
+`archiving-research-or-statistics` without a purpose of article 89(1); `erasureExemption` on
+`consent`, `public-health` without special data on `health-or-social-care` or `public-health`, or
+`archiving-research-or-statistics` without a purpose of article 89(1); and a category an exemption
+keeps past a forgetting that is processed for `direct-marketing`, which an objection must stop.
+
 ### Changing a category
 
 A category's retention can change at any time: the sweep reads it as it runs, so a longer or a
-shorter one applies at once to every person, what a forgetting kept included. So does a basis, and
-a category removed from the file: a key a forgetting kept under a legal obligation is destroyed by
-the next pass of the worker once its category is no longer a `legal-obligation` one, with a
+shorter one applies at once to every person, what a forgetting kept included. So does a basis, a
+condition or a claim, and a category removed from the file: a key a forgetting kept is destroyed by
+the next pass of the worker once no [exemption](#categories) keeps its category any more, with a
 `PersonalDataForgotten` that names it in `expired`, since nothing allows keeping it any more.
 
 A field moved to another category, or out of a category into the default one or back, is sealed
@@ -478,14 +546,15 @@ await app.catchUpReadModels({ through: forgotten });
 
 `forget` is on every `BoundaClient`: the app, the Durable Object through `connect`, the `bounda`
 context of React Router. A client bound with `as` records who asked on `PersonalDataForgotten`, in
-`metadata.actor`, and so on `ProcessingRestricted` and `ProcessingRestrictionLifted`. In one transaction it deletes the person's keys, but those a
-[legal obligation keeps](#categories), cancels the scheduled commands that hold their data, removes
+`metadata.actor`, and so on `ProcessingRestricted` and `ProcessingRestrictionLifted`. In one transaction it deletes the person's keys, but those an
+[exemption of article 17(3) keeps](#categories), cancels the scheduled commands that hold their data, removes
 the dead letters of those that gave up, and appends `PersonalDataForgotten` to the stream
 `bounda:<personId>`: the runtime's own aggregate, `bounda`, has one stream per person it forgot.
 Its payload is `{ personId, reason, whole, categories, retained, expired, fingerprints,
 cancelledCommands, removedDeadLetters }`:
 
-- `reason` is `"requested"` for `forget` and `"retention"` when the [retention](#retention) forgot
+- `reason` is `"requested"` for `forget`, `"objection"` for `forget` with
+  [`objection`](#after-an-objection), and `"retention"` when the [retention](#retention) forgot
   them. A forgetting a [forget ledger](#backups) commits again keeps its id, its time and its
   reason.
 - `whole` is `true` when the person was forgotten as a whole, and `false` for
@@ -493,7 +562,7 @@ cancelledCommands, removedDeadLetters }`:
   from the [ledger](#backups) that kept a key given to the person after it: that key's category is
   then not among `categories` either.
 - `categories` are the categories forgotten, every one but those `retained` when `whole`;
-  `retained`, those a legal obligation kept; `expired`, those kept at an earlier forgetting whose
+  `retained`, those an exemption kept; `expired`, those kept at an earlier forgetting whose
   retention ended now.
 - `fingerprints` names the keys it covered, destroyed or retained, by their check value, which
   opens nothing; none for a person who held none.
@@ -511,7 +580,7 @@ without a key is forgotten all the same, since a read model may hold what their 
 the clear, and forgetting twice appends twice. An empty id is refused with `ValidationError`.
 
 From then on every personal field of theirs reads as `null`, in every event, however old, but
-those of a category kept under a legal obligation. A person registered again gets fresh keys;
+those of a category an exemption kept. A person registered again gets fresh keys;
 their old events stay unreadable. A command running
 when `forget` commits stores nothing it decided on their data, nor anything sealed under the key
 `forget` removed: the state it loaded remembers the key each person's data was read under, its
@@ -567,6 +636,39 @@ Nor does it reach the `actor` in the metadata of events, who acted on them (see
 [Who acts](/concepts/ids-causation-and-correlation/#who-acts)): it is an id, as a person's id is,
 so bind clients with the id of a user or a service, never their name or email.
 
+### After an objection
+
+Article 21 gives the person three objections, which the [export](#exporting-a-persons-data) lists
+from each category's basis and [purposes](#purposes-and-exemptions):
+
+| Right | Article | Categories | What the app does |
+| --- | --- | --- | --- |
+| `objection` | 21(1) | on `public-task` or `legitimate-interests` | weighs it, the processing held with `restrict(person, { ground: "objection-pending", categories })`, then forgets the categories if it upholds it, or lifts the restriction |
+| `objection-to-direct-marketing` | 21(2) | for `direct-marketing` | forgets the categories at once: nothing is weighed |
+| `objection-to-research-or-statistics` | 21(6) | for `scientific-or-historical-research` or `statistics`, but on `public-task` | forgets the categories it reaches |
+
+An objection to direct marketing is never held pending: `restrict` with `objection-pending` that
+names a category for `direct-marketing` is refused with `ValidationError`, since article 21(3)
+stops that processing with nothing to weigh, and no exemption keeps such a category past a
+forgetting, so `forget(person, { categories })` erases it at once.
+
+Once the app upholds an objection, it forgets with `objection`:
+
+```ts
+await app.forget("c-42", { categories: ["census"], objection: true });
+```
+
+An exemption of article 17(3) spares data from erasure, but does not let the controller go on
+processing what the person objected to: article 21(1) has it stop, but for legal claims. So of a
+category an objection reaches, `objection` keeps only what a `legal-obligation` or `legal-claims`
+exemption keeps, which the processing objected to does not need, and ends too what an earlier
+forgetting kept of it under `public-task`, `public-health` or `archiving-research-or-statistics`.
+A category no objection reaches is forgotten as without it. `PersonalDataForgotten` records it with
+`reason: "objection"`, which a [forget ledger](#backups) keeps, so a restore forgets again the same.
+`bounda forget <person> --objection` does it from a terminal. Whether an objection under 21(1) or
+21(6) holds is the app's to decide, and so is telling the person of these rights at the latest in
+the first communication, as 21(4) asks.
+
 ### Remembered answers
 
 A command dispatched with an [`idempotencyKey`](/guides/idempotent-commands/) remembers what it
@@ -615,24 +717,32 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   exportedAt: "2026-03-01T10:00:00.000Z",
   position: 812,
   categories: {
-    default: { basis: null, special: null, criminal: null, purposes: [], sources: [],
-      retention: "730d", held: true, keptUntil: "2028-02-28T10:00:00.000Z",
-      restrictedUntil: null },
+    default: { basis: null, special: null, criminal: null, purposes: [], processedFor: [],
+      erasureExemptions: [], sources: [], retention: "730d", held: true,
+      keptUntil: "2028-02-28T10:00:00.000Z", restrictedUntil: null },
     profile: { basis: "contract", special: null, criminal: null,
-      purposes: ["Run the customer's account"], sources: ["data-subject"], retention: "30d",
-      held: true, keptUntil: "2026-03-30T10:00:00.000Z", restrictedUntil: null },
+      purposes: ["Run the customer's account"], processedFor: [], erasureExemptions: [],
+      sources: ["data-subject"], retention: "30d", held: true,
+      keptUntil: "2026-03-30T10:00:00.000Z", restrictedUntil: null },
+    newsletter: { basis: "consent", special: null, criminal: null,
+      purposes: ["Send the newsletter they signed up for"], processedFor: ["direct-marketing"],
+      erasureExemptions: [], sources: ["data-subject"], retention: "730d", held: false,
+      keptUntil: null, restrictedUntil: null },
     invoices: { basis: "legal-obligation", special: null, criminal: null,
-      purposes: ["Keep the invoices tax law requires"],
+      purposes: ["Keep the invoices tax law requires"], processedFor: [],
+      erasureExemptions: [{ exemption: "legal-obligation", article: "17(3)(b)" }],
       sources: ["data-subject", { kind: "third-party", name: "Stripe" }], retention: "6y",
       held: true, keptUntil: "2032-02-28T10:00:00.000Z", restrictedUntil: null },
   },
   rights: [
     { right: "access", article: "15", categories: null },
     { right: "rectification", article: "16", categories: null },
-    { right: "erasure", article: "17", categories: ["default", "profile"] },
+    { right: "erasure", article: "17", categories: ["default", "profile", "newsletter"] },
     { right: "restriction", article: "18", categories: null },
-    { right: "portability", article: "20", categories: ["profile"] },
-    { right: "objection", article: "21", categories: [] },
+    { right: "portability", article: "20", categories: ["profile", "newsletter"] },
+    { right: "objection", article: "21(1)", categories: [] },
+    { right: "objection-to-direct-marketing", article: "21(2)", categories: ["newsletter"] },
+    { right: "withdraw-consent", article: "7(3)", categories: ["newsletter"] },
     { right: "human-intervention", article: "22(3)", categories: ["profile"] },
     { right: "complaint", article: "77", categories: null },
   ],
@@ -702,10 +812,10 @@ declares, so nothing has to be written by hand next to it:
 
 | Article 15(1) | In the export |
 | --- | --- |
-| (a) the purposes | each category's `purposes`, with its `basis` and, for special or criminal data, its `special` condition or `criminal` authority |
+| (a) the purposes | each category's `purposes` and `processedFor`, with its `basis` and, for special or criminal data, its `special` condition or `criminal` authority |
 | (b) the categories of data | `categories`, and the category of each field of every record |
 | (c) the recipients, and (15(2)) the safeguards of a transfer out of the EEA | `recipients` |
-| (d) how long it is kept, or the criteria | each category's `retention`, `keptUntil` and `restrictedUntil` |
+| (d) how long it is kept, or the criteria | each category's `retention`, `keptUntil` and `restrictedUntil`, and the `erasureExemptions` that keep it past erasure |
 | (e) the rights to rectification, erasure, restriction and objection | `rights` |
 | (f) the right to complain to a supervisory authority | `rights`, `complaint` |
 | (g) the source of data not collected from the person | each category's `sources` |
@@ -714,22 +824,28 @@ declares, so nothing has to be written by hand next to it:
 `categories` describes every category of the app: its `basis`, `null` for the default category,
 which declares none; its [`special`](#special-categories-and-criminal-data) categories of data, with
 their condition of article 9(2), and the authority it processes `criminal` data under, each `null`
-when it holds none; its `purposes` and `sources`, none for the default category; how long it is kept
-after their last activity, its `retention`, `null` when nothing forgets it for inactivity; whether
+when it holds none; its `purposes`, those among them the GDPR has [rules
+for](#purposes-and-exemptions), `processedFor`, and its `sources`, none for the default category;
+the `erasureExemptions` that keep it past their erasure, each with its point of article 17(3), none
+when erasure reaches it; how long it is kept after their last activity, its `retention`, `null` when
+nothing forgets it for inactivity; whether
 the runtime `held` data of theirs in it when the export began, a key of theirs in force or kept; for
 them, `keptUntil`, when the retention forgets what they hold of it unless they are active again
 before, the earlier of the category's own retention and the default one's, which forgets them as a
-whole, and the category's own for one kept under a legal obligation, `null` when nothing forgets it
-or they hold none; and, for a category a legal obligation kept past a forgetting, when what was kept
-goes, `restrictedUntil`. While they are [restricted](#restricting-processing), the retention waits
+whole, and the category's own for one an exemption keeps past it, `null` when nothing forgets it or
+they hold none; and, for a category an exemption kept past a forgetting, when what was kept goes,
+`restrictedUntil`. While they are [restricted](#restricting-processing), the retention waits
 for the restriction to be lifted, as `restrictions` shows, so either date is when it goes at the
 soonest. Every record lists the category of each field of its `data` in `categories`.
 
 `rights` lists their rights, each with its article and the categories it reaches, `null` for all of
 their data, from the basis each category declares: access, rectification, restriction and the
-complaint to a supervisory authority always; erasure for every category but those kept under a legal
-obligation (article 17(3)(b)); objection for those processed on `public-task` or
-`legitimate-interests` (article 21(1)), an empty list when none is; portability for those on
+complaint to a supervisory authority always; erasure for every category but those an
+[exemption](#categories) of article 17(3) keeps; objection for those processed on `public-task` or
+`legitimate-interests` (article 21(1)), an empty list when none is; the objection to direct
+marketing for those processed for it (21(2)), and the objection to research or statistics for those
+processed for `scientific-or-historical-research` or `statistics` on any basis but `public-task`
+(21(6)), each only when it reaches one; portability for those on
 `consent` or `contract`, or whose special data rests on `explicit-consent` (article 20(1)(a)), the
 withdrawal of consent for those on `consent` or whose special data rests on `explicit-consent`
 (article 7(3)), and human intervention for the categories of an automated decision on a `contract`
@@ -742,7 +858,7 @@ lifted, one per ground, with the categories each covers, `null` for the person a
 since when; a lift announced is among `events`, as `ProcessingRestrictionLiftAnnounced` with
 `liftsAt`. Restricted data is still in the export, since the right of access holds: every record
 says in `restricted` what of it a restriction covers, the fields of `data` of a restricted
-category, or kept under a legal obligation, or every one for a person restricted as a whole, and
+category, or kept under an erasure exemption, or every one for a person restricted as a whole, and
 `errorMessage` and `errorStack`, or an answer's `outcome`, while any restriction holds, since an
 error's text or a rejection's message may quote any of their data.
 
@@ -1086,7 +1202,7 @@ export const project = async ({ event, table }: Projection.Args) => {
 
 What it does is the read model's business: delete the row, as here, keep it without the personal
 columns by upserting it again without them, or keep a count. Its payload says which
-[categories](#categories) went: `categories`, every one but those a legal obligation kept when the
+[categories](#categories) went: `categories`, every one but those an exemption kept when the
 person was forgotten as a whole, and only those named when a consent was withdrawn (`whole:
 false`). A read model clears what it holds of those categories alone, so a newsletter's subscribers,
 all of them `marketing`, go when that category does, and stay when only an invoice is at stake:
@@ -1123,10 +1239,10 @@ without `clear`, found by equality through its blind index, never sorted or filt
 
 ### What a forgetting kept
 
-A category a legal obligation keeps past `forget(person)` is restricted until its retention ends
-(see [Categories](#categories)). The runtime marks the key field of each value written under the
-key it kept, so a query leaves those rows out but on the `legal-obligation` basis or one of article
-18(2), and the export marks those fields restricted. A person who comes back gets a new key: what
+A category an exemption of article 17(3) keeps past `forget(person)` is restricted until its
+retention ends (see [Categories](#categories)). The runtime marks the key field of each value written
+under the key it kept, so a query leaves those rows out but on the `erasure-exemption` basis or one
+of article 18(2), and the export marks those fields restricted. A person who comes back gets a new key: what
 is written of them from then on goes under it and reads as any other row, while the rows from before
 stay out of sight. When the kept key's retention ends the key goes, and the old values read as
 `null`, while the new ones still read: the key, not the text, tells them apart.
@@ -1422,7 +1538,7 @@ await app.catchUpReadModels({ through: restricted });
 | `accuracy-contested` | (a) | the person contests the accuracy of their data, while it is verified |
 | `unlawful-processing` | (b) | the processing was unlawful and the person asked to keep the data rather than erase it |
 | `legal-claims` | (c) | the app no longer needs the data and the person needs it for a legal claim |
-| `objection-pending` | (d) | the person objected under article 21(1), while the objection is weighed |
+| `objection-pending` | (d) | the person objected under article 21(1), while the objection is weighed; never of a category for [direct marketing](#after-an-objection) |
 
 Without `categories` the person is restricted as a whole; `restrict("c-42", { ground:
 "accuracy-contested", categories: ["contact"] })` restricts those [categories](#categories) alone,
@@ -1434,11 +1550,12 @@ and every restriction the person has after it, ids and names alone, and it resol
 command, so `catchUpReadModels({ through })` waits for the read models, and the Durable Object and
 React Router wait for them themselves unless `consistency` is `"eventual"`. A restriction that adds
 nothing appends nothing and resolves without events. An empty id, a ground the article does not
-name, or categories that are empty or that the app does not have are refused with
-`ValidationError`.
+name, categories that are empty or that the app does not have, or `objection-pending` of a category
+for `direct-marketing` are refused with `ValidationError`.
 
-What a [forgetting kept under a legal obligation](#categories) is restricted too, without anyone
-asking: kept for the law alone, and for nothing else, until its retention ends.
+What a [forgetting kept under an exemption of article 17(3)](#categories) is restricted too,
+without anyone asking: kept for what the exemption serves alone, and for nothing else, until its
+retention ends.
 
 ### What restricted means
 
@@ -1491,7 +1608,7 @@ commits:
 - **What a forgetting kept.** A command, a policy or a process step reads a field opened under a
   key a forgetting kept as `null`, as if forgotten: those keys are never lifted, so nothing waits
   for them, and the business goes on with the rest. A query leaves the row out unless it reads on
-  `legal-obligation`.
+  `erasure-exemption`.
 
 Projections keep storing, since storing is what a restriction keeps, and a rebuild replays every
 event. `forget` and the export stay allowed: a restriction is not an erasure, and the right of
@@ -1507,10 +1624,10 @@ one: the call names it, and the [access log](#who-opened-what) records it.
 | Basis | Opens |
 | --- | --- |
 | `consent`, `legal-claims`, `protection-of-rights`, `public-interest` | every restricted value, a restriction asked for or what a forgetting kept |
-| `legal-obligation` | what a forgetting kept under a legal obligation, never a restriction a person asked for |
+| `erasure-exemption` | what a forgetting kept under an exemption of article 17(3), for what that exemption serves, never a restriction a person asked for |
 
 - A query reads restricted rows with `includeRestricted`: `app.queries.invoicesOf({ customerId },
-  { includeRestricted: "legal-obligation" })`. The queries its handler composes read on the same
+  { includeRestricted: "erasure-exemption" })`. The queries its handler composes read on the same
   basis unless they name their own. Its record says `restricted: { basis, persons, personCount }`,
   the restricted persons whose rows it read.
 - A command runs on restricted data with `processRestricted`: `app.commands.correctAddress(payload,
@@ -1686,8 +1803,8 @@ event the handler reacted to, one hop deeper, as its commands are.
 its retention. A declared category is forgotten on its own once the person has been inactive for
 its retention, as `forget(person, { categories })` does, with `reason: "retention"` and `whole:
 false`: the profile goes thirty days after their last activity, the invoices six years after it,
-whatever the other categories do. A category whose basis is `legal-obligation` is forgotten that way
-too when its retention ends, even when the app's retention forgot the person as a whole earlier:
+whatever the other categories do. A category an [exemption](#categories) keeps is forgotten that
+way too when its retention ends, even when the app's retention forgot the person as a whole earlier:
 that forgetting kept it, and its time runs from the activity it kept.
 
 Activity is the person's, as for the app's retention: any event of the app's aggregates that names
@@ -1718,8 +1835,9 @@ database. The record lists:
 
 - each [category](#categories), with its basis, the [special categories of data and the criminal
   data](#special-categories-and-criminal-data) it holds, with their condition or authority, its
-  purposes, its sources, how long after the person's last activity it is kept, and how many fields
-  are in it;
+  purposes and those the GDPR has [rules for](#purposes-and-exemptions), its sources, how long after
+  the person's last activity it is kept, the exemptions of article 17(3) that keep it past erasure,
+  and how many fields are in it;
 - each [automated decision](#categories) the app declares, with its categories, logic,
   significance, consequences, whether it profiles, its ground, the special data it decides on and
   its measures;
@@ -1792,8 +1910,8 @@ a race may be run and an orientation may be a direction.
 Each adapter keeps the keys in a table next to the events, `bounda_personal_keys`, one row per
 key with the person, the category, the key, the id of the version of the tenant's key it is
 wrapped under, its
-fingerprint, the person's last activity and, for one a legal obligation kept past a forgetting,
-since when: at most one key in force per person and category. Each key is named by the person and
+fingerprint, the person's last activity and, for one an exemption kept past a forgetting, since
+when: at most one key in force per person and category. Each key is named by the person and
 its fingerprint: the memory adapter
 in memory, SQLite and the Durable Object in their database, PostgreSQL in its schema. The
 fingerprint is the key's AES-GCM tag of nothing under a nonce no value is ever sealed under, a key
@@ -2207,7 +2325,9 @@ await app.forgetTenant("acme");
 
 The name must be the tenant the app serves: a `ValidationError` otherwise. While a person of the
 tenant holds a key a legal obligation keeps (see [Categories](#categories)), it refuses, since that
-data must stay: hand it back first, then pass `{ despiteLegalObligations: true }`. It resolves to
+data must stay: hand it back first, then pass `{ despiteLegalObligations: true }`. The other
+exemptions of article 17(3) do not stop it: they let the controller keep data, without requiring it
+to. It resolves to
 `{ tenant, forgottenAt, eventId }`; `bounda forget-tenant <tenant> --yes` does the same from a
 terminal.
 
@@ -2661,7 +2781,7 @@ await expectForgotten(app, "c-1", {
   fields of `before` in them, are looked for, and the person must hold no key in force of them.
 
 Without `categories` it looks for what was sealed under every key the person no longer holds, so a
-category a legal obligation kept past the forgetting, whose key they still hold, is left out: that
+category an exemption kept past the forgetting, whose key they still hold, is left out: that
 data stays lawfully, and its values may turn up anywhere it was kept. It refuses to pass for want
 of something to look for: a person who still holds their keys, or one with no value to look for
 and no `values`, rejects with an `Error` saying so, and so does one who still holds a key in force

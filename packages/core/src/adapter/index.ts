@@ -66,13 +66,14 @@ export type {
   ForgetLedger,
   ForgetLedgerEntry,
   ForgetLedgerPosition,
+  ForgottenReasonOfFunction,
   LedgerDisclosure,
   LedgerRedaction,
   LedgerRestriction,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "./storage/forget-ledger.ts";
-export { byForgetLedgerOrder } from "./storage/forget-ledger.ts";
+export { byForgetLedgerOrder, forgottenReasonOf } from "./storage/forget-ledger.ts";
 export type { Hold } from "./storage/hold.ts";
 export type {
   DispatchOutcome,

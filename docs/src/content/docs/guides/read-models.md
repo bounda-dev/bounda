@@ -182,7 +182,7 @@ refuses to start.
 A query never reads the rows of a person whose processing is
 [restricted](/guides/personal-data/#restricting-processing): those whose field marked `.person()`
 names someone restricted as a whole, or restricted in a category a field marked `.personal()`
-holds, and those holding a value under a key a forgetting kept under a legal obligation. `table` leaves them out
+holds, and those holding a value under a key a forgetting kept under an erasure exemption. `table` leaves them out
 in its own statement, so `findMany` with a `limit` fills the page with the others and `count`
 counts the others. `client.get` and `client.all` run your SQL as it is and drop those rows from
 what it answers, so a `LIMIT` in it may return fewer rows, and `client.get` answers `null` when
@@ -203,12 +203,13 @@ allows, and the access log records it with the restricted persons whose rows it 
 ```ts
 const invoices = await app.queries.invoicesOf(
   { customerId: "c-42" },
-  { includeRestricted: "legal-obligation" },
+  { includeRestricted: "erasure-exemption" },
 );
 ```
 
-`legal-obligation` reads what a forgetting kept under a legal obligation and still leaves out what
-a person asked to restrict; `consent`, `legal-claims`, `protection-of-rights` and `public-interest`
+`erasure-exemption` reads what a forgetting kept under an [exemption of article
+17(3)](/guides/personal-data/#categories), such as a legal obligation, and still leaves out what a
+person asked to restrict; `consent`, `legal-claims`, `protection-of-rights` and `public-interest`
 read every row. The queries its handler composes read on the same basis unless they pass their
 own.
 

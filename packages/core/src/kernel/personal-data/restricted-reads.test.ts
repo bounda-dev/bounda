@@ -14,7 +14,7 @@ describe("checkIncludeRestricted", () => {
           {
             path: ["includeRestricted"],
             message:
-              'Expected one of "consent", "legal-claims", "protection-of-rights", "public-interest", "legal-obligation"',
+              'Expected one of "consent", "legal-claims", "protection-of-rights", "public-interest", "erasure-exemption"',
           },
         ],
       }),
@@ -23,9 +23,9 @@ describe("checkIncludeRestricted", () => {
 });
 
 describe("restrictionViewOf", () => {
-  it("reads past what a forgetting kept on legal-obligation, past everything on another basis", () => {
+  it("reads past what a forgetting kept on erasure-exemption, past everything on another basis", () => {
     expect(restrictionViewOf(undefined)).toBe("unrestricted");
-    expect(restrictionViewOf("legal-obligation")).toBe("retained");
+    expect(restrictionViewOf("erasure-exemption")).toBe("retained");
     expect(restrictionViewOf("consent")).toBe("all");
   });
 });

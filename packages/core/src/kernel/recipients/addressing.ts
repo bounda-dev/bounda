@@ -63,7 +63,7 @@ export interface TouchedByFunction {
 
 /**
  * The categories an event of the runtime's touches: those it forgets, restricts, lifts or redacts,
- * and those a forgetting kept under a legal obligation instead.
+ * and those a forgetting kept under an erasure exemption instead.
  */
 export const touchedBy: TouchedByFunction = (event) => {
   switch (event.type) {

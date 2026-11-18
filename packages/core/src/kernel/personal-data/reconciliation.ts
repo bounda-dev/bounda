@@ -14,6 +14,7 @@ import { discloseAgain } from "../recipients/again.ts";
 import { startedBy } from "../shared/causation.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
+  endsKeptOf,
   type ForgetScope,
   type Forgotten,
   forgetWithin,
@@ -192,9 +193,11 @@ export const forgetAgain: ForgetAgainFunction = async ({
       });
       if (applied !== null) return null;
     }
-    const covered = coveredBy(asScope, await stores.personalKeys.list(personId)).filter(
-      ({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint),
-    );
+    const covered = coveredBy(
+      asScope,
+      await stores.personalKeys.list(personId),
+      endsKeptOf(categories, reason ?? "requested"),
+    ).filter(({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint));
     if (covered.length === 0) return null;
     if (reason !== "retention") return covered;
     return (await retentionDue(stores, personId, clock.now(), known === null ? null : covered))
@@ -223,6 +226,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
           personId,
           reason: reason ?? "requested",
           scope: scopeOf(due),
+          ends: endsKeptOf(categories, reason ?? "requested"),
           keys: storage.personalKeys,
         });
     const outcome = await transactRetrying({

@@ -2,6 +2,7 @@ import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredDispatch } from "../../contracts/command.ts";
 import { type Retention, retentionEnd } from "../../contracts/duration.ts";
+import { ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -12,14 +13,28 @@ import {
   type PersonalDataForgottenPayload,
   type PersonalDataForgottenReason,
 } from "../../modules/bounda-events.ts";
-import type { ForgetOptions, PersonalCategoryName } from "../../modules/personal-data.ts";
+import type {
+  ErasureExemption,
+  ForgetOptions,
+  PersonalCategoryName,
+} from "../../modules/personal-data.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
 import { addressed } from "../recipients/addressing.ts";
 import { actedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { lastActivity } from "./activity.ts";
-import { checkCategoryNames, type PersonalCategories } from "./categories.ts";
-import { coveredBy, type ForgetIntention, type ForgetIntentions } from "./intention.ts";
+import {
+  checkCategoryNames,
+  type PersonalCategories,
+  type PersonalCategory,
+} from "./categories.ts";
+import { objectable } from "./information.ts";
+import {
+  coveredBy,
+  type EndsKeptFunction,
+  type ForgetIntention,
+  type ForgetIntentions,
+} from "./intention.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 /**
@@ -68,7 +83,43 @@ export interface HeldForgetting {
   readonly held: StoredEvent;
 }
 
-// A key in force of a category under a legal obligation outlives a request while its retention
+// What an upheld objection leaves to keep: data an obligation of law requires, and what legal
+// claims need, which article 21(1) spares; the other exemptions rest on the very processing the
+// person objected to.
+const SURVIVE_OBJECTION: readonly ErasureExemption[] = ["legal-obligation", "legal-claims"];
+
+export interface KeepsFunction {
+  (category: PersonalCategory, reason: PersonalDataForgottenReason): boolean;
+}
+
+/**
+ * Whether a forgetting for `reason` keeps the category's keys in force, under an exemption of
+ * article 17(3).
+ */
+export const keeps: KeepsFunction = (category, reason) =>
+  reason === "objection" && objectable(category)
+    ? category.exemptions.some((exemption) => SURVIVE_OBJECTION.includes(exemption))
+    : category.exemptions.length > 0;
+
+export interface EndsKeptOfFunction {
+  (categories: PersonalCategories, reason: PersonalDataForgottenReason): EndsKeptFunction;
+}
+
+/**
+ * What an earlier forgetting kept that a forgetting for `reason` ends: after an objection, what no
+ * exemption it spares keeps of a category it reaches.
+ */
+export const endsKeptOf: EndsKeptOfFunction = (categories, reason) => (name) => {
+  const category = categories.of(name);
+  return (
+    reason === "objection" &&
+    category !== undefined &&
+    objectable(category) &&
+    !keeps(category, reason)
+  );
+};
+
+// A key in force of a category an erasure exemption keeps outlives a request while its retention
 // runs from the person's last activity, read past what the retention recorded so it is never cut
 // short; a person never seen active is taken as active now.
 const keptUntil = async (
@@ -94,13 +145,14 @@ export interface ForgetWithinFunction {
 /**
  * Forgets what `scope` covers on the transaction given, and appends `PersonalDataForgotten` to the
  * person's stream, with the id, time and reason of the intention: whoever reads the event finds
- * the fields gone already. A key in force of a category whose basis is a legal obligation is
- * retained instead while its retention has not run out, when the person or the category is what
- * was asked for; a key named by fingerprint goes whatever it is. The scheduled commands, dead
- * letters and snapshots that hold the person's data under a key no longer in force go in the same
- * transaction, and the remembered answers sealed under one are erased, every one that names them
- * when they are forgotten as a whole; the event names the commands and the letters. A person without a key is forgotten
- * all the same, since read models may hold what their events carried in the clear.
+ * the fields gone already. A key in force of a category an erasure exemption keeps is retained
+ * instead while its retention has not run out, when the person or the category is what was asked
+ * for, and after an objection a key kept earlier that no exemption it spares keeps goes; a key
+ * named by fingerprint goes whatever it is. The scheduled commands, dead letters and snapshots
+ * that hold the person's data under a key no longer in force go in the same transaction, and the
+ * remembered answers sealed under one are erased, every one that names them when they are
+ * forgotten as a whole; the event names the commands and the letters. A person without a key is
+ * forgotten all the same, since read models may hold what their events carried in the clear.
  */
 export const forgetWithin: ForgetWithinFunction = async (args) => {
   const { transaction, ids, clock, personId, intention, context, categories, scope } = args;
@@ -117,7 +169,11 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
   const now = clock.now();
   // A key the scope covers that the intention does not name was given to the person after it: a
   // caller that checked the intention already keeps it.
-  const covered = coveredBy(scope, await transaction.personalKeys.list(personId));
+  const covered = coveredBy(
+    scope,
+    await transaction.personalKeys.list(personId),
+    endsKeptOf(categories, intention.reason),
+  );
   const asked = covered.filter(
     ({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint),
   );
@@ -147,9 +203,9 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
   const expired = new Set<string>();
   let destroyed = 0;
   for (const { category, key, retainedSince } of asked) {
-    const basis = categories.of(category);
-    if (scope.kind !== "keys" && basis?.basis === "legal-obligation" && basis.retention !== null) {
-      const kept = await keptUntil(args, basis.retention, lastActive);
+    const declared = categories.of(category);
+    if (scope.kind !== "keys" && declared?.retention != null && keeps(declared, intention.reason)) {
+      const kept = await keptUntil(args, declared.retention, lastActive);
       if (kept.until > now.getTime()) {
         await transaction.personalKeys.retain(personId, key.fingerprint, {
           since: now.toISOString(),
@@ -159,7 +215,8 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
       }
     }
     if (await transaction.personalKeys.remove(personId, key.fingerprint)) destroyed += 1;
-    (retainedSince === null ? gone : expired).add(category);
+    // What an objection ends of an earlier forgetting is forgotten now, not expired.
+    (retainedSince === null || scope.kind !== "keys" ? gone : expired).add(category);
   }
   // A forgetting as a whole keeps nothing, unless a caller that checked its intention left a key
   // given after it in force; that key's category is then neither whole nor forgotten.
@@ -259,6 +316,7 @@ export const forgetIntended: ForgetIntendedFunction = async ({
       personId,
       reason,
       scope,
+      ends: endsKeptOf(categories, reason),
       keys: storage.personalKeys,
     });
     const outcome = await transactRetrying({
@@ -357,8 +415,26 @@ export const forgetScopeOf: ForgetScopeOfFunction = ({ categories, options }) =>
         }),
       };
 
+export interface ForgetReasonOfFunction {
+  (options: ForgetOptions | undefined): PersonalDataForgottenReason;
+}
+
 /**
- * `forget` of a client: `forgetIntended`, as a request of the person.
+ * The reason `forget(personId, options)` records: `objection` with `objection: true`. Throws
+ * `ValidationError` for an `objection` that is not a boolean.
+ */
+export const forgetReasonOf: ForgetReasonOfFunction = (options) => {
+  const objection = options?.objection;
+  if (objection !== undefined && typeof objection !== "boolean") {
+    throw new ValidationError("forget takes objection as true or false", [
+      { path: ["objection"], message: "Expected a boolean" },
+    ]);
+  }
+  return objection === true ? "objection" : "requested";
+};
+
+/**
+ * `forget` of a client: `forgetIntended`, as a request of the person or after their objection.
  */
 export const forgetPersonalData: ForgetPersonalDataFunction = async ({
   storage,
@@ -375,6 +451,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
 }) => {
   checkPersonId(personId, "forget");
   const scope = forgetScopeOf({ categories, options });
+  const reason = forgetReasonOf(options);
   const correlationId = ids.next();
   const forgotten = await forgetIntended({
     storage,
@@ -386,7 +463,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
     batchSize,
     personId,
     scope,
-    reason: "requested",
+    reason,
     context: startedBy(correlationId, actor),
   });
   if ("held" in forgotten) return forgottenDispatch(forgotten.held);

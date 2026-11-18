@@ -8,15 +8,19 @@ import {
   CRIMINAL_DATA_AUTHORITIES,
   type CriminalOffenceData,
   DECIDABLE_CONDITIONS,
+  type DeclaredErasureExemption,
+  type ErasureExemption,
   LEGAL_BASES,
   type LegalBasis,
   type PersonalDataModule,
   type PersonalDataSource,
   SPECIAL_CATEGORY_CONDITIONS,
   SPECIAL_CATEGORY_KINDS,
+  SPECIFIC_PURPOSES,
   type SpecialCategoryCondition,
   type SpecialCategoryData,
   type SpecialCategoryKind,
+  type SpecificPurpose,
 } from "../../modules/personal-data.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 
@@ -42,6 +46,15 @@ export interface PersonalCategory {
    * `null` for a category without data on criminal convictions and offences (article 10).
    */
   readonly criminal: CriminalOffenceData | null;
+  /**
+   * None for a category that declares none, as the default one.
+   */
+  readonly processedFor: readonly SpecificPurpose[];
+  /**
+   * The exemptions of article 17(3) that keep it past a forgetting, in the article's order; none
+   * for the default category and any on `consent`.
+   */
+  readonly exemptions: readonly ErasureExemption[];
 }
 
 /**
@@ -134,6 +147,92 @@ const criminalOf = (criminal: unknown, at: string): CriminalOffenceData | null =
   return { authority: authority as CriminalOffenceData["authority"] };
 };
 
+const ARCHIVAL: readonly SpecificPurpose[] = SPECIFIC_PURPOSES.filter(
+  (purpose) => purpose !== "direct-marketing",
+);
+
+const DECLARED_EXEMPTIONS: readonly DeclaredErasureExemption[] = [
+  "public-health",
+  "archiving-research-or-statistics",
+];
+
+const serves = (processedFor: readonly SpecificPurpose[], purposes: readonly SpecificPurpose[]) =>
+  processedFor.some((purpose) => purposes.includes(purpose));
+
+const processedForOf = (processedFor: unknown, at: string): SpecificPurpose[] => {
+  if (processedFor === undefined) return [];
+  const purposes = listOf(processedFor, (purpose): purpose is SpecificPurpose =>
+    SPECIFIC_PURPOSES.includes(purpose as SpecificPurpose),
+  );
+  if (purposes === null) {
+    throw new ConfigurationError(
+      `${at} must name in processedFor at least one of ${describeNames(SPECIFIC_PURPOSES)}`,
+    );
+  }
+  return purposes;
+};
+
+interface ExemptionArgs {
+  readonly basis: LegalBasis;
+  readonly special: SpecialCategoryData | null;
+  readonly processedFor: readonly SpecificPurpose[];
+  readonly declared: unknown;
+  readonly at: string;
+}
+
+const declaredExemptionOf = ({
+  basis,
+  special,
+  processedFor,
+  declared,
+  at,
+}: ExemptionArgs): DeclaredErasureExemption | null => {
+  if (declared === undefined) return null;
+  if (!DECLARED_EXEMPTIONS.includes(declared as DeclaredErasureExemption)) {
+    throw new ConfigurationError(
+      `${at} must name as its erasureExemption one of ${describeNames(DECLARED_EXEMPTIONS)}`,
+    );
+  }
+  if (basis === "consent") {
+    throw new ConfigurationError(
+      `${at} is on consent, which a withdrawal leaves without a basis to keep it on, and cannot claim an erasureExemption`,
+    );
+  }
+  if (
+    declared === "public-health" &&
+    special?.condition !== "health-or-social-care" &&
+    special?.condition !== "public-health"
+  ) {
+    throw new ConfigurationError(
+      `${at} claims public-health (article 17(3)(c)), which needs special categories of data on health-or-social-care or public-health`,
+    );
+  }
+  if (declared === "archiving-research-or-statistics" && !serves(processedFor, ARCHIVAL)) {
+    throw new ConfigurationError(
+      `${at} claims archiving-research-or-statistics (article 17(3)(d)), which needs one of ${describeNames(ARCHIVAL)} in processedFor`,
+    );
+  }
+  return declared as DeclaredErasureExemption;
+};
+
+// What article 17(3) spares from erasure, as the declaration shows it: its basis (b), its
+// condition of article 9(2) where it states the necessity itself (c, e), and what it claims (c,
+// d). Nothing on consent, whose withdrawal leaves no basis to keep it on (article 17(1)(b)).
+const exemptionsOf = (
+  { basis, special }: Pick<ExemptionArgs, "basis" | "special">,
+  declared: DeclaredErasureExemption | null,
+): ErasureExemption[] => {
+  if (basis === "consent") return [];
+  const held = new Set<ErasureExemption>();
+  if (basis === "legal-obligation" || basis === "public-task") held.add(basis);
+  if (special?.condition === "public-health" || declared === "public-health") {
+    held.add("public-health");
+  }
+  if (declared === "archiving-research-or-statistics") held.add(declared);
+  if (special?.condition === "legal-claims") held.add("legal-claims");
+  return [...held];
+};
+
 const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] => {
   if (module === undefined) return [];
   const { categories } = module;
@@ -181,13 +280,46 @@ const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] 
       );
     }
     const special = specialOf(category.special, at);
-    if (category.basis === "legal-obligation" && special?.condition === "explicit-consent") {
+    const criminal = criminalOf(category.criminal, at);
+    const processedFor = processedForOf(category.processedFor, at);
+    if (
+      special?.condition === "archiving-research-or-statistics" &&
+      !serves(processedFor, ARCHIVAL)
+    ) {
       throw new ConfigurationError(
-        `${at} is on legal-obligation, which keeps its data past a forgetting, and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+        `${at} holds special categories of data on archiving-research-or-statistics and must name the purpose of article 89(1) it serves in processedFor, one of ${describeNames(ARCHIVAL)}`,
       );
     }
-    const criminal = criminalOf(category.criminal, at);
-    return { name, basis: category.basis, retention, purposes, sources, special, criminal };
+    const { basis } = category;
+    const declared = declaredExemptionOf({
+      basis,
+      special,
+      processedFor,
+      declared: category.erasureExemption,
+      at,
+    });
+    const exemptions = exemptionsOf({ basis, special }, declared);
+    if (exemptions.length > 0 && special?.condition === "explicit-consent") {
+      throw new ConfigurationError(
+        `${at} is kept past a forgetting (${exemptions.join(", ")}), and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+      );
+    }
+    if (exemptions.length > 0 && processedFor.includes("direct-marketing")) {
+      throw new ConfigurationError(
+        `${at} is kept past a forgetting (${exemptions.join(", ")}), and cannot be processed for direct-marketing, which an objection stops at once (article 21(3))`,
+      );
+    }
+    return {
+      name,
+      basis,
+      retention,
+      purposes,
+      sources,
+      special,
+      criminal,
+      processedFor,
+      exemptions,
+    };
   });
 };
 
@@ -276,6 +408,8 @@ export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ modul
     sources: [],
     special: null,
     criminal: null,
+    processedFor: [],
+    exemptions: [],
   };
   const all = [fallback, ...declared];
   const byName = new Map(all.map((category) => [category.name, category]));

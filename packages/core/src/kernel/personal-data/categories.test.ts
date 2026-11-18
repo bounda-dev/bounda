@@ -52,6 +52,7 @@ describe("buildPersonalCategories", () => {
       sources: ["data-subject"],
       special: null,
       criminal: null,
+      processedFor: [],
     };
     expect(categories.all).toEqual([
       {
@@ -62,9 +63,23 @@ describe("buildPersonalCategories", () => {
         sources: [],
         special: null,
         criminal: null,
+        processedFor: [],
+        exemptions: [],
       },
-      { name: "profile", basis: "contract", retention: { months: 0, ms: 2_592_000_000 }, ...said },
-      { name: "invoices", basis: "legal-obligation", retention: { months: 72, ms: 0 }, ...said },
+      {
+        name: "profile",
+        basis: "contract",
+        retention: { months: 0, ms: 2_592_000_000 },
+        ...said,
+        exemptions: [],
+      },
+      {
+        name: "invoices",
+        basis: "legal-obligation",
+        retention: { months: 72, ms: 0 },
+        ...said,
+        exemptions: ["legal-obligation"],
+      },
     ]);
     expect(categories.decisions).toEqual([]);
     expect(categories.declared.map(({ name }) => name)).toEqual(["profile", "invoices"]);
@@ -84,6 +99,8 @@ describe("buildPersonalCategories", () => {
         sources: [],
         special: null,
         criminal: null,
+        processedFor: [],
+        exemptions: [],
       },
     ]);
     expect(categories.declared).toEqual([]);
@@ -248,7 +265,7 @@ describe("buildPersonalCategories", () => {
         },
       }),
     ).toBe(
-      `${at} is on legal-obligation, which keeps its data past a forgetting, and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+      `${at} is kept past a forgetting (legal-obligation), and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
     );
     expect(
       buildPersonalCategories({
@@ -262,6 +279,214 @@ describe("buildPersonalCategories", () => {
         retention: null,
       }).of("care")?.special,
     ).toEqual({ kinds: ["health"], condition: "explicit-consent" });
+  });
+
+  it("keeps the purposes the GDPR has rules for, and refuses those it cannot read and special data on archiving-research-or-statistics without one of article 89(1)", () => {
+    const said = { retention: "1d", purposes: ["Write to them"], sources: ["data-subject"] };
+    const built = buildPersonalCategories({
+      module: module({
+        news: { basis: "consent", ...said, processedFor: ["direct-marketing"] },
+        study: {
+          basis: "legitimate-interests",
+          ...said,
+          processedFor: ["statistics", "scientific-or-historical-research"],
+          special: { kinds: ["health"], condition: "archiving-research-or-statistics" },
+        },
+        archive: {
+          basis: "public-task",
+          ...said,
+          processedFor: ["archiving-in-the-public-interest"],
+          special: { kinds: ["political-opinions"], condition: "archiving-research-or-statistics" },
+        },
+        plain: { basis: "contract", ...said },
+      }),
+      retention: null,
+    });
+    expect(built.of("news")?.processedFor).toEqual(["direct-marketing"]);
+    expect(built.of("study")?.processedFor).toEqual([
+      "statistics",
+      "scientific-or-historical-research",
+    ]);
+    expect(built.of("archive")?.processedFor).toEqual(["archiving-in-the-public-interest"]);
+    expect(built.of("plain")?.processedFor).toEqual([]);
+    const at = 'app/personal-data.ts: category "news"';
+    for (const wrong of [null, [], ["whim"], "direct-marketing", ["direct-marketing", 1]]) {
+      expect(refusal({ news: { basis: "consent", ...said, processedFor: wrong } })).toBe(
+        `${at} must name in processedFor at least one of "direct-marketing", "archiving-in-the-public-interest", "scientific-or-historical-research", "statistics"`,
+      );
+    }
+    const archival = `${at} holds special categories of data on archiving-research-or-statistics and must name the purpose of article 89(1) it serves in processedFor, one of "archiving-in-the-public-interest", "scientific-or-historical-research", "statistics"`;
+    const special = { kinds: ["health"], condition: "archiving-research-or-statistics" };
+    expect(refusal({ news: { basis: "contract", ...said, special } })).toBe(archival);
+    expect(
+      refusal({
+        news: { basis: "contract", ...said, special, processedFor: ["direct-marketing"] },
+      }),
+    ).toBe(archival);
+  });
+
+  it("names the exemptions of article 17(3) a category's basis, condition and claim carry, none on consent, and refuses a claim that does not apply", () => {
+    const said = { retention: "1d", purposes: ["Treat them"], sources: ["data-subject"] };
+    const on = (condition: string) => ({ kinds: ["health"], condition });
+    const built = buildPersonalCategories({
+      module: module({
+        served: { basis: "contract", ...said },
+        taxed: { basis: "legal-obligation", ...said },
+        public: { basis: "public-task", ...said },
+        treated: { basis: "contract", ...said, special: on("health-or-social-care") },
+        screened: {
+          basis: "contract",
+          ...said,
+          special: on("health-or-social-care"),
+          erasureExemption: "public-health",
+        },
+        tracked: { basis: "vital-interests", ...said, special: on("public-health") },
+        claimed: {
+          basis: "vital-interests",
+          ...said,
+          special: on("public-health"),
+          erasureExemption: "public-health",
+        },
+        disputed: { basis: "contract", ...said, special: on("legal-claims") },
+        consented: { basis: "consent", ...said, special: on("public-health") },
+        defended: { basis: "consent", ...said, special: on("legal-claims") },
+        counted: {
+          basis: "legitimate-interests",
+          ...said,
+          processedFor: ["statistics"],
+          erasureExemption: "archiving-research-or-statistics",
+        },
+        uncounted: { basis: "legitimate-interests", ...said, processedFor: ["statistics"] },
+        everything: {
+          basis: "legal-obligation",
+          ...said,
+          special: on("public-health"),
+          processedFor: ["archiving-in-the-public-interest"],
+          erasureExemption: "archiving-research-or-statistics",
+        },
+        litigated: { basis: "public-task", ...said, special: on("legal-claims") },
+      }),
+      retention: null,
+    });
+    const exemptions = Object.fromEntries(
+      built.declared.map(({ name, exemptions: held }) => [name, held]),
+    );
+    expect(exemptions).toEqual({
+      served: [],
+      taxed: ["legal-obligation"],
+      public: ["public-task"],
+      treated: [],
+      screened: ["public-health"],
+      tracked: ["public-health"],
+      claimed: ["public-health"],
+      disputed: ["legal-claims"],
+      consented: [],
+      defended: [],
+      counted: ["archiving-research-or-statistics"],
+      uncounted: [],
+      everything: ["legal-obligation", "public-health", "archiving-research-or-statistics"],
+      litigated: ["public-task", "legal-claims"],
+    });
+    const at = 'app/personal-data.ts: category "care"';
+    for (const wrong of [null, "whim", "legal-obligation", "public-task", "legal-claims"]) {
+      expect(refusal({ care: { basis: "contract", ...said, erasureExemption: wrong } })).toBe(
+        `${at} must name as its erasureExemption one of "public-health", "archiving-research-or-statistics"`,
+      );
+    }
+    for (const claim of ["public-health", "archiving-research-or-statistics"]) {
+      expect(
+        refusal({
+          care: {
+            basis: "consent",
+            ...said,
+            special: on("public-health"),
+            processedFor: ["statistics"],
+            erasureExemption: claim,
+          },
+        }),
+      ).toBe(
+        `${at} is on consent, which a withdrawal leaves without a basis to keep it on, and cannot claim an erasureExemption`,
+      );
+    }
+    const health = `${at} claims public-health (article 17(3)(c)), which needs special categories of data on health-or-social-care or public-health`;
+    expect(
+      refusal({ care: { basis: "contract", ...said, erasureExemption: "public-health" } }),
+    ).toBe(health);
+    expect(
+      refusal({
+        care: {
+          basis: "contract",
+          ...said,
+          special: on("vital-interests"),
+          erasureExemption: "public-health",
+        },
+      }),
+    ).toBe(health);
+    const research = `${at} claims archiving-research-or-statistics (article 17(3)(d)), which needs one of "archiving-in-the-public-interest", "scientific-or-historical-research", "statistics" in processedFor`;
+    for (const processedFor of [undefined, ["direct-marketing"]]) {
+      expect(
+        refusal({
+          care: {
+            basis: "contract",
+            ...said,
+            ...(processedFor === undefined ? {} : { processedFor }),
+            erasureExemption: "archiving-research-or-statistics",
+          },
+        }),
+      ).toBe(research);
+    }
+  });
+
+  it("refuses a category kept past a forgetting whose special data rests on explicit consent, or that is processed for direct marketing", () => {
+    const said = { retention: "1d", purposes: ["Write to them"], sources: ["data-subject"] };
+    const at = 'app/personal-data.ts: category "news"';
+    const consented = { kinds: ["health"], condition: "explicit-consent" };
+    expect(refusal({ news: { basis: "public-task", ...said, special: consented } })).toBe(
+      `${at} is kept past a forgetting (public-task), and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+    );
+    expect(
+      refusal({
+        news: {
+          basis: "contract",
+          ...said,
+          special: consented,
+          processedFor: ["scientific-or-historical-research"],
+          erasureExemption: "archiving-research-or-statistics",
+        },
+      }),
+    ).toBe(
+      `${at} is kept past a forgetting (archiving-research-or-statistics), and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+    );
+    const marketing = (exemptions: string) =>
+      `${at} is kept past a forgetting (${exemptions}), and cannot be processed for direct-marketing, which an objection stops at once (article 21(3))`;
+    expect(
+      refusal({ news: { basis: "legal-obligation", ...said, processedFor: ["direct-marketing"] } }),
+    ).toBe(marketing("legal-obligation"));
+    expect(
+      refusal({
+        news: {
+          basis: "contract",
+          ...said,
+          special: { kinds: ["health"], condition: "legal-claims" },
+          processedFor: ["statistics", "direct-marketing"],
+          erasureExemption: "archiving-research-or-statistics",
+        },
+      }),
+    ).toBe(marketing("archiving-research-or-statistics, legal-claims"));
+    const allowed = buildPersonalCategories({
+      module: module({
+        news: { basis: "legitimate-interests", ...said, processedFor: ["direct-marketing"] },
+        offers: {
+          basis: "consent",
+          ...said,
+          special: { kinds: ["health"], condition: "public-health" },
+          processedFor: ["direct-marketing"],
+        },
+        consented: { basis: "contract", ...said, special: consented },
+      }),
+      retention: null,
+    });
+    expect(allowed.declared.map(({ name }) => name)).toEqual(["news", "offers", "consented"]);
   });
 
   it("lets an automated decision on special categories of data rest only on explicit consent or a substantial public interest, with its measures, as article 22(4) asks", () => {

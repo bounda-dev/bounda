@@ -415,6 +415,7 @@ const runForgotten = async (
 interface ForgetOptions extends ActingOptions {
   readonly from?: string;
   readonly category?: readonly string[];
+  readonly objection?: boolean;
 }
 
 const collect = (value: string, previous: readonly string[] = []): readonly string[] => [
@@ -431,15 +432,14 @@ const runForgetPerson = (
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
     const categories = options.category;
-    await actingAs(app, options).forget(
-      personId,
-      categories === undefined ? undefined : { categories },
-    );
+    const objection = options.objection === true;
+    await actingAs(app, options).forget(personId, {
+      ...(categories === undefined ? {} : { categories }),
+      ...(objection ? { objection } : {}),
+    });
     line(
       stdout,
-      categories === undefined
-        ? `forgot ${personId}`
-        : `forgot ${categories.join(", ")} of ${personId}`,
+      `${categories === undefined ? `forgot ${personId}` : `forgot ${categories.join(", ")} of ${personId}`}${objection ? " after their objection" : ""}`,
     );
     return EXIT_OK;
   });
@@ -456,8 +456,11 @@ const runForget = async (
     return EXIT_CONVENTION;
   }
   if (personId !== undefined) return runForgetPerson(personId, options, cwd, stdout, stderr);
-  if (options.category !== undefined) {
-    line(stderr, "error: --category forgets one person; a list says what each line asked for");
+  if (options.category !== undefined || options.objection !== undefined) {
+    line(
+      stderr,
+      "error: --category and --objection forget one person; a list says what each line asked for",
+    );
     return EXIT_CONVENTION;
   }
   const from = options.from as string;
@@ -1162,6 +1165,10 @@ export const runCli: RunCliFunction = async ({
         "--category <name>",
         "forget only this category of the person, as when a consent is withdrawn; repeat it for several",
         collect,
+      )
+      .option(
+        "--objection",
+        "after an objection you upheld (article 21): of what it reaches, keep only what a legal obligation or legal claims keep",
       )
       .option("--from <file>", "what bounda forgotten printed, or one person's id a line"),
   ).action(async (personId: string | undefined, options: ForgetOptions) => {

@@ -108,7 +108,7 @@ export interface DeadLetter extends Omit<StoredDeadLetter, "errorMessage" | "err
   readonly parked?: number;
   /**
    * `true` when the letter names a person whose processing is restricted, or a scheduled
-   * command's fields were kept under a legal obligation, and its error text and fields were left
+   * command's fields were kept under an erasure exemption, and its error text and fields were left
    * sealed, reading as `null`: asked for with `includeRestricted`, they come out opened. Filled in
    * by `app.deadLetters`, never stored.
    */

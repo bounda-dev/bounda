@@ -5,10 +5,10 @@ import type { RestrictionBasis } from "../../modules/personal-data.ts";
 
 /**
  * Whether `basis` lets through what a person asked to restrict: only the exceptions of article
- * 18(2) do, never `legal-obligation`, which opens only what a forgetting kept.
+ * 18(2) do, never `erasure-exemption`, which opens only what a forgetting kept.
  */
 export const opensRequested = (basis: RestrictionBasis | undefined): boolean =>
-  basis !== undefined && basis !== "legal-obligation";
+  basis !== undefined && basis !== "erasure-exemption";
 
 export interface RefuseRestrictedArgs {
   readonly persons: Pick<PersonStore, "restrictions">;

@@ -32,12 +32,14 @@ import type {
   DeadLetterKind,
   DeadLetterRetentionStatus,
   DecidedDispatch,
+  DeclaredErasureExemption,
   DispatchOptions,
   DispatchResult,
   DomainError,
   DurationInput,
   EmptyPayload,
   EnvSection,
+  ErasureExemption,
   EventMetadata,
   EventPayloadArgs,
   ExportedAnswer,
@@ -46,6 +48,7 @@ import type {
   ExportedCategory,
   ExportedData,
   ExportedDeadLetter,
+  ExportedErasureExemption,
   ExportedEvent,
   ExportedRedaction,
   ExportedRestricted,
@@ -143,6 +146,7 @@ import type {
   SpecialCategoryCondition,
   SpecialCategoryData,
   SpecialCategoryKind,
+  SpecificPurpose,
   StoredDispatch,
   StoredEvent,
   SubscriberFailure,
@@ -156,20 +160,24 @@ import type {
 import {
   CRIMINAL_DATA_AUTHORITIES,
   checkActor,
+  ERASURE_EXEMPTIONS,
   fieldBuilder,
   idempotencyKeyFor,
   MAX_ACCESS_PERSONS,
   MAX_ACTOR_LENGTH,
+  PERSONAL_DATA_FORGOTTEN_REASONS,
   personalDataExportJson,
   SPECIAL_CATEGORY_CONDITIONS,
   SPECIAL_CATEGORY_KINDS,
+  SPECIFIC_PURPOSES,
 } from "@bounda-dev/core";
-import type {
-  Adapter,
-  ForgetLedger,
-  SchemaScopeName,
-  SchemaVersion,
-  StoredSubscriberFailure,
+import {
+  type Adapter,
+  type ForgetLedger,
+  forgottenReasonOf,
+  type SchemaScopeName,
+  type SchemaVersion,
+  type StoredSubscriberFailure,
 } from "@bounda-dev/core/adapter";
 import { describe, expectTypeOf, it } from "vitest";
 import type { input as ZodInput, output as ZodOutput, ZodString } from "zod";
@@ -903,10 +911,18 @@ describe("personal data", () => {
     expectTypeOf<PersonalCategoryName>().toEqualTypeOf<
       "default" | "delivery" | "invoices" | "dietary"
     >();
-    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<"requested" | "retention">();
+    expectTypeOf<PersonalDataForgottenReason>().toEqualTypeOf<
+      "requested" | "objection" | "retention"
+    >();
+    expectTypeOf(PERSONAL_DATA_FORGOTTEN_REASONS).toEqualTypeOf<
+      readonly PersonalDataForgottenReason[]
+    >();
+    expectTypeOf(forgottenReasonOf).toEqualTypeOf<
+      (stored: unknown) => PersonalDataForgottenReason
+    >();
     expectTypeOf<
       AuditOnPersonalDataForgotten.HandlerArgs["event"]["payload"]["reason"]
-    >().toEqualTypeOf<"requested" | "retention">();
+    >().toEqualTypeOf<"requested" | "objection" | "retention">();
     expectTypeOf<CancelledCommand>().toEqualTypeOf<{
       readonly commandId: string;
       readonly type: string;
@@ -943,7 +959,27 @@ describe("personal data", () => {
       readonly sources: readonly [PersonalDataSource, ...PersonalDataSource[]];
       readonly special?: SpecialCategoryData;
       readonly criminal?: CriminalOffenceData;
+      readonly processedFor?: readonly [SpecificPurpose, ...SpecificPurpose[]];
+      readonly erasureExemption?: DeclaredErasureExemption;
     }>();
+    expectTypeOf<SpecificPurpose>().toEqualTypeOf<
+      | "direct-marketing"
+      | "archiving-in-the-public-interest"
+      | "scientific-or-historical-research"
+      | "statistics"
+    >();
+    expectTypeOf(SPECIFIC_PURPOSES).toEqualTypeOf<readonly SpecificPurpose[]>();
+    expectTypeOf<ErasureExemption>().toEqualTypeOf<
+      | "legal-obligation"
+      | "public-task"
+      | "public-health"
+      | "archiving-research-or-statistics"
+      | "legal-claims"
+    >();
+    expectTypeOf(ERASURE_EXEMPTIONS).toEqualTypeOf<readonly ErasureExemption[]>();
+    expectTypeOf<DeclaredErasureExemption>().toEqualTypeOf<
+      "public-health" | "archiving-research-or-statistics"
+    >();
     expectTypeOf<SpecialCategoryData>().toEqualTypeOf<{
       readonly kinds: readonly [SpecialCategoryKind, ...SpecialCategoryKind[]];
       readonly condition: SpecialCategoryCondition;
@@ -1029,6 +1065,7 @@ describe("personal data", () => {
     >();
     expectTypeOf<ForgetOptions>().toEqualTypeOf<{
       readonly categories?: readonly ("default" | "delivery" | "invoices" | "dietary")[];
+      readonly objection?: boolean;
     }>();
     expectTypeOf<BoundaApp["forget"]>().toEqualTypeOf<BoundaClient["forget"]>();
   });
@@ -1095,6 +1132,8 @@ describe("personal data", () => {
       readonly special: SpecialCategoryData | null;
       readonly criminal: CriminalOffenceData | null;
       readonly purposes: readonly string[];
+      readonly processedFor: readonly SpecificPurpose[];
+      readonly erasureExemptions: readonly ExportedErasureExemption[];
       readonly sources: readonly PersonalDataSource[];
       readonly retention: string | null;
       readonly held: boolean;
@@ -1106,6 +1145,10 @@ describe("personal data", () => {
       readonly article: string;
       readonly categories: readonly string[] | null;
     }>();
+    expectTypeOf<ExportedErasureExemption>().toEqualTypeOf<{
+      readonly exemption: ErasureExemption;
+      readonly article: string;
+    }>();
     expectTypeOf<PersonalDataRight>().toEqualTypeOf<
       | "access"
       | "rectification"
@@ -1113,6 +1156,8 @@ describe("personal data", () => {
       | "restriction"
       | "portability"
       | "objection"
+      | "objection-to-direct-marketing"
+      | "objection-to-research-or-statistics"
       | "withdraw-consent"
       | "human-intervention"
       | "complaint"
@@ -1225,7 +1270,7 @@ describe("personal data", () => {
       "accuracy-contested" | "unlawful-processing" | "legal-claims" | "objection-pending"
     >();
     expectTypeOf<RestrictionBasis>().toEqualTypeOf<
-      "consent" | "legal-claims" | "protection-of-rights" | "public-interest" | "legal-obligation"
+      "consent" | "legal-claims" | "protection-of-rights" | "public-interest" | "erasure-exemption"
     >();
     expectTypeOf<RestrictOptions>().toEqualTypeOf<{
       readonly ground: RestrictionGround;

@@ -3,6 +3,7 @@ import {
   byForgetLedgerOrder,
   type ForgetLedger,
   type ForgetLedgerEntry,
+  forgottenReasonOf,
   type LedgerDisclosure,
   type LedgerRedaction,
   type LedgerRestriction,
@@ -173,7 +174,7 @@ const entryOf = (
     categories: isTextList(categories) ? [...categories] : null,
     eventId,
     forgottenAt: metadata.forgottenAt,
-    reason: metadata.reason === "retention" ? "retention" : "requested",
+    reason: forgottenReasonOf(metadata.reason),
   };
   return {
     ...entry,

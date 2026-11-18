@@ -4,13 +4,14 @@ import {
   type HeldPersonalKey,
 } from "../../adapter/storage/personal-key-store.ts";
 import { type Retention, retentionEnd } from "../../contracts/duration.ts";
-import type { LegalBasis } from "../../modules/personal-data.ts";
+import type { LegalBasis, SpecificPurpose } from "../../modules/personal-data.ts";
 import { formatRetention, type PersonalCategories, type PersonalCategory } from "./categories.ts";
-import type {
-  ExportedAutomatedDecision,
-  ExportedCategory,
-  ExportedRight,
-  PersonalDataExport,
+import {
+  EXEMPTION_ARTICLES,
+  type ExportedAutomatedDecision,
+  type ExportedCategory,
+  type ExportedRight,
+  type PersonalDataExport,
 } from "./export.ts";
 
 export interface PersonalDataInformationArgs {
@@ -55,6 +56,27 @@ const onBases =
 const onConsent = (category: PersonalCategory): boolean =>
   category.basis === "consent" || category.special?.condition === "explicit-consent";
 
+const processedFor =
+  (...purposes: readonly SpecificPurpose[]) =>
+  (category: PersonalCategory): boolean =>
+    category.processedFor.some((purpose) => purposes.includes(purpose));
+
+// Research or statistics on any basis but `public-task`: article 21(6) spares only a task carried
+// out for reasons of public interest.
+const researched = (category: PersonalCategory): boolean =>
+  category.basis !== "public-task" &&
+  processedFor("scientific-or-historical-research", "statistics")(category);
+
+export interface ObjectableFunction {
+  (category: PersonalCategory): boolean;
+}
+
+// Whether an objection of article 21 reaches the category: (1), (2) or (6).
+export const objectable: ObjectableFunction = (category) =>
+  onBases("public-task", "legitimate-interests")(category) ||
+  processedFor("direct-marketing")(category) ||
+  researched(category);
+
 export const personalDataInformation: PersonalDataInformationFunction = ({
   categories,
   keys,
@@ -63,7 +85,8 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
   // The default category's retention forgets the person as a whole, from their last activity.
   const whole = endOf(person?.lastActiveAt ?? null, categories.default.retention);
   const exported: Record<string, ExportedCategory> = {};
-  for (const { name, basis, purposes, sources, retention, special, criminal } of categories.all) {
+  for (const category of categories.all) {
+    const { name, basis, purposes, sources, retention, special, criminal, exemptions } = category;
     const theirs = keys.filter(({ category }) => category === name);
     const live = theirs.filter(({ retainedSince }) => retainedSince === null);
     const kept = theirs.flatMap(({ retainedSince, lastActiveAt }) => {
@@ -71,11 +94,12 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
       return end === null ? [] : [end];
     });
     const own = earliest(live.map(({ lastActiveAt }) => endOf(lastActiveAt, retention)));
-    // A forgetting as a whole keeps what the law requires until its own retention ends.
+    // A forgetting as a whole keeps what an exemption of article 17(3) spares until its own
+    // retention ends.
     const until =
       name === DEFAULT_PERSONAL_CATEGORY
         ? whole
-        : basis === "legal-obligation"
+        : exemptions.length > 0
           ? own
           : earliest([own, whole]);
     exported[name] = {
@@ -83,6 +107,11 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
       special,
       criminal,
       purposes,
+      processedFor: category.processedFor,
+      erasureExemptions: exemptions.map((exemption) => ({
+        exemption,
+        article: EXEMPTION_ARTICLES[exemption],
+      })),
       sources,
       retention: retention === null ? null : formatRetention(retention),
       held: theirs.length > 0,
@@ -110,7 +139,7 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
       right: "erasure",
       article: "17",
       categories: categories.all
-        .filter(({ basis }) => basis !== "legal-obligation")
+        .filter(({ exemptions }) => exemptions.length === 0)
         .map(({ name }) => name),
     },
     { right: "restriction", article: "18", categories: null },
@@ -124,9 +153,19 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
     }),
     {
       right: "objection",
-      article: "21",
+      article: "21(1)",
       categories: reaching(categories, onBases("public-task", "legitimate-interests")),
     },
+    ...optional({
+      right: "objection-to-direct-marketing",
+      article: "21(2)",
+      categories: reaching(categories, processedFor("direct-marketing")),
+    }),
+    ...optional({
+      right: "objection-to-research-or-statistics",
+      article: "21(6)",
+      categories: reaching(categories, researched),
+    }),
     ...optional({
       right: "withdraw-consent",
       article: "7(3)",

@@ -63,9 +63,9 @@ else, in a port's own store, a log, a file, another service, is the app's to ans
 **Article 6.** Every declared category names one of the six bases of article 6(1): `consent`,
 `contract`, `legal-obligation`, `vital-interests`, `public-task` or `legitimate-interests`. A
 category without one, or with another, does not compile, and the app refuses to start on it. The
-basis decides what the runtime does: a `legal-obligation` category
-[outlives a forgetting](/guides/personal-data/#categories) while its retention runs, and the
-export's `rights` follow the bases. Bounda records the basis; whether it is the right one, and the
+basis decides what the runtime does: a category on `legal-obligation` or `public-task`
+[outlives a forgetting](/guides/personal-data/#categories) while its retention runs, one on
+`consent` never does, and the export's `rights` follow the bases. Bounda records the basis; whether it is the right one, and the
 balancing test behind `legitimate-interests`, are the controller's. Article 6(4), whether a new
 purpose is compatible with the one the data was collected for, is the controller's too.
 
@@ -92,9 +92,12 @@ of `explicit-consent` (a), `employment-and-social-protection` (b), `vital-intere
 `not-for-profit-body` (d), `made-public` (e), `legal-claims` (f), `substantial-public-interest` (g),
 `health-or-social-care` (h), `public-health` (i) or `archiving-research-or-statistics` (j). A
 category that names special data without a condition, or a kind or condition Bounda does not know,
-does not compile, and the app refuses to start on it. So does a category on `legal-obligation` whose
-special data rests on `explicit-consent`: the obligation keeps the data past a forgetting, while a
-withdrawn consent leaves no condition to keep it on. The export and the record of processing state
+does not compile, and the app refuses to start on it. So does a category an exemption of 17(3)
+keeps past a forgetting, as one on `legal-obligation` or `public-task`, whose special data rests on
+`explicit-consent`: the exemption keeps the data past a forgetting, while a withdrawn consent leaves
+no condition to keep it on. Special data on `archiving-research-or-statistics` names in
+[`processedFor`](/guides/personal-data/#purposes-and-exemptions) the purpose of article 89(1) it
+serves, archiving, research or statistics, which the objections of article 21 tell apart. The export and the record of processing state
 each category's kinds and condition, and the export's `rights` follow the condition where the GDPR
 makes them differ: data on `explicit-consent` can be withdrawn, 7(3), and is portable, 20(1)(a),
 whatever the basis.
@@ -214,20 +217,35 @@ once the key is gone, and appends `PersonalDataForgotten` to their stream. Read 
 [sealed at rest](/guides/personal-data/#sealed-at-rest) go with the key; a field [kept in the
 clear](/guides/personal-data/#in-the-clear) forces its read model to project the forgetting, or the
 app does not compile. Every [recipient](#notification-to-recipients-article-19) that received their
-data is told, to erase it or, for what a legal obligation keeps, to restrict it. `forget(person, {
+data is told, to erase it or, for what an exemption keeps, to restrict it. `forget(person, {
 categories })` erases those categories alone, and `bounda forget <person>` does either from a
 terminal. `expectForgotten` checks in a test that no value of theirs is left readable in any table,
 log or span.
 
-**Exceptions, 17(3)(b).** A category whose basis is `legal-obligation` outlives the forgetting while
-its retention runs, restricted to the law that keeps it, and is forgotten when that ends. The
-export's `rights` leave it out of erasure. The same point exempts a task carried out in the public
-interest, but a category on `public-task` is not kept that way: `forget` erases it like any other
-and the export lists erasure for it, so an app that must keep it leaves it out of the categories it
-forgets. Other exceptions are the controller's to weigh: public health, for special data on
-`health-or-social-care` or `public-health`, 17(3)(c); archiving, research or statistics, 17(3)(d);
-and the controller's own legal claims, 17(3)(e). It decides not to call `forget`, or which
-categories to name.
+**Exceptions, 17(3).** A category an [exemption](/guides/personal-data/#categories) applies to
+outlives the forgetting while its retention runs, restricted to what the exemption serves, and is
+forgotten when that ends; the export's `rights` leave it out of erasure, and the export and the
+record of processing name each category's exemptions, with their point, in `erasureExemptions`.
+Bounda reads them from the declaration, as far as it shows that the processing is necessary:
+
+- (b): a basis of `legal-obligation` or `public-task`. Point (b) names both in the words of 6(1)(c)
+  and (e), and each of those bases already requires the processing to be necessary for the
+  obligation or the task, so both are kept alike.
+- (c): special data on `public-health`, 9(2)(i), whose condition is the public interest in the area
+  of public health itself; and on `health-or-social-care`, 9(2)(h), only when the category claims
+  `erasureExemption: "public-health"`, since care is not by itself processed for that interest.
+- (d): a category processed for a purpose of article 89(1) that claims
+  `erasureExemption: "archiving-research-or-statistics"`, since the point holds only where erasure
+  would render impossible or seriously impair the objectives of the processing, which the
+  controller judges.
+- (e): special data on `legal-claims`, 9(2)(f), whose condition is the necessity for legal claims.
+
+None applies on `consent`: withdrawing it leaves no basis to keep anything on, 17(1)(b), and
+`erasureExemption` on it does not compile. Point (a), freedom of expression and information, is
+the controller's under the law of its Member State, article 85; so are legal claims over data a
+category does not hold for them, by not calling `forget`, or not naming the category. An
+[upheld objection](#objection-article-21) keeps less, since 17(3) spares data from erasure and does
+not allow processing what the person objected to.
 
 **Backups.** A restored copy brings back the keys of everyone forgotten after it was taken. A
 [forget ledger](/guides/personal-data/#the-forget-ledger), kept outside the database, forgets them
@@ -257,7 +275,9 @@ asks, the data is kept and nothing else: commands that would touch it are refuse
 out, dead letters keep it sealed, and a disclosure to a recipient is refused. A call processes it
 anyway only by [naming a basis of 18(2)](/guides/personal-data/#processing-restricted-data-anyway),
 consent, legal claims, the protection of another's rights or public interest, which the access log
-records. [`unrestrict`](/guides/personal-data/#lifting-a-restriction) takes a `notice`, and
+records; what a forgetting kept under an exemption of 17(3) is restricted too, and opens only on
+those or on `erasure-exemption`. `objection-pending` is refused for a category processed for
+direct marketing, since 21(3) leaves nothing to weigh. [`unrestrict`](/guides/personal-data/#lifting-a-restriction) takes a `notice`, and
 announces the lift first with `ProcessingRestrictionLiftAnnounced`, so a policy tells the person
 before it happens, as 18(3) asks; the reactions that waited run once it does. `bounda restrict`
 and `bounda unrestrict` do the same from a terminal, and `expectRestricted` checks in a test that
@@ -292,19 +312,33 @@ rights of others, 20(4).
 
 ## Objection (article 21)
 
-The export's `rights` list objection for the categories processed on `public-task` or
-`legitimate-interests`, as 21(1) has it, and `restrict(person, { ground: "objection-pending" })`
-holds the processing while the objection is weighed (18(1)(d)). Once it is upheld, the app forgets
-the categories concerned or stops the processing in its code. Weighing compelling legitimate
-grounds is the controller's.
+A category says in [`processedFor`](/guides/personal-data/#purposes-and-exemptions) whether it is
+processed for direct marketing, archiving in the public interest, scientific or historical
+research, or statistics, and the export's `rights` list each objection from it and from the basis:
 
-Direct marketing, 21(2) and 21(3), is not modelled: a category does not say its purpose is direct
-marketing, so the export lists no objection to it for a category on `consent` or `contract`. On
-`consent`, withdrawing it, which the export does list, has the same effect; otherwise the app tells
-the person of the right itself, as 21(4) asks it to at the first communication at the latest, and
-honours it in its code. Likewise, a category does not say its purpose is scientific or historical
-research or statistics, so the export lists no objection of 21(6) for one on another basis, and the
-app tells the person of it.
+- **21(1)**, `objection`, for the categories on `public-task` or `legitimate-interests`.
+  `restrict(person, { ground: "objection-pending" })` holds the processing while the objection is
+  weighed (18(1)(d)); weighing compelling legitimate grounds is the controller's.
+- **21(2) and (3)**, `objection-to-direct-marketing`, for the categories processed for
+  `direct-marketing`, whatever the basis. Nothing is weighed: `forget(person, { categories })`
+  erases them at once, `objection-pending` is refused for them, and a category for direct marketing
+  that an exemption of 17(3) would keep past a forgetting does not compile, so no objection can
+  leave it processed. Objecting forgets the whole category, so it holds what is processed for
+  direct marketing alone.
+- **21(6)**, `objection-to-research-or-statistics`, for the categories processed for
+  `scientific-or-historical-research` or `statistics` on any basis but `public-task`, the one
+  exception 21(6) makes being a task carried out for reasons of public interest. Archiving in the
+  public interest has no objection of its own.
+
+Once the app upholds an objection, it forgets with
+[`objection: true`](/guides/personal-data/#after-an-objection), recorded with
+`reason: "objection"`. An exemption of 17(3) spares data from erasure but does not allow processing
+what the person objected to, which 21(1) stops but for legal claims: of a category an objection
+reaches, only a legal obligation or legal claims keep anything, and what an earlier forgetting kept
+of it under another exemption goes too. Whether an objection under 21(1) or 21(6) holds, the
+derogations a Member State's law makes under article 89(2) and (3), telling the person of these
+rights at the first communication at the latest, 21(4), and objecting by automated means in an
+information society service, 21(5), are the app's.
 
 ## Automated decisions (article 22)
 
@@ -369,7 +403,8 @@ store the actor of every change.
 [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) prints the record
 from the app's modules and configuration, opening no database: the categories with their basis, the
 special categories of data and the criminal data they hold, with their condition or authority, their
-purposes, sources and retention; the automated decisions; every event, command, process state and
+purposes and those the GDPR has rules for, their sources and retention, and the exemptions of 17(3)
+that keep them past erasure; the automated decisions; every event, command, process state and
 read model that holds personal data, whose, how it is kept and where its copies go; the recipients,
 with their country and safeguard; what the runtime keeps about persons and for how long; the keys
 and the forget ledger; and the fields marked `notPersonal`. `--markdown` writes it as a document and

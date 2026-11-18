@@ -136,7 +136,7 @@ describe("formatStatus", () => {
       "retention",
       "  default  30d, 1 person past it, next due 2026-05-03T00:00:00.000Z",
       "  invoices  6y, 2 keys past it, next due never",
-      "  1 key kept past a forgetting that no legal obligation keeps",
+      "  1 key kept past a forgetting that no erasure exemption keeps",
       "dead letter retention: 90s, next purge when a letter is resolved",
       "recipients",
       "  customer.crm  Brevo, third-party, FR: contact, invoices; 1 person disclosed to it",

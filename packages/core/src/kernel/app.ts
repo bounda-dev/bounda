@@ -222,9 +222,10 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * reads those fields as `null` from now on, the instance carrying on, and appends
    * `PersonalDataForgotten` to the stream `bounda:<personId>`, which every read model that
    * projects personal fields handles. With `categories`, only those, as when a consent is
-   * withdrawn. A category whose basis is `legal-obligation` is kept instead, restricted, until its
-   * retention ends. Both happen together or not at all. Resolves like a command, so
-   * `catchUpReadModels({ through })` waits for those read models. Rejects with
+   * withdrawn. A category an exemption of article 17(3) applies to is kept instead, restricted,
+   * until its retention ends, unless `objection` leaves it none. Both happen together or not at
+   * all. Resolves like a command, so `catchUpReadModels({ through })` waits for those read
+   * models. Rejects with
    * `ValidationError` an empty id, or categories that are empty or that the app does not have.
    * With `runtime.personalData.forgetLedger`, the forgetting is in the ledger before it commits:
    * one that rejects after that still forgets what it asked for at the next reconciliation, and
@@ -282,7 +283,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * like a command, so `catchUpReadModels({ through })` waits for the read models. A restriction
    * that adds nothing appends nothing and resolves without events. `forget` and the export stay
    * allowed. Rejects with `ValidationError` an empty id, a ground article 18(1) does not name,
-   * or categories that are empty or that the app does not have.
+   * categories that are empty or that the app does not have, or `objection-pending` of a category
+   * for `direct-marketing`, which an objection stops at once.
    */
   restrict(personId: string, options: RestrictOptions): Promise<StoredDispatch>;
   /**
@@ -1126,8 +1128,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       checkpointStore: storage.checkpointStore,
       following: following.map((subscriber) => subscriber.name),
     });
-    // Without a retention the sweep still ends what a forgetting kept that no legal obligation keeps
-    // any more, which only an app that marks personal fields can hold.
+    // Without a retention the sweep still ends what a forgetting kept that no erasure exemption
+    // keeps any more, which only an app that marks personal fields can hold.
     const recordsActivity = retains(personalCategories);
     const retention =
       recordsActivity || marksPersonalFields({ aggregates, processes: processDefinitions })

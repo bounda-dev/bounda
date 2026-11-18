@@ -56,10 +56,10 @@ export interface DispatchOptions {
   /**
    * Lets the command process restricted data on a basis of article 18(2): the person's `consent`,
    * `legal-claims`, the `protection-of-rights` of another person or an important `public-interest`
-   * open what a person asked to restrict; any of them, or `legal-obligation`, what a forgetting
-   * kept. Without it a command that touches a person restricted as a whole, or would read or write
-   * restricted data, or replay an answer remembered of such data, is refused with
-   * `ProcessingRestrictedError`. Its events carry the basis in
+   * open what a person asked to restrict; any of them, or `erasure-exemption`, what a forgetting
+   * kept under an exemption of article 17(3). Without it a command that touches a person
+   * restricted as a whole, or would read or write restricted data, or replay an answer remembered
+   * of such data, is refused with `ProcessingRestrictedError`. Its events carry the basis in
    * `metadata.restrictionBasis`, and the access log records the restricted persons it let
    * through. Not with `delay`: a basis holds when it is given.
    */
