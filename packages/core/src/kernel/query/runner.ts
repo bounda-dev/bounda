@@ -11,6 +11,7 @@ import type { SealingSource } from "../projection/runner.ts";
 import { projectionSubscriberName } from "../projection/runner.ts";
 import type { ReadModelRuntime, ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
+import { lazyTableIndexer } from "../read-model/table-indexer.ts";
 import type { Disclosures } from "../recipients/gate.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
@@ -95,7 +96,12 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
       storage: readModel.storage,
       layout: readModel.layout,
       keys: createSealingKeyRing({ keys: sealing.keys, fetching: true }),
-      indexer: sealing.indexer,
+      indexer: lazyTableIndexer({
+        indexer: sealing.indexer,
+        readModel: readModel.name,
+        checkpoints: readModel.storage.checkpointStore,
+        table: readModel.storage.table,
+      }),
       view,
     });
   const runAs = async (

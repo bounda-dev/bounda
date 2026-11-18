@@ -96,6 +96,10 @@ export const createMemoryTable: CreateMemoryTableFunction = <Row extends object>
           const values = condition.values.map((value) => sqliteDialect.encode(type, value));
           return (stored) => values.includes(stored[field]);
         }
+        if (condition.operator === "nin") {
+          const values = condition.values.map((value) => sqliteDialect.encode(type, value));
+          return (stored) => !values.includes(stored[field]);
+        }
         const value = sqliteDialect.encode(type, condition.value);
         switch (condition.operator) {
           case "eq":

@@ -14,7 +14,7 @@ import type { AppEnv } from "../../register/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { appStorage } from "../events/app-event-store.ts";
-import { openDatabaseKey } from "../personal-data/blind-index.ts";
+import { epochMark, openDatabaseKey } from "../personal-data/blind-index.ts";
 import { openEncryptedFiles } from "../personal-data/encrypted-files.ts";
 import { keySourcesOf, openKeyHierarchy } from "../personal-data/key-hierarchy.ts";
 import { buildKeyWrapper } from "../personal-data/key-wrapper.ts";
@@ -32,8 +32,9 @@ import {
   compileProjections,
   readModelsMarkPersonal,
 } from "./build-read-models.ts";
-import { fingerprintReadModel } from "./fingerprint.ts";
+import { digest, fingerprintReadModel } from "./fingerprint.ts";
 import { sealedLayoutOf } from "./sealed-rows.ts";
+import { layoutDigest, settledMark } from "./sealed-settle.ts";
 import { openReadModelSealing } from "./sealing.ts";
 
 export interface RebuildReadModelArgs {
@@ -304,7 +305,15 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
         : null,
       scheduler: storage.scheduler,
     });
-    const progress = `${progressPrefix(name)}${fingerprintReadModel(entry)}`;
+    // The whole shadow is indexed under the database's key in force when it starts, which the
+    // table's epoch mark says once it takes the live one's place; a rebuild paused under another
+    // key starts again from a fresh shadow.
+    const indexer = sealing.indexer === null ? null : await sealing.indexer.pinned();
+    const progress = `${progressPrefix(name)}${
+      indexer === null
+        ? fingerprintReadModel(entry)
+        : digest(JSON.stringify([fingerprintReadModel(entry), indexer.epoch]))
+    }`;
     const rebuild = await adapterForReadModel({ name, config }).rebuildReadModel<
       Record<string, unknown>
     >({
@@ -355,7 +364,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
                 readModel,
                 events: batch,
                 transaction,
-                sealing: { layout, keys, indexer: sealing.indexer, redacted },
+                sealing: { layout, keys, indexer, redacted },
                 logger,
                 errorText,
                 tracer: tracerOf,
@@ -376,7 +385,17 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
         position = batch[done - 1]?.position ?? position;
         logger.debug("read model rebuild progressed", { readModel: name, position, events });
       }
-      await rebuild.commit({ subscriber: projectionSubscriberName(name), position });
+      // The table it puts in place is as this layout and key would settle it.
+      await rebuild.commit({
+        subscriber: projectionSubscriberName(name),
+        position,
+        marks: {
+          ...(layout.personal.length === 0
+            ? {}
+            : { [settledMark(name)]: layoutDigest({ layout, epoch: indexer?.epoch ?? null }) }),
+          ...(indexer === null ? {} : { [epochMark(name)]: indexer.number }),
+        },
+      });
       await rebuild.checkpointStore.set(
         rebuiltMark(name),
         await rebuild.checkpointStore.get(startedMark(name)),

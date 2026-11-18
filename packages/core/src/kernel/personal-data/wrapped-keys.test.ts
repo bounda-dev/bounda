@@ -823,3 +823,38 @@ describe("inSealingOrder", () => {
     ).toEqual(["default:z", "invoices:m", "profile:a", "profile:b"]);
   });
 });
+
+describe("the keys a reseal superseded", () => {
+  it("counts them through the store, and lets go of every key kept once they are destroyed", async () => {
+    const store = await keyStore();
+    const wrapper = fakeTenant("kid-1");
+    const wrapping = wrappingOf(wrapper);
+    const keys = wrapping.over(store);
+    const old = await keys.create("c-1", DEFAULT_PERSONAL_CATEGORY);
+    const stored = await store.get("c-1", DEFAULT_PERSONAL_CATEGORY);
+    const fresh = await wrapping.generate();
+    if (stored === null) throw new Error("no key stored");
+    await store.supersede("c-1", stored, { ...fresh.stored, at: "2026-03-01T00:00:00.000Z" });
+    expect(await keys.countSuperseded()).toBe(1);
+    const opened = await keys.opened("c-1", old.fingerprint);
+    expect(opened?.successor).toBe(fresh.key.fingerprint);
+    await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
+    const unwrapped = wrapper.unwrapped.length;
+    await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(wrapper.unwrapped).toHaveLength(unwrapped);
+    expect(await keys.destroySuperseded()).toBe(1);
+    expect(await keys.countSuperseded()).toBe(0);
+    await keys.held("c-1", DEFAULT_PERSONAL_CATEGORY);
+    expect(wrapper.unwrapped.length).toBeGreaterThan(unwrapped);
+  });
+
+  it("gives a key no one keeps for a value that must read as forgotten, with keys or without", async () => {
+    const store = await keyStore();
+    const keyless = keylessWrapping().over(store);
+    const one = await keyless.discarded("c-1");
+    const two = await wrappingOf(fakeTenant("kid-1")).over(store).discarded("c-1");
+    expect(one.fingerprint).not.toBe(two.fingerprint);
+    expect(one.cryptoKey.extractable).toBe(false);
+    expect(await store.list("c-1")).toEqual([]);
+  });
+});

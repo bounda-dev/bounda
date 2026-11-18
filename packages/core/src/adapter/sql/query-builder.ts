@@ -44,9 +44,16 @@ export type Condition =
       readonly operator: "in";
       readonly column: ColumnDefinition;
       readonly values: readonly unknown[];
+    }
+  | {
+      readonly operator: "nin";
+      readonly column: ColumnDefinition;
+      readonly values: readonly unknown[];
     };
 
-const OPERATORS: ReadonlySet<string> = new Set(["gt", "gte", "lt", "lte", "ne", "in"]);
+// `nin`, none of, is written by the runtime alone: `ne` on a blind index while a reseal keeps two
+// database keys, the value's index under each.
+const OPERATORS: ReadonlySet<string> = new Set(["gt", "gte", "lt", "lte", "ne", "in", "nin"]);
 
 // A JSON column's value is matched whole, so an object there is a value, not operators.
 const isOperators = (column: ColumnDefinition, value: unknown): value is object =>
@@ -73,7 +80,7 @@ const conditionsOfField = (column: ColumnDefinition, value: unknown): Condition[
     }
     if (given === undefined) return [];
     if (operator === "ne") return [{ operator, column, value: given }];
-    if (operator !== "in") {
+    if (operator !== "in" && operator !== "nin") {
       if (column.type === "boolean") {
         throw new ConfigurationError(
           `Field "${column.field}": a boolean has no order for "${operator}"; use ne or in`,
@@ -84,9 +91,10 @@ const conditionsOfField = (column: ColumnDefinition, value: unknown): Condition[
       ];
     }
     if (!Array.isArray(given)) {
-      throw new ConfigurationError(`Field "${column.field}": "in" needs an array`);
+      throw new ConfigurationError(`Field "${column.field}": "${operator}" needs an array`);
     }
-    return [{ operator, column, values: given.map((item) => operand(column, operator, item)) }];
+    const values = given.map((item) => operand(column, operator, item));
+    return [operator === "in" ? { operator, column, values } : { operator: "nin", column, values }];
   });
   // Matching every row here would turn a missing operand into a `delete` of the whole table.
   if (conditions.length === 0) {
@@ -152,6 +160,11 @@ export const buildWhere: BuildWhereFunction = ({ where, columns, dialect, offset
         return condition.values.length === 0
           ? "1 = 0"
           : `${name} IN (${condition.values.map((value) => bind(condition, value)).join(", ")})`;
+      // As `ne`, it keeps the rows without a value.
+      case "nin":
+        return condition.values.length === 0
+          ? "1 = 1"
+          : `(${name} IS NULL OR ${name} NOT IN (${condition.values.map((value) => bind(condition, value)).join(", ")}))`;
       case "eq":
         return condition.value === null
           ? `${name} IS NULL`

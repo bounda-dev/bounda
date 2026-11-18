@@ -18,6 +18,10 @@ export interface CreateSqlPersonalKeyStoreArgs {
   readonly table: string;
   readonly persons: string;
   readonly restrictions: string;
+  /**
+   * Already quoted: the keys a reseal superseded.
+   */
+  readonly superseded: string;
   readonly dialect: Pick<SqlDialect, "placeholder">;
 }
 
@@ -41,6 +45,15 @@ const heldOf = (row: Record<string, unknown>): HeldPersonalKey => ({
 });
 
 const HELD = `"category", "key", "fingerprint", "kid", "retained_since", "last_active_at"`;
+
+// A superseded key `"s"` as `find` hands it out: with the category, retention and activity of the
+// key `"k"` in its place.
+const SUPERSEDED = `"k"."category", "s"."key", "s"."fingerprint", "s"."kid", "k"."retained_since", "k"."last_active_at", "k"."fingerprint" AS "successor"`;
+
+const supersededOf = (row: Record<string, unknown>): HeldPersonalKey => ({
+  ...heldOf(row),
+  successor: String(row.successor),
+});
 
 // Within the hundred parameters a Durable Object's SQLite binds to one statement.
 const PERSONS_PER_STATEMENT = 90;
@@ -74,6 +87,7 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
   table,
   persons,
   restrictions,
+  superseded,
   dialect,
 }) => {
   const p = dialect.placeholder;
@@ -104,12 +118,18 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
   };
   return {
     get,
+    // A superseded key reads with the one that took its place, while both are kept.
     find: async (person, fingerprint) => {
       const [row] = await db.all(
         `SELECT ${HELD} FROM ${table} WHERE "person" = ${p(1)} AND "fingerprint" = ${p(2)}`,
         [person, fingerprint],
       );
-      return row === undefined ? null : heldOf(row);
+      if (row !== undefined) return heldOf(row);
+      const [old] = await db.all(
+        `SELECT ${SUPERSEDED} FROM ${superseded} AS "s" JOIN ${table} AS "k" ON "k"."person" = "s"."person" AND "k"."fingerprint" = "s"."successor" WHERE "s"."person" = ${p(1)} AND "s"."fingerprint" = ${p(2)} AND "s"."key" IS NOT NULL`,
+        [person, fingerprint],
+      );
+      return old === undefined ? null : supersededOf(old);
     },
     list: async (person) =>
       (
@@ -131,6 +151,14 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
           const person = String(row.person);
           listed.set(person, [...(listed.get(person) ?? []), heldOf(row)]);
         }
+        const old = await db.all(
+          `SELECT "s"."person", ${SUPERSEDED} FROM ${superseded} AS "s" JOIN ${table} AS "k" ON "k"."person" = "s"."person" AND "k"."fingerprint" = "s"."successor" WHERE "s"."person" IN (${chunk.map((_, index) => p(index + 1)).join(", ")}) AND "s"."key" IS NOT NULL ORDER BY "s"."person", "s"."fingerprint"`,
+          chunk,
+        );
+        for (const row of old) {
+          const person = String(row.person);
+          listed.set(person, [...(listed.get(person) ?? []), supersededOf(row)]);
+        }
       }
       return listed;
     },
@@ -145,21 +173,35 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
       return (await get(person, category)) ?? key;
     },
     kids: async () =>
-      (await db.all(`SELECT DISTINCT "kid" FROM ${table}`, [])).map(({ kid }) =>
-        kid === null ? null : String(kid),
-      ),
+      (
+        await db.all(
+          `SELECT "kid" FROM ${table} UNION SELECT "kid" FROM ${superseded} WHERE "key" IS NOT NULL`,
+          [],
+        )
+      ).map(({ kid }) => (kid === null ? null : String(kid))),
     categories: async () =>
       (await db.all(`SELECT DISTINCT "category" FROM ${table} ORDER BY "category"`, [])).map(
         ({ category }) => String(category),
       ),
-    clear: async () => (await db.all(`DELETE FROM ${table} RETURNING "person"`, [])).length,
-    remove: async (person, fingerprint) =>
-      (
-        await db.all(
-          `DELETE FROM ${table} WHERE "person" = ${p(1)} AND "fingerprint" = ${p(2)} RETURNING "person"`,
-          [person, fingerprint],
-        )
-      ).length === 1,
+    clear: async () => {
+      await db.run(`DELETE FROM ${superseded}`, []);
+      return (await db.all(`DELETE FROM ${table} RETURNING "person"`, [])).length;
+    },
+    // What the key superseded goes with it: it opens what the key does.
+    remove: async (person, fingerprint) => {
+      await db.run(`DELETE FROM ${superseded} WHERE "person" = ${p(1)} AND "successor" = ${p(2)}`, [
+        person,
+        fingerprint,
+      ]);
+      return (
+        (
+          await db.all(
+            `DELETE FROM ${table} WHERE "person" = ${p(1)} AND "fingerprint" = ${p(2)} RETURNING "person"`,
+            [person, fingerprint],
+          )
+        ).length === 1
+      );
+    },
     retain: async (person, fingerprint, { since, lastActiveAt }) =>
       (
         await db.all(
@@ -290,6 +332,62 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
       );
       return Number(row?.count ?? 0);
     },
+    // The key's place, its retention, activity and the hold of its retention pass to the new key;
+    // the rotation's hold does not, since the new key is wrapped under the version in force. Keys
+    // the old one superseded follow it, so each superseded key names the key in its place now.
+    supersede: async (person, from, to) => {
+      const [old] = await db.all(
+        `DELETE FROM ${table} WHERE "person" = ${p(1)} AND "key" = ${p(2)} AND "fingerprint" = ${p(3)} RETURNING "category", "last_active_at", "retained_since", "forget_held_until", "forget_attempts"`,
+        [person, from.key, from.fingerprint],
+      );
+      if (old === undefined) return false;
+      await db.run(
+        `INSERT INTO ${table} ("person", "category", "key", "fingerprint", "kid", "last_active_at", "retained_since", "forget_held_until", "forget_attempts") VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)})`,
+        [
+          person,
+          old.category,
+          to.key,
+          to.fingerprint,
+          to.kid,
+          old.last_active_at,
+          old.retained_since,
+          old.forget_held_until,
+          old.forget_attempts,
+        ],
+      );
+      await db.run(
+        `UPDATE ${superseded} SET "successor" = ${p(1)} WHERE "person" = ${p(2)} AND "successor" = ${p(3)}`,
+        [to.fingerprint, person, from.fingerprint],
+      );
+      await db.run(
+        `INSERT INTO ${superseded} ("person", "fingerprint", "successor", "key", "kid", "superseded_at") VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)})`,
+        [person, from.fingerprint, to.fingerprint, from.key, from.kid, to.at],
+      );
+      return true;
+    },
+    predecessors: async (person, fingerprints) =>
+      fingerprints.length === 0
+        ? []
+        : (
+            await db.all(
+              `SELECT "fingerprint" FROM ${superseded} WHERE "person" = ${p(1)} AND "successor" IN (${fingerprints.map((_, index) => p(index + 2)).join(", ")}) ORDER BY "fingerprint"`,
+              [person, ...fingerprints],
+            )
+          ).map(({ fingerprint }) => String(fingerprint)),
+    countSuperseded: async () => {
+      const [row] = await db.all(
+        `SELECT count(*) AS "count" FROM ${superseded} WHERE "key" IS NOT NULL`,
+        [],
+      );
+      return Number(row?.count ?? 0);
+    },
+    destroySuperseded: async () =>
+      (
+        await db.all(
+          `UPDATE ${superseded} SET "key" = NULL, "kid" = NULL WHERE "key" IS NOT NULL RETURNING "person"`,
+          [],
+        )
+      ).length,
     releaseHolds: async () =>
       (
         await db.all(
@@ -330,3 +428,22 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
       ).length,
   };
 };
+
+export interface SupersededKeysTableStatementsFunction {
+  (table: string): readonly string[];
+}
+
+// Migration 10 of the storage tables, on both engines: the keys a reseal superseded, `key` and
+// `kid` emptied once destroyed.
+export const supersededKeysTableStatements: SupersededKeysTableStatementsFunction = (table) => [
+  `CREATE TABLE IF NOT EXISTS ${table} (
+    "person" TEXT NOT NULL,
+    "fingerprint" TEXT NOT NULL,
+    "successor" TEXT NOT NULL,
+    "key" TEXT,
+    "kid" TEXT,
+    "superseded_at" TEXT NOT NULL,
+    PRIMARY KEY ("person", "fingerprint")
+  )`,
+  `CREATE INDEX IF NOT EXISTS "${table.slice(1, -1)}_successor_idx" ON ${table} ("person", "successor")`,
+];

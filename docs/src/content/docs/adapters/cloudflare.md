@@ -192,8 +192,8 @@ export default defineConfig({
 binding fails to start with a `ConfigurationError` that names it. KV has no compare-and-set, which a
 store written by several writers needs; each tenant's record is written by its own object alone,
 one at a time, so none is needed. `prefix` keeps the records under another root, for two apps on one
-namespace. The object answers `forgetTenant`, `rotateTenantKey` and `retireTenantKeys` through its
-stub, and `connect(stub)` types them; once forgotten, every call rejects with
+namespace. The object answers `forgetTenant`, `rotateTenantKey`, its `reseal` included, and
+`retireTenantKeys` through its stub, and `connect(stub)` types them; once forgotten, every call rejects with
 `TenantForgottenError`, which `createWorker` answers with `410`. Once its recipients are told, the
 object empties its storage with `deleteAll()` and holds nothing but the forgetting; Cloudflare
 keeps the storage's point-in-time history for 30 days, where what was not sealed under the tenant's

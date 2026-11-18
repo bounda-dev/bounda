@@ -28,6 +28,7 @@ import {
   type RedactOptions,
   type Registry,
   type RestrictOptions,
+  type RotateTenantKeyOptions,
   type StoredDispatch,
   type StoredEvent,
   type SubscriberFailure,
@@ -206,9 +207,13 @@ export interface BoundaObjectMethods {
   ): Promise<RpcOutcome<TenantForgottenResult>>;
   /**
    * Puts a new version of the tenant's key in force, as `BoundaClient.rotateTenantKey` does; the
-   * alarm rewraps every key under it.
+   * alarm rewraps every key under it, or with `reseal` replaces every key and seals the object's
+   * personal data again under the new ones.
    */
-  rotateTenantKey(actor?: string): Promise<RpcOutcome<TenantKeyVersions>>;
+  rotateTenantKey(
+    actor?: string,
+    options?: RotateTenantKeyOptions,
+  ): Promise<RpcOutcome<TenantKeyVersions>>;
   /**
    * Retires the older versions of the tenant's key, as `BoundaClient.retireTenantKeys` does.
    */
@@ -594,9 +599,12 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       });
     }
 
-    rotateTenantKey(actor?: string): Promise<RpcOutcome<TenantKeyVersions>> {
+    rotateTenantKey(
+      actor?: string,
+      options?: RotateTenantKeyOptions,
+    ): Promise<RpcOutcome<TenantKeyVersions>> {
       return settle(async () => {
-        const versions = await this.#as(actor).rotateTenantKey();
+        const versions = await this.#as(actor).rotateTenantKey(options);
         await this.#rearm(false, true);
         return versions;
       });

@@ -22,7 +22,10 @@ operator does, and what the runtime then guarantees.
 - Keep every version of the tenant's key a backup's keys are wrapped under, and every [master
   key](/guides/personal-data/#rotating-the-master-key) a backup of the tenant key store was taken
   under, as long as the backup: retire an older version of the tenant's key only once the backups
-  that need it have expired, or they open nothing personal.
+  that need it have expired, or they open nothing personal. After a
+  [reseal](/guides/personal-data/#recovering-from-a-full-compromise), the backups taken before it
+  hold the keys that leaked: keep the versions they need only as long as you may restore one, and
+  reseal again after restoring it.
 - Keep the read models that live in [another database](/reference/configuration/) on the same
   schedule as the storage, and restore both to the same moment.
 
@@ -121,6 +124,10 @@ restored; and a backup is taken, the tenant is forgotten, and the copy is restor
   `TenantForgotten` the copy lacks, under the id and time the store recorded. Until it starts, a
   read model's fields not marked `.personal()` are in the clear in the copy, as they were in the
   database.
+- **A copy taken during a [reseal](/guides/personal-data/#recovering-from-a-full-compromise)**
+  goes on with it from the step the copy holds, and one taken before it holds the keys the reseal
+  replaced: whoever a forgetting since named is forgotten again all the same, since the ledger
+  names the keys a reseal replaced along with those that took their place.
 - **The app goes on:** projections stay current, new persons register, `forget` and the rotation
   work, and the next normal start forgets nobody again. A failed reconciliation the copy
   remembers does not hold the restored start back, and `bounda status` counts the restore.

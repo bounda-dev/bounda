@@ -281,6 +281,7 @@ describe("the keys of a batch", () => {
     const opened = await withKeys({
       redactions: async () => [],
       keys: {
+        discarded: () => createDisposableKey(),
         heldAllOf: async (persons) => {
           asked.push([...persons]);
           return new Map();

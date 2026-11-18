@@ -305,6 +305,84 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toHaveLength(1);
     });
 
+    it("supersedes, removes and destroys keys a reseal replaced with the rest, or not at all", async () => {
+      const at = "2026-03-01T00:00:00.000Z";
+      await storage.personalKeys.add("c-1", D, stored("1"));
+      await storage.personalKeys.add("c-2", D, stored("2"));
+      await storage.transact(async (tx) => {
+        await tx.personalKeys.supersede("c-2", stored("2"), { ...stored("2b"), at });
+      });
+      const states = async () => ({
+        c1: await storage.personalKeys.get("c-1", D),
+        c2: await storage.personalKeys.get("c-2", D),
+        old1: (await storage.personalKeys.find("c-1", "f-1"))?.successor ?? null,
+        old2: (await storage.personalKeys.find("c-2", "f-2"))?.successor ?? null,
+        superseded: await storage.personalKeys.countSuperseded(),
+        predecessors: await storage.personalKeys.predecessors("c-2", ["f-2b"]),
+      });
+      const before = await states();
+      expect(before).toEqual({
+        c1: stored("1"),
+        c2: stored("2b"),
+        old1: null,
+        old2: "f-2b",
+        superseded: 1,
+        predecessors: ["f-2"],
+      });
+      const work = async (tx: StorageTransaction) => {
+        expect(await tx.personalKeys.supersede("c-1", stored("1"), { ...stored("1b"), at })).toBe(
+          true,
+        );
+        expect(await tx.personalKeys.remove("c-2", "f-2b")).toBe(true);
+        expect(await tx.personalKeys.destroySuperseded()).toBe(1);
+        await tx.eventStore.append({
+          aggregateType: "order",
+          aggregateId: "1",
+          expectedVersion: 0,
+          events: [pendingEvent({ aggregateId: "1", version: 1 })],
+        });
+      };
+      await expect(
+        storage.transact(async (tx) => {
+          await work(tx);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await states()).toEqual(before);
+      await storage.transact(work);
+      expect(await states()).toEqual({
+        c1: stored("1b"),
+        c2: null,
+        old1: null,
+        old2: null,
+        superseded: 0,
+        predecessors: [],
+      });
+      expect(await storage.personalKeys.predecessors("c-1", ["f-1b"])).toEqual(["f-1"]);
+    });
+
+    it("destroys the keys a reseal replaced with the rest, or not at all", async () => {
+      const at = "2026-03-01T00:00:00.000Z";
+      await storage.personalKeys.add("c-1", D, stored("1"));
+      await storage.transact((tx) =>
+        tx.personalKeys.supersede("c-1", stored("1"), { ...stored("1b"), at }),
+      );
+      await expect(
+        storage.transact(async (tx) => {
+          expect(await tx.personalKeys.countSuperseded()).toBe(1);
+          expect(await tx.personalKeys.destroySuperseded()).toBe(1);
+          expect(await tx.personalKeys.countSuperseded()).toBe(0);
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect((await storage.personalKeys.find("c-1", "f-1"))?.key).toEqual(stored("1"));
+      expect(await storage.personalKeys.countSuperseded()).toBe(1);
+      await storage.transact(async (tx) => {
+        await tx.personalKeys.destroySuperseded();
+      });
+      expect(await storage.personalKeys.find("c-1", "f-1")).toBeNull();
+    });
+
     it("restricts and unrestricts a person with the rest, or not at all", async () => {
       const work = async (tx: StorageTransaction) => {
         expect(

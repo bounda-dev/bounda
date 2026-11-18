@@ -125,6 +125,8 @@ import type {
   RejectFunction,
   RejectionCodeOf,
   RemovedDeadLetter,
+  ResealStatus,
+  ResealStep,
   RestrictedAccess,
   RestrictedProcessingAccess,
   RestrictionBasis,
@@ -1663,6 +1665,11 @@ describe("read models", () => {
         orderBy: { field: "joined", direction: "desc" },
       });
       expectTypeOf(await client.blindIndex("email", "ana@example.com")).toEqualTypeOf<string>();
+      expectTypeOf(await client.blindIndexes("email", "ana@example.com")).toEqualTypeOf<
+        readonly string[]
+      >();
+      // @ts-expect-error nor every index of one
+      await client.blindIndexes("note", "x");
       // @ts-expect-error a blind index matches by equality, never by a range
       await table.findOne({ email: { gt: "a" } });
       // @ts-expect-error a field sealed without a blind index is never matched
@@ -1893,6 +1900,13 @@ describe("operations", () => {
       readonly previous: readonly string[];
       readonly pending: number;
       readonly completeAt: string | null;
+      readonly reseal: ResealStatus | null;
+    }>();
+    expectTypeOf<ResealStatus>().toEqualTypeOf<{
+      readonly step: ResealStep | "complete";
+      readonly startedAt: string | null;
+      readonly completedAt: string | null;
+      readonly superseded: number;
     }>();
     expectTypeOf<RetentionStatus>().toEqualTypeOf<{
       readonly categories: readonly CategoryRetentionStatus[];

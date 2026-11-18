@@ -13,6 +13,7 @@ export type InspectedStore =
   | "idempotencyKeys"
   | "personalKeys"
   | "indexKeys"
+  | "supersededKeys"
   | "tenancy"
   | "persons"
   | "restrictions"
@@ -41,6 +42,7 @@ export const STORAGE_STORES: readonly Exclude<InspectedStore, "readModel">[] = [
   "idempotencyKeys",
   "personalKeys",
   "indexKeys",
+  "supersededKeys",
   "tenancy",
   "persons",
   "restrictions",
@@ -84,12 +86,13 @@ export interface OpaqueColumnsOfFunction {
 }
 
 /**
- * The key material a store keeps: the personal keys, the database's key and their fingerprints,
- * the records of tenants' keys, and the key and index fields beside the personal fields of a read
- * model.
+ * The key material a store keeps: the personal keys, those a reseal superseded, the database's key
+ * and their fingerprints, the records of tenants' keys, and the key and index fields beside the
+ * personal fields of a read model.
  */
 export const opaqueColumnsOf: OpaqueColumnsOfFunction = (store, columns) => {
   if (store === "personalKeys" || store === "indexKeys") return ["key", "fingerprint"];
+  if (store === "supersededKeys") return ["key", "fingerprint", "successor"];
   if (store === "tenantKeys") return ["record"];
   return store === "readModel" ? columns.filter(isHiddenField) : [];
 };

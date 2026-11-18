@@ -718,6 +718,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       "scheduled_commands",
       "snapshots",
       "subscriber_failures",
+      "superseded_keys",
       "tenancy",
     ]);
   });

@@ -106,7 +106,8 @@ export interface SealedSnapshotsFunction {
 
 /**
  * The snapshot store with every state sealed at rest. A state kept in the clear, by a version of
- * Bounda that did not seal it, is taken for no snapshot: the stream is folded from its events.
+ * Bounda that did not seal it, or sealed under a key no longer held, is taken for no snapshot: the
+ * stream is folded from its events.
  */
 export const sealedSnapshots: SealedSnapshotsFunction = (store, sealer) => ({
   ...store,
@@ -119,7 +120,13 @@ export const sealedSnapshots: SealedSnapshotsFunction = (store, sealer) => ({
     } catch {
       return null;
     }
-    return isSealedAtRest(stored) ? { ...snapshot, state: await sealer.open(stored) } : null;
+    if (!isSealedAtRest(stored)) return null;
+    // Sealed under a key the database no longer holds, as a reseal leaves it: a cache gone.
+    try {
+      return { ...snapshot, state: await sealer.open(stored) };
+    } catch {
+      return null;
+    }
   },
   put: async (snapshot: Snapshot) =>
     store.put({ ...snapshot, state: JSON.stringify(await sealer.seal(snapshot.state)) }),

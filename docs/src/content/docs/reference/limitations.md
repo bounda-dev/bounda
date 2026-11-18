@@ -23,8 +23,8 @@ get today. Each item says why, so nobody discovers it the hard way:
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Parts of the GDPR the code could answer.** A condition of article 9(2) for special categories,
-  an objection to direct marketing in the export's rights, an export of a whole tenant, new keys
-  for persons whose keys leaked, and a jurisdiction for what Bounda keeps in KV on Cloudflare.
+  an objection to direct marketing in the export's rights, an export of a whole tenant, and a
+  jurisdiction for what Bounda keeps in KV on Cloudflare.
   See [GDPR rights in Bounda](/reference/gdpr/), which also says what is the controller's.
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share

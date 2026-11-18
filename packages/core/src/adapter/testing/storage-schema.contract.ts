@@ -45,6 +45,7 @@ const LATEST = [
   { scope: "storage", version: 7 },
   { scope: "storage", version: 8 },
   { scope: "storage", version: 9 },
+  { scope: "storage", version: 10 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -157,20 +158,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 9 },
+        { scope: "storage", version: 0, latest: 10 },
         { scope: "checkpoints", version: 0, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 9 },
+        { scope: "storage", version: 0, latest: 10 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
-        { scope: "storage", version: 9, latest: 9 },
+        { scope: "storage", version: 10, latest: 10 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 7, latest: 7 },
         { scope: "tenant-keys", version: 1, latest: 1 },
@@ -227,7 +228,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 9,
+        supported: 10,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -361,6 +362,23 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         const letter = await storage.deadLetterStore.get("d-1");
         expect(letter).toMatchObject({ id: "d-1" });
         expect(letter).not.toHaveProperty("statePerson");
+      });
+      expect(await shapeOf(target, dialect)).toEqual(shape);
+    });
+
+    it("adds, at migration 10, the table of the keys a reseal superseded, keeping everything else", async () => {
+      const target = await create();
+      await opened(target.adapter, (storage) => storage.checkpointStore.set("projection:x", 3));
+      const shape = await shapeOf(target, dialect);
+      await target.execute(
+        `DROP TABLE "${storageTableNameFor({ prefix: target.prefix, table: "supersededKeys" })}"`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'storage' AND "version" >= 10`,
+      );
+      await opened(target.adapter, async (storage) => {
+        expect(await storage.checkpointStore.get("projection:x")).toBe(3);
+        expect(await storage.personalKeys.countSuperseded()).toBe(0);
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });

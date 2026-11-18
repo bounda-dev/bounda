@@ -52,9 +52,9 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
         ({ key }) => key,
         page,
       ).map(copy),
-    list: async ({ now, limit, offset = 0 }) =>
+    list: async ({ now, after, limit, offset = 0 }) =>
       [...records.values()]
-        .filter((record) => !expired(record, now))
+        .filter((record) => !expired(record, now) && (after === undefined || record.key > after))
         .sort((a, b) => (a.key < b.key ? -1 : 1))
         .slice(offset, limit === undefined ? undefined : offset + limit)
         .map(copy),
@@ -66,6 +66,12 @@ export const createKeptIdempotencyStore: CreateKeptIdempotencyStoreFunction = ({
       if (filed === key || existing === undefined || expired(existing, now)) {
         records.set(filed, erased({ ...record, key: filed }));
       }
+    },
+    reseal: async ({ key, from, answer, persons, now }) => {
+      const record = records.get(key);
+      if (record === undefined || expired(record, now)) return;
+      if (JSON.stringify(record.answer) !== JSON.stringify(from)) return;
+      records.set(key, copy({ ...record, answer, persons }));
     },
     clear: async () => {
       records.clear();

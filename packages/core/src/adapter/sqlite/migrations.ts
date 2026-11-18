@@ -19,6 +19,7 @@ import {
   type SchemaScope,
   schemaMigrationsTableFor,
 } from "../sql/migrations.ts";
+import { supersededKeysTableStatements } from "../sql/personal-key-store.ts";
 import { recipientTablesStatements } from "../sql/recipient-store.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { tenancyTableStatement } from "../sql/tenancy-store.ts";
@@ -246,6 +247,14 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
           await tx.run(`ALTER TABLE ${tables[table]} ADD COLUMN "${column}" ${definition}`, []);
         }
         await tx.run(statePersonIndexStatement(tables), []);
+      },
+    },
+    {
+      version: 10,
+      migrate: async (tx) => {
+        for (const statement of supersededKeysTableStatements(tables.supersededKeys)) {
+          await tx.run(statement, []);
+        }
       },
     },
   ],

@@ -28,6 +28,12 @@ export interface HeldPersonalKey {
   readonly key: StoredPersonalKey;
   readonly retainedSince: string | null;
   readonly lastActiveAt: string | null;
+  /**
+   * Only for a key a reseal superseded and has not destroyed yet, which `find` alone hands out:
+   * the fingerprint of the key that took its place, whose category, retention and activity it
+   * reads with.
+   */
+  readonly successor?: string;
 }
 
 /**
@@ -49,6 +55,13 @@ export interface DueKey extends Omit<PersonalKeyRow, "key"> {
   readonly fingerprint: string;
   readonly lastActiveAt: string;
   readonly retainedSince: string | null;
+}
+
+/**
+ * The key `supersede` puts in the place of another, and when, as an ISO timestamp.
+ */
+export interface SupersedingKey extends StoredPersonalKey {
+  readonly at: string;
 }
 
 /**
@@ -235,6 +248,13 @@ export const namesPerson: NamesPersonFunction = (row, person, keep = []) =>
  * the same condition, and `nextHoldEnd` answers the earliest end of a hold past `after` among the
  * keys wrapped under one of `kids`, `null` when none is held past it.
  *
+ * `supersede` puts a new key in the place of the key `from` of a person, in force or retained as
+ * it was, and keeps `from` apart, superseded, only while the person still holds it, and reports
+ * whether it did: a reseal replaces every key so, and `find` keeps opening what is still sealed
+ * under the old one until `destroySuperseded` destroys them all. A superseded key goes with the
+ * key that took its place, by `remove` or `clear`; once destroyed, only its fingerprint stays, as
+ * `predecessors` reads it, until then.
+ *
  * Stores that keep personal data in the clear, as snapshots do, compare a person's fingerprints
  * with the keys in force in the same statement as they write, so the store must keep them where
  * they can read them.
@@ -244,7 +264,8 @@ export interface PersonalKeyStore {
   find(person: string, fingerprint: string): Promise<HeldPersonalKey | null>;
   list(person: string): Promise<readonly HeldPersonalKey[]>;
   /**
-   * `list` of each of `persons` at once, by person; a person without a key is left out.
+   * `list` of each of `persons` at once, by person, with the keys a reseal superseded and has not
+   * destroyed yet, as `find` hands them out; a person without a key is left out.
    */
   listMany(persons: readonly string[]): Promise<ReadonlyMap<string, readonly HeldPersonalKey[]>>;
   add(person: string, category: string, key: StoredPersonalKey): Promise<StoredPersonalKey>;
@@ -265,8 +286,24 @@ export interface PersonalKeyStore {
    */
   countWrappedUnder(args: Pick<ListWrappedUnderArgs, "kids">): Promise<number>;
   /**
+   * Called inside a transaction, which it takes several statements of.
+   */
+  supersede(person: string, from: StoredPersonalKey, to: SupersedingKey): Promise<boolean>;
+  /**
+   * The fingerprints of the keys the person's keys of `fingerprints` superseded, destroyed or not.
+   */
+  predecessors(person: string, fingerprints: readonly string[]): Promise<readonly string[]>;
+  /**
+   * How many superseded keys are not destroyed yet.
+   */
+  countSuperseded(): Promise<number>;
+  /**
+   * Destroys every superseded key, keeping its fingerprint, and resolves to how many it destroyed.
+   */
+  destroySuperseded(): Promise<number>;
+  /**
    * The ids of the keys every key is wrapped under, each once, `null` among them while a key is
-   * kept unwrapped.
+   * kept unwrapped; a superseded key not destroyed yet counts.
    */
   kids(): Promise<readonly (string | null)[]>;
   /**
