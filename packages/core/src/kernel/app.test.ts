@@ -363,6 +363,7 @@ describe("createApp", () => {
     });
     expect(await app.nextDueAt()).toBeNull();
     expect((await app.status()).keyRotation).toBeNull();
+    await app.restored();
     await app.stop();
   });
 

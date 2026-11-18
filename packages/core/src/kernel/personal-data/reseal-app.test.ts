@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { InspectedTable } from "../../adapter/storage/inspection.ts";
@@ -199,6 +199,36 @@ const setUp = async (adapter: Adapter, batchSize?: number) => {
   };
   return { app, clock, adapter, logged, queries, register, emailOf, keyFingerprints, reseal };
 };
+
+// The memory adapter hands out the stores the app writes, which a test can make fail.
+describe("a restore under a running app", () => {
+  it("reads the database's keys again when told of a restore, and logs a read that fails", async () => {
+    const adapter = memory();
+    const errors: (readonly [string, unknown])[] = [];
+    const { app } = await createTestApp({
+      registry,
+      adapter,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: (message, fields) => errors.push([message, fields]),
+      },
+    });
+    stops.push(() => app.stop());
+    const stores = await adapter.createStorage();
+    const previous = vi.spyOn(stores.indexKeys, "previous");
+    await app.restored();
+    expect(previous).toHaveBeenCalled();
+    const down = new Error("the database is down");
+    previous.mockRejectedValueOnce(down);
+    await app.restored();
+    expect(errors).toContainEqual([
+      "the database's key could not be read again",
+      expect.objectContaining({ errorMessage: "the database is down" }),
+    ]);
+  });
+});
 
 describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapterOf) => {
   it("replaces every key that seals personal data, seals everything again under the new ones and destroys the old", async () => {
