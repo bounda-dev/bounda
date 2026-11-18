@@ -22,7 +22,7 @@ export const RESTORES_FOUND = "runtime:restores";
  * instance that finds it first takes it: what lets an app without a forget ledger, stopped or
  * running, find such a restore, and counts it exactly once.
  */
-export const RESTORE_TAKEN_BY_FIRST = "runtime:restore-unclaimed";
+export const RESTORE_UNCLAIMED = "runtime:restore-unclaimed";
 
 /**
  * The forget ledger's mark the generation is raised to, outside the database: what tells a copy
@@ -191,11 +191,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
 
   // Whether this instance takes the restore counted in place, whose count the database holds.
   const take = async (stored: Seen): Promise<boolean> => {
-    const unclaimed = await checkpoints.get(RESTORE_TAKEN_BY_FIRST);
+    const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
     // The count it read moved past what this instance had read, so it is never 0 here.
     return (
       unclaimed === stored.restores &&
-      (await checkpoints.compareAndSet(RESTORE_TAKEN_BY_FIRST, unclaimed, 0))
+      (await checkpoints.compareAndSet(RESTORE_UNCLAIMED, unclaimed, 0))
     );
   };
 
@@ -281,7 +281,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         seen = stored;
         // One counted where it was made moved the generation past the mark; one the mark tells came
         // after, as a copy of a database that held it.
-        const unclaimed = await checkpoints.get(RESTORE_TAKEN_BY_FIRST);
+        const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
         foundAtStart = unclaimed === stored.restores ? unclaimed : 0;
         const restored =
           (await compareWithMark(stored)) ?? (foundAtStart > 0 ? { first: true } : null);
@@ -295,7 +295,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     started: async () => {
       if (foundAtStart === 0) return;
       try {
-        await checkpoints.compareAndSet(RESTORE_TAKEN_BY_FIRST, foundAtStart, 0);
+        await checkpoints.compareAndSet(RESTORE_UNCLAIMED, foundAtStart, 0);
       } catch (error) {
         logger.error("the restore found at start could not be taken", { error });
       }

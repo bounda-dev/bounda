@@ -1,7 +1,7 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 import {
   RESTORE_GENERATION,
-  RESTORE_TAKEN_BY_FIRST,
+  RESTORE_UNCLAIMED,
   RESTORES_FOUND,
 } from "../../kernel/shared/restores.ts";
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
@@ -184,6 +184,6 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
       const generation = Math.max(before[1], await checkpoints.get(RESTORE_GENERATION)) + 1;
       await checkpoints.set(RESTORES_FOUND, restores);
       await checkpoints.set(RESTORE_GENERATION, generation);
-      await checkpoints.set(RESTORE_TAKEN_BY_FIRST, restores);
+      await checkpoints.set(RESTORE_UNCLAIMED, restores);
     }
   });

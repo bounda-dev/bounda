@@ -9,7 +9,7 @@ import {
   GENERATION_INTERVAL_MS,
   RESTORE_GENERATION,
   RESTORE_MARK,
-  RESTORE_TAKEN_BY_FIRST,
+  RESTORE_UNCLAIMED,
   RESTORES_FOUND,
 } from "./restores.ts";
 
@@ -64,7 +64,7 @@ describe("createRestoreWatch", () => {
   const restoredInPlace = async (store: CheckpointStore, restores: number) => {
     await store.set(RESTORES_FOUND, restores);
     await store.set(RESTORE_GENERATION, 7);
-    await store.set(RESTORE_TAKEN_BY_FIRST, restores);
+    await store.set(RESTORE_UNCLAIMED, restores);
   };
 
   it.each([true, false])(
@@ -79,7 +79,7 @@ describe("createRestoreWatch", () => {
       await through.started();
       await through.started();
       expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
-      expect(await checkpointStore.get(RESTORE_TAKEN_BY_FIRST)).toBe(0);
+      expect(await checkpointStore.get(RESTORE_UNCLAIMED)).toBe(0);
       expect(await watchOver().start()).toBeNull();
     },
   );
@@ -101,7 +101,7 @@ describe("createRestoreWatch", () => {
       wrap: (store) => ({
         ...store,
         compareAndSet: async (subscriber, expected, position) => {
-          if (subscriber === RESTORE_TAKEN_BY_FIRST) throw new Error("store is down");
+          if (subscriber === RESTORE_UNCLAIMED) throw new Error("store is down");
           return store.compareAndSet(subscriber, expected, position);
         },
       }),
@@ -140,17 +140,17 @@ describe("createRestoreWatch", () => {
     const watch = watchOver();
     await watch.check(at(0));
     await checkpointStore.set(RESTORES_FOUND, 2);
-    await checkpointStore.set(RESTORE_TAKEN_BY_FIRST, 1);
+    await checkpointStore.set(RESTORE_UNCLAIMED, 1);
     expect(await watch.check(at(1))).toEqual({ first: false });
-    expect(await checkpointStore.get(RESTORE_TAKEN_BY_FIRST)).toBe(1);
+    expect(await checkpointStore.get(RESTORE_UNCLAIMED)).toBe(1);
   });
 
   it("takes nothing a copy of an older count left behind", async () => {
     const { checkpointStore, watchOver } = await setUp({ marks: false });
     await checkpointStore.set(RESTORES_FOUND, 4);
-    await checkpointStore.set(RESTORE_TAKEN_BY_FIRST, 3);
+    await checkpointStore.set(RESTORE_UNCLAIMED, 3);
     expect(await watchOver().start()).toBeNull();
-    expect(await checkpointStore.get(RESTORE_TAKEN_BY_FIRST)).toBe(3);
+    expect(await checkpointStore.get(RESTORE_UNCLAIMED)).toBe(3);
   });
 
   it("logs a store it could not read, and finds nothing", async () => {
