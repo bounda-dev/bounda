@@ -61,6 +61,10 @@ export interface PersonalCategories {
    * The declared ones alone, whose retention a sweep of their keys applies.
    */
   readonly declared: readonly PersonalCategory[];
+  /**
+   * The category of fields marked without one, whose retention forgets the person as a whole.
+   */
+  readonly default: PersonalCategory;
   of(name: string): PersonalCategory | undefined;
   /**
    * The automated decisions `app/personal-data.ts` declares, in its order.
@@ -264,22 +268,21 @@ const decisionsIn = (
  */
 export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ module, retention }) => {
   const declared = declaredIn(module);
-  const all: PersonalCategory[] = [
-    {
-      name: DEFAULT_PERSONAL_CATEGORY,
-      basis: null,
-      retention,
-      purposes: [],
-      sources: [],
-      special: null,
-      criminal: null,
-    },
-    ...declared,
-  ];
+  const fallback: PersonalCategory = {
+    name: DEFAULT_PERSONAL_CATEGORY,
+    basis: null,
+    retention,
+    purposes: [],
+    sources: [],
+    special: null,
+    criminal: null,
+  };
+  const all = [fallback, ...declared];
   const byName = new Map(all.map((category) => [category.name, category]));
   return {
     all,
     declared,
+    default: fallback,
     of: (name) => byName.get(name),
     decisions: decisionsIn(module, byName),
   };

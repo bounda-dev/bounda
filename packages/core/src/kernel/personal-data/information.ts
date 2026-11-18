@@ -61,10 +61,7 @@ export const personalDataInformation: PersonalDataInformationFunction = ({
   person,
 }) => {
   // The default category's retention forgets the person as a whole, from their last activity.
-  const whole = endOf(
-    person?.lastActiveAt ?? null,
-    categories.of(DEFAULT_PERSONAL_CATEGORY)?.retention ?? null,
-  );
+  const whole = endOf(person?.lastActiveAt ?? null, categories.default.retention);
   const exported: Record<string, ExportedCategory> = {};
   for (const { name, basis, purposes, sources, retention, special, criminal } of categories.all) {
     const theirs = keys.filter(({ category }) => category === name);
