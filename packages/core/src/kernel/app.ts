@@ -90,6 +90,7 @@ import {
   NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
 import { type Redactions, redactPersonalData, settleRedaction } from "./personal-data/redact.ts";
+import { createPersonalDataReseal } from "./personal-data/reseal.ts";
 import { marksFingerprint, walkFingerprint } from "./personal-data/resealing.ts";
 import {
   createRestrictedPersonsSubscriber,
@@ -132,6 +133,7 @@ import {
   rebuildsPassed,
   rebuiltMark,
 } from "./read-model/rebuild.ts";
+import { createResealReadModels } from "./read-model/reseal-read-models.ts";
 import { openReadModelSealing, settleReadModels } from "./read-model/sealing.ts";
 import { buildRecipients } from "./recipients/build.ts";
 import { createDisclosures, PersonalDataChangedError } from "./recipients/gate.ts";
@@ -335,15 +337,20 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * Puts a new version of the tenant's key in force: new keys are wrapped under it, and the worker
    * rewraps every person's key and the database's key under it in the background. The older
    * versions stay in the tenant key store, opening what a backup holds under them, until
-   * `retireTenantKeys`. Rejects with `ConfigurationError` in an app without keys.
+   * `retireTenantKeys`. With `reseal`, after a leak of the persons' keys themselves, the worker
+   * replaces every person's key and the database's key by new ones instead, seals again under them
+   * everything the store holds of persons, rebuilds the read models that hold personal data and
+   * destroys the old keys; `status().keyRotation.reseal` says where it stands. Rejects with
+   * `ValidationError` while a reseal keeps the keys it replaced, or, with `reseal`, while one is
+   * under way at all; with `ConfigurationError` in an app without keys.
    */
-  rotateTenantKey(): Promise<TenantKeyVersions>;
+  rotateTenantKey(options?: RotateTenantKeyOptions): Promise<TenantKeyVersions>;
   /**
    * Removes from the tenant key store every version of the tenant's key but the one in force, and
    * resolves to the ids it removed: a backup that holds keys wrapped under them opens nothing
-   * personal any more. Rejects with `ValidationError` while a key is still wrapped under one, or
+   * personal any more. Rejects with `ValidationError` while a key is still wrapped under one,
    * before twice `UNWRAPPED_KEY_TTL_MS` has passed since the version in force was created, the
-   * time every instance takes to wrap under it.
+   * time every instance takes to wrap under it, and while a reseal keeps the keys it replaced.
    */
   retireTenantKeys(): Promise<readonly string[]>;
   /**
@@ -359,6 +366,18 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * `ValidationError` for an actor that is not a string of 1 to `MAX_ACTOR_LENGTH` characters.
    */
   as(actor: string): BoundaClient<R>;
+}
+
+/**
+ * What `rotateTenantKey` takes.
+ */
+export interface RotateTenantKeyOptions {
+  /**
+   * Replaces every key that seals personal data, and the database's key, by new ones, and seals
+   * everything again under them: what recovers from a leak of the database, the tenant key store
+   * and the master key at once, after the master key itself is rotated.
+   */
+  readonly reseal?: boolean;
 }
 
 /**
@@ -1177,6 +1196,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             }),
           };
     const reconciliation = reconciling?.reconciliation;
+    const reseal =
+      hierarchy === null
+        ? undefined
+        : createPersonalDataReseal({
+            storage: written,
+            wrapping,
+            tenantKeys: hierarchy.tenantKeys,
+            databaseKey,
+            readModels: createResealReadModels({
+              readModels: Object.values(readModels.byName),
+              rebuild: (name, options) => rebuild(name, options),
+              maxEvents: config.runtime.dispatcher.batchSize * REDACTION_REBUILD_BATCHES,
+            }),
+            batchSize: config.runtime.dispatcher.batchSize,
+            clock,
+            logger,
+          });
     const rotation =
       hierarchy === null
         ? undefined
@@ -1187,6 +1223,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             tenantKeys: hierarchy.tenantKeys,
             master: hierarchy.master,
             wrapping,
+            reseal,
             clock,
             logger,
           });
@@ -1306,6 +1343,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       retention,
       letterRetention,
       rotation,
+      reseal,
       reconciliation,
       intentions,
       backfill,
@@ -1358,9 +1396,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           }),
       },
       restores,
-      onRestored: () => {
+      onRestored: async () => {
         dispatcher.restored();
         earlierAnswers.reset();
+        // A copy from before a reseal holds the database's keys of then, not those this instance
+        // read since.
+        await databaseKey?.refresh().catch((error: unknown) => {
+          logger.error("the database's key could not be read again", { error });
+        });
       },
       reactive: following.map((subscriber) => subscriber.name),
       standing: dispatcher.positionOf,
@@ -1391,6 +1434,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         retention?.nextDueAt() ?? null,
         letterRetention?.nextDueAt() ?? null,
         rotation?.nextDueAt() ?? null,
+        reseal?.nextDueAt() ?? null,
         reconciliation?.nextDueAt() ?? null,
         backfill?.nextDueAt() ?? null,
       ]);
@@ -1607,10 +1651,58 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       await enterForgotten(keys, { settled: true });
       return { tenant: tenantId, forgottenAt: forgetting.at, eventId: forgetting.eventId };
     };
+    const rotateTenantKey = async ({
+      reseal: resealing = false,
+    }: RotateTenantKeyOptions = {}): Promise<TenantKeyVersions> => {
+      const { tenantKeys } = keysFor("rotateTenantKey");
+      // A rotation would rewrap the keys a reseal still replaces; another reseal waits for the
+      // previous one to end altogether.
+      if (resealing && reseal !== undefined && (await reseal.active())) {
+        throw runtimeText(
+          new ValidationError(
+            "A reseal of the tenant's personal data is under way: another one can start once it is complete",
+            [{ path: ["reseal"], message: "Expected no reseal under way" }],
+          ),
+        );
+      }
+      if (reseal !== undefined && (await reseal.holdsSuperseded())) {
+        throw runtimeText(
+          new ValidationError(
+            "A reseal keeps the persons' keys it replaced: the tenant's key rotates again once it destroys them",
+            [{ path: [], message: "Expected no reseal keeping keys" }],
+          ),
+        );
+      }
+      // Begun before the rotation, so the worker never rewraps a key the reseal replaces.
+      if (resealing) await reseal?.begin();
+      await tenantKeys.rotate();
+      // Each file has a new key too, which the worker moves it under once it can.
+      await fileEncryptions.refresh();
+      if (resealing) await reseal?.switchDatabaseKey();
+      const versions = await tenantKeys.kids();
+      logger.info(
+        resealing
+          ? "tenant key rotated; every key that seals personal data is replaced in the background"
+          : "tenant key rotated",
+        {
+          tenant: tenantId,
+          ...versions,
+        },
+      );
+      return versions;
+    };
     const retireTenantKeys = async (): Promise<readonly string[]> => {
       const { tenantKeys } = keysFor("retireTenantKeys");
       const { previous, since } = await tenantKeys.kids();
       if (previous.length === 0) return [];
+      if (reseal !== undefined && (await reseal.holdsSuperseded())) {
+        throw runtimeText(
+          new ValidationError(
+            "A reseal keeps the persons' keys it replaced, wrapped under an older version of the tenant's key: wait for it to destroy them",
+            [{ path: [], message: "Expected no reseal keeping keys" }],
+          ),
+        );
+      }
       // An instance that read the tenant's record before the rotation wraps new keys under the
       // older version until it reads it again, which it does within the key cache's time.
       if (clock.now().getTime() - Date.parse(since) < 2 * UNWRAPPED_KEY_TTL_MS) {
@@ -1859,21 +1951,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: () => forgetThisTenant(name, options, actor),
           }),
-        rotateTenantKey: () =>
+        rotateTenantKey: (options) =>
           tracedOperation({
             tracer: appTracer,
             errorText,
             operation: "rotateTenantKey",
             actor,
-            run: async () => {
-              const { tenantKeys } = keysFor("rotateTenantKey");
-              await tenantKeys.rotate();
-              // Each file has a new key too, which the worker moves it under once it can.
-              await fileEncryptions.refresh();
-              const versions = await tenantKeys.kids();
-              logger.info("tenant key rotated", { tenant: tenantId, ...versions });
-              return versions;
-            },
+            run: () => rotateTenantKey(options),
           }),
         retireTenantKeys: () =>
           tracedOperation({
@@ -1921,7 +2005,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         unrestrict: (personId, options) => gate.unrestrict(personId, options),
         redact: (personId, options) => gate.redact(personId, options),
         forgetTenant: (name, options) => live.forgetTenant(name, options),
-        rotateTenantKey: () => gate.rotateTenantKey(),
+        rotateTenantKey: (options) => gate.rotateTenantKey(options),
         retireTenantKeys: () => gate.retireTenantKeys(),
         as: (next) => {
           live.as(next);

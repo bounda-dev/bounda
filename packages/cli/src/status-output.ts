@@ -116,6 +116,15 @@ const rotationOf = ({ keyRotation: rotation }: AppStatus): string => {
   return `under ${rotation.kid}${rotation.previous.length === 0 ? "" : ` (previous ${rotation.previous.join(", ")})`}, ${left}`;
 };
 
+// Only once the tenant's data was resealed, or while it is.
+const resealOf = ({ keyRotation: rotation }: AppStatus): string[] => {
+  const reseal = rotation?.reseal ?? null;
+  if (reseal === null) return [];
+  if (reseal.step === "complete") return [`reseal: complete (${reseal.completedAt})`];
+  const kept = reseal.superseded === 0 ? "" : `, ${plural(reseal.superseded, "old key")} kept`;
+  return [`reseal: ${reseal.step} since ${reseal.startedAt}${kept}`];
+};
+
 // One line per retention set: the app's forgets persons as a whole, a category's its keys.
 const retentionOf = ({ retention }: AppStatus): string[] => {
   if (retention === null) return ["retention: no personal data marked"];
@@ -180,6 +189,7 @@ export const formatStatus: FormatStatusFunction = (args) => {
     `tenant: ${tenantOf(status)}`,
     ...formatFiles(status.files),
     `key rotation: ${rotationOf(status)}`,
+    ...resealOf(status),
     ...retentionOf(status),
     `dead letter retention: ${purgeOf(status)}`,
     ...formatRecipients(status.recipients),

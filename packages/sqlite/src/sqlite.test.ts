@@ -387,6 +387,7 @@ describe("sqlite adapter on a file", () => {
       ["storage", 7],
       ["storage", 8],
       ["storage", 9],
+      ["storage", 10],
     ]);
   });
 
@@ -438,6 +439,7 @@ describe("sqlite adapter on a file", () => {
       "app_scheduled_commands",
       "app_snapshots",
       "app_subscriber_failures",
+      "app_superseded_keys",
       "app_tenancy",
     ]);
     await readModel.close();

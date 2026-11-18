@@ -354,6 +354,19 @@ describe("createApp", () => {
     await app.stop();
   });
 
+  it("says nothing is due in an app that holds no personal data and has no keys", async () => {
+    const { ephemeralKeys: _, ...keyless } = memory();
+    const app = await createApp({
+      registry: { aggregates: {}, readModels: {} },
+      config: { storage: keyless },
+      clock: createFixedClock(),
+    });
+    expect(await app.nextDueAt()).toBeNull();
+    expect((await app.status()).keyRotation).toBeNull();
+    await app.restored();
+    await app.stop();
+  });
+
   it("says when the next scheduled command or process time-out is due", async () => {
     const { app, clock } = await start();
     expect(await app.nextDueAt()).toBeNull();

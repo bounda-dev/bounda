@@ -20,7 +20,22 @@ export interface PersonalKey {
   readonly fingerprint: string;
   readonly cryptoKey: CryptoKey;
   readonly retained: boolean;
+  /**
+   * For a key a reseal superseded: the fingerprint of the key in its place, which whatever it
+   * opens is held under.
+   */
+  readonly successor?: string;
 }
+
+export interface HeldFingerprintFunction {
+  (key: PersonalKey): string;
+}
+
+/**
+ * The fingerprint of the key the person holds for what `key` opens: its own, or the key's that
+ * took its place.
+ */
+export const heldFingerprint: HeldFingerprintFunction = (key) => key.successor ?? key.fingerprint;
 
 export interface IsSealedFunction {
   (value: unknown): value is SealedValue;

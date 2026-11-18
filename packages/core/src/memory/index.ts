@@ -246,10 +246,11 @@ export const memory: MemoryFunction = (options = {}) => {
             key: ["key"],
             rows: entriesRows(idempotencyStore.entries),
           }),
+          storageTable({ table: "personalKeys", key: ["person"], rows: personalKeys.keyRows() }),
           storageTable({
-            table: "personalKeys",
-            key: ["person"],
-            rows: entriesRows(personalKeys.entries, "person"),
+            table: "supersededKeys",
+            key: ["person", "fingerprint"],
+            rows: personalKeys.supersededRows(),
           }),
           storageTable({ table: "indexKeys", key: ["scope"], rows: indexKeys.rows() }),
           storageTable({ table: "tenancy", key: ["scope"], rows: tenancy.rows() }),
@@ -392,7 +393,7 @@ export const memory: MemoryFunction = (options = {}) => {
               }),
             ),
           ),
-        commit: ({ subscriber, position }) =>
+        commit: ({ subscriber, position, marks = {} }) =>
           holding(subscriber, () =>
             fenced(async () => {
               shadows.delete(name);
@@ -400,6 +401,9 @@ export const memory: MemoryFunction = (options = {}) => {
               if (target === undefined) tables.set(name, { current: shadow });
               else target.current = shadow;
               await checkpointStore.set(subscriber, position);
+              for (const [mark, value] of Object.entries(marks)) {
+                await checkpointStore.set(mark, value);
+              }
               await checkpointStore.remove(progress);
             }),
           ),

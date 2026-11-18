@@ -7,7 +7,7 @@ export interface WitnessedWrappingFunction {
 }
 
 // Every key the kernel seals or opens with comes out of `held`, `opened`, `heldAll`, `heldAllOf`,
-// `open` or `create`.
+// `open`, `create` or `discarded`.
 export const witnessedWrapping: WitnessedWrappingFunction = (wrapping, witness) => {
   const seen = <Key extends PersonalKey | null>(person: string, key: Key): Key => {
     if (key !== null) witness.onPersonalKey(person, key);
@@ -33,6 +33,7 @@ export const witnessedWrapping: WitnessedWrappingFunction = (wrapping, witness) 
         },
         open: async (person, stored) => seen(person, await over.open(person, stored)),
         create: async (person, category) => seen(person, await over.create(person, category)),
+        discarded: async (person) => seen(person, await over.discarded(person)),
       };
     },
   };

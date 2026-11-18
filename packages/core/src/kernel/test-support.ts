@@ -24,6 +24,7 @@ import type { AppStorage } from "./events/app-event-store.ts";
 import type { RecordAccess } from "./personal-data/access.ts";
 import { createAccessLog } from "./personal-data/access.ts";
 import {
+  createDisposableKey,
   type PersonalKey,
   TENANT_KEY_ALGORITHM,
   TENANT_KEY_USAGES,
@@ -627,7 +628,7 @@ export const withoutLedger = ({ ids, clock }: WithoutLedgerArgs): ForgetIntentio
  * personal fields runs on.
  */
 export const keylessSealing: SealingSource = {
-  keys: { heldAllOf: async () => new Map() },
+  keys: { heldAllOf: async () => new Map(), discarded: () => createDisposableKey() },
   indexer: null,
   redactions: async () => [],
 };
@@ -635,7 +636,7 @@ export const keylessSealing: SealingSource = {
 export interface EachPersonFunction {
   (
     keysOf: (person: string) => readonly CategoryKey[] | Promise<readonly CategoryKey[]>,
-  ): Pick<PersonalKeys, "heldAllOf">;
+  ): Pick<PersonalKeys, "heldAllOf" | "discarded">;
 }
 
 /**
@@ -646,4 +647,5 @@ export const eachPerson: EachPersonFunction = (keysOf) => ({
     new Map(
       await Promise.all(persons.map(async (person) => [person, await keysOf(person)] as const)),
     ),
+  discarded: () => createDisposableKey(),
 });

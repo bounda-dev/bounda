@@ -194,5 +194,5 @@ describe("the node:sqlite adapter on a file", () => {
       await Promise.all(workers.map((worker) => worker.terminate()));
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

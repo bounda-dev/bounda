@@ -7,6 +7,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import {
+  createDisposableKey,
   fingerprintOf,
   fromBase64,
   generateWrappableKey,
@@ -53,7 +54,8 @@ export interface PersonalKeys extends PersonalKeyStore {
    */
   heldAll(person: string): Promise<readonly CategoryKey[]>;
   /**
-   * `heldAll` of each of `persons`, read in one go; a person without a key is left out.
+   * `heldAll` of each of `persons`, read in one go, with the keys a reseal superseded and has not
+   * destroyed yet, each with its `successor`; a person without a key is left out.
    */
   heldAllOf(persons: readonly string[]): Promise<ReadonlyMap<string, readonly CategoryKey[]>>;
   /**
@@ -65,6 +67,11 @@ export interface PersonalKeys extends PersonalKeyStore {
    * force.
    */
   create(person: string, category: string): Promise<PersonalKey>;
+  /**
+   * A new key no store keeps, for a value of the person that must read as forgotten: what is
+   * sealed under it opens nowhere once it is let go.
+   */
+  discarded(person: string): Promise<PersonalKey>;
 }
 
 /**
@@ -297,6 +304,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     person: string,
     stored: StoredPersonalKey,
     retained = false,
+    successor?: string,
   ): Promise<PersonalKey> => {
     const { kid, fingerprint } = stored;
     // Before the cache, so a key rewrapped under a kid this app does not know, or kept after its
@@ -304,14 +312,15 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
     if (kid !== null && !masterKids.has(kid) && !tenantKeys.knows(kid)) await tenantKeyOf(kid);
     dropExpired(clock.now().getTime());
     const entry = kept.get(fingerprint);
+    const named = successor === undefined ? {} : { successor };
     if (entry === undefined) {
       const key = unwrap(stored, false);
       remember(fingerprint, person, key);
-      return { fingerprint, cryptoKey: await key, retained };
+      return { fingerprint, cryptoKey: await key, retained, ...named };
     }
     kept.delete(fingerprint);
     kept.set(fingerprint, entry);
-    return { fingerprint, cryptoKey: await entry.key, retained };
+    return { fingerprint, cryptoKey: await entry.key, retained, ...named };
   };
 
   // The new key as the store keeps it, and as it is sealed with: WebCrypto wraps it under the
@@ -376,7 +385,9 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       },
       opened: async (person, fingerprint) => {
         const found = await keys.find(person, fingerprint);
-        return found === null ? null : open(person, found.key, found.retainedSince !== null);
+        return found === null
+          ? null
+          : open(person, found.key, found.retainedSince !== null, found.successor);
       },
       heldAll: async (person) =>
         Promise.all(
@@ -396,7 +407,12 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
                   await Promise.all(
                     listed.map(async (found) => ({
                       category: found.category,
-                      key: await open(person, found.key, found.retainedSince !== null),
+                      key: await open(
+                        person,
+                        found.key,
+                        found.retainedSince !== null,
+                        found.successor,
+                      ),
                       retainedSince: found.retainedSince,
                     })),
                   ),
@@ -405,6 +421,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
           ),
         ),
       open: (person, stored) => open(person, stored),
+      discarded: () => createDisposableKey(),
       create: async (person, category) => {
         const fresh = await generate();
         const inForce = await keys.add(person, category, fresh.stored);
@@ -435,6 +452,15 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       hold: (person, from, hold) => keys.hold(person, from, hold),
       nextHoldEnd: (args) => keys.nextHoldEnd(args),
       countWrappedUnder: (args) => keys.countWrappedUnder(args),
+      supersede: (person, from, to) => keys.supersede(person, from, to),
+      predecessors: (person, fingerprints) => keys.predecessors(person, fingerprints),
+      countSuperseded: () => keys.countSuperseded(),
+      // What this instance kept of them goes too, so none is used once destroyed.
+      destroySuperseded: async () => {
+        const destroyed = await keys.destroySuperseded();
+        for (const fingerprint of [...kept.keys()]) drop(fingerprint);
+        return destroyed;
+      },
       kids: () => keys.kids(),
       categories: () => keys.categories(),
       clear: async () => {
@@ -487,6 +513,7 @@ export const keylessWrapping: KeylessWrappingFunction = () => {
         (await keys.listMany(persons)).size === 0 ? new Map() : refuse(),
       open: async () => refuse(),
       create: async () => refuse(),
+      discarded: () => createDisposableKey(),
     }),
     close: () => undefined,
   };

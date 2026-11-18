@@ -131,6 +131,23 @@ describe("migrateSqlite", () => {
   });
 });
 
+describe("the superseded keys' table", () => {
+  it("is indexed by person and successor under a name of its own", async () => {
+    const { database, db } = onNodeSqlite();
+    await migrateSqlite({
+      db: database,
+      prefix: "app_",
+      scopes: [sqliteStorageScope(storageTablesFor("app_"))],
+    });
+    expect(
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?")
+        .all("app_superseded_keys")
+        .map((row) => row.name),
+    ).toContain("app_superseded_keys_successor_idx");
+  });
+});
+
 describe("the SQLite schema scopes", () => {
   it("number their migrations from 1, with no gap", () => {
     for (const { migrations } of [

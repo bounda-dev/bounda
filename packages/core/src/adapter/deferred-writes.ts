@@ -23,7 +23,10 @@ export interface DeferredWriteTarget {
     DeferredStores["scheduler"],
     "schedule" | "cancel" | "complete" | "fail" | "defer" | "reseal"
   >;
-  readonly idempotencyStore: Pick<DeferredStores["idempotencyStore"], "put" | "forget" | "erase">;
+  readonly idempotencyStore: Pick<
+    DeferredStores["idempotencyStore"],
+    "put" | "forget" | "erase" | "reseal"
+  >;
 }
 
 /**
@@ -174,7 +177,9 @@ export const deferWrites: DeferWritesFunction = ({
             } else merged.delete(key);
           }
           const offset = args.offset ?? 0;
+          const { after } = args;
           return [...merged.values()]
+            .filter(({ key }) => after === undefined || key > after)
             .sort((a, b) => (a.key < b.key ? -1 : 1))
             .slice(offset, args.limit === undefined ? undefined : offset + args.limit);
         },
@@ -195,6 +200,17 @@ export const deferWrites: DeferWritesFunction = ({
           if (filed === key || existing === null)
             records.set(filed, erased({ ...record, key: filed }));
           recorded.push((target) => target.idempotencyStore.erase(args));
+        },
+        reseal: async (args) => {
+          const record = records.has(args.key) ? (records.get(args.key) ?? null) : undefined;
+          if (
+            record !== undefined &&
+            record !== null &&
+            JSON.stringify(record.answer) === JSON.stringify(args.from)
+          ) {
+            records.set(args.key, { ...record, answer: args.answer, persons: args.persons });
+          }
+          recorded.push((target) => target.idempotencyStore.reseal(args));
         },
         purge: idempotencyStore.purge,
         clear: async () => {

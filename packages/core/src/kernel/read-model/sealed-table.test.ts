@@ -25,6 +25,9 @@ const fields: FieldsRecord = {
 const indexer: BlindIndexer = {
   epoch: "epoch-1",
   index: async ({ readModel, field, value }) => `${readModel}.${field}=${JSON.stringify(value)}`,
+  forTable: async () => indexer,
+  pinned: async () => ({ ...indexer, number: 1 }),
+  indexAll: async (args) => [await indexer.index(args)],
 };
 
 const keysOf = (retained: readonly string[] = []): SealingKeys => {
@@ -80,13 +83,49 @@ describe("storedWhere", () => {
       email__index: { in: ['customers.email="a@x"', 'customers.email="b@x"'] },
     });
     expect(await storedWhere({ context, where: { email: null } })).toEqual({ email__index: null });
+    // Only `in` reads a list as the values it may be: given to `ne`, it is one value.
+    expect(await storedWhere({ context, where: { email: { ne: ["a@x"] } } })).toEqual({
+      email__index: { ne: 'customers.email=["a@x"]' },
+    });
     expect(await storedWhere({ context, where: undefined })).toBeUndefined();
+  });
+
+  it("matches a value under each database key a reseal keeps, a table being under one of them", async () => {
+    const { context } = await setUp();
+    const twoKeys = {
+      ...context,
+      indexer: {
+        ...indexer,
+        indexAll: async (args: Parameters<BlindIndexer["indexAll"]>[0]) => [
+          `new:${await indexer.index(args)}`,
+          `old:${await indexer.index(args)}`,
+        ],
+      },
+    };
+    expect(await storedWhere({ context: twoKeys, where: { email: "a@x" } })).toEqual({
+      email__index: { in: ['new:customers.email="a@x"', 'old:customers.email="a@x"'] },
+    });
+    expect(
+      await storedWhere({ context: twoKeys, where: { email: { in: ["a@x", null] } } }),
+    ).toEqual({
+      email__index: { in: ['new:customers.email="a@x"', 'old:customers.email="a@x"', null] },
+    });
+    expect(
+      await storedWhere({ context: twoKeys, where: { email: { ne: "a@x" }, born: { ne: null } } }),
+    ).toEqual({
+      email__index: { nin: ['new:customers.email="a@x"', 'old:customers.email="a@x"'] },
+      born__index: { ne: null },
+    });
   });
 
   it("refuses a sealed field without a blind index, and a range on one with it", async () => {
     const { context } = await setUp();
     await expect(storedWhere({ context, where: { note: "x" } })).rejects.toThrow(
       'Read model "customers": field "note" is sealed at rest and has no blind index, so where cannot match it; give it .index() or .unique()',
+    );
+    // Refused as a field in the clear refuses it, whichever keys the table may be under.
+    await expect(storedWhere({ context, where: { email: { in: "a@x" } } })).rejects.toThrow(
+      'Field "email": "in" needs an array',
     );
     await expect(storedWhere({ context, where: { born: { gt: new Date(0) } } })).rejects.toThrow(
       'Read model "customers": field "born" is sealed at rest, so where matches it by equality, ne or in, never by "gt"',
@@ -172,6 +211,14 @@ describe("sealedClient", () => {
     expect(await blindIndex("email", "a@x")).toBe('customers.email="a@x"');
     await expect(blindIndex("note", "x")).rejects.toThrow(
       'Read model "customers": field "note" has no blind index; only a field marked .personal() with .index() or .unique() has one',
+    );
+    const blindIndexes = sealedClient({ context, client: storage.client }).blindIndexes as (
+      field: string,
+      value: unknown,
+    ) => Promise<readonly string[]>;
+    expect(await blindIndexes("email", "a@x")).toEqual(['customers.email="a@x"']);
+    await expect(blindIndexes("note", "x")).rejects.toThrow(
+      'Read model "customers": field "note" has no blind index',
     );
   });
 });
@@ -273,9 +320,6 @@ describe("sealedTable and storedWhere at their edges", () => {
     });
     expect(await storedWhere({ context, where: { email: undefined } })).toEqual({
       email__index: undefined,
-    });
-    expect(await storedWhere({ context, where: { email: { in: "a@x" } } })).toEqual({
-      email__index: { in: 'customers.email="a@x"' },
     });
   });
 

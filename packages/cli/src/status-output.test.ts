@@ -61,7 +61,7 @@ const status: AppStatus = {
     previous: ["t-1"],
     master: { kid: "m-2", previous: ["m-1"], pending: 1 },
   },
-  keyRotation: { kid: "k-2", previous: ["k-1"], pending: 1, completeAt: null },
+  keyRotation: { kid: "k-2", previous: ["k-1"], pending: 1, completeAt: null, reseal: null },
   retention: {
     categories: [
       { category: "default", retention: "30d", due: 1, nextDueAt: "2026-05-03T00:00:00.000Z" },
@@ -170,7 +170,13 @@ describe("formatStatus", () => {
         held: null,
       },
       tenant: null,
-      keyRotation: { kid: "k-1", previous: [], pending: 0, completeAt: "2026-05-01T00:00:00.000Z" },
+      keyRotation: {
+        kid: "k-1",
+        previous: [],
+        pending: 0,
+        completeAt: "2026-05-01T00:00:00.000Z",
+        reseal: null,
+      },
       retention: null,
       deadLetterRetention: null,
       recipients: [],
@@ -194,6 +200,34 @@ describe("formatStatus", () => {
         status: { ...bare, keyRotation: { ...bare.keyRotation, completeAt: null } as never },
       }),
     ).toContain("key rotation: under k-1, every key wrapped\n");
+    const resealing = (reseal: object) =>
+      formatStatus({
+        status: { ...bare, keyRotation: { ...bare.keyRotation, reseal } as never },
+      });
+    expect(
+      resealing({
+        step: "events",
+        startedAt: "2026-05-01T00:00:00.000Z",
+        completedAt: null,
+        superseded: 2,
+      }),
+    ).toContain("reseal: events since 2026-05-01T00:00:00.000Z, 2 old keys kept\n");
+    expect(
+      resealing({
+        step: "expiring",
+        startedAt: "2026-05-01T00:00:00.000Z",
+        completedAt: null,
+        superseded: 0,
+      }),
+    ).toContain("reseal: expiring since 2026-05-01T00:00:00.000Z\n");
+    expect(
+      resealing({
+        step: "complete",
+        startedAt: null,
+        completedAt: "2026-05-02T00:00:00.000Z",
+        superseded: 0,
+      }),
+    ).toContain("reseal: complete (2026-05-02T00:00:00.000Z)\n");
     const tenant = {
       tenant: "acme",
       forgottenAt: null,

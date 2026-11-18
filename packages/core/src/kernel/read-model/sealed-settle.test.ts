@@ -29,6 +29,9 @@ const fields: FieldsRecord = {
 const indexer: BlindIndexer = {
   epoch: "epoch-1",
   index: async ({ field, value }) => `${field}=${JSON.stringify(value)}`,
+  forTable: async () => indexer,
+  pinned: async () => ({ ...indexer, number: 1 }),
+  indexAll: async (args) => [await indexer.index(args)],
 };
 
 interface Keys {
@@ -346,7 +349,13 @@ describe("settleReadModels", () => {
   });
 
   it("gives an indexer only to read models with a blind index, and refuses one without keys", async () => {
-    const indexer = { epoch: "e", index: () => Promise.reject(new Error("not asked")) };
+    const indexer: BlindIndexer = {
+      epoch: "e",
+      index: () => Promise.reject(new Error("not asked")),
+      forTable: () => Promise.reject(new Error("not asked")),
+      pinned: () => Promise.reject(new Error("not asked")),
+      indexAll: () => Promise.reject(new Error("not asked")),
+    };
     const atRest = {
       seal: () => Promise.reject(new Error("not asked")),
       open: () => Promise.reject(new Error("not asked")),

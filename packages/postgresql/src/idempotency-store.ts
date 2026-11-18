@@ -78,11 +78,11 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
           [person, now.toISOString(), after ?? null, limit ?? null],
         )
       ).map(toRecord),
-    list: async ({ now, limit, offset = 0 }) =>
+    list: async ({ now, after, limit, offset = 0 }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE "expires_at" > $1 ORDER BY "key" COLLATE "C" LIMIT $2 OFFSET $3`,
-          [now.toISOString(), limit ?? null, offset],
+          `SELECT ${COLUMNS} FROM ${table} WHERE "expires_at" > $1 AND ($4::text IS NULL OR "key" COLLATE "C" > $4::text) ORDER BY "key" COLLATE "C" LIMIT $2 OFFSET $3`,
+          [now.toISOString(), limit ?? null, offset, after ?? null],
         )
       ).map(toRecord),
     // Filing it elsewhere copies it there erased before it leaves `key`: a crash between the two
@@ -105,6 +105,17 @@ export const createPostgresqlIdempotencyStore: CreatePostgresqlIdempotencyStoreF
         now.toISOString(),
       ]);
     },
+    reseal: ({ key, from, answer, persons, now }) =>
+      db.run(
+        `UPDATE ${table} SET "outcome" = $1::jsonb, "persons" = $2::jsonb WHERE "key" = $3 AND "outcome" = $4::jsonb AND "expires_at" > $5`,
+        [
+          postgresqlDialect.encode("json", answer),
+          postgresqlDialect.encode("json", persons),
+          key,
+          postgresqlDialect.encode("json", from),
+          now.toISOString(),
+        ],
+      ),
     clear: () => db.run(`DELETE FROM ${table}`, []),
     purge: async ({ now }) => {
       const rows = await db.all(`DELETE FROM ${table} WHERE "expires_at" <= $1 RETURNING "key"`, [
