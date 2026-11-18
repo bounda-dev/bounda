@@ -1570,6 +1570,101 @@ describe("the retention and the forget ledger", () => {
     expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
   });
 
+  it("leaves a kept key whose forgetting a reconciliation committed under the intention's id meanwhile", async () => {
+    const {
+      storage,
+      record,
+      touch,
+      forgettings,
+      advance,
+      clock,
+      ids,
+      logger,
+      entries,
+      categories,
+    } = await setUp(undefined, {
+      retentionMs: null,
+      module: {
+        automatedDecisions: {},
+        categories: {
+          invoices: {
+            basis: "legal-obligation",
+            retention: "30d",
+            purposes: ["Serve the person"],
+            sources: ["data-subject"],
+          },
+        },
+      },
+    });
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("1"));
+    await touch("c-1");
+    await record();
+    await forgetPersonalData({
+      storage,
+      intentions: withoutLedger({ ids, clock }),
+      ids,
+      clock,
+      logger,
+      concurrencyRetries: 0,
+      categories,
+      batchSize: 2,
+      personId: "c-1",
+    });
+    await record();
+    advance(30);
+    const { intentions, recorded } = recordingIntentions(ids, clock);
+    let reconciled = false;
+    const raced: Storage = {
+      ...storage,
+      transact: async (work) => {
+        if (!reconciled) {
+          reconciled = true;
+          const { version } = await storage.eventStore.load({
+            aggregateType: "bounda",
+            aggregateId: "c-1",
+            fromVersion: Number.MAX_SAFE_INTEGER,
+          });
+          await storage.eventStore.append({
+            aggregateType: "bounda",
+            aggregateId: "c-1",
+            expectedVersion: version,
+            events: [
+              {
+                ...forgotten(99, "c-1", false),
+                aggregateId: "c-1",
+                id: recorded[0]?.eventId ?? "",
+                version: version + 1,
+                payload: { personId: "c-1", reason: "retention", whole: false },
+              },
+            ],
+          });
+        }
+        return storage.transact(work);
+      },
+    };
+    const told: string[] = [];
+    const sweep = createRetentionSweep({
+      storage: raced,
+      intentions,
+      categories,
+      ids,
+      clock,
+      logger,
+      concurrencyRetries: 1,
+      batchSize: 2,
+      forgotten: (person) => void told.push(person),
+    });
+    expect(await sweep.sweep(clock.now())).toBe(0);
+    expect(reconciled).toBe(true);
+    expect(told).toEqual([]);
+    expect(entries.filter(({ level }) => level === "error")).toEqual([]);
+    expect((await forgettings()).map(({ id }) => id)).toEqual([
+      expect.any(String),
+      recorded[0]?.eventId,
+    ]);
+    expect(await storage.personalKeys.list("c-1")).toHaveLength(1);
+  });
+
   it("says a person whose row never saw them active is not due", async () => {
     const { storage, clock } = await setUp();
     await storage.persons.record({ person: "c-5", position: 1, forgottenAt: null });

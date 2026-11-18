@@ -1185,6 +1185,21 @@ describe("forgetAgain", () => {
     expect(await run({ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] })).toBeNull();
     expect(await storage.eventStore.lastPosition()).toBe(0);
   });
+
+  it("forgets nobody again whom another instance forgot under its intention meanwhile", async () => {
+    const { storage, recorded, run, beforeTransaction } = await ledgered();
+    await keyed(storage, ["c-1"]);
+    beforeTransaction(async () => {
+      const [intended] = recorded;
+      if (intended !== undefined) await run(intended);
+      await keyed(storage, ["c-1"]);
+    });
+    expect(await run({ personId: "c-1" })).toBeNull();
+    expect(
+      (await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).map(({ id }) => id),
+    ).toEqual([recorded[0]?.eventId]);
+    expect(await storage.personalKeys.get("c-1", "default")).not.toBeNull();
+  });
 });
 
 describe("the reconciliation's status and restores", () => {

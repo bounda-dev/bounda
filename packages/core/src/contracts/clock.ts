@@ -29,16 +29,10 @@ const LONGEST_TIMER_MS = 2 ** 31 - 1;
 // go. Resolves whether it could. workerd's Node-style timers have one that does nothing, so the
 // Durable Object host drops background waits itself.
 const letGo = (timer: unknown): boolean => {
-  if (
-    typeof timer === "object" &&
-    timer !== null &&
-    "unref" in timer &&
-    typeof timer.unref === "function"
-  ) {
-    timer.unref();
-    return true;
-  }
-  return false;
+  const { unref } = Object(timer) as { readonly unref?: unknown };
+  if (typeof unref !== "function") return false;
+  unref.call(timer);
+  return true;
 };
 
 /**

@@ -979,6 +979,84 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     }
   }, 10_000);
 
+  it("indexes the storage tables as their reads need", async () => {
+    await openStorage();
+    const prefix = `t${run}_${prefixes}_`;
+    const sql = postgres(url, { max: 1 });
+    try {
+      const indexes = await sql<{ indexdef: string }[]>`
+        SELECT "indexdef" FROM pg_indexes
+        WHERE "schemaname" = current_schema() AND starts_with("tablename", ${prefix})
+        ORDER BY "indexname"`;
+      expect(indexes.map(({ indexdef }) => indexdef.replaceAll(prefix, ""))).toEqual([
+        "CREATE UNIQUE INDEX checkpoints_pkey ON public.checkpoints USING btree (subscriber)",
+        "CREATE INDEX dead_letters_listing_idx ON public.dead_letters USING btree (status, first_failed_at, id)",
+        "CREATE INDEX dead_letters_person_idx ON public.dead_letters USING btree (person)",
+        "CREATE INDEX dead_letters_persons_idx ON public.dead_letters USING gin (persons jsonb_path_ops)",
+        "CREATE UNIQUE INDEX dead_letters_pkey ON public.dead_letters USING btree (id)",
+        "CREATE INDEX dead_letters_resolved_idx ON public.dead_letters USING btree (resolved_at, id) WHERE (resolved_at IS NOT NULL)",
+        "CREATE INDEX dead_letters_state_person_idx ON public.dead_letters USING btree (state_person) WHERE (state_person IS NOT NULL)",
+        "CREATE UNIQUE INDEX disclosures_pkey ON public.disclosures USING btree (person, port, recipient, category)",
+        "CREATE UNIQUE INDEX events_aggregate_type_aggregate_id_version_key ON public.events USING btree (aggregate_type, aggregate_id, version)",
+        "CREATE UNIQUE INDEX events_id_key ON public.events USING btree (id)",
+        'CREATE INDEX events_person_idx ON public.events USING btree (person, "position")',
+        'CREATE UNIQUE INDEX events_pkey ON public.events USING btree ("position")',
+        "CREATE INDEX idempotency_keys_expires_at_idx ON public.idempotency_keys USING btree (expires_at)",
+        "CREATE INDEX idempotency_keys_persons_idx ON public.idempotency_keys USING gin (persons jsonb_path_ops)",
+        "CREATE UNIQUE INDEX idempotency_keys_pkey ON public.idempotency_keys USING btree (key)",
+        "CREATE UNIQUE INDEX inbox_pkey ON public.inbox USING btree (handler, event_id)",
+        "CREATE UNIQUE INDEX index_keys_pkey ON public.index_keys USING btree (scope)",
+        "CREATE UNIQUE INDEX migrations_pkey ON public.migrations USING btree (scope, version)",
+        "CREATE INDEX personal_keys_due_idx ON public.personal_keys USING btree (category, last_active_at) WHERE (last_active_at IS NOT NULL)",
+        "CREATE INDEX personal_keys_held_idx ON public.personal_keys USING btree (held_until) WHERE (held_until IS NOT NULL)",
+        "CREATE UNIQUE INDEX personal_keys_in_force_idx ON public.personal_keys USING btree (person, category) WHERE (retained_since IS NULL)",
+        "CREATE INDEX personal_keys_kid_idx ON public.personal_keys USING btree (kid, person)",
+        "CREATE UNIQUE INDEX personal_keys_pkey ON public.personal_keys USING btree (person, fingerprint)",
+        "CREATE INDEX personal_keys_retained_idx ON public.personal_keys USING btree (retained_since) WHERE (retained_since IS NOT NULL)",
+        "CREATE INDEX persons_held_idx ON public.persons USING btree (held_until) WHERE ((last_active_at IS NOT NULL) AND (forgotten_at IS NULL) AND (restricted_since IS NULL) AND (held_until IS NOT NULL))",
+        "CREATE INDEX persons_idle_idx ON public.persons USING btree (last_active_at, person) WHERE ((last_active_at IS NOT NULL) AND (forgotten_at IS NULL) AND (restricted_since IS NULL))",
+        "CREATE UNIQUE INDEX persons_pkey ON public.persons USING btree (person)",
+        "CREATE UNIQUE INDEX recipients_pkey ON public.recipients USING btree (port)",
+        "CREATE UNIQUE INDEX restricted_persons_pkey ON public.restricted_persons USING btree (person, source, category)",
+        "CREATE UNIQUE INDEX restricted_positions_pkey ON public.restricted_positions USING btree (person)",
+        "CREATE UNIQUE INDEX restrictions_pkey ON public.restrictions USING btree (person, ground, category)",
+        "CREATE INDEX scheduled_commands_claimed_at_idx ON public.scheduled_commands USING btree (claimed_at) WHERE (claimed_at IS NOT NULL)",
+        "CREATE INDEX scheduled_commands_execute_at_idx ON public.scheduled_commands USING btree (execute_at)",
+        "CREATE INDEX scheduled_commands_persons_idx ON public.scheduled_commands USING gin (persons jsonb_path_ops)",
+        "CREATE UNIQUE INDEX scheduled_commands_pkey ON public.scheduled_commands USING btree (dedupe_key)",
+        "CREATE INDEX scheduled_commands_unclaimed_idx ON public.scheduled_commands USING btree (execute_at) WHERE (claimed_at IS NULL)",
+        "CREATE INDEX snapshots_persons_idx ON public.snapshots USING gin (persons jsonb_path_ops)",
+        "CREATE UNIQUE INDEX snapshots_pkey ON public.snapshots USING btree (aggregate_type, aggregate_id)",
+        "CREATE UNIQUE INDEX subscriber_failures_pkey ON public.subscriber_failures USING btree (subscriber)",
+        "CREATE UNIQUE INDEX superseded_keys_pkey ON public.superseded_keys USING btree (person, fingerprint)",
+        "CREATE INDEX superseded_keys_successor_idx ON public.superseded_keys USING btree (person, successor)",
+        "CREATE UNIQUE INDEX tenancy_pkey ON public.tenancy USING btree (scope)",
+      ]);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("hands back a rebuild's use of the pool however the rebuild ends", async () => {
+    for (const ending of ["commit", "abort", "pause"] as const) {
+      const adapter = fresh();
+      const storage = await adapter.createStorage();
+      const rebuild = await adapter.rebuildReadModel({
+        name: "orderSummary",
+        fields: contractFields,
+        logger: silentLogger,
+        progress: "rebuild:orderSummary:0000000000000001",
+      });
+      if (ending === "commit") {
+        await rebuild.commit({ subscriber: "projection:orderSummary", position: 0 });
+      } else {
+        await rebuild[ending]();
+      }
+      await storage.close();
+      await expect(storage.eventStore.lastPosition()).rejects.toThrow();
+    }
+  });
+
   it("shares one pool between storage and read models until the last close", async () => {
     const adapter = fresh();
     const storage = await adapter.createStorage();

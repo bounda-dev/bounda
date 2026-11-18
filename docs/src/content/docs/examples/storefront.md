@@ -118,7 +118,7 @@ runtime: {
 ```
 
 `tests/storefront.test.ts` passes the app's `runtime` to `createTestApp`, so the snapshots are
-written there too, and earns points 250 times before redeeming them: a test app checks every state
+written there too, and earns points 150 times before redeeming them: a test app checks every state
 loaded from a snapshot against a fold of the whole stream, and fails the command when they differ.
 
 **A delay from the environment.** The reminder's delay comes from `REMINDER_DELAY`, a string

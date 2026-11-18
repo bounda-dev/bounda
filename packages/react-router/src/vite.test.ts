@@ -12,11 +12,15 @@ const repoRoot = resolve(import.meta.dirname, "../../..");
 const fixtures = join(repoRoot, "packages/core/test-types/fixtures");
 const temporary: string[] = [];
 
+// Inferring the state of an aggregate without state.ts starts TypeScript's API, a native process
+// that takes every core: the generator's own tests measured it past 5 s on a loaded Windows runner.
+const INFERENCE_TIMEOUT_MS = 30_000;
+
 afterAll(async () => {
   await Promise.all(temporary.map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-const project = async (fixture = "order-app-inferred"): Promise<string> => {
+const project = async (fixture = "order-app"): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "bounda-vite-"));
   temporary.push(root);
   await cp(join(fixtures, fixture, "app"), join(root, "app"), {
@@ -290,8 +294,10 @@ describe("bounda() Vite plugin", () => {
     expect(load("\0@bounda-dev/react-router/app", "server")).toBeNull();
   });
 
-  it("generates the project when the build starts and reports inference warnings", async () => {
-    const root = await project();
+  it("generates the project when the build starts and reports inference warnings", {
+    timeout: INFERENCE_TIMEOUT_MS,
+  }, async () => {
+    const root = await project("order-app-inferred");
     const { configure, start, recorded } = harness(root);
     configure("serve");
     await start();
@@ -303,7 +309,7 @@ describe("bounda() Vite plugin", () => {
   });
 
   it("generates once for every environment of a build, sharing one instance between them", async () => {
-    const root = await project("order-app");
+    const root = await project();
     const { plugin, configure, start } = harness(root);
     expect(plugin.sharedDuringBuild).toBe(true);
     configure("build");
@@ -315,7 +321,7 @@ describe("bounda() Vite plugin", () => {
   });
 
   it("generates on every start of a watching build", async () => {
-    const root = await project("order-app");
+    const root = await project();
     const { configure, start } = harness(root);
     configure("build");
     await start(true);
@@ -325,7 +331,7 @@ describe("bounda() Vite plugin", () => {
   });
 
   it("stays quiet when there is nothing to warn about", async () => {
-    const root = await project("order-app");
+    const root = await project();
     const { configure, start, recorded } = harness(root);
     configure("serve");
     await start();
@@ -346,7 +352,7 @@ describe("bounda() Vite plugin", () => {
   ] as const)(
     "warns once, on serve and build, unless the entry server exports handleError: %s in %s",
     async (source, file, warned) => {
-      const root = await project("order-app");
+      const root = await project();
       await rm(join(root, "app/entry.server.tsx"));
       if (source !== undefined && file !== undefined) {
         await writeFile(join(root, "app", file), `${source}\n`);
