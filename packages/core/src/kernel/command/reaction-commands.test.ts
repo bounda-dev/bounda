@@ -57,7 +57,7 @@ const forgottenEvents = async (storage: Storage) =>
     (event) => event.type === "PersonalDataForgotten",
   );
 
-const withLedger = async () => {
+const withLedger = async (categories = personalCategories) => {
   const harness = await createKernelHarness({ registry: orderRegistry });
   const unit = createUnitOfWork({ storage: harness.storage });
   const recorded: ForgetLedgerEntry[] = [];
@@ -73,7 +73,7 @@ const withLedger = async () => {
     logger,
     ids,
     clock: harness.clock,
-    personalCategories,
+    personalCategories: categories,
     batchSize: 10,
     intentions: createForgetIntentions({
       ledger: {
@@ -450,6 +450,45 @@ describe("createReactionCommands", () => {
         reason: "requested",
         fingerprints: ["f-1"],
       },
+    ]);
+  });
+
+  it("forgets after an objection, ending what an earlier forgetting kept that it reaches, apart from a request", async () => {
+    const census = buildPersonalCategories({
+      module: {
+        automatedDecisions: {},
+        categories: {
+          census: {
+            basis: "public-task",
+            retention: "1y",
+            purposes: ["Count them"],
+            sources: ["data-subject"],
+          },
+        },
+      },
+      retention: null,
+    });
+    const { harness, unit, reaction, recorded } = await withLedger(census);
+    await harness.storage.personalKeys.add("c-1", "census", {
+      key: "k",
+      fingerprint: "f-1",
+      kid: TEST_TENANT_KID,
+    });
+    await harness.storage.personalKeys.retain("c-1", "f-1", {
+      since: "2026-01-01T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    await reaction.forget("c-1", { categories: ["census"], objection: true });
+    await reaction.forget("c-1", { categories: ["census"] });
+    await unit.commit();
+    expect(recorded.map(({ reason, fingerprints }) => [reason, fingerprints])).toEqual([
+      ["objection", ["f-1"]],
+      ["requested", []],
+    ]);
+    expect(await harness.storage.personalKeys.list("c-1")).toEqual([]);
+    expect((await forgottenEvents(harness.storage)).map(({ payload }) => payload)).toMatchObject([
+      { reason: "objection", categories: ["census"], retained: [] },
+      { reason: "requested", categories: ["census"], retained: [] },
     ]);
   });
 

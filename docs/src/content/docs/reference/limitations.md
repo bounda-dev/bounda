@@ -22,9 +22,8 @@ get today. Each item says why, so nobody discovers it the hard way:
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
-- **Parts of the GDPR the code could answer.** An objection to direct marketing or to research in
-  the export's rights, an export of a whole tenant, and a jurisdiction for what Bounda keeps in KV
-  on Cloudflare. See [GDPR rights in Bounda](/reference/gdpr/), which also says what is the
+- **Parts of the GDPR the code could answer.** An export of a whole tenant, and a jurisdiction for
+  what Bounda keeps in KV on Cloudflare. See [GDPR rights in Bounda](/reference/gdpr/), which also says what is the
   controller's.
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
@@ -79,8 +78,9 @@ basis named:
 What a production app does get, and where it is explained:
 [rebuilding a read model](/guides/deployment/#rebuilding-a-read-model) without taking it offline,
 [forgetting a person](/guides/personal-data/) without deleting an event, each
-[category](/guides/personal-data/#categories) of their data with its basis and retention, what a
-legal obligation keeps kept,
+[category](/guides/personal-data/#categories) of their data with its basis and retention, what an
+exemption from erasure keeps kept, [their objections](/guides/personal-data/#after-an-objection) to
+direct marketing and research honoured,
 [exporting their data](/guides/personal-data/#exporting-a-persons-data), read models included,
 their read models' fields [sealed at rest](/guides/personal-data/#sealed-at-rest) with blind indexes
 to look them up,

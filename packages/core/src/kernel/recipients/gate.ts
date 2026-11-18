@@ -36,7 +36,7 @@ export interface OpenedData {
   readonly fingerprint: string | null;
   readonly category?: string;
   /**
-   * Read under a key a forgetting kept under a legal obligation.
+   * Read under a key a forgetting kept under an erasure exemption.
    */
   readonly retained?: boolean;
   readonly fence: number | undefined;

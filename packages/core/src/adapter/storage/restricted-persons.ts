@@ -6,13 +6,13 @@ import type { Table } from "./table.ts";
 /**
  * Which rows of restricted persons a read of a read model leaves out: `unrestricted` leaves out
  * every one, `retained` only those of a restriction a person asked for, so what a forgetting kept
- * under a legal obligation is read, and `all` none.
+ * under an erasure exemption is read, and `all` none.
  */
 export type RestrictionView = "unrestricted" | "retained" | "all";
 
 /**
  * One restriction a person asked for, as the read side keeps it: on a ground, of a category or,
- * `null`, of the person as a whole. What a forgetting kept under a legal obligation is not here:
+ * `null`, of the person as a whole. What a forgetting kept under an erasure exemption is not here:
  * each row says it, in the key fields of its personal values.
  */
 export interface RestrictedPerson {
@@ -55,7 +55,7 @@ export interface RestrictedPersonsStore {
  * The reads of a read model that leave out the rows of restricted persons: those whose field
  * marked `.person()` names a person restricted as a whole, or in a category a field of the read
  * model marked `.personal()` holds, and, for `unrestricted`, those holding a value under a key a
- * forgetting kept under a legal obligation, as its key field says. A read model without a field
+ * forgetting kept under an erasure exemption, as its key field says. A read model without a field
  * marked `.person()` has no row of anyone's.
  */
 export interface RestrictedReads<Row extends object> {
@@ -129,7 +129,7 @@ export interface IsRetainedKeyFunction {
 }
 
 /**
- * Whether a key field names a key a forgetting kept under a legal obligation.
+ * Whether a key field names a key a forgetting kept under an erasure exemption.
  */
 export const isRetainedKey: IsRetainedKeyFunction = (key) =>
   typeof key === "string" && key.startsWith(RETAINED_KEY_PREFIX);

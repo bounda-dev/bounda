@@ -136,7 +136,7 @@ describe("createSubscriberFailures", () => {
     expect((await failures.list())[1]).not.toHaveProperty("errorStack");
     expect((await failures.list())[2]).not.toHaveProperty("restricted");
     expect(
-      await failures.get("projection:a", { includeRestricted: "legal-obligation" }),
+      await failures.get("projection:a", { includeRestricted: "erasure-exemption" }),
     ).toMatchObject({
       errorMessage: null,
       restricted: true,
@@ -158,7 +158,7 @@ describe("createSubscriberFailures", () => {
       { persons: ["ana", "bo"], restricted: null },
       { persons: ["ana", "bo"], restricted: null },
       { persons: ["ana", "bo"], restricted: null },
-      { persons: ["ana"], restricted: { basis: "legal-obligation", persons: [] } },
+      { persons: ["ana"], restricted: { basis: "erasure-exemption", persons: [] } },
       { persons: ["ana", "bo"], restricted: { basis: "consent", persons: ["ana", "bo"] } },
       { persons: ["bo"], restricted: { basis: "public-interest", persons: ["bo"] } },
     ]);

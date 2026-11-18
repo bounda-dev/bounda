@@ -59,7 +59,7 @@ export interface CategoryRetentionStatus {
 
 /**
  * Where the retention stands: each retention set, and how many keys a forgetting kept that no
- * legal obligation keeps any more, which the sweep destroys at once.
+ * erasure exemption keeps any more, which the sweep destroys at once.
  */
 export interface RetentionStatus {
   readonly categories: readonly CategoryRetentionStatus[];
@@ -200,7 +200,7 @@ export interface RetentionSweep {
   /**
    * Forgets, with `reason: "retention"`, up to `RETENTION_SWEEP_LIMIT` persons idle past the app's
    * retention at `now` and not held, as a whole, as many keys of each declared category idle past
-   * that category's retention, and as many keys a forgetting kept that no legal obligation keeps
+   * that category's retention, and as many keys a forgetting kept that no erasure exemption keeps
    * any more, and resolves to how many forgettings it made. Never rejects:
    * a person or a key it could not forget is logged and held, longer after each failure.
    */
@@ -280,7 +280,7 @@ interface Sweepable<Due> {
 interface Runner {
   sweep(now: Date, through: () => Promise<number>): Promise<Swept>;
   nextDue(now: Date): Promise<number>;
-  // For a retention of the app or a category; the keys kept beyond a legal obligation have none.
+  // For a retention of the app or a category; the keys kept beyond an erasure exemption have none.
   readonly status?: (now: Date) => Promise<CategoryRetentionStatus>;
 }
 
@@ -423,22 +423,22 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
       describe: (due) => ({ personId: due.person, category: due.category }),
     }) satisfies Sweepable<DueKey>;
 
-  // What a forgetting kept that no legal obligation keeps any more, as a category whose basis
-  // changed or that the app no longer declares, goes at once.
-  const legal = categories.declared
-    .filter(({ basis }) => basis === "legal-obligation")
+  // What a forgetting kept that no erasure exemption keeps any more, as a category whose
+  // declaration changed or that the app no longer declares, goes at once.
+  const exempt = categories.declared
+    .filter(({ exemptions }) => exemptions.length > 0)
     .map(({ name }) => name);
   const keptBeyond: Sweepable<DueKey> = {
     activeBefore: () => undefined,
     deadlineOf: ({ retainedSince }) => Date.parse(retainedSince ?? ""),
     list: ({ releasedBy, limit }) =>
       storage.personalKeys.listRetained({
-        except: legal,
+        except: exempt,
         ...(releasedBy === undefined ? {} : { releasedBy }),
         limit,
       }),
-    count: () => storage.personalKeys.countRetained({ except: legal }),
-    nextHoldEnd: (after) => storage.personalKeys.nextRetainedHoldEnd({ except: legal, after }),
+    count: () => storage.personalKeys.countRetained({ except: exempt }),
+    nextHoldEnd: (after) => storage.personalKeys.nextRetainedHoldEnd({ except: exempt, after }),
     holdOf: (due) => due.hold,
     forget: (due) =>
       forgetting(
@@ -452,7 +452,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
           return (row?.restrictedSince ?? null) !== null ||
             key === null ||
             key.retainedSince === null ||
-            legal.includes(key.category)
+            exempt.includes(key.category)
             ? "skipped"
             : "go";
         },

@@ -72,6 +72,8 @@ describe("personalDataInformation", () => {
       special: null,
       criminal: null,
       purposes: [],
+      processedFor: [],
+      erasureExemptions: [],
       sources: [],
       retention: "20d",
       held: false,
@@ -83,6 +85,8 @@ describe("personalDataInformation", () => {
       special: null,
       criminal: null,
       ...said,
+      processedFor: [],
+      erasureExemptions: [],
       retention: "30d",
       held: true,
       keptUntil: null,
@@ -99,7 +103,8 @@ describe("personalDataInformation", () => {
         key("profile", "2026-01-01T00:00:00.000Z"),
         key("newsletter", "2026-01-01T00:00:00.000Z"),
         key("invoices", "2026-01-01T00:00:00.000Z"),
-        key("census", null),
+        key("census", "2026-01-01T00:00:00.000Z"),
+        key("fraud", null),
       ],
       person: person("2026-01-01T00:00:00.000Z"),
     });
@@ -108,11 +113,11 @@ describe("personalDataInformation", () => {
     expect(told.profile?.keptUntil).toBe("2026-01-21T00:00:00.000Z");
     // Sooner on its own.
     expect(told.newsletter?.keptUntil).toBe("2026-01-11T00:00:00.000Z");
-    // Kept past the whole forgetting, by law.
+    // Kept past the whole forgetting, by law or for a task in the public interest.
     expect(told.invoices?.keptUntil).toBe("2026-03-02T00:00:00.000Z");
+    expect(told.census?.keptUntil).toBe("2027-01-01T00:00:00.000Z");
     // Without activity of its own, as the whole goes.
-    expect(told.census?.keptUntil).toBe("2026-01-21T00:00:00.000Z");
-    expect(told.fraud?.keptUntil).toBeNull();
+    expect(told.fraud?.keptUntil).toBe("2026-01-21T00:00:00.000Z");
   });
 
   it("tells no end while nothing forgets them: without activity, retention or keys in force", () => {
@@ -130,6 +135,13 @@ describe("personalDataInformation", () => {
       told({ keys: [key("profile", "2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z")] })
         .profile,
     ).toMatchObject({ held: true, keptUntil: null, restrictedUntil: "2026-01-31T00:00:00.000Z" });
+    // Nothing of it in force, so nothing for the whole person's retention to forget either.
+    expect(
+      told({
+        keys: [key("profile", "2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z")],
+        person: person("2026-01-01T00:00:00.000Z"),
+      }).profile?.keptUntil,
+    ).toBeNull();
     const noRetention = buildPersonalCategories({ module: undefined, retention: null });
     expect(
       personalDataInformation({
@@ -168,11 +180,11 @@ describe("personalDataInformation", () => {
       {
         right: "erasure",
         article: "17",
-        categories: ["default", "profile", "newsletter", "fraud", "census"],
+        categories: ["default", "profile", "newsletter", "fraud"],
       },
       { right: "restriction", article: "18", categories: null },
       { right: "portability", article: "20", categories: ["profile", "newsletter"] },
-      { right: "objection", article: "21", categories: ["fraud", "census"] },
+      { right: "objection", article: "21(1)", categories: ["fraud", "census"] },
       { right: "withdraw-consent", article: "7(3)", categories: ["newsletter"] },
       { right: "human-intervention", article: "22(3)", categories: ["profile"] },
       { right: "complaint", article: "77", categories: null },
@@ -238,7 +250,7 @@ describe("personalDataInformation", () => {
     expect(told.rights.map(({ right, categories: reached }) => [right, reached])).toEqual([
       ["access", null],
       ["rectification", null],
-      ["erasure", ["default", "care", "record"]],
+      ["erasure", ["default", "care"]],
       ["restriction", null],
       ["portability", ["care"]],
       ["objection", ["record"]],
@@ -254,6 +266,89 @@ describe("personalDataInformation", () => {
         ground: "explicit-consent",
         measures: "A nurse reviews it",
       },
+    ]);
+  });
+
+  it("tells the purposes the GDPR has rules for and the exemptions that keep a category past erasure, and the objections each purpose opens", () => {
+    const special = (condition: string) => ({ kinds: ["health"], condition });
+    const purposed = buildPersonalCategories({
+      module: {
+        categories: {
+          news: { basis: "consent", retention: "1y", ...said, processedFor: ["direct-marketing"] },
+          offers: {
+            basis: "legitimate-interests",
+            retention: "1y",
+            ...said,
+            processedFor: ["direct-marketing"],
+          },
+          study: {
+            basis: "legitimate-interests",
+            retention: "1y",
+            ...said,
+            processedFor: ["scientific-or-historical-research"],
+            erasureExemption: "archiving-research-or-statistics",
+          },
+          survey: { basis: "contract", retention: "1y", ...said, processedFor: ["statistics"] },
+          census: { basis: "public-task", retention: "1y", ...said, processedFor: ["statistics"] },
+          archive: {
+            basis: "contract",
+            retention: "1y",
+            ...said,
+            processedFor: ["archiving-in-the-public-interest"],
+          },
+          lab: { basis: "contract", retention: "1y", ...said, special: special("public-health") },
+          dispute: {
+            basis: "contract",
+            retention: "1y",
+            ...said,
+            special: special("legal-claims"),
+          },
+        },
+        automatedDecisions: {},
+      } as unknown as PersonalDataModule,
+      retention: null,
+    });
+    const told = personalDataInformation({ categories: purposed, keys: [], person: null });
+    expect(told.categories.news).toMatchObject({
+      processedFor: ["direct-marketing"],
+      erasureExemptions: [],
+    });
+    expect(told.categories.study).toMatchObject({
+      processedFor: ["scientific-or-historical-research"],
+      erasureExemptions: [{ exemption: "archiving-research-or-statistics", article: "17(3)(d)" }],
+    });
+    expect(told.categories.census?.erasureExemptions).toEqual([
+      { exemption: "public-task", article: "17(3)(b)" },
+    ]);
+    expect(told.categories.lab?.erasureExemptions).toEqual([
+      { exemption: "public-health", article: "17(3)(c)" },
+    ]);
+    expect(told.categories.dispute?.erasureExemptions).toEqual([
+      { exemption: "legal-claims", article: "17(3)(e)" },
+    ]);
+    expect(told.rights).toEqual([
+      { right: "access", article: "15", categories: null },
+      { right: "rectification", article: "16", categories: null },
+      {
+        right: "erasure",
+        article: "17",
+        categories: ["default", "news", "offers", "survey", "archive"],
+      },
+      { right: "restriction", article: "18", categories: null },
+      {
+        right: "portability",
+        article: "20",
+        categories: ["news", "survey", "archive", "lab", "dispute"],
+      },
+      { right: "objection", article: "21(1)", categories: ["offers", "study", "census"] },
+      { right: "objection-to-direct-marketing", article: "21(2)", categories: ["news", "offers"] },
+      {
+        right: "objection-to-research-or-statistics",
+        article: "21(6)",
+        categories: ["study", "survey"],
+      },
+      { right: "withdraw-consent", article: "7(3)", categories: ["news"] },
+      { right: "complaint", article: "77", categories: null },
     ]);
   });
 

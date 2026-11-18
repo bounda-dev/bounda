@@ -9,6 +9,7 @@ import type {
   LegalBasis,
   PersonalDataSource,
   SpecialCategoryData,
+  SpecificPurpose,
 } from "../../modules/personal-data.ts";
 import type { RecipientKind, TransferSafeguard } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -22,6 +23,7 @@ import {
   type FieldClassification,
   schemaOf,
 } from "./classification.ts";
+import { EXEMPTION_ARTICLES, type ExportedErasureExemption } from "./export.ts";
 import { looksPersonal, looksSpecial } from "./looks-personal.ts";
 import { fieldCategory, personalMarksOf } from "./marks.ts";
 
@@ -100,6 +102,14 @@ export interface InventoryCategory {
    * None for the default category.
    */
   readonly purposes: readonly string[];
+  /**
+   * The purposes the GDPR has rules of its own for; none when it declares none.
+   */
+  readonly processedFor: readonly SpecificPurpose[];
+  /**
+   * The exemptions of article 17(3) that keep it past a forgetting; none when erasure reaches it.
+   */
+  readonly erasureExemptions: readonly ExportedErasureExemption[];
   readonly sources: readonly PersonalDataSource[];
   /**
    * How long after the person's last activity the category is forgotten, as configuration writes
@@ -524,6 +534,11 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
       special: category.special,
       criminal: category.criminal,
       purposes: category.purposes,
+      processedFor: category.processedFor,
+      erasureExemptions: category.exemptions.map((exemption) => ({
+        exemption,
+        article: EXEMPTION_ARTICLES[exemption],
+      })),
       sources: category.sources,
       retention: category.retention === null ? null : formatRetention(category.retention),
       fields: counts.get(category.name) ?? 0,

@@ -12,6 +12,8 @@ import type { ForgetOptions, RestrictionBasis } from "../../modules/personal-dat
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import {
+  endsKeptOf,
+  forgetReasonOf,
   forgetScopeOf,
   forgetWithin,
   logForgotten,
@@ -232,6 +234,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
     forget: async (personId, options) => {
       checkPersonId(personId, "forget");
       const scope = forgetScopeOf({ categories: personalCategories, options });
+      const reason = forgetReasonOf(options);
       if (abandoned.signal.aborted) throw abandoned.signal.reason;
       if (finished) {
         throw new ReactionFinishedError(
@@ -241,15 +244,16 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
       }
       const depth = context.depth + 1;
       if (depth > maxChainDepth) throw new ChainDepthExceededError(depth, maxChainDepth);
-      const asked = JSON.stringify([personId, scope]);
+      const asked = JSON.stringify([personId, scope, reason]);
       if (forgetting.has(asked)) return;
       forgetting.add(asked);
       let intention: ForgetIntention | undefined;
       within.beforeCommit(async (storage) => {
         intention = await intentions.intend({
           personId,
-          reason: "requested",
+          reason,
           scope,
+          ends: endsKeptOf(personalCategories, reason),
           keys: storage.personalKeys,
         });
       });

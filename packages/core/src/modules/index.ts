@@ -48,6 +48,7 @@ export {
   BOUNDA_AGGREGATE,
   BOUNDA_EVENTS,
   PERSONAL_DATA_FORGOTTEN_EVENT,
+  PERSONAL_DATA_FORGOTTEN_REASONS,
   PERSONAL_DATA_REDACTED_EVENT,
   PROCESSING_RESTRICTED_EVENT,
   PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
@@ -111,9 +112,13 @@ export type {
   AutomatedDecisions,
   CriminalDataAuthority,
   CriminalOffenceData,
+  DeclaredErasureExemption,
   DeclaresPersonalData,
+  ErasureExemption,
   ForgetOptions,
   LegalBasis,
+  ObjectionPendingCategoriesOf,
+  ObjectionPendingCategory,
   PersonalCategoriesOf,
   PersonalCategoryName,
   PersonalDataCategories,
@@ -128,16 +133,19 @@ export type {
   SpecialCategoryCondition,
   SpecialCategoryData,
   SpecialCategoryKind,
+  SpecificPurpose,
   UnrestrictOptions,
 } from "./personal-data.ts";
 export {
   AUTOMATED_DECISION_GROUNDS,
   CRIMINAL_DATA_AUTHORITIES,
+  ERASURE_EXEMPTIONS,
   LEGAL_BASES,
   RESTRICTION_BASES,
   RESTRICTION_GROUNDS,
   SPECIAL_CATEGORY_CONDITIONS,
   SPECIAL_CATEGORY_KINDS,
+  SPECIFIC_PURPOSES,
 } from "./personal-data.ts";
 export type { PolicyHandlerArgs, PolicyModule, ReactionForgetFunction } from "./policy.ts";
 export type {

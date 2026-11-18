@@ -34,13 +34,13 @@ const categories = buildPersonalCategories({
     automatedDecisions: {},
     categories: {
       marketing: {
-        basis: "consent",
+        basis: "legitimate-interests",
         retention: "730d",
         purposes: ["Serve the person"],
         sources: ["data-subject"],
       },
       invoices: {
-        basis: "legal-obligation",
+        basis: "public-task",
         retention: "6y",
         purposes: ["Serve the person"],
         sources: ["data-subject"],
@@ -50,7 +50,7 @@ const categories = buildPersonalCategories({
   retention: null,
 });
 
-const setup = async (storage?: Storage) => {
+const setup = async (storage?: Storage, known = categories) => {
   const live = storage ?? (await memory().createStorage());
   const { logger, entries: logs } = createRecordingLogger();
   const clock = createFixedClock();
@@ -68,7 +68,7 @@ const setup = async (storage?: Storage) => {
     logger,
     concurrencyRetries: 2,
     personId,
-    categories,
+    categories: known,
     intentions,
   });
   return {
@@ -286,6 +286,63 @@ describe("restrictProcessing", () => {
       restrict("c-1", { ground: "legal-claims", categories: ["profile"] as never }),
     ).rejects.toThrow('restrict names categories the app does not have: "profile"');
     expect(await storage.eventStore.lastPosition()).toBe(0);
+  });
+
+  it("holds objection-pending only for what an objection under article 21(1) is weighed for: public-task or legitimate-interests, not direct marketing", async () => {
+    const said = { retention: "1y", purposes: ["Serve them"], sources: ["data-subject"] } as const;
+    const weighing = buildPersonalCategories({
+      module: {
+        automatedDecisions: {},
+        categories: {
+          weighed: { basis: "legitimate-interests", ...said },
+          census: { basis: "public-task", ...said },
+          offers: { basis: "legitimate-interests", ...said, processedFor: ["direct-marketing"] },
+          mailings: { basis: "consent", ...said, processedFor: ["direct-marketing"] },
+          served: { basis: "contract", ...said },
+          research: { basis: "contract", ...said, processedFor: ["statistics"] },
+        },
+      },
+      retention: null,
+    });
+    const { storage, restrict } = await setup(undefined, weighing);
+    const refused = (names: string, whole = false) =>
+      new ValidationError(
+        `restrict holds objection-pending only for what an objection under article 21(1) reaches and is weighed for, on public-task or legitimate-interests and not for direct-marketing (article 18(1)(d)); ${names}${whole ? ": name the categories the objection reaches" : ""}`,
+        [
+          {
+            path: ["categories"],
+            message:
+              "Expected categories on public-task or legitimate-interests, not for direct-marketing, or default",
+          },
+        ],
+      );
+    await expect(
+      restrict("c-1", { ground: "objection-pending", categories: ["served"] }),
+    ).rejects.toThrow(refused("served is not"));
+    await expect(
+      restrict("c-1", { ground: "objection-pending", categories: ["research"] }),
+    ).rejects.toThrow(refused("research is not"));
+    await expect(
+      restrict("c-1", {
+        ground: "objection-pending",
+        categories: ["weighed", "offers", "mailings"],
+      }),
+    ).rejects.toThrow(refused("offers, mailings are not"));
+    await expect(
+      restrict("c-1", { ground: "objection-pending" } as RestrictOptions),
+    ).rejects.toThrow(refused("offers, mailings, served, research are not", true));
+    expect(await storage.eventStore.lastPosition()).toBe(0);
+    await restrict("c-1", {
+      ground: "objection-pending",
+      categories: ["weighed", "census", "default"],
+    });
+    await restrict("c-1", { ground: "accuracy-contested", categories: ["offers", "served"] });
+    await restrict("c-1", { ground: "unlawful-processing" });
+    expect(await storage.eventStore.lastPosition()).toBe(3);
+    // Every category of the app weighed, the person as a whole may be held.
+    expect(
+      (await (await setup()).restrict("c-1", { ground: "objection-pending" })).eventTypes,
+    ).toEqual(["ProcessingRestricted"]);
   });
 
   it("runs again when the person's stream moved under it, and gives up past the retries", async () => {
@@ -766,7 +823,7 @@ describe("refuseRestricted", () => {
       message: "The processing of this person's data is restricted",
     });
     await expect(
-      refuseRestricted({ persons, person: "c-1", basis: "legal-obligation" }),
+      refuseRestricted({ persons, person: "c-1", basis: "erasure-exemption" }),
     ).rejects.toBeInstanceOf(ProcessingRestrictedError);
     await expect(
       refuseRestricted({ persons, person: "c-1", basis: "consent" }),
@@ -799,7 +856,7 @@ describe("refuseRestricted", () => {
 
   it("opens what a person asked to restrict only on a basis of article 18(2)", () => {
     expect(opensRequested(undefined)).toBe(false);
-    expect(opensRequested("legal-obligation")).toBe(false);
+    expect(opensRequested("erasure-exemption")).toBe(false);
     expect(opensRequested("consent")).toBe(true);
     expect(opensRequested("protection-of-rights")).toBe(true);
   });
@@ -826,7 +883,7 @@ describe("refuseRestrictedRead", () => {
         persons: storage.persons,
         keys: keyOf("invoices"),
         opened: kept,
-        basis: "legal-obligation",
+        basis: "erasure-exemption",
       }),
     ).toEqual(["c-1"]);
   });
@@ -879,7 +936,7 @@ describe("refuseRestrictedRead", () => {
         persons: storage.persons,
         keys: keyOf("marketing"),
         opened: opened("c-1"),
-        basis: "legal-obligation",
+        basis: "erasure-exemption",
       }),
     ).rejects.toMatchObject({ personId: "c-1" });
   });

@@ -111,7 +111,7 @@ export interface CarryOpeningFunction {
 
 /**
  * `to`, a copy of `from` made after it was handed out, as an upcast makes, opened as `from` was;
- * `hidden`, the same copy made of `from`'s fields kept under a legal obligation read as `null`.
+ * `hidden`, the same copy made of `from`'s fields kept under an erasure exemption read as `null`.
  */
 export const carryOpening: CarryOpeningFunction = (from, to, hidden) => {
   openings.set(to, openedUnder(from));

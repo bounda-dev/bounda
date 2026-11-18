@@ -111,6 +111,34 @@ describe("the intentions of forgetting", () => {
     ]);
   });
 
+  it("name the keys an earlier forgetting kept of the categories an objection ends, and of no other", async () => {
+    const appended: ForgetLedgerEntry[] = [];
+    const { storage, intentions } = await setUp({
+      ledger: recordingLedger(async (entries) => {
+        appended.push(...entries);
+      }),
+    });
+    await storage.personalKeys.add("c-1", "census", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("2"));
+    await storage.personalKeys.add("c-1", "profile", testPersonalKey("3"));
+    for (const fingerprint of ["f-1", "f-2"]) {
+      await storage.personalKeys.retain("c-1", fingerprint, {
+        since: NOW.toISOString(),
+        lastActiveAt: NOW.toISOString(),
+      });
+    }
+    expect(
+      await intentions.intend({
+        personId: "c-1",
+        reason: "objection",
+        scope: WHOLE,
+        ends: (category) => category === "census",
+        keys: storage.personalKeys,
+      }),
+    ).toMatchObject({ reason: "objection", fingerprints: ["f-1", "f-3"] });
+    expect(appended).toMatchObject([{ reason: "objection", fingerprints: ["f-1", "f-3"] }]);
+  });
+
   it("read no key and record nothing without a ledger, leaving any key to the forgetting", async () => {
     const { storage, intentions } = await setUp({ ledger: null });
     let reads = 0;

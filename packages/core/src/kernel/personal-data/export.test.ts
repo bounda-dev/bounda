@@ -143,6 +143,8 @@ const exportedCategories = {
     special: null,
     criminal: null,
     purposes: [],
+    processedFor: [],
+    erasureExemptions: [],
     sources: [],
     retention: "30d",
     held: true,
@@ -154,6 +156,8 @@ const exportedCategories = {
     special: null,
     criminal: null,
     purposes: ["Serve the person"],
+    processedFor: [],
+    erasureExemptions: [{ exemption: "legal-obligation", article: "17(3)(b)" }],
     sources: ["data-subject"],
     retention: "60d",
     held: true,
@@ -167,7 +171,7 @@ const exportedRights = [
   { right: "rectification", article: "16", categories: null },
   { right: "erasure", article: "17", categories: ["default"] },
   { right: "restriction", article: "18", categories: null },
-  { right: "objection", article: "21", categories: [] },
+  { right: "objection", article: "21(1)", categories: [] },
   { right: "complaint", article: "77", categories: null },
 ];
 
@@ -690,8 +694,8 @@ describe("exportPersonalData", () => {
     expect(await exportOf("c-1", 100)).toEqual(exported);
     // One row a page: the person field that is the directory's key stays the person's.
     expect(await exportOf("c-1", 1)).toEqual(exported);
-    expect(JSON.stringify(exported)).not.toContain("bo");
-    expect(JSON.stringify(exported)).not.toContain("pro");
+    expect(JSON.stringify(exported)).not.toContain('"bo');
+    expect(JSON.stringify(exported)).not.toContain('"pro"');
   });
 
   it.each([
@@ -918,6 +922,8 @@ describe("exportPersonalData", () => {
         special: null,
         criminal: null,
         purposes: [],
+        processedFor: [],
+        erasureExemptions: [],
         sources: [],
         retention: null,
         ...none,

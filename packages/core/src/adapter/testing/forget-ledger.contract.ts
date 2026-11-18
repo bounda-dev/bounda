@@ -61,6 +61,20 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await readAll(ledger, 10)).toEqual(entries);
     });
 
+    it("keeps the reason each forgetting was asked with", async () => {
+      const entries: ForgetLedgerEntry[] = [
+        entry("p-1", "e-1", 1),
+        { ...entry("p-2", "e-2", 2, ["marketing"]), reason: "objection" },
+        { ...entry("p-3", "e-3", 3, ["marketing"]), reason: "retention" },
+      ];
+      await ledger.append(entries);
+      expect((await readAll(ledger, 10)).map(({ reason }) => reason)).toEqual([
+        "requested",
+        "objection",
+        "retention",
+      ]);
+    });
+
     it("keeps the change of restrictions an entry records, in order with the forgettings", async () => {
       const restrictions = Array.from({ length: 40 }, (_, index) => ({
         ground: "accuracy-contested" as const,

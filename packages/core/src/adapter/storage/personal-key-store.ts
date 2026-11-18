@@ -19,7 +19,7 @@ export interface StoredPersonalKey {
 
 /**
  * One of a person's keys, as `list` hands it out: the category it seals, the key, when it was
- * kept past a forgetting under a legal obligation (`null` while it is in force), and the last
+ * kept past a forgetting under an erasure exemption (`null` while it is in force), and the last
  * activity of the person recorded on it (`null` before any), which a key kept past a forgetting
  * stops following.
  */
@@ -114,7 +114,7 @@ export interface ListDueArgs {
 
 export interface ListRetainedArgs {
   /**
-   * Leaves out the keys of these categories: those a legal obligation still keeps.
+   * Leaves out the keys of these categories: those an erasure exemption still keeps.
    */
   readonly except: readonly string[];
   /**
@@ -218,7 +218,7 @@ export const namesPerson: NamesPersonFunction = (row, person, keep = []) =>
 
 /**
  * The keys personal fields are encrypted with: one in force per person and category, and those
- * a forgetting kept past it under a legal obligation, `retained`. A key is named by the person
+ * a forgetting kept past it under an erasure exemption, `retained`. A key is named by the person
  * and its fingerprint.
  *
  * `get` is the key in force for the person and category, `null` when there is none. `find` is the
@@ -237,7 +237,7 @@ export const namesPerson: NamesPersonFunction = (row, person, keep = []) =>
  * end of such a hold past `after`, `null` when none is held past it.
  *
  * `listRetained` lists, kept longest first, the keys a forgetting retained whose category is not
- * one of `except`, whose person is not restricted: what no legal obligation keeps any more, as a
+ * one of `except`, whose person is not restricted: what no erasure exemption keeps any more, as a
  * category whose basis changed. Their holds are those of `holdDue`, and `nextRetainedHoldEnd`
  * answers the earliest end of one past `after`.
  *

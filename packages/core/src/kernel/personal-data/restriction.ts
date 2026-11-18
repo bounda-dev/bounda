@@ -28,7 +28,13 @@ import { RETRY_RESTRICTED_COMMAND, retryRestrictedKey } from "../command/pipelin
 import { addressed } from "../recipients/addressing.ts";
 import { actedBy, causedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
-import { type CategoryNames, checkCategoryNames } from "./categories.ts";
+import {
+  type CategoryNames,
+  checkCategoryNames,
+  type PersonalCategories,
+  type PersonalCategory,
+  pendsObjection,
+} from "./categories.ts";
 import type { ForgetIntentions } from "./intention.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
@@ -129,6 +135,7 @@ interface RestrictionArgsBase {
 }
 
 export interface RestrictProcessingArgs extends RestrictionArgsBase {
+  readonly categories: Pick<PersonalCategories, "of" | "declared">;
   readonly options: RestrictOptions;
 }
 
@@ -469,6 +476,24 @@ export const restrictProcessing: RestrictProcessingFunction = async ({
     options?.categories === undefined
       ? null
       : checkCategoryNames({ categories: known, asked: options.categories, operation: "restrict" });
+  // Every name is the app's: `checkCategoryNames` refused any other.
+  if (ground === "objection-pending") {
+    const unweighed = (categories ?? known.declared.map(({ name }) => name)).filter(
+      (category) => !pendsObjection(known.of(category) as PersonalCategory),
+    );
+    if (unweighed.length > 0) {
+      throw new ValidationError(
+        `restrict holds objection-pending only for what an objection under article 21(1) reaches and is weighed for, on public-task or legitimate-interests and not for direct-marketing (article 18(1)(d)); ${unweighed.join(", ")} ${unweighed.length === 1 ? "is" : "are"} not${categories === null ? ": name the categories the objection reaches" : ""}`,
+        [
+          {
+            path: ["categories"],
+            message:
+              "Expected categories on public-task or legitimate-interests, not for direct-marketing, or default",
+          },
+        ],
+      );
+    }
+  }
   const changed = await change({
     storage,
     ids,

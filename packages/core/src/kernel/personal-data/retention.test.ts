@@ -1168,7 +1168,7 @@ describe("createRetentionSweep", () => {
     ]);
   });
 
-  it("destroys at once what a forgetting kept once no legal obligation keeps its category", async () => {
+  it("destroys at once what a forgetting kept once no erasure exemption keeps its category", async () => {
     const live = await memory().createStorage();
     const legal = {
       automatedDecisions: {},
@@ -1180,7 +1180,7 @@ describe("createRetentionSweep", () => {
           sources: ["data-subject"],
         },
         orders: {
-          basis: "legal-obligation",
+          basis: "public-task",
           retention: "6y",
           purposes: ["Serve the person"],
           sources: ["data-subject"],

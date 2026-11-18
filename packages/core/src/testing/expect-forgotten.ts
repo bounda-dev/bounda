@@ -272,8 +272,8 @@ const searchScope = async (
  * of a class `witnessObjects` watches, or the witness, it looks for every value of a field marked
  * `personal()` that the app sealed under a key the person no longer holds, and for every value a
  * read model kept in a field marked `.personal()` for them before its category was forgotten, and
- * adds `values` and `before`; with `categories`, those of the categories named alone. A key a
- * legal obligation kept past the forgetting is still held, so what it sealed is not looked for. It
+ * adds `values` and `before`; with `categories`, those of the categories named alone. A key an
+ * erasure exemption kept past the forgetting is still held, so what it sealed is not looked for. It
  * searches each table of the storage and of every read model, read as stored and never opened,
  * the forget ledger, every entry the app logged and every span it started; for a witness that
  * watches apps of several tenants, each tenant's values in its own tables, logs and spans. Given
