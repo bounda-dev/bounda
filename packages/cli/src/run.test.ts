@@ -167,6 +167,21 @@ describe("bounda generate", () => {
     expect(unknown.code).toBe(EXIT_CONVENTION);
   });
 
+  it("documents the options of forget in its help", async () => {
+    const root = await project();
+    const help = await cli(["forget", "--help"], root);
+    expect(help.code).toBe(EXIT_OK);
+    const flattened = help.stdout.replace(/\s+/g, " ");
+    for (const text of [
+      "--category <name>",
+      "forget only this category of the person, as when a consent is withdrawn; repeat it for several",
+      "--objection",
+      "after an objection you upheld (article 21): of what it reaches, keep only what a legal obligation or legal claims keep",
+    ]) {
+      expect(flattened).toContain(text);
+    }
+  });
+
   it("documents every option of generate in its help", async () => {
     const root = await project();
     const help = await cli(["generate", "--help"], root);
@@ -792,12 +807,12 @@ describe("bounda forgotten and bounda forget", () => {
     const partial = await cli(["forget", memberId, "--category", "default"], fixture);
     expect(partial).toMatchObject({ code: EXIT_OK, stdout: `forgot default of ${memberId}\n` });
     const objected = await cli(
-      ["forget", memberId, "--category", "default", "--objection"],
+      ["forget", memberId, "--category", "default", "--category", "default", "--objection"],
       fixture,
     );
     expect(objected).toMatchObject({
       code: EXIT_OK,
-      stdout: `forgot default of ${memberId} after their objection\n`,
+      stdout: `forgot default, default of ${memberId} after their objection\n`,
     });
     const whole = await cli(["forget", memberId, "--actor", "operator-1"], fixture);
     expect(whole).toMatchObject({ code: EXIT_OK, stdout: `forgot ${memberId}\n` });
