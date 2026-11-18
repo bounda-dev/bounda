@@ -12,7 +12,7 @@ import { buildReadModels } from "../read-model/build-read-models.ts";
 import { tracer } from "../telemetry.ts";
 import { keylessSealing, unrecordedAccess } from "../test-support.ts";
 import { buildQueries } from "./build-queries.ts";
-import { createQueryRunner } from "./runner.ts";
+import { createQueryRunner, type QueryVouch } from "./runner.ts";
 
 interface Row {
   readonly orderId: string;
@@ -105,7 +105,7 @@ const registry: Registry = {
   },
 };
 
-const setup = async (ports: ModulePorts = {}) => {
+const setup = async (ports: ModulePorts = {}, vouch?: QueryVouch) => {
   const config = resolveConfig({ storage: memory() });
   const readModels = await buildReadModels({ registry, config, logger: silentLogger });
   const table = readModels.byName.orderSummary?.storage.table as unknown as Table<Row>;
@@ -121,10 +121,42 @@ const setup = async (ports: ModulePorts = {}) => {
     recordAccess: unrecordedAccess,
     errorText: "omit",
     standing: async () => 0,
+    ...(vouch === undefined ? {} : { vouch }),
   });
 };
 
 describe("query runner", () => {
+  it("vouches for what a query reads before it reads, once its handler returns, and before a handler with ports runs", async () => {
+    const vouched: string[] = [];
+    const vouch: QueryVouch = {
+      before: async (readModel) => {
+        vouched.push(`before ${readModel}`);
+      },
+      after: async (readModel) => {
+        vouched.push(`after ${readModel}`);
+      },
+    };
+    const plain = await setup({}, vouch);
+    await plain.run({ type: "GetOrder", payload: { orderId: "o-2" } });
+    expect(vouched).toEqual(["before orderSummary", "after orderSummary"]);
+    vouched.length = 0;
+    const withPorts = await setup({ orderSummary: { rates: async () => 2 } }, vouch);
+    await withPorts.run({ type: "GetOrderInUsd", payload: { orderId: "o-2" } });
+    expect(vouched).toEqual(["before orderSummary", "after orderSummary", "after orderSummary"]);
+    const refusing = await setup(
+      {},
+      {
+        before: async () => undefined,
+        after: async () => {
+          throw new Error("went back");
+        },
+      },
+    );
+    await expect(refusing.run({ type: "GetOrder", payload: { orderId: "o-2" } })).rejects.toThrow(
+      "went back",
+    );
+  });
+
   it("runs repository then handler with the validated payload", async () => {
     const runner = await setup();
     expect(await runner.run({ type: "GetOrder", payload: { orderId: "o-2" } })).toEqual({

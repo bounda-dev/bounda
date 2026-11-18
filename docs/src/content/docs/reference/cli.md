@@ -355,7 +355,8 @@ restored /backups/app.db in place, in one transaction
 Every table, index and trigger becomes the copy's, Bounda's tables brought to the versions the
 database held. A copy that is missing, does not open, is another tenant's, or that a newer version
 of Bounda migrated is refused, and nothing changes. With a forget ledger, its mark tells the app,
-and the command says so; without one, it then records the restore as `bounda restored` does. A
+and the command says so; without one, it then records the restore as `bounda restored` does, and an
+instance that found it on its own first counts it too, so `bounda status` may count it twice. A
 storage on another engine is refused: restore it with the engine's tools, as
 [Backups and restores](/guides/backups/#restoring) says. Options: `--root`, `--config`,
 `--registry`, `--tenant`, `--error-text`, as for `bounda rebuild`. Exit codes: `0` restored, `2`

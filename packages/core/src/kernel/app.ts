@@ -1062,8 +1062,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       // The dispatcher is built further down; a query only asks once the app is assembled.
       standing: (subscriber) => dispatcher.positionOf(subscriber),
       vouch: {
-        before: (readModel) => vouchBefore([readModel])(),
-        after: (readModel) => vouchAfter(readModel)(),
+        before: (readModel) => vouchBefore(readModel),
+        after: (readModel) => vouchAfter(readModel),
       },
     });
     const processes = createProcessRunner({
@@ -1298,18 +1298,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // What a read hands out is vouched for: a read model of a database not back where it stood is
     // refused, and a strict app checks after every read, the newest event seen included, that the
     // database did not go back meanwhile and that the ledger is reconciled with any restore found.
-    const vouchBefore = (names: readonly string[]) => async (): Promise<void> => {
+    const vouchBefore = async (...names: readonly string[]): Promise<void> => {
       for (const name of names) await readModelDatabases.vouch(name);
     };
     const readModelNames = Object.keys(readModels.byName);
     // An export's records, each vouched for once read, before it is handed out.
     async function* vouchedRecords<Part>(records: AsyncIterable<Part>): AsyncGenerator<Part> {
       for await (const part of records) {
-        await vouchAfter(...readModelNames)();
+        await vouchAfter(...readModelNames);
         yield part;
       }
-      // The header, read before any record.
-      await vouchAfter(...readModelNames)();
     }
     // What the runtime keeps of handlers that failed opens personal data too: its reads are vouched
     // for as a query's are.
@@ -1317,7 +1315,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       <Args extends unknown[], Read>(read: (...args: Args) => Promise<Read>) =>
       async (...args: Args): Promise<Read> => {
         const value = await read(...args);
-        await vouchAfter()();
+        await vouchAfter();
         return value;
       };
     // A restore is settled once the ledger is reconciled with it and the read models projected
@@ -1330,22 +1328,20 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         unreconciled = null;
       } else unreconciled = { cause: result.failed };
     };
-    const vouchAfter =
-      (...names: readonly string[]) =>
-      async (): Promise<void> => {
-        if (!strict) return;
-        const found = await restores.check(clock.now());
-        // Finding it marks it unreconciled, as every restore this instance learns of.
-        if (found !== null) await restartFound(found);
-        if (unreconciled !== null) {
-          settling ??= settleRestore().finally(() => {
-            settling = null;
-          });
-          await settling;
-          throw new RestoreUnreconciledError(unreconciled?.cause);
-        }
-        for (const name of names) await readModelDatabases.vouch(name, { fresh: true });
-      };
+    const vouchAfter = async (...names: readonly string[]): Promise<void> => {
+      if (!strict) return;
+      const found = await restores.check(clock.now());
+      // Finding it marks it unreconciled, as every restore this instance learns of.
+      if (found !== null) await restartFound(found);
+      if (unreconciled !== null) {
+        settling ??= settleRestore().finally(() => {
+          settling = null;
+        });
+        await settling;
+        throw new RestoreUnreconciledError(unreconciled?.cause);
+      }
+      for (const name of names) await readModelDatabases.vouch(name, { fresh: true });
+    };
     // A pass checks first whether the tenant was forgotten elsewhere, once the check exists.
     let tenantCheck: () => Promise<void> = async () => undefined;
     const dispatcher = createDispatcher({
@@ -1842,7 +1838,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             persons: [personId],
             outcome,
           });
-        await vouchBefore(readModelNames)();
+        await vouchBefore(...readModelNames);
         const streamed = await recorded(
           // Only a failure is recorded here: what resolves is recorded as it starts and ends.
           async (outcome) => {
@@ -1862,6 +1858,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               personId,
             }),
         );
+        // The header is read: vouched for before it is handed out, as each record is.
+        await vouchAfter(...readModelNames);
         return recordedExport({
           streamed: { ...streamed, records: vouchedRecords(streamed.records) },
           record,

@@ -137,6 +137,29 @@ describe("createReadModelDatabases", () => {
     expect(resets).toEqual([PROJECTION]);
   });
 
+  it("reads how far a subscriber reached again once its checkpoint went back, as another instance may have moved it", async () => {
+    const { database, checkpoints } = databaseOf();
+    const reached = createMemoryCheckpointStore();
+    const { events } = streamOf(9);
+    await standAt(checkpoints, PROJECTION, 4);
+    const watch = createReadModelDatabases({
+      databases: [database],
+      events,
+      reached,
+      logger: silentLogger,
+    });
+    expect(await watch.check()).toBe(true);
+    // Another instance found it astray, reset it, and waits for the stream's head.
+    await reached.set(reachedOf(PROJECTION), 9);
+    await checkpoints.set(PROJECTION, 0);
+    await checkpoints.remove(streamMarkOf(PROJECTION));
+    expect(await watch.check()).toBe(false);
+    await standAt(checkpoints, PROJECTION, 5);
+    expect(await watch.check()).toBe(false);
+    await standAt(checkpoints, PROJECTION, 9);
+    expect(await watch.check()).toBe(true);
+  });
+
   it("names no read model when the database's copy of who is restricted is reset", async () => {
     const { database, checkpoints, resets } = databaseOf();
     const { events } = streamOf(5);

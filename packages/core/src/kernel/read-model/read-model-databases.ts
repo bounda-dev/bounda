@@ -130,6 +130,9 @@ export const createReadModelDatabases: CreateReadModelDatabasesFunction = ({
       const position = rows.get(subscriber.name) ?? 0;
       const mark = rows.get(streamMarkOf(subscriber.name));
       const known = verified.get(subscriber.name);
+      // A checkpoint that went back since this instance read it: how far it reached is read again,
+      // as another instance may have moved it since.
+      if (known !== undefined && position < known.position) furthest.delete(subscriber.name);
       const same = known?.position === position && known.mark === mark;
       if (position > 0 && !same && !(await holds(position, mark))) {
         await subscriber.reset();

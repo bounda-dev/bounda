@@ -73,7 +73,7 @@ export interface CreateQueryRunnerArgs {
   readonly standing: (subscriber: string) => Promise<number>;
   /**
    * Throw to refuse what a query of the read model would hand out: `before` it reads, and `after`
-   * each of its reads, the repository's and the handler's.
+   * it read, once its handler returns and, for a handler with ports, before the handler runs.
    */
   readonly vouch?: QueryVouch;
 }
@@ -161,7 +161,6 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
                   table,
                   actor,
                 });
-          await vouch?.after(query.readModel);
           const args = {
             query: { type, payload: parsed },
             repositoryData,
@@ -186,6 +185,8 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
             }) ??
             ports[query.readModel] ??
             {};
+          // A handler that can send what it reads out waits for its reads to be vouched for.
+          if (Object.keys(readModelPorts).length > 0) await vouch?.after(query.readModel);
           const answer = await query.handler(
             Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
           );
