@@ -56,6 +56,7 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
   concurrent = true,
 }) => {
   describe("restricted reads contract", () => {
+    let adapter: Adapter;
     let orders: ReadModelStorage<RestrictedRow>;
     let ids: ReadModelStorage<{ readonly customerId: string; readonly total: number }>;
     let plain: ReadModelStorage<{ readonly sku: string; readonly customerId: string }>;
@@ -68,7 +69,7 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       });
 
     beforeEach(async () => {
-      const adapter: Adapter = await create();
+      adapter = await create();
       orders = await adapter.createReadModel<RestrictedRow>({
         name: "orders",
         fields: restrictedFields,
@@ -231,6 +232,11 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       );
       await write((store) => store.clear());
       expect(await orders.restricted.among(["ana", "bo", "cy"], "unrestricted")).toEqual(new Set());
+      expect(
+        (await adapter.inspect())
+          .filter(({ store }) => store === "restrictedPersons" || store === "restrictedPositions")
+          .flatMap(({ rows }) => rows),
+      ).toEqual([]);
       expect(await found(orders.restricted.unrestricted)).toEqual([
         "o-1",
         "o-2",

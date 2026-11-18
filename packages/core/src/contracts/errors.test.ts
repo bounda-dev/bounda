@@ -11,7 +11,9 @@ import {
   ForgetLedgerUnavailableError,
   ForgetLedgerUnreconciledError,
   NotFoundError,
+  ReadModelRestoringError,
   RebuildSupersededError,
+  RestoreUnreconciledError,
   rejectionOf,
   ScheduledClaimLostError,
   ValidationError,
@@ -94,6 +96,27 @@ describe("errors", () => {
     expect(error.code).toBe("REBUILD_SUPERSEDED");
     expect(error.readModel).toBe("orderSummary");
     expect(error.message).toContain('"orderSummary"');
+  });
+
+  it("name the read model a restore keeps from serving", () => {
+    const error = new ReadModelRestoringError("orderSummary");
+    expect(error.code).toBe("READ_MODEL_RESTORING");
+    expect(error.name).toBe("ReadModelRestoringError");
+    expect(error.readModel).toBe("orderSummary");
+    expect(error.message).toBe(
+      'Read model "orderSummary" was restored from another moment than the stream, and serves once it is projected back to where it stood',
+    );
+  });
+
+  it("say a strict read waits for the ledger, with its error only when it failed", () => {
+    const waiting = new RestoreUnreconciledError();
+    expect(waiting.code).toBe("RESTORE_UNRECONCILED");
+    expect(waiting.message).toBe(
+      "The database was restored from an earlier copy and the forget ledger is not reconciled with it yet: runtime.personalData.forgetLedger.strict hands out nothing read from it until it is",
+    );
+    expect("cause" in waiting).toBe(false);
+    const down = new Error("the ledger is down");
+    expect(new RestoreUnreconciledError(down).cause).toBe(down);
   });
 
   it("name the scheduled command whose claim moved", () => {

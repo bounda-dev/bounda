@@ -32,22 +32,21 @@ export interface RestoreSqliteCopyFunction {
 interface SchemaObject {
   readonly type: string;
   readonly name: string;
-  readonly sql: string | null;
+  readonly sql: string;
 }
 
-// SQLite's own objects, but for the counters of AUTOINCREMENT tables, which are rows to copy.
+// Every object but SQLite's own, whose statements are all its sql holds; the counters of
+// AUTOINCREMENT tables are rows to copy.
 const SCHEMA_QUERY =
   'SELECT "type", "name", "sql" FROM sqlite_master WHERE "name" NOT LIKE \'sqlite_%\' ORDER BY rowid';
 const SEQUENCE = "sqlite_sequence";
 const PAGE_ROWS = 500;
-// Below every build's limit on the parameters of one statement.
-const MAX_PARAMETERS = 900;
 
 const schemaOf = async (db: Pick<SqlExecutor, "all">): Promise<readonly SchemaObject[]> =>
   (await db.all(SCHEMA_QUERY, [])).map(({ type, name, sql }) => ({
     type: String(type),
     name: String(name),
-    sql: sql === null ? null : String(sql),
+    sql: String(sql),
   }));
 
 const hasTable = async (db: Pick<SqlExecutor, "all">, name: string): Promise<boolean> =>
@@ -61,13 +60,14 @@ const tenantOf = async (db: Pick<SqlExecutor, "all">, prefix: string): Promise<s
   return row === undefined ? null : String(row.tenant);
 };
 
-// A table's rows in pages: by rowid where it has one, so a page costs the same however far in.
+// A table's rows in pages: by rowid where it has one, so a page costs the same however far in,
+// under an alias no column takes.
 async function* rowsOf(
   copy: Pick<SqlExecutor, "all">,
   table: SchemaObject,
 ): AsyncGenerator<readonly Record<string, unknown>[]> {
   const quoted = quoteName(table.name);
-  if (/\bWITHOUT\s+ROWID\b/i.test(table.sql ?? "")) {
+  if (/\bWITHOUT\s+ROWID\b/i.test(table.sql)) {
     for (let offset = 0; ; offset += PAGE_ROWS) {
       const page = await copy.all(`SELECT * FROM ${quoted} LIMIT ? OFFSET ?`, [PAGE_ROWS, offset]);
       if (page.length === 0) return;
@@ -79,31 +79,24 @@ async function* rowsOf(
   let page = await copy.all(`${select} ORDER BY rowid LIMIT ?`, [PAGE_ROWS]);
   while (page.length > 0) {
     yield page.map(({ [at]: _rowid, ...row }) => row);
+    const last = page[page.length - 1] as Record<string, unknown>;
     page = await copy.all(`${select} WHERE rowid > ? ORDER BY rowid LIMIT ?`, [
-      page[page.length - 1]?.[at],
+      last[at],
       PAGE_ROWS,
     ]);
   }
 }
 
-const insertRows = async (
+const insertRow = (
   tx: SqlTransaction,
   table: string,
-  rows: readonly Record<string, unknown>[],
+  row: Readonly<Record<string, unknown>>,
 ): Promise<void> => {
-  const [first] = rows;
-  if (first === undefined) return;
-  const columns = Object.keys(first);
-  const perStatement = Math.max(1, Math.floor(MAX_PARAMETERS / Math.max(1, columns.length)));
-  const into = `INSERT INTO ${quoteName(table)} (${columns.map(quoteName).join(", ")}) VALUES `;
-  const tuple = `(${columns.map(() => "?").join(", ")})`;
-  for (let start = 0; start < rows.length; start += perStatement) {
-    const chunk = rows.slice(start, start + perStatement);
-    await tx.run(
-      `${into}${chunk.map(() => tuple).join(", ")}`,
-      chunk.flatMap((row) => columns.map((column) => row[column] ?? null)),
-    );
-  }
+  const columns = Object.keys(row);
+  return tx.run(
+    `INSERT INTO ${quoteName(table)} (${columns.map(quoteName).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+    columns.map((column) => row[column]),
+  );
 };
 
 // The statements of an open transaction as a database, so the migrations run inside it.
@@ -141,23 +134,28 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
     // A foreign key between two tables is checked once both hold the copy's rows.
     await tx.run("PRAGMA defer_foreign_keys = ON", []);
     const current = await schemaOf(tx);
-    for (const type of ["view", "trigger", "table"]) {
+    // A table takes its indexes and triggers with it.
+    for (const type of ["view", "table"]) {
       for (const object of current.filter((candidate) => candidate.type === type)) {
-        await tx.run(`DROP ${type.toUpperCase()} IF EXISTS ${quoteName(object.name)}`, []);
+        await tx.run(`DROP ${type} ${quoteName(object.name)}`, []);
       }
     }
     const copied = await schemaOf(copy);
     const tables = copied.filter(({ type }) => type === "table");
-    for (const { sql } of tables) if (sql !== null) await tx.run(sql, []);
+    for (const { sql } of tables) await tx.run(sql, []);
     for (const table of tables) {
-      for await (const page of rowsOf(copy, table)) await insertRows(tx, table.name, page);
+      for await (const page of rowsOf(copy, table)) {
+        for (const row of page) await insertRow(tx, table.name, row);
+      }
     }
     if (await hasTable(copy, SEQUENCE)) {
       await tx.run(`DELETE FROM ${SEQUENCE}`, []);
-      await insertRows(tx, SEQUENCE, await copy.all(`SELECT * FROM ${SEQUENCE}`, []));
+      for (const row of await copy.all(`SELECT * FROM ${SEQUENCE}`, [])) {
+        await insertRow(tx, SEQUENCE, row);
+      }
     }
     // After the rows, so no trigger writes what the copy holds already.
-    for (const { type, sql } of copied) if (type !== "table" && sql !== null) await tx.run(sql, []);
+    for (const { type, sql } of copied) if (type !== "table") await tx.run(sql, []);
     await migrateSqlite({
       db: boundTo(tx),
       prefix,

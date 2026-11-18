@@ -1747,6 +1747,10 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
             cause: { message: "the ledger is down" },
           });
         }
+        // An export of nobody reads the header alone.
+        await expect(first.app.exportPersonalData("nobody")).rejects.toBeInstanceOf(
+          RestoreUnreconciledError,
+        );
         // What the runtime keeps of handlers that failed opens personal data as a query does.
         await expect(first.app.deadLetters.list()).rejects.toBeInstanceOf(RestoreUnreconciledError);
         await expect(first.app.deadLetters.get("none")).rejects.toBeInstanceOf(

@@ -5,6 +5,7 @@ import { resolveConfig } from "../../config/schema.ts";
 import type { Config } from "../../config/types.ts";
 import { systemClock } from "../../contracts/clock.ts";
 import { ConfigurationError, TenantForgottenError } from "../../contracts/errors.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { checkActor } from "../../contracts/metadata.ts";
 import type { Registry } from "../../modules/registry.ts";
@@ -370,8 +371,6 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
     });
     const { batchSize } = config.runtime.dispatcher;
     let { position } = rebuild;
-    // The id of the event at `position`, once a batch reached it.
-    let last: string | undefined;
     const budget = maxEvents ?? Number.POSITIVE_INFINITY;
     let events = 0;
     try {
@@ -431,7 +430,6 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
         });
         events += done;
         position = batch[done - 1]?.position ?? position;
-        last = batch[done - 1]?.id ?? last;
         logger.debug("read model rebuild progressed", { readModel: name, position, events });
       }
       const subscriber = projectionSubscriberName(name);
@@ -441,7 +439,11 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
       const at =
         own === undefined || own === config.storage || position === 0
           ? undefined
-          : (last ?? (await eventStore.readAll({ afterPosition: position - 1, limit: 1 }))[0]?.id);
+          : (
+              (
+                await eventStore.readAll({ afterPosition: position - 1, limit: 1 })
+              )[0] as StoredEvent
+            ).id;
       // The table it puts in place is as this layout and key would settle it.
       await rebuild.commit({
         subscriber,

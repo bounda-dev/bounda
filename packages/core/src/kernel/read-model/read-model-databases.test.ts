@@ -43,18 +43,19 @@ const streamOf = (count: number) => {
 // A database of the orders read model and its copy of who is restricted, whose resets are told.
 const databaseOf = (checkpoints: CheckpointStore = createMemoryCheckpointStore()) => {
   const resets: string[] = [];
-  const database: WatchedDatabase = {
-    readModels: ["orders"],
-    subscribers: [
-      { name: PROJECTION, readModel: "orders" },
-      { name: RESTRICTIONS, readModel: null },
-    ],
-    checkpoints,
-    reset: async ({ name }: WatchedSubscriber) => {
+  const subscriber = (name: string, readModel: string | null): WatchedSubscriber => ({
+    name,
+    readModel,
+    reset: async () => {
       resets.push(name);
       await checkpoints.set(name, 0);
       await checkpoints.remove(streamMarkOf(name));
     },
+  });
+  const database: WatchedDatabase = {
+    readModels: ["orders"],
+    subscribers: [subscriber(PROJECTION, "orders"), subscriber(RESTRICTIONS, null)],
+    checkpoints,
   };
   return { database, checkpoints, resets };
 };
@@ -120,6 +121,22 @@ describe("createReadModelDatabases", () => {
     },
   );
 
+  it("compares again a checkpoint that stands where it stood under another mark", async () => {
+    const { database, checkpoints, resets } = databaseOf();
+    const { events } = streamOf(5);
+    await standAt(checkpoints, PROJECTION, 3);
+    const watch = createReadModelDatabases({
+      databases: [database],
+      events,
+      reached: createMemoryCheckpointStore(),
+      logger: silentLogger,
+    });
+    expect(await watch.check()).toBe(true);
+    await checkpoints.set(streamMarkOf(PROJECTION), eventMark("e-9"));
+    expect(await watch.check()).toBe(false);
+    expect(resets).toEqual([PROJECTION]);
+  });
+
   it("names no read model when the database's copy of who is restricted is reset", async () => {
     const { database, checkpoints, resets } = databaseOf();
     const { events } = streamOf(5);
@@ -153,8 +170,19 @@ describe("createReadModelDatabases", () => {
     await expect(watch.vouch("orders")).rejects.toBeInstanceOf(ReadModelRestoringError);
     expect(await reached.get(reachedOf(PROJECTION))).toBe(5);
     await standAt(checkpoints, PROJECTION, 6);
+    const listing = checkpoints.list;
+    let listed = 0;
+    Object.assign(checkpoints, {
+      list: () => {
+        listed += 1;
+        return listing();
+      },
+    });
     await watch.vouch("orders");
     expect(await reached.get(reachedOf(PROJECTION))).toBe(6);
+    // Served again: a vouch reads nothing more.
+    await watch.vouch("orders");
+    expect(listed).toBe(1);
   });
 
   it("compares a checkpoint with the stream only when it moved, or once the stream went back", async () => {
@@ -176,13 +204,23 @@ describe("createReadModelDatabases", () => {
     await standAt(checkpoints, PROJECTION, 4);
     await watch.check();
     expect(reads.count).toBe(2);
-    // Another instance's reach, read again once the stream went back.
+    // Another instance's reach, read again only once the stream went back.
+    const reading = reached.get;
+    let readsOfReached = 0;
+    Object.assign(reached, {
+      get: (subscriber: string) => {
+        readsOfReached += 1;
+        return reading(subscriber);
+      },
+    });
     await reached.set(reachedOf(PROJECTION), 5);
     await watch.check();
     expect(reads.count).toBe(2);
+    expect(readsOfReached).toBe(0);
     watch.restored();
     expect(await watch.check()).toBe(false);
     expect(reads.count).toBe(3);
+    expect(readsOfReached).toBe(2);
   });
 
   it("leaves a served database unread unless asked fresh, and a read model of the storage's database alone", async () => {
@@ -320,7 +358,12 @@ describe("watchedDatabasesOf", () => {
       storage,
       logger: silentLogger,
     });
-    expect(watched.map(({ readModels: names, subscribers }) => ({ names, subscribers }))).toEqual([
+    expect(
+      watched.map(({ readModels: names, subscribers }) => ({
+        names,
+        subscribers: subscribers.map(({ name, readModel }) => ({ name, readModel })),
+      })),
+    ).toEqual([
       {
         names: ["orders", "totals"],
         subscribers: [
@@ -370,7 +413,7 @@ describe("watchedDatabasesOf", () => {
         }
       },
     });
-    for (const subscriber of database.subscribers) await database.reset(subscriber);
+    for (const subscriber of database.subscribers) await subscriber.reset();
     expect(await orders.storage.table.findMany()).toEqual([]);
     expect(await orders.storage.restricted.among(["ana"], "unrestricted")).toEqual(new Set());
     expect(await orders.storage.checkpointStore.list()).toEqual(
@@ -389,5 +432,37 @@ describe("watchedDatabasesOf", () => {
       "rebuilding:orders",
       "restrictions:orders",
     ]);
+  });
+
+  it("waits for the subscriber's lock to reset the database's copy of who is restricted", async () => {
+    const reports = memory();
+    const orders = await readModelOn(reports, "orders");
+    const [database] = watchedDatabasesOf({
+      readModels: [orders],
+      hosts: [orders],
+      adapterOf: () => reports,
+      storage: memory(),
+      logger: silentLogger,
+    });
+    const restrictions = database?.subscribers.find(({ readModel }) => readModel === null);
+    let release = (): void => undefined;
+    const holding = new Promise<void>((started) => {
+      void orders.storage.transact({
+        subscriber: "restrictions:orders",
+        wait: true,
+        work: async ({ restrictedPersons }) => {
+          await restrictedPersons.request("ana", [{ ground: "legal-claims", categories: null }]);
+          await new Promise<void>((resolve) => {
+            release = resolve;
+            started();
+          });
+        },
+      });
+    });
+    await holding;
+    const reset = restrictions?.reset();
+    release();
+    await reset;
+    expect(await orders.storage.restricted.among(["ana"], "unrestricted")).toEqual(new Set());
   });
 });

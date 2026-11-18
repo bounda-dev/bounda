@@ -87,6 +87,7 @@ import { marksPersonalFields } from "./personal-data/marks.ts";
 import {
   createForgetLedgerReconciliation,
   type ForgetAgainEntry,
+  type ForgetLedgerReconciliation,
   forgetAgain,
   NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
@@ -1058,7 +1059,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       standing: (subscriber) => dispatcher.positionOf(subscriber),
       vouch: {
         before: (readModel) => vouchBefore([readModel])(),
-        after: (readModel) => vouchAfter([readModel])(),
+        after: (readModel) => vouchAfter(readModel)(),
       },
     });
     const processes = createProcessRunner({
@@ -1253,14 +1254,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             logger,
             errorText,
           });
-    // Why the ledger could not be reconciled with the restore, for what a strict app refuses.
-    const reconcileAfterRestore = async () => {
-      const result = await reconciliation?.reconcile(clock.now());
-      if (result !== undefined && typeof result !== "number" && unreconciled !== null) {
-        unreconciled = { cause: result.failed };
-      }
-      return result;
-    };
     // A restore found outside a worker's pass: the jobs start over and the ledger is reconciled
     // at once, unless this instance's worker handled it already. Resolves how many it forgot. It
     // reads the worker, built after the dispatcher, only when called: no pass runs before.
@@ -1271,7 +1264,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       if (forgetLedger === null) {
         await written.recipients.presumeThrough(await written.eventStore.lastPosition());
       }
-      const forgotten = await reconcileAfterRestore();
+      const forgotten = await reconciliation?.reconcile(clock.now());
       return typeof forgotten === "number" ? forgotten : 0;
     };
     // The databases that hold read models and not the stream, each restored apart from it.
@@ -1307,14 +1300,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const readModelNames = Object.keys(readModels.byName);
     // An export's records, each vouched for once read, before it is handed out.
     async function* vouchedRecords<Part>(records: AsyncIterable<Part>): AsyncGenerator<Part> {
-      let none = true;
       for await (const part of records) {
-        none = false;
-        await vouchAfter(readModelNames)();
+        await vouchAfter(...readModelNames)();
         yield part;
       }
-      // The header alone was read.
-      if (none) await vouchAfter(readModelNames)();
+      // The header, read before any record.
+      await vouchAfter(...readModelNames)();
     }
     // What the runtime keeps of handlers that failed opens personal data too: its reads are vouched
     // for as a query's are.
@@ -1322,32 +1313,35 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       <Args extends unknown[], Read>(read: (...args: Args) => Promise<Read>) =>
       async (...args: Args): Promise<Read> => {
         const value = await read(...args);
-        await vouchAfter([])();
+        await vouchAfter()();
         return value;
       };
     // A restore is settled once the ledger is reconciled with it and the read models projected
     // what that committed again; what was read before then is refused.
     const settleRestore = async (): Promise<void> => {
-      const result = await reconcileAfterRestore();
-      if (typeof result !== "number") return;
-      await dispatcher.catchUp("projection");
-      unreconciled = null;
+      // A strict app has a ledger.
+      const result = await (reconciliation as ForgetLedgerReconciliation).reconcile(clock.now());
+      if (typeof result === "number") {
+        await dispatcher.catchUp("projection");
+        unreconciled = null;
+      } else unreconciled = { cause: result.failed };
     };
-    const vouchAfter = (names: readonly string[]) => async (): Promise<void> => {
-      if (!strict) return;
-      const found = await restores.check(clock.now());
-      if (found !== null) await restartFound(found);
-      if (found !== null || unreconciled !== null) {
+    const vouchAfter =
+      (...names: readonly string[]) =>
+      async (): Promise<void> => {
+        if (!strict) return;
+        const found = await restores.check(clock.now());
+        // Finding it marks it unreconciled, as every restore this instance learns of.
+        if (found !== null) await restartFound(found);
         if (unreconciled !== null) {
           settling ??= settleRestore().finally(() => {
             settling = null;
           });
           await settling;
+          throw new RestoreUnreconciledError(unreconciled?.cause);
         }
-        throw new RestoreUnreconciledError(unreconciled?.cause);
-      }
-      for (const name of names) await readModelDatabases.vouch(name, { fresh: true });
-    };
+        for (const name of names) await readModelDatabases.vouch(name, { fresh: true });
+      };
     // A pass checks first whether the tenant was forgotten elsewhere, once the check exists.
     let tenantCheck: () => Promise<void> = async () => undefined;
     const dispatcher = createDispatcher({
@@ -1624,7 +1618,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }
         await dispatcher.catchUp("projection");
       }
-      if (typeof forgotten === "number") unreconciled = null;
+      // Reconciled, or the start failed already.
+      unreconciled = null;
     }
     // Nor before a read model whose database of its own was restored apart from the stream is back
     // where it stood, or projected again from the start when it holds what another stream wrote.

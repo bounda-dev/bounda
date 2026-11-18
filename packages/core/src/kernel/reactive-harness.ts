@@ -236,6 +236,8 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
             logger,
             errorText: config.runtime.telemetry.errorText,
             budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+            // The harness does not watch a read model's database for a restore.
+            marked: false,
           }),
         ),
         ...restrictedPersonsHosts({

@@ -19,6 +19,11 @@ export interface WatchedSubscriber {
    * restricted, which every read model there with a field marked `.person()` reads.
    */
   readonly readModel: string | null;
+  /**
+   * Empties what it wrote and moves its checkpoint, and its mark, back to the start, in one
+   * transaction holding its lock, so it projects the stream again from the start.
+   */
+  reset(): Promise<void>;
 }
 
 /**
@@ -29,11 +34,6 @@ export interface WatchedDatabase {
   readonly readModels: readonly string[];
   readonly subscribers: readonly WatchedSubscriber[];
   readonly checkpoints: CheckpointStore;
-  /**
-   * Empties what the subscriber wrote and moves its checkpoint, and its mark, back to the start,
-   * in one transaction holding its lock, so it projects the stream again from the start.
-   */
-  readonly reset: (subscriber: WatchedSubscriber) => Promise<void>;
 }
 
 export interface ReadModelDatabases {
@@ -98,7 +98,6 @@ export const createReadModelDatabases: CreateReadModelDatabasesFunction = ({
   const furthest = new Map<string, number>();
 
   const holds = async (position: number, mark: number | undefined): Promise<boolean> => {
-    if (mark === undefined) return false;
     const [event] = await events.readAll({ afterPosition: position - 1, limit: 1 });
     return event?.position === position && eventMark(event.id) === mark;
   };
@@ -133,8 +132,7 @@ export const createReadModelDatabases: CreateReadModelDatabasesFunction = ({
       const known = verified.get(subscriber.name);
       const same = known?.position === position && known.mark === mark;
       if (position > 0 && !same && !(await holds(position, mark))) {
-        await database.reset(subscriber);
-        verified.delete(subscriber.name);
+        await subscriber.reset();
         await raise(subscriber.name, await events.lastPosition());
         logger.warn(
           "a read model's database holds what another copy of the stream wrote: it is projected again from the start, and serves once it is back",
@@ -218,42 +216,44 @@ export const watchedDatabasesOf: WatchedDatabasesOfFunction = ({
   for (const readModel of readModels) {
     const adapter = adapterOf(readModel.name);
     if (adapter === storage) continue;
-    grouped.set(adapter, [...(grouped.get(adapter) ?? []), readModel]);
+    const held = grouped.get(adapter);
+    if (held === undefined) grouped.set(adapter, [readModel]);
+    else held.push(readModel);
   }
-  return [...grouped].flatMap(([adapter, held]) => {
-    const [first] = held;
-    if (first === undefined) return [];
+  return [...grouped].map(([adapter, held]) => {
     const host = hosts.find(({ name }) => held.some((readModel) => readModel.name === name));
-    const projections = new Map(
-      held.map((readModel) => [projectionSubscriberName(readModel.name), readModel]),
-    );
-    return [
-      {
-        readModels: held.map(({ name }) => name),
-        checkpoints: first.storage.checkpointStore,
-        subscribers: [
-          ...held.map(({ name }) => ({ name: projectionSubscriberName(name), readModel: name })),
-          ...(host === undefined
-            ? []
-            : [{ name: restrictedPersonsSubscriberName(host.name), readModel: null }]),
-        ],
-        reset: async ({ name }: WatchedSubscriber) => {
-          const readModel = projections.get(name);
-          if (readModel !== undefined) {
-            await resetReadModel({ readModel, adapter, logger });
-            return;
-          }
-          await host?.storage.transact({
-            subscriber: name,
-            wait: true,
-            work: async ({ restrictedPersons, checkpointStore }) => {
-              await restrictedPersons.clear();
-              await checkpointStore.remove(streamMarkOf(name));
-              await checkpointStore.set(name, 0);
+    const restrictions: readonly WatchedSubscriber[] =
+      host === undefined
+        ? []
+        : [
+            {
+              name: restrictedPersonsSubscriberName(host.name),
+              readModel: null,
+              reset: async () => {
+                const name = restrictedPersonsSubscriberName(host.name);
+                await host.storage.transact({
+                  subscriber: name,
+                  wait: true,
+                  work: async ({ restrictedPersons, checkpointStore }) => {
+                    await restrictedPersons.clear();
+                    await checkpointStore.remove(streamMarkOf(name));
+                    await checkpointStore.set(name, 0);
+                  },
+                });
+              },
             },
-          });
-        },
-      },
-    ];
+          ];
+    return {
+      readModels: held.map(({ name }) => name),
+      checkpoints: (held[0] as Pick<ReadModelRuntime, "storage">).storage.checkpointStore,
+      subscribers: [
+        ...held.map((readModel) => ({
+          name: projectionSubscriberName(readModel.name),
+          readModel: readModel.name,
+          reset: () => resetReadModel({ readModel, adapter, logger }),
+        })),
+        ...restrictions,
+      ],
+    };
   });
 };

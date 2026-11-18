@@ -296,7 +296,7 @@ export interface CreateProjectionSubscriberArgs {
    * Whether the read model lives in a database of its own, where each checkpoint is marked with
    * the event it stands at, so a restore of either database is told apart.
    */
-  readonly marked?: boolean;
+  readonly marked: boolean;
 }
 
 export interface CreateProjectionSubscriberFunction {
@@ -322,7 +322,7 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   errorText,
   tracer,
   budget,
-  marked = false,
+  marked,
 }) => {
   const name = projectionSubscriberName(readModel.name);
   const { storage, layout } = readModel;
