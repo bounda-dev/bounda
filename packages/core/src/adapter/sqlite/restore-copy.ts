@@ -1,11 +1,19 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
+import {
+  RESTORE_GENERATION,
+  RESTORE_TAKEN_BY_FIRST,
+  RESTORES_FOUND,
+} from "../../kernel/shared/restores.ts";
+import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
+import { sqliteDialect } from "../sql/dialect.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { quoteName } from "../sql/inspection.ts";
 import type { SchemaScope } from "../sql/migrations.ts";
 import { readSchemaVersions, schemaMigrationsTableFor } from "../sql/migrations.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { isMissingSqliteTable, migrateSqlite } from "./migrations.ts";
+import { storageTablesFor } from "./schema.ts";
 
 /**
  * A copy of a SQLite database, open for reading: nothing else writes it while it is restored.
@@ -131,6 +139,15 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
         isMissingTable: isMissingSqliteTable,
       })
     ).filter(({ version }) => version > 0);
+    const checkpoints = createSqlCheckpointStore({
+      db: tx,
+      table: storageTablesFor(prefix).checkpoints,
+      dialect: sqliteDialect,
+    });
+    const counted = held.some(({ scope }) => scope === "checkpoints");
+    const before = counted
+      ? await Promise.all([checkpoints.get(RESTORES_FOUND), checkpoints.get(RESTORE_GENERATION)])
+      : [0, 0];
     // A foreign key between two tables is checked once both hold the copy's rows.
     await tx.run("PRAGMA defer_foreign_keys = ON", []);
     const current = await schemaOf(tx);
@@ -161,4 +178,13 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
       prefix,
       scopes: scopes.filter(({ scope }) => held.some((version) => version.scope === scope)),
     });
+    // Counted here, past what the copy and the database held, for the first instance that finds it
+    // to take: a running one by the count it read, a stopped one when it starts, ledger or not.
+    if (counted) {
+      const restores = Math.max(before[0] ?? 0, await checkpoints.get(RESTORES_FOUND)) + 1;
+      const generation = Math.max(before[1] ?? 0, await checkpoints.get(RESTORE_GENERATION)) + 1;
+      await checkpoints.set(RESTORES_FOUND, restores);
+      await checkpoints.set(RESTORE_GENERATION, generation);
+      await checkpoints.set(RESTORE_TAKEN_BY_FIRST, restores);
+    }
   });

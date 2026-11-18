@@ -1916,30 +1916,18 @@ describe("bounda restore", () => {
   const restoredFrom = (): readonly string[] =>
     (Reflect.get(globalThis, "restoredFrom") as string[] | undefined) ?? [];
 
-  it("puts the copy back through the storage, then records the restore when no ledger tells the app", async () => {
+  it("puts the copy back through the storage, which counts the restore itself, and records nothing more", async () => {
     const result = await cli(
       ["restore", "backups/app.db", "--config", "restore.config.ts"],
       fixture,
     );
     expect(result.code).toBe(EXIT_OK);
     expect(besidesLogs(result.stderr)).toBe("");
-    expect(restoredFrom().at(-1)).toBe(join(fixture, "backups/app.db"));
-    expect(result.stdout).toMatch(
-      /^restored backups\/app\.db in place, in one transaction\nrestore recorded: \d+ found so far; the background jobs start over from the copy, without the holds it brought back\n$/,
-    );
-  });
-
-  it("leaves the restore for the forget ledger's mark to tell", async () => {
-    const result = await cli(
-      ["restore", "/backups/app.db", "--config", "restore-ledger.config.ts"],
-      fixture,
-    );
-    expect(result.code).toBe(EXIT_OK);
-    expect(restoredFrom().at(-1)).toBe("/backups/app.db");
-    expect(result.stdout).toBe(
-      "restored /backups/app.db in place, in one transaction\nthe forget ledger's mark tells the app: running instances find the restore at their next pass, and a stopped app when it starts\n",
-    );
     expect(result.stderr).not.toContain("went back to an earlier copy");
+    expect(restoredFrom().at(-1)).toBe(join(fixture, "backups/app.db"));
+    expect(result.stdout).toBe(
+      "restored backups/app.db in place, in one transaction: running instances find the restore at their next pass, and a stopped app when it starts\n",
+    );
   });
 
   it("fails on a copy the storage refuses, and on a storage that restores with its engine's tools", async () => {
@@ -1959,7 +1947,7 @@ describe("bounda restore", () => {
     );
   });
 
-  it("reads no runtime a configuration leaves out, opens the files of the tenant --tenant names, and fails on a project that does not load", async () => {
+  it("restores a configuration without a runtime, opens the files of the tenant --tenant names, and fails on a project that does not load", async () => {
     const bare = await cli(["restore", "app.db", "--config", "restore-bare.config.ts"], fixture);
     expect(bare.code).toBe(EXIT_OK);
     expect(restoredFrom().at(-1)).toBe(join(fixture, "app.db"));

@@ -130,6 +130,42 @@ describe("restoring a copy of a SQLite database in place", () => {
     expect(rowsOf(live.db, "SELECT count(*) AS n FROM notes")).toEqual([{ n: 2 }]);
   });
 
+  it("counts the restore past what the copy and the database held, for the first instance that finds it to take", async () => {
+    const counters = (db: DatabaseSync) =>
+      rowsOf(
+        db,
+        `SELECT subscriber, position FROM bounda_checkpoints WHERE subscriber LIKE 'runtime:%' ORDER BY subscriber`,
+      );
+    const set = (db: DatabaseSync, restores: number, generation: number) =>
+      db.exec(
+        `INSERT OR REPLACE INTO bounda_checkpoints (subscriber, position) VALUES ('runtime:restores', ${restores}), ('runtime:generation', ${generation})`,
+      );
+    for (const [copied, live, restores, generation] of [
+      [[5, 2], [1, 9], 6, 10],
+      [[1, 9], [5, 2], 6, 10],
+    ] as const) {
+      const copy = fresh("copy");
+      set((await seeded(copy, 1)).db, copied[0], copied[1]);
+      const target = await seeded(fresh("live"), 1);
+      set(target.db, live[0], live[1]);
+      await target.adapter.restore?.({ copy });
+      expect(counters(target.db)).toEqual([
+        { subscriber: "runtime:generation", position: generation },
+        { subscriber: "runtime:restore-unclaimed", position: restores },
+        { subscriber: "runtime:restores", position: restores },
+      ]);
+    }
+    // A database whose checkpoints were never migrated counts nothing.
+    const bare = open(fresh("bare"));
+    bare.db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY)");
+    const copy = fresh("copy");
+    open(copy).db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY)");
+    await bare.adapter.restore?.({ copy });
+    expect(rowsOf(bare.db, "SELECT name FROM sqlite_master WHERE name LIKE 'bounda_%'")).toEqual(
+      [],
+    );
+  });
+
   it("brings a copy taken before a migration to the versions the database held", async () => {
     const copy = fresh("copy");
     const source = open(copy);

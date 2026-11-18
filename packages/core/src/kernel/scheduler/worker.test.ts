@@ -61,6 +61,7 @@ describe("scheduled command worker", () => {
       logger,
       restores: {
         start: async () => null,
+        started: async () => undefined,
         check: async () => {
           const result = finds;
           finds = null;
@@ -92,6 +93,7 @@ describe("scheduled command worker", () => {
       logger,
       restores: {
         start: async () => null,
+        started: async () => undefined,
         check: async () => {
           steps.push("check");
           const result = finds;

@@ -844,8 +844,7 @@ const runRestored = (
     return EXIT_OK;
   });
 
-// In place, through the adapter's own engine, then counted as `bounda restored` counts it when no
-// forget ledger's mark tells the instances: running ones find it at their next pass anyway.
+// In place, through the adapter's own engine, which counts the restore in the same transaction.
 const runRestore = async (
   copy: string,
   options: ProjectOptions,
@@ -875,15 +874,11 @@ const runRestore = async (
   } catch (error) {
     return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
   }
-  line(stdout, `restored ${copy} in place, in one transaction`);
-  if (config.runtime?.personalData?.forgetLedger !== undefined) {
-    line(
-      stdout,
-      "the forget ledger's mark tells the app: running instances find the restore at their next pass, and a stopped app when it starts",
-    );
-    return EXIT_OK;
-  }
-  return runRestored(options, cwd, stdout, stderr);
+  line(
+    stdout,
+    `restored ${copy} in place, in one transaction: running instances find the restore at their next pass, and a stopped app when it starts`,
+  );
+  return EXIT_OK;
 };
 
 // Opens every database file the configuration encrypts under the tenant's keys, as a start would,
@@ -1408,7 +1403,7 @@ export const runCli: RunCliFunction = async ({
         "the copy of the database file, taken with VACUUM INTO or the sqlite3 shell",
       )
       .description(
-        "put a copy of a SQLite file back in place, in one transaction through the app's own engine, under a running app or not; without a forget ledger, then say it was restored",
+        "put a copy of a SQLite file back in place, in one transaction through the app's own engine, under a running app or not",
       ),
   ).action(async (copy: string, options: ProjectOptions) => {
     exitCode = await runRestore(copy, options, cwd, stdout, stderr);

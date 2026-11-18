@@ -340,7 +340,9 @@ person was forgotten says its text went with them.
 
 Puts a copy of the storage's SQLite file back in place, with the app running or not: in one write
 transaction through libSQL, the app's own engine, so a running app reads the database as it was or
-as the copy has it, never in between, and finds the restore at its next pass. It loads the
+as the copy has it, never in between. The restore is counted in the same transaction, once: every
+running instance finds it at its next pass, and a stopped app when it starts, with a forget ledger
+or without one, so no `bounda restored` follows it. It loads the
 configuration as `bounda migrate` does, and opens a file encrypted under the tenant's keys, and its
 copy, through them.
 
@@ -349,14 +351,12 @@ bounda restore /backups/app.db
 ```
 
 ```
-restored /backups/app.db in place, in one transaction
+restored /backups/app.db in place, in one transaction: running instances find the restore at their next pass, and a stopped app when it starts
 ```
 
 Every table, index and trigger becomes the copy's, Bounda's tables brought to the versions the
 database held. A copy that is missing, does not open, is another tenant's, or that a newer version
-of Bounda migrated is refused, and nothing changes. With a forget ledger, its mark tells the app,
-and the command says so; without one, it then records the restore as `bounda restored` does, and an
-instance that found it on its own first counts it too, so `bounda status` may count it twice. A
+of Bounda migrated is refused, and nothing changes. A
 storage on another engine is refused: restore it with the engine's tools, as
 [Backups and restores](/guides/backups/#restoring) says. Options: `--root`, `--config`,
 `--registry`, `--tenant`, `--error-text`, as for `bounda rebuild`. Exit codes: `0` restored, `2`

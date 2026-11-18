@@ -74,8 +74,9 @@ or as the copy has it, never half restored:
   It opens the copy, under the tenant's keys when the file is encrypted, and puts every table,
   index and trigger of it back in one write transaction through libSQL, the app's own engine,
   bringing Bounda's tables to the versions the database held; a copy of another tenant's database,
-  or one a newer version of Bounda migrated, is refused and nothing changes. Without a forget ledger
-  it then records the restore, as `bounda restored` does. A statement of the app that waits for the
+  or one a newer version of Bounda migrated, is refused and nothing changes. The restore is counted
+  in the same transaction: every instance finds it, running or started after, with a forget ledger
+  or without one, so no `bounda restored` is needed. A statement of the app that waits for the
   transaction past the busy timeout fails, as one that met any other lock does.
   `adapter.restore({ copy })` is the same in code.
 - **PostgreSQL.** `pg_restore --clean --if-exists --single-transaction --schema <schema>`.
@@ -133,8 +134,9 @@ that the read model's database of its own stands where it did.
 A restore found then, or one the ledger is not yet reconciled with, refuses the read with
 [`RESTORE_UNRECONCILED`](/reference/errors/#codes), the ledger's error as its `cause` when it could
 not be read: the reconciliation runs at once, and the read models project what it committed again
-before anything is served. The read after succeeds. Each read costs the reads of the check, shared
-by the reads that run at once.
+before anything is served. The read after succeeds, and a refused read is in the [access
+log](/guides/personal-data/#who-opened-what) as `failed`. Each read costs the reads of the check,
+shared by the reads that run at once; an export checks once for each page it reads.
 
 ## What is guaranteed
 

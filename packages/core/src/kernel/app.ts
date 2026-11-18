@@ -150,6 +150,7 @@ import {
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { startedBy } from "./shared/causation.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
+import { type CallCounter, createCallCounter } from "./shared/counted-calls.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
 import { createRestoreWatch, GENERATION_INTERVAL_MS, type Restored } from "./shared/restores.ts";
@@ -1302,22 +1303,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       for (const name of names) await readModelDatabases.vouch(name);
     };
     const readModelNames = Object.keys(readModels.byName);
-    // An export's records, each vouched for once read, before it is handed out.
-    async function* vouchedRecords<Part>(records: AsyncIterable<Part>): AsyncGenerator<Part> {
+    // An export's records, vouched for before one read since the last vouch is handed out: those
+    // of a page read together, once.
+    async function* vouchedRecords<Part>(
+      records: AsyncIterable<Part>,
+      reads: CallCounter,
+    ): AsyncGenerator<Part> {
+      let vouched = reads.calls();
       for await (const part of records) {
-        await vouchAfter(...readModelNames);
+        if (reads.calls() !== vouched) {
+          await vouchAfter(...readModelNames);
+          vouched = reads.calls();
+        }
         yield part;
       }
     }
-    // What the runtime keeps of handlers that failed opens personal data too: its reads are vouched
-    // for as a query's are.
-    const vouchedRead =
-      <Args extends unknown[], Read>(read: (...args: Args) => Promise<Read>) =>
-      async (...args: Args): Promise<Read> => {
-        const value = await read(...args);
-        await vouchAfter();
-        return value;
-      };
     // A restore is settled once the ledger is reconciled with it and the read models projected
     // what that committed again; what was read before then is refused.
     const settleRestore = async (): Promise<void> => {
@@ -1627,6 +1627,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       await dispatcher.catchUp("projection");
       await readModelDatabases.check();
     }
+    await restores.started();
     const rebuild = (
       name: string,
       options: RebuildReadModelOptions & { readonly actor?: string } = {},
@@ -1839,6 +1840,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             outcome,
           });
         await vouchBefore(...readModelNames);
+        // A strict app counts what the export reads, to vouch for each page once.
+        const reads = createCallCounter();
+        const reading = strict
+          ? {
+              storage: reads.count(storage, 2),
+              readModels: {
+                ...readModels,
+                byName: Object.fromEntries(
+                  Object.entries(readModels.byName).map(([name, readModel]) => [
+                    name,
+                    { ...readModel, storage: reads.count(readModel.storage, 3) },
+                  ]),
+                ),
+              },
+            }
+          : { storage, readModels };
         const streamed = await recorded(
           // Only a failure is recorded here: what resolves is recorded as it starts and ends.
           async (outcome) => {
@@ -1846,10 +1863,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           },
           () =>
             streamPersonalData({
-              storage,
+              ...reading,
               aggregates,
               processes: processDefinitions,
-              readModels,
               sealing,
               clock,
               batchSize: config.runtime.dispatcher.batchSize,
@@ -1861,7 +1877,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         // The header is read: vouched for before it is handed out, as each record is.
         await vouchAfter(...readModelNames);
         return recordedExport({
-          streamed: { ...streamed, records: vouchedRecords(streamed.records) },
+          streamed: { ...streamed, records: vouchedRecords(streamed.records, reads) },
           record,
           onError: (error) => {
             if (error instanceof TenantForgottenError) onTenantForgotten();
@@ -1876,6 +1892,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         actor,
         recordAccess,
         errorText,
+        vouch: () => vouchAfter(),
       });
       const letters = createDeadLetters({
         tracer: appTracer,
@@ -1887,6 +1904,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         errorText,
         actor,
         recordAccess,
+        vouch: () => vouchAfter(),
       });
       return {
         commands: createCommandsFacade({
@@ -1903,13 +1921,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: status,
           }),
-        subscriberFailures: {
-          ...failures,
-          list: vouchedRead(failures.list),
-          get: vouchedRead(failures.get),
-        },
+        subscriberFailures: failures,
         events,
-        deadLetters: { ...letters, list: vouchedRead(letters.list), get: vouchedRead(letters.get) },
+        deadLetters: letters,
         rebuildReadModel: (name) =>
           tracedOperation({
             tracer: appTracer,

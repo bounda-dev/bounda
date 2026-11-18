@@ -59,4 +59,31 @@ describe("the access log of dead letters", () => {
       { operation: "deadLetters.get", persons: [], detail: { letter: "dl-3" } },
     ]);
   });
+
+  it("records a read it refuses once read as failed, and hands nothing out", async () => {
+    const storage = withPersonalKeys(await memory().createStorage());
+    await storage.deadLetterStore.add({ ...testDeadLetter("dl-1"), person: "ana" });
+    const outcomes: unknown[] = [];
+    const deadLetters = createDeadLetters({
+      tracer,
+      storage,
+      retries: {} as DeadLetterRetry,
+      processes: {} as Pick<ProcessDeadLetters, "parkedBehind" | "stillParked" | "abandon">,
+      clock: createFixedClock(),
+      logger: silentLogger,
+      errorText: "omit",
+      recordAccess: async ({ operation, outcome }) => {
+        outcomes.push([operation, outcome]);
+      },
+      vouch: async () => {
+        throw new Error("restored");
+      },
+    });
+    await expect(deadLetters.list()).rejects.toThrow("restored");
+    await expect(deadLetters.get("dl-1")).rejects.toThrow("restored");
+    expect(outcomes).toEqual([
+      ["deadLetters.list", "failed"],
+      ["deadLetters.get", "failed"],
+    ]);
+  });
 });

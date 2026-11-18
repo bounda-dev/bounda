@@ -315,7 +315,9 @@ export interface Adapter<Name extends string = string, Options = unknown>
   /**
    * Puts back a copy of this database, taken with the engine's own tools, in place and in one
    * write transaction: an app running on it reads the database as it was or as the copy has it,
-   * never in between, and finds the restore as it finds any other. Every table, index and trigger
+   * never in between. The restore is counted in the same transaction, once, and the first instance
+   * to find it, running or started after, forget ledger or not, starts its background jobs over as
+   * after any other. Every table, index and trigger
    * becomes the copy's, its Bounda tables brought to the versions this database held. Throws
    * `ConfigurationError` for a copy that is missing, does not open, or is another tenant's, and
    * `StorageSchemaTooNewError` for one a newer version migrated; either way nothing changes.

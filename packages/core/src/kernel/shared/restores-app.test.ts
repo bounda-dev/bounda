@@ -292,6 +292,39 @@ describe("a database restored while the app runs", () => {
   });
 });
 
+describe("a strict app's export", () => {
+  it("checks for a restore once for each page it reads, not for every record", async () => {
+    const { adapter } = createNodeSqliteAdapter();
+    let checks = 0;
+    const counted = {
+      ...adapter,
+      createStorage: async () => {
+        const opened = await adapter.createStorage();
+        return {
+          ...opened,
+          checkpointStore: {
+            ...opened.checkpointStore,
+            get: (subscriber: string) => {
+              if (subscriber === "runtime:generation") checks += 1;
+              return opened.checkpointStore.get(subscriber);
+            },
+          },
+        };
+      },
+    };
+    const { app } = await start({
+      adapter: counted,
+      runtime: { personalData: { forgetLedger: { store: memory(), strict: true } } },
+    });
+    for (let index = 0; index < 40; index += 1) await register(app, "c-1");
+    checks = 0;
+    const exported = await app.exportPersonalData("c-1");
+    expect(exported.events).toHaveLength(40);
+    expect(checks).toBeGreaterThan(1);
+    expect(checks).toBeLessThan(10);
+  });
+});
+
 describe("a database restored while the app was stopped", () => {
   const files = () => {
     const directory = mkdtempSync(join(tmpdir(), "bounda-cold-"));
