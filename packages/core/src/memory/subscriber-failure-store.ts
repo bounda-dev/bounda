@@ -19,13 +19,14 @@ export const createMemorySubscriberFailureStore: CreateMemorySubscriberFailureSt
   () => {
     const failures = new Map<string, StoredSubscriberFailure>();
     return {
-      record: async ({ failedAt, ...failure }) => {
+      record: async ({ failedAt, readPersons, ...failure }) => {
         const kept = failures.get(failure.subscriber);
         const again = kept?.resolvedAt === null && kept.eventId === failure.eventId;
         failures.set(
           failure.subscriber,
           jsonCopy({
             ...failure,
+            ...(readPersons === undefined || readPersons.length === 0 ? {} : { readPersons }),
             attempts: again ? kept.attempts + 1 : 1,
             firstFailedAt: again ? kept.firstFailedAt : failedAt,
             lastFailedAt: failedAt,

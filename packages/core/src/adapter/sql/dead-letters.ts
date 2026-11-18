@@ -30,6 +30,19 @@ export interface DecodeErrorTextFunction {
 export const decodeErrorText: DecodeErrorTextFunction = (column) =>
   JSON.parse(String(column)) as string | SealedValue;
 
+export interface DecodeReadPersonsFunction {
+  (column: unknown): { readonly readPersons?: readonly string[] };
+}
+
+/**
+ * The `read_persons` of a dead letter or a subscriber failure, a JSON array, as its text or as a
+ * driver hands `jsonb` back, parsed: absent when it names nobody.
+ */
+export const decodeReadPersons: DecodeReadPersonsFunction = (column) => {
+  const persons = (typeof column === "string" ? JSON.parse(column) : column) as readonly string[];
+  return persons.length === 0 ? {} : { readPersons: persons };
+};
+
 export interface ResolvedAtOfEarlierLettersFunction {
   (table: string): string;
 }

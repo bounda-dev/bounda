@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NewDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import { testDeadLetter } from "../../adapter/testing/fixtures.ts";
 import {
   DeadLetterNotRetriableError,
@@ -9,6 +10,7 @@ import {
 import type { RestrictionNotice } from "../../modules/personal-data.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { buildPersonalCategories } from "../personal-data/categories.ts";
+import { noteReads } from "../personal-data/reads.ts";
 import { unrestrictProcessing } from "../personal-data/restriction.ts";
 import { PROCESS_DEADLINE_COMMAND } from "../process/deadlines.ts";
 import { PROCESSES_SUBSCRIBER } from "../process/runner.ts";
@@ -393,6 +395,46 @@ describe("the retry of a restricted person's dead letters", () => {
     expect(await deadLetterStore.get("same")).toMatchObject({ person: "c-9" });
     expect(await deadLetterStore.get("same")).not.toHaveProperty("statePerson");
     expect(await deadLetterStore.get("none")).not.toHaveProperty("statePerson");
+  });
+
+  it("names on a letter it files again whom else the new failure read, not whom the old one did", async () => {
+    const { harness } = await setup();
+    const { deadLetterStore } = harness.storage;
+    let reads: readonly KeyedPerson[] = [];
+    const retries = createRestrictedRetries({
+      storage: harness.storage,
+      retries: {
+        retry: async () => {
+          const error = new ProcessingRestrictedError("c-9");
+          noteReads(error, reads);
+          throw error;
+        },
+      },
+      clock: harness.clock,
+      logger: harness.logger,
+    });
+    const base = refused("read", "TouchOrder", "o-1", "c-1", "2026-01-01T00:00:00Z");
+    await deadLetterStore.add({ ...base, readPersons: ["c-7"] });
+    await deadLetterStore.add({
+      ...base,
+      id: "reads",
+      readPersons: ["c-7"],
+      firstFailedAt: "2026-01-01T00:01:00Z",
+    });
+    const unit = createUnitOfWork({ storage: harness.storage });
+    let retried = 0;
+    await retries.retryAll({
+      personId: "c-1",
+      unit,
+      beforeEach: async () => {
+        reads = retried === 0 ? [] : [{ person: "c-8", fingerprint: "k" }];
+        retried += 1;
+      },
+    });
+    await unit.commit();
+    expect(await deadLetterStore.get("read")).not.toHaveProperty("readPersons");
+    expect(await deadLetterStore.get("read")).toMatchObject({ person: "c-9" });
+    expect(await deadLetterStore.get("reads")).toMatchObject({ readPersons: ["c-8"] });
   });
 
   it("goes past a letter another retry settled first, and resolves", async () => {

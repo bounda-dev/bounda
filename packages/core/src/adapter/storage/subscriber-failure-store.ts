@@ -14,9 +14,15 @@ export interface StoredSubscriberFailure {
   readonly eventType: string;
   /**
    * Whom the event names, under whose key the error's text is sealed; `null` for an event that
-   * names nobody, whose text is kept in the clear.
+   * names nobody, whose text is kept in the clear unless `readPersons` names someone.
    */
   readonly person: string | null;
+  /**
+   * Whom else the failed delivery read data of, besides `person`, as rows of the read model its
+   * projection read: the error text is sealed under their keys too, around `person`'s. Absent when
+   * it read nobody else.
+   */
+  readonly readPersons?: readonly string[];
   readonly errorName: string;
   readonly errorCode?: string;
   readonly errorMessage: string | SealedValue;

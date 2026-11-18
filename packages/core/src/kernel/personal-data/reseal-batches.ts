@@ -511,6 +511,7 @@ export const createResealBatches: CreateResealBatchesFunction = ({
     await transaction.deadLetterStore.reseal(letter.id, {
       person,
       ...(ofState === undefined ? {} : { statePerson: ofState }),
+      ...(letter.readPersons === undefined ? {} : { readPersons: letter.readPersons }),
       errorMessage,
       ...(errorStack === undefined ? {} : { errorStack }),
       ...(stored === undefined ? {} : { payload: stored }),

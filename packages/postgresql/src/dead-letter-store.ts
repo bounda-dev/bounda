@@ -11,6 +11,7 @@ import type {
 import {
   byFirstFailure,
   decodeErrorText,
+  decodeReadPersons,
   encodeErrorText,
   postgresqlDialect,
 } from "@bounda-dev/core/adapter/sql";
@@ -27,7 +28,7 @@ export interface CreatePostgresqlDeadLetterStoreFunction {
 }
 
 const COLUMNS =
-  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "resolved_at", "payload", "persons", "state_person"';
+  '"id", "kind", "handler", "event_id", "event_type", "aggregate_type", "aggregate_id", "person", "error_type", "error_name", "error_code", "error_message", "error_stack", "attempts", "first_failed_at", "last_failed_at", "status", "resolved_at", "payload", "persons", "state_person", "read_persons"';
 
 const toLetter = (row: Record<string, unknown>): StoredDeadLetter => ({
   id: String(row.id),
@@ -41,6 +42,7 @@ const toLetter = (row: Record<string, unknown>): StoredDeadLetter => ({
   ...(row.state_person === null || row.state_person === undefined
     ? {}
     : { statePerson: String(row.state_person) }),
+  ...decodeReadPersons(row.read_persons),
   errorType: String(row.error_type) as DeadLetterErrorType,
   errorName: String(row.error_name),
   ...(row.error_code === null || row.error_code === undefined
@@ -91,7 +93,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
   return {
     add: async (letter) => {
       await db.run(
-        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'failed', NULL, $17, $18, $19) ON CONFLICT ("id") DO NOTHING`,
+        `INSERT INTO ${table} (${COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'failed', NULL, $17, $18, $19, $20) ON CONFLICT ("id") DO NOTHING`,
         [
           letter.id,
           letter.kind,
@@ -112,6 +114,7 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           postgresqlDialect.encode("json", letter.payload),
           postgresqlDialect.encode("json", letter.persons ?? []),
           letter.statePerson ?? null,
+          postgresqlDialect.encode("json", letter.readPersons ?? []),
         ],
       );
       return (await get(letter.id)) as StoredDeadLetter;
@@ -148,9 +151,12 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       if (updated.length === 0) throw new DeadLetterSettledError({ id });
     },
     remove: (id) => db.run(`DELETE FROM ${table} WHERE "id" = $1`, [id]),
-    reseal: (id, { person, statePerson, errorMessage, errorStack, payload, persons }) =>
+    reseal: (
+      id,
+      { person, statePerson, readPersons, errorMessage, errorStack, payload, persons },
+    ) =>
       db.run(
-        `UPDATE ${table} SET "person" = $1, "error_message" = $2, "error_stack" = $3, "payload" = $4, "persons" = $5, "state_person" = $7 WHERE "id" = $6`,
+        `UPDATE ${table} SET "person" = $1, "error_message" = $2, "error_stack" = $3, "payload" = $4, "persons" = $5, "state_person" = $7, "read_persons" = $8 WHERE "id" = $6`,
         [
           person,
           encodeErrorText(errorMessage),
@@ -159,12 +165,13 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           postgresqlDialect.encode("json", persons ?? []),
           id,
           statePerson ?? null,
+          postgresqlDialect.encode("json", readPersons ?? []),
         ],
       ),
     listByPerson: async ({ person, after, limit }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE ("person" = $1 OR "state_person" = $1 OR ${naming("$1")}) AND ($2::text IS NULL OR "id" COLLATE "C" > $2::text) ORDER BY "id" COLLATE "C" LIMIT $3`,
+          `SELECT ${COLUMNS} FROM ${table} WHERE ("person" = $1 OR "state_person" = $1 OR "read_persons" @> jsonb_build_array($1::text) OR ${naming("$1")}) AND ($2::text IS NULL OR "id" COLLATE "C" > $2::text) ORDER BY "id" COLLATE "C" LIMIT $3`,
           [person, after ?? null, limit ?? null],
         )
       ).map(toLetter),

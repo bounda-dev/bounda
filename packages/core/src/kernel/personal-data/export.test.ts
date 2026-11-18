@@ -22,7 +22,7 @@ import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { createDisposableKey, seal } from "./crypto.ts";
 import { sealError } from "./errors.ts";
-import { exportPersonalData } from "./export-stream.ts";
+import { exportPersonalData, streamPersonalData } from "./export-stream.ts";
 
 const NO_RECIPIENTS: RecipientsRuntime = { all: [], byPort: {}, byOwner: {} };
 
@@ -204,7 +204,7 @@ const setup = async () => {
       table: readModel.storage.table,
     });
   };
-  const exportOf = (personId: string, batchSize = 2) =>
+  const exportOf = (personId: string, batchSize = 2, includeWithheld = false) =>
     exportPersonalData({
       storage,
       aggregates,
@@ -216,6 +216,21 @@ const setup = async () => {
       categories,
       recipients: NO_RECIPIENTS,
       personId,
+      includeWithheld,
+    });
+  const streamOf = (personId: string, includeWithheld: boolean) =>
+    streamPersonalData({
+      storage,
+      aggregates,
+      processes: { byName: {} },
+      readModels,
+      sealing: { keys: storage.personalKeys, indexer: null, redactions: async () => [] },
+      clock: createFixedClock(),
+      batchSize: 2,
+      categories,
+      recipients: NO_RECIPIENTS,
+      personId,
+      includeWithheld,
     });
   const register = (aggregateId: string, email: string) =>
     storage.eventStore.append({
@@ -265,6 +280,7 @@ const setup = async () => {
     storage,
     written,
     exportOf,
+    streamOf,
     register,
     place,
     sealedReminder,
@@ -541,6 +557,7 @@ describe("exportPersonalData", () => {
         data: { email: "ana@example.com" },
         categories: { email: "default" },
         restricted: [],
+        withheld: [],
       },
       {
         id: "dl-3",
@@ -549,6 +566,7 @@ describe("exportPersonalData", () => {
         data: {},
         categories: {},
         restricted: [],
+        withheld: [],
       },
       {
         id: "dl-4",
@@ -559,6 +577,7 @@ describe("exportPersonalData", () => {
         data: {},
         categories: {},
         restricted: [],
+        withheld: [],
       },
     ]);
     expect(JSON.stringify(exported)).not.toContain("bo@example.com");
@@ -739,6 +758,7 @@ describe("exportPersonalData", () => {
         categories,
         recipients: NO_RECIPIENTS,
         personId: "c-1",
+        includeWithheld: false,
       });
       expect(exported.readModels.orderNotes?.map((row) => row.key)).toEqual([
         "o-2",
@@ -783,6 +803,7 @@ describe("exportPersonalData", () => {
         categories,
         recipients: NO_RECIPIENTS,
         personId: "c-1",
+        includeWithheld: false,
       }),
     ).rejects.toBe(down);
   });
@@ -819,6 +840,7 @@ describe("exportPersonalData", () => {
         data: {},
         categories: {},
         restricted: [],
+        withheld: [],
       },
     ]);
     expect(exported.scheduledCommands).toEqual([
@@ -897,6 +919,7 @@ describe("exportPersonalData", () => {
       categories: buildPersonalCategories({ module: undefined, retention: null }),
       recipients: NO_RECIPIENTS,
       personId: "c-1",
+      includeWithheld: false,
     });
     expect(exported.categories.default?.restrictedUntil).toBeNull();
   });
@@ -914,6 +937,7 @@ describe("exportPersonalData", () => {
       categories: buildPersonalCategories({ module: undefined, retention: null }),
       recipients: NO_RECIPIENTS,
       personId: "c-1",
+      includeWithheld: false,
     });
     const none = { held: false, keptUntil: null, restrictedUntil: null };
     expect(exported.categories).toEqual({
@@ -999,14 +1023,211 @@ describe("exportPersonalData", () => {
         expiresAt: "2026-01-02T00:00:00.000Z",
         outcome,
         restricted: [],
+        withheld: [],
       },
       {
         idempotencyKey: "confirm-1",
         expiresAt: "2026-01-02T00:00:00.000Z",
         outcome,
         restricted: [],
+        withheld: [],
       },
     ]);
     expect((await exportOf("c-2")).answers).toEqual([]);
+  });
+
+  it("holds back from each person the text sealed under someone else too, and says so, unless asked to open it", async () => {
+    const { exportOf, streamOf, storage, register } = await setup();
+    await register("c-1", "ana@example.com");
+    await register("c-2", "bea@example.com");
+    const keys = keysOver(storage.personalKeys);
+    const [bea] = await storage.personalKeys.list("c-2");
+    const readBea = [{ person: "c-2", fingerprint: bea?.key.fingerprint ?? null }];
+    const text = (message: string, args: Omit<Parameters<typeof sealError>[0], "error" | "keys">) =>
+      sealError({ error: new Error(message), keys, ...args });
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-1"),
+      ...(await text("ana alone", { person: "c-1" })),
+      person: "c-1",
+    });
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-2"),
+      ...(await text("ana's courier bea", { person: "c-1", statePerson: "c-2" })),
+      kind: "process",
+      person: "c-1",
+      statePerson: "c-2",
+    });
+    const read = await text("ana owes bea@example.com", { person: "c-1", read: readBea });
+    expect(read.readPersons).toEqual(["c-2"]);
+    await storage.deadLetterStore.add({ ...testDeadLetter("dl-3"), ...read, person: "c-1" });
+    const { errorStack: _stack, ...stackless } = await text("no stack", {
+      person: "c-1",
+      read: readBea,
+    });
+    await storage.deadLetterStore.add({ ...testDeadLetter("dl-4"), ...stackless, person: "c-1" });
+    const failed = await text("cannot index bea@example.com", { person: "c-1", read: readBea });
+    await storage.subscriberFailures.record({
+      subscriber: "projection:a",
+      position: 1,
+      eventId: "e-1",
+      eventType: "CustomerRegistered",
+      person: "c-1",
+      ...failed,
+      failedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const outcome = {
+      rejected: "Owed",
+      message: "bea@example.com is owed",
+      aggregateType: "customer",
+      aggregateId: "c-2",
+    };
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    const sealed = await sealAnswer({
+      keys,
+      atRest: createAtRestSealer(
+        await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]),
+      ),
+      answer: { key: "pay-bea", fingerprint: "fp", outcome },
+      person: "c-1",
+      marks: null,
+      payload: {},
+      read: readBea,
+    });
+    await storage.idempotencyStore.put({
+      key: "h-1",
+      ...sealed,
+      expiresAt: "2026-01-02T00:00:00.000Z",
+      now,
+    });
+
+    const forOthers = (...fields: string[]) =>
+      fields.map((field) => ({ field, reason: "rights-of-others", article: "15(4)" }));
+    const letters = (exported: Awaited<ReturnType<typeof exportOf>>) =>
+      exported.deadLetters.map(({ id, errorMessage, errorStack, withheld }) => ({
+        id,
+        errorMessage,
+        errorStack,
+        withheld,
+      }));
+    for (const person of ["c-1", "c-2"]) {
+      const exported = await exportOf(person);
+      expect(letters(exported)).toEqual([
+        ...(person === "c-1"
+          ? [
+              {
+                id: "dl-1",
+                errorMessage: "ana alone",
+                errorStack: expect.stringContaining("ana alone"),
+                withheld: [],
+              },
+            ]
+          : []),
+        {
+          id: "dl-2",
+          errorMessage: null,
+          errorStack: null,
+          withheld: forOthers("errorMessage", "errorStack"),
+        },
+        {
+          id: "dl-3",
+          errorMessage: null,
+          errorStack: null,
+          withheld: forOthers("errorMessage", "errorStack"),
+        },
+        {
+          id: "dl-4",
+          errorMessage: null,
+          errorStack: undefined,
+          withheld: forOthers("errorMessage"),
+        },
+      ]);
+      expect(exported.subscriberFailures).toEqual([
+        {
+          subscriber: "projection:a",
+          eventId: "e-1",
+          eventType: "CustomerRegistered",
+          errorMessage: null,
+          errorStack: null,
+          restricted: [],
+          withheld: forOthers("errorMessage", "errorStack"),
+        },
+      ]);
+      expect(exported.answers).toEqual([
+        {
+          idempotencyKey: null,
+          expiresAt: "2026-01-02T00:00:00.000Z",
+          outcome: null,
+          restricted: [],
+          withheld: forOthers("idempotencyKey", "outcome"),
+        },
+      ]);
+      const json = JSON.stringify(exported);
+      expect(json).not.toContain("owes");
+      expect(json).not.toContain("is owed");
+      expect(json).not.toContain("pay-bea");
+      expect(json).not.toContain("courier");
+    }
+
+    const opened = await exportOf("c-1", 2, true);
+    expect(letters(opened).find(({ id }) => id === "dl-3")).toEqual({
+      id: "dl-3",
+      errorMessage: "ana owes bea@example.com",
+      errorStack: expect.stringContaining("ana owes"),
+      withheld: forOthers("errorMessage", "errorStack"),
+    });
+    expect(opened.subscriberFailures[0]).toMatchObject({
+      errorMessage: "cannot index bea@example.com",
+      withheld: forOthers("errorMessage", "errorStack"),
+    });
+    expect(opened.answers[0]).toMatchObject({
+      idempotencyKey: "pay-bea",
+      outcome,
+      withheld: forOthers("idempotencyKey", "outcome"),
+    });
+    const streamed = await streamOf("c-1", true);
+    expect(streamed.others()).toEqual([]);
+    for await (const _ of streamed.records);
+    expect(streamed.others()).toEqual(["c-2"]);
+    const withholding = await streamOf("c-1", false);
+    for await (const _ of withholding.records);
+    expect(withholding.others()).toEqual([]);
+
+    // Once anyone it is sealed under is forgotten, nothing of it opens, and nothing is held back.
+    for (const { key } of await storage.personalKeys.list("c-2")) {
+      await storage.personalKeys.remove("c-2", key.fingerprint);
+    }
+    const gone = await exportOf("c-1", 2, true);
+    expect(letters(gone).find(({ id }) => id === "dl-3")).toEqual({
+      id: "dl-3",
+      errorMessage: null,
+      errorStack: null,
+      withheld: [],
+    });
+    expect(gone.subscriberFailures[0]?.withheld).toEqual([]);
+    expect(gone.answers).toEqual([]);
+    const forgotten = await streamOf("c-1", true);
+    for await (const _ of forgotten.records);
+    expect(forgotten.others()).toEqual([]);
+  });
+
+  it("hands a letter listed for whom its work read the text of no one else, as theirs", async () => {
+    const { exportOf, storage, register } = await setup();
+    await register("c-2", "bea@example.com");
+    const [bea] = await storage.personalKeys.list("c-2");
+    const sealed = await sealError({
+      error: new Error("bea@example.com bounced"),
+      person: null,
+      keys: keysOver(storage.personalKeys),
+      read: [{ person: "c-2", fingerprint: bea?.key.fingerprint ?? null }],
+    });
+    await storage.deadLetterStore.add({ ...testDeadLetter("dl-1"), ...sealed, person: null });
+    expect((await exportOf("c-2")).deadLetters).toEqual([
+      expect.objectContaining({
+        id: "dl-1",
+        errorMessage: "bea@example.com bounced",
+        withheld: [],
+      }),
+    ]);
+    expect((await exportOf("c-1")).deadLetters).toEqual([]);
   });
 });

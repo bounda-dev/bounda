@@ -171,7 +171,9 @@ export const loader = async ({ params, context }: Route.LoaderArgs) =>
 The response is the JSON document of `personalDataExportJson`, with `content-disposition`
 `attachment; filename="personal-data.json"`, which names no person, and `cache-control: no-store`,
 so no cache between keeps a copy; a third argument adds to it, as a `ResponseInit`, its headers
-over these. A refusal, such as an empty id or a forgotten tenant, rejects before the response is
+over these. Its `includeWithheld` opens what [article
+15(4)](/guides/personal-data/#someone-elses-data) holds back, for a route the controller reviews an
+export on, never for the person's own download. A refusal, such as an empty id or a forgotten tenant, rejects before the response is
 made, for `failure` or the route's `ErrorBoundary`. A later one, a `ConcurrencyError` when the
 person was forgotten, restricted or redacted while it was read, cuts the body short: what the
 browser saved is not valid JSON, and a new request exports the person as they are then. When the

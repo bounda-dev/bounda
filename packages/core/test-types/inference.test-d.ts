@@ -56,6 +56,7 @@ import type {
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
+  ExportedWithheld,
   ExportOutcome,
   Field,
   FieldFilter,
@@ -90,6 +91,7 @@ import type {
   PersonalDataCategory,
   PersonalDataExport,
   PersonalDataExportHeader,
+  PersonalDataExportOptions,
   PersonalDataExportPart,
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
@@ -157,6 +159,7 @@ import type {
   TransferSafeguard,
   UnrestrictOptions,
   Where,
+  WithholdingReason,
 } from "@bounda-dev/core";
 import {
   CRIMINAL_DATA_AUTHORITIES,
@@ -816,6 +819,7 @@ describe("personal data", () => {
     }>();
     expectTypeOf<DeadLetter["resolvedAt"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<DeadLetter["statePerson"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<DeadLetter["readPersons"]>().toEqualTypeOf<readonly string[] | undefined>();
     expectTypeOf<DeadLetterAccess["operation"]>().toEqualTypeOf<
       "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard"
     >();
@@ -841,6 +845,8 @@ describe("personal data", () => {
       readonly answers: number;
       readonly readModelRows: number;
       readonly recipients: number;
+      readonly withheld: number;
+      readonly includeWithheld: boolean;
     }>();
     expectTypeOf<
       Extract<PersonalDataAccess, { operation: "disclosure" }>["detail"]
@@ -1073,8 +1079,11 @@ describe("personal data", () => {
 
   it("lets every client export a person's data, their marked fields alone", () => {
     expectTypeOf<BoundaClient["exportPersonalData"]>().toEqualTypeOf<
-      (personId: string) => Promise<PersonalDataExport>
+      (personId: string, options?: PersonalDataExportOptions) => Promise<PersonalDataExport>
     >();
+    expectTypeOf<PersonalDataExportOptions>().toEqualTypeOf<{
+      readonly includeWithheld?: boolean;
+    }>();
     expectTypeOf<BoundaApp["exportPersonalData"]>().toEqualTypeOf<
       BoundaClient["exportPersonalData"]
     >();
@@ -1096,7 +1105,10 @@ describe("personal data", () => {
       readonly readModels: Readonly<Record<string, readonly ExportedRow[]>>;
     }>();
     expectTypeOf<BoundaClient["streamPersonalData"]>().toEqualTypeOf<
-      (personId: string) => Promise<AsyncIterable<PersonalDataExportPart>>
+      (
+        personId: string,
+        options?: PersonalDataExportOptions,
+      ) => Promise<AsyncIterable<PersonalDataExportPart>>
     >();
     expectTypeOf<BoundaApp["streamPersonalData"]>().toEqualTypeOf<
       BoundaClient["streamPersonalData"]
@@ -1167,11 +1179,18 @@ describe("personal data", () => {
     expectTypeOf<ExportedAutomatedDecision>().toExtend<AutomatedDecision<string>>();
     expectTypeOf<ExportedAutomatedDecision["measures"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<ExportedAnswer>().toEqualTypeOf<{
-      readonly idempotencyKey: string;
+      readonly idempotencyKey: string | null;
       readonly expiresAt: string;
-      readonly outcome: DispatchResult | RejectedDispatch;
+      readonly outcome: DispatchResult | RejectedDispatch | null;
       readonly restricted: ExportedRestricted;
+      readonly withheld: readonly ExportedWithheld[];
     }>();
+    expectTypeOf<ExportedWithheld>().toEqualTypeOf<{
+      readonly field: string;
+      readonly reason: WithholdingReason;
+      readonly article: string;
+    }>();
+    expectTypeOf<WithholdingReason>().toEqualTypeOf<"rights-of-others">();
     expectTypeOf<BoundaClient["recipientsOf"]>().toEqualTypeOf<
       (personId: string) => Promise<readonly PersonRecipient[]>
     >();
@@ -1208,6 +1227,7 @@ describe("personal data", () => {
       readonly errorMessage: string | null;
       readonly errorStack?: string | null;
       readonly restricted: ExportedRestricted;
+      readonly withheld: readonly ExportedWithheld[];
     }>();
     expectTypeOf<ExportedRestricted>().toEqualTypeOf<readonly string[]>();
     expectTypeOf<ExportedRow>().toEqualTypeOf<{
@@ -1252,6 +1272,7 @@ describe("personal data", () => {
       readonly data: ExportedData;
       readonly categories: ExportedCategories;
       readonly restricted: ExportedRestricted;
+      readonly withheld: readonly ExportedWithheld[];
     }>();
     expectTypeOf<ExportedData>().toEqualTypeOf<Readonly<Record<string, unknown>>>();
     expectTypeOf<ExportedCategories>().toEqualTypeOf<Readonly<Record<string, string>>>();
@@ -2052,6 +2073,7 @@ describe("operations", () => {
     }>();
     expectTypeOf<SubscriberFailure["errorMessage"]>().toEqualTypeOf<string | null>();
     expectTypeOf<SubscriberFailure["errorStack"]>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<SubscriberFailure["readPersons"]>().toEqualTypeOf<readonly string[] | undefined>();
     expectTypeOf<StoredSubscriberFailure["person"]>().toEqualTypeOf<string | null>();
     expectTypeOf<SubscriberFailure["resolvedAt"]>().toEqualTypeOf<string | null>();
   });

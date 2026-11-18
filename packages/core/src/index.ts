@@ -74,10 +74,13 @@ export type {
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
+  ExportedWithheld,
   PersonalDataExport,
   PersonalDataExportHeader,
+  PersonalDataExportOptions,
   PersonalDataExportPart,
   PersonalDataRight,
+  WithholdingReason,
 } from "./kernel/personal-data/export.ts";
 export type { PersonalDataExportJsonFunction } from "./kernel/personal-data/export-json.ts";
 export { personalDataExportJson } from "./kernel/personal-data/export-json.ts";

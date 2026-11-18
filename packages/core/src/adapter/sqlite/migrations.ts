@@ -26,6 +26,7 @@ import { tenancyTableStatement } from "../sql/tenancy-store.ts";
 import { tenantKeysTableStatement } from "../sql/tenant-key-store.ts";
 import {
   checkpointTableStatement,
+  deadLetterReadsStatements,
   personRowsBackfillStatements,
   restrictedPersonsTableStatements,
   restrictionStatements,
@@ -52,6 +53,17 @@ const NINTH_COLUMNS: readonly AddedColumn[] = [
   { table: "deadLetters", column: "state_person", definition: "TEXT" },
 ];
 
+// The columns migration 11 adds: whom else the work behind a dead letter or a subscriber failure
+// read data of. Rows stored before name nobody there.
+const ELEVENTH_COLUMNS: readonly AddedColumn[] = [
+  { table: "deadLetters", column: "read_persons", definition: "TEXT NOT NULL DEFAULT '[]'" },
+  {
+    table: "subscriberFailures",
+    column: "read_persons",
+    definition: "TEXT NOT NULL DEFAULT '[]'",
+  },
+];
+
 const ADDED_COLUMNS: readonly AddedColumn[] = [
   { table: "events", column: "person", definition: "TEXT" },
   { table: "deadLetters", column: "person", definition: "TEXT" },
@@ -70,6 +82,7 @@ const ADDED_COLUMNS: readonly AddedColumn[] = [
   { table: "persons", column: "held_until", definition: "TEXT" },
   { table: "persons", column: "attempts", definition: "INTEGER NOT NULL DEFAULT 0" },
   ...NINTH_COLUMNS,
+  ...ELEVENTH_COLUMNS,
 ];
 
 // Rows written before errors were named. A letter kept its text unencoded: it is named after the
@@ -255,6 +268,16 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
         for (const statement of supersededKeysTableStatements(tables.supersededKeys)) {
           await tx.run(statement, []);
         }
+      },
+    },
+    {
+      version: 11,
+      migrate: async (tx) => {
+        for (const { table, column, definition } of ELEVENTH_COLUMNS) {
+          if ((await columnsOf(tx, tables[table])).has(column)) continue;
+          await tx.run(`ALTER TABLE ${tables[table]} ADD COLUMN "${column}" ${definition}`, []);
+        }
+        for (const statement of deadLetterReadsStatements(tables)) await tx.run(statement, []);
       },
     },
   ],

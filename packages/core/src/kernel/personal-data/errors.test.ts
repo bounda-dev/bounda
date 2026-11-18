@@ -6,6 +6,7 @@ import { keysOver, newStoredKey } from "../test-support.ts";
 import { sealedKeys } from "./commands.ts";
 import { isSealed, unseal } from "./crypto.ts";
 import { openTextWith, sealError, sealUnderAll } from "./errors.ts";
+import { noteReads } from "./reads.ts";
 
 const setup = async () => {
   const keys = keysOver((await memory().createStorage()).personalKeys);
@@ -131,6 +132,71 @@ describe("sealError", () => {
     const readKept = [{ person: "c-1", fingerprint: held.fingerprint, retained: true as const }];
     const kept = await sealError({ error: new Error("bo"), person: "c-1", keys, read: readKept });
     expect(await open()(kept.errorMessage)).toBe("bo");
+  });
+
+  it("seals the text under everyone else the work read data of, around the person, and names them", async () => {
+    const { keys, held, open } = await setup();
+    const bea = await keys.add("c-2", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
+    const cai = await keys.add("c-3", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
+    const dan = await keys.add("c-4", DEFAULT_PERSONAL_CATEGORY, await newStoredKey());
+    const error = new Error("ana owes bea");
+    noteReads(error, [
+      { person: "c-3", fingerprint: cai.fingerprint },
+      { person: "c-1", fingerprint: held.fingerprint },
+    ]);
+    const sealed = await sealError({
+      error,
+      person: "c-1",
+      statePerson: "c-4",
+      keys,
+      read: [
+        { person: "c-2", fingerprint: bea.fingerprint },
+        { person: "c-4", fingerprint: dan.fingerprint },
+        { person: "c-5", fingerprint: null },
+      ],
+    });
+    expect(sealed.readPersons).toEqual(["c-2", "c-3"]);
+    expect(sealed.errorMessage).toMatchObject({ $personal: { person: "c-3" } });
+    expect(sealed.errorStack).toMatchObject({ $personal: { person: "c-3" } });
+    const layers: string[] = [];
+    let opened: unknown = sealed.errorMessage;
+    while (isSealed(opened)) {
+      layers.push(opened.$personal.person);
+      const { person, key } = opened.$personal;
+      opened = await unseal({ key: await sealedKeys(keys)(person, key), sealed: opened });
+    }
+    expect(layers).toEqual(["c-3", "c-2", "c-4", "c-1"]);
+    expect(opened).toBe("ana owes bea");
+
+    const alone = await sealError({ error: new Error("only ana"), person: "c-1", keys });
+    expect(alone).not.toHaveProperty("readPersons");
+    const twice = await sealError({
+      error: new Error("bea twice"),
+      person: "c-1",
+      keys,
+      read: [
+        { person: "c-2", fingerprint: bea.fingerprint },
+        { person: "c-2", fingerprint: "another" },
+      ],
+    });
+    expect(twice.readPersons).toEqual(["c-2"]);
+    expect(await open()(twice.errorMessage)).toBeNull();
+
+    const read = [{ person: "c-2", fingerprint: bea.fingerprint }];
+    const both = await sealError({ error: new Error("ana owes bea"), person: "c-1", keys, read });
+    expect(await open()(both.errorMessage)).toBe("ana owes bea");
+    await keys.remove("c-2", bea.fingerprint);
+    expect(await open()(both.errorMessage)).toBeNull();
+  });
+
+  it("seals for good the text of work that read data of someone who holds no key", async () => {
+    const { keys, open } = await setup();
+    const read = [{ person: "c-2", fingerprint: "gone" }];
+    const sealed = await sealError({ error: new Error("bea"), person: null, keys, read });
+    expect(sealed.readPersons).toEqual(["c-2"]);
+    expect(isSealed(sealed.errorMessage)).toBe(true);
+    expect(await open()(sealed.errorMessage)).toBeNull();
+    expect(await keys.list("c-2")).toEqual([]);
   });
 });
 

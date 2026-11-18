@@ -776,6 +776,14 @@ describe("bounda forgotten and bounda forget", () => {
     const data = JSON.parse(exported.stdout) as PersonalDataExport;
     expect(data.personId).toBe(memberId);
     expect(data.recipients).toEqual([]);
+    const included = (stderr: string) =>
+      logged(stderr, "info", "personal data accessed").map(
+        (fields) => (fields as { detail: { includeWithheld: boolean } }).detail.includeWithheld,
+      );
+    expect(included(exported.stderr)).toEqual([false, false]);
+    const opened = await cli(["personal-data", "export", memberId, "--include-withheld"], fixture);
+    expect(opened.code).toBe(EXIT_OK);
+    expect(included(opened.stderr)).toEqual([true, true]);
     const listed = await cli(["recipients", memberId], fixture);
     expect(listed).toMatchObject({ code: EXIT_OK, stdout: "[]\n" });
     expect(await cli(["recipients"], fixture)).toMatchObject({

@@ -1,6 +1,7 @@
 import {
   type BoundaClient,
   ConcurrencyError,
+  type PersonalDataExportOptions,
   type PersonalDataExportPart,
   ValidationError,
 } from "@bounda-dev/core";
@@ -25,10 +26,12 @@ const header: PersonalDataExportPart = {
 const clientOf = (
   parts: () => AsyncGenerator<PersonalDataExportPart, void, undefined>,
   asked: string[] = [],
+  options: (PersonalDataExportOptions | undefined)[] = [],
 ): Pick<BoundaClient, "streamPersonalData"> => ({
-  streamPersonalData: async (personId) => {
+  streamPersonalData: async (personId, given) => {
     if (personId === "") throw new ValidationError("no person", []);
     asked.push(personId);
+    options.push(given);
     return parts();
   },
 });
@@ -36,13 +39,19 @@ const clientOf = (
 describe("personalDataExportResponse", () => {
   it("answers the export's JSON, streamed, to be saved and never cached", async () => {
     const asked: string[] = [];
+    const options: (PersonalDataExportOptions | undefined)[] = [];
     const response = await personalDataExportResponse(
-      clientOf(async function* () {
-        yield header;
-      }, asked),
+      clientOf(
+        async function* () {
+          yield header;
+        },
+        asked,
+        options,
+      ),
       "ada",
     );
     expect(asked).toEqual(["ada"]);
+    expect(options).toEqual([{ includeWithheld: false }]);
     expect(response.status).toBe(200);
     expect(Object.fromEntries(response.headers)).toEqual({
       "content-type": "application/json; charset=utf-8",
@@ -83,6 +92,23 @@ describe("personalDataExportResponse", () => {
     expect(response.headers.get("content-disposition")).toBe('attachment; filename="ada.json"');
     expect(response.headers.get("x-request")).toBe("r-1");
     expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("asks for what article 15(4) holds back with includeWithheld, which it leaves out of the response", async () => {
+    const options: (PersonalDataExportOptions | undefined)[] = [];
+    const response = await personalDataExportResponse(
+      clientOf(
+        async function* () {
+          yield header;
+        },
+        [],
+        options,
+      ),
+      "ada",
+      { includeWithheld: true, status: 203 },
+    );
+    expect(options).toEqual([{ includeWithheld: true }]);
+    expect(response.status).toBe(203);
   });
 
   it("rejects a refusal before any response, and cuts the body short at a later one", async () => {

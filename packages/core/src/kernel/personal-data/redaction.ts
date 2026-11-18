@@ -346,6 +346,7 @@ const sealLetters = async (
     await transaction.deadLetterStore.reseal(letter.id, {
       person: letter.person,
       ...(letter.statePerson === undefined ? {} : { statePerson: letter.statePerson }),
+      ...(letter.readPersons === undefined ? {} : { readPersons: letter.readPersons }),
       ...text,
       ...(letter.payload === undefined ? {} : { payload: letter.payload }),
       ...(letter.persons === undefined ? {} : { persons: letter.persons }),

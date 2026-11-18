@@ -145,9 +145,9 @@ export interface InventoryRecipient {
  * What the runtime keeps about persons besides the fields of the holders: their keys
  * (`personal-keys`), their activity and restriction (`persons`), the runtime's events about them
  * (`forgettings`), the answers remembered for idempotent commands (`remembered-answers`), the error
- * text of failed work (`dead-letters`), what went to each recipient (`disclosures`), the
- * forgettings recorded outside the database (`forget-ledger`) and the accesses handed to
- * `app/audit.ts` (`access-log`).
+ * text of failed work (`dead-letters`) and of each subscriber's last failure
+ * (`subscriber-failures`), what went to each recipient (`disclosures`), the forgettings recorded
+ * outside the database (`forget-ledger`) and the accesses handed to `app/audit.ts` (`access-log`).
  */
 export type InventoryRecordName =
   | "personal-keys"
@@ -155,6 +155,7 @@ export type InventoryRecordName =
   | "forgettings"
   | "remembered-answers"
   | "dead-letters"
+  | "subscriber-failures"
   | "disclosures"
   | "forget-ledger"
   | "access-log";
@@ -455,6 +456,7 @@ const recordsOf = (
       location,
       keptFor: msText(config.runtime.deadLetters.retentionMs),
     },
+    { name: "subscriber-failures", where: storage, location, keptFor: null },
     ...(recipients.length === 0
       ? []
       : [{ name: "disclosures" as const, where: storage, location, keptFor: null }]),

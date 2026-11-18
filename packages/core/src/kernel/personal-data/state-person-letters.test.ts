@@ -159,15 +159,28 @@ describe("a process letter whose step read the state of another person than its 
     await app.stop();
   });
 
-  it("hands its text out in the export of either person", async () => {
+  it("holds its text back from the export of either person, which it may quote the other's data to", async () => {
     const { app, letter } = await setup();
+    const withheld = ["errorMessage", "errorStack"].map((field) => ({
+      field,
+      reason: "rights-of-others",
+      article: "15(4)",
+    }));
     for (const person of ["c-1", "k-1"]) {
-      expect((await app.exportPersonalData(person)).deadLetters).toEqual([
-        expect.objectContaining({
-          id: letter.id,
-          errorMessage: "courier +34 600 000 000 unreachable",
-        }),
+      const exported = await app.exportPersonalData(person);
+      expect(exported.deadLetters).toEqual([
+        expect.objectContaining({ id: letter.id, errorMessage: null, errorStack: null, withheld }),
       ]);
+      expect(JSON.stringify(exported)).not.toContain("+34 600 000 000 unreachable");
+      expect((await app.exportPersonalData(person, { includeWithheld: true })).deadLetters).toEqual(
+        [
+          expect.objectContaining({
+            id: letter.id,
+            errorMessage: "courier +34 600 000 000 unreachable",
+            withheld,
+          }),
+        ],
+      );
     }
     await app.stop();
   });

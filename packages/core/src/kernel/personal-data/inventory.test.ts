@@ -271,6 +271,7 @@ describe("personalDataInventory", () => {
       { name: "forgettings", where: "memory", location: null, keptFor: null },
       { name: "remembered-answers", where: "memory", location: null, keptFor: "1d" },
       { name: "dead-letters", where: "memory", location: null, keptFor: "30d" },
+      { name: "subscriber-failures", where: "memory", location: null, keptFor: null },
       { name: "disclosures", where: "memory", location: null, keptFor: null },
       { name: "access-log", where: "app/audit.ts", location: null, keptFor: null },
     ]);
@@ -301,6 +302,7 @@ describe("personalDataInventory", () => {
       ["forgettings", "jurisdiction eu"],
       ["remembered-answers", "jurisdiction eu"],
       ["dead-letters", "jurisdiction eu"],
+      ["subscriber-failures", "jurisdiction eu"],
       ["disclosures", "jurisdiction eu"],
       ["access-log", null],
     ]);
@@ -513,6 +515,7 @@ describe("personalDataInventory", () => {
       "forgettings",
       "remembered-answers",
       "dead-letters",
+      "subscriber-failures",
     ]);
   });
 

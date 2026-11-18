@@ -100,10 +100,11 @@ export interface CreateDeadLettersFunction {
 
 // The persons the error's text is sealed under, and those whose fields a payload holds.
 const personsOf = (
-  letter: Pick<StoredDeadLetter, "person" | "statePerson" | "persons">,
+  letter: Pick<StoredDeadLetter, "person" | "statePerson" | "readPersons" | "persons">,
 ): string[] => [
   ...(letter.person === null ? [] : [letter.person]),
   ...(letter.statePerson === undefined ? [] : [letter.statePerson]),
+  ...(letter.readPersons ?? []),
   ...(letter.persons ?? []).map(({ person }) => person),
 ];
 

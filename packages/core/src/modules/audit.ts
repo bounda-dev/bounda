@@ -77,7 +77,9 @@ export interface QueryAccess extends AccessRecord {
 
 /**
  * `exportPersonalData` or `streamPersonalData`, recorded as it starts and as it ends, with how many
- * records of each kind it handed out by then: at its start, the recipients of its header.
+ * records of each kind it handed out by then: at its start, the recipients of its header. `persons`
+ * is the person exported, and, with `includeWithheld`, after them everyone else whose data the
+ * values it opened in spite of article 15(4) may quote.
  */
 export interface ExportAccess extends AccessRecord<ExportOutcome> {
   readonly operation: "exportPersonalData";
@@ -94,6 +96,12 @@ export interface ExportAccess extends AccessRecord<ExportOutcome> {
     readonly answers: number;
     readonly readModelRows: number;
     readonly recipients: number;
+    /**
+     * The records with a value held back under article 15(4), or opened in spite of it with
+     * `includeWithheld`.
+     */
+    readonly withheld: number;
+    readonly includeWithheld: boolean;
   };
 }
 

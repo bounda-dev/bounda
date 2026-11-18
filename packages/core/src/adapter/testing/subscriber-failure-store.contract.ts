@@ -60,6 +60,22 @@ export const subscriberFailureStoreContract: SubscriberFailureStoreContractFunct
       });
     });
 
+    it("keeps whom else the delivery read, and what a later failure says of them in its place", async () => {
+      await store.record(failure({ readPersons: ["c-2", "c-3"] }));
+      expect(await store.get("projection:orders")).toMatchObject({ readPersons: ["c-2", "c-3"] });
+      expect((await store.list())[0]?.readPersons).toEqual(["c-2", "c-3"]);
+      await store.record(failure({ failedAt: at(1) }));
+      expect(await store.get("projection:orders")).not.toHaveProperty("readPersons");
+      await store.record(failure({ eventId: "e-8", readPersons: [] }));
+      expect(await store.get("projection:orders")).not.toHaveProperty("readPersons");
+      await store.record(failure({ eventId: "e-9", readPersons: ["c-4"] }));
+      await store.reseal("projection:orders", { eventId: "e-9", errorMessage: "sealed for good" });
+      expect(await store.get("projection:orders")).toMatchObject({
+        readPersons: ["c-4"],
+        errorMessage: "sealed for good",
+      });
+    });
+
     it("keeps text in the clear apart from a sealed envelope, and an error without code or stack", async () => {
       const {
         errorCode: _code,

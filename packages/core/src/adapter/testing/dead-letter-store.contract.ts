@@ -423,6 +423,44 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.listByPerson({ person: "c-2" })).toEqual([]);
     });
 
+    it("names whom else a letter's work read: lists it for each of them, pages them, and forgets it for none", async () => {
+      await store.add(
+        letter("read", {
+          person: "c-1",
+          readPersons: ["c-2", "c-3"],
+          errorMessage: sealed("c-3", "3"),
+        }),
+      );
+      await store.add(letter("alone", { person: "c-2", readPersons: [] }));
+      await store.add(letter("other", { person: "c-4", readPersons: ["c-5"] }));
+      expect(await store.get("read")).toMatchObject({ person: "c-1", readPersons: ["c-2", "c-3"] });
+      expect(await store.get("alone")).not.toHaveProperty("readPersons");
+      expect((await store.list()).find(({ id }) => id === "read")?.readPersons).toEqual([
+        "c-2",
+        "c-3",
+      ]);
+      expect((await store.listByPerson({ person: "c-2" })).map(({ id }) => id)).toEqual([
+        "alone",
+        "read",
+      ]);
+      expect(await store.listByPerson({ person: "c-2", after: "alone", limit: 1 })).toEqual([
+        await store.get("read"),
+      ]);
+      expect((await store.listByPerson({ person: "c-3" })).map(({ id }) => id)).toEqual(["read"]);
+      expect(await store.listByPerson({ person: "c-6" })).toEqual([]);
+      expect(await store.forget("c-2")).toEqual([]);
+      expect(await store.forget("c-3")).toEqual([]);
+      await store.reseal("read", { person: "c-1", readPersons: ["c-6"], errorMessage: "x" });
+      expect(await store.get("read")).toMatchObject({ readPersons: ["c-6"] });
+      expect((await store.listByPerson({ person: "c-6" })).map(({ id }) => id)).toEqual(["read"]);
+      expect((await store.listByPerson({ person: "c-3" })).map(({ id }) => id)).toEqual([]);
+      await store.reseal("read", { person: "c-1", errorMessage: "x" });
+      expect(await store.get("read")).not.toHaveProperty("readPersons");
+      expect(await store.listByPerson({ person: "c-6" })).toEqual([]);
+      await store.remove("other");
+      expect(await store.listByPerson({ person: "c-5" })).toEqual([]);
+    });
+
     it("reseals a letter in place, whatever its status, keeping the rest of it", async () => {
       await store.add(letter("p", { errorStack: "Error: timeout\n    at handler" }));
       await store.add(

@@ -1,10 +1,19 @@
-import { type BoundaClient, personalDataExportJson } from "@bounda-dev/core";
+import {
+  type BoundaClient,
+  type PersonalDataExportOptions,
+  personalDataExportJson,
+} from "@bounda-dev/core";
+
+/**
+ * What `personalDataExportResponse` adds to the response, and what it asks of the export.
+ */
+export interface PersonalDataExportResponseInit extends ResponseInit, PersonalDataExportOptions {}
 
 export interface PersonalDataExportResponseFunction {
   (
     client: Pick<BoundaClient, "streamPersonalData">,
     personId: string,
-    init?: ResponseInit,
+    init?: PersonalDataExportResponseInit,
   ): Promise<Response>;
 }
 
@@ -14,7 +23,8 @@ export interface PersonalDataExportResponseFunction {
  * `personal-data.json`, never cached. A refusal rejects before the response is made, for the
  * route's error handling; one that comes later, as `ConcurrencyError` when the person's data
  * changed while it read, cuts the body short, so what the browser saved is not valid JSON.
- * `init` adds to the response, its headers over these.
+ * `init` adds to the response, its headers over these; its `includeWithheld` opens what article
+ * 15(4) holds back, for a controller who weighs it, never for the person's own download.
  *
  * ```ts
  * export const loader = async ({ context, params }: Route.LoaderArgs) =>
@@ -24,9 +34,11 @@ export interface PersonalDataExportResponseFunction {
 export const personalDataExportResponse: PersonalDataExportResponseFunction = async (
   client,
   personId,
-  init = {},
+  { includeWithheld, ...init } = {},
 ) => {
-  const parts = await client.streamPersonalData(personId);
+  const parts = await client.streamPersonalData(personId, {
+    includeWithheld: includeWithheld === true,
+  });
   const headers = new Headers({
     "content-type": "application/json; charset=utf-8",
     "content-disposition": 'attachment; filename="personal-data.json"',

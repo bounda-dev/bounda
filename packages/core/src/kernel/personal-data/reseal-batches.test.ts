@@ -810,7 +810,9 @@ describe("what the backfill rewrites and names beyond the marks of a field", () 
     });
     const stackless = ({ errorStack: _, ...letter }: NewDeadLetter): NewDeadLetter => letter;
     await storage.deadLetterStore.add(filed("l-1", {}));
-    await storage.deadLetterStore.add(filed("l-2", { person: "c-1", errorMessage: "sealed" }));
+    await storage.deadLetterStore.add(
+      filed("l-2", { person: "c-1", readPersons: ["r-1"], errorMessage: "sealed" }),
+    );
     await storage.deadLetterStore.add(
       stackless(filed("l-3", { aggregateType: stream, eventId: "deadline:x" })),
     );
@@ -845,7 +847,11 @@ describe("what the backfill rewrites and names beyond the marks of a field", () 
     expect(after.get("l-1")?.errorStack).toBeDefined();
     expect(after.get("l-1")?.errorMessage).toMatchObject({ $personal: { person: "a-1" } });
     expect(after.get("l-1")?.errorStack).toMatchObject({ $personal: { person: "a-1" } });
-    expect(after.get("l-2")).toMatchObject({ person: "c-1", statePerson: "a-3" });
+    expect(after.get("l-2")).toMatchObject({
+      person: "c-1",
+      statePerson: "a-3",
+      readPersons: ["r-1"],
+    });
     expect(after.get("l-2")?.errorMessage).toMatchObject({ $personal: { person: "a-3" } });
     expect(after.get("l-3")).toMatchObject({ person: "a-4" });
     expect(after.get("l-3")).not.toHaveProperty("statePerson");

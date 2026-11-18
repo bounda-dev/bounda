@@ -34,6 +34,36 @@ export type ExportedCategories = Readonly<Record<string, string>>;
 export type ExportedRestricted = readonly string[];
 
 /**
+ * Why the export holds a value of a record back: `rights-of-others`, as article 15(4) of the GDPR
+ * asks, since the value is text the app's code wrote while it read data of someone else besides
+ * the person, and may quote it.
+ */
+export type WithholdingReason = "rights-of-others";
+
+/**
+ * A value of a record the export holds back, which reads `null`, unless the export was asked for
+ * with `includeWithheld`: the field, why, and the article that asks for it.
+ */
+export interface ExportedWithheld {
+  readonly field: string;
+  readonly reason: WithholdingReason;
+  readonly article: string;
+}
+
+/**
+ * What a reader of `exportPersonalData` or `streamPersonalData` may ask of the export.
+ */
+export interface PersonalDataExportOptions {
+  /**
+   * Opens what the export holds back under article 15(4), each value still named in its record's
+   * `withheld`, for the controller to weigh whether handing it over would adversely affect the
+   * other person before it does; the access log names those persons too. Never for an export
+   * handed to the person as it is. Defaults to `false`.
+   */
+  readonly includeWithheld?: boolean;
+}
+
+/**
  * An exemption of article 17(3) that keeps a category past a forgetting, with its point:
  * `legal-obligation` and `public-task` 17(3)(b), `public-health` (c),
  * `archiving-research-or-statistics` (d), `legal-claims` (e).
@@ -179,9 +209,10 @@ export interface ExportedScheduledCommand {
 }
 
 /**
- * A handler run that gave up and names the person: the work was about them, so the error's text is
- * sealed under their key, or it is a scheduled command whose payload holds personal fields of
- * theirs. `data` holds that payload's marked fields, empty for a policy or process letter.
+ * A handler run that gave up and names the person: the work was about them or read their data, so
+ * the error's text is sealed under their keys, or it is a scheduled command whose payload holds
+ * personal fields of theirs. `data` holds that payload's marked fields, empty for a policy or
+ * process letter.
  */
 export interface ExportedDeadLetter {
   readonly id: string;
@@ -191,8 +222,8 @@ export interface ExportedDeadLetter {
    */
   readonly handler: string;
   /**
-   * The error's message, opened, when it is sealed under the person; `null` once they are
-   * forgotten.
+   * The error's message, opened, when it is sealed under the person; `null` once anyone it is
+   * sealed under is forgotten, or when it is withheld.
    */
   readonly errorMessage?: string | null;
   /**
@@ -202,6 +233,11 @@ export interface ExportedDeadLetter {
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
   readonly restricted: ExportedRestricted;
+  /**
+   * `errorMessage` and `errorStack` when the work read data of someone else too, so the text is
+   * sealed under them as well and may quote it.
+   */
+  readonly withheld: readonly ExportedWithheld[];
 }
 
 /**
@@ -209,19 +245,31 @@ export interface ExportedDeadLetter {
  * their keys: what it answered, opened. It is remembered until `expiresAt`.
  */
 export interface ExportedAnswer {
-  readonly idempotencyKey: string;
+  /**
+   * `null` when it is withheld.
+   */
+  readonly idempotencyKey: string | null;
   readonly expiresAt: string;
-  readonly outcome: DispatchOutcome;
+  /**
+   * `null` when it is withheld.
+   */
+  readonly outcome: DispatchOutcome | null;
   /**
    * `["outcome"]` while any restriction of the person holds: the answer may quote any of their
    * data.
    */
   readonly restricted: ExportedRestricted;
+  /**
+   * `idempotencyKey` and `outcome` when the answer is sealed under someone else too, a rejection
+   * decided on a state that held their data or a command that touches them, which it may quote.
+   */
+  readonly withheld: readonly ExportedWithheld[];
 }
 
 /**
- * The last failure of a subscriber on an event that names the person, whose error text is sealed
- * under their key: opened, `null` once they are forgotten.
+ * The last failure of a subscriber on an event that names the person, or whose delivery read their
+ * data, whose error text is sealed under their keys: opened, `null` once anyone it is sealed under
+ * is forgotten, or when it is withheld.
  */
 export interface ExportedSubscriberFailure {
   readonly subscriber: string;
@@ -230,6 +278,11 @@ export interface ExportedSubscriberFailure {
   readonly errorMessage: string | null;
   readonly errorStack?: string | null;
   readonly restricted: ExportedRestricted;
+  /**
+   * `errorMessage` and `errorStack` when the delivery read data of someone else too, as
+   * `ExportedDeadLetter` holds them back.
+   */
+  readonly withheld: readonly ExportedWithheld[];
 }
 
 /**
@@ -342,7 +395,7 @@ export type PersonalDataExportRecord = Exclude<PersonalDataExportPart, { readonl
 /**
  * How many records of each kind an export handed out.
  */
-export type ExportedCounts = Omit<ExportAccess["detail"], "exportId">;
+export type ExportedCounts = Omit<ExportAccess["detail"], "exportId" | "includeWithheld">;
 
 export interface CountPartFunction {
   (counts: ExportedCounts, part: PersonalDataExportPart): ExportedCounts;
@@ -357,9 +410,23 @@ export const NO_EXPORTED_RECORDS: ExportedCounts = {
   answers: 0,
   readModelRows: 0,
   recipients: 0,
+  withheld: 0,
 };
 
-export const countPart: CountPartFunction = (counts, part) => {
+const withholding = (part: PersonalDataExportPart): number => {
+  switch (part.kind) {
+    case "deadLetter":
+      return part.deadLetter.withheld.length > 0 ? 1 : 0;
+    case "subscriberFailure":
+      return part.subscriberFailure.withheld.length > 0 ? 1 : 0;
+    case "answer":
+      return part.answer.withheld.length > 0 ? 1 : 0;
+    default:
+      return 0;
+  }
+};
+
+const countKind: CountPartFunction = (counts, part) => {
   switch (part.kind) {
     case "header":
       return { ...counts, recipients: part.header.recipients.length };
@@ -379,6 +446,9 @@ export const countPart: CountPartFunction = (counts, part) => {
       return { ...counts, readModelRows: counts.readModelRows + 1 };
   }
 };
+
+export const countPart: CountPartFunction = (counts, part) =>
+  countKind({ ...counts, withheld: counts.withheld + withholding(part) }, part);
 
 export interface CollectPersonalDataExportFunction {
   (parts: AsyncIterable<PersonalDataExportPart>): Promise<PersonalDataExport>;

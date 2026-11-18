@@ -18,15 +18,15 @@ import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import { type TracerFunction, tracedOperation } from "../telemetry.ts";
 
 /**
- * A subscriber's last failure, with the error's text opened: `null` once the person the event
- * named, under whose key it was sealed, is forgotten.
+ * A subscriber's last failure, with the error's text opened: `null` once anyone it was sealed
+ * under, the person the event named or one of `readPersons`, is forgotten.
  */
 export interface SubscriberFailure
   extends Omit<StoredSubscriberFailure, "errorMessage" | "errorStack"> {
   readonly errorMessage: string | null;
   readonly errorStack?: string | null;
   /**
-   * `true` when the event named a person whose processing is restricted and the text was left
+   * `true` when the text is sealed under a person whose processing is restricted and was left
    * sealed, reading as `null`: asked for with `includeRestricted`, it comes out opened.
    */
   readonly restricted?: true;
@@ -36,14 +36,14 @@ export interface SubscriberFailure
  * The last failure of each subscriber, kept with its text whatever
  * `runtime.telemetry.errorText` says, since a projection's error otherwise leaves no text
  * anywhere. Each call that finds a failure hands its text out opened, so it is recorded in the
- * access log once it settles, naming the person the event named, and rejects with what the log's
- * hook throws.
+ * access log once it settles, naming the persons its text is sealed under, and rejects with what
+ * the log's hook throws.
  */
 export interface SubscriberFailures {
   /**
-   * Every subscriber's last failure, by subscriber, resolved ones included. The text of one whose
-   * event named a person whose processing is restricted stays sealed, unless `includeRestricted`
-   * names the basis it is read on.
+   * Every subscriber's last failure, by subscriber, resolved ones included. The text of one sealed
+   * under a person whose processing is restricted stays sealed, unless `includeRestricted` names
+   * the basis it is read on.
    */
   list(options?: IncludeRestrictedOptions): Promise<readonly SubscriberFailure[]>;
   /**
@@ -66,8 +66,12 @@ export interface CreateSubscriberFailuresFunction {
   (args: CreateSubscriberFailuresArgs): SubscriberFailures;
 }
 
+// Everyone a failure's text is sealed under.
 const personsOf = (failures: readonly StoredSubscriberFailure[]): string[] =>
-  failures.flatMap(({ person }) => (person === null ? [] : [person]));
+  failures.flatMap(({ person, readPersons = [] }) => [
+    ...(person === null ? [] : [person]),
+    ...readPersons,
+  ]);
 
 export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
   store,
@@ -96,8 +100,8 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
           ...(errorStack === undefined ? {} : { errorStack: await open(errorStack) }),
         };
 
-  // A failure's text is sealed under the person its event named alone, so only their restriction
-  // keeps it sealed; `erasure-exemption` opens none of it.
+  // A failure's text is sealed under the person its event named and those its delivery read data
+  // of, so only their restriction keeps it sealed; `erasure-exemption` opens none of it.
   // `letThrough` gathers the restricted persons whose text a basis opened, for the record.
   const read = (
     failures: readonly StoredSubscriberFailure[],
@@ -110,9 +114,12 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
     const open = openTextWith(sealedKeys(keys));
     return Promise.all(
       failures.map(async (failure) => {
-        const sealed = failure.person !== null && (await restricted(failure.person));
-        if (sealed && opens && failure.person !== null) letThrough.push(failure.person);
-        return opened(failure, open, sealed && !opens);
+        const held: string[] = [];
+        for (const person of personsOf([failure])) {
+          if (await restricted(person)) held.push(person);
+        }
+        if (opens) letThrough.push(...held);
+        return opened(failure, open, held.length > 0 && !opens);
       }),
     );
   };

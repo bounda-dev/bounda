@@ -336,6 +336,7 @@ export const createPersonalDataReseal: CreatePersonalDataResealFunction = ({
       await transaction.deadLetterStore.reseal(id, {
         person: letter.person,
         ...(letter.statePerson === undefined ? {} : { statePerson: letter.statePerson }),
+        ...(letter.readPersons === undefined ? {} : { readPersons: letter.readPersons }),
         errorMessage,
         ...(errorStack === undefined ? {} : { errorStack }),
         ...(payload === undefined ? {} : { payload }),

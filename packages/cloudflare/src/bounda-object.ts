@@ -20,6 +20,7 @@ import {
   type Logger,
   NotFoundError,
   type PersonalDataExport,
+  type PersonalDataExportOptions,
   type PersonRecipient,
   type QueryOptions,
   type ReadEventsArgs,
@@ -152,7 +153,11 @@ export interface BoundaObjectMethods {
   /**
    * Exports a person's data, as `BoundaClient.exportPersonalData` does.
    */
-  exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>>;
+  exportPersonalData(
+    personId: string,
+    actor?: string,
+    options?: PersonalDataExportOptions,
+  ): Promise<RpcOutcome<PersonalDataExport>>;
   /**
    * Streams a person's data, as `BoundaClient.streamPersonalData` does: once the header is read,
    * the parts, one JSON per line, read only as the stream is; cancelling it stops the export.
@@ -160,6 +165,7 @@ export interface BoundaObjectMethods {
   streamPersonalData(
     personId: string,
     actor?: string,
+    options?: PersonalDataExportOptions,
   ): Promise<RpcOutcome<ReadableStream<Uint8Array>>>;
   /**
    * The recipients of a person's data, as `BoundaClient.recipientsOf` lists them.
@@ -529,15 +535,22 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       });
     }
 
-    exportPersonalData(personId: string, actor?: string): Promise<RpcOutcome<PersonalDataExport>> {
-      return settle(() => this.#as(actor).exportPersonalData(personId));
+    exportPersonalData(
+      personId: string,
+      actor?: string,
+      options?: PersonalDataExportOptions,
+    ): Promise<RpcOutcome<PersonalDataExport>> {
+      return settle(() => this.#as(actor).exportPersonalData(personId, options));
     }
 
     streamPersonalData(
       personId: string,
       actor?: string,
+      options?: PersonalDataExportOptions,
     ): Promise<RpcOutcome<ReadableStream<Uint8Array>>> {
-      return settle(async () => partLines(await this.#as(actor).streamPersonalData(personId)));
+      return settle(async () =>
+        partLines(await this.#as(actor).streamPersonalData(personId, options)),
+      );
     }
 
     recipientsOf(

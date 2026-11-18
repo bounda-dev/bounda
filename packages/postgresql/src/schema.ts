@@ -124,7 +124,8 @@ export const subscriberFailuresTableStatement: SubscriberFailuresTableStatementF
     "attempts" integer NOT NULL,
     "first_failed_at" text NOT NULL,
     "last_failed_at" text NOT NULL,
-    "resolved_at" text
+    "resolved_at" text,
+    "read_persons" text NOT NULL DEFAULT '[]'
   )`;
 
 export interface StorageSchemaStatementsFunction {
@@ -179,7 +180,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "resolved_at" text,
     "payload" jsonb,
     "persons" jsonb NOT NULL DEFAULT '[]',
-    "state_person" text
+    "state_person" text,
+    "read_persons" jsonb NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "person")} ON ${tables.deadLetters} ("person")`,
@@ -251,6 +253,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "persons")} ON ${tables.idempotencyKeys} USING gin ("persons" jsonb_path_ops)`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "persons")} ON ${tables.scheduledCommands} USING gin ("persons" jsonb_path_ops)`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "persons")} ON ${tables.deadLetters} USING gin ("persons" jsonb_path_ops)`,
+  readPersonsIndexStatement(tables),
 ];
 
 export interface InSchemaArgs<T> {
@@ -325,3 +328,12 @@ export interface StatePersonIndexStatementFunction {
 // What `listByPerson` finds a process letter by when the person is its instance's state's.
 export const statePersonIndexStatement: StatePersonIndexStatementFunction = (tables) =>
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "state_person")} ON ${tables.deadLetters} ("state_person") WHERE "state_person" IS NOT NULL`;
+
+export interface ReadPersonsIndexStatementFunction {
+  (tables: Pick<StorageTables, "deadLetters">): string;
+}
+
+// Migration 11 of the storage tables: what `listByPerson` finds a letter by when the person is one
+// its work read data of.
+export const readPersonsIndexStatement: ReadPersonsIndexStatementFunction = (tables) =>
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "read_persons")} ON ${tables.deadLetters} USING gin ("read_persons" jsonb_path_ops)`;
