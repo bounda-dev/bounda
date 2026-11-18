@@ -23,6 +23,7 @@ import {
   type RedactedFields,
   type Registry,
   type RestrictOptions,
+  type RotateTenantKeyOptions,
   type StoredDispatch,
   type StoredEvent,
   type SubscriberFailure,
@@ -97,7 +98,7 @@ export interface BoundaStub {
     options: RedactRequest,
   ): PromiseLike<unknown>;
   forgetTenant(tenant: string, actor?: string, options?: ForgetTenantOptions): PromiseLike<unknown>;
-  rotateTenantKey(actor?: string): PromiseLike<unknown>;
+  rotateTenantKey(actor?: string, options?: RotateTenantKeyOptions): PromiseLike<unknown>;
   retireTenantKeys(actor?: string): PromiseLike<unknown>;
 }
 
@@ -204,7 +205,7 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       unwrap<StoredDispatch>(stub.redact(personId, consistency, actor, options)),
     forgetTenant: (tenant, options) =>
       unwrap<TenantForgottenResult>(stub.forgetTenant(tenant, actor, options)),
-    rotateTenantKey: () => unwrap<TenantKeyVersions>(stub.rotateTenantKey(actor)),
+    rotateTenantKey: (options) => unwrap<TenantKeyVersions>(stub.rotateTenantKey(actor, options)),
     retireTenantKeys: () => unwrap<readonly string[]>(stub.retireTenantKeys(actor)),
     as: (next) => {
       checkActor(next);

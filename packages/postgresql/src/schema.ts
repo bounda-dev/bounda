@@ -15,6 +15,7 @@ export interface StorageTables {
   readonly idempotencyKeys: string;
   readonly personalKeys: string;
   readonly indexKeys: string;
+  readonly supersededKeys: string;
   readonly tenancy: string;
   readonly persons: string;
   readonly restrictions: string;
@@ -69,6 +70,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     idempotencyKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "idempotencyKeys" })),
     personalKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "personalKeys" })),
     indexKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "indexKeys" })),
+    supersededKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "supersededKeys" })),
     tenancy: quoteIdentifier(storageTableNameFor({ prefix, table: "tenancy" })),
     tenantKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "tenantKeys" })),
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),

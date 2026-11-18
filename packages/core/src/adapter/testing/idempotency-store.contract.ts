@@ -174,6 +174,10 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
       expect(
         (await store.list({ now: later(1_000), limit: 2, offset: 2 })).map(({ key }) => key),
       ).toEqual(["k3"]);
+      expect((await store.list({ now, after: "k1" })).map(({ key }) => key)).toEqual(["k2", "k3"]);
+      expect((await store.list({ now, after: "k1", limit: 1 })).map(({ key }) => key)).toEqual([
+        "k2",
+      ]);
     });
 
     it("erases one record in place, keeping its key taken until it expires, and never an expired one", async () => {
@@ -211,6 +215,35 @@ export const idempotencyStoreContract: IdempotencyStoreContractFunction = ({ cre
       );
       await store.erase({ key: "gone", filed: "elsewhere", now });
       expect(await store.get({ key: "elsewhere", now })).toBeNull();
+    });
+
+    it("writes a record again with another answer only while it holds the answer read, and never an expired one", async () => {
+      await keys.add("c-1", D, stored("1"));
+      await store.put({ ...record("k1"), answer: sealed, persons: [held("c-1", "1")], now });
+      const resealed = { $personal: { ...sealed.$personal, key: "f-2", data: "other" } };
+      const persons = [held("c-1", "2")];
+      await store.reseal({ key: "k1", from: testAnswer("k1"), answer: resealed, persons, now });
+      expect((await store.get({ key: "k1", now }))?.answer).toEqual(sealed);
+      await store.reseal({ key: "k1", from: sealed, answer: resealed, persons, now });
+      expect(await store.get({ key: "k1", now })).toEqual({
+        ...record("k1"),
+        answer: resealed,
+        persons,
+      });
+      await store.reseal({ key: "none", from: sealed, answer: resealed, persons, now });
+      expect(await store.get({ key: "none", now })).toBeNull();
+      await store.erase({ key: "k1", now });
+      await store.reseal({ key: "k1", from: resealed, answer: sealed, persons, now });
+      expect(await store.get({ key: "k1", now })).toEqual(erasedAt("k1"));
+      await store.put({ ...record("k2", 1_000), now });
+      await store.reseal({
+        key: "k2",
+        from: testAnswer("k2"),
+        answer: sealed,
+        persons,
+        now: later(1_000),
+      });
+      expect((await store.get({ key: "k2", now }))?.answer).toEqual(testAnswer("k2"));
     });
 
     it("answers a record as it was put, and null for a key it never saw", async () => {

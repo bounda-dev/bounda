@@ -69,11 +69,11 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
           [person, now.toISOString(), after ?? null, after ?? null, limit ?? -1],
         )
       ).map(toRecord),
-    list: async ({ now, limit, offset = 0 }) =>
+    list: async ({ now, after, limit, offset = 0 }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE "expires_at" > ? ORDER BY "key" LIMIT ? OFFSET ?`,
-          [now.toISOString(), limit ?? -1, offset],
+          `SELECT ${COLUMNS} FROM ${table} WHERE "expires_at" > ? AND (? IS NULL OR "key" > ?) ORDER BY "key" LIMIT ? OFFSET ?`,
+          [now.toISOString(), after ?? null, after ?? null, limit ?? -1, offset],
         )
       ).map(toRecord),
     // Filing it elsewhere copies it there erased before it leaves `key`: a crash between the two
@@ -96,6 +96,17 @@ export const createSqliteIdempotencyStore: CreateSqliteIdempotencyStoreFunction 
         now.toISOString(),
       ]);
     },
+    reseal: ({ key, from, answer, persons, now }) =>
+      db.run(
+        `UPDATE ${table} SET "outcome" = ?, "persons" = ? WHERE "key" = ? AND "outcome" = ? AND "expires_at" > ?`,
+        [
+          JSON.stringify(answer),
+          JSON.stringify(persons),
+          key,
+          JSON.stringify(from),
+          now.toISOString(),
+        ],
+      ),
     clear: () => db.run(`DELETE FROM ${table}`, []),
     purge: async ({ now }) => {
       const rows = await db.all(`DELETE FROM ${table} WHERE "expires_at" <= ? RETURNING "key"`, [

@@ -785,17 +785,25 @@ const runForgetTenant = (
   });
 };
 
+interface RotateTenantKeyOptions extends ActingOptions {
+  readonly reseal: boolean;
+}
+
 const runRotateTenantKey = (
-  options: ActingOptions,
+  options: RotateTenantKeyOptions,
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    const { kid, previous } = await actingAs(app, options).rotateTenantKey();
+    const { kid, previous } = await actingAs(app, options).rotateTenantKey(
+      options.reseal ? { reseal: true } : undefined,
+    );
     line(
       stdout,
-      `tenant key ${kid} in force; the worker rewraps every key under it, then retire ${previous.join(", ")} with bounda tenant-key retire`,
+      options.reseal
+        ? `tenant key ${kid} in force; the worker replaces every key that seals personal data and seals it all again under the new ones, which bounda status follows, then retire ${previous.join(", ")} with bounda tenant-key retire`
+        : `tenant key ${kid} in force; the worker rewraps every key under it, then retire ${previous.join(", ")} with bounda tenant-key retire`,
     );
     return EXIT_OK;
   });
@@ -1314,8 +1322,13 @@ export const runCli: RunCliFunction = async ({
       .command("rotate")
       .description(
         "put a new version of the tenant's key in force: the worker rewraps every person's key and the database's key under it",
+      )
+      .option(
+        "--reseal",
+        "after a leak of the persons' keys themselves: replace every key that seals personal data, and the database's key, and seal it all again under the new ones",
+        false,
       ),
-  ).action(async (options: ActingOptions) => {
+  ).action(async (options: RotateTenantKeyOptions) => {
     exitCode = await runRotateTenantKey(options, cwd, stdout, stderr);
   });
   actingOptions(

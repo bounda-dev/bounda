@@ -8,14 +8,15 @@ import { projectionSubscriberName, type SealingSource, withKeys } from "../proje
 import type { ReadModelRuntime } from "./build-read-models.ts";
 import type { SealedLayout } from "./sealed-rows.ts";
 import { layoutDigest, settledMark, settlePage } from "./sealed-settle.ts";
+import { tableIndexer } from "./table-indexer.ts";
 
 export interface OpenReadModelSealingArgs {
   readonly layouts: readonly SealedLayout[];
-  readonly keys: Pick<PersonalKeys, "heldAllOf">;
+  readonly keys: Pick<PersonalKeys, "heldAllOf" | "discarded">;
   /**
    * `null` in an app without keys.
    */
-  readonly databaseKey: DatabaseKey | null;
+  readonly databaseKey: Pick<DatabaseKey, "indexer"> | null;
   /**
    * Where a redaction's scrub entry is read: the read models write `null` over the old values it
    * kept.
@@ -23,7 +24,7 @@ export interface OpenReadModelSealingArgs {
   readonly scheduler: Pick<Scheduler, "get">;
 }
 
-const indexerOf = (databaseKey: DatabaseKey | null): DatabaseKey["indexer"] => {
+const indexerOf = (databaseKey: Pick<DatabaseKey, "indexer"> | null): DatabaseKey["indexer"] => {
   if (databaseKey === null) {
     throw new ConfigurationError(
       "A read model keeps a blind index, which needs keys: set runtime.personalData.keyWrapper and runtime.personalData.tenantKeys",
@@ -75,7 +76,17 @@ export const settleReadModels: SettleReadModelsFunction = async ({
   for (const { name, layout, storage } of readModels) {
     if (layout.personal.length === 0) continue;
     const mark = settledMark(name);
-    const digest = layoutDigest({ layout, epoch: sealing.indexer?.epoch ?? null });
+    // Under the key its rows are indexed under, which a reseal's rebuild alone changes.
+    const indexer = layout.indexed
+      ? await tableIndexer({
+          indexer: sealing.indexer,
+          readModel: name,
+          checkpoints: storage.checkpointStore,
+          table: storage.table,
+          writes: false,
+        })
+      : null;
+    const digest = layoutDigest({ layout, epoch: indexer?.epoch ?? null });
     if ((await storage.checkpointStore.get(mark)) === digest) continue;
     let after: unknown;
     for (;;) {
@@ -89,7 +100,7 @@ export const settleReadModels: SettleReadModelsFunction = async ({
             wait: true,
             work: (transaction) =>
               settlePage({
-                context: { layout, keys, indexer: sealing.indexer, event: () => null },
+                context: { layout, keys, indexer, event: () => null },
                 table: transaction.table,
                 after,
               }),

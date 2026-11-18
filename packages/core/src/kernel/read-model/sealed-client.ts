@@ -1,7 +1,7 @@
 import type { ReadClient, StoredReadClient } from "../../adapter/storage/table.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { OpenedRow, SealingContext } from "./sealed-rows.ts";
-import { indexOf } from "./sealed-rows.ts";
+import { indexesOf, indexOf } from "./sealed-rows.ts";
 import { openAll } from "./sealed-table.ts";
 
 type Row = Record<string, unknown>;
@@ -27,6 +27,17 @@ export const sealedClient: SealedClientFunction = ({
   read = (rows) => openAll(context, rows),
   onRaw = () => undefined,
 }) => {
+  const indexedField = (field: string) => {
+    const indexed = context.layout.personal.find(
+      (candidate) => candidate.field === field && candidate.indexField !== null,
+    );
+    if (indexed === undefined) {
+      throw new ConfigurationError(
+        `Read model "${context.layout.readModel}": field "${field}" has no blind index; only a field marked .personal() with .index() or .unique() has one`,
+      );
+    }
+    return indexed;
+  };
   const opened = async (rows: readonly Row[]): Promise<readonly Row[]> =>
     (await read(rows)).map(({ row }) => row);
   return {
@@ -39,16 +50,7 @@ export const sealedClient: SealedClientFunction = ({
       onRaw();
       return client.raw;
     },
-    blindIndex: async (field, value) => {
-      const indexed = context.layout.personal.find(
-        (candidate) => candidate.field === field && candidate.indexField !== null,
-      );
-      if (indexed === undefined) {
-        throw new ConfigurationError(
-          `Read model "${context.layout.readModel}": field "${field}" has no blind index; only a field marked .personal() with .index() or .unique() has one`,
-        );
-      }
-      return indexOf({ context, field: indexed, value });
-    },
+    blindIndex: async (field, value) => indexOf({ context, field: indexedField(field), value }),
+    blindIndexes: async (field, value) => indexesOf({ context, field: indexedField(field), value }),
   };
 };

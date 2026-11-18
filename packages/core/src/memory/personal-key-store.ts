@@ -12,7 +12,21 @@ import {
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { earliestHoldEnd } from "./holds.ts";
 
+/**
+ * What the ids of superseded keys start with among the store's entries, which name the keys
+ * themselves as `keyedPersonId` does.
+ */
+export const SUPERSEDED_ENTRY = "superseded:";
+
 export interface KeptPersonalKeyStore extends WithEntries<PersonalKeyStore, string> {
+  /**
+   * The keys in force or retained, as an inspection lists them.
+   */
+  keyRows(): readonly Readonly<Record<string, unknown>>[];
+  /**
+   * The superseded keys, as an inspection lists them.
+   */
+  supersededRows(): readonly Readonly<Record<string, unknown>>[];
   /**
    * Whether the person holds the key of that fingerprint in force, always for a `null` one,
    * answered at once: the memory snapshot store checks it in the same step as it writes, so no
@@ -49,6 +63,16 @@ interface KeptPersonalKey extends StoredPersonalKey {
   readonly lastActiveAt: string | null;
   readonly retainedSince: string | null;
   readonly dueHold: Hold | null;
+}
+
+// A key a reseal superseded, `key` and `kid` `null` once destroyed.
+interface KeptSupersededKey {
+  readonly person: string;
+  readonly fingerprint: string;
+  readonly successor: string;
+  readonly key: string | null;
+  readonly kid: string | null;
+  readonly supersededAt: string;
 }
 
 const stored = ({ key, fingerprint, kid }: KeptPersonalKey): StoredPersonalKey => ({
@@ -91,6 +115,31 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
   lastActiveAt: lastActiveOf,
 }) => {
   const keys = new Map<string, KeptPersonalKey>();
+  const superseded = new Map<string, KeptSupersededKey>();
+  const supersededBy = (person: string, fingerprint: string): KeptSupersededKey[] =>
+    [...superseded.values()].filter(
+      (old) => old.person === person && old.successor === fingerprint,
+    );
+  // A superseded key not destroyed yet, as `find` hands it out, read with the key in its place.
+  const supersededHeldOf = (old: KeptSupersededKey): HeldPersonalKey | null => {
+    const successor = keys.get(idOf(old.person, old.successor));
+    if (old.key === null || successor === undefined) return null;
+    return {
+      ...held(successor),
+      key: { key: old.key, fingerprint: old.fingerprint, kid: old.kid },
+      successor: successor.fingerprint,
+    };
+  };
+  const supersededHeld = (person: string): HeldPersonalKey[] =>
+    [...superseded.values()]
+      .filter((old) => old.person === person)
+      .flatMap((old) => supersededHeldOf(old) ?? []);
+  const keyEntries = createStoreEntries(keys, (id: string) => id);
+  const supersededEntries = createStoreEntries(superseded, (id: string) => id);
+  const entriesOf = (id: string) =>
+    id.startsWith(SUPERSEDED_ENTRY)
+      ? { entries: supersededEntries, at: id.slice(SUPERSEDED_ENTRY.length) }
+      : { entries: keyEntries, at: id };
   const of = (person: string): KeptPersonalKey[] =>
     [...keys.values()].filter((kept) => kept.person === person);
   const inForce = (person: string, category: string): KeptPersonalKey | undefined =>
@@ -128,13 +177,15 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
       },
       find: async (person, fingerprint) => {
         const kept = keys.get(idOf(person, fingerprint));
-        return kept === undefined ? null : held(kept);
+        if (kept !== undefined) return held(kept);
+        const old = superseded.get(idOf(person, fingerprint));
+        return old === undefined ? null : supersededHeldOf(old);
       },
       list: async (person) => of(person).sort(byPerson).map(held),
       listMany: async (persons) =>
         new Map(
           [...new Set(persons)].flatMap((person) => {
-            const listed = of(person).sort(byPerson).map(held);
+            const listed = [...of(person).sort(byPerson).map(held), ...supersededHeld(person)];
             return listed.length === 0 ? [] : [[person, listed] as const];
           }),
         ),
@@ -155,7 +206,12 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
         keys.set(idOf(person, key.fingerprint), kept);
         return stored(kept);
       },
-      kids: async () => [...new Set([...keys.values()].map(({ kid }) => kid))],
+      kids: async () => [
+        ...new Set([
+          ...[...keys.values()].map(({ kid }) => kid),
+          ...[...superseded.values()].filter(({ key }) => key !== null).map(({ kid }) => kid),
+        ]),
+      ],
       categories: async () =>
         [...new Set([...keys.values()].map(({ category }) => category))].sort((a, b) =>
           a < b ? -1 : a > b ? 1 : 0,
@@ -163,9 +219,15 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
       clear: async () => {
         const removed = keys.size;
         keys.clear();
+        superseded.clear();
         return removed;
       },
-      remove: async (person, fingerprint) => keys.delete(idOf(person, fingerprint)),
+      remove: async (person, fingerprint) => {
+        for (const old of supersededBy(person, fingerprint)) {
+          superseded.delete(idOf(person, old.fingerprint));
+        }
+        return keys.delete(idOf(person, fingerprint));
+      },
       retain: async (person, fingerprint, { since, lastActiveAt }) => {
         const kept = keys.get(idOf(person, fingerprint));
         if (kept === undefined || kept.retainedSince !== null) return false;
@@ -248,6 +310,46 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
         ),
       countWrappedUnder: async ({ kids }) =>
         [...keys.values()].filter((key) => kids.includes(key.kid)).length,
+      supersede: async (person, from, to) => {
+        const kept = keys.get(idOf(person, from.fingerprint));
+        if (!isHeldBy(kept, from)) return false;
+        keys.delete(idOf(person, from.fingerprint));
+        keys.set(idOf(person, to.fingerprint), {
+          ...kept,
+          key: to.key,
+          fingerprint: to.fingerprint,
+          kid: to.kid,
+          hold: null,
+        });
+        for (const old of supersededBy(person, from.fingerprint)) {
+          superseded.set(idOf(person, old.fingerprint), { ...old, successor: to.fingerprint });
+        }
+        superseded.set(idOf(person, from.fingerprint), {
+          person,
+          fingerprint: from.fingerprint,
+          successor: to.fingerprint,
+          key: from.key,
+          kid: from.kid,
+          supersededAt: to.at,
+        });
+        return true;
+      },
+      predecessors: async (person, fingerprints) =>
+        fingerprints
+          .flatMap((fingerprint) => supersededBy(person, fingerprint))
+          .map(({ fingerprint }) => fingerprint)
+          .sort(),
+      countSuperseded: async () =>
+        [...superseded.values()].filter(({ key }) => key !== null).length,
+      destroySuperseded: async () => {
+        let destroyed = 0;
+        for (const [id, old] of superseded) {
+          if (old.key === null) continue;
+          superseded.set(id, { ...old, key: null, kid: null });
+          destroyed += 1;
+        }
+        return destroyed;
+      },
       releaseHolds: async () => {
         const held = [...keys.values()].filter(({ hold }) => hold !== null);
         for (const kept of held) update(kept, { hold: null });
@@ -266,6 +368,19 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
         return held.length;
       },
     },
-    entries: createStoreEntries(keys, (id: string) => id),
+    // A superseded key's entry is named apart, since a transaction puts back each it changes.
+    entries: {
+      read: (id) => entriesOf(id).entries.read(entriesOf(id).at),
+      putBack: (id, before, after) => {
+        const { entries, at } = entriesOf(id);
+        entries.putBack(at, before, after);
+      },
+      list: () => [
+        ...keyEntries.list(),
+        ...supersededEntries.list().map(([at, old]) => [`${SUPERSEDED_ENTRY}${at}`, old] as const),
+      ],
+    },
+    keyRows: () => [...keys.values()].map((kept) => ({ ...kept })),
+    supersededRows: () => [...superseded.values()].map((old) => ({ ...old })),
   };
 };

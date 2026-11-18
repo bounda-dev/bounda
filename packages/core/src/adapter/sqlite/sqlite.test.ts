@@ -551,6 +551,7 @@ describe("createSqliteAdapter", () => {
       "app_scheduled_commands",
       "app_snapshots",
       "app_subscriber_failures",
+      "app_superseded_keys",
       "app_tenancy",
     ]);
   });

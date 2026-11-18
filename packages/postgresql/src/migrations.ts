@@ -20,6 +20,7 @@ import {
   type SqlExecutor,
   type SqlTransaction,
   schemaMigrationsTableFor,
+  supersededKeysTableStatements,
   tenancyTableStatement,
   tenantKeysTableStatement,
 } from "@bounda-dev/core/adapter/sql";
@@ -269,6 +270,14 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
           await tx.run(`ALTER TABLE ${tables[table]} ADD COLUMN "${column}" ${definition}`, []);
         }
         await tx.run(statePersonIndexStatement(tables), []);
+      },
+    },
+    {
+      version: 10,
+      migrate: async (tx) => {
+        for (const statement of supersededKeysTableStatements(tables.supersededKeys)) {
+          await tx.run(statement, []);
+        }
       },
     },
   ],

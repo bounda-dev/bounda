@@ -256,6 +256,169 @@ describe("createKeyRotation", () => {
     expect((await rotation.status()).completeAt).not.toBeNull();
   });
 
+  it("rewraps the database's previous key too, pauses on a failure and completes only once both are", async () => {
+    const storage = await memory().createStorage();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const logger = recordingLogger();
+    const old = wrappingOver(fakeWrapper("old"));
+    const inForce = (await old.generate()).stored;
+    const previous = (await old.generate()).stored;
+    await storage.indexKeys.add(previous, clock.now());
+    await storage.indexKeys.supersede(previous, inForce, previous, clock.now());
+    let answer: "fail" | "lost" | "ok" = "fail";
+    const rotation = createKeyRotation({
+      keys: storage.personalKeys,
+      indexKeys: {
+        ...storage.indexKeys,
+        rewrap: async (from, to) => {
+          if (from.fingerprint === previous.fingerprint && answer === "fail") {
+            throw new Error("index down");
+          }
+          if (from.fingerprint === previous.fingerprint && answer === "lost") return false;
+          return storage.indexKeys.rewrap(from, to);
+        },
+      },
+      checkpoints: storage.checkpointStore,
+      tenantKeys: wrapper,
+      master: testMaster,
+      wrapping: wrappingOver(wrapper),
+      clock,
+      logger,
+    });
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    expect(await rotation.status()).toMatchObject({ pending: 2 });
+    await rotation.sweep(clock.now());
+    expect(logger.logged).toContainEqual({
+      level: "error",
+      message: "the database's key could not be rewrapped",
+      context: expect.objectContaining({ kid: "old" }),
+    });
+    expect((await rotation.nextDueAt())?.getTime()).toBeGreaterThan(clock.now().getTime());
+    expect(await rotation.settled()).toBe(false);
+    answer = "lost";
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    await rotation.sweep(clock.now());
+    await rotation.sweep(clock.now());
+    expect((await rotation.status()).completeAt).toBeNull();
+    answer = "ok";
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    await rotation.sweep(clock.now());
+    await rotation.sweep(clock.now());
+    expect((await storage.indexKeys.previous())?.kid).toBe("new");
+    expect((await rotation.status()).completeAt).not.toBeNull();
+    expect(await rotation.settled()).toBe(true);
+  });
+
+  it("replaces the keys it finds while a reseal replaces them, and leaves the retirement for the reseal to say", async () => {
+    const storage = await memory().createStorage();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const logger = recordingLogger();
+    const store = storage.personalKeys;
+    await addUnder(store, "old", "c-1");
+    await addUnder(store, "old", "c-2");
+    const replaced: string[] = [];
+    let failing = true;
+    const rotation = createKeyRotation({
+      keys: store,
+      checkpoints: storage.checkpointStore,
+      tenantKeys: wrapper,
+      master: testMaster,
+      wrapping: wrappingOver(wrapper),
+      reseal: {
+        active: async () => true,
+        replacing: async () => true,
+        status: async () => null,
+        replace: async (row) => {
+          if (row.person === "c-2" && failing) throw new Error("store down");
+          replaced.push(row.person);
+          const fresh = (await wrappingOver(wrapper).generate()).stored;
+          return store.supersede(row.person, row.key, { ...fresh, at: clock.now().toISOString() });
+        },
+      },
+      clock,
+      logger,
+    });
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    expect(replaced).toEqual(["c-1"]);
+    expect(logger.logged).toContainEqual({
+      level: "error",
+      message: "personal key could not be replaced",
+      context: expect.objectContaining({ personId: "c-2", kid: "old" }),
+    });
+    expect(await store.countSuperseded()).toBe(1);
+    // The hold was kept: the next pass is when it ends, not later.
+    const held = (await store.listWrappedUnder({ kids: ["old"], limit: 10 }))[0]?.hold;
+    expect(await rotation.nextDueAt()).toEqual(new Date(held?.until ?? 0));
+    failing = false;
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    await rotation.sweep(clock.now());
+    expect(await store.countWrappedUnder({ kids: ["old"] })).toBe(0);
+    expect((await rotation.status()).completeAt).not.toBeNull();
+    expect(logger.logged.map(({ message }) => message)).not.toContain(
+      "no key is wrapped under an older version of the tenant's key any more; retire them",
+    );
+    expect((await rotation.status()).reseal).toBeNull();
+  });
+
+  it("stops a pass once a version put in force since it began is what a key would go under", async () => {
+    const storage = await memory().createStorage();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const store = storage.personalKeys;
+    await addUnder(store, "old", "c-1");
+    const base = wrappingOver(wrapper);
+    const rotation = createKeyRotation({
+      keys: store,
+      checkpoints: storage.checkpointStore,
+      tenantKeys: wrapper,
+      master: testMaster,
+      wrapping: {
+        kids: () => base.kids(),
+        wrapped: async (key) => ({ ...(await base.wrapped(key)), kid: "newer" }),
+      },
+      clock,
+      logger: recordingLogger(),
+    });
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    expect(await rotation.sweep(clock.now())).toBe(0);
+    expect(await store.countWrappedUnder({ kids: ["old"] })).toBe(1);
+    expect(await store.countWrappedUnder({ kids: ["newer"] })).toBe(0);
+    // Nothing failed: the next pass is due at once, and reads the version anew.
+    expect(await rotation.nextDueAt()).toEqual(clock.now());
+  });
+
+  it("rewraps rather than replaces once a reseal no longer replaces", async () => {
+    const storage = await memory().createStorage();
+    const wrapper = fakeWrapper("new", ["old"]);
+    const store = storage.personalKeys;
+    await addUnder(store, "old", "c-1");
+    const replaced: string[] = [];
+    const rotation = createKeyRotation({
+      keys: store,
+      checkpoints: storage.checkpointStore,
+      tenantKeys: wrapper,
+      master: testMaster,
+      wrapping: wrappingOver(wrapper),
+      reseal: {
+        active: async () => true,
+        replacing: async () => false,
+        status: async () => null,
+        replace: async (row) => {
+          replaced.push(row.person);
+          return false;
+        },
+      },
+      clock,
+      logger: recordingLogger(),
+    });
+    clock.set(new Date(clock.now().getTime() + 1_000 * ROTATION_CHECK_INTERVAL_MS));
+    expect(await rotation.sweep(clock.now())).toBe(1);
+    expect(replaced).toEqual([]);
+    expect(await store.countSuperseded()).toBe(0);
+    expect(await store.countWrappedUnder({ kids: ["new"] })).toBe(1);
+  });
+
   it("rewraps at most ROTATION_BATCH keys a pass", async () => {
     const { store, clock, rotation } = await setUp();
     for (let index = 0; index <= ROTATION_BATCH; index += 1) {
@@ -954,6 +1117,7 @@ describe("the key rotation across instances", () => {
       previous: ["old"],
       pending: 2,
       completeAt: null,
+      reseal: null,
     });
     await rotation.sweep(clock.now());
     await rotation.sweep(clock.now());
@@ -962,6 +1126,7 @@ describe("the key rotation across instances", () => {
       previous: ["old"],
       pending: 0,
       completeAt: clock.now().toISOString(),
+      reseal: null,
     });
   });
 });
@@ -1045,7 +1210,7 @@ describe("the tenant's key under the master key", () => {
     expect(logger.logged.map(({ message }) => message)).not.toContain(removeThem.message);
   });
 
-  it("logs a rewrap that fails, completes nothing, and tries again on the next pass", async () => {
+  it("logs a rewrap that fails, completes nothing, and tries again once the pause ends", async () => {
     const { state, tenantKeys } = underMaster(async () => {
       throw new Error("the KMS is down");
     });
@@ -1058,6 +1223,10 @@ describe("the tenant's key under the master key", () => {
     });
     expect((await rotation.status()).completeAt).toBeNull();
     await rotation.sweep(clock.now());
+    expect(state.calls).toBe(1);
+    expect((await rotation.nextDueAt())?.getTime()).toBe(clock.now().getTime() + HOLD_MS);
+    clock.set(new Date(clock.now().getTime() + HOLD_MS));
+    await rotation.sweep(clock.now());
     expect(state.calls).toBe(2);
   });
 });
@@ -1065,7 +1234,7 @@ describe("the tenant's key under the master key", () => {
 describe("settled", () => {
   it("says whether any key, a person's or the database's, is still under an older version", async () => {
     const storage = await memory().createStorage();
-    const wrapper = fakeWrapper("new", ["old", "new"]);
+    const wrapper = fakeWrapper("new", ["old", "older", "new"]);
     const rotation = createKeyRotation({
       keys: storage.personalKeys,
       indexKeys: storage.indexKeys,

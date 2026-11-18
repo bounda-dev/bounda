@@ -1,7 +1,8 @@
 import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { withUpcasting } from "../aggregate/upcasting.ts";
-import { type AtRestSealer, sealedSnapshots } from "../personal-data/at-rest.ts";
+import { sealedSnapshots } from "../personal-data/at-rest.ts";
+import type { DatabaseSealer } from "../personal-data/blind-index.ts";
 import { withPersonalData } from "../personal-data/event-store.ts";
 import type { PersonalKeys, PersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
@@ -19,7 +20,7 @@ export interface AppStorageArgs {
    * What snapshots, and remembered answers that name nobody, are sealed under at rest; `null`, or
    * absent, in an app without keys, whose snapshots hold nothing personal.
    */
-  readonly atRest?: AtRestSealer | null;
+  readonly atRest?: DatabaseSealer | null;
 }
 
 export interface AppStorageTransaction extends Omit<StorageTransaction, "personalKeys"> {
@@ -31,7 +32,7 @@ export interface AppStorage extends Omit<Storage, "personalKeys" | "transact"> {
   /**
    * What remembered answers that name nobody are sealed under, `null` in an app without keys.
    */
-  readonly atRest: AtRestSealer | null;
+  readonly atRest: DatabaseSealer | null;
   transact<T>(work: (transaction: AppStorageTransaction) => Promise<T>): Promise<T>;
 }
 

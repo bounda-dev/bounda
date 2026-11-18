@@ -4,7 +4,7 @@ import { createMemoryIndexKeyStore } from "../../memory/index-key-store.ts";
 import { createMemoryTenancyStore } from "../../memory/tenancy-store.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import { openTestTenantKeys, testMaster } from "../test-support.ts";
-import { indexedText, openDatabaseKey } from "./blind-index.ts";
+import { epochMark, epochNumber, indexedText, openDatabaseKey } from "./blind-index.ts";
 import { fingerprintOf, generateWrappableKey, toBase64, withRawKey } from "./crypto.ts";
 import type { TenantKeys } from "./tenant-keys.ts";
 import { createPersonalKeyWrapping } from "./wrapped-keys.ts";
@@ -120,5 +120,141 @@ describe("openDatabaseKey", () => {
     } finally {
       vi.restoreAllMocks();
     }
+  });
+
+  it("takes the key a reseal puts in force within its time, keeping the previous one to open and find with until it goes", async () => {
+    const store = createMemoryIndexKeyStore();
+    const clock = createFixedClock();
+    const tenantKeys = await openTestTenantKeys();
+    const wrapping = wrappingUnder(tenantKeys);
+    const opened = await openDatabaseKey({ store, wrapping, clock, ttlMs: 1_000 });
+    const args = { readModel: "customers", field: "email", type: "string" as const, value: "a@x" };
+    const before = await opened.indexer.index(args);
+    const sealedBefore = await opened.atRest.seal("state");
+    const [lookup] = await opened.atRest.lookups("k-1");
+    expect(await opened.atRest.lookups("k-1")).toEqual([lookup]);
+    expect(await opened.indexer.indexAll(args)).toEqual([before]);
+    const from = (await store.get()) as NonNullable<Awaited<ReturnType<typeof store.get>>>;
+    const to = (await wrapping.generate()).stored;
+    await store.supersede(from, to, await wrapping.wrapped(from), clock.now());
+    // Within its time, what it read stands.
+    clock.advance(999);
+    expect(await opened.indexer.index(args)).toBe(before);
+    expect(opened.indexer.epoch).toBe(from.fingerprint);
+    clock.advance(1);
+    const after = await opened.indexer.index(args);
+    expect(after).not.toBe(before);
+    expect(opened.indexer.epoch).toBe(to.fingerprint);
+    expect(await opened.indexer.indexAll(args)).toEqual([after, before]);
+    expect(await opened.atRest.lookups("k-1")).toEqual([await opened.atRest.lookup("k-1"), lookup]);
+    expect(await opened.atRest.open(sealedBefore)).toBe("state");
+    const sealedAfter = await opened.atRest.seal("next");
+    expect(await opened.atRest.open(sealedAfter)).toBe("next");
+    const pinned = await opened.indexer.pinned();
+    expect(pinned.epoch).toBe(to.fingerprint);
+    expect(pinned.number).toBe(await epochNumber(to.fingerprint));
+    expect(await pinned.indexAll(args)).toEqual([after]);
+    expect((await pinned.forTable({} as never)).epoch).toBe(to.fingerprint);
+    expect((await pinned.pinned()).number).toBe(pinned.number);
+    // A table keeps the key it is indexed under, as its mark says, or the previous one unmarked.
+    const marks = new Map<string, number>();
+    const table = (empty: boolean, writes = true) => ({
+      readModel: "customers",
+      checkpoints: {
+        get: async (name: string) => marks.get(name) ?? 0,
+        set: async (name: string, value: number) => {
+          marks.set(name, value);
+        },
+      },
+      isEmpty: async () => empty,
+      writes,
+    });
+    expect((await opened.indexer.forTable(table(false, false))).epoch).toBe(from.fingerprint);
+    expect(marks.size).toBe(0);
+    expect((await opened.indexer.forTable(table(true))).epoch).toBe(to.fingerprint);
+    expect(marks.get(epochMark("customers"))).toBe(await epochNumber(to.fingerprint));
+    marks.set(epochMark("customers"), await epochNumber(from.fingerprint));
+    expect(await (await opened.indexer.forTable(table(true))).index(args)).toBe(before);
+    marks.set(epochMark("customers"), await epochNumber(to.fingerprint));
+    expect(await (await opened.indexer.forTable(table(false))).index(args)).toBe(after);
+    // Once dropped, the previous key opens nothing more, and every table is under the new one.
+    await store.dropPrevious(
+      (await store.previous()) as NonNullable<Awaited<ReturnType<typeof store.previous>>>,
+    );
+    await opened.refresh();
+    marks.set(epochMark("customers"), await epochNumber(from.fingerprint));
+    expect((await opened.indexer.forTable(table(false))).epoch).toBe(to.fingerprint);
+    expect(await opened.indexer.indexAll(args)).toEqual([after]);
+    await expect(opened.atRest.open(sealedBefore)).rejects.toThrow();
+    expect(await opened.atRest.lookups("k-1")).toHaveLength(1);
+    // A clock set back reads the store again.
+    clock.set(new Date(clock.now().getTime() - 10));
+    const get = vi.spyOn(store, "get");
+    await opened.indexer.index(args);
+    expect(get).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("names a database key's epoch by a positive number, and a read model's mark after it", async () => {
+    expect(epochMark("customers")).toBe("read-model:epoch:customers");
+    const numbers = await Promise.all(["a", "b", "c", "d"].map(epochNumber));
+    for (const number of numbers) {
+      expect(Number.isInteger(number) && number > 0 && number <= 0x7fffffff).toBe(true);
+    }
+    expect(new Set(numbers).size).toBe(4);
+    expect(await epochNumber("a")).toBe(numbers[0]);
+  });
+});
+
+describe("openDatabaseKey across a reseal", () => {
+  it("opens the previous key a reseal keeps when it starts, and unwraps a key it holds once", async () => {
+    const store = createMemoryIndexKeyStore();
+    const clock = createFixedClock();
+    const tenantKeys = await openTestTenantKeys();
+    const wrapping = wrappingUnder(tenantKeys);
+    const first = await openDatabaseKey({ store, wrapping, clock });
+    const args = { readModel: "customers", field: "email", type: "string" as const, value: "a@x" };
+    const before = await first.indexer.index(args);
+    const from = (await store.get()) as NonNullable<Awaited<ReturnType<typeof store.get>>>;
+    const to = (await wrapping.generate()).stored;
+    await store.supersede(from, to, await wrapping.wrapped(from), clock.now());
+    const base = vi.spyOn(wrapping, "derivationBase");
+    const started = await openDatabaseKey({ store, wrapping, clock });
+    expect(base).toHaveBeenCalledTimes(2);
+    expect((await started.indexer.indexAll(args))[1]).toBe(before);
+    await started.refresh();
+    expect(base).toHaveBeenCalledTimes(2);
+    // Calls at the same instant read the store once.
+    const get = vi.spyOn(store, "get");
+    await started.indexer.index(args);
+    await started.indexer.index(args);
+    expect(get).not.toHaveBeenCalled();
+    // A store emptied, as forgetting the tenant leaves it, keeps the keys held.
+    await store.clear();
+    await started.refresh();
+    expect(started.indexer.epoch).toBe(to.fingerprint);
+    vi.restoreAllMocks();
+  });
+
+  it("fails to open what neither key sealed with the cipher's own error", async () => {
+    const store = createMemoryIndexKeyStore();
+    const clock = createFixedClock();
+    const opened = await openDatabaseKey({
+      store,
+      wrapping: wrappingUnder(await openTestTenantKeys()),
+      clock,
+    });
+    const other = await openDatabaseKey({
+      store: createMemoryIndexKeyStore(),
+      wrapping: wrappingUnder(await openTestTenantKeys()),
+      clock,
+    });
+    const error = await opened.atRest.open(await other.atRest.seal("x")).catch((caught) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(TypeError);
+  });
+
+  it("numbers an epoch by the first 31 bits of its SHA-256", async () => {
+    expect(await epochNumber("a")).toBe(1251442962);
   });
 });

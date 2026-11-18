@@ -120,6 +120,64 @@ describe("deferWrites", () => {
     ]);
   });
 
+  it("lists past a key and reseals what it holds back while it holds what was read, and the live store on flush", async () => {
+    const storage = await memory().createStorage();
+    await storage.idempotencyStore.put(record("live", []));
+    const { stores, flush } = deferWrites(storage);
+    await stores.idempotencyStore.put(record("held", []));
+    await stores.idempotencyStore.put(record("other", []));
+    expect(
+      (await stores.idempotencyStore.list({ now, after: "held" })).map(({ key }) => key),
+    ).toEqual(["live", "other"]);
+    const resealed = { $sealed: { salt: "s", data: "new" } };
+    const persons = [held("c-1", "1")];
+    await stores.idempotencyStore.reseal({
+      key: "held",
+      from: testAnswer("held"),
+      answer: resealed,
+      persons,
+      now,
+    });
+    await stores.idempotencyStore.reseal({
+      key: "other",
+      from: testAnswer("stale"),
+      answer: resealed,
+      persons,
+      now,
+    });
+    expect((await stores.idempotencyStore.get({ key: "other", now }))?.answer).toEqual(
+      testAnswer("other"),
+    );
+    // A record filed elsewhere since it was read is no longer here to reseal.
+    await stores.idempotencyStore.erase({ key: "other", filed: "moved", now });
+    await stores.idempotencyStore.reseal({
+      key: "other",
+      from: testAnswer("other"),
+      answer: resealed,
+      persons,
+      now,
+    });
+    expect(await stores.idempotencyStore.get({ key: "other", now })).toBeNull();
+    await stores.idempotencyStore.reseal({
+      key: "live",
+      from: testAnswer("live"),
+      answer: resealed,
+      persons,
+      now,
+    });
+    expect(await stores.idempotencyStore.get({ key: "held", now })).toMatchObject({
+      answer: resealed,
+      persons,
+    });
+    expect((await storage.idempotencyStore.get({ key: "live", now }))?.answer).toEqual(
+      testAnswer("live"),
+    );
+    await flush(storage);
+    expect((await storage.idempotencyStore.get({ key: "live", now }))?.answer).toEqual(resealed);
+    expect((await storage.idempotencyStore.get({ key: "held", now }))?.answer).toEqual(resealed);
+    expect(await storage.idempotencyStore.get({ key: "other", now })).toBeNull();
+  });
+
   it("lists and erases only what has not expired, and keeps a live record where it files one", async () => {
     const storage = await memory().createStorage();
     await storage.idempotencyStore.put(record("live", []));

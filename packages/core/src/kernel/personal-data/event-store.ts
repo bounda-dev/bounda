@@ -8,6 +8,7 @@ import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import {
+  heldFingerprint,
   holdsSealed,
   isSealed,
   type PersonalKey,
@@ -147,10 +148,11 @@ const keyCache = <Key>() => {
 type SealingKey = (person: string, category: string) => Promise<PersonalKey>;
 type OpeningKey = (person: string, fingerprint: string) => Promise<PersonalKey | null>;
 
+// A value opened under a key a reseal superseded is held under the key in its place.
 const keyedOf = (person: string, key: PersonalKey): KeyedPerson =>
   key.retained
-    ? { person, fingerprint: key.fingerprint, retained: true }
-    : { person, fingerprint: key.fingerprint };
+    ? { person, fingerprint: heldFingerprint(key), retained: true }
+    : { person, fingerprint: heldFingerprint(key) };
 
 /**
  * The event store handlers write to and read from: personal fields go in encrypted with the key

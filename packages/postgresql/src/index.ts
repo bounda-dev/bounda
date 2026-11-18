@@ -175,6 +175,7 @@ export const postgresql: PostgresqlFunction = (options) => {
             table: tables.personalKeys,
             persons: tables.persons,
             restrictions: tables.restrictions,
+            superseded: tables.supersededKeys,
           }),
           persons: createSqlPersonStore({
             dialect: postgresqlDialect,

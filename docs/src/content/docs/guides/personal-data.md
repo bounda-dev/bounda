@@ -1056,6 +1056,11 @@ export const repository = async ({ client, email }: Query.RepositoryArgs) =>
   ]);
 ```
 
+While a [reseal](#recovering-from-a-full-compromise) moves the table under the database's new key,
+a value has two indexes, one under each key, and the table holds one of them. `where` matches both;
+a statement of your own stays right through it by comparing with `client.blindIndexes(field,
+value)`, every index the value may have, with `IN`.
+
 The index key is one random key per database, created when the first read model with a blind
 index starts and kept wrapped under the [key wrapper](#where-the-keys-live) as the persons' keys are,
 rewrapped with them when the master key rotates: a copy of the database computes no index without
@@ -2038,6 +2043,53 @@ more. It refuses while a key is still wrapped under one, and until twice `UNWRAP
 after the version in force was created, since an instance that read the record before the rotation
 wraps under the older version until it reads it again.
 
+### Recovering from a full compromise
+
+Rotating a level rewrites how the keys below it are wrapped, never the keys themselves. Whoever
+took the database, the tenant key store and the master key at once holds every person's key and
+the database's key unwrapped, and opens with them what any later copy of the database holds. A
+reseal replaces them all:
+
+1. [Rotate the master key](#rotating-the-master-key) until no tenant is left under the previous
+   one, then remove it.
+2. On each tenant, `rotateTenantKey({ reseal: true })`, or `bounda tenant-key rotate --reseal`.
+3. Once the reseal has destroyed the old keys, `retireTenantKeys()`, or `bounda tenant-key
+   retire`.
+
+The reseal puts a new version of the tenant's key in force and replaces the database's key, keeping
+the old one as the previous. The worker replaces each person's key, in force or kept under a legal
+obligation, by a new one under the new version, and keeps the old one superseded in
+`bounda_superseded_keys` while values are still sealed under it: a read opens them as before, and
+the person's new key is the one that seals from then on. Once every key is replaced and
+`RESEAL_SWITCH_MS` has passed, twice the key cache's time, every instance seals and indexes under the
+new keys, and the worker walks each store a batch at a time, sealing again under the new keys what
+it holds of persons: the events and the state of processes, stored and scheduled commands, a
+redaction's kept values, dead letters and the text of their errors, layered under several persons as
+it is, each subscriber's last failure, and remembered answers, layered or sealed under the
+database's key. The snapshots go, and every read model that holds personal data is rebuilt, its
+values sealed and its blind indexes computed under the new keys. Last, in one transaction, it reads
+again every scheduled command and dead letter, the stores the runtime copies sealed values into,
+and destroys the old keys, keeping only their fingerprints, so a [restored
+copy](/guides/backups/#what-is-guaranteed) still forgets whoever a forgetting since named. The
+database's previous key goes once the last answer filed under it expires,
+`idempotencyKeyLifetimeMs` at most, so a command sent again with its key still finds its answer.
+
+It runs with the app live, a step at a time under a lease, each step resumed where it stood after a
+crash or a restart. A value sealed under a key no store keeps any more, of a person forgotten or a
+value redacted, is sealed again as `null` under a key no one keeps, so the leaked key no longer
+opens it in any later copy. A forgetting, a redaction or a restriction that commits meanwhile is
+never undone: each batch is written in a transaction that reads what it rewrites, one at a time with
+theirs. `status().keyRotation.reseal`, and `bounda status`, say the step under way: `replacing`,
+`events`, `scheduled`, `letters`, `failures`, `answers`, `snapshots`, `read-models`, `sealing`,
+`expiring`, then `complete`. Another reseal is refused until it is complete, and a plain rotation
+and `retireTenantKeys` until the old keys are destroyed.
+
+What the keys taken still open is what was taken, and any copy made before the reseal: a backup
+holds the old keys, wrapped under the versions of the tenant's key retired at the end. Retiring them
+leaves such a backup unreadable to anyone without the leaked keys, as for [old backups](#old-backups);
+keep them only as long as you need to restore one, and reseal again after restoring it, since the
+copy brings the old keys back.
+
 ### Encrypted database files
 
 In an app with a key wrapper and a tenant key store, `sqlite({ path })` encrypts its file under a
@@ -2521,7 +2573,9 @@ The ledger handles a backup once it is restored. Rotating the [tenant's key](#ro
 handles the others: retiring the older version once every backup it covers has expired leaves those
 backups unreadable as a whole, the forgotten persons with everyone else. A tenant's backups need
 nothing of the kind once the tenant is [forgotten](#forgetting-a-tenant): its key is gone, and with
-it every copy.
+it every copy. After a [reseal](#recovering-from-a-full-compromise), a backup taken before it holds
+keys that no longer seal anything the database holds: it opens only through the versions of the
+tenant's key the reseal replaced, and opens nothing once they are retired.
 
 ## In tests
 

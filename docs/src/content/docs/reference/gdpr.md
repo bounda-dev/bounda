@@ -393,7 +393,8 @@ organised by the controllers it serves, which Bounda does not know.
   indexes](/guides/personal-data/#sealed-at-rest), and a SQLite file is [encrypted
   whole](/guides/personal-data/#encrypted-database-files) under the tenant's key.
   The master key and the tenant's key [rotate](/guides/personal-data/#rotating-the-master-key) with
-  the app running.
+  the app running, and after a leak of all three every key that seals the data is
+  [replaced](/guides/personal-data/#recovering-from-a-full-compromise) and the data sealed again.
 - **Confidentiality, 32(1)(b).** The [access log](/guides/personal-data/#who-opened-what) records
   every call that hands a person's data out in the clear, and queries receive the actor, to read
   only what it may see. What it does not see, a column kept in the clear read around the client, is
@@ -422,11 +423,14 @@ Bounda detects no breach and notifies no one. What it gives the controller once 
   key](/guides/personal-data/#rotating-the-master-key) leaves whoever holds the old one unable to
   open the tenant key store once its records are rewrapped, and [rotating the tenant's
   key](/guides/personal-data/#rotating-the-tenants-key) and retiring the older version leaves
-  whoever holds that version unable to open the persons' keys once the database's are rewrapped.
-
-A leak of every level at once, the database, the tenant key store and the master key, exposes the
-persons' keys themselves, and no rotation replaces those: rotating rewrites wrappings, never the
-keys that seal the data.
+  whoever holds that version unable to open the persons' keys once the database's are rewrapped;
+- the way out of a leak of every level at once, the database, the tenant key store and the master
+  key, which exposes the persons' keys themselves: [a
+  reseal](/guides/personal-data/#recovering-from-a-full-compromise) replaces every person's key and
+  the database's key, with the app running, seals again under the new keys everything the store
+  holds of persons and rebuilds the read models, then destroys the old keys. What was taken stays
+  readable to whoever took it, and so does a backup taken before; nothing written or kept after the
+  reseal opens with the keys taken, a person forgotten or a value redacted before it included.
 
 Whether encryption made the data unintelligible to whoever took it, so that the person need not be
 told under 34(3)(a), is the controller's assessment. Notifying the supervisory authority within 72

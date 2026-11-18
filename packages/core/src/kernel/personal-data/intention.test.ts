@@ -119,6 +119,7 @@ describe("the intentions of forgetting", () => {
         reads += 1;
         return storage.personalKeys.list(person);
       },
+      predecessors: storage.personalKeys.predecessors,
     };
     expect(
       await intentions.intend({ personId: "c-1", reason: "requested", scope: WHOLE, keys }),

@@ -77,6 +77,24 @@ export interface IndexOfFunction {
   (args: IndexOfArgs): Promise<string>;
 }
 
+export interface IndexesOfFunction {
+  (args: IndexOfArgs): Promise<readonly string[]>;
+}
+
+/**
+ * The value's index under every database key the table may be indexed under, for a condition.
+ */
+export const indexesOf: IndexesOfFunction = ({ context, field, value }) => {
+  // A layout with an index field is only opened with an indexer.
+  const indexer = context.indexer as BlindIndexer;
+  return indexer.indexAll({
+    readModel: context.layout.readModel,
+    field: field.field,
+    type: field.definition.type,
+    value,
+  });
+};
+
 export const indexOf: IndexOfFunction = ({ context, field, value }) => {
   // A layout with an index field is only opened with an indexer.
   const indexer = context.indexer as BlindIndexer;

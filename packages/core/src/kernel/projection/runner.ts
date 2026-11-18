@@ -31,6 +31,7 @@ import {
   KeysMissingError,
   type SealingKeys,
 } from "../read-model/sealing-keys.ts";
+import { tableIndexer } from "../read-model/table-indexer.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { ATTRIBUTES, actorAttribute, type TracerFunction, traced } from "../telemetry.ts";
 
@@ -230,7 +231,10 @@ export const projectBatch: ProjectBatchFunction = async ({
 };
 
 interface ProjectionClaim extends CheckpointClaim {
-  readonly transaction: Pick<ReadModelTransaction, "table" | "client" | "unsettled">;
+  readonly transaction: Pick<
+    ReadModelTransaction,
+    "table" | "client" | "unsettled" | "checkpointStore"
+  >;
   readonly keys: SealingKeys;
   readonly redacted: RedactedValues;
 }
@@ -239,7 +243,7 @@ interface ProjectionClaim extends CheckpointClaim {
  * What sealing needs from the app: the persons' keys and the database's blind indexes.
  */
 export interface SealingSource {
-  readonly keys: Pick<PersonalKeys, "heldAllOf">;
+  readonly keys: Pick<PersonalKeys, "heldAllOf" | "discarded">;
   readonly indexer: BlindIndexer | null;
   /**
    * Where the old values a redaction kept are read, by its event's id.
@@ -343,12 +347,25 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
               }),
           }),
       }),
-    process: (events, { transaction, keys, redacted }) =>
+    process: async (events, { transaction, keys, redacted }) =>
       projectBatch({
         readModel,
         events,
         transaction,
-        sealing: { layout, keys, indexer: sealing.indexer, redacted },
+        sealing: {
+          layout,
+          keys,
+          indexer: layout.indexed
+            ? await tableIndexer({
+                indexer: sealing.indexer,
+                readModel: readModel.name,
+                checkpoints: transaction.checkpointStore,
+                table: transaction.table,
+                writes: true,
+              })
+            : null,
+          redacted,
+        },
         logger,
         errorText,
         tracer,

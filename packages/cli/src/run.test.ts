@@ -1490,6 +1490,39 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     );
   });
 
+  it("reseals with --reseal, refusing another rotation while it runs, and status says its step", async () => {
+    const tenant = tenantOf("resealed");
+    await joinMember(tenant, "m-1");
+    const before = JSON.parse(
+      (await cli(["status", ...config, "--tenant", tenant, "--json"], fixture)).stdout,
+    ).tenant.kid as string;
+    const rotated = await cli(["tenant-key", "rotate", ...config, "--tenant", tenant], fixture);
+    const [, between] = /^tenant key (\S+) in force;/.exec(rotated.stdout) ?? [];
+    const resealed = await cli(
+      ["tenant-key", "rotate", ...config, "--tenant", tenant, "--reseal"],
+      fixture,
+    );
+    expect(besidesLogs(resealed.stderr)).toBe("");
+    expect(resealed.code).toBe(EXIT_OK);
+    const [, kid] = /^tenant key (\S+) in force;/.exec(resealed.stdout) ?? [];
+    expect(resealed.stdout).toBe(
+      `tenant key ${kid} in force; the worker replaces every key that seals personal data and seals it all again under the new ones, which bounda status follows, then retire ${between}, ${before} with bounda tenant-key retire\n`,
+    );
+    const status = await cli(["status", ...config, "--tenant", tenant], fixture);
+    expect(status.stdout).toMatch(/^reseal: replacing since \S+$/m);
+    const again = await cli(["tenant-key", "rotate", ...config, "--tenant", tenant], fixture);
+    expect(again.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(again.stderr)).toBe(
+      "error: A reseal keeps the persons' keys it replaced: the tenant's key rotates again once it destroys them\n",
+    );
+    const retired = await cli(["tenant-key", "retire", ...config, "--tenant", tenant], fixture);
+    expect(retired.code).toBe(EXIT_FAILURE);
+    const help = await cli(["tenant-key", "rotate", "--help"], fixture);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "--reseal after a leak of the persons' keys themselves: replace every key that seals personal data, and the database's key, and seal it all again under the new ones",
+    );
+  });
+
   it("forgets a tenant whose persons hold keys a legal obligation keeps only when told to", async () => {
     const tenant = tenantOf("invoicing");
     const invoicing = ["--registry", ".bounda/invoicing-registry.ts", ...config];

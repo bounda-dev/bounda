@@ -199,7 +199,7 @@ export interface ReadModelRebuild<Row extends object = Record<string, unknown>, 
   /**
    * In one transaction, holding the lock named `subscriber` as `ReadModelStorage.transact` does:
    * the shadow takes the live table's place, the checkpoint `subscriber` is set to `position`,
-   * so the projections carry on from there, and `progress` is forgotten.
+   * so the projections carry on from there, each of `marks` is set, and `progress` is forgotten.
    */
   commit(args: CommitReadModelRebuildArgs): Promise<void>;
   /**
@@ -212,6 +212,11 @@ export interface ReadModelRebuild<Row extends object = Record<string, unknown>, 
 export interface CommitReadModelRebuildArgs {
   readonly subscriber: string;
   readonly position: number;
+  /**
+   * Checkpoints set in the same transaction, which describe the table that takes the live one's
+   * place.
+   */
+  readonly marks?: Readonly<Record<string, number>>;
 }
 
 export interface CreateReadModelRebuildArgs extends CreateReadModelArgs {
