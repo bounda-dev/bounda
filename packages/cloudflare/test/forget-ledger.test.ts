@@ -56,7 +56,8 @@ describe("the forget ledger in Workers KV", () => {
       fingerprints: ["k-1"],
     };
     await ada.append([entry]);
-    expect(await ada.read({ limit: 10 })).toEqual([entry]);
+    // Strictly: an entry without a restriction, redaction or disclosure reads back without the key.
+    expect(await ada.read({ limit: 10 })).toStrictEqual([entry]);
     expect(await bob.read({ limit: 10 })).toEqual([]);
     expect(ada.visibilityDelayMs).toBe(KV_LIST_DELAY_MS);
   });

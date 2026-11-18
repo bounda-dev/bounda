@@ -135,6 +135,13 @@ describe("personalDataInformation", () => {
       told({ keys: [key("profile", "2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z")] })
         .profile,
     ).toMatchObject({ held: true, keptUntil: null, restrictedUntil: "2026-01-31T00:00:00.000Z" });
+    // Nothing of it in force, so nothing for the whole person's retention to forget either.
+    expect(
+      told({
+        keys: [key("profile", "2026-01-01T00:00:00.000Z", "2026-01-05T00:00:00.000Z")],
+        person: person("2026-01-01T00:00:00.000Z"),
+      }).profile?.keptUntil,
+    ).toBeNull();
     const noRetention = buildPersonalCategories({ module: undefined, retention: null });
     expect(
       personalDataInformation({
