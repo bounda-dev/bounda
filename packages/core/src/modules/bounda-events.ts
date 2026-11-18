@@ -41,11 +41,22 @@ export interface RemovedDeadLetter {
 
 /**
  * Why a person was forgotten: `requested` by `forget`, from a client or a policy or process, or
- * by `bounda forget --from` for a bare id, or `retention`, past `runtime.personalData.retention`,
- * or a category's own, without activity. A forgetting committed again from `runtime.personalData.forgetLedger`, after
- * a restore or a commit that never happened, keeps the reason it was asked with.
+ * by `bounda forget --from` for a bare id, `objection`, by `forget` with `objection`, after an
+ * objection the app upheld (article 21), or `retention`, past `runtime.personalData.retention`, or
+ * a category's own, without activity. A forgetting committed again from
+ * `runtime.personalData.forgetLedger`, after a restore or a commit that never happened, keeps the
+ * reason it was asked with.
  */
-export type PersonalDataForgottenReason = "requested" | "retention";
+export type PersonalDataForgottenReason = "requested" | "objection" | "retention";
+
+/**
+ * Every reason a person is forgotten for.
+ */
+export const PERSONAL_DATA_FORGOTTEN_REASONS: readonly PersonalDataForgottenReason[] = [
+  "requested",
+  "objection",
+  "retention",
+];
 
 export interface PersonalDataForgottenPayload {
   readonly personId: string;
@@ -63,7 +74,7 @@ export interface PersonalDataForgottenPayload {
    */
   readonly categories: readonly PersonalCategoryName[];
   /**
-   * The categories kept under a legal obligation instead, restricted until their retention ends,
+   * The categories kept under an erasure exemption instead, restricted until their retention ends,
    * when another `PersonalDataForgotten` names them in `expired`.
    */
   readonly retained: readonly PersonalCategoryName[];

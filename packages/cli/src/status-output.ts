@@ -138,7 +138,7 @@ const retentionOf = ({ retention }: AppStatus): string[] => {
     ),
     ...(keptBeyond === 0
       ? []
-      : [`  ${plural(keptBeyond, "key")} kept past a forgetting that no legal obligation keeps`]),
+      : [`  ${plural(keptBeyond, "key")} kept past a forgetting that no erasure exemption keeps`]),
   ];
 };
 

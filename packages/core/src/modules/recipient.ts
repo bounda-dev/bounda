@@ -389,7 +389,7 @@ export type RecipientDeclaration<Category extends string = PersonalCategoryName>
 /**
  * A recipient one of the runtime's events names, to be told of it: the port, by
  * `"<aggregate or read model>.<port>"`, and, of the categories it was disclosed, those the change
- * touches. `retained` are those a forgetting kept under a legal obligation instead, restricted;
+ * touches. `retained` are those a forgetting kept under an erasure exemption instead, restricted;
  * `presumed` is `true` when the disclosure is not recorded but cannot be ruled out, as for a
  * recipient declared after the person's data already existed.
  */
@@ -435,7 +435,7 @@ export type RecipientNoticeArgs<
 
 /**
  * `onPersonalDataForgotten`'s arguments: `retained` are the categories disclosed that a forgetting
- * kept under a legal obligation, to restrict rather than erase.
+ * kept under an erasure exemption, to restrict rather than erase.
  */
 export type RecipientForgottenArgs<Ports extends object> = RecipientNoticeArgs<
   PersonalDataForgottenEvent,

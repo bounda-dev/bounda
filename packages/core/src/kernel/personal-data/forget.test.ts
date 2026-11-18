@@ -41,6 +41,51 @@ const declared: PersonalDataModule = {
   },
 };
 
+const said = { retention: "30d", purposes: ["Serve the person"], sources: ["data-subject"] };
+
+const health = (condition: string) => ({ kinds: ["health"], condition });
+
+// A category for each exemption of article 17(3), and some no exemption spares.
+const exempted = {
+  automatedDecisions: {},
+  categories: {
+    invoices: { basis: "legal-obligation", ...said },
+    news: { basis: "consent", ...said, processedFor: ["direct-marketing"] },
+    census: { basis: "public-task", ...said, processedFor: ["statistics"] },
+    lab: { basis: "contract", ...said, special: health("public-health") },
+    care: { basis: "contract", ...said, special: health("health-or-social-care") },
+    consented: { basis: "consent", ...said, special: health("legal-claims") },
+    study: {
+      basis: "legitimate-interests",
+      ...said,
+      processedFor: ["scientific-or-historical-research"],
+      erasureExemption: "archiving-research-or-statistics",
+    },
+    dispute: { basis: "legitimate-interests", ...said, special: health("legal-claims") },
+    screening: { basis: "legitimate-interests", ...said, special: health("public-health") },
+  },
+} as unknown as PersonalDataModule;
+
+// A key in force of every category of `exempted`, the person active a day ago.
+const holdEvery = async (storage: Storage) => {
+  const names = ["default", ...Object.keys(exempted.categories)];
+  for (const [index, category] of names.entries()) {
+    await storage.personalKeys.add("c-1", category, testPersonalKey(String(index)));
+  }
+  await storage.persons.record({
+    person: "c-1",
+    position: 1,
+    lastActiveAt: "2025-12-31T00:00:00.000Z",
+    forgottenAt: null,
+  });
+};
+
+// The categories whose key a forgetting kept, in the order the store lists them.
+const keptOf = async (storage: Storage) =>
+  (await storage.personalKeys.list("c-1"))
+    .filter(({ retainedSince }) => retainedSince !== null)
+    .map(({ category }) => category);
+
 const setup = async (storage?: Storage, module?: PersonalDataModule) => {
   const live = storage ?? (await memory().createStorage());
   const { logger, entries: logs } = createRecordingLogger();
@@ -303,6 +348,108 @@ describe("forgetPersonalData", () => {
       retained: [],
       expired: [],
     });
+  });
+
+  it("keeps every category an exemption of article 17(3) spares, and nothing on consent", async () => {
+    const { storage, forget } = await setup(undefined, exempted);
+    await holdEvery(storage);
+    await forget("c-1");
+    expect(await keptOf(storage)).toEqual([
+      "invoices",
+      "census",
+      "lab",
+      "study",
+      "dispute",
+      "screening",
+    ]);
+    const [event] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(event?.payload).toMatchObject({
+      reason: "requested",
+      whole: true,
+      categories: ["default", "news", "care", "consented"],
+      retained: ["invoices", "census", "lab", "study", "dispute", "screening"],
+      expired: [],
+    });
+  });
+
+  it("after an objection, keeps of what it reaches only what a legal obligation or legal claims keep", async () => {
+    const { storage, forget } = await setup(undefined, exempted);
+    await holdEvery(storage);
+    await forget("c-1", { objection: true });
+    expect(await keptOf(storage)).toEqual(["invoices", "lab", "dispute"]);
+    const [event] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(event?.payload).toMatchObject({
+      reason: "objection",
+      whole: true,
+      categories: ["default", "news", "census", "care", "consented", "study", "screening"],
+      retained: ["invoices", "lab", "dispute"],
+      expired: [],
+    });
+  });
+
+  it("ends, after an objection, what an earlier forgetting kept that the objection reaches, and only that", async () => {
+    const { storage, forget } = await setup(undefined, exempted);
+    await holdEvery(storage);
+    await forget("c-1");
+    const before = await storage.personalKeys.list("c-1");
+    await forget("c-1", { categories: ["census", "lab", "dispute", "invoices"], objection: true });
+    expect(await keptOf(storage)).toEqual(["invoices", "lab", "study", "dispute", "screening"]);
+    const events = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(events[1]?.payload).toMatchObject({
+      reason: "objection",
+      whole: false,
+      categories: ["census"],
+      retained: ["lab", "dispute", "invoices"],
+      expired: [],
+      fingerprints: [before.find(({ category }) => category === "census")?.key.fingerprint],
+    });
+    // A request again ends nothing an earlier forgetting kept.
+    await forget("c-1", { categories: ["study"] });
+    expect(await keptOf(storage)).toEqual(["invoices", "lab", "study", "dispute", "screening"]);
+    // Kept when it was declared otherwise, a category for direct marketing goes at an objection.
+    await storage.personalKeys.add("c-1", "news", testPersonalKey("n"));
+    await storage.personalKeys.retain("c-1", "f-n", {
+      since: "2026-01-01T00:00:00.000Z",
+      lastActiveAt: "2026-01-01T00:00:00.000Z",
+    });
+    await forget("c-1", { categories: ["news"] });
+    expect(await keptOf(storage)).toContain("news");
+    await forget("c-1", { categories: ["news"], objection: true });
+    expect(await keptOf(storage)).not.toContain("news");
+  });
+
+  it("leaves to the retention what an earlier forgetting kept of a category no objection reaches", async () => {
+    const { storage, forget } = await setup(undefined, exempted);
+    await storage.personalKeys.add("c-1", "care", testPersonalKey("1"));
+    await storage.personalKeys.retain("c-1", "f-1", {
+      since: "2025-12-31T00:00:00.000Z",
+      lastActiveAt: "2025-12-31T00:00:00.000Z",
+    });
+    // Nor of one the app no longer declares, which the retention ends as well.
+    await storage.personalKeys.add("c-1", "dropped", testPersonalKey("2"));
+    await storage.personalKeys.retain("c-1", "f-2", {
+      since: "2025-12-31T00:00:00.000Z",
+      lastActiveAt: "2025-12-31T00:00:00.000Z",
+    });
+    await forget("c-1", { objection: true });
+    expect(await keptOf(storage)).toEqual(["care", "dropped"]);
+  });
+
+  it("takes objection as a boolean, recording a request without it", async () => {
+    const { storage, forget } = await setup(undefined, exempted);
+    await storage.personalKeys.add("c-1", "census", testPersonalKey("1"));
+    for (const wrong of ["yes", 1, null]) {
+      await expect(
+        forget("c-1", { objection: wrong } as unknown as ForgetOptions),
+      ).rejects.toMatchObject({
+        message: "forget takes objection as true or false",
+        issues: [{ path: ["objection"], message: "Expected a boolean" }],
+      });
+    }
+    expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toEqual([]);
+    await forget("c-1", { objection: false });
+    const [event] = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
+    expect(event?.payload).toMatchObject({ reason: "requested", retained: ["census"] });
   });
 
   it("refuses categories that are empty or that the app does not have, forgetting nothing", async () => {

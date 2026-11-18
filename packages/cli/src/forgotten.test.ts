@@ -179,7 +179,7 @@ describe("parseForgetList", () => {
       '{"personId":"c-1","categories":[1]}',
     ]) {
       expect(() => parseForgetList(`c-0\n${line}`)).toThrow(
-        'line 2 needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", "fingerprints" only as a list of strings, and "categories" only as null or a list of names',
+        'line 2 needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested", "objection" or "retention", "fingerprints" only as a list of strings, and "categories" only as null or a list of names',
       );
     }
     expect(() => parseForgetList("{not json")).toThrow("line 1 is neither a person's id nor JSON");

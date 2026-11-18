@@ -444,7 +444,7 @@ describe("withPersonalData", () => {
       aggregateId: "o-4",
       expectedVersion: 0,
       events: [placed({ customerId: "c-2", address: { street: "Main" }, total: 1 }, "o-4")],
-      basis: "legal-obligation",
+      basis: "erasure-exemption",
     });
     expect(appended[3]).toMatchObject({
       persons: [],

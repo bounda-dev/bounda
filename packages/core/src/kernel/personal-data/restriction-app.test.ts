@@ -3,11 +3,11 @@ import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { ReadClient, Table } from "../../adapter/storage/table.ts";
 import type { DispatchResult } from "../../contracts/command.ts";
-import { PROCESSING_RESTRICTED } from "../../contracts/errors.ts";
+import { PROCESSING_RESTRICTED, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
-import type { RestrictionBasis } from "../../modules/personal-data.ts";
+import type { RestrictionBasis, RestrictOptions } from "../../modules/personal-data.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -260,7 +260,7 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
           archiveOnInvoiceIssued: {
             module: {
               on: "InvoiceIssued",
-              restricted: "legal-obligation",
+              restricted: "erasure-exemption",
               handler: ({ event }: { event: { payload: { address: string | null } } }) => {
                 archived.push(event.payload.address);
               },
@@ -301,9 +301,9 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
           followCalls: callProcess(followed),
           escalateCalls: callProcess(escalated, "legal-claims"),
           fileInvoices: invoiceProcess(filed),
-          auditInvoices: invoiceProcess(audited, "legal-obligation"),
+          auditInvoices: invoiceProcess(audited, "erasure-exemption"),
           remindInvoices: reminderProcess(reminded),
-          recallInvoices: reminderProcess(recalled, "legal-obligation"),
+          recallInvoices: reminderProcess(recalled, "erasure-exemption"),
         },
       },
     },
@@ -572,7 +572,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
       "bo",
     ]);
     expect(
-      await queries.customersOnPlan?.({ plan: "pro" }, { includeRestricted: "legal-obligation" }),
+      await queries.customersOnPlan?.({ plan: "pro" }, { includeRestricted: "erasure-exemption" }),
     ).toEqual(["bo"]);
     await expect(
       queries.customersOnPlan?.(
@@ -590,17 +590,31 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await register("ana");
     await commands.issueInvoice?.({ customerId: "ana", invoiceId: "i-1", address: "1 Main St" });
     await app.runUntilIdle();
-    await app.restrict("ana", { ground: "objection-pending", categories: ["invoices"] });
+    await app.restrict("ana", { ground: "unlawful-processing", categories: ["invoices"] });
     await app.catchUpReadModels();
     expect(await queries.invoicesOf?.({ customerId: "ana" })).toEqual([]);
     expect(await queries.customersOnPlan?.({ plan: "pro" })).toEqual(["ana"]);
-    await app.restrict("ana", { ground: "objection-pending", categories: ["marketing"] });
+    await app.restrict("ana", { ground: "unlawful-processing", categories: ["marketing"] });
     await app.catchUpReadModels();
     expect(await queries.customersOnPlan?.({ plan: "pro" })).toEqual(["ana"]);
     await app.stop();
   });
 
-  it("treats what a forgetting kept under a legal obligation as restricted, read on legal-obligation alone", async () => {
+  it("refuses through the client to hold an objection pending for what no objection under article 21(1) is weighed for", async () => {
+    const { app } = await setup({ adapter: adapterOf() });
+    for (const options of [
+      { ground: "objection-pending", categories: ["invoices"] },
+      { ground: "objection-pending" },
+    ]) {
+      await expect(app.restrict("ana", options as RestrictOptions)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+    }
+    expect(await app.events.read({ limit: 10 })).toEqual([]);
+    await app.stop();
+  });
+
+  it("treats what a forgetting kept under a legal obligation as restricted, read on erasure-exemption alone", async () => {
     const { app, queries, commands, register } = await setup({ adapter: adapterOf() });
     await register("ana");
     await commands.issueInvoice?.({ customerId: "ana", invoiceId: "i-1", address: "1 Main St" });
@@ -609,7 +623,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.catchUpReadModels();
     expect(await queries.invoicesOf?.({ customerId: "ana" })).toEqual([]);
     expect(
-      await queries.invoicesOf?.({ customerId: "ana" }, { includeRestricted: "legal-obligation" }),
+      await queries.invoicesOf?.({ customerId: "ana" }, { includeRestricted: "erasure-exemption" }),
     ).toEqual(["i-1"]);
     await expect(
       commands.issueInvoice?.({ customerId: "ana", invoiceId: "i-2", address: "2 Main St" }),
@@ -650,7 +664,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
       commands.nudgeCustomer?.(
         { customerId: "ana" },
         {
-          processRestricted: "legal-obligation",
+          processRestricted: "erasure-exemption",
         },
       ),
     ).rejects.toMatchObject({ code: PROCESSING_RESTRICTED });
@@ -662,7 +676,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
       adapter: adapterOf(),
       reportBasis: "legal-claims",
     });
-    await app.restrict("ana", { ground: "objection-pending" });
+    await app.restrict("ana", { ground: "unlawful-processing" });
     await commands.registerCustomer?.(
       { customerId: "ana", email: "ana@example.com", plan: "pro" },
       { processRestricted: "consent" },
@@ -730,7 +744,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.restrict("ana", { ground: "accuracy-contested" });
     await app.unrestrict("ana", { notice: "7d" });
     await app.restrict("ana", { ground: "accuracy-contested", categories: ["marketing"] });
-    await app.restrict("ana", { ground: "objection-pending" });
+    await app.restrict("ana", { ground: "unlawful-processing" });
     clock.advance(7 * DAY_MS);
     await app.runUntilIdle();
     expect(await queries.customerCount?.()).toBe(0);
@@ -825,7 +839,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
         {
           path: ["processRestricted"],
           message:
-            'Expected one of "consent", "legal-claims", "protection-of-rights", "public-interest", "legal-obligation"',
+            'Expected one of "consent", "legal-claims", "protection-of-rights", "public-interest", "erasure-exemption"',
         },
       ],
     });
@@ -853,7 +867,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.runUntilIdle();
     expect(called).toEqual(["ana"]);
     await commands.callCustomer?.({ customerId: "ana" });
-    await app.restrict("ana", { ground: "objection-pending" });
+    await app.restrict("ana", { ground: "unlawful-processing" });
     await app.runUntilIdle();
     expect(called).toEqual(["ana"]);
     expect((await app.deadLetters.list()).map(({ handler }) => handler)).toContain(
@@ -894,7 +908,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.stop();
   });
 
-  it("holds a deadline whose state names a restricted person, and hands the state a forgetting kept as null but to a process that names legal-obligation", async () => {
+  it("holds a deadline whose state names a restricted person, and hands the state a forgetting kept as null but to a process that names erasure-exemption", async () => {
     const { app, clock, commands, register } = await setup({ adapter: adapterOf() });
     await register("ana");
     await register("bo");
@@ -916,7 +930,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.stop();
   });
 
-  it("hands a policy, a process and a command what a forgetting kept as null, but for one that names legal-obligation", async () => {
+  it("hands a policy, a process and a command what a forgetting kept as null, but for one that names erasure-exemption", async () => {
     const { app, commands, register, accesses } = await setup({ adapter: adapterOf() });
     await register("ana");
     await commands.issueInvoice?.({ customerId: "ana", invoiceId: "i-1", address: "1 Main St" });
@@ -933,7 +947,10 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     expect(filed).toEqual([null]);
     expect(audited).toEqual(["1 Main St"]);
     await commands.printInvoice?.({ customerId: "ana" });
-    await commands.printInvoice?.({ customerId: "ana" }, { processRestricted: "legal-obligation" });
+    await commands.printInvoice?.(
+      { customerId: "ana" },
+      { processRestricted: "erasure-exemption" },
+    );
     expect(printed).toEqual([null, "1 Main St"]);
     await app.stop();
   });
@@ -1002,7 +1019,7 @@ describe("a policy that names a basis that is none", () => {
   it("keeps the app from starting", async () => {
     const registry = registryWith({ reportBasis: "curiosity" as RestrictionBasis });
     await expect(createTestApp({ registry })).rejects.toThrow(
-      'aggregates.customer.policies.reportOnCustomerRegistered: restricted "curiosity" is not a basis of article 18(2); use one of "consent", "legal-claims", "protection-of-rights", "public-interest", "legal-obligation"',
+      'aggregates.customer.policies.reportOnCustomerRegistered: restricted "curiosity" is not a basis of article 18(2); use one of "consent", "legal-claims", "protection-of-rights", "public-interest", "erasure-exemption"',
     );
   });
 });

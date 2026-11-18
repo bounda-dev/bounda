@@ -97,7 +97,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
         };
 
   // A failure's text is sealed under the person its event named alone, so only their restriction
-  // keeps it sealed; `legal-obligation` opens none of it.
+  // keeps it sealed; `erasure-exemption` opens none of it.
   // `letThrough` gathers the restricted persons whose text a basis opened, for the record.
   const read = (
     failures: readonly StoredSubscriberFailure[],

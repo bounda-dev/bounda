@@ -3,9 +3,10 @@ import {
   type ForgetAgainEntry,
   type GlobalStream,
   PERSONAL_DATA_FORGOTTEN_EVENT,
+  PERSONAL_DATA_FORGOTTEN_REASONS,
   type PersonalDataForgottenReason,
 } from "@bounda-dev/core";
-import type { ForgetLedgerEntry } from "@bounda-dev/core/adapter";
+import { type ForgetLedgerEntry, forgottenReasonOf } from "@bounda-dev/core/adapter";
 import { InvalidArgumentError } from "commander";
 
 const PAGE = 1_000;
@@ -52,13 +53,8 @@ const fieldOf = (payload: unknown, name: string): unknown =>
 const isTextList = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
-const REASONS: Readonly<Record<PersonalDataForgottenReason, true>> = {
-  requested: true,
-  retention: true,
-};
-
 const isReason = (value: unknown): value is PersonalDataForgottenReason =>
-  typeof value === "string" && Object.hasOwn(REASONS, value);
+  PERSONAL_DATA_FORGOTTEN_REASONS.includes(value as PersonalDataForgottenReason);
 
 // What the forgetting asked for: `null` for the person as a whole, as one that does not say it
 // forgot only some categories did, else the categories named, those retained included.
@@ -97,7 +93,7 @@ export const readForgotten: ReadForgottenFunction = async ({ events, since }) =>
         eventId: event.id,
         forgottenAt: event.timestamp,
         categories: askedOf(event.payload),
-        reason: isReason(reason) ? reason : "requested",
+        reason: forgottenReasonOf(reason),
         ...(isTextList(fingerprints) ? { fingerprints } : {}),
       });
     }
@@ -130,7 +126,7 @@ const entryOf = (line: string, number: number): ForgetAgainEntry => {
     (categories !== undefined && categories !== null && !isTextList(categories))
   ) {
     throw new Error(
-      `line ${number} needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested" or "retention", "fingerprints" only as a list of strings, and "categories" only as null or a list of names`,
+      `line ${number} needs a "personId" string; "eventId" and "forgottenAt" only as strings, "reason" only as "requested", "objection" or "retention", "fingerprints" only as a list of strings, and "categories" only as null or a list of names`,
     );
   }
   return {

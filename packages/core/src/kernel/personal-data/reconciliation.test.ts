@@ -833,6 +833,61 @@ describe("forgetAgain", () => {
     expect(transactions).toBe(1);
   });
 
+  it("forgets again after an objection what an earlier forgetting kept that the objection reaches, until it is gone", async () => {
+    const storage = await memory().createStorage();
+    const said = {
+      retention: "30d",
+      purposes: ["Serve the person"],
+      sources: ["data-subject"],
+    } as const;
+    const categories = buildPersonalCategories({
+      module: {
+        automatedDecisions: {},
+        categories: {
+          census: { basis: "public-task", ...said },
+          invoices: { basis: "legal-obligation", ...said },
+        },
+      },
+      retention: null,
+    });
+    await storage.personalKeys.add("c-1", "census", testPersonalKey("1"));
+    await storage.personalKeys.add("c-1", "invoices", testPersonalKey("2"));
+    for (const fingerprint of ["f-1", "f-2"]) {
+      await storage.personalKeys.retain("c-1", fingerprint, { since: at(0), lastActiveAt: at(0) });
+    }
+    const ids = createSequentialIdGenerator();
+    const clock = createFixedClock(NOW);
+    const run = (entry: ForgetAgainEntry) =>
+      forgetAgain({
+        storage,
+        intentions: withoutLedger({ ids, clock }),
+        ids,
+        clock,
+        concurrencyRetries: 3,
+        categories,
+        batchSize: 10,
+        entry,
+        retentionDue: NEVER_DUE,
+        record: false,
+      });
+    const asked = { personId: "c-1", categories: ["census", "invoices"], reason: "objection" };
+    // A request ends nothing a forgetting kept.
+    expect(await run({ ...asked, reason: "requested" })).toBeNull();
+    expect(
+      (await run({ ...asked, eventId: "e-1", forgottenAt: at(1) } as ForgetAgainEntry))?.payload,
+    ).toMatchObject({
+      reason: "objection",
+      whole: false,
+      categories: ["census"],
+      retained: ["invoices"],
+      fingerprints: ["f-1"],
+    });
+    expect((await storage.personalKeys.list("c-1")).map(({ category }) => category)).toEqual([
+      "invoices",
+    ]);
+    expect(await run(asked as ForgetAgainEntry)).toBeNull();
+  });
+
   it("forgets again only the categories the entry asked for, while one of them still has a key in force", async () => {
     const storage = await memory().createStorage();
     const categories = buildPersonalCategories({

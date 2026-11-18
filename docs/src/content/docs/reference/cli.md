@@ -320,7 +320,7 @@ recipients
   The retention has a line for the app's, which forgets persons as a whole, under `default`, and
   one for each category of `app/personal-data.ts`, which [forgets its
   keys](/guides/personal-data/#each-category-for-its-own-time), with how many are past it now and
-  when the next comes due, and the keys a forgetting kept that no legal obligation keeps any more.
+  when the next comes due, and the keys a forgetting kept that no erasure exemption keeps any more.
 - every [recipient](/guides/personal-data/#recipients), as [`bounda recipients`](#bounda-recipients)
   prints them.
 
@@ -425,12 +425,14 @@ does, and act as `--actor`.
 bounda personal-data export c-42 --actor ops-ana --output c-42.json
 bounda personal-data export c-42 --actor ops-ana | jq '.events | length'
 bounda forget c-42 --category marketing --actor ops-ana
+bounda forget c-42 --category census --objection --actor ops-ana
 bounda forget c-42 --actor ops-ana
 ```
 
 `bounda personal-data export <person>` writes, as JSON, what `app.exportPersonalData` answers: every
 record that names the person, with each field's category, every category's basis, special categories
-of data and criminal data, purposes, sources and retention, and the person's rights (see [Exporting
+of data and criminal data, purposes, sources, retention and exemptions from erasure, and the
+person's rights (see [Exporting
 a person's data](/guides/personal-data/#exporting-a-persons-data)). It streams it, reading and
 writing a page of records at a time, however long the person's history, and reads no faster than its
 output takes it. It prints to standard output; with `--output <file>` it writes the file instead,
@@ -442,8 +444,12 @@ access log like any export.
 
 `bounda forget <person>` forgets the person as a whole, as `app.forget` does, and prints
 `forgot c-42`; with `--category`, repeated for several, only those categories, as when a consent is
-withdrawn, and prints `forgot marketing of c-42`. A category whose basis is `legal-obligation` is
-kept, restricted, until its retention ends, either way. A category the app does not have fails with
+withdrawn, and prints `forgot marketing of c-42`. A category an [exemption of article
+17(3)](/guides/personal-data/#categories) keeps is kept, restricted, until its retention ends,
+either way. With `--objection`, after an objection the app upheld, it forgets as `forget` with
+`objection` does, keeping of what the objection reaches only what a legal obligation or legal claims
+keep (see [After an objection](/guides/personal-data/#after-an-objection)), and adds `after their
+objection` to what it prints. A category the app does not have fails with
 `VALIDATION_FAILED` and nothing is forgotten. The export lists the person's restrictions, and marks
 on each record the fields a restriction covers.
 
@@ -451,8 +457,9 @@ on each record the fields a restriction covers.
 
 Prints the record of processing activities of article 30 of the GDPR, as far as the modules and the
 configuration say it: the categories of personal data with their basis, the special categories of
-data and the criminal data they hold, with their condition or authority, their purposes, sources and
-retention, the automated decisions, with the special data they decide on and their measures, every
+data and the criminal data they hold, with their condition or authority, their purposes, those the
+GDPR has rules for, their sources and retention and the exemptions of article 17(3) that keep them
+past erasure, the automated decisions, with the special data they decide on and their measures, every
 event, command, process state and read model that holds personal data, whose and where, every
 recipient, what the runtime keeps about persons and for how long, and the fields marked
 `notPersonal`. It loads the project as `bounda rebuild` does and opens no database; in a Cloudflare
@@ -478,6 +485,14 @@ Categories
   account  contract  forgotten 2y after last activity  14 fields
     for: Run the user's account
     from: the person
+  newsletter  consent  forgotten 2y after last activity  1 field
+    for: Send the newsletter they signed up for
+    from: the person
+    processed for: direct-marketing
+  invoices  legal-obligation  forgotten 6y after last activity  3 fields
+    for: Keep the invoices tax law requires
+    from: the person
+    kept past erasure: legal-obligation (article 17(3)(b))
 
 Automated decisions
   none declared
@@ -570,7 +585,9 @@ and prints `restricted c-42 on accuracy-contested`; with `--category`, repeated 
 those categories, and prints `restricted invoices of c-42 on legal-claims`. A restriction that adds
 nothing prints `c-42 was restricted on accuracy-contested already`. Without `--ground`, or with
 one the article does not name, it fails before booting; a category the app does not have fails
-with `VALIDATION_FAILED`.
+with `VALIDATION_FAILED`, and so does `objection-pending` of a category no objection under article
+21(1) is weighed for, or of the person as a whole while the app has one (see [Restricting
+processing](/guides/personal-data/#restricting-processing)).
 
 `bounda unrestrict <person> --notice <duration|given>` lifts the person's restrictions: with a
 duration, it announces the lift, for the app to tell the person, and lifts it that long after,
@@ -642,6 +659,7 @@ forgot again 1 of 3 listed; the rest hold no key the line names, or this store h
 | `--since <date\|position>` | `forgotten` | A date such as `2026-11-01` or `2026-11-01T03:00:00Z`, or a position: a whole number |
 | `--from <file>` | `forget` | What `bounda forgotten` printed, or one person's id a line; not with a person |
 | `--category <name>` | `forget <person>` | Forget only this category of the person; repeat it for several |
+| `--objection` | `forget <person>` | Forget after an objection the app upheld, recorded with `reason: "objection"` |
 | `--root`, `--config`, `--registry`, `--error-text` | all | As for `bounda rebuild` |
 | `--actor <id>` | `personal-data export`, `forget` | Who acts, named in each `PersonalDataForgotten`, its log line and the access log |
 | `--output <file>` | `personal-data export` | Write the export to this file, once whole, instead of standard output |
@@ -786,7 +804,7 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
 or `app.as(actor).deadLetters`, `bounda personal-data export` is
 `personalDataExportJson(await app.as(actor).streamPersonalData(person))`,
-`bounda forget <person>` is `app.as(actor).forget(person, { categories })`,
+`bounda forget <person>` is `app.as(actor).forget(person, { categories, objection })`,
 `bounda forget --from` is `app.forgetAgain(entries, { actor })`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and

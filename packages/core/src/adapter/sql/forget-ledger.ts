@@ -1,9 +1,10 @@
-import type {
-  ForgetLedger,
-  ForgetLedgerEntry,
-  LedgerDisclosure,
-  LedgerRedaction,
-  LedgerRestriction,
+import {
+  type ForgetLedger,
+  type ForgetLedgerEntry,
+  forgottenReasonOf,
+  type LedgerDisclosure,
+  type LedgerRedaction,
+  type LedgerRestriction,
 } from "../storage/forget-ledger.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier } from "./identifiers.ts";
@@ -171,7 +172,7 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
     categories: Array.isArray(categories) ? categories.map(String) : null,
     eventId: String(row.event_id),
     forgottenAt: String(row.forgotten_at),
-    reason: row.reason === "retention" ? "retention" : "requested",
+    reason: forgottenReasonOf(row.reason),
   };
   const fingerprints: unknown = JSON.parse(String(row.fingerprints ?? null));
   const restriction = JSON.parse(String(row.restriction ?? null)) as LedgerRestriction | null;

@@ -29,6 +29,7 @@ const registry = {
         retention: "730d",
         purposes: ["Serve the person"],
         sources: ["data-subject"],
+        processedFor: ["direct-marketing"],
       },
       invoices: {
         basis: "legal-obligation",
@@ -145,7 +146,7 @@ const config: Config = {
 
 // Built in each test, which a mutation tool's run of that test sees.
 describe("personalDataInventory", () => {
-  it("lists every category with its basis, purposes, sources, retention and how many fields it holds", () => {
+  it("lists every category with its basis, purposes, sources, retention, exemptions from erasure and how many fields it holds", () => {
     const inventory = personalDataInventory({ registry, config });
     const said = {
       special: null,
@@ -160,12 +161,30 @@ describe("personalDataInventory", () => {
         special: null,
         criminal: null,
         purposes: [],
+        processedFor: [],
+        erasureExemptions: [],
         sources: [],
         retention: "2y",
         fields: 2,
       },
-      { name: "contact", basis: "consent", ...said, retention: "730d", fields: 2 },
-      { name: "invoices", basis: "legal-obligation", ...said, retention: "6y", fields: 1 },
+      {
+        name: "contact",
+        basis: "consent",
+        ...said,
+        processedFor: ["direct-marketing"],
+        erasureExemptions: [],
+        retention: "730d",
+        fields: 2,
+      },
+      {
+        name: "invoices",
+        basis: "legal-obligation",
+        ...said,
+        processedFor: [],
+        erasureExemptions: [{ exemption: "legal-obligation", article: "17(3)(b)" }],
+        retention: "6y",
+        fields: 1,
+      },
     ]);
     expect(inventory.automatedDecisions).toEqual([]);
   });

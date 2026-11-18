@@ -167,6 +167,21 @@ describe("bounda generate", () => {
     expect(unknown.code).toBe(EXIT_CONVENTION);
   });
 
+  it("documents the options of forget in its help", async () => {
+    const root = await project();
+    const help = await cli(["forget", "--help"], root);
+    expect(help.code).toBe(EXIT_OK);
+    const flattened = help.stdout.replace(/\s+/g, " ");
+    for (const text of [
+      "--category <name>",
+      "forget only this category of the person, as when a consent is withdrawn; repeat it for several",
+      "--objection",
+      "after an objection you upheld (article 21): of what it reaches, keep only what a legal obligation or legal claims keep",
+    ]) {
+      expect(flattened).toContain(text);
+    }
+  });
+
   it("documents every option of generate in its help", async () => {
     const root = await project();
     const help = await cli(["generate", "--help"], root);
@@ -791,16 +806,28 @@ describe("bounda forgotten and bounda forget", () => {
     expect(unknown.code).not.toBe(EXIT_OK);
     const partial = await cli(["forget", memberId, "--category", "default"], fixture);
     expect(partial).toMatchObject({ code: EXIT_OK, stdout: `forgot default of ${memberId}\n` });
+    const objected = await cli(
+      ["forget", memberId, "--category", "default", "--category", "default", "--objection"],
+      fixture,
+    );
+    expect(objected).toMatchObject({
+      code: EXIT_OK,
+      stdout: `forgot default, default of ${memberId} after their objection\n`,
+    });
     const whole = await cli(["forget", memberId, "--actor", "operator-1"], fixture);
     expect(whole).toMatchObject({ code: EXIT_OK, stdout: `forgot ${memberId}\n` });
     const after = await open();
     const forgettings = (await after.events.read({ limit: 1_000 }))
       .filter((event) => event.type === "PersonalDataForgotten" && event.aggregateId === memberId)
-      .map(({ payload, metadata }) => [(payload as { whole: boolean }).whole, metadata.actor]);
+      .map(({ payload, metadata }) => {
+        const { whole: all, reason } = payload as { whole: boolean; reason: string };
+        return [all, reason, metadata.actor];
+      });
     await after.stop();
     expect(forgettings).toEqual([
-      [false, undefined],
-      [true, "operator-1"],
+      [false, "requested", undefined],
+      [false, "objection", undefined],
+      [true, "requested", "operator-1"],
     ]);
   });
 
@@ -974,9 +1001,11 @@ describe("bounda forgotten and bounda forget", () => {
     expect(neither.stderr).toContain("name one person, or a list with --from, not both");
     const both = await cli(["forget", "m-1", "--from", "list.txt"], fixture);
     expect(both.code).toBe(EXIT_CONVENTION);
-    const listed = await cli(["forget", "--from", "list.txt", "--category", "default"], fixture);
-    expect(listed.code).toBe(EXIT_CONVENTION);
-    expect(listed.stderr).toContain("--category forgets one person");
+    for (const asked of [["--category", "default"], ["--objection"]]) {
+      const listed = await cli(["forget", "--from", "list.txt", ...asked], fixture);
+      expect(listed.code).toBe(EXIT_CONVENTION);
+      expect(listed.stderr).toContain("--category and --objection forget one person");
+    }
   });
 
   it("names who forgets again with --actor, in the event's metadata", async () => {

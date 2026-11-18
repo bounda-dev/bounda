@@ -391,11 +391,11 @@ describe("createDisclosures", () => {
     const kept = disclosuresOf().bind(
       "customer",
       { mailer: mailer(sent) },
-      run(opened, { basis: "legal-obligation" }),
+      run(opened, { basis: "erasure-exemption" }),
     ) as { mailer: Mailer };
     await kept.mailer.send("ana");
     expect(accesses.at(-1)).toMatchObject({
-      restricted: { basis: "legal-obligation", persons: ["c-1"] },
+      restricted: { basis: "erasure-exemption", persons: ["c-1"] },
     });
     const plain = disclosuresOf().bind(
       "customer",

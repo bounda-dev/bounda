@@ -8,6 +8,8 @@ import {
   type ForgetsPersonalData,
   type ImplementationModule,
   type Instant,
+  type ObjectionPendingCategoriesOf,
+  type PersonalDataCategories,
   type PersonalDataCategory,
   type PolicyModule,
   type ProcessDeadlineField,
@@ -17,7 +19,7 @@ import {
 } from "@bounda-dev/core";
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 import { defineConfig } from "@bounda-dev/core/config";
-import { describe, it } from "vitest";
+import { describe, expectTypeOf, it } from "vitest";
 import type { Commands } from "./fixtures/order-app/.bounda/types.ts";
 import type { Event as CustomerRegistered } from "./fixtures/order-app/app/domain/customer/+types/customer-registered.ts";
 import type { Command as RegisterCustomer } from "./fixtures/order-app/app/domain/customer/commands/+types/register-customer.ts";
@@ -498,6 +500,229 @@ describe("what does not compile", () => {
     // @ts-expect-error a special category Bounda does not know
     type UnknownKind = Expect<DeclaresPersonalData<UnknownKindModule>>;
     const checks: [Complete?, Kept?, Unallowed?, Unmeasured?, UnknownKind?] = [];
+    void checks;
+  });
+
+  it("purposes and erasure exemptions that articles 17(3), 21 and 89(1) do not allow", () => {
+    type Expect<Check extends true> = Check;
+    const said = {
+      retention: "1y",
+      purposes: ["Write to them"],
+      sources: ["data-subject"],
+    } as const;
+    const news: PersonalDataCategory = {
+      basis: "consent",
+      ...said,
+      processedFor: ["direct-marketing"],
+    };
+    const study: PersonalDataCategory = {
+      basis: "legitimate-interests",
+      ...said,
+      processedFor: ["statistics", "scientific-or-historical-research"],
+      erasureExemption: "archiving-research-or-statistics",
+    };
+    const whim: PersonalDataCategory = {
+      basis: "consent",
+      ...said,
+      // @ts-expect-error a purpose the GDPR has no rules of its own for
+      processedFor: ["gossip"],
+    };
+    const none: PersonalDataCategory = {
+      basis: "consent",
+      ...said,
+      // @ts-expect-error at least one purpose when given
+      processedFor: [],
+    };
+    const claimed: PersonalDataCategory = {
+      basis: "contract",
+      ...said,
+      // @ts-expect-error an exemption a basis or a condition carries, never claimed
+      erasureExemption: "legal-obligation",
+    };
+    void [news, study, whim, none, claimed];
+    // Declared with `satisfies`, as app/personal-data.ts does: the literals the checks read stay.
+    const categories = {
+      news: { basis: "consent", ...said, processedFor: ["direct-marketing"] },
+      offers: { basis: "legitimate-interests", ...said, processedFor: ["direct-marketing"] },
+      census: { basis: "public-task", ...said, processedFor: ["statistics"] },
+      lab: {
+        basis: "contract",
+        ...said,
+        special: { kinds: ["health"], condition: "health-or-social-care" },
+        erasureExemption: "public-health",
+      },
+      study: {
+        basis: "vital-interests",
+        ...said,
+        special: { kinds: ["genetic"], condition: "archiving-research-or-statistics" },
+        processedFor: ["scientific-or-historical-research"],
+        erasureExemption: "archiving-research-or-statistics",
+      },
+      dispute: {
+        basis: "contract",
+        ...said,
+        special: { kinds: ["health"], condition: "legal-claims" },
+      },
+      promoted: {
+        basis: "consent",
+        ...said,
+        special: { kinds: ["health"], condition: "public-health" },
+        processedFor: ["direct-marketing"],
+      },
+    } satisfies PersonalDataCategories;
+    type Declared = Expect<
+      DeclaresPersonalData<{
+        readonly categories: typeof categories;
+        readonly automatedDecisions: Readonly<Record<string, never>>;
+      }>
+    >;
+    type With<Category> = {
+      readonly categories: { readonly refused: Category };
+      readonly automatedDecisions: Readonly<Record<string, never>>;
+    };
+    interface Base {
+      readonly retention: "1y";
+      readonly purposes: readonly ["Write to them"];
+      readonly sources: readonly ["data-subject"];
+    }
+    type Special<Condition> = {
+      readonly special: { readonly kinds: readonly ["health"]; readonly condition: Condition };
+    };
+    type Unserved = With<
+      Base & { readonly basis: "contract" } & Special<"archiving-research-or-statistics">
+    >;
+    type Marketed = With<
+      Base & {
+        readonly basis: "contract";
+        readonly processedFor: readonly ["direct-marketing"];
+      } & Special<"archiving-research-or-statistics">
+    >;
+    type OnConsent = With<
+      Base & {
+        readonly basis: "consent";
+        readonly processedFor: readonly ["statistics"];
+        readonly erasureExemption: "archiving-research-or-statistics";
+      }
+    >;
+    type Unhealthy = With<
+      Base & {
+        readonly basis: "contract";
+        readonly erasureExemption: "public-health";
+      } & Special<"vital-interests">
+    >;
+    type Unresearched = With<
+      Base & {
+        readonly basis: "contract";
+        readonly processedFor: readonly ["direct-marketing"];
+        readonly erasureExemption: "archiving-research-or-statistics";
+      }
+    >;
+    type PublicConsent = With<
+      Base & { readonly basis: "public-task" } & Special<"explicit-consent">
+    >;
+    type ClaimedConsent = With<
+      Base & {
+        readonly basis: "contract";
+        readonly processedFor: readonly ["statistics"];
+        readonly erasureExemption: "archiving-research-or-statistics";
+      } & Special<"explicit-consent">
+    >;
+    type KeptMarketing = With<
+      Base & {
+        readonly basis: "legal-obligation";
+        readonly processedFor: readonly ["direct-marketing"];
+      }
+    >;
+    type ClaimedMarketing = With<
+      Base & {
+        readonly basis: "contract";
+        readonly processedFor: readonly ["statistics", "direct-marketing"];
+        readonly erasureExemption: "archiving-research-or-statistics";
+      }
+    >;
+    type DisputedMarketing = With<
+      Base & {
+        readonly basis: "contract";
+        readonly processedFor: readonly ["direct-marketing"];
+      } & Special<"legal-claims">
+    >;
+    type UnknownPurpose = With<
+      Base & { readonly basis: "contract"; readonly processedFor: readonly ["gossip"] }
+    >;
+    // @ts-expect-error special data on archiving-research-or-statistics without its purpose
+    type Unserved1 = Expect<DeclaresPersonalData<Unserved>>;
+    // @ts-expect-error nor with direct-marketing alone
+    type Unserved2 = Expect<DeclaresPersonalData<Marketed>>;
+    // @ts-expect-error an erasure exemption claimed on consent
+    type Unfounded1 = Expect<DeclaresPersonalData<OnConsent>>;
+    // @ts-expect-error public-health without special data on health-or-social-care or public-health
+    type Unfounded2 = Expect<DeclaresPersonalData<Unhealthy>>;
+    // @ts-expect-error archiving-research-or-statistics without a purpose of article 89(1)
+    type Unfounded3 = Expect<DeclaresPersonalData<Unresearched>>;
+    // @ts-expect-error kept on public-task, on explicit consent a withdrawal ends
+    type KeptConsent1 = Expect<DeclaresPersonalData<PublicConsent>>;
+    // @ts-expect-error kept on a claimed exemption, on explicit consent
+    type KeptConsent2 = Expect<DeclaresPersonalData<ClaimedConsent>>;
+    // @ts-expect-error direct marketing kept on a legal obligation
+    type Kept1 = Expect<DeclaresPersonalData<KeptMarketing>>;
+    // @ts-expect-error direct marketing kept on a claimed exemption
+    type Kept2 = Expect<DeclaresPersonalData<ClaimedMarketing>>;
+    // @ts-expect-error direct marketing kept for legal claims
+    type Kept3 = Expect<DeclaresPersonalData<DisputedMarketing>>;
+    // @ts-expect-error a purpose Bounda does not know
+    type Unknown = Expect<DeclaresPersonalData<UnknownPurpose>>;
+    type Weighing = {
+      readonly categories: {
+        readonly weighed: Base & { readonly basis: "legitimate-interests" };
+        readonly census: Base & { readonly basis: "public-task" };
+        readonly offers: Base & {
+          readonly basis: "legitimate-interests";
+          readonly processedFor: readonly ["direct-marketing"];
+        };
+        readonly served: Base & { readonly basis: "contract" };
+        readonly counted: Base & {
+          readonly basis: "contract";
+          readonly processedFor: readonly ["statistics"];
+        };
+      };
+    };
+    expectTypeOf<ObjectionPendingCategoriesOf<Weighing>>().toEqualTypeOf<"weighed" | "census">();
+    // From a declaration with `satisfies`, the literals the check reads stay.
+    expectTypeOf<
+      ObjectionPendingCategoriesOf<{ readonly categories: typeof categories }>
+    >().toEqualTypeOf<"census">();
+    const unserved =
+      "app/personal-data.ts declares special data on archiving-research-or-statistics without naming in processedFor the purpose of article 89(1) it serves" as const;
+    const unfounded =
+      "app/personal-data.ts declares an erasureExemption that does not apply: never on consent, public-health only on special data on health-or-social-care or public-health, archiving-research-or-statistics only for a purpose of article 89(1)" as const;
+    const keptConsent =
+      "app/personal-data.ts declares a category that an exemption of article 17(3) keeps past a forgetting whose special data rests on explicit-consent, which a withdrawal ends" as const;
+    const keptMarketing =
+      "app/personal-data.ts declares a category for direct-marketing that an exemption of article 17(3) keeps past a forgetting, while an objection must stop it (article 21(3))" as const;
+    expectTypeOf<DeclaresPersonalData<Unserved>>().toEqualTypeOf<typeof unserved>();
+    expectTypeOf<DeclaresPersonalData<Marketed>>().toEqualTypeOf<typeof unserved>();
+    expectTypeOf<DeclaresPersonalData<OnConsent>>().toEqualTypeOf<typeof unfounded>();
+    expectTypeOf<DeclaresPersonalData<Unhealthy>>().toEqualTypeOf<typeof unfounded>();
+    expectTypeOf<DeclaresPersonalData<Unresearched>>().toEqualTypeOf<typeof unfounded>();
+    expectTypeOf<DeclaresPersonalData<PublicConsent>>().toEqualTypeOf<typeof keptConsent>();
+    expectTypeOf<DeclaresPersonalData<ClaimedConsent>>().toEqualTypeOf<typeof keptConsent>();
+    expectTypeOf<DeclaresPersonalData<KeptMarketing>>().toEqualTypeOf<typeof keptMarketing>();
+    expectTypeOf<DeclaresPersonalData<ClaimedMarketing>>().toEqualTypeOf<typeof keptMarketing>();
+    expectTypeOf<DeclaresPersonalData<DisputedMarketing>>().toEqualTypeOf<typeof keptMarketing>();
+    const checks: [
+      Declared?,
+      Unserved1?,
+      Unserved2?,
+      Unfounded1?,
+      Unfounded2?,
+      Unfounded3?,
+      KeptConsent1?,
+      KeptConsent2?,
+      Kept1?,
+      Kept2?,
+      Kept3?,
+      Unknown?,
+    ] = [];
     void checks;
   });
 

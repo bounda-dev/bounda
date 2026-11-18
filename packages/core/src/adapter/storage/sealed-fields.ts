@@ -3,7 +3,7 @@ import type { FieldDefinition, FieldsRecord } from "../../modules/view.ts";
 
 /**
  * After a personal field's name, the hidden field that holds the fingerprint of the key its value
- * was written under: what tells a value kept under a legal obligation, or forgotten, from one
+ * was written under: what tells a value kept under an erasure exemption, or forgotten, from one
  * written after.
  */
 export const KEY_FIELD_SUFFIX = "__key";
@@ -15,7 +15,7 @@ export const KEY_FIELD_SUFFIX = "__key";
 export const INDEX_FIELD_SUFFIX = "__index";
 
 /**
- * Before a fingerprint in a key field, once a forgetting kept the key under a legal obligation:
+ * Before a fingerprint in a key field, once a forgetting kept the key under an erasure exemption:
  * the row is restricted from then on, until the key's retention ends.
  */
 export const RETAINED_KEY_PREFIX = "retained:";

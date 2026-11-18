@@ -129,6 +129,16 @@ const specialOf = (special: SpecialCategoryData): string =>
 const criminalOf = ({ authority }: CriminalOffenceData): string =>
   `under ${authority} (article 10)`;
 
+const processedForOf = ({ processedFor }: InventoryCategory): string =>
+  processedFor.length === 0 ? "none" : processedFor.join(", ");
+
+const exemptionsOf = ({ erasureExemptions }: InventoryCategory): string =>
+  erasureExemptions.length === 0
+    ? "none"
+    : erasureExemptions
+        .map(({ exemption, article }) => `${exemption} (article ${article})`)
+        .join(", ");
+
 // What of the categories a decision decides on holds special categories of data, which article
 // 22(4) restricts.
 const specialDecidedOn = (
@@ -165,6 +175,12 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
     }
     if (category.criminal !== null) {
       lines.push(`    criminal data: ${criminalOf(category.criminal)}`);
+    }
+    if (category.processedFor.length > 0) {
+      lines.push(`    processed for: ${processedForOf(category)}`);
+    }
+    if (category.erasureExemptions.length > 0) {
+      lines.push(`    kept past erasure: ${exemptionsOf(category)}`);
     }
   }
   lines.push("", "Automated decisions");
@@ -250,8 +266,10 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
         "Special categories (article 9)",
         "Criminal data (article 10)",
         "Purposes",
+        "Processed for",
         "Sources",
         "Time limit for erasure",
+        "Kept past erasure (article 17(3))",
         "Fields",
       ],
       inventory.categories.map((category) => [
@@ -260,8 +278,10 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
         category.special === null ? "none" : specialOf(category.special),
         category.criminal === null ? "none" : criminalOf(category.criminal),
         purposesOf(category),
+        processedForOf(category),
         sourcesOf(category),
         retentionOf(category.retention),
+        exemptionsOf(category),
         String(category.fields),
       ]),
     ),

@@ -21,6 +21,8 @@ const header = (readModels: readonly string[]): PersonalDataExportPart => ({
         special: null,
         criminal: null,
         purposes: [],
+        processedFor: [],
+        erasureExemptions: [],
         sources: [],
         retention: null,
         held: false,

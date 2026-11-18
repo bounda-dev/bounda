@@ -185,7 +185,7 @@ export interface OpenedRow {
   readonly row: Row;
   // The persons the row's sealed values name, its own included.
   readonly persons: readonly string[];
-  // Whether a value of the row is under a key a forgetting kept under a legal obligation.
+  // Whether a value of the row is under a key a forgetting kept under an erasure exemption.
   readonly retained: boolean;
   // The fields whose value is under such a key.
   readonly retainedFields: readonly string[];

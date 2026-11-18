@@ -1,12 +1,13 @@
-import type {
-  PersonalDataForgottenReason,
-  PROCESSING_RESTRICTED_EVENT,
-  PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
-  PROCESSING_RESTRICTION_LIFTED_EVENT,
-  ProcessingRestrictedPayload,
-  ProcessingRestrictionLiftAnnouncedPayload,
-  ProcessingRestrictionLiftedPayload,
-  RedactedEvent,
+import {
+  PERSONAL_DATA_FORGOTTEN_REASONS,
+  type PersonalDataForgottenReason,
+  type PROCESSING_RESTRICTED_EVENT,
+  type PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
+  type PROCESSING_RESTRICTION_LIFTED_EVENT,
+  type ProcessingRestrictedPayload,
+  type ProcessingRestrictionLiftAnnouncedPayload,
+  type ProcessingRestrictionLiftedPayload,
+  type RedactedEvent,
 } from "../../modules/bounda-events.ts";
 
 /**
@@ -185,6 +186,19 @@ export interface CreateForgetLedgerArgs {
 }
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+export interface ForgottenReasonOfFunction {
+  (stored: unknown): PersonalDataForgottenReason;
+}
+
+/**
+ * The reason a ledger of your own stored, read back: one Bounda knows, or `requested` for anything
+ * else, as for an entry written before the reason was stored.
+ */
+export const forgottenReasonOf: ForgottenReasonOfFunction = (stored) =>
+  PERSONAL_DATA_FORGOTTEN_REASONS.includes(stored as PersonalDataForgottenReason)
+    ? (stored as PersonalDataForgottenReason)
+    : "requested";
 
 export interface ByForgetLedgerOrderFunction {
   (a: ForgetLedgerPosition, b: ForgetLedgerPosition): number;

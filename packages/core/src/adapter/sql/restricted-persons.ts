@@ -117,7 +117,7 @@ export interface RetainedRowsConditionFunction {
 }
 
 /**
- * True for a row with no value under a key a forgetting kept under a legal obligation.
+ * True for a row with no value under a key a forgetting kept under an erasure exemption.
  */
 export const retainedRowsCondition: RetainedRowsConditionFunction = ({ keys, dialect }) => {
   return (offset) => ({

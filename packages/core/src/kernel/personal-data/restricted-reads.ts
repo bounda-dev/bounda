@@ -12,7 +12,7 @@ import { isSealed } from "./crypto.ts";
 export interface IncludeRestrictedOptions {
   /**
    * Opens what a restriction leaves sealed, on a basis named explicitly, which the access log
-   * records with those persons: a basis of article 18(2) opens all of it, `legal-obligation` only
+   * records with those persons: a basis of article 18(2) opens all of it, `erasure-exemption` only
    * what a forgetting kept.
    */
   readonly includeRestricted?: RestrictionBasis;
@@ -24,11 +24,11 @@ export interface RestrictionViewOfFunction {
 
 /**
  * What a read leaves out for the basis it names: every restricted value without one, only what a
- * person asked to restrict on `legal-obligation`, nothing on a basis of article 18(2).
+ * person asked to restrict on `erasure-exemption`, nothing on a basis of article 18(2).
  */
 export const restrictionViewOf: RestrictionViewOfFunction = (includeRestricted) => {
   if (includeRestricted === undefined) return "unrestricted";
-  return includeRestricted === "legal-obligation" ? "retained" : "all";
+  return includeRestricted === "erasure-exemption" ? "retained" : "all";
 };
 
 export interface CheckIncludeRestrictedFunction {
