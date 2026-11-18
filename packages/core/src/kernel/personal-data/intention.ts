@@ -80,12 +80,12 @@ export interface EndsKeptFunction {
  * person as a whole, those in force of the categories named, or the keys named by fingerprint,
  * whatever they are, and, of the categories `ends` names, those an earlier forgetting kept.
  */
-export const coveredBy: CoveredByFunction = (scope, held, ends = () => false) =>
+export const coveredBy: CoveredByFunction = (scope, held, ends) =>
   scope.kind === "keys"
     ? held.filter(({ key }) => scope.fingerprints.includes(key.fingerprint))
     : held.filter(
         ({ category, retainedSince }) =>
-          (retainedSince === null || ends(category)) &&
+          (retainedSince === null || ends?.(category) === true) &&
           (scope.kind === "whole" || scope.categories.includes(category)),
       );
 

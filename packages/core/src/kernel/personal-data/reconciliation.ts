@@ -196,7 +196,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
     const covered = coveredBy(
       asScope,
       await stores.personalKeys.list(personId),
-      endsKeptOf(categories, reason ?? "requested"),
+      endsKeptOf(categories, reason),
     ).filter(({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint));
     if (covered.length === 0) return null;
     if (reason !== "retention") return covered;
@@ -226,7 +226,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
           personId,
           reason: reason ?? "requested",
           scope: scopeOf(due),
-          ends: endsKeptOf(categories, reason ?? "requested"),
+          ends: endsKeptOf(categories, reason),
           keys: storage.personalKeys,
         });
     const outcome = await transactRetrying({

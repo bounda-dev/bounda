@@ -102,7 +102,10 @@ export const keeps: KeepsFunction = (category, reason) =>
     : category.exemptions.length > 0;
 
 export interface EndsKeptOfFunction {
-  (categories: PersonalCategories, reason: PersonalDataForgottenReason): EndsKeptFunction;
+  (
+    categories: PersonalCategories,
+    reason: PersonalDataForgottenReason | undefined,
+  ): EndsKeptFunction;
 }
 
 /**

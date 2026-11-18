@@ -425,8 +425,14 @@ describe("forgetPersonalData", () => {
       since: "2025-12-31T00:00:00.000Z",
       lastActiveAt: "2025-12-31T00:00:00.000Z",
     });
+    // Nor of one the app no longer declares, which the retention ends as well.
+    await storage.personalKeys.add("c-1", "dropped", testPersonalKey("2"));
+    await storage.personalKeys.retain("c-1", "f-2", {
+      since: "2025-12-31T00:00:00.000Z",
+      lastActiveAt: "2025-12-31T00:00:00.000Z",
+    });
     await forget("c-1", { objection: true });
-    expect(await keptOf(storage)).toEqual(["care"]);
+    expect(await keptOf(storage)).toEqual(["care", "dropped"]);
   });
 
   it("takes objection as a boolean, recording a request without it", async () => {
