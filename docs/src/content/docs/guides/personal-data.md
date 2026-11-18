@@ -1557,7 +1557,9 @@ name, or categories that are empty or that the app does not have are refused wit
 weighed for: one on another basis than `public-task` or `legitimate-interests`, or for
 `direct-marketing`, whose objection weighs nothing. The person as a whole is held on it only while
 every category of the app is weighed; otherwise it names the categories the objection reaches, and
-the types refuse the call without them. `default`, which declares no basis, may be held.
+the types refuse the call without them. `default`, which declares no basis, may be held. Since
+the categories `objection-pending` takes depend on the ground, code that passes a ground held in a
+variable narrows it first, `ground === "objection-pending" ? … : …`, as the types ask.
 
 What a [forgetting kept under an exemption of article 17(3)](#categories) is restricted too,
 without anyone asking: kept for what the exemption serves alone, and for nothing else, until its

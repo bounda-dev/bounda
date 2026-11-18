@@ -617,10 +617,18 @@ export type RestrictOptions =
   | ([Exclude<PersonalCategoryName, ObjectionPendingCategory>] extends [never]
       ? {
           readonly ground: "objection-pending";
+          /**
+           * Holds these categories alone, those the objection reaches; without it, the person as
+           * a whole, which every category of the app is weighed for.
+           */
           readonly categories?: readonly ObjectionPendingCategory[];
         }
       : {
           readonly ground: "objection-pending";
+          /**
+           * The categories the objection reaches, which the app weighs it for: the person as a
+           * whole would hold categories no objection under article 21(1) reaches.
+           */
           readonly categories: readonly ObjectionPendingCategory[];
         });
 

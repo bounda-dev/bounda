@@ -3,11 +3,11 @@ import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { ReadClient, Table } from "../../adapter/storage/table.ts";
 import type { DispatchResult } from "../../contracts/command.ts";
-import { PROCESSING_RESTRICTED } from "../../contracts/errors.ts";
+import { PROCESSING_RESTRICTED, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
-import type { RestrictionBasis } from "../../modules/personal-data.ts";
+import type { RestrictionBasis, RestrictOptions } from "../../modules/personal-data.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
@@ -597,6 +597,20 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
     await app.restrict("ana", { ground: "unlawful-processing", categories: ["marketing"] });
     await app.catchUpReadModels();
     expect(await queries.customersOnPlan?.({ plan: "pro" })).toEqual(["ana"]);
+    await app.stop();
+  });
+
+  it("refuses through the client to hold an objection pending for what no objection under article 21(1) is weighed for", async () => {
+    const { app } = await setup({ adapter: adapterOf() });
+    for (const options of [
+      { ground: "objection-pending", categories: ["invoices"] },
+      { ground: "objection-pending" },
+    ]) {
+      await expect(app.restrict("ana", options as RestrictOptions)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+    }
+    expect(await app.events.read({ limit: 10 })).toEqual([]);
     await app.stop();
   });
 

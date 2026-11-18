@@ -423,18 +423,18 @@ export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ modul
   };
 };
 
-export interface ObjectableFunction {
+export interface CategoryTestFunction {
   (category: PersonalCategory): boolean;
 }
 
 // Research or statistics on any basis but `public-task`: article 21(6) spares only a task carried
 // out for reasons of public interest.
-export const researched: ObjectableFunction = (category) =>
+export const researched: CategoryTestFunction = (category) =>
   category.basis !== "public-task" &&
   serves(category.processedFor, ["scientific-or-historical-research", "statistics"]);
 
 // Whether an objection of article 21 reaches the category: (1), (2) or (6).
-export const objectable: ObjectableFunction = (category) =>
+export const objectable: CategoryTestFunction = (category) =>
   category.basis === "public-task" ||
   category.basis === "legitimate-interests" ||
   category.processedFor.includes("direct-marketing") ||
@@ -444,7 +444,7 @@ export const objectable: ObjectableFunction = (category) =>
 // what restricting it while the objection is weighed asks (article 18(1)(d)): on `public-task` or
 // `legitimate-interests`, but not for direct marketing, which nothing weighs. The default category
 // declares no basis to tell by, so it may be held.
-export const pendsObjection: ObjectableFunction = (category) =>
+export const pendsObjection: CategoryTestFunction = (category) =>
   category.basis === null ||
   ((category.basis === "public-task" || category.basis === "legitimate-interests") &&
     !category.processedFor.includes("direct-marketing"));
