@@ -25,10 +25,10 @@ import { appendSystemEvent } from "../system-events.ts";
 import { lastActivity } from "./activity.ts";
 import {
   checkCategoryNames,
+  objectable,
   type PersonalCategories,
   type PersonalCategory,
 } from "./categories.ts";
-import { objectable } from "./information.ts";
 import {
   coveredBy,
   type EndsKeptFunction,
@@ -88,15 +88,13 @@ export interface HeldForgetting {
 // person objected to.
 const SURVIVE_OBJECTION: readonly ErasureExemption[] = ["legal-obligation", "legal-claims"];
 
-export interface KeepsFunction {
+interface KeepsFunction {
   (category: PersonalCategory, reason: PersonalDataForgottenReason): boolean;
 }
 
-/**
- * Whether a forgetting for `reason` keeps the category's keys in force, under an exemption of
- * article 17(3).
- */
-export const keeps: KeepsFunction = (category, reason) =>
+// Whether a forgetting for `reason` keeps the category's keys in force, under an exemption of
+// article 17(3).
+const keeps: KeepsFunction = (category, reason) =>
   reason === "objection" && objectable(category)
     ? category.exemptions.some((exemption) => SURVIVE_OBJECTION.includes(exemption))
     : category.exemptions.length > 0;

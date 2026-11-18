@@ -5,7 +5,12 @@ import {
 } from "../../adapter/storage/personal-key-store.ts";
 import { type Retention, retentionEnd } from "../../contracts/duration.ts";
 import type { LegalBasis, SpecificPurpose } from "../../modules/personal-data.ts";
-import { formatRetention, type PersonalCategories, type PersonalCategory } from "./categories.ts";
+import {
+  formatRetention,
+  type PersonalCategories,
+  type PersonalCategory,
+  researched,
+} from "./categories.ts";
 import {
   EXEMPTION_ARTICLES,
   type ExportedAutomatedDecision,
@@ -60,22 +65,6 @@ const processedFor =
   (...purposes: readonly SpecificPurpose[]) =>
   (category: PersonalCategory): boolean =>
     category.processedFor.some((purpose) => purposes.includes(purpose));
-
-// Research or statistics on any basis but `public-task`: article 21(6) spares only a task carried
-// out for reasons of public interest.
-const researched = (category: PersonalCategory): boolean =>
-  category.basis !== "public-task" &&
-  processedFor("scientific-or-historical-research", "statistics")(category);
-
-export interface ObjectableFunction {
-  (category: PersonalCategory): boolean;
-}
-
-// Whether an objection of article 21 reaches the category: (1), (2) or (6).
-export const objectable: ObjectableFunction = (category) =>
-  onBases("public-task", "legitimate-interests")(category) ||
-  processedFor("direct-marketing")(category) ||
-  researched(category);
 
 export const personalDataInformation: PersonalDataInformationFunction = ({
   categories,

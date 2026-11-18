@@ -9,6 +9,7 @@ import {
   type CriminalOffenceData,
   DECIDABLE_CONDITIONS,
   type DeclaredErasureExemption,
+  ERASURE_EXEMPTIONS,
   type ErasureExemption,
   LEGAL_BASES,
   type LegalBasis,
@@ -230,7 +231,7 @@ const exemptionsOf = (
   }
   if (declared === "archiving-research-or-statistics") held.add(declared);
   if (special?.condition === "legal-claims") held.add("legal-claims");
-  return [...held];
+  return ERASURE_EXEMPTIONS.filter((exemption) => held.has(exemption));
 };
 
 const declaredIn = (module: PersonalDataModule | undefined): PersonalCategory[] => {
@@ -421,6 +422,23 @@ export const buildPersonalCategories: BuildPersonalCategoriesFunction = ({ modul
     decisions: decisionsIn(module, byName),
   };
 };
+
+export interface ObjectableFunction {
+  (category: PersonalCategory): boolean;
+}
+
+// Research or statistics on any basis but `public-task`: article 21(6) spares only a task carried
+// out for reasons of public interest.
+export const researched: ObjectableFunction = (category) =>
+  category.basis !== "public-task" &&
+  serves(category.processedFor, ["scientific-or-historical-research", "statistics"]);
+
+// Whether an objection of article 21 reaches the category: (1), (2) or (6).
+export const objectable: ObjectableFunction = (category) =>
+  category.basis === "public-task" ||
+  category.basis === "legitimate-interests" ||
+  category.processedFor.includes("direct-marketing") ||
+  researched(category);
 
 export interface CheckCategoryArgs {
   readonly categories: PersonalCategories;
