@@ -71,23 +71,48 @@ purpose is compatible with the one the data was collected for, is the controller
 
 **Article 7, consent.** Withdrawing consent is
 [`forget(person, { categories })`](/guides/personal-data/#categories) on the categories processed
-on `consent`: their keys go, their fields read as `null` everywhere, the rest of the person's data
-stays, and the recipients that received them are told. `bounda forget <person> --category <name>`
-does the same from a terminal, and the export lists the withdrawal among the person's `rights` for
-those categories. Bounda keeps no record of consents given: to demonstrate a consent, as 7(1)
-asks, the app records it as an event of its own, which carries its time and its
-[actor](/concepts/ids-causation-and-correlation/#who-acts) like any other. The form, the wording,
-and making withdrawal as easy as giving, 7(2) and 7(3), are the app's.
+on `consent`, or whose special data rests on `explicit-consent`: their keys go, their fields read as
+`null` everywhere, the rest of the person's data stays, and the recipients that received them are
+told. `bounda forget <person> --category <name>` does the same from a terminal, and the export
+lists the withdrawal among the person's `rights` for those categories. Bounda keeps no record of
+consents given: to demonstrate a consent, as 7(1) asks, the app records it as an event of its own,
+which carries its time and its [actor](/concepts/ids-causation-and-correlation/#who-acts) like any
+other. The form, the wording, and making withdrawal as easy as giving, 7(2) and 7(3), are the
+app's.
 
 **Article 8, a child's consent.** Not covered: Bounda knows nothing of a person's age or of who
 holds parental responsibility.
 
-**Articles 9 and 10, special categories and criminal records.** Not covered. A category declares
-a basis of article 6, never a condition of article 9(2), so neither the record of processing nor
-the export says on which condition health, religious or biometric data is processed. Bounda only
-helps find it: `bounda personal-data inventory` flags an unmarked field whose name points at a
-special category or a criminal record, such as `health` or `religion`. Declaring such data its own
-category, with its own retention, keeps it apart, so it can be forgotten or restricted on its own.
+**Article 9, special categories.** A category that holds data of article 9(1) says so with
+[`special`](/guides/personal-data/#special-categories-and-criminal-data): which kinds it holds,
+`racial-or-ethnic-origin`, `political-opinions`, `religious-or-philosophical-beliefs`,
+`trade-union-membership`, `genetic`, `biometric`, `health` or `sex-life-or-sexual-orientation`, and
+the condition of 9(2) it is processed on, besides its basis of article 6, which it still needs: one
+of `explicit-consent` (a), `employment-and-social-protection` (b), `vital-interests` (c),
+`not-for-profit-body` (d), `made-public` (e), `legal-claims` (f), `substantial-public-interest` (g),
+`health-or-social-care` (h), `public-health` (i) or `archiving-research-or-statistics` (j). A
+category that names special data without a condition, or a kind or condition Bounda does not know,
+does not compile, and the app refuses to start on it. So does a category on `legal-obligation` whose
+special data rests on `explicit-consent`: the obligation keeps the data past a forgetting, while a
+withdrawn consent leaves no condition to keep it on. The export and the record of processing state
+each category's kinds and condition, and the export's `rights` follow the condition where the GDPR
+makes them differ: data on `explicit-consent` can be withdrawn, 7(3), and is portable, 20(1)(a),
+whatever the basis.
+
+To find special data that was not declared, `bounda personal-data inventory` flags an unmarked
+field whose name points at a special category or a criminal record, such as `health` or `religion`,
+and a field marked personal whose name does, such as `allergies` or `politicalParty`, in a category
+that does not declare it. Left to the controller: whether the condition is the right one; the law
+that (b), (g), (h), (i) and (j) rest on, and the professional secrecy 9(3) asks of (h); keeping data
+of a not-for-profit body (d) within it; and the further conditions a Member State sets for genetic,
+biometric or health data, 9(4).
+
+**Article 10, criminal convictions and offences.** A category that holds data relating to criminal
+convictions and offences or related security measures says so with `criminal`, naming the
+authority it is processed under: the control of an `official-authority`, or a `law` that provides
+appropriate safeguards. The export and the record of processing state it. Which law, its safeguards,
+and keeping a comprehensive register of criminal convictions only under official authority are the
+controller's.
 
 ## Transparency and modalities (articles 12 to 14)
 
@@ -108,12 +133,13 @@ and the recipients with `recipientsOf`. Left to the app:
 
 **Articles 13 and 14, the information to give.** The privacy notice is the controller's. What the
 app declares is most of what it has to say, and is in one place: the purposes and basis of each
-category, its retention, its sources (14(2)(f)), the recipients with their country and the
-safeguard of a transfer, and the automated decisions with their logic. `bounda personal-data
-inventory --json` prints all of it, for a notice to be written from or checked against. The
-identity and contact details of the controller and of its data protection officer, the legitimate
-interests pursued, and whether giving the data is a requirement of a contract or of the law are
-not in the code, and the notice says them.
+category, with the condition of its special data or the authority of its criminal data, its
+retention, its sources (14(2)(f)), the recipients with their country and the safeguard of a
+transfer, and the automated decisions with their logic. `bounda personal-data inventory --json`
+prints all of it, for a notice to be written from or checked against. The identity and contact
+details of the controller and of its data protection officer, the legitimate interests pursued, and
+whether giving the data is a requirement of a contract or of the law are not in the code, and the
+notice says them.
 
 ## Access (article 15)
 
@@ -123,14 +149,14 @@ answers every item of article 15(1) from what the app declares, nothing written 
 | Article 15 | In the export |
 | --- | --- |
 | confirmation that data is processed, and the data | every record that names the person, with the category of each field, and `held` per category |
-| (a) the purposes | each category's `purposes`, with its `basis` |
-| (b) the categories of data | `categories` |
+| (a) the purposes | each category's `purposes`, with its `basis` and, for special or criminal data, its `special` condition or `criminal` authority |
+| (b) the categories of data | `categories`, with the special categories of data each holds |
 | (c) the recipients, and 15(2) the safeguards of a transfer | `recipients`, as `recipientsOf` lists them |
 | (d) how long it is kept | each category's `retention`, `keptUntil` and `restrictedUntil` |
 | (e) rectification, erasure, restriction and objection | `rights` |
 | (f) the complaint to a supervisory authority | `rights`, `complaint` |
 | (g) the source of data not collected from the person | each category's `sources` |
-| (h) automated decisions, profiling included | `automatedDecisions` |
+| (h) automated decisions, profiling included | `automatedDecisions`, with their `measures` on special categories of data |
 
 It holds every event and read-model row that names the person, the scheduled commands and dead
 letters that hold their data, the text of errors sealed under them, and the answers remembered
@@ -193,13 +219,15 @@ categories })` erases those categories alone, and `bounda forget <person>` does 
 terminal. `expectForgotten` checks in a test that no value of theirs is left readable in any table,
 log or span.
 
-**Exceptions, 17(3)(b).** A category whose basis is `legal-obligation` outlives the forgetting
-while its retention runs, restricted to the law that keeps it, and is forgotten when that ends. The
+**Exceptions, 17(3)(b).** A category whose basis is `legal-obligation` outlives the forgetting while
+its retention runs, restricted to the law that keeps it, and is forgotten when that ends. The
 export's `rights` leave it out of erasure. The same point exempts a task carried out in the public
 interest, but a category on `public-task` is not kept that way: `forget` erases it like any other
 and the export lists erasure for it, so an app that must keep it leaves it out of the categories it
-forgets. Other exceptions are the controller's to weigh, as for the controller's own legal claims
-under 17(3)(e): it decides not to call `forget`, or which categories to name.
+forgets. Other exceptions are the controller's to weigh: public health, for special data on
+`health-or-social-care` or `public-health`, 17(3)(c); archiving, research or statistics, 17(3)(d);
+and the controller's own legal claims, 17(3)(e). It decides not to call `forget`, or which
+categories to name.
 
 **Backups.** A restored copy brings back the keys of everyone forgotten after it was taken. A
 [forget ledger](/guides/personal-data/#the-forget-ledger), kept outside the database, forgets them
@@ -256,10 +284,11 @@ recipient that received the data is told.
 ## Portability (article 20)
 
 The export is a structured, commonly used, machine-readable document, and its `rights` list
-portability for the categories processed on `consent` or `contract`, as 20(1) has it. It holds
-more than article 20 asks, what the app derived included; each category's `sources` say which data
-came from the person. Left to the app: transmitting the data directly to another controller,
-20(2), and leaving out what would affect the rights of others, 20(4).
+portability for the categories processed on `consent` or `contract`, or whose special data rests on
+`explicit-consent`, as 20(1)(a) has it. It holds more than article 20 asks, what the app derived
+included; each category's `sources` say which data came from the person. Left to the app:
+transmitting the data directly to another controller, 20(2), and leaving out what would affect the
+rights of others, 20(4).
 
 ## Objection (article 21)
 
@@ -273,7 +302,9 @@ Direct marketing, 21(2) and 21(3), is not modelled: a category does not say its 
 marketing, so the export lists no objection to it for a category on `consent` or `contract`. On
 `consent`, withdrawing it, which the export does list, has the same effect; otherwise the app tells
 the person of the right itself, as 21(4) asks it to at the first communication at the latest, and
-honours it in its code.
+honours it in its code. Likewise, a category does not say its purpose is scientific or historical
+research or statistics, so the export lists no objection of 21(6) for one on another basis, and the
+app tells the person of it.
 
 ## Automated decisions (article 22)
 
@@ -286,10 +317,18 @@ export hands the person the decisions on categories they hold data of, with the 
 intervention of 22(3) for those on `contract` or `explicit-consent`, and the record of processing
 lists them all.
 
+**22(4), special categories.** A decision on a category that declares
+[special data](/guides/personal-data/#special-categories-and-criminal-data) is allowed only when that
+category's condition is `explicit-consent` (9(2)(a)) or `substantial-public-interest` (9(2)(g)), and
+must say its `measures`, the suitable measures that safeguard the person, in words for them. Any
+other condition, or no measures, does not compile, and the app refuses to start on it. The export
+hands the person the measures with the decision, and the record of processing lists, for each
+decision, the special data it decides on and its measures. A decision on any other category may say
+its measures too, those of 22(3).
+
 Left to the app: making the decisions, the human who reviews one, letting the person express their
-view and contest it, the safeguards a law requires for those on `law`, and 22(4), which forbids
-decisions on special categories but under conditions Bounda does not model. A decision made in
-code and not declared is one Bounda cannot see.
+view and contest it, the safeguards a law requires for those on `law`, and putting the measures it
+declares in place. A decision made in code and not declared is one Bounda cannot see.
 
 ## By design and by default (article 25)
 
@@ -327,14 +366,15 @@ store the actor of every change.
 
 ## The record of processing activities (article 30)
 
-[`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) prints the
-record from the app's modules and configuration, opening no database: the categories with their
-basis, purposes, sources and retention; the automated decisions; every event, command, process
-state and read model that holds personal data, whose, how it is kept and where its copies go; the
-recipients, with their country and safeguard; what the runtime keeps about persons and for how
-long; the keys and the forget ledger; and the fields marked `notPersonal`. `--markdown` writes it
-as a document and `--json` as data; it exits `1` while anything keeps it from being complete, so a
-CI step fails on it. See [The record of processing
+[`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) prints the record
+from the app's modules and configuration, opening no database: the categories with their basis, the
+special categories of data and the criminal data they hold, with their condition or authority, their
+purposes, sources and retention; the automated decisions; every event, command, process state and
+read model that holds personal data, whose, how it is kept and where its copies go; the recipients,
+with their country and safeguard; what the runtime keeps about persons and for how long; the keys
+and the forget ledger; and the fields marked `notPersonal`. `--markdown` writes it as a document and
+`--json` as data; it exits `1` while anything keeps it from being complete, so a CI step fails on
+it. See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
 
 Left to the controller: its name and contact details, those of its representative and its data
@@ -399,8 +439,10 @@ hours, 33(1), documenting the breach, 33(5), and telling the persons, 34, are th
 ## Impact assessment and data protection officer (articles 35 to 39)
 
 Not covered. The record of processing is an input to a data protection impact assessment, article
-35, and the prior consultation of article 36 is the controller's. So is designating a data
-protection officer, articles 37 to 39.
+35, and names the categories of special or criminal data, whose processing on a large scale calls
+for one, 35(3)(b), and for a data protection officer when it is the controller's core activity,
+37(1)(c). The assessment, the prior consultation of article 36 and designating the officer, articles
+37 to 39, are the controller's.
 
 ## Transfers out of the EEA (articles 44 to 49)
 

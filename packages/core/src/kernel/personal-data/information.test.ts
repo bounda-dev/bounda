@@ -69,6 +69,8 @@ describe("personalDataInformation", () => {
     });
     expect(told.default).toEqual({
       basis: null,
+      special: null,
+      criminal: null,
       purposes: [],
       sources: [],
       retention: "20d",
@@ -78,6 +80,8 @@ describe("personalDataInformation", () => {
     });
     expect(told.profile).toEqual({
       basis: "contract",
+      special: null,
+      criminal: null,
       ...said,
       retention: "30d",
       held: true,
@@ -176,6 +180,80 @@ describe("personalDataInformation", () => {
     expect(automatedDecisions).toEqual([
       { name: "scoring", ...scoring },
       { name: "vetting", ...scoring, categories: ["fraud", "census"], ground: "law" },
+    ]);
+  });
+
+  it("tells the special categories of data and the criminal data of each category, and lets explicit consent be withdrawn and its data be carried, whatever the basis", () => {
+    const special = buildPersonalCategories({
+      module: {
+        categories: {
+          care: {
+            basis: "vital-interests",
+            retention: "1y",
+            ...said,
+            special: { kinds: ["health"], condition: "explicit-consent" },
+          },
+          union: {
+            basis: "legal-obligation",
+            retention: "6y",
+            ...said,
+            special: {
+              kinds: ["trade-union-membership"],
+              condition: "employment-and-social-protection",
+            },
+          },
+          record: {
+            basis: "public-task",
+            retention: "6y",
+            ...said,
+            criminal: { authority: "official-authority" },
+          },
+        },
+        automatedDecisions: {
+          triage: {
+            ...scoring,
+            categories: ["care"],
+            ground: "explicit-consent",
+            measures: "A nurse reviews it",
+          },
+        },
+      } as unknown as PersonalDataModule,
+      retention: null,
+    });
+    const told = personalDataInformation({
+      categories: special,
+      keys: [key("care", null)],
+      person: null,
+    });
+    expect(told.categories.care).toMatchObject({
+      basis: "vital-interests",
+      special: { kinds: ["health"], condition: "explicit-consent" },
+      criminal: null,
+    });
+    expect(told.categories.union?.special?.condition).toBe("employment-and-social-protection");
+    expect(told.categories.record).toMatchObject({
+      special: null,
+      criminal: { authority: "official-authority" },
+    });
+    expect(told.rights.map(({ right, categories: reached }) => [right, reached])).toEqual([
+      ["access", null],
+      ["rectification", null],
+      ["erasure", ["default", "care", "record"]],
+      ["restriction", null],
+      ["portability", ["care"]],
+      ["objection", ["record"]],
+      ["withdraw-consent", ["care"]],
+      ["human-intervention", ["care"]],
+      ["complaint", null],
+    ]);
+    expect(told.automatedDecisions).toEqual([
+      {
+        name: "triage",
+        ...scoring,
+        categories: ["care"],
+        ground: "explicit-consent",
+        measures: "A nurse reviews it",
+      },
     ]);
   });
 

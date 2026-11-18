@@ -147,9 +147,23 @@ const config: Config = {
 describe("personalDataInventory", () => {
   it("lists every category with its basis, purposes, sources, retention and how many fields it holds", () => {
     const inventory = personalDataInventory({ registry, config });
-    const said = { purposes: ["Serve the person"], sources: ["data-subject"] };
+    const said = {
+      special: null,
+      criminal: null,
+      purposes: ["Serve the person"],
+      sources: ["data-subject"],
+    };
     expect(inventory.categories).toEqual([
-      { name: "default", basis: null, purposes: [], sources: [], retention: "2y", fields: 2 },
+      {
+        name: "default",
+        basis: null,
+        special: null,
+        criminal: null,
+        purposes: [],
+        sources: [],
+        retention: "2y",
+        fields: 2,
+      },
       { name: "contact", basis: "consent", ...said, retention: "730d", fields: 2 },
       { name: "invoices", basis: "legal-obligation", ...said, retention: "6y", fields: 1 },
     ]);
@@ -319,6 +333,135 @@ describe("personalDataInventory", () => {
     );
     expect(inventory.findings[1]?.message).toBe(
       'customer.CustomerNoted: field "age" is named like personal data ("age") and is not marked; mark it personal or notPersonal',
+    );
+  });
+
+  it("lists the special categories of data and the criminal data of each category, and reports a personal field named like them in a category that does not declare them", () => {
+    const said = { retention: "1y", purposes: ["Treat them"], sources: ["data-subject"] };
+    const special = { kinds: ["health"], condition: "explicit-consent" } as const;
+    const measures = "A nurse reviews it";
+    const triage = {
+      categories: ["care"],
+      logic: "A score of their symptoms",
+      significance: "How soon they are seen",
+      consequences: "A later appointment",
+      profiling: true,
+      ground: "explicit-consent",
+      measures,
+    } as const;
+    const inventory = personalDataInventory({
+      registry: {
+        personalData: {
+          automatedDecisions: { triage },
+          categories: {
+            care: { basis: "contract", ...said, special },
+            record: { basis: "legal-obligation", ...said, criminal: { authority: "law" } },
+            contact: { basis: "contract", ...said },
+          },
+        },
+        aggregates: {
+          patient: {
+            events: {
+              patientAdmitted: {
+                payload: ({ z, personal }: EventPayloadArgs) =>
+                  z.object({
+                    healthNote: personal(z.string(), { category: "care" }),
+                    allergies: personal(z.string(), { category: "contact" }),
+                    criminalRecord: personal(z.string(), { category: "record" }),
+                    priorConviction: personal(z.string(), { category: "care" }),
+                    offenceDate: personal(z.string(), { category: "care" }),
+                    religiousConviction: personal(z.string(), { category: "record" }),
+                    healthOffence: personal(z.string(), { category: "care" }),
+                    sexLife: personal(z.string()),
+                    email: personal(z.string(), { category: "contact" }),
+                  }),
+                begin: () => ({}),
+              },
+            },
+            commands: {},
+            policies: {},
+            processes: {},
+          },
+        },
+        readModels: {
+          patients: {
+            view: {
+              fields: ({ f }: FieldsArgs) => ({
+                id: f.string().primaryKey().person(),
+                medicalNotes: f.string().personal({ clear: true }),
+              }),
+            },
+            projections: {},
+            queries: {},
+          },
+        },
+      } as unknown as Registry,
+      config: { storage: memory(), runtime: { telemetry: { errorText: "omit" } } },
+    });
+    expect(
+      inventory.categories.map(({ name, special: kinds, criminal }) => [name, kinds, criminal]),
+    ).toEqual([
+      ["default", null, null],
+      ["care", special, null],
+      ["record", null, { authority: "law" }],
+      ["contact", null, null],
+    ]);
+    expect(inventory.automatedDecisions).toEqual([{ name: "triage", ...triage }]);
+    const looksSpecial = inventory.findings.filter(({ kind }) => kind === "looks-special");
+    expect(looksSpecial.map(({ holder, field }) => `${holder}: ${field}`)).toEqual([
+      "patient.PatientAdmitted: allergies",
+      "patient.PatientAdmitted: offenceDate",
+      "patient.PatientAdmitted: religiousConviction",
+      "patient.PatientAdmitted: healthOffence",
+      "patient.PatientAdmitted: sexLife",
+      "patients: medicalNotes",
+    ]);
+    expect(looksSpecial.map(({ message }) => message)).toEqual([
+      'patient.PatientAdmitted: field "allergies" is named like special categories of data (article 9) ("allergies") and is in the category "contact", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category',
+      'patient.PatientAdmitted: field "offenceDate" is named like criminal data (article 10) ("offence") and is in the category "care", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category',
+      'patient.PatientAdmitted: field "religiousConviction" is named like special categories of data (article 9) ("religious") and is in the category "record", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category',
+      'patient.PatientAdmitted: field "healthOffence" is named like criminal data (article 10) ("offence") and is in the category "care", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category',
+      'patient.PatientAdmitted: field "sexLife" is named like special categories of data (article 9) ("sexlife") and is in the category "default", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category',
+      'patients: field "medicalNotes" is named like special categories of data (article 9) ("medical") and is in the category "default", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category',
+    ]);
+    const either = personalDataInventory({
+      registry: {
+        personalData: {
+          automatedDecisions: {},
+          categories: { record: { basis: "public-task", ...said, criminal: { authority: "law" } } },
+        },
+        aggregates: {
+          person: {
+            events: {
+              noted: {
+                payload: ({ z, personal }: EventPayloadArgs) =>
+                  z.object({
+                    conviction: personal(z.string()),
+                    // A category the file does not declare, as only a project that skipped the
+                    // type check can have.
+                    diagnosis: personal(z.string(), { category: "undeclared" as "record" }),
+                    criminalRecord: personal(z.string(), { category: "undeclared" as "record" }),
+                  }),
+                begin: () => ({}),
+              },
+            },
+            commands: {},
+            policies: {},
+            processes: {},
+          },
+        },
+        readModels: {},
+      } as unknown as Registry,
+      config: { storage: memory(), runtime: { telemetry: { errorText: "omit" } } },
+    });
+    const flagged = either.findings.filter(({ kind }) => kind === "looks-special");
+    expect(flagged.map(({ field }) => field)).toEqual([
+      "conviction",
+      "diagnosis",
+      "criminalRecord",
+    ]);
+    expect(flagged[0]?.message).toBe(
+      'person.Noted: field "conviction" is named like special categories of data (article 9) or criminal data (article 10) ("conviction") and is in the category "default", which does not declare them; declare them in a category of app/personal-data.ts and give the field that category',
     );
   });
 

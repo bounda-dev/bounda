@@ -22,10 +22,10 @@ get today. Each item says why, so nobody discovers it the hard way:
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
-- **Parts of the GDPR the code could answer.** A condition of article 9(2) for special categories,
-  an objection to direct marketing in the export's rights, an export of a whole tenant, and a
-  jurisdiction for what Bounda keeps in KV on Cloudflare.
-  See [GDPR rights in Bounda](/reference/gdpr/), which also says what is the controller's.
+- **Parts of the GDPR the code could answer.** An objection to direct marketing or to research in
+  the export's rights, an export of a whole tenant, and a jurisdiction for what Bounda keeps in KV
+  on Cloudflare. See [GDPR rights in Bounda](/reference/gdpr/), which also says what is the
+  controller's.
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each

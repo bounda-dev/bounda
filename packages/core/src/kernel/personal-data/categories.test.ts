@@ -47,7 +47,12 @@ describe("buildPersonalCategories", () => {
       },
       retention: { months: 0, ms: 5_000 },
     });
-    const said = { purposes: ["Serve the person"], sources: ["data-subject"] };
+    const said = {
+      purposes: ["Serve the person"],
+      sources: ["data-subject"],
+      special: null,
+      criminal: null,
+    };
     expect(categories.all).toEqual([
       {
         name: "default",
@@ -55,6 +60,8 @@ describe("buildPersonalCategories", () => {
         retention: { months: 0, ms: 5_000 },
         purposes: [],
         sources: [],
+        special: null,
+        criminal: null,
       },
       { name: "profile", basis: "contract", retention: { months: 0, ms: 2_592_000_000 }, ...said },
       { name: "invoices", basis: "legal-obligation", retention: { months: 72, ms: 0 }, ...said },
@@ -69,7 +76,15 @@ describe("buildPersonalCategories", () => {
   it("has the default category alone without app/personal-data.ts", () => {
     const categories = buildPersonalCategories({ module: undefined, retention: null });
     expect(categories.all).toEqual([
-      { name: "default", basis: null, retention: null, purposes: [], sources: [] },
+      {
+        name: "default",
+        basis: null,
+        retention: null,
+        purposes: [],
+        sources: [],
+        special: null,
+        criminal: null,
+      },
     ]);
     expect(categories.declared).toEqual([]);
     expect(categories.decisions).toEqual([]);
@@ -156,6 +171,157 @@ describe("buildPersonalCategories", () => {
       expect(refusal({ profile }, { scoring: { ...scoring, ground: wrong } })).toBe(
         `${decision} must name its ground, one of "contract", "law", "explicit-consent"`,
       );
+    }
+  });
+
+  it("keeps the special categories of data and the criminal data a category declares, with their condition and authority, and refuses those it cannot read", () => {
+    const said = { retention: "1d", purposes: ["Treat them"], sources: ["data-subject"] };
+    const built = buildPersonalCategories({
+      module: module({
+        care: {
+          basis: "contract",
+          ...said,
+          special: { kinds: ["health", "genetic"], condition: "health-or-social-care" },
+        },
+        record: { basis: "legal-obligation", ...said, criminal: { authority: "law" } },
+        both: {
+          basis: "public-task",
+          ...said,
+          special: { kinds: ["sex-life-or-sexual-orientation"], condition: "legal-claims" },
+          criminal: { authority: "official-authority" },
+        },
+        kept: {
+          basis: "legal-obligation",
+          ...said,
+          special: {
+            kinds: ["trade-union-membership"],
+            condition: "employment-and-social-protection",
+          },
+        },
+      }),
+      retention: null,
+    });
+    expect(built.of("care")).toMatchObject({
+      special: { kinds: ["health", "genetic"], condition: "health-or-social-care" },
+      criminal: null,
+    });
+    expect(built.of("record")).toMatchObject({ special: null, criminal: { authority: "law" } });
+    expect(built.of("both")).toMatchObject({
+      special: { kinds: ["sex-life-or-sexual-orientation"], condition: "legal-claims" },
+      criminal: { authority: "official-authority" },
+    });
+    expect(built.of("kept")?.special?.condition).toBe("employment-and-social-protection");
+    const at = 'app/personal-data.ts: category "care"';
+    const kinds = `${at} must name the special categories of data it holds, at least one of "racial-or-ethnic-origin", "political-opinions", "religious-or-philosophical-beliefs", "trade-union-membership", "genetic", "biometric", "health", "sex-life-or-sexual-orientation"`;
+    for (const wrong of [
+      null,
+      "health",
+      [],
+      { condition: "explicit-consent" },
+      { kinds: [], condition: "explicit-consent" },
+      { kinds: ["gossip"], condition: "explicit-consent" },
+      { kinds: ["health", 1], condition: "explicit-consent" },
+      { kinds: "health", condition: "explicit-consent" },
+    ]) {
+      expect(refusal({ care: { basis: "contract", ...said, special: wrong } })).toBe(kinds);
+    }
+    for (const wrong of [undefined, "whim", "consent", null]) {
+      expect(
+        refusal({
+          care: { basis: "contract", ...said, special: { kinds: ["health"], condition: wrong } },
+        }),
+      ).toBe(
+        `${at} must name the condition of article 9(2) it processes special categories of data on, one of "explicit-consent", "employment-and-social-protection", "vital-interests", "not-for-profit-body", "made-public", "legal-claims", "substantial-public-interest", "health-or-social-care", "public-health", "archiving-research-or-statistics"`,
+      );
+    }
+    for (const wrong of [null, "law", {}, { authority: "court" }, { authority: undefined }]) {
+      expect(refusal({ care: { basis: "contract", ...said, criminal: wrong } })).toBe(
+        `${at} must name the authority of article 10 it processes criminal data under, one of "official-authority", "law"`,
+      );
+    }
+    expect(
+      refusal({
+        care: {
+          basis: "legal-obligation",
+          ...said,
+          special: { kinds: ["health"], condition: "explicit-consent" },
+        },
+      }),
+    ).toBe(
+      `${at} is on legal-obligation, which keeps its data past a forgetting, and cannot rest its special categories of data on explicit-consent, which a withdrawal ends`,
+    );
+    expect(
+      buildPersonalCategories({
+        module: module({
+          care: {
+            basis: "consent",
+            ...said,
+            special: { kinds: ["health"], condition: "explicit-consent" },
+          },
+        }),
+        retention: null,
+      }).of("care")?.special,
+    ).toEqual({ kinds: ["health"], condition: "explicit-consent" });
+  });
+
+  it("lets an automated decision on special categories of data rest only on explicit consent or a substantial public interest, with its measures, as article 22(4) asks", () => {
+    const said = { retention: "1d", purposes: ["Treat them"], sources: ["data-subject"] };
+    const categories = {
+      profile: { basis: "contract", ...said },
+      consented: {
+        basis: "contract",
+        ...said,
+        special: { kinds: ["health"], condition: "explicit-consent" },
+      },
+      public: {
+        basis: "public-task",
+        ...said,
+        special: { kinds: ["biometric"], condition: "substantial-public-interest" },
+      },
+      care: {
+        basis: "contract",
+        ...said,
+        special: { kinds: ["health"], condition: "health-or-social-care" },
+      },
+      record: { basis: "legal-obligation", ...said, criminal: { authority: "law" } },
+    };
+    const decision = {
+      logic: "A score of their answers",
+      significance: "Whether they are covered",
+      consequences: "A human decides instead",
+      profiling: true,
+      ground: "explicit-consent",
+    };
+    const measures = "A clinician reviews every refusal";
+    const built = buildPersonalCategories({
+      module: module(categories, {
+        cover: { ...decision, categories: ["consented", "public", "profile"], measures },
+        vet: { ...decision, categories: ["record", "profile"] },
+        greet: { ...decision, categories: ["profile"], measures },
+      }),
+      retention: null,
+    });
+    expect(built.decisions).toEqual([
+      { name: "cover", ...decision, categories: ["consented", "public", "profile"], measures },
+      { name: "vet", ...decision, categories: ["record", "profile"] },
+      { name: "greet", ...decision, categories: ["profile"], measures },
+    ]);
+    expect(built.decisions[1]).not.toHaveProperty("measures");
+    const at = 'app/personal-data.ts: automated decision "cover"';
+    expect(
+      refusal(categories, { cover: { ...decision, categories: ["consented", "care"], measures } }),
+    ).toBe(
+      `${at} decides on special categories of data of "care", processed on "health-or-social-care"; article 22(4) allows it only on "explicit-consent", "substantial-public-interest"`,
+    );
+    for (const decided of [["consented"], ["profile", "public"]]) {
+      expect(refusal(categories, { cover: { ...decision, categories: decided } })).toBe(
+        `${at} decides on special categories of data and must give the measures that safeguard the person, in words for them (article 22(4))`,
+      );
+    }
+    for (const wrong of ["", "  ", 3, null]) {
+      expect(
+        refusal(categories, { cover: { ...decision, categories: ["profile"], measures: wrong } }),
+      ).toBe(`${at} must give its measures in words for the person`);
     }
   });
 

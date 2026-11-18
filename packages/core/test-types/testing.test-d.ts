@@ -109,7 +109,7 @@ describe("expectForgotten", () => {
       readonly values?: readonly unknown[];
       readonly before?: PersonalDataExport;
       readonly places?: Readonly<Record<string, unknown>>;
-      readonly categories?: readonly ("default" | "delivery" | "invoices")[];
+      readonly categories?: readonly ("default" | "delivery" | "invoices" | "dietary")[];
     }>();
     // @ts-expect-error a category app/personal-data.ts does not declare
     const misspelled: ExpectForgottenOptions = { categories: ["deliveries"] };

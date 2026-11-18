@@ -3,9 +3,11 @@ import type { DispatchOutcome } from "../../adapter/storage/idempotency-store.ts
 import type { ExportAccess } from "../../modules/audit.ts";
 import type {
   AutomatedDecision,
+  CriminalOffenceData,
   LegalBasis,
   PersonalDataSource,
   ProcessingRestriction,
+  SpecialCategoryData,
 } from "../../modules/personal-data.ts";
 import type { PersonRecipient } from "../../modules/recipient.ts";
 
@@ -31,13 +33,17 @@ export type ExportedRestricted = readonly string[];
 
 /**
  * A category of the app as the export tells the person of it, as article 15(1) of the GDPR asks:
- * its `basis`, `null` for the default category, which declares none; its `purposes` (a) and
- * `sources` (g), none for the default category; and how long it is kept (d): its `retention`
+ * its `basis`, `null` for the default category, which declares none; the special categories of
+ * data it holds and their condition of article 9(2) (`special`), and the authority it processes
+ * criminal data under, article 10 (`criminal`), each `null` when it holds none; its `purposes` (a)
+ * and `sources` (g), none for the default category; and how long it is kept (d): its `retention`
  * after their last activity, `null` when nothing forgets it for inactivity, and, for them, until
  * when.
  */
 export interface ExportedCategory {
   readonly basis: LegalBasis | null;
+  readonly special: SpecialCategoryData | null;
+  readonly criminal: CriminalOffenceData | null;
   readonly purposes: readonly string[];
   readonly sources: readonly PersonalDataSource[];
   readonly retention: string | null;
@@ -76,7 +82,9 @@ export type PersonalDataRight =
 
 /**
  * A right the person has, as article 15(1)(e) and (f) ask they be told, with its article and the
- * categories it reaches, from the basis each declares; `null` for every one of their data.
+ * categories it reaches, from the basis each declares, and the condition of article 9(2) where it
+ * changes them: special categories of data on `explicit-consent` can be withdrawn and are portable,
+ * whatever the basis; `null` for every one of their data.
  */
 export interface ExportedRight {
   readonly right: PersonalDataRight;
@@ -86,9 +94,10 @@ export interface ExportedRight {
 
 /**
  * An automated decision `app/personal-data.ts` declares on a category of theirs, as article
- * 15(1)(h) asks: the logic involved, its significance and the envisaged consequences for them.
+ * 15(1)(h) asks: the logic involved, its significance and the envisaged consequences for them, and,
+ * on special categories of data, the measures that safeguard them (article 22(4)).
  */
-export interface ExportedAutomatedDecision extends AutomatedDecision {
+export interface ExportedAutomatedDecision extends AutomatedDecision<string> {
   readonly name: string;
 }
 
