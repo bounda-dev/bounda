@@ -2503,8 +2503,12 @@ out of place, so reaching its end without a throw means the file holds the whole
 The export is of the stream up to the header's `position`; the rest of what it reads, it reads as
 it is when it gets there. When the stream moves past that position while it reads, the export fails
 at the end with `ConcurrencyError`, without its `end` part, since what was written meanwhile may be
-in one part and missing from another. Take it at the end of the service, once the tenant receives
-no more work and the worker has nothing left to do, as `bounda status` shows, then:
+in one part and missing from another. When the stream comes back shorter than that position, as
+after a restore under the running app, it fails the same way. Take it at the end of the service,
+once the tenant receives no more work and the worker has nothing left to do, as `bounda status`
+shows, and, with a forget ledger whose reads lag behind its writes, such as `kvForgetLedger`, once
+its `visibilityDelayMs` has passed since the last forgetting, restriction or redaction, so the
+ledger shows every entry. Then:
 
 1. Export the tenant: `bounda export-tenant acme --output acme.jsonl`, or `exportTenant` from your
    code.

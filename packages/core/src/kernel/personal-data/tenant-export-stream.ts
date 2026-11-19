@@ -324,7 +324,8 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
     for await (const page of ids) {
       const keys = await storage.personalKeys.listMany(page);
       yield await built(page, async (personId) => {
-        const person = rows.get(personId) ?? (await storage.persons.get(personId));
+        // A person the store keeps a row of is read before their id comes out of the merge.
+        const person = rows.get(personId) ?? null;
         rows.delete(personId);
         const information = personalDataInformation({
           categories,
@@ -346,7 +347,11 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
                   { keptUntil, restrictedUntil },
                 ]),
             ),
-            restrictions: processingRestrictionsOf(await storage.persons.restrictions(personId)),
+            // A person has restrictions only while their row says since when.
+            restrictions:
+              person?.restrictedSince == null
+                ? []
+                : processingRestrictionsOf(await storage.persons.restrictions(personId)),
             recipients: await recipientsOf({ storage, recipients, categories, personId }),
           },
         };
@@ -384,8 +389,13 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
           },
         };
       });
-      // The head is an event, so a page that reaches it ends the loop, and none is empty before.
-      afterPosition = (page.at(-1) as StoredEvent).position;
+      // The head is an event, so a page that reaches it ends the loop; one that comes back empty
+      // before it read a stream that went back, as a restore under the app does.
+      const last = page.at(-1);
+      if (last === undefined) {
+        throw new TenantDataChangedError(tenant, position, await storage.eventStore.lastPosition());
+      }
+      afterPosition = last.position;
     }
   };
 

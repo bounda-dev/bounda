@@ -150,6 +150,36 @@ describe("readTenantExport", () => {
     ],
     ["a line that is null", [linesOf(header, null)], "Line 2 of the tenant export is not a part"],
     [
+      "a part of a kind only every object has",
+      [linesOf(header, { kind: "toString" })],
+      "unknown kind toString",
+    ],
+    [
+      "a header without its data",
+      [linesOf({ kind: "header" })],
+      "The header part on line 1 of the tenant export holds no data",
+    ],
+    [
+      "a person whose data is null",
+      [linesOf(header, { kind: "person", person: null })],
+      "The person part on line 2 of the tenant export holds no data",
+    ],
+    [
+      "a row without its read model",
+      [linesOf(header, { kind: "row", row: {} })],
+      "The row part on line 2 of the tenant export holds no data",
+    ],
+    [
+      "a forget ledger entry under another name",
+      [linesOf(header, { kind: "forgetLedgerEntry", forgetLedgerEntry: {} })],
+      "The forgetLedgerEntry part on line 2 of the tenant export holds no data",
+    ],
+    [
+      "an end without its counts",
+      [linesOf(header, { kind: "end" })],
+      "The end part on line 2 of the tenant export holds no data",
+    ],
+    [
       "a line that is text",
       [linesOf(header, "person")],
       "Line 2 of the tenant export is not a part",

@@ -972,6 +972,22 @@ describe("streamTenantExport", () => {
     ).rejects.toBe(refused);
   });
 
+  it("fails without its end when the stream comes back shorter than its head, as after a restore", async () => {
+    const { stream, register, storage } = await setup();
+    await register("c-1", "ana@example.com");
+    await register("c-2", "bo@example.com");
+    const { parts } = await stream({ batchSize: 1 });
+    Object.assign(storage.eventStore, { readAll: async () => [] });
+    const failure = await (async () => {
+      for await (const _ of parts);
+    })().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(TenantDataChangedError);
+    expect(failure).toMatchObject({ expectedVersion: 2, actualVersion: 2 });
+  });
+
   it("hands out nothing past the head, and fails without its end once the stream moved past it", async () => {
     const { stream, register } = await setup();
     await register("c-1", "ana@example.com");

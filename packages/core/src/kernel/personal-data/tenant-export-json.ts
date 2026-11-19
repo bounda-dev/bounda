@@ -5,7 +5,6 @@ import {
   TENANT_EXPORT_VERSION,
   type TenantExportCounts,
   type TenantExportPart,
-  type TenantExportRecord,
 } from "./tenant-export.ts";
 
 export interface TenantExportJsonLinesFunction {
@@ -37,16 +36,21 @@ export const tenantExportJsonLines: TenantExportJsonLinesFunction = (parts) => {
   );
 };
 
-const KINDS: ReadonlySet<string> = new Set<TenantExportRecord["kind"]>([
-  "person",
-  "event",
-  "scheduledCommand",
-  "deadLetter",
-  "subscriberFailure",
-  "answer",
-  "row",
-  "forgetLedgerEntry",
-]);
+type Kind = TenantExportPart["kind"];
+
+// The name each kind of part holds its data under.
+const HOLDERS: Readonly<Record<Kind, string>> = {
+  header: "header",
+  person: "person",
+  event: "event",
+  scheduledCommand: "scheduledCommand",
+  deadLetter: "deadLetter",
+  subscriberFailure: "subscriberFailure",
+  answer: "answer",
+  row: "row",
+  forgetLedgerEntry: "entry",
+  end: "counts",
+};
 
 // The part a line holds, whose kind and first-level shape are checked; what lies inside a record is
 // the app's data, handed on as it is.
@@ -62,8 +66,18 @@ const partOf = (line: string, number: number): TenantExportPart => {
   if (typeof kind !== "string") {
     throw new Error(`Line ${number} of the tenant export is not a part`);
   }
-  if (kind === "header" || kind === "end" || KINDS.has(kind)) return parsed as TenantExportPart;
-  throw new Error(`Line ${number} of the tenant export is a part of unknown kind ${kind}`);
+  if (!Object.hasOwn(HOLDERS, kind)) {
+    throw new Error(`Line ${number} of the tenant export is a part of unknown kind ${kind}`);
+  }
+  // What the part holds, under its kind's own name, as the reader goes on to read it.
+  const held = (parsed as Readonly<Record<string, unknown>>)[HOLDERS[kind as Kind]];
+  const shaped =
+    typeof held === "object" &&
+    held !== null &&
+    (kind !== "row" || typeof (parsed as { readonly readModel?: unknown }).readModel === "string");
+  if (!shaped)
+    throw new Error(`The ${kind} part on line ${number} of the tenant export holds no data`);
+  return parsed as TenantExportPart;
 };
 
 const sameCounts = (a: TenantExportCounts, b: TenantExportCounts): boolean =>
