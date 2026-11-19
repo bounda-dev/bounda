@@ -1838,14 +1838,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             persons: [personId, ...others()],
             outcome,
           });
-        await vouchBefore(...readModelNames);
         const streamed = await recorded(
           // Only a failure is recorded here: what resolves is recorded as it starts and ends.
           async (outcome) => {
             if (outcome === "failed") await record(outcome);
           },
-          () =>
-            streamPersonalData({
+          async () => {
+            // A read model not served refuses the export before it reads, recorded all the same.
+            await vouchBefore(...readModelNames);
+            return streamPersonalData({
               storage,
               readModels,
               aggregates,
@@ -1859,7 +1860,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               includeWithheld,
               // The header and each page, vouched for before they are handed out.
               onPage: () => vouchAfter(...readModelNames),
-            }),
+            });
+          },
         );
         others = streamed.others;
         return recordedExport({
