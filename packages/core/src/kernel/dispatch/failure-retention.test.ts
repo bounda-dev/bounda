@@ -243,6 +243,24 @@ describe("the retention of subscriber failures", () => {
     expect(await retention.nextDueAt()).toBeNull();
   });
 
+  it("waits as long as the first time again once a pass reads the store", async () => {
+    const { store, retention, resolved } = await setUp();
+    const { list } = store;
+    let failing = true;
+    store.list = () => (failing ? Promise.reject(new Error("database is down")) : list());
+    expect(await retention.sweep(start)).toBe(0);
+    failing = false;
+    const read = later(HOLD_MS);
+    expect(await retention.sweep(read)).toBe(0);
+    await resolved("policies", later(HOLD_MS));
+    failing = true;
+    const again = new Date(read.getTime() + 7 * DAY);
+    expect(await retention.sweep(again)).toBe(0);
+    failing = false;
+    expect(await retention.sweep(new Date(again.getTime() + HOLD_MS - 1))).toBe(0);
+    expect(await retention.sweep(new Date(again.getTime() + HOLD_MS))).toBe(1);
+  });
+
   it("names the end of the pause as when it is due while the store cannot be read, and logs it", async () => {
     const { clock, store, logs, retention, resolved } = await setUp();
     await resolved("policies", start);
@@ -271,10 +289,12 @@ describe("the retention of subscriber failures", () => {
     retention.restored();
     expect(await retention.sweep(start)).toBe(1);
     await resolved("projection:orders", later(-8 * DAY));
+    retention.restored();
     const { list } = store;
     store.list = () => Promise.reject(new Error("down"));
     expect(await retention.sweep(later(1))).toBe(0);
     store.list = list;
+    expect(await retention.sweep(later(2))).toBe(0);
     retention.restored();
     expect(await retention.sweep(later(2))).toBe(1);
   });
