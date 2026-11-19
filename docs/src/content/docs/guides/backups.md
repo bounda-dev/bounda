@@ -136,7 +136,8 @@ A restore found then, or one the ledger is not yet reconciled with, refuses the 
 not be read: the reconciliation runs at once, and the read models project what it committed again
 before anything is served. The read after succeeds, and a refused read is in the [access
 log](/guides/personal-data/#who-opened-what) as `failed`. Each read costs the reads of the check,
-shared by the reads that run at once; an export checks once for each page it reads.
+shared by the reads that run at once; an export checks once its header is read and once for each
+page it reads, before it hands out any of it.
 
 ## What is guaranteed
 
