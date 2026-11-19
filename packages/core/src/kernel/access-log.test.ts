@@ -477,7 +477,10 @@ describe("the access log", () => {
       operation: string,
       detail: unknown,
       restricted: unknown = null,
-      error: unknown = { errorName: "ValidationError", errorCode: "VALIDATION_FAILED" },
+      error: { readonly errorName: string; readonly errorCode: string | null } = {
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+      },
     ) => ({
       operation,
       actor: "operator-1",
@@ -485,7 +488,7 @@ describe("the access log", () => {
       personCount: 0,
       at: AT,
       outcome: "refused",
-      ...(error as object),
+      ...error,
       restricted,
       ...(operation === "query" ? { unattributed: false } : {}),
       detail,

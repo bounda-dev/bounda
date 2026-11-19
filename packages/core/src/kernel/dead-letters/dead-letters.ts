@@ -202,7 +202,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       asked?: unknown,
       letThrough: ReadonlySet<string> = new Set(),
     ) =>
-    (outcome: ReadOutcome, error?: unknown) =>
+    (outcome: ReadOutcome, error: unknown) =>
       recordAccess({
         operation,
         detail: { letter: id },
@@ -218,7 +218,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       const asked = options?.includeRestricted;
       const letThrough = new Set<string>();
       const record =
-        (letters: readonly StoredDeadLetter[]) => (outcome: ReadOutcome, error?: unknown) =>
+        (letters: readonly StoredDeadLetter[]) => (outcome: ReadOutcome, error: unknown) =>
           recordAccess({
             operation: "deadLetters.list",
             detail: { letters: letters.length },
@@ -258,7 +258,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       const record = letterRecord("deadLetters.get", id, letter, asked, letThrough);
       // Recorded as a query that matches no row is.
       if (letter === null) {
-        await record("ok");
+        await record("ok", undefined);
         return null;
       }
       return recorded(record, async () => {

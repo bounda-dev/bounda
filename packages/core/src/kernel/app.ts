@@ -1843,7 +1843,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         const includeWithheld = options.includeWithheld === true;
         const exportId = ids.next();
         let others: () => readonly string[] = () => [];
-        const record = (outcome: ExportOutcome, error?: unknown, counts = NO_EXPORTED_RECORDS) =>
+        const record = (outcome: ExportOutcome, error: unknown, counts = NO_EXPORTED_RECORDS) =>
           recordAccess({
             operation: "exportPersonalData",
             detail: { exportId, ...counts, includeWithheld },
@@ -1965,7 +1965,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: async () => {
               let listed: readonly PersonRecipient[] | undefined;
-              const record = (outcome: ReadOutcome, error?: unknown) =>
+              const record = (outcome: ReadOutcome, error: unknown) =>
                 recordAccess({
                   operation: "recipientsOf",
                   detail: listed === undefined ? null : { recipients: listed.length },

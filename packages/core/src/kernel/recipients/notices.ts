@@ -193,7 +193,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
     }
     const context = { ...causedBy(event), ...actedBy(actor) };
     const tenantWide = event.type === TENANT_FORGOTTEN_EVENT;
-    const record = (outcome: "ok" | "failed", skipped: boolean, error?: unknown) =>
+    const record = (outcome: "ok" | "failed", skipped: boolean, error: unknown) =>
       recordAccess({
         operation: "recipientNotice",
         detail: {
@@ -209,7 +209,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
         error,
       });
     if (await superseded(storage, recipients, recipient, event)) {
-      await record("ok", true);
+      await record("ok", true, undefined);
       return;
     }
     const idempotencyKey = deriveIdempotencyKey({

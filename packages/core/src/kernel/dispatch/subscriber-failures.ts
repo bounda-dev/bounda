@@ -138,7 +138,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
     const asked = options?.includeRestricted;
     const letThrough: string[] = [];
     const record =
-      (failures: readonly StoredSubscriberFailure[]) => (outcome: ReadOutcome, error?: unknown) =>
+      (failures: readonly StoredSubscriberFailure[]) => (outcome: ReadOutcome, error: unknown) =>
         recordAccess({
           operation: "subscriberFailures.list",
           detail: { failures: failures.length },
@@ -166,7 +166,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
     const asked = options?.includeRestricted;
     const letThrough: string[] = [];
     const record =
-      (failures: readonly StoredSubscriberFailure[]) => (outcome: ReadOutcome, error?: unknown) =>
+      (failures: readonly StoredSubscriberFailure[]) => (outcome: ReadOutcome, error: unknown) =>
         recordAccess({
           operation: "subscriberFailures.get",
           detail: { subscriber },
@@ -182,7 +182,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
     }));
     // Recorded as a query that matches no row is.
     if (failure === null) {
-      await record([])("ok");
+      await record([])("ok", undefined);
       return null;
     }
     return recorded(record([failure]), async () => {
