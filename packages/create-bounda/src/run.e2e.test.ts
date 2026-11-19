@@ -449,7 +449,10 @@ describe("a project created by create-bounda", () => {
     expect(await readFile(join(project, "bounda.config.ts"), "utf8")).toContain(
       `cloudflare({ jurisdiction: "eu" })`,
     );
-    expect(await readFile(join(project, "wrangler.jsonc"), "utf8")).toContain('"name": "edge"');
+    const wranglerConfig = await readFile(join(project, "wrangler.jsonc"), "utf8");
+    expect(wranglerConfig).toContain('"name": "edge"');
+    expect(wranglerConfig).toContain('{ "name": "KEEPER", "class_name": "Keeper" }');
+    expect(wranglerConfig).not.toContain("kv_namespaces");
     expect(await readFile(join(project, ".dev.vars"), "utf8")).toMatch(
       /^BOUNDA_MASTER_KEY=[A-Za-z0-9+/]{43}=$/m,
     );
@@ -474,6 +477,13 @@ describe("a project created by create-bounda", () => {
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
         { name: "persons", where: "cloudflare", location: "jurisdiction eu", keptFor: null },
+        // In the keeper, in the same jurisdiction as the objects.
+        {
+          name: "forget-ledger",
+          where: "forget-ledger",
+          location: "jurisdiction eu",
+          keptFor: null,
+        },
       ]),
     });
     const wrangler = join(project, "node_modules/wrangler/bin/wrangler.js");
