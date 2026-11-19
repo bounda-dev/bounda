@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { Storage } from "../adapter.ts";
 import type {
   NewSubscriberFailure,
   SubscriberFailureStore,
 } from "../storage/subscriber-failure-store.ts";
 
 export interface SubscriberFailureStoreContractArgs {
-  readonly create: () => Promise<SubscriberFailureStore>;
+  /**
+   * A fresh, empty storage: its subscriber failures, and its persons, whose restrictions `remove`
+   * checks.
+   */
+  readonly create: () => Promise<Pick<Storage, "subscriberFailures" | "persons">>;
 }
 
 export interface SubscriberFailureStoreContractFunction {
@@ -37,9 +42,10 @@ export const subscriberFailureStoreContract: SubscriberFailureStoreContractFunct
 }) => {
   describe("subscriber failure store contract", () => {
     let store: SubscriberFailureStore;
+    let persons: Storage["persons"];
 
     beforeEach(async () => {
-      store = await create();
+      ({ subscriberFailures: store, persons } = await create());
     });
 
     it("keeps nothing for a subscriber that never failed, and resolves nothing for it", async () => {
@@ -174,6 +180,88 @@ export const subscriberFailureStoreContract: SubscriberFailureStoreContractFunct
         "policies",
         "projection:orders",
       ]);
+    });
+
+    it("removes a failure only while it is as it was read: not recorded again, not resolved since", async () => {
+      await store.record(failure());
+      await store.record(failure({ subscriber: "policies" }));
+      const read = await store.get("projection:orders");
+      if (read === null) throw new Error("no failure");
+      await store.record(failure({ failedAt: at(1) }));
+      expect(await store.remove(read, [])).toBe(false);
+      const again = await store.get("projection:orders");
+      if (again === null) throw new Error("no failure");
+      await store.resolve("projection:orders", new Date(at(2)));
+      expect(await store.remove(again, [])).toBe(false);
+      expect(await store.remove({ ...again, resolvedAt: at(3) }, [])).toBe(false);
+      expect(await store.remove({ ...again, resolvedAt: at(2), attempts: 1 }, [])).toBe(false);
+      expect(await store.remove({ ...again, resolvedAt: at(2), eventId: "e-8" }, [])).toBe(false);
+      expect(await store.get("projection:orders")).toMatchObject({
+        attempts: 2,
+        resolvedAt: at(2),
+      });
+      expect(await store.remove({ ...again, resolvedAt: at(2) }, [])).toBe(true);
+      expect(await store.remove({ ...again, resolvedAt: at(2) }, [])).toBe(false);
+      expect(await store.get("projection:orders")).toBeNull();
+      const unresolved = await store.get("policies");
+      if (unresolved === null) throw new Error("no failure");
+      expect(await store.remove(unresolved, [])).toBe(true);
+      expect(await store.list()).toEqual([]);
+      expect(await store.remove(unresolved, [])).toBe(false);
+    });
+
+    it("removes no failure while one of the persons it is told of holds a restriction", async () => {
+      await store.record(failure());
+      const read = await store.get("projection:orders");
+      if (read === null) throw new Error("no failure");
+      await persons.restrict("c-2", {
+        ground: "legal-claims",
+        categories: ["contact"],
+        since: new Date(at(1)),
+      });
+      expect(await store.remove(read, ["c-1", "c-2"])).toBe(false);
+      expect(await store.remove(read, ["c-2"])).toBe(false);
+      expect(await store.get("projection:orders")).not.toBeNull();
+      await persons.unrestrict("c-2", { categories: null });
+      expect(await store.remove(read, ["c-1", "c-2"])).toBe(true);
+      expect(await store.get("projection:orders")).toBeNull();
+    });
+
+    it("removes nothing failed again on the same event after it was resolved, though it counts from one again", async () => {
+      await store.record(failure());
+      const read = await store.get("projection:orders");
+      if (read === null) throw new Error("no failure");
+      await store.resolve("projection:orders", new Date(at(1)));
+      await store.record(failure({ failedAt: at(2) }));
+      expect(await store.get("projection:orders")).toMatchObject({
+        attempts: 1,
+        resolvedAt: null,
+        lastFailedAt: at(2),
+      });
+      expect(await store.remove(read, [])).toBe(false);
+      expect(await store.get("projection:orders")).not.toBeNull();
+    });
+
+    it("records a failure afresh once its last one was removed", async () => {
+      await store.record(failure());
+      const read = await store.get("projection:orders");
+      if (read === null) throw new Error("no failure");
+      await store.remove(read, []);
+      await store.record(failure({ failedAt: at(4) }));
+      expect(await store.get("projection:orders")).toMatchObject({
+        attempts: 1,
+        firstFailedAt: at(4),
+      });
+    });
+
+    it("clears every failure, and clears an empty store", async () => {
+      await store.clear();
+      await store.record(failure());
+      await store.record(failure({ subscriber: "policies" }));
+      await store.resolve("policies", new Date(at(1)));
+      await store.clear();
+      expect(await store.list()).toEqual([]);
+      expect(await store.get("policies")).toBeNull();
     });
 
     it("counts both of two instances failing on the same event at once", async () => {

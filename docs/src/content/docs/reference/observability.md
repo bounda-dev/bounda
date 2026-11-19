@@ -89,6 +89,12 @@ rows its projection read, named in `readPersons`, or in the clear when that is n
 `errorText` says. `app.subscriberFailures.list()` and
 `.get(subscriber)`, or `bounda status --error-text`, open it, and each call is recorded in the
 [access log](/guides/personal-data/#who-opened-what); once the person is forgotten it reads `null`.
+A failure the subscriber got past, or of a subscriber the app no longer runs, is removed with its
+text once [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures),
+30 days by default, has passed since it was resolved or last failed, by the scheduled-command
+worker, or on a host without one when `nextDueAt()` wakes it; one whose text is sealed under a
+[restricted](/guides/personal-data/#restricting-processing) person stays while the restriction
+lasts and the text still opens, and goes within the hour after it is lifted.
 Your own logger calls
 around the app, in a request handler, can follow the same rule with `errorFields`:
 

@@ -28,6 +28,7 @@ export {
   DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
   DEFAULT_SNAPSHOT_VERIFY,
   DEFAULT_SNAPSHOT_VERSION,
+  DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
 } from "./defaults.ts";
 export type {
   ConfigForTenantArgs,
@@ -60,6 +61,7 @@ export type {
   RuntimeConfig,
   RuntimeRole,
   SnapshotConfig,
+  SubscriberFailuresConfig,
   TelemetryConfig,
   TenantConfigArgs,
 } from "./types.ts";

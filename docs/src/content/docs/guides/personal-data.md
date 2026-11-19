@@ -632,7 +632,10 @@ error of work that names nobody, such as a deadline of a process whose state nam
 scheduled command whose payload marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
 and mark every field that holds it. A letter retried or discarded keeps its text until
 [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters) removes it, sealed
-or not; set it to bound how long that is.
+or not; set it to bound how long that is. A subscriber's last failure, kept in the clear when its
+event names nobody, goes once the subscriber got past it, or the app stopped running it, longer ago
+than [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures), 30
+days by default.
 
 Nor does it reach the `actor` in the metadata of events, who acted on them (see
 [Who acts](/concepts/ids-causation-and-correlation/#who-acts)): it is an id, as a person's id is,
@@ -1672,7 +1675,12 @@ commits:
   [Queries](/guides/read-models/#restricted-rows).
 - **Dead letters and subscriber failures.** `deadLetters.list` and `get` keep a letter that names a
   restricted person sealed, its error text and fields reading as `null`, and say `restricted: true`;
-  so do `subscriberFailures.list` and `get`.
+  so do `subscriberFailures.list` and `get`. A subscriber's last failure whose text is sealed under
+  a restricted person is kept past
+  [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) until
+  the restriction is lifted, since keeping the data is what the person asked for; `bounda status`
+  counts them. Once its text no longer opens, its person forgotten since, as a whole or in any
+  category, nothing of theirs is left in it, and the restriction keeps it no longer.
 - **What a forgetting kept.** A command, a policy or a process step reads a field opened under a
   key a forgetting kept as `null`, as if forgotten: those keys are never lifted, so nothing waits
   for them, and the business goes on with the rest. A query leaves the row out unless it reads on
@@ -1923,7 +1931,9 @@ database. The record lists:
   restrictions, its own events about them, [remembered answers](#remembered-answers) for as long as
   `runtime.commands.idempotencyKeyLifetime` keeps them, dead letters for as long as
   [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters) keeps resolved
-  ones, the last failure of each subscriber until its next one replaces it, each with the error
+  ones, the last failure of each subscriber until its next one replaces it or
+  [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) has passed
+  since the subscriber got past it or the app stopped running it, each with the error
   text encrypted under everyone whose data the work read and [held back](#someone-elses-data) from
   an export when that is more than one person, what went to each recipient, the [forget ledger](#the-forget-ledger) for its `keepFor`, and
   the [access log](#who-opened-what) when `app/audit.ts` exists;
@@ -2409,8 +2419,8 @@ It runs in this order, every step safe to run again:
 2. The database marks the tenant forgotten, and `TenantForgotten` is appended to the stream
    `bounda:<tenant>`, with the categories the tenant's persons held keys of and the
    [recipients](#recipients) to tell.
-3. Every person's key, the database's key, every snapshot and every remembered answer are deleted,
-   and every read model's rows, but those of a read model whose view says it holds no personal data
+3. Every person's key, the database's key, every snapshot, every remembered answer and every
+   subscriber's last failure are deleted, and every read model's rows, but those of a read model whose view says it holds no personal data
    (`holdsPersonalData: false`): what another instance would still open with a key it keeps in
    memory, or a projection kept in the clear, is gone.
 

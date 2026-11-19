@@ -288,6 +288,7 @@ retention
   marketing  18mo, 3 keys past it, next due 2026-11-09T11:40:00.000Z
   invoices  6y, 0 keys past it, next due 2031-02-12T16:20:00.000Z
 dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
+subscriber failure retention: 30d, next purge when a failure is resolved
 recipients
   customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 812 persons disclosed to it
     2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer
@@ -316,7 +317,9 @@ recipients
   `reseal` line with the step under way, since when and how many old keys it still keeps, or
   `complete` and when; the
   [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
-  letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off.
+  letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off,
+  and the [purge of subscriber failures](/reference/configuration/#subscriber-failures), with how
+  many past it are kept while a person their text is sealed under is restricted.
   The retention has a line for the app's, which forgets persons as a whole, under `default`, and
   one for each category of `app/personal-data.ts`, which [forgets its
   keys](/guides/personal-data/#each-category-for-its-own-time), with how many are past it now and

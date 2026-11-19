@@ -153,6 +153,7 @@ import type {
   StoredDispatch,
   StoredEvent,
   SubscriberFailure,
+  SubscriberFailureRetentionStatus,
   SubscriberFailureStatus,
   SubscriberFailures,
   Table,
@@ -2024,6 +2025,14 @@ describe("operations", () => {
     expectTypeOf<
       AppStatus["deadLetterRetention"]
     >().toEqualTypeOf<DeadLetterRetentionStatus | null>();
+    expectTypeOf<
+      AppStatus["subscriberFailureRetention"]
+    >().toEqualTypeOf<SubscriberFailureRetentionStatus | null>();
+    expectTypeOf<SubscriberFailureRetentionStatus>().toEqualTypeOf<{
+      readonly retentionMs: number;
+      readonly nextDueAt: string | null;
+      readonly held: number;
+    }>();
     expectTypeOf<
       AppStatus["forgetLedger"]
     >().toEqualTypeOf<ForgetLedgerReconciliationStatus | null>();

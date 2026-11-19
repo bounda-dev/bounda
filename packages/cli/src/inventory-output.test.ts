@@ -149,7 +149,7 @@ const inventory: PersonalDataInventory = {
       name: "subscriber-failures",
       where: "cloudflare",
       location: "jurisdiction eu",
-      keptFor: null,
+      keptFor: "30d",
     },
     { name: "forget-ledger", where: "forget-ledger", location: null, keptFor: "400d" },
     { name: "access-log", where: "app/audit.ts", location: null, keptFor: null },
@@ -244,7 +244,7 @@ describe("formatInventory", () => {
         "  personal-keys  a key per person and category, wrapped under the tenant's key; until the category is forgotten (cloudflare, jurisdiction eu)",
         "  remembered-answers  the answer of each command dispatched with an idempotency key, sealed under its persons; an export holds one back from each when it names several (article 15(4)); 1d, or until erased by a forgetting (cloudflare, jurisdiction eu)",
         "  dead-letters  the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4)); retried or discarded letters for 30d, failed ones until resolved; unreadable once their person is forgotten (cloudflare, jurisdiction eu)",
-        "  subscriber-failures  the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)); until the subscriber's next failure replaces it, unreadable once their person is forgotten (cloudflare, jurisdiction eu)",
+        "  subscriber-failures  the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)); until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten (cloudflare, jurisdiction eu)",
         "  forget-ledger  each forgetting's person, categories and reason, outside the database; 400d (forget-ledger)",
         "  access-log  every access to personal data, by ids, handed to app/audit.ts; as the app keeps it (app/audit.ts)",
         "",
@@ -292,6 +292,15 @@ describe("formatInventory", () => {
         "",
         "Complete: every field is classified",
       ].join("\n"),
+    );
+    // A record no setting bounds, as one from a core before the failures' retention.
+    expect(
+      formatInventory({
+        ...empty,
+        records: [{ name: "subscriber-failures", where: "memory", location: null, keptFor: null }],
+      }),
+    ).toContain(
+      "until the subscriber's next failure replaces it, unreadable once their person is forgotten (memory)",
     );
   });
 });
@@ -344,7 +353,7 @@ describe("formatInventoryMarkdown", () => {
         "| personal-keys | a key per person and category, wrapped under the tenant's key | until the category is forgotten | cloudflare, jurisdiction eu |",
         "| remembered-answers | the answer of each command dispatched with an idempotency key, sealed under its persons; an export holds one back from each when it names several (article 15(4)) | 1d, or until erased by a forgetting | cloudflare, jurisdiction eu |",
         "| dead-letters | the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4)) | retried or discarded letters for 30d, failed ones until resolved; unreadable once their person is forgotten | cloudflare, jurisdiction eu |",
-        "| subscriber-failures | the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)) | until the subscriber's next failure replaces it, unreadable once their person is forgotten | cloudflare, jurisdiction eu |",
+        "| subscriber-failures | the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)) | until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten | cloudflare, jurisdiction eu |",
         "| forget-ledger | each forgetting's person, categories and reason, outside the database | 400d | forget-ledger |",
         "| access-log | every access to personal data, by ids, handed to app/audit.ts | as the app keeps it | app/audit.ts |",
         "",

@@ -70,7 +70,7 @@ describe("the Durable Object adapter", () => {
   recipientStoreContract({ create: freshStorage });
   tenancyContract({ create: freshStorage });
   inspectionContract({ create: freshAdapter });
-  subscriberFailureStoreContract({ create: async () => (await freshStorage()).subscriberFailures });
+  subscriberFailureStoreContract({ create: freshStorage });
   forgetLedgerContract({
     create: async () => {
       const adapter = await freshAdapter();

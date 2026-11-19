@@ -99,7 +99,7 @@ it brings them up to the version the installed Bounda expects
 | `bounda_restricted_persons` | In every database that holds a read model with a field marked `.person()`: the read side's copy of who is restricted, on which ground and in which category, which the runtime writes from the stream and every query filters by |
 | `bounda_restricted_positions` | Beside it: the position of the last event of each person written into the copy, so that reading the stream again never takes a later change back |
 | `bounda_snapshots` | The last snapshot of every stream of an aggregate that takes them, its state sealed under the database's key, with the fingerprint it is valid for |
-| `bounda_subscriber_failures` | The last failure of each subscriber, with its text encrypted under the person the event names, and whether the subscriber got past it ([observability](/reference/observability/#error-text)) |
+| `bounda_subscriber_failures` | The last failure of each subscriber, with its text encrypted under the person the event names, and whether the subscriber got past it, removed once [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) has passed since ([observability](/reference/observability/#error-text)) |
 | `bounda_migrations` | The version of each set of tables Bounda versions, `storage`, `checkpoints`, `forget-ledger` and `tenant-keys`, one row per migration with when it ran; a forget ledger, a tenant key store or read models in a database of their own keep theirs there |
 
 Read models get one table each, named after the read model in snake_case behind `rm_`, so no

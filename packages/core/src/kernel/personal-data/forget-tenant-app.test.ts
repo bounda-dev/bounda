@@ -230,8 +230,21 @@ describe("forgetTenant", () => {
     const { app } = await createTestApp({ registry, adapter });
     stops.push(() => app.stop());
     await register(app, "c-1");
-    const { eventId } = await app.forgetTenant("default", { despiteLegalObligations: true });
     const storage = await adapter.createStorage();
+    // A failure in the clear, which no key's destruction reaches, and no subscriber resolves now.
+    await storage.subscriberFailures.record({
+      subscriber: "projection:customers",
+      position: 1,
+      eventId: "e-1",
+      eventType: "CustomerRegistered",
+      person: null,
+      errorName: "Error",
+      errorMessage: "cannot project c-1@example.com",
+      failedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const { eventId } = await app.forgetTenant("default", { despiteLegalObligations: true });
+    expect(await storage.subscriberFailures.list()).toEqual([]);
+    expect((await app.status()).subscriberFailureRetention).toBeNull();
     const events = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
     expect(events.map(({ type, aggregateId }) => [type, aggregateId])).toEqual([
       ["CustomerRegistered", "c-1"],

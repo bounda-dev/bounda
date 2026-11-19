@@ -86,7 +86,13 @@ export interface ForgottenReadModel {
 export interface SettleTenantForgettingArgs {
   readonly storage: Pick<
     Storage,
-    "transact" | "tenancy" | "personalKeys" | "indexKeys" | "snapshotStore" | "idempotencyStore"
+    | "transact"
+    | "tenancy"
+    | "personalKeys"
+    | "indexKeys"
+    | "snapshotStore"
+    | "idempotencyStore"
+    | "subscriberFailures"
   >;
   readonly readModels: readonly ForgottenReadModel[];
   readonly tenant: string;
@@ -104,10 +110,11 @@ export interface SettleTenantForgettingFunction {
 /**
  * What a tenant's forgetting leaves in its database once its key is destroyed: the binding marked,
  * `TenantForgotten` appended unless the store holds it, every person's key and the database's key
- * removed, every snapshot and remembered answer with them, and the rows of the read models that
- * may hold personal data deleted, those kept in the clear among them: what another instance would
- * still open with a key it keeps in memory is gone. Every step can run again: a start that finds the tenant forgotten runs it all,
- * for a forgetting cut short or a database restored from a copy.
+ * removed, every snapshot, remembered answer and subscriber failure with them, and the rows of the
+ * read models that may hold personal data deleted, those kept in the clear among them: what
+ * another instance would still open with a key it keeps in memory is gone. Every step can run
+ * again: a start that finds the tenant forgotten runs it all, for a forgetting cut short or a
+ * database restored from a copy.
  */
 export const settleTenantForgetting: SettleTenantForgettingFunction = async ({
   storage,
@@ -153,6 +160,8 @@ export const settleTenantForgetting: SettleTenantForgettingFunction = async ({
   await storage.indexKeys.clear();
   await storage.snapshotStore.clear();
   await storage.idempotencyStore.clear();
+  // No subscriber of the tenant runs again to resolve its last failure, so no retention would end it.
+  await storage.subscriberFailures.clear();
   for (const { name, storage: readModel } of readModels) {
     await readModel.transact({
       subscriber: projectionSubscriberName(name),

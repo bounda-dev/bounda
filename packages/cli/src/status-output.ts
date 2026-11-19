@@ -147,6 +147,14 @@ const purgeOf = ({ deadLetterRetention: purge }: AppStatus): string =>
     ? "not configured"
     : `${days(purge.retentionMs)}, next purge ${purge.nextDueAt ?? "when a letter is resolved"}`;
 
+const failurePurgeOf = ({ subscriberFailureRetention: purge }: AppStatus): string => {
+  if (purge === null) return "none kept, the tenant was forgotten";
+  const next = `${days(purge.retentionMs)}, next purge ${purge.nextDueAt ?? "when a failure is resolved"}`;
+  return purge.held === 0
+    ? next
+    : `${next}; ${plural(purge.held, "failure")} past it kept while a person it is sealed under is restricted`;
+};
+
 export interface FormatRecipientsFunction {
   (recipients: readonly RecipientStatus[]): readonly string[];
 }
@@ -192,6 +200,7 @@ export const formatStatus: FormatStatusFunction = (args) => {
     ...resealOf(status),
     ...retentionOf(status),
     `dead letter retention: ${purgeOf(status)}`,
+    `subscriber failure retention: ${failurePurgeOf(status)}`,
     ...formatRecipients(status.recipients),
   ].join("\n");
 };

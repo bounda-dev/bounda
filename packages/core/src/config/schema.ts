@@ -32,6 +32,7 @@ import {
   DEFAULT_PROJECTION_BATCH_TIME_MS,
   DEFAULT_SNAPSHOT_VERIFY,
   DEFAULT_SNAPSHOT_VERSION,
+  DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
 } from "./defaults.ts";
 import type {
   Config,
@@ -172,6 +173,7 @@ const runtime = z.strictObject({
     })
     .optional(),
   deadLetters: z.strictObject({ retention: timeout.optional() }).optional(),
+  subscriberFailures: z.strictObject({ retention: timeout.optional() }).optional(),
   telemetry: z.strictObject({ errorText: z.enum(["omit", "include"]).optional() }).optional(),
   overrides: z.record(z.string(), overrides).optional(),
 });
@@ -328,6 +330,10 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
       },
       deadLetters: {
         retentionMs: parsed.runtime?.deadLetters?.retention ?? null,
+      },
+      subscriberFailures: {
+        retentionMs:
+          parsed.runtime?.subscriberFailures?.retention ?? DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
       },
       telemetry: { errorText: parsed.runtime?.telemetry?.errorText ?? "omit" },
       overrides: resolvedOverrides,

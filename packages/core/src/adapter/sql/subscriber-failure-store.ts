@@ -13,6 +13,10 @@ export interface CreateSqlSubscriberFailureStoreArgs {
    * Already quoted.
    */
   readonly table: string;
+  /**
+   * The storage's restrictions table, already quoted, which `remove` checks in its statement.
+   */
+  readonly restrictions: string;
   readonly dialect: Pick<SqlDialect, "placeholder">;
 }
 
@@ -48,6 +52,7 @@ const failureOf = (row: Record<string, unknown>): StoredSubscriberFailure => ({
 export const createSqlSubscriberFailureStore: CreateSqlSubscriberFailureStoreFunction = ({
   db,
   table,
+  restrictions,
   dialect,
 }) => {
   const p = dialect.placeholder;
@@ -96,5 +101,26 @@ export const createSqlSubscriberFailureStore: CreateSqlSubscriberFailureStoreFun
       (await db.all(`SELECT ${COLUMNS} FROM ${table}`, []))
         .map(failureOf)
         .sort((a, b) => codePointOrder(a.subscriber, b.subscriber)),
+    // A restriction committed before the statement keeps the row; one committed during it comes
+    // after the removal, as if asked a moment later.
+    remove: async (failure, unlessRestricted) => {
+      const held =
+        unlessRestricted.length === 0
+          ? ""
+          : ` AND NOT EXISTS (SELECT 1 FROM ${restrictions} WHERE "person" IN (${unlessRestricted.map((_, index) => p(index + 6)).join(", ")}))`;
+      const removed = await db.all(
+        `DELETE FROM ${table} WHERE "subscriber" = ${p(1)} AND "event_id" = ${p(2)} AND "attempts" = ${p(3)} AND "last_failed_at" = ${p(4)} AND COALESCE("resolved_at", '') = ${p(5)}${held} RETURNING "subscriber"`,
+        [
+          failure.subscriber,
+          failure.eventId,
+          failure.attempts,
+          failure.lastFailedAt,
+          failure.resolvedAt ?? "",
+          ...unlessRestricted,
+        ],
+      );
+      return removed.length > 0;
+    },
+    clear: () => db.run(`DELETE FROM ${table}`, []),
   };
 };

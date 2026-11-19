@@ -17,6 +17,7 @@ import {
 } from "../command/pipeline.ts";
 import type { RestrictedRetries } from "../dead-letters/restricted.ts";
 import type { DeadLetterRetention } from "../dead-letters/retention.ts";
+import type { SubscriberFailureRetention } from "../dispatch/failure-retention.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import type { PersonalDataBackfill } from "../personal-data/backfill.ts";
 import { openCommandPayload } from "../personal-data/commands.ts";
@@ -100,6 +101,10 @@ export interface CreateScheduledCommandWorkerArgs {
    * Swept on every pass; absent without `runtime.deadLetters.retention`.
    */
   readonly letterRetention?: DeadLetterRetention | undefined;
+  /**
+   * Swept on every pass.
+   */
+  readonly failureRetention?: SubscriberFailureRetention | undefined;
   /**
    * Swept on every pass; absent without `runtime.personalData.keyWrapper`.
    */
@@ -230,6 +235,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
   restrictedRetries,
   retention,
   letterRetention,
+  failureRetention,
   rotation,
   reseal,
   reconciliation,
@@ -690,6 +696,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
     waits.clear();
     await onRestored?.();
     letterRetention?.restored();
+    failureRetention?.restored();
     await Promise.all([
       retention?.restored(first),
       rotation?.restored(first),
@@ -759,6 +766,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         await restart(handled.first, true);
       }
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
+      const purgedFailures = (await failureRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;
       const caughtUp = (await recipientCatchUp?.sweep()) ?? 0;
       if (unreadable !== undefined) throw unreadable.error;
@@ -770,6 +778,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         resealed +
         forgottenAgain +
         purged +
+        purgedFailures +
         backfilled +
         caughtUp;
       worked = done > 0;

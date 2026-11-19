@@ -9,6 +9,7 @@ import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import {
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
   DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
+  DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
 } from "./defaults.ts";
 import { resolveConfig } from "./schema.ts";
 
@@ -89,6 +90,7 @@ describe("resolveConfig", () => {
       },
       personalData: { retention: null, keyWrapper: null, tenantKeys: null, forgetLedger: null },
       deadLetters: { retentionMs: null },
+      subscriberFailures: { retentionMs: DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS },
       telemetry: { errorText: "omit" },
       overrides: {},
     });
@@ -124,6 +126,7 @@ describe("resolveConfig", () => {
           },
         },
         deadLetters: { retention: "7d" },
+        subscriberFailures: { retention: "2d" },
       },
       ports: { order: { inventory: "http" } },
     });
@@ -163,6 +166,7 @@ describe("resolveConfig", () => {
       },
     });
     expect(resolved.runtime.deadLetters).toEqual({ retentionMs: 604_800_000 });
+    expect(resolved.runtime.subscriberFailures).toEqual({ retentionMs: 172_800_000 });
     const ledgerDatabase = memory();
     const defaulted = resolveConfig({
       storage: sqlite,
@@ -309,6 +313,9 @@ describe("resolveConfig", () => {
     expect(message({ storage: sqlite, runtime: { deadLetters: { retention: 0 } } })).toContain(
       "runtime.deadLetters.retention: Expected a duration longer than 0",
     );
+    expect(
+      message({ storage: sqlite, runtime: { subscriberFailures: { retention: "0s" } } }),
+    ).toContain("runtime.subscriberFailures.retention: Expected a duration longer than 0");
     expect(
       message({ storage: sqlite, runtime: { personalData: { keyWrapper: "BOUNDA_MASTER_KEY" } } }),
     ).toContain(
