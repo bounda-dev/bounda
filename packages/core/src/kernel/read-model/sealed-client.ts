@@ -65,6 +65,14 @@ export const sealedClient: SealedClientFunction = ({
           `${where} names no categories, and the read model marks no field .personal(): name the categories the read returned`,
         );
       }
+      const unknown = categories.find(
+        (category) => context.layout.categories?.has(category) === false,
+      );
+      if (unknown !== undefined) {
+        throw new ConfigurationError(
+          `${where} names the category ${JSON.stringify(unknown)}, which the app does not have`,
+        );
+      }
       await rawRead(personsOf(where, named).map((person) => ({ person, categories })));
     },
   };

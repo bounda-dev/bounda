@@ -303,17 +303,24 @@ const registry = {
         },
         rawFind: {
           payload: ({ z }: { z: typeof import("zod").z }) =>
-            z.object({ personId: z.string(), named: z.boolean() }),
+            z.object({ personId: z.string(), named: z.boolean().optional() }),
           repository: async ({
             personId,
             named,
             client,
           }: {
             personId: string;
-            named: boolean;
+            named?: boolean;
             client: ReadClient<Record<string, unknown>>;
           }) => {
-            await client.rawReadOf(personId, named ? { categories: ["default"] } : undefined);
+            await client.rawReadOf(
+              personId,
+              named === undefined
+                ? { categories: ["contacts" as "default"] }
+                : named
+                  ? { categories: ["default"] }
+                  : undefined,
+            );
             return personId;
           },
           handler: ({ repositoryData }: { repositoryData: string }) => repositoryData,
@@ -649,8 +656,17 @@ describe("a query of a read model that holds no personal data", () => {
     await expect(queries.rawFind?.({ personId: "bea", named: false })).rejects.toThrow(
       'Read model "people": rawReadOf names no categories, and the read model marks no field .personal(): name the categories the read returned',
     );
+    await app.restrict("zoe", { ground: "accuracy-contested" });
+    accesses.length = 0;
+    await expect(queries.find?.({ personId: "zoe" })).rejects.toThrow(ProcessingRestrictedError);
+    expect(
+      accesses.map(({ operation, outcome, persons }) => [operation, outcome, persons]),
+    ).toEqual([["query", "failed", []]]);
     await expect(queries.rawFind?.({ personId: "", named: true })).rejects.toThrow(
       'Read model "people": rawReadOf named "", which is no person id',
+    );
+    await expect(queries.rawFind?.({ personId: "bea" })).rejects.toThrow(
+      'Read model "people": rawReadOf names the category "contacts", which the app does not have',
     );
     await app.stop();
   });

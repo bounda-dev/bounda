@@ -23,6 +23,7 @@ import {
   type SpecialCategoryKind,
   type SpecificPurpose,
 } from "../../modules/personal-data.ts";
+import type { Registry } from "../../modules/registry.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 
 /**
@@ -601,3 +602,13 @@ export const checkMarkedCategories: CheckMarkedCategoriesFunction = ({
     }
   }
 };
+
+export interface CategoryNamesOfFunction {
+  (registry: Pick<Registry, "personalData">): readonly string[];
+}
+
+// Read from the registry as it is, before `buildPersonalCategories` checks it.
+export const categoryNamesOf: CategoryNamesOfFunction = (registry) => [
+  DEFAULT_PERSONAL_CATEGORY,
+  ...Object.keys(registry.personalData?.categories ?? {}),
+];

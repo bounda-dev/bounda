@@ -52,7 +52,7 @@ import { createEarlierAnswers, type EarlierAnswers } from "../personal-data/earl
 import { hidingRetained } from "../personal-data/event-store.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted, refuseRestrictedRead } from "../personal-data/refusal.ts";
-import { keyedReturned, refuseReturned } from "../personal-data/returned.ts";
+import { readReturned } from "../personal-data/returned.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import { bindPorts } from "../ports/bind.ts";
 import type { PortReturns } from "../ports/returns.ts";
@@ -511,10 +511,13 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         handler: command.type,
         actor: command.metadata.actor,
         read: async (reads) => {
-          for (const one of await refuseReturned({ persons: storage.persons, basis, reads })) {
-            letThrough.add(one);
-          }
-          const keyed = await keyedReturned(storage.personalKeys, reads);
+          const keyed = await readReturned({
+            persons: storage.persons,
+            keys: storage.personalKeys,
+            basis,
+            reads,
+            letThrough,
+          });
           returned.push(...keyed);
           onReturned(keyed);
         },

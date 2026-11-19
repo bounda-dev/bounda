@@ -17,7 +17,7 @@ import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personTouchedByEvent } from "../personal-data/persons.ts";
 import { checkStatePerson } from "../personal-data/process-state.ts";
 import { refuseRestrictedRead } from "../personal-data/refusal.ts";
-import { keyedReturned, refuseReturned } from "../personal-data/returned.ts";
+import { readReturned } from "../personal-data/returned.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import { bindPorts } from "../ports/bind.ts";
 import type { PortReturns } from "../ports/returns.ts";
@@ -107,7 +107,7 @@ export interface CreateProcessHandlersArgs {
    * The keys a step on restricted data reads the categories of, and what its ports return is read
    * under.
    */
-  readonly keys: Pick<PersonalKeys, "find" | "held" | "create">;
+  readonly keys: Pick<PersonalKeys, "find" | "heldAllOf" | "create">;
   readonly recordAccess: RecordAccess;
   readonly disclosures?: Disclosures | undefined;
   readonly returns?: PortReturns | undefined;
@@ -208,14 +208,15 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
         handler: process.name,
         actor,
         read: async (reads) => {
-          for (const one of await refuseReturned({
-            persons: within.persons,
-            basis: process.restricted ?? undefined,
-            reads,
-          })) {
-            letThrough.add(one);
-          }
-          within.read(await keyedReturned(keys, reads));
+          within.read(
+            await readReturned({
+              persons: within.persons,
+              keys,
+              basis: process.restricted ?? undefined,
+              reads,
+              letThrough,
+            }),
+          );
         },
       }),
       {

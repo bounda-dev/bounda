@@ -63,13 +63,33 @@ describe("refuseReturned", () => {
 });
 
 describe("keyedReturned", () => {
-  it("reads each category under the key in force, created when the person holds none", async () => {
-    const held = await createDisposableKey();
-    const created = await createDisposableKey();
+  it("reads every person's keys at once, and each category under the one in force, created when none is", async () => {
+    const [inForce, kept, superseded, created] = await Promise.all([
+      createDisposableKey(),
+      createDisposableKey(),
+      createDisposableKey(),
+      createDisposableKey(),
+    ]);
+    const asked: string[][] = [];
     const made: string[][] = [];
     const keys = {
-      held: async (person: string, category: string): Promise<PersonalKey | null> =>
-        person === "ana" && category === "contact" ? held : null,
+      heldAllOf: async (persons: readonly string[]) => {
+        asked.push([...persons]);
+        return new Map([
+          [
+            "ana",
+            [
+              { category: "invoices", key: kept, retainedSince: "2026-01-01T00:00:00.000Z" },
+              {
+                category: "contact",
+                key: { ...superseded, successor: "next" },
+                retainedSince: null,
+              },
+              { category: "contact", key: inForce, retainedSince: null },
+            ],
+          ],
+        ]) as never;
+      },
       create: async (person: string, category: string): Promise<PersonalKey> => {
         made.push([person, category]);
         return created;
@@ -79,12 +99,15 @@ describe("keyedReturned", () => {
       keyedReturned(keys, [
         { person: "ana", categories: ["contact", "invoices"] },
         { person: "bea", categories: ["contact"] },
+        { person: "ana", categories: ["contact"] },
       ]),
     ).resolves.toEqual([
-      { person: "ana", fingerprint: held.fingerprint },
+      { person: "ana", fingerprint: inForce.fingerprint },
       { person: "ana", fingerprint: created.fingerprint },
       { person: "bea", fingerprint: created.fingerprint },
+      { person: "ana", fingerprint: inForce.fingerprint },
     ]);
+    expect(asked).toEqual([["ana", "bea"]]);
     expect(made).toEqual([
       ["ana", "invoices"],
       ["bea", "contact"],

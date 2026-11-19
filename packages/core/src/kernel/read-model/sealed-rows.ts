@@ -32,11 +32,14 @@ export interface SealedLayout {
   // Whether a field is kept in the clear: `client.raw` then reads personal data as it is.
   readonly clear: boolean;
   readonly indexed: boolean;
+  // The app's categories, which `rawReadOf` names; unchecked when absent.
+  readonly categories?: ReadonlySet<string>;
 }
 
 export interface SealedLayoutOfArgs {
   readonly readModel: string;
   readonly fields: FieldsRecord;
+  readonly categories?: readonly string[];
 }
 
 export interface SealedLayoutOfFunction {
@@ -44,7 +47,7 @@ export interface SealedLayoutOfFunction {
 }
 
 // Throws `ConfigurationError` as `storedFields` does.
-export const sealedLayoutOf: SealedLayoutOfFunction = ({ readModel, fields }) => {
+export const sealedLayoutOf: SealedLayoutOfFunction = ({ readModel, fields, categories }) => {
   const personal = storedPersonalFields(fields);
   return {
     readModel,
@@ -54,6 +57,7 @@ export const sealedLayoutOf: SealedLayoutOfFunction = ({ readModel, fields }) =>
     personal,
     clear: personal.some(({ sealed }) => !sealed),
     indexed: personal.some(({ indexField }) => indexField !== null),
+    ...(categories === undefined ? {} : { categories: new Set(categories) }),
   };
 };
 

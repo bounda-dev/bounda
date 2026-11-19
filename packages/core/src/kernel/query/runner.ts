@@ -167,8 +167,14 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
           : await standing(projectionSubscriberName(query.readModel));
       // What its ports and raw reads said they returned, and the restricted persons of it
       // `includeRestricted` let through.
-      const returned = { reads: [] as ReturnedRead[], letThrough: new Set<string>() };
+      const returned = {
+        reads: [] as ReturnedRead[],
+        letThrough: new Set<string>(),
+        // Whether any said so, a refused one included, so the query is recorded either way.
+        said: false,
+      };
       const readReturned = async (reads: readonly ReturnedRead[]): Promise<void> => {
+        returned.said ||= reads.length > 0;
         for (const one of await refuseReturned({ persons, basis: includeRestricted, reads })) {
           returned.letThrough.add(one);
         }
@@ -280,7 +286,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
         // handler may reshape what it read, so its result cannot tell whose data it holds.
         return recorded(
           async (outcome, error) => {
-            if (!tracked && returned.reads.length === 0) return;
+            if (!tracked && !returned.said) return;
             await recordAccess({
               operation: "query",
               detail,

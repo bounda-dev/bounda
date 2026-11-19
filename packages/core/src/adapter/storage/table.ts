@@ -184,7 +184,7 @@ export interface ReadClient<
    * else's, reached by their forgetting and covered by their restriction. In a query, the access
    * log names them, and a person whose processing is restricted throws `ProcessingRestrictedError`
    * unless the query names a basis that opens it. Throws `ConfigurationError` without categories in
-   * a read model that marks no field `.personal()`.
+   * a read model that marks no field `.personal()`, and for a category the app does not have.
    */
   rawReadOf(
     persons: ReturnedPersons,

@@ -995,7 +995,8 @@ export const project = async ({ event, client }: Projection.Args) => {
 ```
 
 `rawReadOf` takes the person ids, and `{ categories }`, those of the fields the read model marks
-`.personal()` when left out; one that marks none names them, or it throws `ConfigurationError`. In
+`.personal()` when left out; one that marks none names them, or it throws `ConfigurationError`, as
+it does for a category the app does not have. In
 a projection, what it throws is then encrypted under those persons too, under the key a value of
 theirs of each category is written under, so one forgotten in it reads as forgotten. In a query,
 the access log names them, and a restricted person throws `ProcessingRestrictedError` unless the
