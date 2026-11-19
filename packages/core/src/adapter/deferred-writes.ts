@@ -119,7 +119,11 @@ export const deferWrites: DeferWritesFunction = ({
         listHeld: deadLetterStore.listHeld,
         removeHeld: deadLetterStore.removeHeld,
         clear: async (keepEventId) => {
-          for (const [id, { eventId }] of letters) if (eventId !== keepEventId) letters.delete(id);
+          for (const [id, { eventId }] of letters) {
+            if (eventId === keepEventId) continue;
+            letters.delete(id);
+            recorded.push((target) => target.deadLetterStore.remove(id));
+          }
           await deadLetterStore.clear(keepEventId);
         },
       },

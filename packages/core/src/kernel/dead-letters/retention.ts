@@ -193,6 +193,8 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
         const purging = found.resolved !== null && found.resolved <= at;
         const heldNext = heldDueAt(found, at);
         const releasing = heldNext !== null && heldNext <= at;
+        // A read of the held letters left off, by a pass that found none due, starts over.
+        if (!releasing) heldAfter = undefined;
         if (!purging && !releasing) {
           unreadUntil = Math.min(
             found.resolved ?? at + retentionMs,
@@ -210,7 +212,9 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
           : 0;
         const released = releasing ? await release(at) : 0;
         pause.resume();
-        logger.debug("resolved dead letters purged", { purged: purged + released });
+        if (purged + released > 0) {
+          logger.debug("resolved dead letters purged", { purged: purged + released });
+        }
         return purged + released;
       } catch (error) {
         pause.pause(at);

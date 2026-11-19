@@ -411,6 +411,29 @@ describe("the retention of dead letters under a restriction", () => {
     expect(await retention.nextDueAt()).toBeNull();
   });
 
+  it("starts the read of the held letters over once a pass found none due", async () => {
+    const { store, persons, clock, retention, resolve, restrict, sealed } = await setUp();
+    const letter = await sealed("c-1");
+    for (let at = 0; at <= DEAD_LETTER_PURGE_LIMIT; at += 1) {
+      await resolve(`l-${String(at).padStart(3, "0")}`, later(at), "retried", letter);
+    }
+    await restrict("c-1");
+    const due = later(8 * DAY);
+    clock.set(due);
+    const listHeld = store.listHeld;
+    const pages: (string | undefined)[] = [];
+    store.listHeld = (args) => {
+      pages.push(args.after);
+      return listHeld(args);
+    };
+    expect(await retention.sweep(due)).toBe(0);
+    await persons.unrestrict("c-1", { categories: null });
+    expect(await retention.sweep(due)).toBe(DEAD_LETTER_PURGE_LIMIT);
+    await restrict("c-1");
+    expect(await retention.sweep(due)).toBe(0);
+    expect(pages).toEqual([undefined, undefined]);
+  });
+
   it("reads a letter it could not release again with the others a while later", async () => {
     const { store, personalKeys, clock, retention, resolve, restrict, sealed } = await setUp();
     await resolve("a", start, "retried", await sealed("c-1"));
@@ -430,7 +453,7 @@ describe("the retention of dead letters under a restriction", () => {
   });
 
   it("names when a restricted letter comes due, and wakes a host only to read the held ones again", async () => {
-    const { clock, retention, resolve, restrict } = await setUp();
+    const { clock, logs, retention, resolve, restrict } = await setUp();
     await resolve("a", start, "retried", { person: "c-1" });
     await restrict("c-1");
     const due = later(7 * DAY);
@@ -447,6 +470,7 @@ describe("the retention of dead letters under a restriction", () => {
     expect(await retention.sweep(due)).toBe(0);
     expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HELD_RECHECK_MS));
     expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, nextDueAt: null, held: 1 });
+    expect(logs).toEqual([]);
   });
 
   it("names a pause as when it is due once the store cannot be read", async () => {
