@@ -1399,6 +1399,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const failureRetention = createSubscriberFailureRetention({
       store: written.subscriberFailures,
       persons: storage.persons,
+      keys: storage.personalKeys,
       subscribers: subscribers.map(({ name }) => name),
       retentionMs: config.runtime.subscriberFailures.retentionMs,
       clock,

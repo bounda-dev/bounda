@@ -31,6 +31,7 @@ import {
   snapshotStoreContract,
   storageSchemaContract,
   storageTransactionContract,
+  subscriberFailureRetentionContract,
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
@@ -49,6 +50,7 @@ const openStorage = (adapter = sqlite({ memory: true })): Promise<Storage> =>
 describe("sqlite adapter in memory", () => {
   eventStoreContract({ create: openStorage });
   personalDataExportContract({ create: async () => sqlite({ memory: true }) });
+  subscriberFailureRetentionContract({ create: async () => sqlite({ memory: true }) });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });

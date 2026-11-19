@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { NewSubscriberFailure } from "../../adapter/storage/subscriber-failure-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
+import { sealError } from "../personal-data/errors.ts";
 import { HOLD_MS } from "../personal-data/hold.ts";
-import { createRecordingLogger } from "../test-support.ts";
+import { createRecordingLogger, keysOver } from "../test-support.ts";
 import { createSubscriberFailureRetention, HELD_FAILURE_RECHECK_MS } from "./failure-retention.ts";
 
 const DAY = 86_400_000;
@@ -27,12 +28,14 @@ const failure = (
 });
 
 const setUp = async (subscribers: readonly string[] = ["projection:orders", "policies"]) => {
-  const { subscriberFailures: store, persons } = await memory().createStorage();
+  const { subscriberFailures: store, persons, personalKeys } = await memory().createStorage();
   const clock = createFixedClock(start);
+  const keys = keysOver(personalKeys);
   const { logger, entries: logs } = createRecordingLogger();
   const retention = createSubscriberFailureRetention({
     store,
     persons,
+    keys,
     subscribers,
     retentionMs: 7 * DAY,
     clock,
@@ -50,7 +53,25 @@ const setUp = async (subscribers: readonly string[] = ["projection:orders", "pol
   };
   const restrict = (person: string) =>
     persons.restrict(person, { ground: "legal-claims", categories: null, since: start });
-  return { store, persons, clock, logs, retention, fail, resolved, restrict };
+  // Text sealed under the person's key, as a delivery seals it.
+  const sealed = async (person: string) => {
+    await keys.create(person, "default");
+    const { errorMessage } = await sealError({ error: new Error("boom"), person, keys });
+    return { person, errorMessage };
+  };
+  return {
+    store,
+    persons,
+    personalKeys,
+    keys,
+    clock,
+    logs,
+    retention,
+    fail,
+    resolved,
+    restrict,
+    sealed,
+  };
 };
 
 const subscribersOf = async (store: { list(): Promise<readonly { subscriber: string }[]> }) =>
@@ -166,6 +187,39 @@ describe("the retention of subscriber failures", () => {
     expect(await retention.sweep(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS - 1))).toBe(0);
     expect(await retention.sweep(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS))).toBe(1);
     expect(await subscribersOf(store)).toEqual(["projection:orders"]);
+  });
+
+  it("keeps a failure for a restriction only while its text still opens", async () => {
+    const { store, personalKeys, clock, retention, resolved, restrict, sealed } = await setUp();
+    await resolved("projection:orders", start, await sealed("c-1"));
+    await resolved("policies", start, await sealed("c-2"));
+    await restrict("c-1");
+    await restrict("c-2");
+    // c-2 forgotten while restricted: the restriction outlives the key, which nothing brings back.
+    for (const { key } of await personalKeys.list("c-2")) {
+      await personalKeys.remove("c-2", key.fingerprint);
+    }
+    const due = later(7 * DAY);
+    clock.set(due);
+    expect(await retention.status()).toMatchObject({ held: 1 });
+    expect(await retention.sweep(due)).toBe(1);
+    expect(await subscribersOf(store)).toEqual(["projection:orders"]);
+  });
+
+  it("keeps no failure for its persons' restrictions once a key of the text is gone, nor tells the store of them", async () => {
+    const { store, retention, resolved, restrict } = await setUp();
+    const gone = { $personal: { person: "c-1", key: "gone", iv: "aXY=", data: "ZGF0YQ==" } };
+    await resolved("policies", start, { person: "c-1", readPersons: ["c-2"], errorMessage: gone });
+    await restrict("c-1");
+    await restrict("c-2");
+    const remove = store.remove;
+    const told: (readonly string[])[] = [];
+    store.remove = (read, persons) => {
+      told.push(persons);
+      return remove(read, persons);
+    };
+    expect(await retention.sweep(later(7 * DAY))).toBe(1);
+    expect(told).toEqual([[]]);
   });
 
   it("wakes a host only to read a held failure again, never while the sweep would not read it", async () => {
@@ -300,11 +354,12 @@ describe("the retention of subscriber failures", () => {
   });
 
   it("purges a failure once whichever of two instances sweeps it first", async () => {
-    const { store, persons, clock, retention, resolved } = await setUp();
+    const { store, persons, keys, clock, retention, resolved } = await setUp();
     await resolved("policies", start);
     const other = createSubscriberFailureRetention({
       store,
       persons,
+      keys,
       subscribers: ["policies"],
       retentionMs: 7 * DAY,
       clock,

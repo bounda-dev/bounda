@@ -260,8 +260,8 @@ export interface SubscriberFailuresConfig {
   /**
    * How long a subscriber's last failure is kept once the subscriber got past it, or, for a
    * subscriber the app no longer runs, after it last failed. Past it, the scheduled-command worker
-   * removes it, its error text with it, unless a person its text is sealed under is restricted,
-   * until the restriction is lifted. Defaults to 30 days,
+   * removes it, its error text with it, unless a person its text is sealed under is restricted and
+   * the text still opens, until the restriction is lifted. Defaults to 30 days,
    * `DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS`.
    */
   readonly retention?: DurationInput;

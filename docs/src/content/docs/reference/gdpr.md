@@ -297,7 +297,8 @@ asks, the data is kept and nothing else: commands that would touch it are refuse
 `ProcessingRestrictedError`, policies and processes wait as dead letters, queries leave the rows
 out, dead letters keep it sealed, a disclosure to a recipient is refused, and the retention that
 would forget the person, or remove a subscriber's last failure sealed under them, waits until the
-restriction is lifted, since keeping the data is what 18(1)(b) and (c) ask. A call processes it
+restriction is lifted, since keeping the data is what 18(1)(b) and (c) ask; a failure whose text
+no longer opens, its person forgotten, holds nothing left to keep and goes. A call processes it
 anyway only by [naming a basis of 18(2)](/guides/personal-data/#processing-restricted-data-anyway),
 consent, legal claims, the protection of another's rights or public interest, which the access log
 records; what a forgetting kept under an exemption of 17(3) is restricted too, and opens only on

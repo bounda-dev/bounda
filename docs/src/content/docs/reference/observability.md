@@ -94,7 +94,7 @@ text once [`runtime.subscriberFailures.retention`](/reference/configuration/#sub
 30 days by default, has passed since it was resolved or last failed, by the scheduled-command
 worker, or on a host without one when `nextDueAt()` wakes it; one whose text is sealed under a
 [restricted](/guides/personal-data/#restricting-processing) person stays while the restriction
-lasts, and goes within the hour after it is lifted.
+lasts and the text still opens, and goes within the hour after it is lifted.
 Your own logger calls
 around the app, in a request handler, can follow the same rule with `errorFields`:
 

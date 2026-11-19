@@ -193,7 +193,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   Past it, the scheduled-command worker removes it, its error text with it; a failure a subscriber
   is still stuck on stays. A failure whose text is sealed under a person whose processing is
   [restricted](/guides/personal-data/#restricting-processing) stays until the restriction is
-  lifted. It is app-wide. See [error text](/reference/observability/#error-text).
+  lifted, unless the text no longer opens, its person forgotten, since nothing of theirs is left
+  in it to keep. It is app-wide. See [error text](/reference/observability/#error-text).
 
 ### Telemetry
 

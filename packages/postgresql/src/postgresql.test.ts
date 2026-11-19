@@ -37,6 +37,7 @@ import {
   snapshotStoreContract,
   storageSchemaContract,
   storageTransactionContract,
+  subscriberFailureRetentionContract,
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
@@ -123,6 +124,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   });
   eventStoreContract({ create: openStorage });
   personalDataExportContract({ create: async () => fresh() });
+  subscriberFailureRetentionContract({ create: async () => fresh() });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });

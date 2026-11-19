@@ -22,6 +22,7 @@ import {
   schedulerContract,
   snapshotStoreContract,
   storageTransactionContract,
+  subscriberFailureRetentionContract,
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
@@ -53,6 +54,7 @@ describe("memory adapter", () => {
   tenantKeyStoreContract({ create: () => memory().createTenantKeyStore() });
   inspectionContract({ create: async () => memory() });
   subscriberFailureStoreContract({ create: storage });
+  subscriberFailureRetentionContract({ create: async () => memory() });
   forgetLedgerContract({
     create: async () => {
       const adapter = memory();

@@ -5,9 +5,11 @@ import type {
 } from "../../adapter/storage/subscriber-failure-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import { textPersons } from "../personal-data/errors.ts";
+import { sealedKeys } from "../personal-data/commands.ts";
+import { openTextWith, textPersons } from "../personal-data/errors.ts";
 import { createPause } from "../personal-data/hold.ts";
 import { restrictedAmong } from "../personal-data/restricted-reads.ts";
+import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 
 // How long a failure past the retention that a restriction holds waits before it is read again:
 // a restriction lifted in another instance tells nobody here.
@@ -47,6 +49,7 @@ export interface SubscriberFailureRetention {
 export interface CreateSubscriberFailureRetentionArgs {
   readonly store: SubscriberFailureStore;
   readonly persons: Pick<PersonStore, "restrictions">;
+  readonly keys: PersonalKeys;
   /**
    * The subscribers the app runs: the failure of any other is past once it failed a retention ago,
    * since nothing will get past it.
@@ -61,8 +64,17 @@ export interface CreateSubscriberFailureRetentionFunction {
   (args: CreateSubscriberFailureRetentionArgs): SubscriberFailureRetention;
 }
 
+interface Due {
+  readonly failure: StoredSubscriberFailure;
+  /**
+   * Whose restriction, checked again as it is removed, keeps it: nobody once its text no longer
+   * opens.
+   */
+  readonly holders: readonly string[];
+}
+
 interface Standing {
-  readonly due: readonly StoredSubscriberFailure[];
+  readonly due: readonly Due[];
   readonly held: number;
   readonly next: number | null;
 }
@@ -73,10 +85,16 @@ interface Standing {
  * is still stuck on it. The store holds one row per subscriber, so a sweep reads them all; it reads
  * again only once the earliest comes due, since a failure resolved after the read comes due a
  * whole retention later. The removal is conditional on the row as read, so instances need no lease.
+ *
+ * A restriction keeps a failure only while its text still opens: once a key it is sealed under is
+ * gone, the person forgotten, as a whole or in any category, or the text sealed for good by a
+ * redaction, nothing of theirs is left in it to keep, and a restriction that outlives a forgetting
+ * would otherwise keep the row for good.
  */
 export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionFunction = ({
   store,
   persons,
+  keys,
   subscribers,
   retentionMs,
   clock,
@@ -93,7 +111,8 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
 
   const standing = async (at: number): Promise<Standing> => {
     const restricted = restrictedAmong(persons);
-    const due: StoredSubscriberFailure[] = [];
+    const open = openTextWith(sealedKeys(keys));
+    const due: Due[] = [];
     let held = 0;
     let next = Number.POSITIVE_INFINITY;
     for (const failure of await store.list()) {
@@ -103,9 +122,12 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
         next = Math.min(next, dueAt);
         continue;
       }
-      const holds = await Promise.all(textPersons(failure).map(restricted));
+      const sealedUnder = textPersons(failure);
+      const holders =
+        sealedUnder.length > 0 && (await open(failure.errorMessage)) !== null ? sealedUnder : [];
+      const holds = await Promise.all(holders.map(restricted));
       if (holds.includes(true)) held += 1;
-      else due.push(failure);
+      else due.push({ failure, holders });
     }
     return { due, held, next: next === Number.POSITIVE_INFINITY ? null : next };
   };
@@ -126,8 +148,8 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
         const found = await standing(at);
         let purged = 0;
         let kept = false;
-        for (const failure of found.due) {
-          if (await store.remove(failure, textPersons(failure))) purged += 1;
+        for (const { failure, holders } of found.due) {
+          if (await store.remove(failure, holders)) purged += 1;
           else kept = true;
         }
         // A failure recorded, resolved or restricted since the read is read again on the next pass.

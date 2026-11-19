@@ -37,6 +37,7 @@ import {
   snapshotStoreContract,
   storageSchemaContract,
   storageTransactionContract,
+  subscriberFailureRetentionContract,
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
@@ -130,6 +131,7 @@ const tableNames = (db: DatabaseSync, prefix: string): unknown[] =>
 describe("the SQLite stores on node:sqlite", () => {
   eventStoreContract({ create: storage });
   personalDataExportContract({ create: async () => nodeSqlite().adapter });
+  subscriberFailureRetentionContract({ create: async () => nodeSqlite().adapter });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });

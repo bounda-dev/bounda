@@ -1679,7 +1679,8 @@ commits:
   a restricted person is kept past
   [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) until
   the restriction is lifted, since keeping the data is what the person asked for; `bounda status`
-  counts them.
+  counts them. Once its text no longer opens, its person forgotten since, as a whole or in any
+  category, nothing of theirs is left in it, and the restriction keeps it no longer.
 - **What a forgetting kept.** A command, a policy or a process step reads a field opened under a
   key a forgetting kept as `null`, as if forgotten: those keys are never lifted, so nothing waits
   for them, and the business goes on with the rest. A query leaves the row out unless it reads on
