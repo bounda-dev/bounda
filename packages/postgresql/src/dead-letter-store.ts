@@ -187,6 +187,15 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
           [person, after ?? null, limit ?? null],
         )
       ).map(toLetter),
+    scan: async ({ after, limit }) =>
+      (
+        await db.all(
+          after === undefined
+            ? `SELECT ${COLUMNS} FROM ${table} ORDER BY "id" COLLATE "C" LIMIT $1`
+            : `SELECT ${COLUMNS} FROM ${table} WHERE "id" COLLATE "C" > $1 ORDER BY "id" COLLATE "C" LIMIT $2`,
+          after === undefined ? [limit] : [after, limit],
+        )
+      ).map(toLetter),
     forget: async (person, keep = []) =>
       (
         await db.all(

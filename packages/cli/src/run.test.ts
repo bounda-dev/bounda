@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createApp, type PersonalDataExport, silentLogger } from "@bounda-dev/core";
 import type { TenantKeyStore } from "@bounda-dev/core/adapter";
 import { loadProject } from "@bounda-dev/core/node";
@@ -1513,6 +1513,79 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     await app.stop();
   };
 
+  it("hands a tenant back as JSON Lines, checks the file whole, then forgets the tenant", async () => {
+    const tenant = tenantOf("handed-back");
+    await joinMember(tenant, "m-1");
+    await joinMember(tenant, "m-2");
+    const other = await cli(
+      ["export-tenant", "someone-else", ...config, "--tenant", tenant],
+      fixture,
+    );
+    expect(other.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(other.stderr)).toBe(
+      "error: exportTenant names tenant someone-else, and the app serves another\n",
+    );
+
+    const printed = await cli(
+      ["export-tenant", tenant, ...config, "--actor", "operator-1"],
+      fixture,
+    );
+    expect(printed.code).toBe(EXIT_OK);
+    const lines = printed.stdout
+      .trimEnd()
+      .split("\n")
+      .map((text) => JSON.parse(text));
+    expect(lines[0]).toMatchObject({ kind: "header", header: { tenant } });
+    expect(lines.flatMap((part) => (part.kind === "person" ? [part.person.personId] : []))).toEqual(
+      ["m-1", "m-2"],
+    );
+    expect(lines.at(-1)).toMatchObject({ kind: "end", counts: { persons: 2 } });
+    expect(besidesLogs(printed.stderr)).toMatch(
+      new RegExp(
+        `^exported tenant ${tenant} to standard output: 2 persons, \\d+ events, 0 scheduled commands, 0 dead letters, 0 subscriber failures, 0 remembered answers, \\d+ read model rows, 0 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant\n$`,
+      ),
+    );
+    expect(
+      logged(printed.stderr, "info", "personal data accessed").map(
+        (fields) => fields as { operation: string; outcome: string; actor: string },
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        operation: "exportTenant",
+        outcome: "started",
+        actor: "operator-1",
+      }),
+      expect.objectContaining({ operation: "exportTenant", outcome: "ok", actor: "operator-1" }),
+    ]);
+
+    const into = join(await mkdtemp(join(tmpdir(), "bounda-cli-tenant-")), "tenant.jsonl");
+    temporary.push(dirname(into));
+    const saved = await cli(["export-tenant", tenant, ...config, "--output", into], fixture);
+    expect(saved).toMatchObject({ code: EXIT_OK, stdout: "" });
+    expect(besidesLogs(saved.stderr)).toContain(`exported tenant ${tenant} to ${into}: 2 persons`);
+    if (process.platform !== "win32") expect((await stat(into)).mode & 0o777).toBe(0o600);
+    const checked = await cli(["check-tenant-export", into], fixture);
+    expect(checked.code).toBe(EXIT_OK);
+    expect(
+      checked.stdout.startsWith(`${into} is a whole export of tenant ${tenant} up to position `),
+    ).toBe(true);
+    expect(checked.stdout).toContain(": 2 persons, ");
+    const cut = `${into}.cut`;
+    await writeFile(cut, (await readFile(into, "utf8")).split("\n").slice(0, -2).join("\n"));
+    const refused = await cli(["check-tenant-export", cut], fixture);
+    expect(refused).toMatchObject({ code: EXIT_FAILURE, stdout: "" });
+    expect(refused.stderr).toBe(
+      "error: The tenant export ends before its end part: it is not whole\n",
+    );
+    const missing = await cli(["check-tenant-export", `${into}.missing`], fixture);
+    expect(missing.code).toBe(EXIT_FAILURE);
+
+    expect((await cli(["forget-tenant", tenant, ...config, "--yes"], fixture)).code).toBe(EXIT_OK);
+    const gone = await cli(["export-tenant", tenant, ...config], fixture);
+    expect(gone.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(gone.stderr)).toMatch(/TenantForgottenError|forgotten/);
+  });
+
   it("asks for --yes before it forgets a tenant", async () => {
     const tenant = tenantOf("unconfirmed");
     await joinMember(tenant, "m-1");
@@ -1789,6 +1862,24 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       "the tenant the app serves, for a configuration that is a function of the tenant (default:",
     ]) {
       expect(forget.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
+    const exporting = await cli(["export-tenant", "--help"], fixture);
+    for (const text of [
+      "hand a tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log",
+      "<tenant>",
+      "the tenant to export, the one the app serves",
+      "--output <file>",
+      "write it to this file, readable by its owner alone, and only once whole, instead of printing it",
+    ]) {
+      expect(exporting.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
+    const checking = await cli(["check-tenant-export", "--help"], fixture);
+    for (const text of [
+      "check that a file bounda export-tenant wrote is whole, every part in its place and counted by its end, before the tenant is forgotten",
+      "<file>",
+      "the file the export was written to",
+    ]) {
+      expect(checking.stdout.replace(/\s+/g, " ")).toContain(text);
     }
     const keys = await cli(["tenant-key", "--help"], fixture);
     expect(keys.stdout).toContain("rotate the tenant's key, and retire its older versions");

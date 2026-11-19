@@ -15,6 +15,7 @@ import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 export { failure } from "../failure.ts";
 export { personalDataExportResponse } from "../personal-data-export.ts";
+export { tenantExportResponse } from "../tenant-export.ts";
 export type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 /**

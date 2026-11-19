@@ -840,6 +840,7 @@ describe("refuseRestricted", () => {
     const persons: PersonStore = {
       get: vi.fn(),
       restrictions: vi.fn(),
+      scan: vi.fn(),
       restrict: vi.fn(),
       unrestrict: vi.fn(),
       record: vi.fn(),

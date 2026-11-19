@@ -10,6 +10,7 @@ import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
+import type { TenantExportPart } from "../personal-data/tenant-export.ts";
 
 interface Person {
   readonly personId: string;
@@ -511,6 +512,40 @@ describe("text built from what a port returned", () => {
     ]);
     await app.forget("zoe");
     expect((await app.exportPersonalData("ana", { includeWithheld: true })).answers).toEqual([]);
+    await app.stop();
+  });
+
+  it("is handed back with the tenant, opened, and the port is named a source of its category", async () => {
+    const { app, commands } = await vouched();
+    await expect(
+      commands.vouchFor?.({ memberId: "ana", friendId: "zoe" }, { idempotencyKey: "vouch-1" }),
+    ).rejects.toMatchObject({ rejected: "Stranger" });
+    const parts: TenantExportPart[] = [];
+    for await (const part of await app.exportTenant("default")) parts.push(part);
+    const header = parts[0]?.kind === "header" ? parts[0].header : undefined;
+    expect(header?.categories.default?.ports).toEqual([
+      "member.directory",
+      "member.notifier",
+      "members.lookup",
+      "people.lookup",
+    ]);
+    // Zoe holds a key only because the directory said its answer held her data.
+    expect(
+      parts.flatMap((part) => (part.kind === "person" ? [part.person.personId] : [])),
+    ).toContain("zoe");
+    expect(parts).toContainEqual({
+      kind: "deadLetter",
+      deadLetter: expect.objectContaining({
+        readPersons: ["bea"],
+        errorMessage: "cannot greet Bea Sanz",
+      }),
+    });
+    expect(parts).toContainEqual({
+      kind: "answer",
+      answer: expect.objectContaining({
+        outcome: expect.objectContaining({ message: "Zoe Ruiz is a stranger" }),
+      }),
+    });
     await app.stop();
   });
 

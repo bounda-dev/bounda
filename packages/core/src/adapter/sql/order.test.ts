@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codePointOrder } from "./order.ts";
+import { byteOrder, codePointOrder } from "./order.ts";
 
 describe("codePointOrder", () => {
   it("orders text by code point, a character above U+FFFF after U+E000–U+FFFF", () => {
@@ -20,5 +20,12 @@ describe("codePointOrder", () => {
     expect(codePointOrder("abc", "ab")).toBeGreaterThan(0);
     expect(codePointOrder("ab", "ab")).toBe(0);
     expect(codePointOrder("\u{10000}", "\uE000")).toBeGreaterThan(0);
+  });
+});
+
+describe("byteOrder", () => {
+  it("compares PostgreSQL's text by bytes, and leaves SQLite's, which already does, as it is", () => {
+    expect(byteOrder({ name: "postgresql" })).toBe(' COLLATE "C"');
+    expect(byteOrder({ name: "sqlite" })).toBe("");
   });
 });

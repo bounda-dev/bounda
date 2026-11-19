@@ -1362,6 +1362,7 @@ person's data in the clear records it, once per call, and an export once more as
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
 | `exportPersonalData` and `streamPersonalData`, as each starts and as it ends | the person, and with `includeWithheld`, after them, everyone else whose data the values it opened in spite of [article 15(4)](#someone-elses-data) may quote | `{ exportId, redactions, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients, withheld, includeWithheld }`: the export's id, the same in both records, how many of each it handed out by then, before it failed or was cancelled for one that did, how many of those held a value back under article 15(4), or opened it with `includeWithheld`, and whether it was asked for with it |
+| `exportTenant`, as it starts and as it ends | the first persons it handed out, `MAX_ACCESS_PERSONS` at most, none at its start, and `personCount` all of them so far | `{ exportId, persons, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, forgetLedgerEntries }`: the export's id, the same in both records and in its header, and how many parts of each kind it handed out by then |
 | `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
 | `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
 | `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
@@ -2442,6 +2443,87 @@ version of its tenant's key, and once more every five minutes while it runs.
 A wrapper that fails, because KMS is unreachable, fails the command that needed the tenant's key,
 which the caller or the reaction's retry sees; the person's data is not touched.
 
+## Handing a tenant back
+
+An app that keeps a customer's data on their behalf, one [tenant](#tenants) each, is their
+processor, and article 28(3)(g) of the GDPR asks it, at the end of the service, to delete the
+data or to return it, as the customer chooses. `forgetTenant` deletes it (see [Forgetting a
+tenant](#forgetting-a-tenant)); `exportTenant` returns it: everything the runtime holds of the
+tenant, a part at a time, whatever its size.
+
+```ts
+import { createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { tenantExportJsonLines } from "@bounda-dev/core";
+
+const parts = await app.as("operator-7").exportTenant("acme");
+await pipeline(Readable.fromWeb(tenantExportJsonLines(parts)), createWriteStream("acme.jsonl"));
+```
+
+The name must be the tenant the app serves: a `ValidationError` otherwise, before anything is read.
+It resolves once the header is read, then hands out, in this order:
+
+| Part | What it holds |
+| --- | --- |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`1`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, and every read model, in the order their rows come |
+| `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
+| `event` | every event of the stream up to the header's `position`, as the handlers read it today: upcast, its whole `payload` opened, with its `metadata` and the `person` it names; `categories` names the category of each field marked `personal`, `restricted` the fields the controller may only keep, and `redacted` the fields a [redaction](#correcting-a-persons-data) sealed for good |
+| `scheduledCommand` | every command waiting to run, its payload opened, with the `persons` it names |
+| `deadLetter` | every [dead letter](/guides/dead-letters/), whatever its status, its error's text and payload opened |
+| `subscriberFailure` | every subscriber's last failure, its text opened |
+| `answer` | every [remembered answer](/guides/idempotent-commands/) that still opens, with the persons it is sealed under |
+| `row` | every row of every read model, every field of its view, with the person its field marked `.person()` names |
+| `forgetLedgerEntry` | every entry of the [forget ledger](#the-forget-ledger): the persons forgotten, restricted, redacted and disclosed, the one thing about them that has to outlive their data |
+| `end` | how many parts of each kind came before it |
+
+Every value is opened, marked `personal` or not, and nothing is held back. Between a person and the
+controller, [article 15(4)](#someone-elses-data) keeps from one person what quotes another; between
+the processor and the controller there is nothing to weigh, since all of it is the controller's
+data, and so is the rest of each payload, which a person's export leaves out. A value forgotten or
+redacted reads `null`, as everywhere: there is nothing left to hand back. A value whose processing
+is [restricted](#restricting-processing), or that a forgetting kept under an exemption of article
+17(3), is opened too, since keeping it is what a restriction allows, and named in its part's
+`restricted`, so the controller goes on only keeping it. No key leaves: what the export opens is
+the data, not the means to open it.
+
+What it leaves out is not data of the tenant's: snapshots, the state of aggregates the events it
+holds rebuild; the subscribers' checkpoints, the inbox and the tables' versions, which say how far
+the runtime got; and the keys, its own and the tenant key store's. The [access log](#who-opened-what)
+is not the runtime's to hand back: it went to `app/audit.ts`, which is already the controller's,
+and records the export itself, `started` before its header is handed out and again when it ends.
+
+`tenantExportJsonLines(parts)` writes it as [JSON Lines](https://jsonlines.org/), one part per line,
+each a `{ kind, ... }` as the table names it: a format anything reads a line at a time, documented
+by these types (`TenantExportPart` and those it names). `readTenantExport(body)` reads such a file
+back, a part at a time, and checks it is whole: a header of this format and version first, every
+part in its place, and last an `end` that counts what came before it. It throws at the first thing
+out of place, so reaching its end without a throw means the file holds the whole export.
+
+The export is of the stream up to the header's `position`; the rest of what it reads, it reads as
+it is when it gets there. When the stream moves past that position while it reads, the export fails
+at the end with `ConcurrencyError`, without its `end` part, since what was written meanwhile may be
+in one part and missing from another. When the stream comes back shorter than that position, as
+after a restore under the running app, it fails the same way. Take it at the end of the service,
+once the tenant receives no more work and the worker has nothing left to do, as `bounda status`
+shows, and, with a forget ledger whose reads lag behind its writes, such as `kvForgetLedger`, once
+its `visibilityDelayMs` has passed since the last forgetting, restriction or redaction, so the
+ledger shows every entry. Then:
+
+1. Export the tenant: `bounda export-tenant acme --output acme.jsonl`, or `exportTenant` from your
+   code.
+2. Check the file: `bounda check-tenant-export acme.jsonl`, or read it through `readTenantExport`,
+   and hand it to the customer.
+3. Forget the tenant, if the customer asked for it or the agreement says so: `bounda forget-tenant
+   acme --yes`. A legal obligation that keeps some of it (see [Categories](#categories)) is now the
+   customer's to honour with the data you handed back, which is what
+   `{ despiteLegalObligations: true }` says.
+
+A Durable Object hands its tenant back over RPC: `connect(stub).exportTenant(tenant)` streams the
+parts, one JSON per line, read only as they are, and `tenantExportResponse` from
+`@bounda-dev/react-router` answers a route with the file (see [React
+Router](/guides/react-router/)). Guard any route that serves it: it holds every person's data.
+
 ## Forgetting a tenant
 
 When a customer of yours leaves, every person of theirs goes with them. `forgetTenant` destroys the
@@ -2454,7 +2536,8 @@ await app.forgetTenant("acme");
 
 The name must be the tenant the app serves: a `ValidationError` otherwise. While a person of the
 tenant holds a key a legal obligation keeps (see [Categories](#categories)), it refuses, since that
-data must stay: hand it back first, then pass `{ despiteLegalObligations: true }`. The other
+data must stay: [hand it back](#handing-a-tenant-back) first, then pass
+`{ despiteLegalObligations: true }`. The other
 exemptions of article 17(3) do not stop it: they let the controller keep data, without requiring it
 to. It resolves to
 `{ tenant, forgottenAt, eventId }`; `bounda forget-tenant <tenant> --yes` does the same from a

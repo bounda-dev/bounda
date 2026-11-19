@@ -48,6 +48,15 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
       },
       disclosures: async (person) =>
         [...disclosures.values()].filter((row) => row.person === person).sort(byDisclosure),
+      disclosuresOfMany: async (persons) =>
+        new Map(
+          [...new Set(persons)].flatMap((person) => {
+            const rows = [...disclosures.values()]
+              .filter((row) => row.person === person)
+              .sort(byDisclosure);
+            return rows.length === 0 ? [] : [[person, rows] as const];
+          }),
+        ),
       forget: async (person, categories) => {
         for (const [key, row] of disclosures) {
           if (row.person === person && (categories === null || categories.includes(row.category))) {

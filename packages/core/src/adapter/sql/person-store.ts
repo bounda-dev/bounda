@@ -2,6 +2,7 @@ import type { RestrictionGround } from "../../modules/personal-data.ts";
 import type { PersonStore, StoredPerson, StoredRestriction } from "../storage/person-store.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { holdEndOf, holdOf, releasedBy as released } from "./hold.ts";
+import { byteOrder } from "./order.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 export interface CreateSqlPersonStoreArgs {
@@ -11,7 +12,7 @@ export interface CreateSqlPersonStoreArgs {
    */
   readonly table: string;
   readonly restrictions: string;
-  readonly dialect: Pick<SqlDialect, "placeholder">;
+  readonly dialect: Pick<SqlDialect, "placeholder" | "name">;
 }
 
 export interface CreateSqlPersonStoreFunction {
@@ -60,6 +61,7 @@ export const createSqlPersonStore: CreateSqlPersonStoreFunction = ({
   dialect,
 }) => {
   const p = dialect.placeholder;
+  const byCode = byteOrder(dialect);
   // Each placeholder its own value: SQLite's are positional.
   const oldest = (index: number): string =>
     `(SELECT MIN("since") FROM ${restrictions} WHERE "person" = ${p(index)})`;
@@ -89,6 +91,15 @@ export const createSqlPersonStore: CreateSqlPersonStoreFunction = ({
           [person],
         )
       ).map(storedRestriction),
+    scan: async ({ after, limit }) =>
+      (
+        await db.all(
+          after === undefined
+            ? `SELECT ${COLUMNS} FROM ${table} ORDER BY "person"${byCode} LIMIT ${p(1)}`
+            : `SELECT ${COLUMNS} FROM ${table} WHERE "person"${byCode} > ${p(1)} ORDER BY "person"${byCode} LIMIT ${p(2)}`,
+          after === undefined ? [limit] : [after, limit],
+        )
+      ).map(storedPerson),
     restrict: async (person, { ground, categories, since }) => {
       const at = since.toISOString();
       let changed = false;

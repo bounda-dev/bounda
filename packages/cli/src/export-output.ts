@@ -3,6 +3,7 @@ import { createWriteStream } from "node:fs";
 import { rename, rm } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { TenantExportCounts } from "@bounda-dev/core";
 import type { Output } from "./run.ts";
 
 export interface WriteToOutputFunction {
@@ -39,3 +40,21 @@ export const writeToFile: WriteToFileFunction = async (path, body) => {
     throw error;
   }
 };
+
+export interface FormatTenantExportCountsFunction {
+  (counts: TenantExportCounts): string;
+}
+
+const COUNTED: readonly (readonly [keyof TenantExportCounts, string])[] = [
+  ["persons", "persons"],
+  ["events", "events"],
+  ["scheduledCommands", "scheduled commands"],
+  ["deadLetters", "dead letters"],
+  ["subscriberFailures", "subscriber failures"],
+  ["answers", "remembered answers"],
+  ["readModelRows", "read model rows"],
+  ["forgetLedgerEntries", "forget ledger entries"],
+];
+
+export const formatTenantExportCounts: FormatTenantExportCountsFunction = (counts) =>
+  COUNTED.map(([key, name]) => `${counts[key]} ${name}`).join(", ");

@@ -1,5 +1,6 @@
 import type { RestrictionRead } from "../adapter/storage/append-checks.ts";
 import { isReleasedBy } from "../adapter/storage/hold.ts";
+import { pageByKey } from "../adapter/storage/person-page.ts";
 import type {
   PersonStore,
   StoredPerson,
@@ -99,6 +100,8 @@ export const createKeptPersonStore: CreateKeptPersonStoreFunction = () => {
         return kept === undefined ? null : stored(kept);
       },
       restrictions: async (person) => inOrder(restrictionsOf(person)),
+      scan: async (page) =>
+        pageByKey([...persons.values()], ({ person }) => person, page).map(stored),
       restrict: async (person, { ground, categories, since }) => {
         const kept = existing(person);
         const on = kept.restrictions.filter((row) => row.ground === ground);

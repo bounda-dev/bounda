@@ -828,6 +828,42 @@ export const schedulerContract: SchedulerContractFunction = ({ create }) => {
       expect(rewritten).not.toHaveProperty("persons");
     });
 
+    it("scans every command by key, by code point, claimed or not, a page at a time", async () => {
+      for (const [index, dedupeKey] of ["b", "\u{1F600}", "a", "！", "B"].entries()) {
+        await scheduler.schedule({
+          dedupeKey,
+          command: testCommand(dedupeKey),
+          executeAt: at(5_000 - index * 1_000),
+          scheduledAt: at(500),
+          context: testContext,
+          ...(dedupeKey === "a" ? { persons: [held("c-1", "1")] } : {}),
+        });
+      }
+      await scheduler.claimDue({ now: at(10_000), limit: 1, leaseMs: 60_000 });
+      const keysOf = (page: readonly ScheduledCommand[]) => page.map((entry) => entry.dedupeKey);
+      expect(keysOf(await scheduler.scan({ limit: 10 }))).toEqual([
+        "B",
+        "a",
+        "b",
+        "！",
+        "\u{1F600}",
+      ]);
+      expect(keysOf(await scheduler.scan({ limit: 2 }))).toEqual(["B", "a"]);
+      expect(keysOf(await scheduler.scan({ after: "a", limit: 2 }))).toEqual(["b", "！"]);
+      expect(keysOf(await scheduler.scan({ after: "！", limit: 2 }))).toEqual(["\u{1F600}"]);
+      expect(await scheduler.scan({ after: "\u{1F600}", limit: 2 })).toEqual([]);
+      expect(keysOf(await scheduler.scan({ after: "", limit: 1 }))).toEqual(["B"]);
+      expect((await scheduler.scan({ limit: 10 }))[1]).toEqual({
+        dedupeKey: "a",
+        command: testCommand("a"),
+        executeAt: at(3_000).toISOString(),
+        scheduledAt: at(500).toISOString(),
+        context: testContext,
+        attempts: 0,
+        persons: [held("c-1", "1")],
+      });
+    });
+
     it("lists pending commands ordered by execution time with paging", async () => {
       await scheduler.schedule({
         dedupeKey: "b",

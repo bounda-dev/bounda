@@ -19,3 +19,5 @@ export type {
 } from "./personal-data-export.ts";
 export { personalDataExportResponse } from "./personal-data-export.ts";
 export type { TenantFunction } from "./tenant.ts";
+export type { TenantExportResponseFunction } from "./tenant-export.ts";
+export { tenantExportResponse } from "./tenant-export.ts";

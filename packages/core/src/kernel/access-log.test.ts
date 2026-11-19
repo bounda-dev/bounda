@@ -6,6 +6,7 @@ import {
   ConcurrencyError,
   ConfigurationError,
   ReadModelRestoringError,
+  ValidationError,
 } from "../contracts/errors.ts";
 import { memory } from "../memory/index.ts";
 import {
@@ -764,6 +765,79 @@ describe("the access log", () => {
           includeWithheld: false,
         },
       ],
+    ]);
+  });
+
+  it("refuses a tenant export of another tenant before it reads, recorded as refused", async () => {
+    const records: OnPersonalDataAccessArgs[] = [];
+    const { app } = await createTestApp({
+      registry: registryWith(),
+      onPersonalDataAccess: (args) => {
+        records.push(args);
+      },
+    });
+    const refusal = await app.exportTenant("acme").then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(ValidationError);
+    expect(refusal).toMatchObject({
+      message: "exportTenant names tenant acme, and the app serves another",
+      issues: [{ path: ["tenant"], message: "Expected the tenant the app serves" }],
+    });
+    expect(records.map(({ access }) => [access.operation, access.outcome, access.persons])).toEqual(
+      [["exportTenant", "refused", []]],
+    );
+  });
+
+  it("records a tenant export whose header fails to read as failed, having handed nothing out", async () => {
+    const base = memory();
+    const down = new Error("stream down");
+    // Down once the app has started, which reads the head too.
+    let isDown = false;
+    const failing: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        return {
+          ...storage,
+          eventStore: {
+            ...storage.eventStore,
+            lastPosition: () => (isDown ? Promise.reject(down) : storage.eventStore.lastPosition()),
+          },
+        };
+      },
+    };
+    const records: OnPersonalDataAccessArgs[] = [];
+    const { app } = await createTestApp({
+      registry: registryWith(),
+      adapter: failing,
+      onPersonalDataAccess: (args) => {
+        records.push(args);
+      },
+    });
+    isDown = true;
+    await expect(app.as("ops-1").exportTenant("default")).rejects.toBe(down);
+    expect(records.map(({ access }) => access)).toEqual([
+      expect.objectContaining({
+        operation: "exportTenant",
+        actor: "ops-1",
+        persons: [],
+        personCount: 0,
+        outcome: "failed",
+        errorName: "Error",
+        detail: {
+          exportId: expect.any(String),
+          persons: 0,
+          events: 0,
+          scheduledCommands: 0,
+          deadLetters: 0,
+          subscriberFailures: 0,
+          answers: 0,
+          readModelRows: 0,
+          forgetLedgerEntries: 0,
+        },
+      }),
     ]);
   });
 
