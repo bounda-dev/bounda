@@ -586,7 +586,12 @@ describe("a libSQL file left in the clear while another process held it", () => 
     const paths = fresh();
     await elsewhere(paths, `await registerCustomer(app, "c-1");`, false);
     const letGo = await heldElsewhere(paths.store);
-    const app = await bootTestApp(paths);
+    // What the encryption once let go logs if it fails: a file still in the clear with none was
+    // still held.
+    const errors: unknown[] = [];
+    const app = await bootTestApp(paths, {
+      logger: { ...silent, error: (message, fields) => void errors.push({ message, fields }) },
+    });
     try {
       expect((await app.status()).files).toEqual([
         { database: "storage", file: paths.store.replaceAll("\\", "/"), state: "clear" },
@@ -597,7 +602,10 @@ describe("a libSQL file left in the clear while another process held it", () => 
       expect((await app.status()).tenant).toMatchObject({ forgottenAt: null });
       await letGo();
       await app.runUntilIdle();
-      expect((await app.status()).files).toMatchObject([{ state: "current" }]);
+      expect({ files: (await app.status()).files, errors }).toMatchObject({
+        files: [{ state: "current" }],
+        errors: [],
+      });
       expect(await nameOf(app, "c-1")).toBe("name of c-1");
       await app.forgetTenant("default");
     } finally {
