@@ -9,6 +9,7 @@ import type { QueryModule } from "../../modules/query.ts";
 import type { ReadModelEntry, Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
+import { categoryNamesOf } from "../personal-data/categories.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { type SealedLayout, sealedLayoutOf } from "./sealed-rows.ts";
 
@@ -232,10 +233,11 @@ const buildReadModel = async (
   entry: ReadModelEntry,
   config: ResolvedConfig,
   logger: Logger,
+  categories: readonly string[],
 ): Promise<ReadModelRuntime> => {
   const fields = entry.view.fields({ f: fieldBuilder });
   const personalData = personalDataOf({ name, entry, fields });
-  const layout = sealedLayoutOf({ readModel: name, fields });
+  const layout = sealedLayoutOf({ readModel: name, fields, categories });
   const storage = await adapterForReadModel({ name, config }).createReadModel<
     Record<string, unknown>
   >({
@@ -267,7 +269,11 @@ export interface BuildReadModelsFunction {
 export const buildReadModels: BuildReadModelsFunction = async ({ registry, config, logger }) => {
   const settled = await Promise.allSettled(
     Object.entries(registry.readModels).map(
-      async ([name, entry]) => [name, await buildReadModel(name, entry, config, logger)] as const,
+      async ([name, entry]) =>
+        [
+          name,
+          await buildReadModel(name, entry, config, logger, categoryNamesOf(registry)),
+        ] as const,
     ),
   );
   const entries = settled.flatMap((result) =>

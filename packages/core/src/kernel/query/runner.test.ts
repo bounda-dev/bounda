@@ -105,6 +105,8 @@ const registry: Registry = {
   },
 };
 
+const unrestricted = { restrictions: async () => [] };
+
 const setup = async (ports: ModulePorts = {}, vouch?: QueryVouch) => {
   const config = resolveConfig({ storage: memory() });
   const readModels = await buildReadModels({ registry, config, logger: silentLogger });
@@ -120,6 +122,7 @@ const setup = async (ports: ModulePorts = {}, vouch?: QueryVouch) => {
     ports,
     recordAccess: unrecordedAccess,
     errorText: "omit",
+    persons: unrestricted,
     // Read only for a read model whose rows a recipient is told of, which none here is.
     standing: () => Promise.reject(new Error("no recipient is told of these rows")),
     ...(vouch === undefined ? {} : { vouch }),
@@ -345,6 +348,7 @@ describe("buildQueries", () => {
       ports: {},
       recordAccess: unrecordedAccess,
       errorText: "omit",
+      persons: unrestricted,
       standing: async () => 0,
     });
     await expect(runner.run({ type: "ByActor", payload: { actor: "a" } })).rejects.toThrow(
@@ -362,6 +366,7 @@ describe("buildQueries", () => {
       ports: {},
       recordAccess: unrecordedAccess,
       errorText: "omit",
+      persons: unrestricted,
       standing: async () => 0,
     });
     expect(await handlerRunner.run({ type: "ByActor", payload: { actor: "a" } })).toBeNull();

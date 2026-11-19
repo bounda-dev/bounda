@@ -503,6 +503,8 @@ const EVENT_EXPORTS: ReadonlySet<string> = new Set(["payload", "begin", "evolve"
 
 // What makes a port's module declare a recipient.
 const RECIPIENT_EXPORT = "recipient";
+// What a port's module says its calls return of whom with.
+const RETURNS_EXPORT = "returnsPersonalData";
 
 const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
 
@@ -597,7 +599,14 @@ const discoverPort = async (
     );
     return null;
   }
-  return { ...moduleRef(context, path), key, typeName, implementations, recipient };
+  return {
+    ...moduleRef(context, path),
+    key,
+    typeName,
+    implementations,
+    recipient,
+    returns: exported.includes(RETURNS_EXPORT),
+  };
 };
 
 interface RootModule {
@@ -677,10 +686,12 @@ const discoverAggregate = async (
     const path = join(directory, `${module}.ts`);
     const text = texts[index] ?? "";
     if (!isEvent(context, path, text)) {
-      // A port that declares a recipient imports its own types for it.
+      // A port imports its own types for what it declares.
+      const exported = runtimeExportsOf(text);
       if (
         OWN_TYPES_IMPORT(module).test(text) &&
-        !runtimeExportsOf(text).includes(RECIPIENT_EXPORT)
+        !exported.includes(RECIPIENT_EXPORT) &&
+        !exported.includes(RETURNS_EXPORT)
       ) {
         warnAbout(
           context,

@@ -150,9 +150,11 @@ const port = (
   typeName: string,
   implementations: readonly string[],
   recipient = false,
+  returns = false,
 ) => ({
   key: name,
   recipient,
+  returns,
   typeName,
   path: `/project/app/domain/order/${name}.ts`,
   relativePath: `app/domain/order/${name}.ts`,
@@ -667,6 +669,7 @@ describe("emitProject with a read model's ports", () => {
     const rates = {
       key: "rates",
       recipient: false,
+      returns: false,
       typeName: "Rates",
       path: "/project/app/read/shipments/rates.ts",
       relativePath: "app/read/shipments/rates.ts",
@@ -802,6 +805,7 @@ describe("emitProject with a port that declares a recipient", () => {
         'type Ports = { readonly mailer: generated.OrderPorts["mailer"] };',
         "",
         "export declare namespace Port {",
+        '  type ReturnsPersonalData = core.ReturnsPersonalData<generated.OrderPorts["mailer"]>;',
         "  type Recipient = core.RecipientDeclaration;",
         "  type OnPersonalDataForgottenArgs = core.RecipientForgottenArgs<Ports>;",
         "  type OnProcessingRestrictedArgs = core.RecipientRestrictedArgs<Ports>;",
@@ -813,7 +817,61 @@ describe("emitProject with a port that declares a recipient", () => {
         "",
       ].join("\n"),
     );
-    expect(contentOf("order/+types/sms.ts")).toBeUndefined();
+    expect(contentOf("order/+types/sms.ts")).toBe(
+      [
+        'import type * as core from "@bounda-dev/core";',
+        'import type * as generated from "../../../../.bounda/types.ts";',
+        "",
+        "export declare namespace Port {",
+        '  type ReturnsPersonalData = core.ReturnsPersonalData<generated.OrderPorts["sms"]>;',
+        "}",
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("emitProject with a port that says what its calls return", () => {
+  const withReturns: ProjectModel = {
+    ...model,
+    aggregates: [
+      {
+        ...(model.aggregates[0] as ProjectModel["aggregates"][number]),
+        ports: [
+          port("contacts", "Contacts", ["memory"], false, true),
+          port("sms", "Sms", ["fake"]),
+        ],
+      },
+      ...model.aggregates.slice(1),
+    ],
+  };
+
+  it("imports its module for the run, lists it under returns and checks every port in .bounda/types.ts", () => {
+    const registry = emitRegistry({ model: withReturns, path: "/project/.bounda/registry.ts" });
+    expect(registry.content).toContain(
+      'import * as orderContacts from "../app/domain/order/contacts.ts";',
+    );
+    expect(registry.content).toContain(
+      'import type * as orderSms from "../app/domain/order/sms.ts";',
+    );
+    expect(registry.content).toContain("      returns: { contacts: orderContacts },\n");
+    expect(
+      emitRegistry({ model: withPorts, path: "/project/.bounda/registry.ts" }).content,
+    ).not.toContain("returns:");
+    expect(
+      emitTypes({ model: { ...withReturns, readModels: [] }, path: "/project/.bounda/types.ts" })
+        .content,
+    ).toContain(
+      [
+        "export type OrderPortReturns = [",
+        '  Expect<core.ClassifiesReturns<"order.contacts", typeof import("../app/domain/order/contacts.ts"), import("../app/domain/order/contacts.ts").Contacts>>,',
+        '  Expect<core.ClassifiesReturns<"order.sms", typeof import("../app/domain/order/sms.ts"), import("../app/domain/order/sms.ts").Sms>>,',
+        "];",
+      ].join("\n"),
+    );
+    expect(
+      emitTypes({ model: { ...model, readModels: [] }, path: "/project/.bounda/types.ts" }).content,
+    ).not.toContain("PortReturns");
   });
 });
 

@@ -16,6 +16,7 @@ import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { appStorage } from "../events/app-event-store.ts";
 import { epochMark, openDatabaseKey } from "../personal-data/blind-index.ts";
+import { categoryNamesOf } from "../personal-data/categories.ts";
 import { openEncryptedFiles } from "../personal-data/encrypted-files.ts";
 import { keySourcesOf, openKeyHierarchy } from "../personal-data/key-hierarchy.ts";
 import { buildKeyWrapper } from "../personal-data/key-wrapper.ts";
@@ -343,6 +344,7 @@ export const rebuildReadModelWith: RebuildReadModelWithFunction = async ({
     const layout = sealedLayoutOf({
       readModel: name,
       fields: entry.view.fields({ f: fieldBuilder }),
+      categories: categoryNamesOf(registry),
     });
     const sealing = await openReadModelSealing({
       layouts: [layout],

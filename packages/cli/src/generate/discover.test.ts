@@ -163,6 +163,12 @@ describe("discoverProject on the order-app fixture", () => {
               implementations: [["memory", "app/domain/order/infrastructure/audit-log/memory.ts"]],
             },
             {
+              key: "contacts",
+              typeName: "Contacts",
+              path: "app/domain/order/contacts.ts",
+              implementations: [["memory", "app/domain/order/infrastructure/contacts/memory.ts"]],
+            },
+            {
               key: "inventory",
               typeName: "Inventory",
               path: "app/domain/order/inventory.ts",
@@ -761,6 +767,37 @@ describe("discoverProject convention problems", () => {
       ["mailer", true],
     ]);
     expect(found.warnings).toEqual([]);
+  });
+
+  it("tells a port that says whose personal data its calls return", async () => {
+    const root = await project([
+      [
+        "app/domain/order/contacts.ts",
+        [
+          'import type { Port } from "./+types/contacts";',
+          "export interface Contacts {}",
+          "export const returnsPersonalData = false satisfies Port.ReturnsPersonalData;",
+          "",
+        ].join("\n"),
+      ],
+      "app/domain/order/infrastructure/contacts/memory.ts",
+      [
+        "app/domain/order/mailer.ts",
+        "export interface Mailer {}\nexport { returnsPersonalData };\n",
+      ],
+      "app/domain/order/infrastructure/mailer/memory.ts",
+      ["app/domain/order/audit-log.ts", "export interface AuditLog {}\n"],
+      "app/domain/order/infrastructure/audit-log/memory.ts",
+    ]);
+    const found = await discoverProject({ root });
+    expect(found.aggregates[0]?.ports.map(({ key, returns }) => [key, returns])).toEqual([
+      ["auditLog", false],
+      ["contacts", true],
+      ["mailer", true],
+    ]);
+    expect(found.aggregates[0]?.events).toEqual([]);
+    expect(found.warnings).toEqual([]);
+    expect(await problemsOf(root)).toEqual([]);
   });
 
   it("rejects a port without a module, interface or implementations, with extra entries, reserved or named like an event", async () => {

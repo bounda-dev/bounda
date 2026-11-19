@@ -191,7 +191,9 @@ first match must be exact. A sealed value names its person, so your SQL need not
 field; a row it answers with a field kept in the clear and without the one marked `.person()`
 cannot be told apart, and the query rejects with `ConfigurationError`: select the person field too.
 What a query reads through `client.raw`, the driver itself, nobody filters, and nobody opens: a
-sealed field comes out as ciphertext. A sealed field matches in SQL only through its blind index
+sealed field comes out as ciphertext. Whose personal data a raw read returned, the query says with
+`client.rawReadOf(persons)`, which names them in the access log and refuses a restricted one
+([someone else's data](/guides/personal-data/#someone-elses-data)). A sealed field matches in SQL only through its blind index
 column, `<column>__index`, compared to `await client.blindIndex(field, value)`. Who is
 restricted is read from a copy each database holding such read models keeps, written from the
 stream as a projection is: until it catches up with a `restrict` or a lift, queries read as
