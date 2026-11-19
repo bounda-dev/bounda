@@ -79,7 +79,8 @@ const elsewhere = (paths: TestAppPaths, body: string, encrypt = true): Promise<v
   });
 
 // A file with one row, under `key`, `null` for none, written by a process of its own, which lets go
-// of it as it exits.
+// of it as it exits. Each process here that opens the file through the client loads the patch the
+// adapter loads: one that exits with a connection open crashes on Windows now and then otherwise.
 const fileUnder = (path: string, key: string | null, also = ""): Promise<void> =>
   new Promise((resolve, reject) => {
     const child = spawn(
@@ -88,6 +89,8 @@ const fileUnder = (path: string, key: string | null, also = ""): Promise<void> =
         "--input-type=module",
         "-e",
         `import { createClient } from "@libsql/client";
+        import { closeConnectionsOnce } from "./close-once.ts";
+        closeConnectionsOnce();
         const client = createClient(${JSON.stringify({ url: `file:${path}`, ...(key === null ? {} : { encryptionKey: key }) })});
         await client.execute("PRAGMA journal_mode = WAL");
         await client.execute("CREATE TABLE t (x INTEGER)");
@@ -110,6 +113,8 @@ const heldElsewhere = async (path: string): Promise<() => Promise<void>> => {
       "--input-type=module",
       "-e",
       `import { createClient } from "@libsql/client";
+      import { closeConnectionsOnce } from "./close-once.ts";
+      closeConnectionsOnce();
       const client = createClient({ url: ${JSON.stringify(`file:${path}`)} });
       await client.execute("SELECT count(*) FROM sqlite_master");
       console.log("holding");
@@ -581,7 +586,12 @@ describe("a libSQL file left in the clear while another process held it", () => 
     const paths = fresh();
     await elsewhere(paths, `await registerCustomer(app, "c-1");`, false);
     const letGo = await heldElsewhere(paths.store);
-    const app = await bootTestApp(paths);
+    // What the encryption once let go logs if it fails: a file still in the clear with none was
+    // still held.
+    const errors: unknown[] = [];
+    const app = await bootTestApp(paths, {
+      logger: { ...silent, error: (message, fields) => void errors.push({ message, fields }) },
+    });
     try {
       expect((await app.status()).files).toEqual([
         { database: "storage", file: paths.store.replaceAll("\\", "/"), state: "clear" },
@@ -592,7 +602,10 @@ describe("a libSQL file left in the clear while another process held it", () => 
       expect((await app.status()).tenant).toMatchObject({ forgottenAt: null });
       await letGo();
       await app.runUntilIdle();
-      expect((await app.status()).files).toMatchObject([{ state: "current" }]);
+      expect({ files: (await app.status()).files, errors }).toMatchObject({
+        files: [{ state: "current" }],
+        errors: [],
+      });
       expect(await nameOf(app, "c-1")).toBe("name of c-1");
       await app.forgetTenant("default");
     } finally {
@@ -624,6 +637,8 @@ const bigFileUnder = (path: string, key: string, rows: number): Promise<void> =>
         "--input-type=module",
         "-e",
         `import { createClient } from "@libsql/client";
+        import { closeConnectionsOnce } from "./close-once.ts";
+        closeConnectionsOnce();
         const client = createClient(${JSON.stringify({ url: `file:${path}`, encryptionKey: key })});
         await client.execute("PRAGMA journal_mode = WAL");
         await client.execute("CREATE TABLE t (x INTEGER, pad BLOB)");
@@ -655,7 +670,9 @@ const encryptionCutShort = (path: string, at: EncryptionStep | "rekeying"): Prom
         "-e",
         `import { writeSync } from "node:fs";
         import { createClient } from "@libsql/client";
+        import { closeConnectionsOnce } from "./close-once.ts";
         import { encryptInPlace } from "./encryption.ts";
+        closeConnectionsOnce();
         const source = createClient(${JSON.stringify({ url: `file:${path}`, encryptionKey: A.key })});
         await source.execute("SELECT count(*) FROM sqlite_master");
         await encryptInPlace(${JSON.stringify(path)}, source, ${JSON.stringify(A)}, ${JSON.stringify(B)}, (step) => {

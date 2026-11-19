@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CONNECTION_HOLDER, closeConnectionsOnce } from "./close-once.ts";
+import { CONNECTION_HOLDER, closeConnectionsLeftOpen, closeConnectionsOnce } from "./close-once.ts";
 
 const CLOSES = 20;
 
@@ -31,56 +31,88 @@ afterAll(async () => {
   });
 });
 
-// Opens and closes storage on a file again and again, in a process of its own, each time once the
-// statements it ran have been collected: then nothing but the connection's own handle holds it
-// when the client closes. Each time it also drops a client in memory without closing it, whose
-// connection is in the same state when collected. Resolves how the process ended.
-const closeAfterCollecting = (path: string): Promise<string> =>
+// Runs `script` in a process of its own, where freed memory faults when it can, and resolves how the
+// process ended and what it printed.
+const run = (script: string): Promise<{ readonly ended: string; readonly printed: string }> =>
   new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [
-        "--expose-gc",
-        "--input-type=module",
-        "-e",
-        `import { setImmediate } from "node:timers/promises";
-        import { createClient } from "@libsql/client";
-        import { sqlite } from "./index.ts";
-        const collect = async () => {
-          for (let round = 0; round < 3; round += 1) {
-            globalThis.gc();
-            await setImmediate();
-          }
-        };
-        for (let time = 0; time < ${CLOSES}; time += 1) {
-          const storage = await sqlite({ path: ${JSON.stringify(path)} }).createStorage();
-          await storage.eventStore.lastPosition();
-          await createClient({ url: ":memory:" }).execute("SELECT 1");
-          await collect();
-          await storage.close();
-        }
-        await collect();`,
-      ],
-      {
-        cwd: import.meta.dirname,
-        env: { ...process.env, ...FREED_MEMORY_FAULTS },
-        stdio: ["ignore", "ignore", "pipe"],
-      },
-    );
+    const child = spawn(process.execPath, ["--expose-gc", "--input-type=module", "-e", script], {
+      cwd: import.meta.dirname,
+      env: { ...process.env, ...FREED_MEMORY_FAULTS },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let printed = "";
     let errors = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      printed += chunk;
+    });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       errors += chunk;
     });
     child.once("error", reject);
     child.once("close", (code, signal) => {
-      resolve(code === 0 ? "exited" : `ended with ${signal ?? code}: ${errors.slice(-2000)}`);
+      resolve({
+        ended: code === 0 ? "exited" : `ended with ${signal ?? code}: ${errors.slice(-2000)}`,
+        printed,
+      });
     });
   });
+
+// Opens and closes storage on a file again and again, each time once the statements it ran have
+// been collected: then nothing but the connection's own handle holds it when the client closes.
+// Each time it also drops a client in memory without closing it, whose connection is in the same
+// state when collected.
+const closeAfterCollecting = async (path: string): Promise<string> =>
+  (
+    await run(`import { setImmediate } from "node:timers/promises";
+    import { createClient } from "@libsql/client";
+    import { sqlite } from "./index.ts";
+    const collect = async () => {
+      for (let round = 0; round < 3; round += 1) {
+        globalThis.gc();
+        await setImmediate();
+      }
+    };
+    for (let time = 0; time < ${CLOSES}; time += 1) {
+      const storage = await sqlite({ path: ${JSON.stringify(path)} }).createStorage();
+      await storage.eventStore.lastPosition();
+      await createClient({ url: ":memory:" }).execute("SELECT 1");
+      await collect();
+      await storage.close();
+    }
+    await collect();`)
+  ).ended;
+
+// Exits with storage open on a file, a client in memory dropped without closing it, and a database
+// left open, which an exit listener added after the patch's own finds closed and closes again.
+const exitWithConnectionsOpen = (path: string) =>
+  run(`import { writeSync } from "node:fs";
+  import { createRequire } from "node:module";
+  import { createClient } from "@libsql/client";
+  import { sqlite } from "./index.ts";
+  const Database = createRequire(createRequire(import.meta.url).resolve("@libsql/client"))("libsql");
+  const storage = await sqlite({ path: ${JSON.stringify(path)} }).createStorage();
+  await storage.eventStore.lastPosition();
+  await createClient({ url: ":memory:" }).execute("SELECT 1");
+  globalThis.gc();
+  const left = new Database(":memory:");
+  left.prepare("SELECT 1");
+  process.once("exit", () => {
+    writeSync(1, left.open ? "left open" : "closed");
+    left.close();
+  });`);
 
 describe("closing a libSQL file", () => {
   it("closes each connection once, closed or dropped, even when nothing but its own handle holds it", async () => {
     expect(await closeAfterCollecting(join(directory, "closed.db"))).toBe("exited");
+  });
+
+  it("closes each connection once as the process exits with it open", async () => {
+    expect(await exitWithConnectionsOpen(join(directory, "left.db"))).toEqual({
+      ended: "exited",
+      printed: "closed",
+    });
   });
 });
 
@@ -142,6 +174,60 @@ describe("closing a libSQL connection", () => {
         database.prepare("SELECT 1");
         database.close();
       })();
+      await collect();
+    } finally {
+      process.off("uncaughtException", record);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it("leaves a database prepared on only once closed to be collected without closing it again", async () => {
+    closeConnectionsOnce();
+    const errors: unknown[] = [];
+    const record = (error: unknown): void => {
+      errors.push(error);
+    };
+    process.on("uncaughtException", record);
+    try {
+      (() => {
+        const database = new Database(":memory:");
+        database.close();
+        expect(() => database.prepare("SELECT 1")).toThrow("not open");
+      })();
+      await collect();
+    } finally {
+      process.off("uncaughtException", record);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it("closes what is still open as the process exits, each once, the databases held themselves", async () => {
+    closeConnectionsOnce();
+    const held = new Database(":memory:");
+    held.prepare("SELECT 1");
+    const closed = new Database(":memory:");
+    closed.prepare("SELECT 1");
+    closed.close();
+    // Only the handle of a database dropped unclosed, collected before its registry's callback runs.
+    const handle = (() => {
+      const dropped = new Database(":memory:");
+      dropped.prepare("SELECT 1");
+      return Reflect.get(dropped, "db");
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const errors: unknown[] = [];
+    const record = (error: unknown): void => {
+      errors.push(error);
+    };
+    process.on("uncaughtException", record);
+    try {
+      collectGarbage();
+      closeConnectionsLeftOpen();
+      expect(held.open).toBe(false);
+      expect(() => held.close()).not.toThrow();
+      expect(() =>
+        Database.prototype.prepare.call({ db: handle, open: false }, "SELECT 1"),
+      ).toThrow("not open");
       await collect();
     } finally {
       process.off("uncaughtException", record);
