@@ -10,7 +10,6 @@ import type { Logger } from "../contracts/logger.ts";
 import type { CountryCode, RecipientKind, TransferSafeguard } from "../modules/recipient.ts";
 import type { AppLag, PersonalDataBackfillLag } from "./app.ts";
 import type { DeadLetterRetention, DeadLetterRetentionStatus } from "./dead-letters/retention.ts";
-import type { SubscriberLag, UnreadableSubscriberLag } from "./dispatch/dispatcher.ts";
 import type {
   SubscriberFailureRetention,
   SubscriberFailureRetentionStatus,
@@ -42,12 +41,10 @@ export interface UnreadableSchemaStatus extends UnreadableStatus {
 }
 
 /**
- * Every subscriber's lag, as `app.getLag()` reports it but for one whose position could not be
- * read, which `maxLag` leaves out. The backfill of personal data is `AppStatus`'s own part.
+ * Every subscriber's lag, as `app.getLag()` reports it; the backfill of personal data is
+ * `AppStatus`'s own part.
  */
-export interface StatusLag extends Omit<AppLag, "subscribers" | "personalDataBackfill"> {
-  readonly subscribers: readonly (SubscriberLag | UnreadableSubscriberLag)[];
-}
+export interface StatusLag extends Omit<AppLag, "personalDataBackfill"> {}
 
 /**
  * A subscriber's last failure without its text, which `subscriberFailures` opens. `current` while

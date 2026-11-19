@@ -100,8 +100,9 @@ export interface DispatcherLag {
   readonly maxLag: number;
 }
 
-export interface DispatcherStandings extends Omit<DispatcherLag, "subscribers"> {
+export interface DispatcherStandings extends Omit<DispatcherLag, "subscribers" | "maxLag"> {
   readonly subscribers: readonly (SubscriberLag | UnreadableSubscriberLag)[];
+  readonly maxLag: number | null;
 }
 
 export interface CatchUpThroughArgs {
@@ -127,8 +128,8 @@ export interface Dispatcher {
   catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
   /**
-   * `getLag` for the status: a subscriber whose checkpoint cannot be read is logged and reported
-   * unreadable rather than rejecting, and `maxLag` counts only those read.
+   * `getLag` as the app reports it: a subscriber whose checkpoint cannot be read is logged and
+   * reported unreadable rather than rejecting, and `maxLag` is then `null`.
    */
   standings(): Promise<DispatcherStandings>;
   /**
@@ -493,14 +494,13 @@ export const createDispatcher: CreateDispatcherFunction = ({
       lagWith((_subscriber, error): never => {
         throw error;
       }),
-    standings: () =>
-      lagWith((subscriber, error) => {
-        logger.error("a part of the status could not be read", {
-          part: "lag",
-          subscriber,
-          error,
-        });
+    standings: async () => {
+      const lag = await lagWith((subscriber, error): UnreadableSubscriberLag => {
+        logger.error("a subscriber's checkpoint could not be read", { subscriber, error });
         return { subscriber, unreadable: true, ...failingOf(subscriber) };
-      }),
+      });
+      // A subscriber not read may be the furthest behind: no maximum stands for it.
+      return lag.subscribers.some((each) => "unreadable" in each) ? { ...lag, maxLag: null } : lag;
+    },
   };
 };

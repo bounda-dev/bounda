@@ -121,7 +121,7 @@ describe("createDispatcher", () => {
     });
   });
 
-  it("reports for the status a subscriber whose position cannot be read, with what it failed on, and leaves it out of the max lag", async () => {
+  it("reports a subscriber whose checkpoint cannot be read, with what it failed on, and no max lag then", async () => {
     const { eventStore, checkpointStore } = await storage();
     await appendMany(eventStore, 3);
     let down = false;
@@ -164,15 +164,15 @@ describe("createDispatcher", () => {
         },
         { subscriber: "a", position: 1, lag: 2 },
       ],
-      maxLag: 2,
+      maxLag: null,
     });
     expect(
-      entries.filter(({ message }) => message === "a part of the status could not be read"),
+      entries.filter(({ message }) => message === "a subscriber's checkpoint could not be read"),
     ).toEqual([
       {
         level: "error",
-        message: "a part of the status could not be read",
-        fields: expect.objectContaining({ part: "lag", subscriber: "b" }),
+        message: "a subscriber's checkpoint could not be read",
+        fields: expect.objectContaining({ subscriber: "b" }),
       },
     ]);
     await expect(dispatcher.getLag()).rejects.toThrow("b's database is down");

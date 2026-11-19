@@ -18,6 +18,7 @@ import { unreadableParts } from "./status.ts";
 import {
   createRecordingLogger,
   eventually,
+  lagIn,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
   readPart,
@@ -407,7 +408,7 @@ describe("createApp", () => {
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
     const lag = await app.getLag();
     const lagOf = (subscriber: string) =>
-      lag.subscribers.find((entry) => entry.subscriber === subscriber)?.lag;
+      lagIn(lag.subscribers.find((entry) => entry.subscriber === subscriber));
     expect(lagOf("projection:orderSummary")).toBe(0);
     expect(lagOf("policies")).toBe(2);
     expect(lagOf("processes")).toBe(2);
@@ -771,6 +772,7 @@ describe("implementations built by create", () => {
       ...read,
       lag: {
         ...read.lag,
+        maxLag: null,
         subscribers: readPart(read.lag).subscribers.map((each) =>
           each.subscriber === "projection:orderSummary"
             ? { subscriber: each.subscriber, unreadable: true }
@@ -785,13 +787,16 @@ describe("implementations built by create", () => {
     });
     expect(
       entries
-        .filter(({ message }) => message === "a part of the status could not be read")
-        .map(({ fields }) => [fields?.part, fields?.subscriber])
+        .filter(({ level }) => level === "error")
+        .map(({ message, fields }) => [message, fields?.part ?? fields?.subscriber])
         .sort(),
     ).toEqual([
-      ["lag", "projection:orderSummary"],
-      ["subscriberFailures", undefined],
+      ["a part of the status could not be read", "subscriberFailures"],
+      ["a subscriber's checkpoint could not be read", "projection:orderSummary"],
+      ["subscriber failures past the retention could not be read", undefined],
     ]);
+    // The lag as `getLag()` reports it is the status' lag, with the backfill the status reads apart.
+    expect(await app.getLag()).toEqual({ ...status.lag, personalDataBackfill: null });
     await app.stop();
   });
 

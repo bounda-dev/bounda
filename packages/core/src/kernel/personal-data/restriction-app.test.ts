@@ -527,7 +527,7 @@ describe.each(adapters)("restriction of processing on %s", (_name, adapterOf) =>
       subscriber.startsWith("restrictions:"),
     );
     expect(copies.length).toBeGreaterThan(0);
-    expect(copies.every(({ lag }) => lag === 0)).toBe(true);
+    expect(copies.every((copy) => "lag" in copy && copy.lag === 0)).toBe(true);
     const restricted = await app.restrict("ana", { ground: "accuracy-contested" });
     await app.catchUpReadModels({ through: restricted });
     expect(await queries.customer?.({ customerId: "ana" })).toBeNull();

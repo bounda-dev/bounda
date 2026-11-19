@@ -50,27 +50,32 @@ export const formatSchema: FormatSchemaFunction = (schema) =>
         )
         .join("\n");
 
-const stateOf = ({ current, resolvedAt }: SubscriberFailureStatus): string => {
+// A subscriber the app no longer runs got past nothing: its failure is resolved or it is not.
+const stateOf = ({ current, resolvedAt }: SubscriberFailureStatus, gone: boolean): string => {
   if (current === true) return "failing";
   if (current === null) return "failed, not resolved";
-  return `last failed, resolved ${resolvedAt ?? "since"}`;
+  if (resolvedAt === null)
+    return gone ? "last failed, not resolved" : "last failed, resolved since";
+  return `last failed, resolved ${resolvedAt}`;
 };
 
 const failureOf = (
   failure: SubscriberFailureStatus | undefined,
   opened: FormatStatusArgs["opened"],
+  gone = false,
 ): string[] => {
   if (failure === undefined) return [];
   const text = opened?.get(failure.subscriber)?.errorMessage;
   return [
-    `    ${stateOf(failure)}: ${identity(failure.errorName, failure.errorCode)} on ${failure.eventType} at ${failure.position}, ${plural(failure.attempts, "attempt")} since ${failure.firstFailedAt}`,
+    `    ${stateOf(failure, gone)}: ${identity(failure.errorName, failure.errorCode)} on ${failure.eventType} at ${failure.position}, ${plural(failure.attempts, "attempt")} since ${failure.firstFailedAt}`,
     ...(text === undefined
       ? []
       : [`    ${text === null ? "its text went with the person it was sealed under" : text}`]),
   ];
 };
 
-// Each subscriber's lag and last failure; without the lag, each failure under its subscriber.
+// Each subscriber's lag and last failure, then the failures of subscribers the app no longer runs,
+// which the failure retention removes; without the lag, each failure under its subscriber.
 const subscribersOf = ({ status, opened }: FormatStatusArgs): string[] => {
   const failures = isUnreadable(status.subscriberFailures) ? [] : status.subscriberFailures;
   const unreadFailures = isUnreadable(status.subscriberFailures)
@@ -83,6 +88,7 @@ const subscribersOf = ({ status, opened }: FormatStatusArgs): string[] => {
       ...unreadFailures,
     ];
   }
+  const running = new Set(status.lag.subscribers.map(({ subscriber }) => subscriber));
   return [
     `subscribers (head at ${status.lag.lastPosition})`,
     ...status.lag.subscribers.flatMap((each) => [
@@ -94,6 +100,12 @@ const subscribersOf = ({ status, opened }: FormatStatusArgs): string[] => {
         opened,
       ),
     ]),
+    ...failures
+      .filter(({ subscriber }) => !running.has(subscriber))
+      .flatMap((failure) => [
+        `  ${failure.subscriber}  no longer run`,
+        ...failureOf(failure, opened, true),
+      ]),
     ...unreadFailures,
   ];
 };

@@ -41,7 +41,12 @@ import { createDeadLetters, type DeadLetters } from "./dead-letters/dead-letters
 import { createRestrictedRetries } from "./dead-letters/restricted.ts";
 import { createDeadLetterRetention } from "./dead-letters/retention.ts";
 import { createDeadLetterRetry } from "./dead-letters/retry.ts";
-import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
+import {
+  createDispatcher,
+  type DispatcherLag,
+  type SubscriberLag,
+  type UnreadableSubscriberLag,
+} from "./dispatch/dispatcher.ts";
 import { createSubscriberFailureRetention } from "./dispatch/failure-retention.ts";
 import { createLastFailures } from "./dispatch/last-failures.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
@@ -156,6 +161,7 @@ import { withCommittedEvents } from "./shared/committed-events.ts";
 import { guardedLogger } from "./shared/guarded-logger.ts";
 import { ignoredRetries, type PendingRetries } from "./shared/pending-retries.ts";
 import { createRestoreWatch, GENERATION_INTERVAL_MS, type Restored } from "./shared/restores.ts";
+import type { UnreadableStatus } from "./shared/retention-status.ts";
 import { runtimeText } from "./shared/runtime-text.ts";
 import { createSnapshotSubscriber, takesSnapshots } from "./snapshot/subscriber.ts";
 import { teedTracer } from "./span-recorder.ts";
@@ -195,7 +201,9 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
   /**
    * How far each subscriber is behind the head of the global stream. To tell a subscriber at rest
    * from one behind, it reads the events after each checkpoint, less than one batch, once per
-   * distinct checkpoint: on a Durable Object those are rows read, billed on every call.
+   * distinct checkpoint: on a Durable Object those are rows read, billed on every call. A
+   * checkpoint or a backfill that cannot be read is logged and reported unreadable, `maxLag` then
+   * `null`; rejects only when the head of the stream cannot be read.
    */
   getLag(): Promise<AppLag>;
   /**
@@ -509,7 +517,17 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
  * and restricted retries that came due this process holds back until the reactive runners catch
  * up, and whether the forget ledger was reconciled.
  */
-export interface AppLag extends DispatcherLag {
+export interface AppLag extends Omit<DispatcherLag, "subscribers" | "maxLag"> {
+  /**
+   * Every subscriber's lag, or, for one whose checkpoint could not be read, which is logged, that
+   * it was not read, with what this process saw it fail on.
+   */
+  readonly subscribers: readonly (SubscriberLag | UnreadableSubscriberLag)[];
+  /**
+   * The largest lag; `null` while a subscriber's checkpoint could not be read, which may be the
+   * furthest behind, so a health check never takes it for caught up.
+   */
+  readonly maxLag: number | null;
   readonly waitingDeadlines: number;
   /**
    * `null` without `runtime.personalData.forgetLedger`. `reconciled` is `false` while the ledger
@@ -520,9 +538,10 @@ export interface AppLag extends DispatcherLag {
   /**
    * `null` when no schema marks personal data. Marks added or changed seal in the background what
    * was written before them: until `caughtUp`, an export or a forget may miss what they now mark
-   * in older events, scheduled commands and dead letters.
+   * in older events, scheduled commands and dead letters. Unreadable, and logged, when where the
+   * walk stands could not be read.
    */
-  readonly personalDataBackfill: PersonalDataBackfillLag | null;
+  readonly personalDataBackfill: PersonalDataBackfillLag | null | UnreadableStatus;
 }
 
 export interface ForgetLedgerLag {
@@ -1575,11 +1594,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       forgetLedger:
         reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
     });
-    const getLag = async (): Promise<AppLag> => ({
-      ...(await dispatcher.getLag()),
-      ...known(),
-      personalDataBackfill: backfill === undefined ? null : await backfill.status(),
-    });
+    const backfilled = async (): Promise<AppLag["personalDataBackfill"]> => {
+      if (backfill === undefined) return null;
+      try {
+        return await backfill.status();
+      } catch (error) {
+        logger.error("the personal data backfill could not be read", { error });
+        return { unreadable: true };
+      }
+    };
+    const getLag = async (): Promise<AppLag> => {
+      const [standings, personalDataBackfill] = await Promise.all([
+        dispatcher.standings(),
+        backfilled(),
+      ]);
+      return { ...standings, ...known(), personalDataBackfill };
+    };
     const status = (): Promise<AppStatus> =>
       readAppStatus({
         config,

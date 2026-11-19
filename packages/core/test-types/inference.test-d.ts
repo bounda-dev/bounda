@@ -2,6 +2,7 @@ import type {
   AccessOutcome,
   AfterOptions,
   Registry as AnyRegistry,
+  AppLag,
   AppRegistry,
   AppStatus,
   AutomatedDecision,
@@ -995,7 +996,7 @@ describe("personal data", () => {
   it("reports where sealing what was written before the personal data marks stands", () => {
     expectTypeOf<
       Awaited<ReturnType<BoundaClient["getLag"]>>["personalDataBackfill"]
-    >().toEqualTypeOf<PersonalDataBackfillLag | null>();
+    >().toEqualTypeOf<PersonalDataBackfillLag | null | UnreadableStatus>();
     expectTypeOf<PersonalDataBackfillLag>().toEqualTypeOf<{
       readonly position: number;
       readonly caughtUp: boolean;
@@ -2066,13 +2067,18 @@ describe("operations", () => {
       readonly unreadable: true;
     }>();
     expectTypeOf<AppStatus["lag"]>().toEqualTypeOf<StatusLag | UnreadableStatus>();
-    expectTypeOf<StatusLag>().toEqualTypeOf<{
+    // `getLag()` degrades the same way, a subscriber at a time; `maxLag` is `null` while one is
+    // unread, so it never reads as caught up.
+    expectTypeOf<AppLag>().toEqualTypeOf<{
       readonly lastPosition: number;
       readonly subscribers: readonly (SubscriberLag | UnreadableSubscriberLag)[];
-      readonly maxLag: number;
+      readonly maxLag: number | null;
       readonly waitingDeadlines: number;
       readonly forgetLedger: ForgetLedgerLag | null;
+      readonly personalDataBackfill: PersonalDataBackfillLag | null | UnreadableStatus;
     }>();
+    expectTypeOf<BoundaClient["getLag"]>().toEqualTypeOf<() => Promise<AppLag>>();
+    expectTypeOf<StatusLag>().toEqualTypeOf<Omit<AppLag, "personalDataBackfill">>();
     expectTypeOf<UnreadableSubscriberLag>().toEqualTypeOf<{
       readonly subscriber: string;
       readonly failing?: SubscriberFailing;

@@ -4,8 +4,9 @@ export interface NextWakeArgs {
   // `true` after an alarm: events still behind the head are held by a retry back-off, not new.
   // `false` after a command: they are new and should be handled at once.
   readonly settled: boolean;
-  // How far the furthest subscriber is behind the head of the stream.
-  readonly lag: number;
+  // How far the furthest subscriber is behind the head of the stream; `null` when a subscriber's
+  // checkpoint could not be read, which may be behind, so the object tries again after `retryMs`.
+  readonly lag: number | null;
   // A paused read model rebuild: `"next"` when its next slice can run at once, `"held"` when the
   // last one failed and should wait `retryMs`.
   readonly rebuild: "none" | "next" | "held";
@@ -23,7 +24,8 @@ export interface NextWakeFunction {
 export const nextWake: NextWakeFunction = ({ idle, settled, lag, rebuild, due, now, retryMs }) => {
   const candidates: number[] = [];
   if (!idle || rebuild === "next") candidates.push(now);
-  if (lag > 0) candidates.push(settled ? now + retryMs : now);
+  if (lag === null) candidates.push(now + retryMs);
+  else if (lag > 0) candidates.push(settled ? now + retryMs : now);
   if (rebuild === "held") candidates.push(now + retryMs);
   if (due !== null) candidates.push(Math.max(due.getTime(), now));
   return candidates.length === 0 ? null : Math.min(...candidates);

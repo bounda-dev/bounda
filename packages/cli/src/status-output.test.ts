@@ -401,6 +401,33 @@ describe("formatStatus of a status with parts that could not be read", () => {
 });
 
 describe("formatStatus of the parts it reads", () => {
+  it("lists the failures of subscribers the app no longer runs, resolved or not", () => {
+    const gone: AppStatus = {
+      ...status,
+      subscriberFailures: [
+        { ...failure, subscriber: "projection:retired", current: false },
+        {
+          ...withoutCode,
+          subscriber: "policies:old",
+          resolvedAt: "2026-05-02T00:00:00.000Z",
+          current: false,
+        },
+      ],
+    };
+    const opened = new Map([["projection:retired", { ...failure, errorMessage: "cannot total" }]]);
+    expect(formatStatus({ status: gone, opened })).toContain(
+      [
+        "  processes  at 9, 0 behind",
+        "  projection:retired  no longer run",
+        "    last failed, not resolved: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "    cannot total",
+        "  policies:old  no longer run",
+        "    last failed, resolved 2026-05-02T00:00:00.000Z: ValidationError on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "personal data backfill",
+      ].join("\n"),
+    );
+  });
+
   it("says a failure its subscriber got past is resolved since, while the store still holds it", () => {
     const past: AppStatus = {
       ...status,

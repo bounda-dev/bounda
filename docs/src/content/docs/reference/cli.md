@@ -302,7 +302,9 @@ recipients
   to an earlier copy ([restores](/guides/personal-data/#restores)), or declared by `bounda restored`.
 - each subscriber's checkpoint and lag, and its last failure, by any instance: `failing` while it is
   still stuck on it, `last failed, resolved …` once it got past. Its class and code, the event, how
-  many deliveries in a row failed and since when; never its text.
+  many deliveries in a row failed and since when; never its text. A subscriber the app no longer
+  runs follows, `no longer run`, while the store keeps its failure, until the
+  [failure retention](/reference/configuration/#subscriber-failures) removes it.
 - the [tenant](/guides/personal-data/#tenants): the version of its key in force, the older ones
   its record still holds, and the master key they are wrapped under, or how many versions are left
   to [rewrap](/guides/personal-data/#rotating-the-master-key) under it; `forgotten at …` once it
@@ -331,7 +333,7 @@ recipients
 
 A part whose store cannot be read does not stop the others: it is logged, its line says
 `its store could not be read, see the logs` where the value would be, and the rest is printed as
-usual. A database of `tables` and a subscriber's position each count as a part of their own, so a
+usual. A database of `tables` and a subscriber's checkpoint each count as a part of their own, so a
 read model's database that is down costs only its own lines; without the head of the stream,
 `subscribers: where they stand, …` lists each last failure under its subscriber instead, as
 `failed, not resolved` when it may still hold the subscriber back. `--json` prints such a part as

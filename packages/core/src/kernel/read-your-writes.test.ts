@@ -5,7 +5,7 @@ import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
 import { type Consistency, checkConsistency, readYourWrites } from "./read-your-writes.ts";
-import { orderAggregateEntry } from "./test-support.ts";
+import { lagIn, orderAggregateEntry } from "./test-support.ts";
 
 interface Placed {
   readonly orderId: string;
@@ -88,7 +88,7 @@ describe("readYourWrites", () => {
       ports: { order: { notifier: "silent" } },
     });
     const lagOf = async (name: string) =>
-      (await app.getLag()).subscribers.find((lag) => lag.subscriber === name)?.lag;
+      lagIn((await app.getLag()).subscribers.find((lag) => lag.subscriber === name));
     await app.commands.placeOrder({ orderId: "o-1", total: 5 });
     await app.commands.archiveOrder({ orderId: "o-1" });
     const consistent = readYourWrites(app);
