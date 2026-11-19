@@ -195,6 +195,22 @@ describe("the keeper stores' configuration", () => {
         "runtime.personalData.tenantKeys names the keeper binding MISSING, which the Worker's env does not hold: bind the class createBoundaKeeper() returns under durable_objects in wrangler.jsonc",
       ),
     );
+    // A binding that is null, or has idFromName but no get, is no Durable Object namespace.
+    const odd = Object.assign(Object.create(env) as object, {
+      NOTHING: null,
+      HALF: { idFromName: () => undefined },
+    }) as Cloudflare.Env;
+    for (const binding of ["NOTHING", "HALF"]) {
+      await expect(
+        Promise.resolve().then(() =>
+          durableObjectTenantKeys({ storage, binding }).create({ env: odd }),
+        ),
+      ).rejects.toThrow(
+        new ConfigurationError(
+          `runtime.personalData.tenantKeys names the keeper binding ${binding}, which the Worker's env does not hold: bind the class createBoundaKeeper() returns under durable_objects in wrangler.jsonc`,
+        ),
+      );
+    }
     for (const binding of ["MISSING", "TENANT_KEYS", "STORE_REGION"]) {
       await expect(
         Promise.resolve().then(() =>
@@ -361,6 +377,17 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       }),
     ).toThrow(ConfigurationError);
+  });
+
+  it("reads past personal data or a forget ledger that is null, as a Worker's code may hold", () => {
+    for (const runtime of [
+      { personalData: null },
+      {
+        personalData: { tenantKeys: durableObjectTenantKeys({ storage: eu }), forgetLedger: null },
+      },
+    ]) {
+      expect(refusal({ storage: eu, runtime } as unknown as Config)).toBe("resolved");
+    }
   });
 
   it("takes the keeper's stores, and stores of your own that name the jurisdiction", () => {
