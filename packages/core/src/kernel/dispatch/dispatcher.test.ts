@@ -178,6 +178,37 @@ describe("createDispatcher", () => {
     await expect(dispatcher.getLag()).rejects.toThrow("b's database is down");
   });
 
+  it("leaves the lag unread for the status when the events past a checkpoint cannot be read, rather than blaming each subscriber", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 3);
+    let down = false;
+    const handling = (name: string): Subscriber => ({
+      ...recorder(name),
+      handles: () => false,
+    });
+    const { logger, entries } = createRecordingLogger();
+    const dispatcher = createDispatcher({
+      tracer,
+      clock: createFixedClock(),
+      eventStore: {
+        ...eventStore,
+        readAll: (args) => {
+          if (down) throw new Error("the events cannot be read");
+          return eventStore.readAll(args);
+        },
+      },
+      checkpointStore,
+      subscribers: [handling("a"), handling("b")],
+      batchSize: 10,
+      pollIntervalMs: 1_000,
+      logger,
+      errorText: "include",
+    });
+    down = true;
+    await expect(dispatcher.standings()).rejects.toThrow("the events cannot be read");
+    expect(entries).toEqual([]);
+  });
+
   it("catches up the subscribers of one kind and leaves the others where they were", async () => {
     const { eventStore, checkpointStore } = await storage();
     await appendMany(eventStore, 3);

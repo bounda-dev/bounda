@@ -237,6 +237,17 @@ export const schemaOf: SchemaOfFunction = ({ database, scopes }, versions) =>
 
 const UNREADABLE: UnreadableStatus = { unreadable: true };
 
+export interface IsUnreadableFunction {
+  (part: unknown): part is UnreadableStatus;
+}
+
+/**
+ * Whether a part of `app.status()` came back unreadable, as `{ unreadable: true }`: what narrows
+ * a part before reading it, `restoresFound` included.
+ */
+export const isUnreadable: IsUnreadableFunction = (part): part is UnreadableStatus =>
+  typeof part === "object" && part !== null && "unreadable" in part;
+
 interface ReadablePartFunction {
   <T>(part: string, read: () => Promise<T>): Promise<T | UnreadableStatus>;
 }
@@ -306,37 +317,36 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     readable("recipients", async () => (await recipients?.()) ?? []),
   ]);
   // `null` for a subscriber whose position could not be read, as for every one without the lag.
-  const positions = new Map<string, number | null>(
-    "unreadable" in current
-      ? []
-      : current.subscribers.map((each) => [
+  const positions = isUnreadable(current)
+    ? undefined
+    : new Map(
+        current.subscribers.map((each) => [
           each.subscriber,
-          "unreadable" in each ? null : each.position,
+          isUnreadable(each) ? null : each.position,
         ]),
-  );
+      );
   const positionOf = (subscriber: string): number | null | undefined =>
-    "unreadable" in current ? null : positions.get(subscriber);
+    positions === undefined ? null : positions.get(subscriber);
   return {
     schema,
     restoresFound,
     lag: current,
     // A subscriber the app no longer runs is stuck on nothing; one whose position could not be
     // read may be.
-    subscriberFailures:
-      "unreadable" in stored
-        ? stored
-        : stored.map(({ errorMessage: _message, errorStack: _stack, ...failure }) => {
-            const position = positionOf(failure.subscriber);
-            return {
-              ...failure,
-              current:
-                failure.resolvedAt !== null || position === undefined
-                  ? false
-                  : position === null
-                    ? null
-                    : position < failure.position,
-            };
-          }),
+    subscriberFailures: isUnreadable(stored)
+      ? stored
+      : stored.map(({ errorMessage: _message, errorStack: _stack, ...failure }) => {
+          const position = positionOf(failure.subscriber);
+          return {
+            ...failure,
+            current:
+              failure.resolvedAt !== null || position === undefined
+                ? false
+                : position === null
+                  ? null
+                  : position < failure.position,
+          };
+        }),
     personalDataBackfill,
     forgetLedger,
     tenant: tenantKey,
@@ -378,9 +388,6 @@ const PARTS = [
   "recipients",
 ] as const satisfies readonly (keyof AppStatus)[];
 
-const unreadable = (part: unknown): part is UnreadableStatus =>
-  typeof part === "object" && part !== null && "unreadable" in part;
-
 /**
  * The parts of `status` that could not be read, in the order of its fields, as the logs name them:
  * a field of `AppStatus`, `schema` with its database, as `schema (readModels.audit)`, and `lag`
@@ -392,13 +399,13 @@ export const unreadableParts: UnreadablePartsFunction = (status) =>
   PARTS.flatMap((part) => {
     if (part === "schema") {
       return status.schema.flatMap((each) =>
-        unreadable(each) ? [`schema (${each.database})`] : [],
+        isUnreadable(each) ? [`schema (${each.database})`] : [],
       );
     }
-    if (part === "lag" && !unreadable(status.lag)) {
+    if (part === "lag" && !isUnreadable(status.lag)) {
       return status.lag.subscribers.flatMap((each) =>
-        unreadable(each) ? [`lag (${each.subscriber})`] : [],
+        isUnreadable(each) ? [`lag (${each.subscriber})`] : [],
       );
     }
-    return unreadable(status[part]) ? [part] : [];
+    return isUnreadable(status[part]) ? [part] : [];
   });

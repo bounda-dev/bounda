@@ -127,7 +127,7 @@ export interface Dispatcher {
   catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
   /**
-   * `getLag` for the status: a subscriber whose position cannot be read is logged and reported
+   * `getLag` for the status: a subscriber whose checkpoint cannot be read is logged and reported
    * unreadable rather than rejecting, and `maxLag` counts only those read.
    */
   standings(): Promise<DispatcherStandings>;
@@ -273,12 +273,12 @@ export const createDispatcher: CreateDispatcherFunction = ({
   };
 
   // Subscribers at the same checkpoint share one read.
-  const standing = async (
+  const beyond = async (
     subscriber: CheckpointedSubscriber,
+    position: number,
     reads: Map<number, Promise<readonly StoredEvent[]>>,
-    head = Number.POSITIVE_INFINITY,
+    head: number,
   ): Promise<number> => {
-    const position = await subscriber.position();
     if (subscriber.handles === undefined || position >= head) return position;
     let events = reads.get(position);
     if (events === undefined) {
@@ -289,6 +289,12 @@ export const createDispatcher: CreateDispatcherFunction = ({
     if (!restsOn({ handles: subscriber.handles, events: pending, batchSize })) return position;
     return pending[pending.length - 1]?.position ?? position;
   };
+
+  const standing = async (
+    subscriber: CheckpointedSubscriber,
+    reads: Map<number, Promise<readonly StoredEvent[]>>,
+    head = Number.POSITIVE_INFINITY,
+  ): Promise<number> => beyond(subscriber, await subscriber.position(), reads, head);
 
   const failingOf = (subscriber: string): { readonly failing?: SubscriberFailing } => {
     const current = failing.get(subscriber);
@@ -315,12 +321,15 @@ export const createDispatcher: CreateDispatcherFunction = ({
     const reads = new Map<number, Promise<readonly StoredEvent[]>>();
     const subscribers = await Promise.all(
       delivering.map(async (subscriber): Promise<SubscriberLag | T> => {
-        let position: number;
+        // Only the checkpoint is the subscriber's own: the events past it are the stream's, whose
+        // failure leaves the whole lag unread.
+        let checkpoint: number;
         try {
-          position = await standing(subscriber, reads, lastPosition);
+          checkpoint = await subscriber.position();
         } catch (error) {
           return unreadable(subscriber.name, error);
         }
+        const position = await beyond(subscriber, checkpoint, reads, lastPosition);
         return {
           subscriber: subscriber.name,
           position,

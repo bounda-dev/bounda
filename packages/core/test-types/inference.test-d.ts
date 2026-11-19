@@ -72,6 +72,7 @@ import type {
   ImplementationModule,
   IncludeRestrictedOptions,
   Instant,
+  IsUnreadableFunction,
   KeyRotationStatus,
   LegalBasis,
   Logger,
@@ -179,6 +180,7 @@ import {
   ERASURE_EXEMPTIONS,
   fieldBuilder,
   idempotencyKeyFor,
+  isUnreadable,
   MAX_ACCESS_PERSONS,
   MAX_ACTOR_LENGTH,
   PERSONAL_DATA_FORGOTTEN_REASONS,
@@ -2047,6 +2049,12 @@ describe("operations", () => {
     expectTypeOf<UnreadableStatus>().toEqualTypeOf<{ readonly unreadable: true }>();
     expectTypeOf<UnreadableRetentionStatus>().toExtend<UnreadableStatus>();
     expectTypeOf(unreadableParts).toEqualTypeOf<UnreadablePartsFunction>();
+    expectTypeOf(isUnreadable).toEqualTypeOf<IsUnreadableFunction>();
+    expectTypeOf<IsUnreadableFunction>().toEqualTypeOf<
+      (part: unknown) => part is UnreadableStatus
+    >();
+    const found = {} as AppStatus["restoresFound"];
+    if (!isUnreadable(found)) expectTypeOf(found).toEqualTypeOf<number>();
     expectTypeOf<UnreadablePartsFunction>().toEqualTypeOf<
       (status: AppStatus) => readonly string[]
     >();

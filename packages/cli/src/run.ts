@@ -6,6 +6,7 @@ import {
   type DeadLetterKind,
   type DeadLetterStatus,
   errorFields,
+  isUnreadable,
   type ListDeadLettersArgs,
   type Logger,
   MAX_ACTOR_LENGTH,
@@ -686,7 +687,11 @@ const runStatus = (
     const status = await app.status();
     let opened: readonly SubscriberFailure[] | undefined;
     let unopened = false;
-    if (app.config.runtime.telemetry.errorText === "include") {
+    // Not once the status found their store down: the read would only fail again.
+    if (
+      app.config.runtime.telemetry.errorText === "include" &&
+      !isUnreadable(status.subscriberFailures)
+    ) {
       try {
         opened = await actingAs(app, options).subscriberFailures.list();
       } catch (error) {
@@ -739,7 +744,7 @@ const runRecipients = (
       return EXIT_OK;
     }
     const { recipients } = await app.status();
-    if ("unreadable" in recipients) {
+    if (isUnreadable(recipients)) {
       line(stderr, "error: could not read recipients; see the logs");
       return EXIT_FAILURE;
     }

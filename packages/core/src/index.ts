@@ -188,6 +188,7 @@ export type {
 export type {
   AppStatus,
   EncryptedFileStatus,
+  IsUnreadableFunction,
   RecipientStatus,
   SchemaStatus,
   StatusLag,
@@ -195,7 +196,7 @@ export type {
   UnreadablePartsFunction,
   UnreadableSchemaStatus,
 } from "./kernel/status.ts";
-export { unreadableParts } from "./kernel/status.ts";
+export { isUnreadable, unreadableParts } from "./kernel/status.ts";
 export type { Witness } from "./kernel/witness.ts";
 export * from "./modules/index.ts";
 export type { AppEnv, AppRegistry, EnvSection, Register } from "./register/index.ts";

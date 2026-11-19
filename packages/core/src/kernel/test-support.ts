@@ -55,6 +55,7 @@ interface OrderState {
  * and want typed facades.
  */
 import type { UnreadableStatus } from "./shared/retention-status.ts";
+import { isUnreadable } from "./status.ts";
 export const orderAggregate = {
   state: { initialState: { status: "new", total: 0 } satisfies OrderState },
   events: {
@@ -657,7 +658,7 @@ export interface ReadPartFunction {
 
 // A part of the status a test expects read: an unreadable one fails it there.
 export const readPart: ReadPartFunction = (part) => {
-  if (typeof part === "object" && part !== null && "unreadable" in part) {
+  if (isUnreadable(part)) {
     throw new Error("expected the part of the status to be read");
   }
   return part;

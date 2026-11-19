@@ -335,8 +335,10 @@ usual. A database of `tables` and a subscriber's position each count as a part o
 read model's database that is down costs only its own lines; without the head of the stream,
 `subscribers: where they stand, …` lists each last failure under its subscriber instead, as
 `failed, not resolved` when it may still hold the subscriber back. `--json` prints such a part as
-`{ "unreadable": true }`, with `retentionMs` for a purge. stderr then names every part it could not
-read, as `app.status()` and `unreadableParts` from `@bounda-dev/core` name them:
+`{ "unreadable": true }`, with `retentionMs` for a purge, `database` for an entry of `schema`, and
+`subscriber`, and `failing` when this process saw it fail, for one of `lag.subscribers`. With
+`--error-text`, the failures' text is not read when their store could not be. stderr then names
+every part it could not read, as `unreadableParts` from `@bounda-dev/core` names them:
 
 ```
 error: could not read lag (projection:customerDirectory), subscriberFailures; see the logs

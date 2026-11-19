@@ -1455,12 +1455,9 @@ describe("bounda status", () => {
     expect(opened.code).toBe(EXIT_FAILURE);
     expect(JSON.parse(opened.stdout).subscriberFailures).toEqual({ unreadable: true });
     expect(besidesLogs(opened.stderr)).toBe(
-      [
-        "error: the store is down",
-        "error: could not read subscriberFailures, subscriberFailureRetention, recipients, the failures' text; see the logs",
-        "",
-      ].join("\n"),
+      "error: could not read subscriberFailures, subscriberFailureRetention, recipients; see the logs\n",
     );
+    expect(logged(opened.stderr, "info", "personal data accessed")).toEqual([]);
     const recipients = await cli(["recipients", ...unreadable], fixture);
     expect(recipients.code).toBe(EXIT_FAILURE);
     expect(recipients.stdout).toBe("");

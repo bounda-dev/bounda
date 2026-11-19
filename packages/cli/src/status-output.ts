@@ -5,8 +5,8 @@ import type {
   SubscriberFailure,
   SubscriberFailureStatus,
   UnreadableSchemaStatus,
-  UnreadableStatus,
 } from "@bounda-dev/core";
+import { isUnreadable } from "@bounda-dev/core";
 import { DEFAULT_PERSONAL_CATEGORY } from "@bounda-dev/core/adapter";
 
 export interface FormatStatusArgs {
@@ -27,10 +27,6 @@ export interface FormatSchemaFunction {
 
 const UNREADABLE = "its store could not be read, see the logs";
 
-// A part that may be `null` is checked for it first.
-const unreadable = (part: object | number): part is UnreadableStatus =>
-  typeof part === "object" && "unreadable" in part;
-
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 const days = (ms: number): string =>
@@ -48,7 +44,7 @@ export const formatSchema: FormatSchemaFunction = (schema) =>
     ? "  no tables to version"
     : schema
         .map((each) =>
-          unreadable(each)
+          isUnreadable(each)
             ? `  ${each.database}  ${UNREADABLE}`
             : `  ${each.database}  ${each.scope}  ${each.version} of ${each.latest}${each.version < each.latest ? "  (migrations pending: bounda migrate)" : ""}`,
         )
@@ -76,11 +72,11 @@ const failureOf = (
 
 // Each subscriber's lag and last failure; without the lag, each failure under its subscriber.
 const subscribersOf = ({ status, opened }: FormatStatusArgs): string[] => {
-  const failures = unreadable(status.subscriberFailures) ? [] : status.subscriberFailures;
-  const unreadFailures = unreadable(status.subscriberFailures)
+  const failures = isUnreadable(status.subscriberFailures) ? [] : status.subscriberFailures;
+  const unreadFailures = isUnreadable(status.subscriberFailures)
     ? [`  last failures: ${UNREADABLE}`]
     : [];
-  if (unreadable(status.lag)) {
+  if (isUnreadable(status.lag)) {
     return [
       `subscribers: where they stand, ${UNREADABLE}`,
       ...failures.flatMap((failure) => [`  ${failure.subscriber}`, ...failureOf(failure, opened)]),
@@ -90,7 +86,7 @@ const subscribersOf = ({ status, opened }: FormatStatusArgs): string[] => {
   return [
     `subscribers (head at ${status.lag.lastPosition})`,
     ...status.lag.subscribers.flatMap((each) => [
-      unreadable(each)
+      isUnreadable(each)
         ? `  ${each.subscriber}  its position, ${UNREADABLE}`
         : `  ${each.subscriber}  at ${each.position}, ${each.lag} behind`,
       ...failureOf(
@@ -105,13 +101,13 @@ const subscribersOf = ({ status, opened }: FormatStatusArgs): string[] => {
 const backfillOf = ({ personalDataBackfill: backfill }: AppStatus): string =>
   backfill === null
     ? "no personal data marked"
-    : unreadable(backfill)
+    : isUnreadable(backfill)
       ? UNREADABLE
       : `sealed through position ${backfill.position}, ${backfill.caughtUp ? "caught up" : "not caught up yet"}`;
 
 const ledgerOf = ({ forgetLedger: ledger }: AppStatus): string => {
   if (ledger === null) return "not configured";
-  if (unreadable(ledger)) return UNREADABLE;
+  if (isUnreadable(ledger)) return UNREADABLE;
   return [
     ledger.reconciled ? "reconciled" : "not reconciled since this instance started",
     `applied through ${ledger.appliedThrough ?? "nothing yet"}`,
@@ -124,7 +120,7 @@ const ledgerOf = ({ forgetLedger: ledger }: AppStatus): string => {
 
 const tenantOf = ({ tenant }: AppStatus): string => {
   if (tenant === null) return "no keys: no personal data marked";
-  if (unreadable(tenant)) return UNREADABLE;
+  if (isUnreadable(tenant)) return UNREADABLE;
   if (tenant.forgottenAt !== null) return `${tenant.tenant}, forgotten at ${tenant.forgottenAt}`;
   const { master } = tenant;
   const wrapped =
@@ -157,7 +153,7 @@ export const formatFiles: FormatFilesFunction = (files) =>
 
 const rotationOf = ({ keyRotation: rotation }: AppStatus): string => {
   if (rotation === null) return "not configured";
-  if (unreadable(rotation)) return UNREADABLE;
+  if (isUnreadable(rotation)) return UNREADABLE;
   const left =
     rotation.pending === 0
       ? `every key wrapped${rotation.completeAt === null ? "" : ` (checked ${rotation.completeAt})`}`
@@ -167,7 +163,7 @@ const rotationOf = ({ keyRotation: rotation }: AppStatus): string => {
 
 // Only once the tenant's data was resealed, or while it is.
 const resealOf = ({ keyRotation: rotation }: AppStatus): string[] => {
-  const reseal = rotation === null || unreadable(rotation) ? null : rotation.reseal;
+  const reseal = rotation === null || isUnreadable(rotation) ? null : rotation.reseal;
   if (reseal === null) return [];
   if (reseal.step === "complete") return [`reseal: complete (${reseal.completedAt})`];
   const kept = reseal.superseded === 0 ? "" : `, ${plural(reseal.superseded, "old key")} kept`;
@@ -177,7 +173,7 @@ const resealOf = ({ keyRotation: rotation }: AppStatus): string[] => {
 // One line per retention set: the app's forgets persons as a whole, a category's its keys.
 const retentionOf = ({ retention }: AppStatus): string[] => {
   if (retention === null) return ["retention: no personal data marked"];
-  if (unreadable(retention)) return [`retention: ${UNREADABLE}`];
+  if (isUnreadable(retention)) return [`retention: ${UNREADABLE}`];
   const { categories, keptBeyond } = retention;
   if (categories.length === 0 && keptBeyond === 0) return ["retention: not configured"];
   return [
@@ -195,7 +191,7 @@ const retentionOf = ({ retention }: AppStatus): string[] => {
 const purgeOf = ({ deadLetterRetention: purge }: AppStatus): string => {
   if (purge === null)
     return "none kept but the notices of the forgetting, the tenant was forgotten";
-  if (unreadable(purge)) return `${days(purge.retentionMs)}, ${UNREADABLE}`;
+  if (isUnreadable(purge)) return `${days(purge.retentionMs)}, ${UNREADABLE}`;
   const next = `${days(purge.retentionMs)}, next purge ${purge.nextDueAt ?? "when a letter is resolved"}`;
   return [
     next,
@@ -214,7 +210,7 @@ const purgeOf = ({ deadLetterRetention: purge }: AppStatus): string => {
 
 const failurePurgeOf = ({ subscriberFailureRetention: purge }: AppStatus): string => {
   if (purge === null) return "none kept, the tenant was forgotten";
-  if (unreadable(purge)) return `${days(purge.retentionMs)}, ${UNREADABLE}`;
+  if (isUnreadable(purge)) return `${days(purge.retentionMs)}, ${UNREADABLE}`;
   const next = `${days(purge.retentionMs)}, next purge ${purge.nextDueAt ?? "when a failure is resolved"}`;
   return purge.held === 0
     ? next
@@ -254,7 +250,7 @@ export interface FormatRestoredFunction {
 // What `bounda restored` prints once the restore is recorded, whether or not the count could be
 // read back.
 export const formatRestored: FormatRestoredFunction = (found) =>
-  `restore recorded: ${unreadable(found) ? `how many were found so far, ${UNREADABLE}` : `${found} found so far`}; the background jobs start over from the copy, without the holds it brought back`;
+  `restore recorded: ${isUnreadable(found) ? `how many were found so far, ${UNREADABLE}` : `${found} found so far`}; the background jobs start over from the copy, without the holds it brought back`;
 
 /**
  * Where the runtime's background work stands, as `bounda status` prints it.
@@ -264,7 +260,7 @@ export const formatStatus: FormatStatusFunction = (args) => {
   return [
     "tables",
     formatSchema(status.schema),
-    `restores found while running: ${unreadable(status.restoresFound) ? UNREADABLE : status.restoresFound}`,
+    `restores found while running: ${isUnreadable(status.restoresFound) ? UNREADABLE : status.restoresFound}`,
     ...subscribersOf(args),
     `personal data backfill: ${backfillOf(status)}`,
     `forget ledger: ${ledgerOf(status)}`,
@@ -275,7 +271,7 @@ export const formatStatus: FormatStatusFunction = (args) => {
     ...retentionOf(status),
     `dead letter retention: ${purgeOf(status)}`,
     `subscriber failure retention: ${failurePurgeOf(status)}`,
-    ...(unreadable(status.recipients)
+    ...(isUnreadable(status.recipients)
       ? [`recipients: ${UNREADABLE}`]
       : formatRecipients(status.recipients)),
   ].join("\n");
