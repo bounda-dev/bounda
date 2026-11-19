@@ -1,15 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Adapter } from "../adapter/adapter.ts";
 import type { Table } from "../adapter/storage/table.ts";
-import { ConcurrencyError, ConfigurationError } from "../contracts/errors.ts";
+import { createFixedClock } from "../contracts/clock.ts";
+import {
+  ConcurrencyError,
+  ConfigurationError,
+  ReadModelRestoringError,
+} from "../contracts/errors.ts";
 import { memory } from "../memory/index.ts";
-import { MAX_ACCESS_PERSONS, type OnPersonalDataAccessArgs } from "../modules/audit.ts";
+import {
+  MAX_ACCESS_PERSONS,
+  type OnPersonalDataAccessArgs,
+  type PersonalDataAccess,
+} from "../modules/audit.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import { RESTRICTION_GROUNDS } from "../modules/personal-data.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
+import { streamMarkOf } from "./read-model/stream-marks.ts";
+import { GENERATION_INTERVAL_MS } from "./shared/restores.ts";
 import { createRecordingLogger } from "./test-support.ts";
 
 interface CustomerRow {
@@ -195,6 +206,7 @@ const setUp = async () => {
 };
 
 const AT = "2026-01-01T00:00:00.000Z";
+const DIRECTORY = "projection:customerDirectory";
 
 describe("the access log", () => {
   it("records an export with its actor, the person and how much it handed out", async () => {
@@ -293,6 +305,17 @@ describe("the access log", () => {
         restricted: null,
         detail: { letter: first.id },
       },
+      // Found nothing, recorded as a query that matches no row is.
+      {
+        operation: "deadLetters.get",
+        actor: null,
+        persons: [],
+        personCount: 0,
+        at: AT,
+        outcome: "ok",
+        restricted: null,
+        detail: { letter: "missing" },
+      },
       {
         operation: "deadLetters.retry",
         actor: "operator-1",
@@ -330,6 +353,8 @@ describe("the access log", () => {
     expect(await app.queries.customerCount()).toBe(3);
     expect(await app.queries.plansOf()).toEqual([]);
     expect(await app.queries.customersOnPlan({ plan: "gold" })).toEqual([]);
+    // A person field and nothing personal, recorded once restricted rows are asked for.
+    expect(await app.queries.plansOf(undefined, { includeRestricted: "legal-claims" })).toEqual([]);
 
     expect(accesses()).toEqual([
       {
@@ -365,6 +390,17 @@ describe("the access log", () => {
         unattributed: false,
         detail: { query: "customersOnPlan", readModel: "customerDirectory" },
       },
+      {
+        operation: "query",
+        actor: null,
+        persons: [],
+        personCount: 0,
+        at: AT,
+        outcome: "ok",
+        restricted: { basis: "legal-claims", persons: [], personCount: 0 },
+        unattributed: false,
+        detail: { query: "plansOf", readModel: "customerPlans" },
+      },
     ]);
   });
 
@@ -389,7 +425,132 @@ describe("the access log", () => {
         unattributed: false,
         detail: { query: "emailCheck", readModel: "customerDirectory" },
       },
+      // Refused before it read, naming no one.
+      {
+        operation: "query",
+        actor: null,
+        persons: [],
+        personCount: 0,
+        at: AT,
+        outcome: "refused",
+        restricted: null,
+        unattributed: false,
+        detail: { query: "emailCheck", readModel: "customerDirectory" },
+      },
     ]);
+  });
+
+  it("records each call refused before it reads as refused, naming no one but the person it names, and the basis it asked on when it is one", async () => {
+    const { app, register, accesses } = await setUp();
+    await register("ana");
+    await app.runUntilIdle();
+    const operator = app.as("operator-1");
+    const [letter] = await operator.deadLetters.list();
+    if (letter === undefined) throw new Error("expected a letter");
+    await operator.deadLetters.discard(letter.id);
+    const curiosity = { includeRestricted: "curiosity" as never };
+    const refused = (operation: string, detail: unknown, restricted: unknown = null) => ({
+      operation,
+      actor: "operator-1",
+      persons: [],
+      personCount: 0,
+      at: AT,
+      outcome: "refused",
+      restricted,
+      ...(operation === "query" ? { unattributed: false } : {}),
+      detail,
+    });
+    const before = accesses().length;
+
+    await expect(
+      operator.queries.customersOnPlan({ plan: 1 } as never, { includeRestricted: "legal-claims" }),
+    ).rejects.toThrow();
+    await expect(operator.queries.customersOnPlan({ plan: "pro" }, curiosity)).rejects.toThrow(
+      "names a basis restricted data is not read on",
+    );
+    await expect(operator.deadLetters.list(undefined, curiosity)).rejects.toThrow(
+      "names a basis restricted data is not read on",
+    );
+    await expect(app.deadLetters.get(letter.id, curiosity)).rejects.toThrow(
+      "names a basis restricted data is not read on",
+    );
+    await expect(operator.deadLetters.retry(letter.id)).rejects.toThrow("discarded");
+    await expect(operator.deadLetters.discard("missing")).rejects.toThrow("not found");
+    await expect(operator.subscriberFailures.list(curiosity)).rejects.toThrow(
+      "names a basis restricted data is not read on",
+    );
+    await expect(operator.subscriberFailures.get("projection:any", curiosity)).rejects.toThrow(
+      "names a basis restricted data is not read on",
+    );
+    await expect(operator.recipientsOf(undefined as never)).rejects.toThrow(
+      "recipientsOf needs the id of the person",
+    );
+
+    const query = { query: "customersOnPlan", readModel: "customerDirectory" };
+    expect(accesses().slice(before)).toEqual([
+      refused("query", query, { basis: "legal-claims", persons: [], personCount: 0 }),
+      refused("query", query),
+      refused("deadLetters.list", { letters: 0 }),
+      { ...refused("deadLetters.get", { letter: letter.id }), actor: null },
+      refused("deadLetters.retry", { letter: letter.id }),
+      refused("deadLetters.discard", { letter: "missing" }),
+      refused("subscriberFailures.list", { failures: 0 }),
+      refused("subscriberFailures.get", { subscriber: "projection:any" }),
+      refused("recipientsOf", null),
+    ]);
+  });
+
+  it("records a query refused because its read model's database went back as refused, naming no one", async () => {
+    const records: PersonalDataAccess[] = [];
+    const directory = memory();
+    const clock = createFixedClock(new Date(AT));
+    const config = {
+      storage: memory(),
+      readModels: { customerDirectory: directory },
+      runtime: { policies: { retry: { strategy: "none" as const } } },
+    };
+    const worker = await createApp({ registry: registryWith(), config, clock });
+    await worker.commands.registerCustomer({
+      customerId: "ana",
+      email: "ana@example.com",
+      plan: "pro",
+    });
+    await worker.runUntilIdle();
+    const web = await createApp({
+      registry: registryWith({
+        onPersonalDataAccess: ({ access }) => {
+          records.push(access);
+        },
+      }),
+      config: { ...config, runtime: { ...config.runtime, role: "web" as const } },
+      clock,
+    });
+    web.start();
+    const operator = web.as("operator-1");
+    const ask = () =>
+      operator.queries.customersOnPlan({ plan: "pro" }, { includeRestricted: "legal-claims" });
+    expect(await ask()).toEqual(["ana@example.com"]);
+
+    const checkpoints = (await directory.createStorage()).checkpointStore;
+    await checkpoints.set(DIRECTORY, 0);
+    await checkpoints.remove(streamMarkOf(DIRECTORY));
+    clock.advance(GENERATION_INTERVAL_MS);
+    await vi.waitFor(async () => {
+      await expect(ask()).rejects.toBeInstanceOf(ReadModelRestoringError);
+    });
+    expect(records.at(-1)).toEqual({
+      operation: "query",
+      actor: "operator-1",
+      persons: [],
+      personCount: 0,
+      at: clock.now().toISOString(),
+      outcome: "refused",
+      restricted: { basis: "legal-claims", persons: [], personCount: 0 },
+      unattributed: false,
+      detail: { query: "customersOnPlan", readModel: "customerDirectory" },
+    });
+    await web.stop();
+    await worker.stop();
   });
 
   it("records a query that takes the driver through client.raw of a read model whose personal fields are all sealed as attributed: the driver reads them as ciphertext", async () => {
@@ -465,6 +626,8 @@ describe("the access log", () => {
     expect(records.map(({ access }) => access)).toEqual([
       { ...failed, outcome: "started" },
       failed,
+      // Refused before it read: it names no one, since it names no person.
+      { ...failed, actor: null, persons: [], personCount: 0, outcome: "refused" },
     ]);
   });
 
@@ -655,6 +818,10 @@ describe("the access log", () => {
 
     await expect(app.exportPersonalData("ana")).rejects.toThrow("audit sink down");
     await expect(app.queries.customersOnPlan({ plan: "pro" })).rejects.toThrow("audit sink down");
+    // Refused, it rejects with what the record threw in place of its own error.
+    await expect(app.queries.customersOnPlan({ plan: 1 } as never)).rejects.toThrow(
+      "audit sink down",
+    );
     await expect(app.deadLetters.list()).rejects.toThrow("audit sink down");
     await expect(app.deadLetters.get(first.id)).rejects.toThrow("audit sink down");
     // Acted on before the record, which says how it went: the retry failed again, the discard

@@ -107,7 +107,9 @@ no marked field. A letter filed before the fields its work holds were marked is 
 once they are, by the [backfill](/guides/personal-data/#marking-a-field-later). `app.deadLetters` and `bounda dead-letters list` open them for you, and every
 `list`, `get`, `retry` and `discard` is recorded in the
 [access log](/guides/personal-data/#who-opened-what), naming the persons its letters name, with
-`outcome: "failed"` for a retry that fails again, whose error may quote them. Once the person is
+`outcome: "failed"` for a retry that fails again, whose error may quote them, and
+`outcome: "refused"`, naming no one, for a call refused before it opened a letter, such as a retry
+of one already settled. Once the person is
 forgotten, even while the handler was failing, and even when they are given a new key before it
 gives up, the letter stays, with its name and code, and the message and the stack read as `null`:
 the process can still be retried, and the stream

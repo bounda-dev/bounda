@@ -21,7 +21,7 @@ import {
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
-import type { ExportOutcome, OnPersonalDataAccess } from "../modules/audit.ts";
+import type { ExportOutcome, OnPersonalDataAccess, ReadOutcome } from "../modules/audit.ts";
 import type {
   ForgetOptions,
   RestrictOptions,
@@ -51,7 +51,7 @@ import {
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { createForgottenRunner, type ForgottenRunner, forgottenApp } from "./forgotten-app.ts";
-import { createAccessLog, recorded } from "./personal-data/access.ts";
+import { checked, createAccessLog, recorded } from "./personal-data/access.ts";
 import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
 import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
@@ -110,7 +110,7 @@ import {
 import { createKeyRotation } from "./personal-data/rotation.ts";
 import { guardClient } from "./personal-data/tenant-guard.ts";
 import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
-import { checkPersonId } from "./personal-data/transact.ts";
+import { checkPersonId, isPersonId } from "./personal-data/transact.ts";
 import { witnessedWrapping } from "./personal-data/witness.ts";
 import { keylessWrapping, UNWRAPPED_KEY_TTL_MS } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
@@ -1840,7 +1840,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         personId: string,
         options: PersonalDataExportOptions = {},
       ): Promise<AsyncIterable<PersonalDataExportPart>> => {
-        checkPersonId(personId, "exportPersonalData");
         const includeWithheld = options.includeWithheld === true;
         const exportId = ids.next();
         let others: () => readonly string[] = () => [];
@@ -1849,18 +1848,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             operation: "exportPersonalData",
             detail: { exportId, ...counts, includeWithheld },
             actor,
-            persons: [personId, ...others()],
+            persons: isPersonId(personId) ? [personId, ...others()] : [],
             outcome,
           });
+        // A person id that is none, or a read model not served, refuses the export before it reads.
+        await checked(record, async () => {
+          checkPersonId(personId, "exportPersonalData");
+          await vouchBefore(...readModelNames);
+        });
         const streamed = await recorded(
           // Only a failure is recorded here: what resolves is recorded as it starts and ends.
           async (outcome) => {
             if (outcome === "failed") await record(outcome);
           },
-          async () => {
-            // A read model not served refuses the export before it reads, recorded all the same.
-            await vouchBefore(...readModelNames);
-            return streamPersonalData({
+          () =>
+            streamPersonalData({
               storage,
               readModels,
               aggregates,
@@ -1874,8 +1876,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               includeWithheld,
               // The header and each page, vouched for before they are handed out.
               onPage: () => vouchAfter(...readModelNames),
-            });
-          },
+            }),
         );
         others = streamed.others;
         return recordedExport({
@@ -1962,27 +1963,25 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             operation: "recipientsOf",
             actor,
             run: async () => {
-              checkPersonId(personId, "recipientsOf");
               let listed: readonly PersonRecipient[] | undefined;
-              return recorded(
-                (outcome) =>
-                  recordAccess({
-                    operation: "recipientsOf",
-                    detail: listed === undefined ? null : { recipients: listed.length },
-                    actor,
-                    persons: [personId],
-                    outcome,
-                  }),
-                async () => {
-                  listed = await listRecipientsOf({
-                    storage,
-                    recipients,
-                    categories: personalCategories,
-                    personId,
-                  });
-                  return listed;
-                },
-              );
+              const record = (outcome: ReadOutcome) =>
+                recordAccess({
+                  operation: "recipientsOf",
+                  detail: listed === undefined ? null : { recipients: listed.length },
+                  actor,
+                  persons: isPersonId(personId) ? [personId] : [],
+                  outcome,
+                });
+              await checked(record, () => checkPersonId(personId, "recipientsOf"));
+              return recorded(record, async () => {
+                listed = await listRecipientsOf({
+                  storage,
+                  recipients,
+                  categories: personalCategories,
+                  personId,
+                });
+                return listed;
+              });
             },
           }),
         exportPersonalData: (personId, options) =>

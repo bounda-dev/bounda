@@ -1357,10 +1357,18 @@ nobody; `persons` names each person once, in the order read, and at most `MAX_AC
 them, with `personCount` saying how many there were in all, so a query that lists every customer
 gives a bounded record; `at` is the app's clock; `outcome` is `ok` when the call handed its result
 out, `failed` when it rejected after reading, since its error may quote what it read, as a
-handler's `cannot reach ana@example.com` does. An export's is `started` in the record written
+handler's `cannot reach ana@example.com` does, and `refused` when it rejected before it opened
+anything: an argument that does not validate, an `includeRestricted` that is no basis, a read
+model whose database is [not served](/guides/backups/#read-models-in-another-database), a
+dead letter already settled or not there. A refused call names no one, since it opened nothing,
+but the person an export or `recipientsOf` was asked for, and keeps in `restricted` the basis it
+named, when it is one. A `get` of a dead letter or a subscriber's failure that finds none is
+recorded `ok`, naming no one, as a query that matches no row is. So every call of an operation in
+the table leaves a record however it ends. An export's is `started` in the record written
 before it hands anything out, then `ok`, `failed`, or `cancelled` when the reader of a [streamed
 export](#a-long-history) stopped before its end, having been handed part of it: a `started` with no
-end of the same `exportId` is one whose reader left it, or whose process died, part way.
+end of the same `exportId` is one whose reader left it, or whose process died, part way; one
+refused before it read has a single record, `refused`.
 
 A query is matched to its read model by the module's place, and to its persons by the rows it
 read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a
@@ -1396,8 +1404,9 @@ to start when it does not export the function, so every host gets it: `boot()`, 
 Durable Object, React Router. It receives the record with the host's `env`, the `tenant` and the
 app's logger, as a port's `create` does. A test app never calls it: `createTestApp` sends the
 records to its `logger`, or to the `onPersonalDataAccess` the test passes. It runs once the call
-has read and before it settles, whether it then hands its result out or rejects, and for an export
-also before its header goes out, and the call waits for it. When it throws, the call rejects with
+has read and before it settles, whether it then hands its result out or rejects, or as it is
+refused before it reads, and for an export also before its header goes out, and the call waits for
+it. When it throws, the call rejects with
 that error, handing out neither its result nor its own error, and an export whose start it fails
 to record hands out nothing: data handed out without its record is what an access log exists to rule out,
 so a sink that is down stops the reads it would have recorded. A retry or a discard of a dead

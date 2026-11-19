@@ -124,6 +124,7 @@ import type {
   ReactionForgetFunction,
   ReadClient,
   ReadEventsArgs,
+  ReadOutcome,
   RecipientKind,
   RedactedEvent,
   RedactedFields,
@@ -870,10 +871,40 @@ describe("personal data", () => {
     >().toEqualTypeOf<{ readonly recipients: number } | null>();
     expectTypeOf<PersonalDataAccess["outcome"]>().toEqualTypeOf<ExportOutcome>();
     expectTypeOf<
-      Exclude<PersonalDataAccess, { operation: "exportPersonalData" }>["outcome"]
+      Extract<
+        PersonalDataAccess,
+        {
+          operation:
+            | "query"
+            | "recipientsOf"
+            | "deadLetters.list"
+            | "deadLetters.get"
+            | "deadLetters.retry"
+            | "deadLetters.discard"
+            | "subscriberFailures.list"
+            | "subscriberFailures.get";
+        }
+      >["outcome"]
+    >().toEqualTypeOf<ReadOutcome>();
+    expectTypeOf<
+      Extract<
+        PersonalDataAccess,
+        {
+          operation:
+            | "disclosure"
+            | "recipientNotice"
+            | "command"
+            | "policy"
+            | "process"
+            | "scheduledCommand";
+        }
+      >["outcome"]
     >().toEqualTypeOf<AccessOutcome>();
     expectTypeOf<AccessOutcome>().toEqualTypeOf<"ok" | "failed">();
-    expectTypeOf<ExportOutcome>().toEqualTypeOf<"started" | "ok" | "failed" | "cancelled">();
+    expectTypeOf<ReadOutcome>().toEqualTypeOf<"ok" | "failed" | "refused">();
+    expectTypeOf<ExportOutcome>().toEqualTypeOf<
+      "started" | "ok" | "failed" | "refused" | "cancelled"
+    >();
     expectTypeOf<
       Extract<PersonalDataAccess, { operation: "query" }>["unattributed"]
     >().toEqualTypeOf<boolean>();

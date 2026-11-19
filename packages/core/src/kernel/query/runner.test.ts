@@ -120,7 +120,8 @@ const setup = async (ports: ModulePorts = {}, vouch?: QueryVouch) => {
     ports,
     recordAccess: unrecordedAccess,
     errorText: "omit",
-    standing: async () => 0,
+    // Read only for a read model whose rows a recipient is told of, which none here is.
+    standing: () => Promise.reject(new Error("no recipient is told of these rows")),
     ...(vouch === undefined ? {} : { vouch }),
   });
 };
@@ -231,10 +232,12 @@ describe("query runner", () => {
 
   it("validates payloads and rejects unknown queries", async () => {
     const runner = await setup();
-    await expect(runner.run({ type: "GetOrder", payload: {} })).rejects.toBeInstanceOf(
-      ValidationError,
-    );
-    await expect(runner.run({ type: "Nope", payload: {} })).rejects.toBeInstanceOf(NotFoundError);
+    const invalid = runner.run({ type: "GetOrder", payload: {} });
+    await expect(invalid).rejects.toBeInstanceOf(ValidationError);
+    await expect(invalid).rejects.toThrow("query GetOrder");
+    const unknown = runner.run({ type: "Nope", payload: {} });
+    await expect(unknown).rejects.toBeInstanceOf(NotFoundError);
+    await expect(unknown).rejects.toThrow('Unknown query "Nope"');
   });
 });
 

@@ -97,6 +97,27 @@ export interface RecordedFunction {
   ): Promise<Result>;
 }
 
+export interface CheckedFunction {
+  <Checked>(
+    record: (outcome: "refused") => Promise<void>,
+    check: () => Checked | Promise<Checked>,
+  ): Promise<Checked>;
+}
+
+/**
+ * Runs what a call that reads personal data does before it opens any: a rejection there is
+ * recorded as `refused` before it is thrown on, so a call refused before it read is in the log too.
+ * A record that fails rejects in its place.
+ */
+export const checked: CheckedFunction = async (record, check) => {
+  try {
+    return await check();
+  } catch (error) {
+    await record("refused");
+    throw error;
+  }
+};
+
 /**
  * Runs what reads personal data and records it however it settles. A failure is recorded before
  * its error is thrown on, since the error may quote what was read; a record that fails rejects in

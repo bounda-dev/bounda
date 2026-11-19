@@ -8,14 +8,15 @@ import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { DeadLetterSettledError, NotFoundError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
-import type { RestrictionBasis } from "../../modules/personal-data.ts";
+import type { ReadOutcome } from "../../modules/audit.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
-import { type RecordAccess, recorded } from "../personal-data/access.ts";
+import { checked, type RecordAccess, recorded } from "../personal-data/access.ts";
 import { type KeyOfFunction, openCommandPayload, sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith, textPersons } from "../personal-data/errors.ts";
 import {
   checkIncludeRestricted,
   type IncludeRestrictedOptions,
+  isRestrictionBasis,
   restrictedAmong,
   restrictionViewOf,
   sealedLeft,
@@ -184,97 +185,95 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     return { ...result, parked: await processes.parkedBehind(letter) };
   };
 
-  // Each call is recorded however it settles: a retry that fails again rejects with the handler's
-  // error, which may quote the person.
-  const recordedLetter = <Result>(
-    operation: "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard",
-    letter: StoredDeadLetter,
-    run: () => Promise<Result>,
-    includeRestricted?: RestrictionBasis,
-    letThrough: ReadonlySet<string> = new Set(),
-  ): Promise<Result> =>
-    recorded(
-      (outcome) =>
-        recordAccess({
-          operation,
-          detail: { letter: letter.id },
-          actor,
-          persons: personsOf(letter),
-          outcome,
-          restricted: restrictedRecord(includeRestricted, letThrough),
-        }),
-      run,
-    );
-
   // The restricted persons whose data a call opened on a basis, for its record: those a
-  // restriction names, and those whose fields a forgetting kept.
-  const restrictedRecord = (
-    includeRestricted: RestrictionBasis | undefined,
-    letThrough: ReadonlySet<string>,
-  ) =>
-    includeRestricted === undefined ? null : { basis: includeRestricted, persons: [...letThrough] };
+  // restriction names, and those whose fields a forgetting kept. Only a call refused before it
+  // read can name what is no basis.
+  const restrictedRecord = (asked: unknown, letThrough: Iterable<string>) =>
+    isRestrictionBasis(asked) ? { basis: asked, persons: [...letThrough] } : null;
+
+  // Each call is recorded however it settles: a retry that fails again rejects with the handler's
+  // error, which may quote the person. One refused before it read the letter, or that found none,
+  // names no one.
+  const letterCall = (
+    operation: "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard",
+    id: string,
+    asked?: unknown,
+  ) => {
+    const call = { letter: null as StoredDeadLetter | null, letThrough: new Set<string>() };
+    const record = (outcome: ReadOutcome) =>
+      recordAccess({
+        operation,
+        detail: { letter: id },
+        actor,
+        persons: call.letter === null ? [] : personsOf(call.letter),
+        outcome,
+        restricted: restrictedRecord(asked, call.letThrough),
+      });
+    return { call, record };
+  };
 
   const calls: DeadLetters = {
     list: async (args, options) => {
-      const includeRestricted = checkIncludeRestricted(
-        "deadLetters.list",
-        options?.includeRestricted,
-      );
+      const asked = options?.includeRestricted;
+      let letters: readonly StoredDeadLetter[] = [];
+      const letThrough = new Set<string>();
+      const record = (outcome: ReadOutcome) =>
+        recordAccess({
+          operation: "deadLetters.list",
+          detail: { letters: letters.length },
+          actor,
+          persons: letters.flatMap(personsOf),
+          outcome,
+          restricted: restrictedRecord(asked, letThrough),
+        });
+      const { includeRestricted, stored } = await checked(record, async () => ({
+        includeRestricted: checkIncludeRestricted("deadLetters.list", asked),
+        stored: await storage.deadLetterStore.list(args),
+      }));
+      letters = stored;
       const view = restrictionViewOf(includeRestricted);
       // Each person's key and restrictions read once for the whole page.
       const keyOf = sealedKeys(storage.personalKeys);
       const restricted = restrictedAmong(storage.persons);
-      const letThrough = new Set<string>();
-      const letters = await storage.deadLetterStore.list(args);
-      return recorded(
-        (outcome) =>
-          recordAccess({
-            operation: "deadLetters.list",
-            detail: { letters: letters.length },
-            actor,
-            persons: letters.flatMap(personsOf),
-            outcome,
-            restricted: restrictedRecord(includeRestricted, letThrough),
-          }),
-        async () => {
-          const read = await Promise.all(
-            letters.map((letter) => withParked(letter, keyOf, view, restricted, letThrough)),
-          );
-          await vouch?.();
-          return read;
-        },
-      );
+      return recorded(record, async () => {
+        const read = await Promise.all(
+          letters.map((letter) => withParked(letter, keyOf, view, restricted, letThrough)),
+        );
+        await vouch?.();
+        return read;
+      });
     },
     count: (args) => storage.deadLetterStore.count(args),
     get: async (id, options) => {
-      const includeRestricted = checkIncludeRestricted(
-        "deadLetters.get",
-        options?.includeRestricted,
-      );
-      const letter = await storage.deadLetterStore.get(id);
-      if (letter === null) return null;
-      const letThrough = new Set<string>();
-      return recordedLetter(
-        "deadLetters.get",
-        letter,
-        async () => {
-          const read = await withParked(
-            letter,
-            undefined,
-            restrictionViewOf(includeRestricted),
-            undefined,
-            letThrough,
-          );
-          await vouch?.();
-          return read;
-        },
-        includeRestricted,
-        letThrough,
-      );
+      const asked = options?.includeRestricted;
+      const { call, record } = letterCall("deadLetters.get", id, asked);
+      const { includeRestricted, letter } = await checked(record, async () => ({
+        includeRestricted: checkIncludeRestricted("deadLetters.get", asked),
+        letter: await storage.deadLetterStore.get(id),
+      }));
+      // Recorded as a query that matches no row is.
+      if (letter === null) {
+        await record("ok");
+        return null;
+      }
+      call.letter = letter;
+      return recorded(record, async () => {
+        const read = await withParked(
+          letter,
+          undefined,
+          restrictionViewOf(includeRestricted),
+          undefined,
+          call.letThrough,
+        );
+        await vouch?.();
+        return read;
+      });
     },
     retry: async (id) => {
-      const letter = await failedLetter(id);
-      return recordedLetter("deadLetters.retry", letter, async () => {
+      const { call, record } = letterCall("deadLetters.retry", id);
+      const letter = await checked(record, () => failedLetter(id));
+      call.letter = letter;
+      return recorded(record, async () => {
         await retries.retry(letter, actor).catch((error: unknown) => {
           throw thrownValue(error);
         });
@@ -291,8 +290,10 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       });
     },
     discard: async (id) => {
-      const letter = await failedLetter(id);
-      return recordedLetter("deadLetters.discard", letter, async () => {
+      const { call, record } = letterCall("deadLetters.discard", id);
+      const letter = await checked(record, () => failedLetter(id));
+      call.letter = letter;
+      return recorded(record, async () => {
         const at = clock.now();
         if (letter.kind === "process") await processes.abandon({ letter, at, actor });
         else await storage.deadLetterStore.updateStatus(id, "discarded", at);
