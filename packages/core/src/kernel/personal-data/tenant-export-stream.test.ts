@@ -16,7 +16,7 @@ import { type AppStorage, appStorage } from "../events/app-event-store.ts";
 import { buildReadModels } from "../read-model/build-read-models.ts";
 import { sealedTable } from "../read-model/sealed-table.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
-import type { RecipientsRuntime } from "../recipients/build.ts";
+import type { RecipientRuntime, RecipientsRuntime } from "../recipients/build.ts";
 import { recipientsOf } from "../recipients/listing.ts";
 import { keysOver, testWrapping } from "../test-support.ts";
 import { sealAnswer } from "./answers.ts";
@@ -183,12 +183,14 @@ const setup = async () => {
   const stream = ({
     batchSize = 2,
     ledger = null,
+    recipients = NO_RECIPIENTS,
     onPage = async () => {
       pages.push("page");
     },
   }: {
     readonly batchSize?: number;
     readonly ledger?: ForgetLedger | null;
+    readonly recipients?: RecipientsRuntime;
     readonly onPage?: () => Promise<void>;
   } = {}) =>
     streamTenantExport({
@@ -207,7 +209,7 @@ const setup = async () => {
       clock: createFixedClock(),
       batchSize,
       categories,
-      recipients: NO_RECIPIENTS,
+      recipients,
       ports: new Map([["invoices", ["order.billing", "order.ledger"]]]),
       tenant: "acme",
       exportId: "x-1",
@@ -916,15 +918,38 @@ describe("streamTenantExport", () => {
         return disclosuresOfMany(persons);
       },
     });
-    const persons = of(await exported({ batchSize: 2 }), "person").map(({ person }) => person);
+    // The app declares the port it was presumed of, of the persons' default category.
+    const crm: RecipientRuntime = {
+      port: "customer.crm",
+      owner: "customer",
+      name: "crm",
+      recipient: "HubSpot",
+      kind: "processor",
+      country: "US",
+      safeguard: "standard-contractual-clauses",
+      categories: ["default"],
+    } as RecipientRuntime;
+    const runtime: RecipientsRuntime = {
+      all: [crm],
+      byPort: { [crm.port]: crm },
+      byOwner: { customer: { crm } },
+    };
+    const persons = of(await exported({ batchSize: 2, recipients: runtime }), "person").map(
+      ({ person }) => person,
+    );
     expect(calls).toEqual(["page c-1,c-2", "page c-3"]);
-    calls.length = 0;
     for (const { personId, recipients } of persons) {
       expect(recipients).toEqual(
-        await recipientsOf({ storage, recipients: NO_RECIPIENTS, categories, personId }),
+        await recipientsOf({ storage, recipients: runtime, categories, personId }),
       );
     }
-    expect(persons.map(({ recipients }) => recipients.length)).toEqual([1, 0, 1]);
+    expect(
+      persons.map(({ recipients }) => recipients.map(({ port, status }) => `${port} ${status}`)),
+    ).toEqual([
+      ["customer.crm presumed", "customer.mailer disclosed"],
+      ["customer.crm presumed"],
+      ["customer.crm presumed", "customer.mailer disclosed"],
+    ]);
   });
 
   it("reads each store of persons once a page, and once more only when a page was full", async () => {
