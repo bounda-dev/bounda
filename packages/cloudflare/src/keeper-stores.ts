@@ -122,8 +122,9 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
  * app on Cloudflare: each tenant's entries in its keeper object, in the jurisdiction `storage`
  * names, outside the tenant's object, so restoring that object to an earlier time leaves the
  * ledger whole. Its reads see every write at once, and with `keepFor` the keeper removes each
- * entry once past it on its own alarm, whether the tenant's object is awake or not. A binding missing from the object's `env` fails its start with `ConfigurationError`,
- * and so does a `storage` that is not `cloudflare()`.
+ * entry once past it on its own alarm, whether the tenant's object is awake or not. A binding
+ * missing from the object's `env` fails its start with `ConfigurationError`, and so does a
+ * `storage` that is not `cloudflare()`.
  */
 export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
   storage,
