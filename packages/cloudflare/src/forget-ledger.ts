@@ -316,7 +316,9 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
  * an id without a name fails its start. KV lists a new key within
  * about a minute, so an object that starts reads the ledger once more after `KV_LIST_DELAY_MS`:
  * a forgetting made in the last minute before a restore is applied by then. A binding missing
- * from the object's `env` fails its start with `ConfigurationError`.
+ * from the object's `env` fails its start with `ConfigurationError`. KV holds its keys to no
+ * jurisdiction, so an app whose `cloudflare()` names one refuses it with `ConfigurationError`:
+ * use `durableObjectForgetLedger` there.
  */
 export const kvForgetLedger: KvForgetLedgerFunction = ({ binding }) =>
   defineForgetLedger(({ env, tenant, keepForMs }) => {

@@ -30,6 +30,8 @@ export interface KeeperNameOfFunction {
 export const keeperNameOf: KeeperNameOfFunction = (tenant) => `${TENANT_KEEPER}${tenant}`;
 
 const DIRECTORY_TABLE = quoteIdentifier(`${DEFAULT_TABLE_PREFIX}keeper_tenants`);
+// Where a tenant's keeper keeps how long its ledger keeps each entry, in its key-value storage.
+const KEEP_FOR_KEY = "bounda:ledger-keep-for";
 
 /**
  * What a keeper object answers over RPC, each method an outcome as a Bounda object's are. A
@@ -54,6 +56,16 @@ export interface BoundaKeeperMethods {
   pruneLedger(tenant: string, args: PruneForgetLedgerArgs): Promise<RpcOutcome<null>>;
   readLedgerMark(tenant: string, name: string): Promise<RpcOutcome<number>>;
   raiseLedgerMark(tenant: string, name: string, value: number): Promise<RpcOutcome<null>>;
+  /**
+   * Keeps each of the tenant's entries `keepForMs` after its `forgottenAt`, `null` for good: the
+   * keeper's alarm removes it then, whether the tenant's object is awake or not.
+   */
+  retainLedger(tenant: string, keepForMs: number | null): Promise<RpcOutcome<null>>;
+  /**
+   * Removes the tenant's entries past the time `retainLedger` set, and arms itself for the next.
+   * Called by the platform.
+   */
+  alarm(): Promise<void>;
 }
 
 /**
@@ -81,7 +93,10 @@ export interface CreateBoundaKeeperFunction {
  * one keeper object per tenant, plus one that lists the tenants for a rotation of the master key.
  * In the jurisdiction `cloudflare()` names, like the tenants' objects, so nothing tied to a person
  * leaves it; restoring a tenant's object to an earlier time leaves its keeper as it is. Use it
- * through `durableObjectTenantKeys` and `durableObjectForgetLedger`. A keeper created in another
+ * through `durableObjectTenantKeys` and `durableObjectForgetLedger`. With `keepFor`, a keeper
+ * removes each entry of its ledger once past it on its own alarm, its tenant's object asleep or
+ * not. Throws `ConfigurationError` for a configuration `cloudflare()` refuses, such as one whose
+ * tenant key store or forget ledger is not kept in its jurisdiction. A keeper created in another
  * jurisdiction than `cloudflare()` names, or reached by a name the stores never give, refuses
  * every call with `ConfigurationError`.
  */
@@ -182,11 +197,45 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
       });
     }
 
+    // The alarm is armed for when the oldest entry left passes the time it is kept, and cleared
+    // when there is none, or no such time.
+    async #armExpiry(ledger: ForgetLedger): Promise<void> {
+      const keepForMs = await this.ctx.storage.get<number>(KEEP_FOR_KEY);
+      const [oldest] = keepForMs === undefined ? [] : await ledger.read({ limit: 1 });
+      if (keepForMs === undefined || oldest === undefined) {
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
+      await this.ctx.storage.setAlarm(Date.parse(oldest.forgottenAt) + keepForMs);
+    }
+
     appendLedger(tenant: string, entries: readonly ForgetLedgerEntry[]): Promise<RpcOutcome<null>> {
       return settle(async () => {
-        await (await this.#forgetLedger(tenant)).append(entries);
+        const ledger = await this.#forgetLedger(tenant);
+        await ledger.append(entries);
+        await this.#armExpiry(ledger);
         return null;
       });
+    }
+
+    retainLedger(tenant: string, keepForMs: number | null): Promise<RpcOutcome<null>> {
+      return settle(async () => {
+        const ledger = await this.#forgetLedger(tenant);
+        if (keepForMs === null) await this.ctx.storage.delete(KEEP_FOR_KEY);
+        else await this.ctx.storage.put(KEEP_FOR_KEY, keepForMs);
+        await this.#armExpiry(ledger);
+        return null;
+      });
+    }
+
+    override async alarm(): Promise<void> {
+      const name = this.ctx.id.name ?? "";
+      const ledger = await this.#forgetLedger(name.slice(TENANT_KEEPER.length));
+      const keepForMs = await this.ctx.storage.get<number>(KEEP_FOR_KEY);
+      if (keepForMs !== undefined) {
+        await ledger.prune?.({ before: new Date(Date.now() - keepForMs).toISOString() });
+      }
+      await this.#armExpiry(ledger);
     }
 
     readLedger(
@@ -198,7 +247,9 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
 
     pruneLedger(tenant: string, args: PruneForgetLedgerArgs): Promise<RpcOutcome<null>> {
       return settle(async () => {
-        await (await this.#forgetLedger(tenant)).prune?.(args);
+        const ledger = await this.#forgetLedger(tenant);
+        await ledger.prune?.(args);
+        await this.#armExpiry(ledger);
         return null;
       });
     }

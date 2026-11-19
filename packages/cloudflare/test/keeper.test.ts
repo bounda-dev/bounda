@@ -162,6 +162,75 @@ describe("the forget ledger in keeper objects", () => {
     expect(durableObjectForgetLedger({ storage }).location).toBeUndefined();
   });
 
+  it("removes each entry once past keepFor on the keeper's own alarm, the tenant's object asleep", async () => {
+    const tenant = `${fresh()}kept-for`;
+    const own = keeper(`tenant:${tenant}`);
+    const at = (ms: number) => new Date(ms).toISOString();
+    const entry = (eventId: string, forgottenAt: string) => ({
+      personId: "c-1",
+      categories: null,
+      eventId,
+      forgottenAt,
+      reason: "requested" as const,
+    });
+    const now = Date.now();
+    const alarm = () => runInDurableObject(own, (_object, state) => state.storage.getAlarm());
+    const keptFor = await durableObjectForgetLedger({ storage }).create({
+      env,
+      tenant,
+      keepForMs: 60_000,
+    });
+    // Told before the first call, the keeper has nothing to expire yet.
+    expect(await keptFor.read({ limit: 10 })).toEqual([]);
+    expect(await alarm()).toBeNull();
+    await keptFor.append([entry("e-old", at(now - 120_000)), entry("e-new", at(now - 30_000))]);
+    // Past already: armed for at once.
+    expect(await alarm()).toBeLessThanOrEqual(Date.now());
+    await runInDurableObject(own, (object) => object.alarm());
+    expect(await keptFor.read({ limit: 10 })).toEqual([entry("e-new", at(now - 30_000))]);
+    expect(await alarm()).toBe(now + 30_000);
+    await keptFor.prune?.({ before: at(now) });
+    expect(await alarm()).toBeNull();
+
+    // Kept for good once keepFor is gone: no alarm, and one that fires removes nothing.
+    await keptFor.append([entry("e-older", at(now - 120_000))]);
+    const forGood = await durableObjectForgetLedger({ storage }).create({ env, tenant });
+    expect(await forGood.readMark("m")).toBe(0);
+    expect(await alarm()).toBeNull();
+    await runInDurableObject(own, (object) => object.alarm());
+    expect(await forGood.read({ limit: 10 })).toEqual([entry("e-older", at(now - 120_000))]);
+  });
+
+  it("tells the keeper how long to keep the entries again after a call that failed before it", async () => {
+    const tenant = `${fresh()}retried`;
+    let calls = 0;
+    const failing = {
+      KEEPER: {
+        idFromName: (name: string) => env.KEEPER.idFromName(name),
+        get: (id: DurableObjectId) => {
+          const stub = env.KEEPER.get(id);
+          return {
+            retainLedger: (...args: Parameters<typeof stub.retainLedger>) => {
+              calls += 1;
+              if (calls === 1) throw new Error("keeper unavailable");
+              return stub.retainLedger(...args);
+            },
+            readLedger: (...args: Parameters<typeof stub.readLedger>) => stub.readLedger(...args),
+          };
+        },
+      },
+    } as unknown as Cloudflare.Env;
+    const ledger = await durableObjectForgetLedger({ storage }).create({
+      env: failing,
+      tenant,
+      keepForMs: 1_000,
+    });
+    await expect(ledger.read({ limit: 1 })).rejects.toThrow("keeper unavailable");
+    expect(await ledger.read({ limit: 1 })).toEqual([]);
+    expect(await ledger.read({ limit: 1 })).toEqual([]);
+    expect(calls).toBe(2);
+  });
+
   it("refuses an app that names no tenant, whose entries no keeper would hold", async () => {
     await expect(
       Promise.resolve().then(() => durableObjectForgetLedger({ storage }).create({ env })),
@@ -196,10 +265,10 @@ describe("the keeper stores' configuration", () => {
       ),
     );
     // A binding that is null, or has idFromName but no get, is no Durable Object namespace.
-    const odd = Object.assign(Object.create(env) as object, {
+    const odd = {
       NOTHING: null,
       HALF: { idFromName: () => undefined },
-    }) as Cloudflare.Env;
+    } as unknown as Cloudflare.Env;
     for (const binding of ["NOTHING", "HALF"]) {
       await expect(
         Promise.resolve().then(() =>

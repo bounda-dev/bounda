@@ -110,7 +110,9 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
  * Cloudflare: outside every Durable Object, so neither restoring an object's storage to an earlier
  * time nor a copy of it brings back the key of a tenant `forgetTenant` destroyed. Each object keeps
  * its tenant's key, wrapped under the master key, under its name, or its id when it has none. A
- * binding missing from the object's `env` fails its start with `ConfigurationError`.
+ * binding missing from the object's `env` fails its start with `ConfigurationError`. KV holds its
+ * keys to no jurisdiction, so an app whose `cloudflare()` names one refuses it with
+ * `ConfigurationError`: use `durableObjectTenantKeys` there.
  */
 export const kvTenantKeys: KvTenantKeysFunction = ({ binding, prefix = KV_TENANT_KEYS_ROOT }) =>
   defineTenantKeyStore(({ env }) => {

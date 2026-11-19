@@ -241,8 +241,9 @@ Cloudflare restores a Durable Object's storage to a point in time, which brings 
 everyone forgotten after it. `durableObjectForgetLedger({ storage })` keeps the record of every
 forgetting in the tenant's keeper, outside its object and in the same jurisdiction, and an object
 that starts forgets again whoever its restored storage brought back; restoring the storage restarts
-the object. A read sees every write at once, and with `keepFor` the periodic reconciliation prunes
-the entries past it. The periodic reconciliation never wakes an object on its own. Every
+the object. A read sees every write at once, and with `keepFor` the keeper removes each entry once
+past it on its own alarm, whether the tenant's object is awake or not. The periodic reconciliation
+never wakes an object on its own. Every
 forgetting writes its intention to the keeper before the object commits it, so one the object did
 not get to commit, because it was evicted or its transaction failed, is committed at its next start;
 with `strict`, a forgetting the keeper does not take fails and forgets nobody. See

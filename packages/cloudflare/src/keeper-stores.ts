@@ -96,15 +96,23 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
   const jurisdiction = jurisdictionOf(storage, "durableObjectTenantKeys()");
   return defineTenantKeyStore(({ env }): TenantKeyStore => {
     const { keeper } = keepersIn(env, binding, jurisdiction, "runtime.personalData.tenantKeys");
+    const directory = keeper(KEEPER_DIRECTORY);
+    // An object reads and writes its own tenant's record alone; the schedule goes through many.
+    const keepers = new Map<string, BoundaKeeperMethods>();
+    const keeperOf = (tenant: string): BoundaKeeperMethods => {
+      const found = keepers.get(tenant) ?? keeper(keeperNameOf(tenant));
+      keepers.set(tenant, found);
+      return found;
+    };
     return {
-      get: (tenant) => unwrap(keeper(keeperNameOf(tenant)).getTenantKeys(tenant)),
+      get: (tenant) => unwrap(keeperOf(tenant).getTenantKeys(tenant)),
       put: async (tenant, record, expected) => {
         // Listed before its first record exists, so a rotation of the master key finds every
         // tenant with one.
-        if (expected === null) await unwrap(keeper(KEEPER_DIRECTORY).registerTenant(tenant));
-        return unwrap(keeper(keeperNameOf(tenant)).putTenantKeys(tenant, record, expected));
+        if (expected === null) await unwrap(directory.registerTenant(tenant));
+        return unwrap(keeperOf(tenant).putTenantKeys(tenant, record, expected));
       },
-      list: (args) => unwrap(keeper(KEEPER_DIRECTORY).listTenants(args)),
+      list: (args) => unwrap(directory.listTenants(args)),
     };
   }, locationOf(storage));
 };
@@ -113,8 +121,8 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
  * A forget ledger in keeper Durable Objects, for `runtime.personalData.forgetLedger.store` of an
  * app on Cloudflare: each tenant's entries in its keeper object, in the jurisdiction `storage`
  * names, outside the tenant's object, so restoring that object to an earlier time leaves the
- * ledger whole. Its reads see every write at once, and it prunes the entries older than
- * `keepFor`. A binding missing from the object's `env` fails its start with `ConfigurationError`,
+ * ledger whole. Its reads see every write at once, and with `keepFor` the keeper removes each
+ * entry once past it on its own alarm, whether the tenant's object is awake or not. A binding missing from the object's `env` fails its start with `ConfigurationError`,
  * and so does a `storage` that is not `cloudflare()`.
  */
 export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
@@ -122,7 +130,7 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
   binding = DEFAULT_KEEPER_BINDING,
 }) => {
   const jurisdiction = jurisdictionOf(storage, "durableObjectForgetLedger()");
-  return defineForgetLedger(({ env, tenant }): ForgetLedger => {
+  return defineForgetLedger(({ env, tenant, keepForMs }): ForgetLedger => {
     const { keeper } = keepersIn(
       env,
       binding,
@@ -135,16 +143,35 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
       );
     }
     const own = keeper(keeperNameOf(tenant));
+    // The keeper is told how long to keep the entries before the first call, and again after a
+    // call that failed before it was.
+    let retained: Promise<unknown> | undefined;
+    const retain = (): Promise<unknown> => {
+      retained ??= unwrap(own.retainLedger(tenant, keepForMs ?? null)).catch((error: unknown) => {
+        retained = undefined;
+        throw error;
+      });
+      return retained;
+    };
     return {
       append: async (entries) => {
+        await retain();
         await unwrap(own.appendLedger(tenant, entries));
       },
-      read: (args) => unwrap(own.readLedger(tenant, args)),
+      read: async (args) => {
+        await retain();
+        return unwrap(own.readLedger(tenant, args));
+      },
       prune: async (args) => {
+        await retain();
         await unwrap(own.pruneLedger(tenant, args));
       },
-      readMark: (name) => unwrap(own.readLedgerMark(tenant, name)),
+      readMark: async (name) => {
+        await retain();
+        return unwrap(own.readLedgerMark(tenant, name));
+      },
       raiseMark: async (name, value) => {
+        await retain();
         await unwrap(own.raiseLedgerMark(tenant, name, value));
       },
     };
