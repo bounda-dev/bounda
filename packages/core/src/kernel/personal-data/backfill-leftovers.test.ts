@@ -330,9 +330,9 @@ describe.each(adapters)("what the backfill closes on %s", (_name, adapterOf) => 
     expect(resealed).toMatchObject({ person: "p-1", statePerson: "a-1" });
     expect(resealed?.errorMessage).toMatchObject({ $personal: { person: "a-1" } });
     expect(JSON.stringify(resealed)).not.toContain("600 000");
-    expect((await after.app.exportPersonalData("a-1")).deadLetters).toEqual([
-      expect.objectContaining({ errorMessage: "agent +34 600 000 000 is away" }),
-    ]);
+    expect(
+      (await after.app.exportPersonalData("a-1", { includeWithheld: true })).deadLetters,
+    ).toEqual([expect.objectContaining({ errorMessage: "agent +34 600 000 000 is away" })]);
     await after.app.forget("a-1");
     expect((await after.app.deadLetters.get(filed?.id ?? ""))?.errorMessage).toBeNull();
   });

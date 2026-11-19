@@ -606,12 +606,14 @@ describe("personal data in an app", () => {
           expiresAt: expect.any(String),
           outcome: rejected,
           restricted: [],
+          withheld: [],
         },
         {
           idempotencyKey: "register-1",
           expiresAt: expect.any(String),
           outcome: registered,
           restricted: [],
+          withheld: [],
         },
       ]),
     );

@@ -3,7 +3,7 @@ import { DEFAULT_PERSONAL_CATEGORY } from "../../adapter/storage/personal-key-st
 import { type ErrorIdentity, errorDetails, errorIdentity } from "../shared/retry.ts";
 import type { KeyOfFunction } from "./commands.ts";
 import { createDisposableKey, isSealed, seal, unseal } from "./crypto.ts";
-import { readUnder } from "./reads.ts";
+import { readersOf, readUnder } from "./reads.ts";
 import { type CategoryKey, inSealingOrder, type PersonalKeys } from "./wrapped-keys.ts";
 
 export interface SealErrorArgs {
@@ -28,11 +28,13 @@ export interface SealErrorArgs {
 
 /**
  * An error as a dead letter records it: its identity in the clear, its text sealed under the keys
- * of the person the failed work names.
+ * of the person the failed work names, and of each of `readPersons`.
  */
 export interface SealedError extends ErrorIdentity {
   readonly errorMessage: string | SealedValue;
   readonly errorStack?: string | SealedValue;
+  // Whom else the work read data of, by id: absent when nobody.
+  readonly readPersons?: readonly string[];
 }
 
 export interface SealErrorFunction {
@@ -86,7 +88,8 @@ export const sealUnderAll: SealUnderAllFunction = async (under, person, value) =
  * when the work read nothing of theirs under a key they no longer hold: a handler's error may quote
  * what it read of the person, in any category, so no store keeps its text in the clear once the
  * work names someone, and forgetting any category of theirs, as a forget that came meanwhile,
- * still reaches it.
+ * still reaches it. So too for everyone else the work read data of, in turn around them, since the
+ * text may quote what it read of them: they come back as `readPersons`.
  */
 export const sealError: SealErrorFunction = async ({
   error,
@@ -98,7 +101,9 @@ export const sealError: SealErrorFunction = async ({
   const details = errorDetails(error);
   let errorMessage: string | SealedValue = details.message;
   let errorStack: string | SealedValue | undefined = details.stack;
-  for (const one of new Set([person, statePerson])) {
+  const named = new Set([person, statePerson]);
+  const readPersons = readersOf(error, read).filter((one) => !named.has(one));
+  for (const one of [...named, ...readPersons]) {
     if (one === null) continue;
     const under = await keysToSealWith(keys, one, readUnder({ person: one, error, also: read }));
     errorMessage = await sealUnderAll(under, one, errorMessage);
@@ -108,6 +113,7 @@ export const sealError: SealErrorFunction = async ({
     ...errorIdentity(error),
     errorMessage,
     ...(errorStack === undefined ? {} : { errorStack }),
+    ...(readPersons.length === 0 ? {} : { readPersons }),
   };
 };
 
@@ -138,3 +144,22 @@ export const openTextWith: OpenTextWithFunction = (keyOf) => {
   };
   return open;
 };
+
+export interface SealedText {
+  readonly person: string | null;
+  readonly statePerson?: string;
+  readonly readPersons?: readonly string[];
+}
+
+export interface TextPersonsFunction {
+  (sealed: SealedText): string[];
+}
+
+/**
+ * Everyone a dead letter's or a subscriber failure's error text is sealed under.
+ */
+export const textPersons: TextPersonsFunction = ({ person, statePerson, readPersons = [] }) => [
+  ...(person === null ? [] : [person]),
+  ...(statePerson === undefined ? [] : [statePerson]),
+  ...readPersons,
+];

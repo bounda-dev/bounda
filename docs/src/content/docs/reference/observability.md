@@ -84,8 +84,9 @@ stack. To find out what a reaction failed on, follow the log line that filed its
 and `app.deadLetters.get(letterId)` opens the text the letter keeps encrypted under the person
 (see [what a letter holds](/guides/dead-letters/#what-a-letter-holds)). A projection has no
 letter: its batch is delivered again until it goes through, so the runtime keeps the last failure
-of each subscriber instead, its text encrypted under the person the event names, or in the clear
-for an event that names nobody, whatever `errorText` says. `app.subscriberFailures.list()` and
+of each subscriber instead, its text encrypted under the person the event names and everyone whose
+rows its projection read, named in `readPersons`, or in the clear when that is nobody, whatever
+`errorText` says. `app.subscriberFailures.list()` and
 `.get(subscriber)`, or `bounda status --error-text`, open it, and each call is recorded in the
 [access log](/guides/personal-data/#who-opened-what); once the person is forgotten it reads `null`.
 Your own logger calls

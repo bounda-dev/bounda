@@ -443,7 +443,9 @@ or else of the one the state names, which covers a deadline. When the event name
 the state another, the [dead letter](/guides/dead-letters/#what-a-letter-holds) names both, the
 state's as `statePerson`, and its text is encrypted under the keys of each, one inside the other:
 the step read the state, and a handler's error may quote it. Forgetting either leaves the text
-unreadable, and the export, a restriction and a redaction of either reach the letter. A lifecycle
+unreadable, and the export, a restriction and a redaction of either reach the letter. So does
+everyone else whose data the step read, as the aggregates the commands it dispatched loaded: the
+letter names them in `readPersons` (see [someone else's data](#someone-elses-data)). A lifecycle
 event written before its state marked its fields is sealed in place by the
 [backfill](#marking-a-field-later), and so is a letter filed before: its text is sealed under the
 person the state of its instance named when the step failed too.
@@ -700,7 +702,9 @@ expires: a late retry neither repeats what the command did nor brings back data 
 erased. Its payload is not compared any more, since its fingerprint went with the answer. Replaying
 an answer is processing the person's data, so a [restriction](#restricting-processing) of anyone
 it names refuses it, as it would refuse the command, unless the dispatch names a basis with
-`processRestricted`. The export hands out the answers remembered of the person in `answers`.
+`processRestricted`. The export hands out the answers remembered of the person in `answers`, and
+holds back one that names someone else too, which it may quote (see [someone else's
+data](#someone-elses-data)).
 
 ## Exporting a person's data
 
@@ -882,11 +886,13 @@ without such fields has an empty `data`. A process's lifecycle event names the p
 names](#in-a-processs-state), and its `data` holds the personal fields of that state. `scheduledCommands` are the commands waiting to run
 whose payload holds personal fields of theirs, with `commandId` the id the dispatch answered or,
 for one the runtime scheduled itself, the scheduler's key, each with the same `data`.
-`deadLetters` are the handler runs that gave up and name the person: work about them, whose
-`errorMessage` and `errorStack` are encrypted with their keys and come out opened, and the
-scheduled commands whose payload holds their fields, with its `data`. `subscriberFailures` are the
-last failures of the subscribers on an event that names them, kept with their error text
-encrypted with their keys (see [observability](/reference/observability/#error-text)), opened.
+`deadLetters` are the handler runs that gave up and name the person: work about them or that read
+their data, whose `errorMessage` and `errorStack` are encrypted with their keys and come out
+opened, and the scheduled commands whose payload holds their fields, with its `data`.
+`subscriberFailures` are the last failures of the subscribers on an event that names them, or
+whose delivery read their data, kept with their error text encrypted with their keys (see
+[observability](/reference/observability/#error-text)), opened. Text encrypted under someone else
+too is held back, as [someone else's data](#someone-elses-data) says.
 `answers` are what the commands dispatched with an idempotency key that concern them answered, as
 long as each is [remembered](#remembered-answers) and opens, opened, in the order the store files
 them. Scheduled commands come in the order of the scheduler's keys, and dead letters in the order
@@ -915,6 +921,60 @@ without a person field is a view Bounda cannot tell is about anyone, and whateve
 is at the mailing provider or the search index, which `recipients` names. An app that owes a person
 more than their marked fields takes this export and adds what it knows from its ports. An event stored before its
 type marked its fields is found once the [backfill](#marking-a-field-later) has sealed it.
+
+### Someone else's data
+
+Article 15(4) asks that the copy not adversely affect the rights and freedoms of others. A field
+marked `personal` is the data of the person its event, state, command or row names: the app
+declared it so, and the export hands it to them. A field that holds someone else's data, a note
+that names a friend, is the app's to model, with an event of that other person's own.
+
+Text the app's code wrote is another matter: an error a handler threw, or a rejection a command
+remembered, may quote whatever the work read, and Bounda knows whose data that was. A dead letter's
+error text, and a subscriber's last failure's, is encrypted under the keys of everyone whose data
+the work read: the person its event names, the one its process state names, those whose aggregates
+the commands it dispatched loaded, and those whose rows a projection read through its `table`,
+sealed or in the clear. The
+letter names them in `person`, `statePerson` and `readPersons`, the failure in `person` and
+`readPersons`. A remembered rejection is encrypted under everyone whose data the state it was
+decided on held, and the person the command touches. Each of them finds the record in their
+export and in a [restriction](#restricting-processing) or a [redaction](#correcting-a-persons-data)
+of theirs, and the text opens only while every one of them holds their keys, so forgetting any of
+them makes it unreadable.
+
+A value encrypted under the person alone comes out as theirs. One encrypted under someone else too
+may quote them, so the export holds it back: it reads `null`, and its record says which fields, and
+why, in `withheld`. A dead letter or a failure holds back its `errorMessage` and `errorStack`, an
+answer its `idempotencyKey` and `outcome`:
+
+```ts
+withheld: [
+  { field: "errorMessage", reason: "rights-of-others", article: "15(4)" },
+  { field: "errorStack", reason: "rights-of-others", article: "15(4)" },
+]
+```
+
+A value that no longer opens, because someone it is encrypted under was forgotten, reads `null`
+with nothing held back: there is nothing left to hand over. Whether handing a value over would
+adversely affect the other person is the controller's to weigh, and it must never end in refusing
+the person everything. To weigh it, `includeWithheld` opens those values, still named in
+`withheld`:
+
+```ts
+const review = await app.as("dpo").exportPersonalData("c-42", { includeWithheld: true });
+```
+
+`streamPersonalData` takes the same option, as do
+[`personalDataExportResponse`](/guides/react-router/#exporting-a-persons-data) and
+[`bounda personal-data export --include-withheld`](/reference/cli/#bounda-personal-data-export-and-bounda-forget-person).
+The [access log](#who-opened-what) records `includeWithheld`, and names, after the person,
+everyone else whose data the values it opened may quote; a value opened of someone whose processing
+is [restricted](#restricting-processing) is named in its record's `restricted` too. Never hand such an export to the person as
+it is: hand them the one without it, and what the controller decided to release.
+
+What a handler took from a port and quoted, or a projection read through `client.raw`, Bounda
+cannot see: text built from it comes out as the person's, and is the controller's to read before
+handing an export over.
 
 ### A long history
 
@@ -966,8 +1026,8 @@ a response a loader returns; and the command line with
 
 Each store keeps the person an event names in a `person` column, indexed with the position, and
 the adapters read by it with `readByPerson`; a scheduled command is found by the `persons` it
-carries, and a dead letter by its `person`, its `statePerson` or its `persons`, every one read a
-page at a time with `listByPerson`. A redaction marks every value it seals for good as such in its
+carries, and a dead letter by its `person`, its `statePerson`, its `readPersons` or its `persons`,
+every one read a page at a time with `listByPerson`. A redaction marks every value it seals for good as such in its
 envelope, so each event of a page says itself which of its fields were redacted, and the
 redactions are read from the person's own stream a window of versions at a time. `forget` and the
 export find those
@@ -1274,7 +1334,7 @@ person's data in the clear records it, once per call, and an export once more as
 
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
-| `exportPersonalData` and `streamPersonalData`, as each starts and as it ends | the person | `{ exportId, redactions, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients }`: the export's id, the same in both records, and how many of each it handed out by then, before it failed or was cancelled for one that did |
+| `exportPersonalData` and `streamPersonalData`, as each starts and as it ends | the person, and with `includeWithheld`, after them, everyone else whose data the values it opened in spite of [article 15(4)](#someone-elses-data) may quote | `{ exportId, redactions, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients, withheld, includeWithheld }`: the export's id, the same in both records, how many of each it handed out by then, before it failed or was cancelled for one that did, how many of those held a value back under article 15(4), or opened it with `includeWithheld`, and whether it was asked for with it |
 | `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
 | `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
 | `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
@@ -1863,7 +1923,9 @@ database. The record lists:
   restrictions, its own events about them, [remembered answers](#remembered-answers) for as long as
   `runtime.commands.idempotencyKeyLifetime` keeps them, dead letters for as long as
   [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters) keeps resolved
-  ones, what went to each recipient, the [forget ledger](#the-forget-ledger) for its `keepFor`, and
+  ones, the last failure of each subscriber until its next one replaces it, each with the error
+  text encrypted under everyone whose data the work read and [held back](#someone-elses-data) from
+  an export when that is more than one person, what went to each recipient, the [forget ledger](#the-forget-ledger) for its `keepFor`, and
   the [access log](#who-opened-what) when `app/audit.ts` exists;
 - whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
   ledger are configured;

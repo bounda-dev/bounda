@@ -24,11 +24,15 @@ const matches = (letter: StoredDeadLetter, args: ListDeadLettersArgs): boolean =
 const copy = ({
   payload,
   persons,
+  readPersons,
   errorMessage,
   errorStack,
   ...letter
 }: StoredDeadLetter): StoredDeadLetter => ({
   ...letter,
+  ...(readPersons === undefined || readPersons.length === 0
+    ? {}
+    : { readPersons: [...readPersons] }),
   errorMessage: jsonCopy(errorMessage),
   ...(errorStack === undefined ? {} : { errorStack: jsonCopy(errorStack) }),
   ...(payload === undefined ? {} : { payload: jsonCopy(payload) }),
@@ -83,7 +87,10 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
     remove: async (id) => {
       letters.delete(id);
     },
-    reseal: async (id, { person, statePerson, errorMessage, errorStack, payload, persons }) => {
+    reseal: async (
+      id,
+      { person, statePerson, readPersons, errorMessage, errorStack, payload, persons },
+    ) => {
       const existing = letters.get(id);
       if (existing === undefined) return;
       const {
@@ -91,6 +98,7 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
         payload: _payload,
         persons: _persons,
         statePerson: _statePerson,
+        readPersons: _readPersons,
         ...kept
       } = existing;
       letters.set(
@@ -99,6 +107,7 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
           ...kept,
           person,
           ...(statePerson === undefined ? {} : { statePerson }),
+          ...(readPersons === undefined ? {} : { readPersons }),
           errorMessage,
           ...(errorStack === undefined ? {} : { errorStack }),
           ...(payload === undefined ? {} : { payload }),
@@ -112,6 +121,7 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
           (letter) =>
             letter.person === person ||
             letter.statePerson === person ||
+            letter.readPersons?.includes(person) === true ||
             namesPerson(letter, person),
         ),
         ({ id }) => id,

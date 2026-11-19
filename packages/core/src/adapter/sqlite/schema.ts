@@ -71,6 +71,10 @@ export const PERSON_INDEXED: {
   deadLetters: { store: "dead_letters", key: ["id"] },
 };
 
+// The persons a letter's error text was read of, besides those it names otherwise, indexed apart
+// from its `persons`, which a forgetting removes letters by.
+const DEAD_LETTER_READS: PersonIndexedStore = { store: "dead_letter_reads", key: ["id"] };
+
 // A row's key as `personRows` keeps it: the JSON array of its key columns.
 const rowOf = (row: string, { key }: PersonIndexedStore): string =>
   `json_array(${key.map((column) => `${row}."${column}"`).join(", ")})`;
@@ -109,6 +113,35 @@ const personRowTriggers = (
     `CREATE TRIGGER IF NOT EXISTS ${trigger("delete")} AFTER DELETE ON ${table} BEGIN ${remove} END`,
   ];
 };
+
+export interface DeadLetterReadsStatementsFunction {
+  (tables: Pick<StorageTables, "deadLetters" | "personRows">): readonly string[];
+}
+
+// Migration 11 of the storage tables: a letter's `read_persons` followed into `personRows`, as its
+// `persons` are, so `listByPerson` finds it by them without reading the table.
+export const deadLetterReadsStatements: DeadLetterReadsStatementsFunction = (tables) => {
+  const trigger = (event: string): string =>
+    quoteIdentifier(`${tables.personRows.slice(1, -1)}_${DEAD_LETTER_READS.store}_${event}`);
+  const insert = `INSERT OR IGNORE INTO ${tables.personRows} ("person", "store", "row") SELECT "value", '${DEAD_LETTER_READS.store}', ${rowOf("NEW", DEAD_LETTER_READS)} FROM json_each(NEW."read_persons");`;
+  const remove = `DELETE FROM ${tables.personRows} WHERE "store" = '${DEAD_LETTER_READS.store}' AND "row" = ${rowOf("OLD", DEAD_LETTER_READS)};`;
+  return [
+    `CREATE TRIGGER IF NOT EXISTS ${trigger("insert")} AFTER INSERT ON ${tables.deadLetters} BEGIN ${insert} END`,
+    `CREATE TRIGGER IF NOT EXISTS ${trigger("update")} AFTER UPDATE OF "read_persons", "id" ON ${tables.deadLetters} BEGIN ${remove} ${insert} END`,
+    `CREATE TRIGGER IF NOT EXISTS ${trigger("delete")} AFTER DELETE ON ${tables.deadLetters} BEGIN ${remove} END`,
+  ];
+};
+
+export interface ReadingLetterFunction {
+  (personRows: string): string;
+}
+
+/**
+ * A condition true for a letter whose `read_persons` names the person of the parameter, which the
+ * index of `personRows` answers without reading the table.
+ */
+export const readingLetter: ReadingLetterFunction = (personRows) =>
+  `"id" IN (SELECT json_extract("row", '$[0]') FROM ${personRows} WHERE "person" = ? AND "store" = '${DEAD_LETTER_READS.store}')`;
 
 export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
@@ -163,7 +196,8 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
     "resolved_at" TEXT,
     "payload" TEXT,
     "persons" TEXT NOT NULL DEFAULT '[]',
-    "state_person" TEXT
+    "state_person" TEXT,
+    "read_persons" TEXT NOT NULL DEFAULT '[]'
   )`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "listing")} ON ${tables.deadLetters} ("status", "first_failed_at", "id")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "person")} ON ${tables.deadLetters} ("person")`,
@@ -243,6 +277,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   ...personRowTriggers(tables, tables.idempotencyKeys, PERSON_INDEXED.idempotencyKeys),
   ...personRowTriggers(tables, tables.scheduledCommands, PERSON_INDEXED.scheduledCommands),
   ...personRowTriggers(tables, tables.deadLetters, PERSON_INDEXED.deadLetters),
+  ...deadLetterReadsStatements(tables),
 ];
 
 export interface PersonRowsBackfillStatementsFunction {
@@ -282,7 +317,8 @@ export const subscriberFailuresTableStatement: SubscriberFailuresTableStatementF
     "attempts" INTEGER NOT NULL,
     "first_failed_at" TEXT NOT NULL,
     "last_failed_at" TEXT NOT NULL,
-    "resolved_at" TEXT
+    "resolved_at" TEXT,
+    "read_persons" TEXT NOT NULL DEFAULT '[]'
   )`;
 
 export interface RestrictionStatementsFunction {

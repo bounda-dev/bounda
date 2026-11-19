@@ -15,6 +15,7 @@ import {
   type IncludeRestrictedOptions,
   type ListDeadLettersArgs,
   type PersonalDataExport,
+  type PersonalDataExportOptions,
   type PersonRecipient,
   type QueriesFacade,
   type QueryOptions,
@@ -76,8 +77,16 @@ export interface BoundaStub {
     actor?: string,
     options?: ForgetOptions,
   ): PromiseLike<unknown>;
-  exportPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
-  streamPersonalData(personId: string, actor?: string): PromiseLike<unknown>;
+  exportPersonalData(
+    personId: string,
+    actor?: string,
+    options?: PersonalDataExportOptions,
+  ): PromiseLike<unknown>;
+  streamPersonalData(
+    personId: string,
+    actor?: string,
+    options?: PersonalDataExportOptions,
+  ): PromiseLike<unknown>;
   recipientsOf(personId: string, actor?: string): PromiseLike<unknown>;
   restrict(
     personId: string,
@@ -191,10 +200,12 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
     rebuildReadModel: (name) => unwrap<RebuildReadModelResult>(stub.rebuildReadModel(name)),
     forget: (personId, options) =>
       unwrap<StoredDispatch>(stub.forget(personId, consistency, actor, options)),
-    exportPersonalData: (personId) =>
-      unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor)),
-    streamPersonalData: async (personId) =>
-      partsOf(await unwrap<ReadableStream<Uint8Array>>(stub.streamPersonalData(personId, actor))),
+    exportPersonalData: (personId, options) =>
+      unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor, options)),
+    streamPersonalData: async (personId, options) =>
+      partsOf(
+        await unwrap<ReadableStream<Uint8Array>>(stub.streamPersonalData(personId, actor, options)),
+      ),
     recipientsOf: (personId) =>
       unwrap<readonly PersonRecipient[]>(stub.recipientsOf(personId, actor)),
     restrict: (personId, options) =>

@@ -41,6 +41,13 @@ export interface StoredDeadLetter {
    * redaction reach it, and a forget leaves it, its text unreadable.
    */
   readonly statePerson?: string;
+  /**
+   * Whom else the failed work read data of, besides `person` and `statePerson`, as the aggregates
+   * the commands it dispatched loaded: the error text is sealed under their keys too, around the
+   * others', since it may quote what it read of them, and the letter names them as it names
+   * `statePerson`. Absent when it read nobody else.
+   */
+  readonly readPersons?: readonly string[];
   readonly errorType: DeadLetterErrorType;
   /**
    * The error's class name, `ValidationError`, or the type of what was thrown when it is no error.
@@ -51,8 +58,8 @@ export interface StoredDeadLetter {
    */
   readonly errorCode?: string;
   /**
-   * The error's message, sealed under the keys of `person`, and of `statePerson` around them, and
-   * in the clear only when the letter names nobody.
+   * The error's message, sealed under the keys of `person`, of `statePerson` around them and of
+   * each of `readPersons` around those, and in the clear only when the letter names nobody.
    */
   readonly errorMessage: string | SealedValue;
   /**
@@ -88,7 +95,7 @@ export type NewDeadLetter = Omit<StoredDeadLetter, "status" | "resolvedAt">;
  */
 export type ResealedDeadLetter = Pick<
   StoredDeadLetter,
-  "person" | "statePerson" | "errorMessage" | "errorStack" | "payload" | "persons"
+  "person" | "statePerson" | "readPersons" | "errorMessage" | "errorStack" | "payload" | "persons"
 >;
 
 /**
@@ -174,15 +181,15 @@ export interface DeadLetterStore {
    */
   reseal(id: string, letter: ResealedDeadLetter): Promise<void>;
   /**
-   * The letters that name `person`, in `person`, `statePerson` or `persons`, whatever their
-   * status, by `id`.
+   * The letters that name `person`, in `person`, `statePerson`, `readPersons` or `persons`,
+   * whatever their status, by `id`.
    */
   listByPerson(args: ListByPersonArgs): Promise<readonly StoredDeadLetter[]>;
   /**
    * Removes every letter whose `persons` names `person` under a key outside `keep`, or read in
    * the clear, whatever its status, and resolves to them in the order of `list`. Without `keep`,
-   * every letter whose `persons` names them. A letter that names the person only in `person` or
-   * `statePerson` stays.
+   * every letter whose `persons` names them. A letter that names the person only in `person`,
+   * `statePerson` or `readPersons` stays.
    */
   forget(person: string, keep?: readonly string[]): Promise<readonly StoredDeadLetter[]>;
   /**

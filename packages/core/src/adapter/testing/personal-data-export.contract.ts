@@ -68,9 +68,21 @@ const registry = {
       policies: {
         refuseOnMemberNoted: {
           module: {
-            handler: async ({ event }: { event: { payload: { note: string | null } } }) => {
-              if (event.payload.note?.startsWith("fail") === true) {
-                throw new ValidationError(`refused ${event.payload.note}`, []);
+            handler: async ({
+              event,
+              commands,
+            }: {
+              event: { payload: { note: string | null } };
+              commands: Readonly<Record<string, Dispatch>>;
+            }) => {
+              const note = event.payload.note;
+              // Reads the other member's notes before it gives up, quoting what it read.
+              const other = note?.match(/^fail for (\w+)$/)?.[1];
+              if (other !== undefined) {
+                await commands.noteMember?.({ memberId: other, note: "seen" });
+              }
+              if (note?.startsWith("fail") === true) {
+                throw new ValidationError(`refused ${note}`, []);
               }
             },
           },
@@ -281,6 +293,39 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
       await note("bob", "not ana's");
       await app.runUntilIdle();
     };
+
+    it("holds back from each person the text of work that read someone else's data, and opens it marked when asked", async () => {
+      const { app, note, accesses } = await open();
+      await note("bob", "bob's own");
+      await note("ana", "fail for bob");
+      await app.runUntilIdle();
+      const withheld = ["errorMessage", "errorStack"].map((field) => ({
+        field,
+        reason: "rights-of-others",
+        article: "15(4)",
+      }));
+      for (const person of ["ana", "bob"]) {
+        const exported = await app.exportPersonalData(person);
+        expect(exported.deadLetters).toEqual([
+          expect.objectContaining({ errorMessage: null, errorStack: null, withheld }),
+        ]);
+        expect(JSON.stringify(exported)).not.toContain("refused fail for bob");
+      }
+      accesses.length = 0;
+      const opened = await app.exportPersonalData("bob", { includeWithheld: true });
+      expect(opened.deadLetters).toEqual([
+        expect.objectContaining({ errorMessage: "refused fail for bob", withheld }),
+      ]);
+      expect(accesses.at(-1)).toMatchObject({
+        outcome: "ok",
+        persons: ["bob", "ana"],
+        detail: { withheld: 1, includeWithheld: true },
+      });
+      const text = await textOf(
+        personalDataExportJson(await app.streamPersonalData("ana", { includeWithheld: true })),
+      );
+      expect(text).toContain("refused fail for bob");
+    });
 
     it("hands out what exportPersonalData answers, a part at a time, and writes it as the same JSON", async () => {
       const { app, note } = await open();
@@ -504,6 +549,8 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
             answers: 0,
             readModelRows: 0,
             recipients: 0,
+            withheld: 0,
+            includeWithheld: false,
           },
         },
       ]);

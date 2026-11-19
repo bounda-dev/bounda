@@ -320,6 +320,7 @@ describe("createPersonalDataReseal", () => {
       ...testDeadLetter("d-1"),
       person: "bob",
       statePerson: "ana",
+      readPersons: ["cai"],
       errorMessage: layered,
       errorStack: layered,
       payload: { email },
@@ -412,7 +413,7 @@ describe("createPersonalDataReseal", () => {
     expect(mail?.persons?.[0]?.fingerprint).toBe(mailed.$personal.key);
     expect((await storage.scheduler.get("plain"))?.command.payload).toEqual({ n: 1 });
     const letter = await storage.deadLetterStore.get("d-1");
-    expect(letter).toMatchObject({ person: "bob", statePerson: "ana" });
+    expect(letter).toMatchObject({ person: "bob", statePerson: "ana", readPersons: ["cai"] });
     expect(await open(field(letter?.payload, "email"))).toBe("ana@x");
     const failures = await storage.subscriberFailures.list();
     expect(failures.find(({ eventId }) => eventId === "e-2")?.errorMessage).toBe("in the clear");

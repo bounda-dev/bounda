@@ -72,6 +72,7 @@ export const createRestrictedRetries: CreateRestrictedRetriesFunction = ({
       errorMessage: _message,
       errorStack: _stack,
       statePerson: ofState,
+      readPersons: _read,
       ...letter
     }: StoredDeadLetter,
     error: unknown,

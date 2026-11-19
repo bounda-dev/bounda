@@ -164,7 +164,7 @@ answers every item of article 15(1) from what the app declares, nothing written 
 It holds every event and read-model row that names the person, the scheduled commands and dead
 letters that hold their data, the text of errors sealed under them, and the answers remembered
 for their commands; restricted data comes out too, marked, since the right of access holds while a
-restriction does. The [access log](/guides/personal-data/#who-opened-what) records each export
+restriction does, and what article 15(4) holds back is listed, marked, its value left out. The [access log](/guides/personal-data/#who-opened-what) records each export
 before it hands anything out and again as it ends, so one cut short, or whose process died, is
 recorded too.
 
@@ -177,14 +177,25 @@ CLI with [`bounda personal-data
 export`](/reference/cli/#bounda-personal-data-export-and-bounda-forget-person), to a file readable
 by its owner alone. Charging for further copies is the app's.
 
-**15(4), the rights of others.** Left to the controller, and to know: the export opens what is
-sealed under the person, and some text is sealed under several. The error text of a
-[dead letter](/guides/dead-letters/#what-a-letter-holds) whose event names one person and whose
-process state names another is sealed under both and comes out in the export of each; a rejection
-remembered under an idempotency key is sealed under everyone whose data the state it was decided
-on held, and comes out in the export of the person the command touched. Either may quote another
-person's data. A free-text field, such as a note, may mention someone else too. Read those parts
-before handing an export over where that matters.
+**15(4), the rights of others.** The export hands each person what is theirs alone. A field marked
+`personal` is the data of the person its event, state, command or row names, as the app declares
+it. Text the app's code wrote, an error's or a remembered rejection's, may quote whatever the work
+read, so Bounda seals it under everyone whose data the work read: the error text of a [dead
+letter](/guides/dead-letters/#what-a-letter-holds) and of a subscriber's last failure under the
+person its event names, the one its process state names, those whose aggregates the commands it
+dispatched loaded and those whose rows a projection read; a remembered rejection under the person
+the command touches and everyone whose data the state it was decided on held. A value sealed under
+the person alone comes out; one sealed under someone else too reads `null`, and its record names
+it in `withheld`, with `reason: "rights-of-others"` and `article: "15(4)"`, so the controller sees
+what was held back and why. See [someone else's data](/guides/personal-data/#someone-elses-data).
+
+Weighing the other person's rights against the person's is the controller's, and recital 63 asks
+that it never end in refusing the person everything: `includeWithheld` opens the held-back values,
+still marked, for the controller to read before deciding what to release, and the access log names
+the other persons whose data they may quote. What Bounda cannot see stays the controller's to read
+before handing an export over: a field the app marked for one person that holds another's, such as
+a note that names a friend, and text a handler built from what a port returned or a projection
+read through `client.raw`.
 
 What the export cannot hold is what Bounda does not know of: a field left unmarked, a read model
 without a field marked `.person()`, and whatever a port sent out. An app that owes the person more
@@ -213,7 +224,9 @@ live database and in every copy of it: crypto-shredding, since events are never 
 transaction it cancels their scheduled commands, removes the dead letters of those, drops the
 snapshots that held their data, erases the [answers
 remembered](/guides/personal-data/#remembered-answers) that name them, which open in no copy either
-once the key is gone, and appends `PersonalDataForgotten` to their stream. Read models' fields
+once the key is gone, and appends `PersonalDataForgotten` to their stream. The error text of every
+dead letter and subscriber failure whose work read their data is sealed under their keys too, so
+it reads `null` from then on, the letter left for its retry. Read models' fields
 [sealed at rest](/guides/personal-data/#sealed-at-rest) go with the key; a field [kept in the
 clear](/guides/personal-data/#in-the-clear) forces its read model to project the forgetting, or the
 app does not compile. Every [recipient](#notification-to-recipients-article-19) that received their
@@ -312,9 +325,10 @@ recipient that received the data is told.
 The export is a structured, commonly used, machine-readable document, and its `rights` list
 portability for the categories processed on `consent` or `contract`, or whose special data rests on
 `explicit-consent`, as 20(1)(a) has it. It holds more than article 20 asks, what the app derived
-included; each category's `sources` say which data came from the person. Left to the app:
-transmitting the data directly to another controller, 20(2), and leaving out what would affect the
-rights of others, 20(4).
+included; each category's `sources` say which data came from the person. The rights of others,
+20(4), are kept as 15(4) keeps them: the export holds back text that may quote someone else, marked
+in `withheld`, and what Bounda cannot see is the controller's to read. Left to the app:
+transmitting the data directly to another controller, 20(2).
 
 ## Objection (article 21)
 
@@ -412,7 +426,9 @@ special categories of data and the criminal data they hold, with their condition
 purposes and those the GDPR has rules for, their sources and retention, and the exemptions of 17(3)
 that keep them past erasure; the automated decisions; every event, command, process state and
 read model that holds personal data, whose, how it is kept and where its copies go; the recipients,
-with their country and safeguard; what the runtime keeps about persons and for how long; the keys
+with their country and safeguard; what the runtime keeps about persons and for how long, the dead
+letters, the subscribers' last failures and the remembered answers among it, with what an export
+holds back of them under 15(4); the keys
 and the forget ledger; and the fields marked `notPersonal`. `--markdown` writes it as a document and
 `--json` as data; it exits `1` while anything keeps it from being complete, so a CI step fails on
 it. See [The record of processing

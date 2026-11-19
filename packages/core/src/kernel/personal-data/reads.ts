@@ -1,3 +1,4 @@
+import { codePointOrder } from "../../adapter/sql/order.ts";
 import { type KeyedPerson, keyedPersonId } from "../../adapter/storage/personal-key-store.ts";
 
 // What the failed run read, by the error it failed with: the error is what reaches whoever files
@@ -43,3 +44,20 @@ export const readUnder: ReadUnderFunction = ({ person, error, also = [] }) => {
   }
   return [...reads.values()];
 };
+
+export interface ReadersOfFunction {
+  (error: unknown, also: readonly KeyedPerson[]): readonly string[];
+}
+
+/**
+ * Everyone the failed work read data of under a key, what its unit noted on `error` and `also`,
+ * each once, in code point order.
+ */
+export const readersOf: ReadersOfFunction = (error, also) =>
+  [
+    ...new Set(
+      [...(readsByError.get(Object(error)) ?? []), ...also]
+        .filter(({ fingerprint }) => fingerprint !== null)
+        .map(({ person }) => person),
+    ),
+  ].sort(codePointOrder);

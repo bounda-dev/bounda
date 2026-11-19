@@ -994,6 +994,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         "CREATE INDEX dead_letters_person_idx ON public.dead_letters USING btree (person)",
         "CREATE INDEX dead_letters_persons_idx ON public.dead_letters USING gin (persons jsonb_path_ops)",
         "CREATE UNIQUE INDEX dead_letters_pkey ON public.dead_letters USING btree (id)",
+        "CREATE INDEX dead_letters_read_persons_idx ON public.dead_letters USING gin (read_persons jsonb_path_ops)",
         "CREATE INDEX dead_letters_resolved_idx ON public.dead_letters USING btree (resolved_at, id) WHERE (resolved_at IS NOT NULL)",
         "CREATE INDEX dead_letters_state_person_idx ON public.dead_letters USING btree (state_person) WHERE (state_person IS NOT NULL)",
         "CREATE UNIQUE INDEX disclosures_pkey ON public.disclosures USING btree (person, port, recipient, category)",

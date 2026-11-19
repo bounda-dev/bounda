@@ -62,6 +62,7 @@ import {
   collectPersonalDataExport,
   NO_EXPORTED_RECORDS,
   type PersonalDataExport,
+  type PersonalDataExportOptions,
   type PersonalDataExportPart,
 } from "./personal-data/export.ts";
 import { recordedExport, streamPersonalData } from "./personal-data/export-stream.ts";
@@ -250,9 +251,15 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * with what the hook throws. Rejects with `ValidationError` an empty id, recording nothing. When the person was
    * forgotten, restricted, lifted or redacted while it read, it reads them again, each reading
    * recorded, and rejects with `ConcurrencyError` after `runtime.commands.concurrencyRetries` more.
-   * Holds the whole export in memory: for a long history, `streamPersonalData`.
+   * Holds the whole export in memory: for a long history, `streamPersonalData`. Text the app's
+   * code wrote while it read data of someone else besides the person, an error's or a remembered
+   * rejection's, may quote it, so article 15(4) holds it back: it reads `null`, named in its
+   * record's `withheld`, unless `includeWithheld` opens it for the controller to weigh.
    */
-  exportPersonalData(personId: string): Promise<PersonalDataExport>;
+  exportPersonalData(
+    personId: string,
+    options?: PersonalDataExportOptions,
+  ): Promise<PersonalDataExport>;
   /**
    * The same export, handed out a part at a time as it is read, a page of records at most held at
    * once, whatever the person's history: the header first, then every record, section by section,
@@ -265,7 +272,10 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * Rejects the reading with `ConcurrencyError` when the person was forgotten, restricted, lifted
    * or redacted while it read, once everything was read: a new export reads them as they are.
    */
-  streamPersonalData(personId: string): Promise<AsyncIterable<PersonalDataExportPart>>;
+  streamPersonalData(
+    personId: string,
+    options?: PersonalDataExportOptions,
+  ): Promise<AsyncIterable<PersonalDataExportPart>>;
   /**
    * The recipients of a person's data, as the export lists them, for the person to be told of on
    * request (article 19): those disclosed data of theirs, recorded as the port called them, with
@@ -1828,15 +1838,20 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const clientAs = (
       actor: string | undefined,
     ): BoundaClient<R> & { readonly deadLetters: DeadLetters } => {
-      const streamAs = async (personId: string): Promise<AsyncIterable<PersonalDataExportPart>> => {
+      const streamAs = async (
+        personId: string,
+        options: PersonalDataExportOptions = {},
+      ): Promise<AsyncIterable<PersonalDataExportPart>> => {
         checkPersonId(personId, "exportPersonalData");
+        const includeWithheld = options.includeWithheld === true;
         const exportId = ids.next();
+        let others: () => readonly string[] = () => [];
         const record = (outcome: ExportOutcome, counts = NO_EXPORTED_RECORDS) =>
           recordAccess({
             operation: "exportPersonalData",
-            detail: { exportId, ...counts },
+            detail: { exportId, ...counts, includeWithheld },
             actor,
-            persons: [personId],
+            persons: [personId, ...others()],
             outcome,
           });
         await vouchBefore(...readModelNames);
@@ -1872,8 +1887,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               categories: personalCategories,
               recipients,
               personId,
+              includeWithheld,
             }),
         );
+        others = streamed.others;
         // The header is read: vouched for before it is handed out, as each record is.
         await vouchAfter(...readModelNames);
         return recordedExport({
@@ -1983,7 +2000,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               );
             },
           }),
-        exportPersonalData: (personId) =>
+        exportPersonalData: (personId, options) =>
           tracedOperation({
             tracer: appTracer,
             errorText,
@@ -1994,7 +2011,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               // overtook reads them again, as a command does.
               for (let attempt = 0; ; attempt += 1) {
                 try {
-                  return await collectPersonalDataExport(await streamAs(personId));
+                  return await collectPersonalDataExport(await streamAs(personId, options));
                 } catch (error) {
                   const again =
                     error instanceof PersonalDataChangedError && attempt < concurrencyRetries;
@@ -2003,13 +2020,13 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               }
             },
           }),
-        streamPersonalData: (personId) =>
+        streamPersonalData: (personId, options) =>
           tracedOperation({
             tracer: appTracer,
             errorText,
             operation: "streamPersonalData",
             actor,
-            run: () => streamAs(personId),
+            run: () => streamAs(personId, options),
           }),
         restrict: (personId, options) =>
           tracedOperation({
@@ -2120,8 +2137,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         },
         rebuildReadModel: (name) => gate.rebuildReadModel(name),
         forget: (personId, options) => gate.forget(personId, options),
-        exportPersonalData: (personId) => gate.exportPersonalData(personId),
-        streamPersonalData: (personId) => gate.streamPersonalData(personId),
+        exportPersonalData: (personId, options) => gate.exportPersonalData(personId, options),
+        streamPersonalData: (personId, options) => gate.streamPersonalData(personId, options),
         recipientsOf: (personId) => gate.recipientsOf(personId),
         restrict: (personId, options) => gate.restrict(personId, options),
         unrestrict: (personId, options) => gate.unrestrict(personId, options),

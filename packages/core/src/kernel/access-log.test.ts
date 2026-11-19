@@ -233,6 +233,8 @@ describe("the access log", () => {
         answers: 0,
         readModelRows: handed,
         recipients: 0,
+        withheld: 0,
+        includeWithheld: false,
       },
     });
     expect(accesses()).toEqual([record("started", 0), record("ok", 1)]);
@@ -456,6 +458,8 @@ describe("the access log", () => {
         answers: 0,
         readModelRows: 0,
         recipients: 0,
+        withheld: 0,
+        includeWithheld: false,
       },
     };
     expect(records.map(({ access }) => access)).toEqual([
@@ -486,6 +490,7 @@ describe("the access log", () => {
       },
     });
     await expect(app.streamPersonalData("ana")).rejects.toBe(down);
+    expect(records.map(({ access }) => access.persons)).toEqual([["ana"]]);
     expect(records.map(({ access }) => [access.operation, access.outcome, access.detail])).toEqual([
       [
         "exportPersonalData",
@@ -500,6 +505,8 @@ describe("the access log", () => {
           answers: 0,
           readModelRows: 0,
           recipients: 0,
+          withheld: 0,
+          includeWithheld: false,
         },
       ],
     ]);

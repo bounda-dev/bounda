@@ -24,6 +24,7 @@ const answer: PersonalDataExportPart = {
     expiresAt: "2026-01-02T00:00:00.000Z",
     outcome: { aggregateType: "order", aggregateId: "o-1", rejected: "Taken", message: "é" },
     restricted: [],
+    withheld: [],
   },
 };
 

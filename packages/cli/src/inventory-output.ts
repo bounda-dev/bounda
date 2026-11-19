@@ -55,13 +55,18 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
   },
   "remembered-answers": {
     holds:
-      "the answer of each command dispatched with an idempotency key, sealed under its persons",
+      "the answer of each command dispatched with an idempotency key, sealed under its persons; an export holds one back from each when it names several (article 15(4))",
     kept: "until erased by a forgetting",
   },
   "dead-letters": {
     holds:
-      "the payload of each command that gave up, and the error text of failed work, sealed under the persons it names",
+      "the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4))",
     kept: "for good once retried or discarded, unreadable once their person is forgotten",
+  },
+  "subscriber-failures": {
+    holds:
+      "the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4))",
+    kept: "until the subscriber's next failure replaces it, unreadable once their person is forgotten",
   },
   disclosures: {
     holds: "which categories of whose data went to each recipient, and when",

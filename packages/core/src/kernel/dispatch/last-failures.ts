@@ -19,8 +19,8 @@ export interface RecordLastFailureArgs {
 
 /**
  * What the dispatcher keeps of the failures it meets: each subscriber's last one, its text sealed
- * under the person the event names, which no log or span carries without
- * `runtime.telemetry.errorText: "include"`.
+ * under the person the event names and everyone else the delivery read data of, which no log or
+ * span carries without `runtime.telemetry.errorText: "include"`.
  */
 export interface LastFailures {
   /**

@@ -9,6 +9,7 @@ export type { SqlDatabase, SqlTransaction } from "./database.ts";
 export {
   byFirstFailure,
   decodeErrorText,
+  decodeReadPersons,
   encodeErrorText,
   resolvedAtOfEarlierLetters,
 } from "./dead-letters.ts";

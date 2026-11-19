@@ -335,6 +335,7 @@ const runDiscardDeadLetter = (
 
 interface ExportOptions extends ActingOptions {
   readonly output?: string;
+  readonly includeWithheld: boolean;
 }
 
 // Written as it is read, whatever the person's history: what they asked for, where the operator
@@ -347,7 +348,11 @@ const runExport = (
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    const body = personalDataExportJson(await actingAs(app, options).streamPersonalData(personId));
+    const body = personalDataExportJson(
+      await actingAs(app, options).streamPersonalData(personId, {
+        includeWithheld: options.includeWithheld,
+      }),
+    );
     if (options.output === undefined) {
       await writeToOutput(stdout, body);
       stdout.write("\n");
@@ -1307,6 +1312,11 @@ export const runCli: RunCliFunction = async ({
       .option(
         "--output <file>",
         "write it to this file, readable by its owner alone, and only once whole, instead of printing it",
+      )
+      .option(
+        "--include-withheld",
+        "open, still marked, the text article 15(4) holds back because it may quote someone else's data, for the controller to weigh before handing it over",
+        false,
       ),
   ).action(async (personId: string, options: ExportOptions) => {
     exitCode = await runExport(personId, options, cwd, stdout, stderr);

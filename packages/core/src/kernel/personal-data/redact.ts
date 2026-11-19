@@ -331,10 +331,11 @@ export const settleRedaction: SettleRedactionFunction = async ({
       });
     }
     const open = openTextWith(sealedKeys(outside));
-    // The failures on the person's events, and those kept in the clear: another person's text is
-    // theirs, sealed under their keys.
+    // The failures on the person's events, those whose delivery read their data, and those kept
+    // in the clear: another person's text is theirs, sealed under their keys.
     for (const failure of await storage.subscriberFailures.list()) {
-      if (failure.person !== personId && failure.person !== null) continue;
+      const reads = failure.readPersons?.includes(personId) === true;
+      if (failure.person !== personId && failure.person !== null && !reads) continue;
       const text = await quotingText(failure, open, matcher, personId, disposable);
       if (text !== null) {
         await storage.subscriberFailures.reseal(failure.subscriber, {

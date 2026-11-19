@@ -29,7 +29,7 @@ import { isRecord } from "../shared/merge-fields.ts";
 import { openAnswer } from "./answers.ts";
 import type { PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
-import { openTextWith } from "./errors.ts";
+import { type OpenTextFunction, openTextWith, textPersons } from "./errors.ts";
 import { openedUnder, redactedIn } from "./event-store.ts";
 import {
   collectPersonalDataExport,
@@ -40,6 +40,7 @@ import {
   type ExportedDeadLetter,
   type ExportedRedaction,
   type ExportedRestricted,
+  type ExportedWithheld,
   NO_EXPORTED_RECORDS,
   type PersonalDataExport,
   type PersonalDataExportHeader,
@@ -49,6 +50,7 @@ import {
 import { personalDataInformation } from "./information.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
+import { restrictedAmong } from "./restricted-reads.ts";
 import { processingRestrictionsOf } from "./restriction.ts";
 import { checkPersonId } from "./transact.ts";
 
@@ -78,12 +80,18 @@ export interface StreamPersonalDataArgs {
    */
   readonly recipients: RecipientsRuntime;
   readonly personId: string;
+  /**
+   * Whether what article 15(4) holds back is opened, still marked.
+   */
+  readonly includeWithheld: boolean;
 }
 
 // The header, read whole, and every record, each read only as it is asked for.
 export interface StreamedExport {
   readonly header: PersonalDataExportHeader;
   readonly records: AsyncGenerator<PersonalDataExportRecord, void, undefined>;
+  // Everyone else whose data the values opened in spite of article 15(4) may quote, so far.
+  readonly others: () => readonly string[];
 }
 
 export interface StreamPersonalDataFunction {
@@ -94,6 +102,12 @@ interface Marked {
   readonly data: ExportedData;
   readonly categories: ExportedCategories;
 }
+
+const WITHHELD_FOR_OTHERS = { reason: "rights-of-others", article: "15(4)" } as const;
+
+const TEXT_FIELDS = ["errorMessage", "errorStack"] as const;
+
+const ANSWER_FIELDS = ["idempotencyKey", "outcome"] as const;
 
 const markedFields = (marks: PersonalMarks | null, payload: unknown): Marked => {
   if (marks === null || !isRecord(payload)) return { data: {}, categories: {} };
@@ -225,6 +239,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
   categories,
   recipients,
   personId,
+  includeWithheld,
 }) => {
   checkPersonId(personId, "exportPersonalData");
   const exportedAt = clock.now().toISOString();
@@ -302,31 +317,83 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
       },
     };
   };
+  // Everyone else whose data a value opened in spite of article 15(4) may quote.
+  const others = new Set<string>();
+  const restrictedOther = restrictedAmong(storage.persons);
+  // What of a value sealed under `sealedUnder` the person gets, as `fields`: all of it when it is
+  // sealed under them alone; when it is sealed under someone else too, it may quote their data, so
+  // it is held back, reading `null`, unless `includeWithheld` opens it, restricted while one of
+  // those others is. A value no key opens any more holds nothing to hold back.
+  const shared = async <Opened extends Record<string, unknown>>(
+    sealedUnder: readonly string[],
+    opened: Opened,
+    fields: readonly (keyof Opened & string)[],
+  ): Promise<{
+    readonly values: { readonly [Field in keyof Opened]: Opened[Field] | null };
+    readonly withheld: readonly ExportedWithheld[];
+    readonly restricted: ExportedRestricted;
+  }> => {
+    const elsewhere = sealedUnder.filter((person) => person !== personId);
+    const held = fields.filter((field) => opened[field] !== null);
+    if (elsewhere.length === 0 || held.length === 0) {
+      return { values: opened, withheld: [], restricted: [] };
+    }
+    const withheld = held.map((field) => ({ field, ...WITHHELD_FOR_OTHERS }));
+    if (!includeWithheld) {
+      return {
+        values: { ...opened, ...Object.fromEntries(held.map((field) => [field, null])) },
+        withheld,
+        restricted: [],
+      };
+    }
+    for (const person of elsewhere) others.add(person);
+    const restricted = await Promise.all(elsewhere.map((person) => restrictedOther(person)));
+    return { values: opened, withheld, restricted: restricted.includes(true) ? held : [] };
+  };
+  // An error's text, opened, as the person gets it.
+  const exportedText = async (
+    openText: OpenTextFunction,
+    sealedUnder: readonly string[],
+    { errorMessage, errorStack }: Pick<StoredDeadLetter, "errorMessage" | "errorStack">,
+  ) => {
+    const opened = {
+      errorMessage: await openText(errorMessage),
+      ...(errorStack === undefined ? {} : { errorStack: await openText(errorStack) }),
+    };
+    return await shared(
+      sealedUnder,
+      opened,
+      errorStack === undefined ? ["errorMessage"] : TEXT_FIELDS,
+    );
+  };
   // A letter's error text is the person's only when it is sealed under them: one listed for the
   // persons its payload names keeps whatever its own `person` holds.
   const exportedLetter = async (
     { openText, openedData }: ReturnType<typeof opener>,
     letter: StoredDeadLetter,
   ): Promise<ExportedDeadLetter> => {
-    const theirs = letter.person === personId || letter.statePerson === personId;
+    const sealedUnder = textPersons(letter);
+    const theirs = sealedUnder.includes(personId);
+    const text = theirs ? await exportedText(openText, sealedUnder, letter) : null;
     const data = await openedData(letter.eventType, letter.payload);
     return {
       id: letter.id,
       kind: letter.kind,
       handler: letter.handler,
-      ...(theirs ? { errorMessage: await openText(letter.errorMessage) } : {}),
-      ...(theirs && letter.errorStack !== undefined
-        ? { errorStack: await openText(letter.errorStack) }
-        : {}),
+      ...text?.values,
       ...data,
       restricted: [
-        ...restrictedFields(data.categories),
-        ...(theirs
-          ? textRestricted.filter(
-              (field) => field === "errorMessage" || letter.errorStack !== undefined,
-            )
-          : []),
+        ...new Set([
+          ...restrictedFields(data.categories),
+          ...(theirs
+            ? textRestricted.filter(
+                (field) => field === "errorMessage" || letter.errorStack !== undefined,
+              )
+            : []),
+          ...(text?.restricted ?? []),
+        ]),
       ],
+      withheld: text?.withheld ?? [],
     };
   };
 
@@ -407,20 +474,26 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     // One row per subscriber: few enough to read whole.
     const { openText } = opener();
     for (const failure of await storage.subscriberFailures.list()) {
-      if (failure.person !== personId) continue;
+      const sealedUnder = textPersons(failure);
+      if (!sealedUnder.includes(personId)) continue;
+      const text = await exportedText(openText, sealedUnder, failure);
       yield {
         kind: "subscriberFailure",
         subscriberFailure: {
           subscriber: failure.subscriber,
           eventId: failure.eventId,
           eventType: failure.eventType,
-          errorMessage: await openText(failure.errorMessage),
-          ...(failure.errorStack === undefined
-            ? {}
-            : { errorStack: await openText(failure.errorStack) }),
-          restricted: textRestricted.filter(
-            (field) => field === "errorMessage" || failure.errorStack !== undefined,
-          ),
+          errorMessage: text.values.errorMessage,
+          ...(text.values.errorStack === undefined ? {} : { errorStack: text.values.errorStack }),
+          restricted: [
+            ...new Set([
+              ...textRestricted.filter(
+                (field) => field === "errorMessage" || failure.errorStack !== undefined,
+              ),
+              ...text.restricted,
+            ]),
+          ],
+          withheld: text.withheld,
         },
       };
     }
@@ -448,13 +521,21 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
                 answer: record.answer,
               });
         if (remembered === null) continue;
+        const opened = await shared(
+          record.persons.map(({ person }) => person),
+          { idempotencyKey: remembered.key ?? record.key, outcome: remembered.outcome },
+          ANSWER_FIELDS,
+        );
         yield {
           kind: "answer",
           answer: {
-            idempotencyKey: remembered.key ?? record.key,
+            idempotencyKey: opened.values.idempotencyKey,
             expiresAt: record.expiresAt,
-            outcome: remembered.outcome,
-            restricted: restrictions.length > 0 ? ["outcome"] : [],
+            outcome: opened.values.outcome,
+            restricted: [
+              ...new Set([...(restrictions.length > 0 ? ["outcome"] : []), ...opened.restricted]),
+            ],
+            withheld: opened.withheld,
           },
         };
       }
@@ -478,7 +559,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     if (after !== before) throw new PersonalDataChangedError(personId, before, after);
   }
 
-  return { header, records: records() };
+  return { header, records: records(), others: () => [...others] };
 };
 
 async function* exportParts({

@@ -1,5 +1,5 @@
 import type { ReadModelTransaction } from "../../adapter/adapter.ts";
-import type { SealedValue } from "../../adapter/storage/personal-key-store.ts";
+import type { KeyedPerson, SealedValue } from "../../adapter/storage/personal-key-store.ts";
 import type { ErrorText } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -18,6 +18,7 @@ import {
 } from "../dispatch/delivery.ts";
 import type { BlindIndexer } from "../personal-data/blind-index.ts";
 import { openedUnder } from "../personal-data/event-store.ts";
+import { noteReads } from "../personal-data/reads.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { sealedClient } from "../read-model/sealed-client.ts";
@@ -34,6 +35,7 @@ import {
 import { markedCompareAndSet } from "../read-model/stream-marks.ts";
 import { tableIndexer } from "../read-model/table-indexer.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
+import { asError } from "../shared/retry.ts";
 import { ATTRIBUTES, actorAttribute, type TracerFunction, traced } from "../telemetry.ts";
 
 export interface ProjectionTarget {
@@ -148,7 +150,16 @@ export const projectBatch: ProjectBatchFunction = async ({
   const started = clock.now().getTime();
   let current: StoredEvent | null = null;
   let raw = false;
-  const context: SealingContext = { ...sealing, event: () => current };
+  // The values of the rows the event's projections read: an error they throw may quote any of
+  // them, so it is sealed under those persons too.
+  let opened: KeyedPerson[];
+  const context: SealingContext = {
+    ...sealing,
+    event: () => current,
+    onOpen: (read) => {
+      opened.push(read);
+    },
+  };
   const table = sealedTable({ context, table: transaction.table });
   const client = sealedClient({
     context,
@@ -165,6 +176,7 @@ export const projectBatch: ProjectBatchFunction = async ({
   for (const event of events) {
     if (done > 0 && clock.now().getTime() - started >= maxMs) return settled(done);
     current = event;
+    opened = [];
     const qualified = qualifiedEventType(event.aggregateType, event.type);
     try {
       if (isForgetting(event) && sealing.layout.personal.length > 0) {
@@ -223,7 +235,9 @@ export const projectBatch: ProjectBatchFunction = async ({
           eventType: event.type,
           error,
         });
-        throw new PartialBatchError(done, error);
+        const cause = asError(error);
+        noteReads(cause, opened);
+        throw new PartialBatchError(done, cause);
       }
     }
     done += 1;

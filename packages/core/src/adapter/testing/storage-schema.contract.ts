@@ -46,6 +46,7 @@ const LATEST = [
   { scope: "storage", version: 8 },
   { scope: "storage", version: 9 },
   { scope: "storage", version: 10 },
+  { scope: "storage", version: 11 },
 ];
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
@@ -158,20 +159,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 10 },
+        { scope: "storage", version: 0, latest: 11 },
         { scope: "checkpoints", version: 0, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 10 },
+        { scope: "storage", version: 0, latest: 11 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
-        { scope: "storage", version: 10, latest: 10 },
+        { scope: "storage", version: 11, latest: 11 },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 7, latest: 7 },
         { scope: "tenant-keys", version: 1, latest: 1 },
@@ -228,7 +229,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 10,
+        supported: 11,
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -379,6 +380,51 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       await opened(target.adapter, async (storage) => {
         expect(await storage.checkpointStore.get("projection:x")).toBe(3);
         expect(await storage.personalKeys.countSuperseded()).toBe(0);
+      });
+      expect(await shapeOf(target, dialect)).toEqual(shape);
+    });
+
+    it("adds, at migration 11, whom else a letter's and a failure's work read, naming nobody there before", async () => {
+      const target = await create();
+      await opened(target.adapter, async (storage) => {
+        await storage.deadLetterStore.add({ ...testDeadLetter("d-1"), person: "ana" });
+        await storage.subscriberFailures.record({
+          subscriber: "orders",
+          position: 1,
+          eventId: "e-1",
+          eventType: "OrderPlaced",
+          person: "ana",
+          errorName: "Error",
+          errorMessage: "boom",
+          failedAt: "2026-01-01T00:00:00.000Z",
+        });
+      });
+      const shape = await shapeOf(target, dialect);
+      const table = (name: "subscriberFailures" | "deadLetters") =>
+        `"${storageTableNameFor({ prefix: target.prefix, table: name })}"`;
+      const named = (name: "personRows" | "deadLetters") =>
+        storageTableNameFor({ prefix: target.prefix, table: name });
+      if (dialect === "sqlite") {
+        for (const event of ["insert", "update", "delete"]) {
+          await target.execute(`DROP TRIGGER "${named("personRows")}_dead_letter_reads_${event}"`);
+        }
+      } else {
+        await target.execute(`DROP INDEX "${named("deadLetters")}_read_persons_idx"`);
+      }
+      await target.execute(`ALTER TABLE ${table("deadLetters")} DROP COLUMN "read_persons"`);
+      await target.execute(`ALTER TABLE ${table("subscriberFailures")} DROP COLUMN "read_persons"`);
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'storage' AND "version" >= 11`,
+      );
+      await opened(target.adapter, async (storage) => {
+        const letter = await storage.deadLetterStore.get("d-1");
+        expect(letter).toMatchObject({ id: "d-1", person: "ana" });
+        expect(letter).not.toHaveProperty("readPersons");
+        expect(await storage.subscriberFailures.get("orders")).not.toHaveProperty("readPersons");
+        await storage.deadLetterStore.add({ ...testDeadLetter("d-2"), readPersons: ["bea"] });
+        expect(
+          (await storage.deadLetterStore.listByPerson({ person: "bea" })).map(({ id }) => id),
+        ).toEqual(["d-2"]);
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });

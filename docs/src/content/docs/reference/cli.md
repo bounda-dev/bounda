@@ -466,7 +466,10 @@ readable by its owner alone, beside it as `<file>.partial` until the export is w
 into place, so a failed export leaves no file. An export that fails once it started printing, as
 when the person is forgotten, restricted or redacted meanwhile (`CONCURRENCY_CONFLICT`), has printed
 a document cut short, which is not valid JSON, and exits `2`: run it again. It is recorded in the
-access log like any export.
+access log like any export. Text that may quote someone else's data is [held
+back](/guides/personal-data/#someone-elses-data) as article 15(4) asks; `--include-withheld` opens
+it, still marked, for the controller to weigh before handing the export over, recorded so in the
+access log.
 
 `bounda forget <person>` forgets the person as a whole, as `app.forget` does, and prints
 `forgot c-42`; with `--category`, repeated for several, only those categories, as when a consent is
@@ -689,6 +692,7 @@ forgot again 1 of 3 listed; the rest hold no key the line names, or this store h
 | `--root`, `--config`, `--registry`, `--error-text` | all | As for `bounda rebuild` |
 | `--actor <id>` | `personal-data export`, `forget` | Who acts, named in each `PersonalDataForgotten`, its log line and the access log |
 | `--output <file>` | `personal-data export` | Write the export to this file, once whole, instead of standard output |
+| `--include-withheld` | `personal-data export` | Open, still marked, what article 15(4) holds back, for the controller to weigh |
 
 Exit codes: `0` done, `1` bad arguments, or a person and `--from` both or neither, `2` the project
 could not be loaded, the export or the forget failed, or the file could not be read or has a line

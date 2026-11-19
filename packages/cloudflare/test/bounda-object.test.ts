@@ -189,6 +189,18 @@ describe("a Bounda Durable Object", () => {
       name: "ValidationError",
       code: "VALIDATION_FAILED",
     });
+    // What the reader asks of the export reaches the object, whose access log records it.
+    const logging = connect<typeof registry>(sliced());
+    logs.info.length = 0;
+    await logging.exportPersonalData("ada", { includeWithheld: true });
+    for await (const _ of await logging.streamPersonalData("ada", { includeWithheld: true }));
+    await logging.exportPersonalData("ada");
+    const asked = logs.info.flatMap(([message, fields]) =>
+      message === "personal data accessed" && (fields as { outcome?: string }).outcome === "ok"
+        ? [(fields as { detail: { includeWithheld: boolean } }).detail.includeWithheld]
+        : [],
+    );
+    expect(asked).toEqual([true, true, false]);
   });
 
   it("redacts a marked field in its SQLite, so the old value reads nowhere and the export lists the redaction", async () => {
@@ -714,7 +726,7 @@ describe("a Bounda Durable Object", () => {
     outage.projection = false;
     const status = await store.status();
     expect(status.schema).toEqual([
-      { database: "storage", scope: "storage", version: 10, latest: 10 },
+      { database: "storage", scope: "storage", version: 11, latest: 11 },
       { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
     ]);
     expect(status.subscriberFailures).toContainEqual(

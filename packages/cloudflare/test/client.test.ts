@@ -72,10 +72,15 @@ describe("connect", () => {
     await connect<typeof registry>(stub).as("dpo").recipientsOf("c-1");
     const parts = await connect<typeof registry>(stub).as("dpo").streamPersonalData("c-1");
     for await (const part of parts) throw new Error(`no part was sent, got ${part.kind}`);
-    expect(exports).toEqual([
-      ["c-1", undefined],
+    const opened = { includeWithheld: true };
+    await connect<typeof registry>(stub).as("dpo").exportPersonalData("c-1", opened);
+    await connect<typeof registry>(stub).streamPersonalData("c-1", opened);
+    expect(exports).toStrictEqual([
+      ["c-1", undefined, undefined],
       ["c-1", "dpo"],
-      ["stream", "c-1", "dpo"],
+      ["stream", "c-1", "dpo", undefined],
+      ["c-1", "dpo", opened],
+      ["stream", "c-1", undefined, opened],
     ]);
   });
 
@@ -108,7 +113,7 @@ describe("connect", () => {
         ["unrestrict", "c-1", "eventual", "user-1", { notice: "given" }],
         ["redact", "c-1", "eventual", "user-1", { events: [redacted] }],
       ],
-      exports: [["c-1", "user-1"]],
+      exports: [["c-1", "user-1", undefined]],
       deadLetters: [
         ["list", { status: "failed" }, "user-1", undefined],
         ["retry", "l-1", "user-1"],

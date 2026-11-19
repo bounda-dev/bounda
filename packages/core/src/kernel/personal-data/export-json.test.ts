@@ -51,6 +51,7 @@ const answer: PersonalDataExportPart = {
     expiresAt: "2026-01-02T00:00:00.000Z",
     outcome: { aggregateType: "member", aggregateId: "ana", rejected: "Taken", message: "taken" },
     restricted: [],
+    withheld: [],
   },
 };
 
@@ -71,8 +72,52 @@ const failure: PersonalDataExportPart = {
     eventType: "MemberNoted",
     errorMessage: "cannot index ana",
     restricted: [],
+    withheld: [],
   },
 };
+
+const FOR_OTHERS = { reason: "rights-of-others", article: "15(4)" } as const;
+
+// Each part of a kind that can hold a value back, holding one back.
+const withheld: readonly PersonalDataExportPart[] = [
+  {
+    kind: "deadLetter",
+    deadLetter: {
+      id: "dl-1",
+      kind: "policy",
+      handler: "member.p",
+      errorMessage: null,
+      data: {},
+      categories: {},
+      restricted: [],
+      withheld: [{ field: "errorMessage", ...FOR_OTHERS }],
+    },
+  },
+  {
+    kind: "subscriberFailure",
+    subscriberFailure: {
+      subscriber: "projection:notes",
+      eventId: "e-1",
+      eventType: "MemberNoted",
+      restricted: [],
+      errorMessage: null,
+      withheld: [{ field: "errorMessage", ...FOR_OTHERS }],
+    },
+  },
+  {
+    kind: "answer",
+    answer: {
+      expiresAt: "2026-01-02T00:00:00.000Z",
+      restricted: [],
+      idempotencyKey: null,
+      outcome: null,
+      withheld: [
+        { field: "idempotencyKey", ...FOR_OTHERS },
+        { field: "outcome", ...FOR_OTHERS },
+      ],
+    },
+  },
+];
 
 async function* from(
   parts: readonly PersonalDataExportPart[],
@@ -166,6 +211,14 @@ describe("the parts of an export", () => {
       answers: 1,
       readModelRows: 1,
       recipients: 0,
+      withheld: 0,
+    });
+    expect(withheld.reduce(countPart, counted)).toEqual({
+      ...counted,
+      deadLetters: 1,
+      subscriberFailures: 3,
+      answers: 2,
+      withheld: 3,
     });
     const scheduled: PersonalDataExportPart = {
       kind: "scheduledCommand",
