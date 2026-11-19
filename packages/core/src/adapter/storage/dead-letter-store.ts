@@ -149,6 +149,15 @@ export interface ListHeldDeadLettersArgs {
   readonly limit: number;
 }
 
+/**
+ * How many `failed` letters a handler of a kind holds, as `failedByHandler` counts them.
+ */
+export interface FailedDeadLetters {
+  readonly kind: DeadLetterKind;
+  readonly handler: string;
+  readonly count: number;
+}
+
 export interface ListDeadLettersArgs {
   readonly kind?: DeadLetterKind;
   readonly handler?: string;
@@ -233,4 +242,9 @@ export interface DeadLetterStore {
    * Removes every letter, whatever its status, but those of the event `keepEventId` when given.
    */
   clear(keepEventId?: string): Promise<void>;
+  /**
+   * How many `failed` letters each handler holds, by `kind`, then `handler`, leaving out those
+   * that hold none.
+   */
+  failedByHandler(): Promise<readonly FailedDeadLetters[]>;
 }

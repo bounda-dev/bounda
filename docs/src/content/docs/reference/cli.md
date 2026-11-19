@@ -319,7 +319,9 @@ recipients
   [retention](/guides/personal-data/#inactivity), `not configured` when it is off, and the
   purges of [resolved dead letters](/guides/dead-letters/#keeping-resolved-letters) and of
   [subscriber failures](/reference/configuration/#subscriber-failures), each with how many past it
-  are kept while a person whose data they hold is restricted.
+  are kept while a person whose data they hold is restricted, the first with the failed letters of
+  a handler the app no longer runs, which wait for an operator to discard them, and each saying so
+  when its store could not be read, the reason in the logs.
   The retention has a line for the app's, which forgets persons as a whole, under `default`, and
   one for each category of `app/personal-data.ts`, which [forgets its
   keys](/guides/personal-data/#each-category-for-its-own-time), with how many are past it now and

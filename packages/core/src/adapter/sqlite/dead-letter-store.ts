@@ -241,6 +241,17 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
       );
       return removed.length > 0;
     },
+    failedByHandler: async () =>
+      (
+        await db.all(
+          `SELECT "kind", "handler", count(*) AS "count" FROM ${table} WHERE "status" = 'failed' GROUP BY "kind", "handler" ORDER BY "kind", "handler"`,
+          [],
+        )
+      ).map((row) => ({
+        kind: String(row.kind) as DeadLetterKind,
+        handler: String(row.handler),
+        count: Number(row.count),
+      })),
     clear: (keepEventId) =>
       db.run(`DELETE FROM ${table} WHERE ? IS NULL OR "event_id" <> ?`, [
         keepEventId ?? null,

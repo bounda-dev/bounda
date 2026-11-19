@@ -82,7 +82,8 @@ export interface AppStatus {
    */
   readonly retention: RetentionStatus | null;
   /**
-   * `null` without `runtime.deadLetters.retention`.
+   * The purge of resolved dead letters past `runtime.deadLetters.retention`, and the failed ones
+   * no handler the app runs would retry; `null` once the tenant is forgotten.
    */
   readonly deadLetterRetention: DeadLetterRetentionStatus | null;
   /**

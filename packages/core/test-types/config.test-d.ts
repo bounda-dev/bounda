@@ -1,4 +1,11 @@
-import type { AppStatus, PersonalDataForgottenReason, RedactedEvent } from "@bounda-dev/core";
+import type {
+  AppStatus,
+  DeadLetterRetentionStanding,
+  PersonalDataForgottenReason,
+  RedactedEvent,
+  SubscriberFailureRetentionStanding,
+  UnreadableRetentionStatus,
+} from "@bounda-dev/core";
 import {
   type DurationInput,
   ERROR_TEXT_VARIABLE,
@@ -326,11 +333,20 @@ describe("defineConfig", () => {
       readonly retentionMs: number;
     }>();
     expectTypeOf(DEFAULT_DEAD_LETTER_RETENTION_MS).toEqualTypeOf<number>();
-    expectTypeOf<NonNullable<AppStatus["deadLetterRetention"]>>().toEqualTypeOf<{
-      readonly retentionMs: number;
-      readonly nextDueAt: string | null;
-      readonly held: number;
-    }>();
+    // A purge whose store cannot be read is reported, never thrown: narrow on `unreadable`.
+    expectTypeOf<NonNullable<AppStatus["deadLetterRetention"]>>().toEqualTypeOf<
+      | {
+          readonly retentionMs: number;
+          readonly nextDueAt: string | null;
+          readonly held: number;
+          readonly withoutHandler: number;
+        }
+      | { readonly retentionMs: number; readonly unreadable: true }
+    >();
+    expectTypeOf<NonNullable<AppStatus["subscriberFailureRetention"]>>().toEqualTypeOf<
+      SubscriberFailureRetentionStanding | UnreadableRetentionStatus
+    >();
+    expectTypeOf<DeadLetterRetentionStanding>().not.toHaveProperty("unreadable");
     defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "include" } } });
     defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "omit" } } });
     expectTypeOf<NonNullable<NonNullable<Config["runtime"]>["telemetry"]>>().toEqualTypeOf<{

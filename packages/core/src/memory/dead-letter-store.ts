@@ -2,6 +2,7 @@ import { byFirstFailure } from "../adapter/sql/dead-letters.ts";
 import { codePointOrder } from "../adapter/sql/order.ts";
 import type {
   DeadLetterStore,
+  FailedDeadLetters,
   ListDeadLettersArgs,
   StoredDeadLetter,
 } from "../adapter/storage/dead-letter-store.ts";
@@ -183,6 +184,16 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = ({ r
       }
       letters.delete(letter.id);
       return true;
+    },
+    failedByHandler: async () => {
+      const counts = new Map<string, FailedDeadLetters>();
+      for (const { kind, handler } of select({ status: "failed" })) {
+        const key = JSON.stringify([kind, handler]);
+        counts.set(key, { kind, handler, count: (counts.get(key)?.count ?? 0) + 1 });
+      }
+      return [...counts.values()].sort(
+        (a, b) => codePointOrder(a.kind, b.kind) || codePointOrder(a.handler, b.handler),
+      );
     },
     clear: async (keepEventId) => {
       for (const [id, { eventId }] of letters) if (eventId !== keepEventId) letters.delete(id);

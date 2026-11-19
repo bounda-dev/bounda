@@ -365,6 +365,23 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.get("failed")).not.toBeNull();
     });
 
+    it("counts the failed letters of each handler, by kind then handler", async () => {
+      expect(await store.failedByHandler()).toEqual([]);
+      await store.add(letter("a", { handler: "order.b" }));
+      await store.add(letter("b", { handler: "order.b" }));
+      await store.add(letter("c", { handler: "order.a" }));
+      await store.add(letter("d", { kind: "scheduled", handler: "PlaceOrder" }));
+      await store.add(letter("e", { kind: "recipient", handler: "order.b" }));
+      await store.add(letter("resolved", { handler: "order.c" }));
+      await store.updateStatus("resolved", "retried", resolvedAt);
+      expect(await store.failedByHandler()).toEqual([
+        { kind: "policy", handler: "order.a", count: 1 },
+        { kind: "policy", handler: "order.b", count: 2 },
+        { kind: "recipient", handler: "order.b", count: 1 },
+        { kind: "scheduled", handler: "PlaceOrder", count: 1 },
+      ]);
+    });
+
     it("clears every letter, or every one but those of an event", async () => {
       await store.add(letter("a"));
       await store.add(letter("b", { eventId: "kept" }));

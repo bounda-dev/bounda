@@ -117,6 +117,7 @@ export const deferWrites: DeferWritesFunction = ({
         firstHeldAt: deadLetterStore.firstHeldAt,
         purge: deadLetterStore.purge,
         listHeld: deadLetterStore.listHeld,
+        failedByHandler: deadLetterStore.failedByHandler,
         removeHeld: deadLetterStore.removeHeld,
         clear: async (keepEventId) => {
           for (const [id, { eventId }] of letters) {

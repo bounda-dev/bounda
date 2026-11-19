@@ -1,5 +1,9 @@
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
-import type { DeadLetterStore, StoredDeadLetter } from "../../adapter/storage/dead-letter-store.ts";
+import type {
+  DeadLetterKind,
+  DeadLetterStore,
+  StoredDeadLetter,
+} from "../../adapter/storage/dead-letter-store.ts";
 import type { PersonStore } from "../../adapter/storage/person-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
@@ -10,6 +14,7 @@ import { createPause } from "../personal-data/hold.ts";
 import { restrictedAmong } from "../personal-data/restricted-reads.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import { createLease } from "../shared/lease.ts";
+import type { UnreadableRetentionStatus } from "../shared/retention-status.ts";
 
 // How many resolved letters a pass of the worker removes, or reads among those a restriction
 // holds, at most.
@@ -22,14 +27,22 @@ export const DEAD_LETTER_PURGE_LEASE = "dead-letters:purge:lease";
 
 /**
  * Where the purge stands: when the earliest resolved letter comes due, `null` when none will
- * without a resolution, and how many past the retention are kept because a person they hold data
- * of is restricted and it still opens.
+ * without a resolution; how many past the retention are kept because a person they hold data of
+ * is restricted and it still opens; and how many `failed` letters no handler the app runs would
+ * retry, which no purge removes until an operator discards them.
  */
-export interface DeadLetterRetentionStatus {
+export interface DeadLetterRetentionStanding {
   readonly retentionMs: number;
   readonly nextDueAt: string | null;
   readonly held: number;
+  readonly withoutHandler: number;
 }
+
+/**
+ * The purge of dead letters as `app.status()` reports it: where it stands, or that its store could
+ * not be read.
+ */
+export type DeadLetterRetentionStatus = DeadLetterRetentionStanding | UnreadableRetentionStatus;
 
 export interface DeadLetterRetention {
   /**
@@ -44,6 +57,9 @@ export interface DeadLetterRetention {
    * pauses the sweep, whose end it names.
    */
   nextDueAt(): Promise<Date | null>;
+  /**
+   * Never rejects: a store that fails is logged, and the purge reported unreadable.
+   */
   status(): Promise<DeadLetterRetentionStatus>;
   /**
    * Gives the lease back when this instance holds it. Never rejects.
@@ -60,6 +76,10 @@ export interface CreateDeadLetterRetentionArgs {
   readonly checkpoints: CheckpointStore;
   readonly persons: Pick<PersonStore, "restrictions">;
   readonly keys: PersonalKeys;
+  /**
+   * Whether the app runs the handler of a letter of this kind, one that a retry would run again.
+   */
+  readonly handles: (kind: DeadLetterKind, handler: string) => boolean;
   readonly retentionMs: number;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -109,6 +129,7 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
   checkpoints,
   persons,
   keys,
+  handles,
   retentionMs,
   clock,
   logger,
@@ -226,26 +247,38 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
     nextDueAt,
     status: async () => {
       const at = clock.now().getTime();
-      const found = await due();
-      let held = 0;
-      let releasable = false;
-      const restricted = restrictedAmong(persons);
-      const open = openTextWith(sealedKeys(keys));
-      let after: string | undefined;
-      do {
-        const page = await heldPage(at, after);
-        for (const letter of page) {
-          if ((await holdOf(letter, restricted, open)).holds) held += 1;
-          else releasable = true;
-        }
-        after = page.length < DEAD_LETTER_PURGE_LIMIT ? undefined : page.at(-1)?.id;
-      } while (after !== undefined);
-      const next = earliest(
-        found.resolved,
-        releasable ? at : null,
-        found.held !== null && found.held > at ? found.held : null,
-      );
-      return { retentionMs, nextDueAt: next === null ? null : new Date(next).toISOString(), held };
+      try {
+        const [found, failed] = await Promise.all([due(), store.failedByHandler()]);
+        let held = 0;
+        let releasable = false;
+        const restricted = restrictedAmong(persons);
+        const open = openTextWith(sealedKeys(keys));
+        let after: string | undefined;
+        do {
+          const page = await heldPage(at, after);
+          for (const letter of page) {
+            if ((await holdOf(letter, restricted, open)).holds) held += 1;
+            else releasable = true;
+          }
+          after = page.length < DEAD_LETTER_PURGE_LIMIT ? undefined : page.at(-1)?.id;
+        } while (after !== undefined);
+        const next = earliest(
+          found.resolved,
+          releasable ? at : null,
+          found.held !== null && found.held > at ? found.held : null,
+        );
+        return {
+          retentionMs,
+          nextDueAt: next === null ? null : new Date(next).toISOString(),
+          held,
+          withoutHandler: failed
+            .filter(({ kind, handler }) => !handles(kind, handler))
+            .reduce((sum, { count }) => sum + count, 0),
+        };
+      } catch (error) {
+        logger.error("resolved dead letters could not be read", { error });
+        return { retentionMs, unreadable: true };
+      }
     },
     release: lease.release,
     restored: () => {

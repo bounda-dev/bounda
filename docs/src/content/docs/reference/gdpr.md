@@ -52,7 +52,8 @@ else, in a port's own store, a log, a file, another service, is the app's to ans
   dead letters after [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters),
   30 days by default, kept longer only while a person whose data they hold is restricted; a
   `failed` letter stays until an operator settles it, since only they know whether the work it
-  dropped is still owed.
+  dropped is still owed, and `bounda status` counts those whose handler the app no longer runs, so
+  none is kept unseen.
 - **Integrity and confidentiality, 5(1)(f).** Bounda: personal fields are encrypted at rest under
   a key per person and category, in events, process states, stored commands, dead letters and read
   models, and snapshots under the database's key, all under a [hierarchy of

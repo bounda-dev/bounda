@@ -96,6 +96,7 @@ describe("runtime.deadLetters.retention", () => {
       retentionMs: DEFAULT_DEAD_LETTER_RETENTION_MS,
       nextDueAt: due.toISOString(),
       held: 0,
+      withoutHandler: 0,
     });
     clock.set(new Date(due.getTime() - 1));
     await app.runUntilIdle();
@@ -103,5 +104,26 @@ describe("runtime.deadLetters.retention", () => {
     clock.set(due);
     await app.runUntilIdle();
     expect(await app.deadLetters.get(discarded)).toBeNull();
+  });
+
+  it("counts the failed letters of a policy the app no longer has, which no purge removes", async () => {
+    const adapter = memory();
+    const before = await createTestApp({ registry, adapter });
+    stops.push(() => before.app.stop());
+    await (
+      before.app.commands as unknown as Record<string, (payload: unknown) => unknown>
+    ).placeOrder?.({ orderId: "o-1" });
+    await before.app.runUntilIdle();
+    await before.app.stop();
+    const order = registry.aggregates.order as unknown as Record<string, unknown>;
+    const { app, clock } = await createTestApp({
+      registry: { ...registry, aggregates: { order: { ...order, policies: {} } } } as Registry,
+      adapter,
+    });
+    stops.push(() => app.stop());
+    expect((await app.status()).deadLetterRetention).toMatchObject({ withoutHandler: 1 });
+    clock.set(new Date(clock.now().getTime() + 10 * DEFAULT_DEAD_LETTER_RETENTION_MS));
+    await app.runUntilIdle();
+    expect(await app.deadLetters.count({ status: "failed" })).toBe(1);
   });
 });

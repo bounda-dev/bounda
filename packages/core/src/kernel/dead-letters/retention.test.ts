@@ -28,12 +28,15 @@ const setUp = async () => {
   const clock = createFixedClock(start);
   const keys = keysOver(personalKeys);
   const { logger, entries: logs } = createRecordingLogger();
+  // The app runs every handler but those of `gone`.
+  const gone = new Set<string>();
   const create = () =>
     createDeadLetterRetention({
       store,
       checkpoints,
       persons,
       keys,
+      handles: (kind, handler) => !gone.has(`${kind}:${handler}`),
       retentionMs: 7 * DAY,
       clock,
       logger,
@@ -72,6 +75,7 @@ const setUp = async () => {
     restrict,
     sealed,
     ids,
+    gone,
     other,
   };
 };
@@ -251,13 +255,43 @@ describe("the retention of dead letters across instances", () => {
 
   it("says when the earliest resolved letter comes due", async () => {
     const { retention, resolve } = await setUp();
-    expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, nextDueAt: null, held: 0 });
+    expect(await retention.status()).toEqual({
+      retentionMs: 7 * DAY,
+      nextDueAt: null,
+      held: 0,
+      withoutHandler: 0,
+    });
     await resolve("a", later(DAY));
     expect(await retention.status()).toEqual({
       retentionMs: 7 * DAY,
       nextDueAt: later(8 * DAY).toISOString(),
       held: 0,
+      withoutHandler: 0,
     });
+  });
+
+  it("counts the failed letters no handler the app runs would retry, and none resolved", async () => {
+    const { store, gone, retention, resolve } = await setUp();
+    for (const id of ["a", "b"]) await store.add({ ...testDeadLetter(id), handler: "order.gone" });
+    await store.add({ ...testDeadLetter("scheduled"), kind: "scheduled", handler: "order.p" });
+    await store.add(testDeadLetter("running"));
+    await resolve("settled", start, "discarded", { handler: "order.gone" });
+    gone.add("policy:order.gone");
+    gone.add("scheduled:order.p");
+    expect(await retention.status()).toMatchObject({ withoutHandler: 3 });
+  });
+
+  it("reports the purge unreadable, and logs why, when its store cannot be read", async () => {
+    const { store, logs, retention } = await setUp();
+    store.failedByHandler = () => Promise.reject(new Error("database is down"));
+    expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, unreadable: true });
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: "resolved dead letters could not be read",
+        fields: expect.objectContaining({ errorMessage: "database is down" }),
+      }),
+    );
   });
 });
 
@@ -275,10 +309,16 @@ describe("the retention of dead letters under a restriction", () => {
       retentionMs: 7 * DAY,
       nextDueAt: due.toISOString(),
       held: 3,
+      withoutHandler: 0,
     });
     expect(await retention.sweep(due)).toBe(1);
     expect(await ids()).toEqual(["person", "read", "state"]);
-    expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, nextDueAt: null, held: 3 });
+    expect(await retention.status()).toEqual({
+      retentionMs: 7 * DAY,
+      nextDueAt: null,
+      held: 3,
+      withoutHandler: 0,
+    });
     expect(await retention.sweep(new Date(due.getTime() + 1))).toBe(0);
     expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HELD_RECHECK_MS));
     await persons.unrestrict("c-3", { categories: null });
@@ -325,6 +365,7 @@ describe("the retention of dead letters under a restriction", () => {
       retentionMs: 7 * DAY,
       nextDueAt: due.toISOString(),
       held: 1,
+      withoutHandler: 0,
     });
     const removeHeld = store.removeHeld;
     const told: (readonly string[])[] = [];
@@ -512,6 +553,7 @@ describe("the retention of dead letters under a restriction", () => {
       retentionMs: 7 * DAY,
       nextDueAt: due.toISOString(),
       held: 0,
+      withoutHandler: 0,
     });
     expect(await retention.sweep(start)).toBe(0);
     expect(await retention.sweep(new Date(due.getTime() - 1))).toBe(0);
@@ -519,7 +561,12 @@ describe("the retention of dead letters under a restriction", () => {
     expect(await retention.nextDueAt()).toEqual(due);
     expect(await retention.sweep(due)).toBe(0);
     expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HELD_RECHECK_MS));
-    expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, nextDueAt: null, held: 1 });
+    expect(await retention.status()).toEqual({
+      retentionMs: 7 * DAY,
+      nextDueAt: null,
+      held: 1,
+      withoutHandler: 0,
+    });
     expect(logs).toEqual([]);
   });
 

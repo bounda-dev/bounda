@@ -229,6 +229,17 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       );
       return removed.length > 0;
     },
+    failedByHandler: async () =>
+      (
+        await db.all(
+          `SELECT "kind", "handler", count(*) AS "count" FROM ${table} WHERE "status" = 'failed' GROUP BY "kind", "handler" ORDER BY "kind" COLLATE "C", "handler" COLLATE "C"`,
+          [],
+        )
+      ).map((row) => ({
+        kind: String(row.kind) as DeadLetterKind,
+        handler: String(row.handler),
+        count: Number(row.count),
+      })),
     clear: async (keepEventId) => {
       await db.run(`DELETE FROM ${table} WHERE $1::text IS NULL OR "event_id" <> $1::text`, [
         keepEventId ?? null,

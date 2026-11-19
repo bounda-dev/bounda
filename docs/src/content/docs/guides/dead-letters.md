@@ -68,7 +68,9 @@ worker removes each one once it was resolved longer ago than
 [`runtime.deadLetters.retention`](/reference/configuration/#dead-letters), 30 days unless you set
 another, a batch on each pass, together with its error text and payload. A `failed` letter stays
 until someone settles it, even one whose handler the app no longer has: only an operator knows
-whether the work it dropped is still owed, and discarding it settles it.
+whether the work it dropped is still owed, and discarding it settles it. So that none sits unseen,
+`bounda status` and `app.status().deadLetterRetention.withoutHandler` count the failed letters no
+policy, process, command or recipient the app runs would retry.
 
 ```ts
 export default defineConfig({

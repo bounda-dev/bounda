@@ -130,7 +130,20 @@ describe("the retention of subscriber failures", () => {
     await resolved("policies", start);
     clock.set(later(10 * DAY));
     expect(await retention.nextDueAt()).toEqual(later(10 * DAY));
-    expect((await retention.status()).nextDueAt).toBe(later(10 * DAY).toISOString());
+    expect(await retention.status()).toMatchObject({ nextDueAt: later(10 * DAY).toISOString() });
+  });
+
+  it("reports the purge unreadable, and logs why, when its store cannot be read", async () => {
+    const { store, logs, retention } = await setUp();
+    store.list = () => Promise.reject(new Error("database is down"));
+    expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, unreadable: true });
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: "subscriber failures past the retention could not be read",
+        fields: expect.objectContaining({ errorMessage: "database is down" }),
+      }),
+    );
   });
 
   it("removes nothing a subscriber recorded or resolved again since the sweep read it", async () => {

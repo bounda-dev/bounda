@@ -40,14 +40,20 @@ export type {
 } from "./kernel/app.ts";
 export { createApp } from "./kernel/app.ts";
 export type { DeadLetters } from "./kernel/dead-letters/dead-letters.ts";
-export type { DeadLetterRetentionStatus } from "./kernel/dead-letters/retention.ts";
+export type {
+  DeadLetterRetentionStanding,
+  DeadLetterRetentionStatus,
+} from "./kernel/dead-letters/retention.ts";
 export type {
   DispatcherLag,
   SubscriberFailing,
   SubscriberKind,
   SubscriberLag,
 } from "./kernel/dispatch/dispatcher.ts";
-export type { SubscriberFailureRetentionStatus } from "./kernel/dispatch/failure-retention.ts";
+export type {
+  SubscriberFailureRetentionStanding,
+  SubscriberFailureRetentionStatus,
+} from "./kernel/dispatch/failure-retention.ts";
 export type {
   SubscriberFailure,
   SubscriberFailures,
@@ -174,6 +180,7 @@ export {
 } from "./kernel/shared/error-text.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
+export type { UnreadableRetentionStatus } from "./kernel/shared/retention-status.ts";
 export type {
   AppStatus,
   EncryptedFileStatus,
