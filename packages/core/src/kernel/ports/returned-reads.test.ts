@@ -340,6 +340,14 @@ const registry = {
             return null;
           },
         },
+        rawNobody: {
+          payload: ({ z }: { z: typeof import("zod").z }) => z.object({}),
+          repository: async ({ client }: { client: ReadClient<Record<string, unknown>> }) => {
+            await client.rawReadOf([null, undefined], { categories: ["default"] });
+            return null;
+          },
+          handler: () => null,
+        },
         nobody: {
           payload: ({ z }: { z: typeof import("zod").z }) => z.object({}),
           handler: () => null,
@@ -647,6 +655,7 @@ describe("a query of a read model that holds no personal data", () => {
     const { app, queries, accesses } = await setup();
     accesses.length = 0;
     await queries.nobody?.({});
+    await queries.rawNobody?.({});
     await queries.find?.({ personId: "zoe" });
     await queries.rawFind?.({ personId: "bea", named: true });
     expect(accesses.map(({ operation, persons }) => [operation, persons])).toEqual([
