@@ -212,7 +212,7 @@ describe("the forget ledger in keeper objects", () => {
           return {
             retainLedger: (...args: Parameters<typeof stub.retainLedger>) => {
               calls += 1;
-              if (calls === 1) throw new Error("keeper unavailable");
+              if (calls === 1) return Promise.reject(new Error("keeper unavailable"));
               return stub.retainLedger(...args);
             },
             readLedger: (...args: Parameters<typeof stub.readLedger>) => stub.readLedger(...args),

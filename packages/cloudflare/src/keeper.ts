@@ -229,8 +229,8 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
     }
 
     override async alarm(): Promise<void> {
-      const name = this.ctx.id.name ?? "";
-      const ledger = await this.#forgetLedger(name.slice(TENANT_KEEPER.length));
+      // Only a tenant's keeper arms an alarm: any other refuses it, as it refuses its ledger.
+      const ledger = await this.#forgetLedger(String(this.ctx.id.name).slice(TENANT_KEEPER.length));
       const keepForMs = await this.ctx.storage.get<number>(KEEP_FOR_KEY);
       if (keepForMs !== undefined) {
         await ledger.prune?.({ before: new Date(Date.now() - keepForMs).toISOString() });
