@@ -1,6 +1,6 @@
 import type { AppStatus, SubscriberFailure } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
-import { formatSchema, formatStatus } from "./status-output.ts";
+import { formatRestored, formatSchema, formatStatus } from "./status-output.ts";
 
 const failure = {
   subscriber: "projection:orders",
@@ -34,7 +34,6 @@ const status: AppStatus = {
     ],
     waitingDeadlines: 0,
     forgetLedger: { reconciled: true },
-    personalDataBackfill: { position: 9, caughtUp: false },
   },
   subscriberFailures: [
     { ...failure, current: true },
@@ -301,8 +300,119 @@ describe("formatStatus", () => {
   });
 });
 
+describe("formatStatus of a status with parts that could not be read", () => {
+  const UNREADABLE = { unreadable: true } as const;
+  const unread: AppStatus = {
+    ...status,
+    schema: [
+      { database: "storage", scope: "storage", version: 2, latest: 2 },
+      { database: "readModels.reports", unreadable: true },
+    ],
+    restoresFound: UNREADABLE,
+    lag: {
+      lastPosition: 9,
+      maxLag: 0,
+      subscribers: [
+        { subscriber: "projection:orders", unreadable: true },
+        { subscriber: "policies", position: 9, lag: 0 },
+      ],
+      waitingDeadlines: 0,
+      forgetLedger: null,
+    },
+    subscriberFailures: UNREADABLE,
+    personalDataBackfill: UNREADABLE,
+    forgetLedger: UNREADABLE,
+    tenant: UNREADABLE,
+    keyRotation: UNREADABLE,
+    retention: UNREADABLE,
+    deadLetterRetention: { retentionMs: 90_000, unreadable: true },
+    subscriberFailureRetention: { retentionMs: 90_000, unreadable: true },
+    recipients: UNREADABLE,
+    files: [],
+  };
+
+  it("prints what it read, and says of each other part that its store could not be read", () => {
+    expect(formatStatus({ status: unread }).split("\n")).toEqual([
+      "tables",
+      "  storage  storage  2 of 2",
+      "  readModels.reports  its store could not be read, see the logs",
+      "restores found while running: its store could not be read, see the logs",
+      "subscribers (head at 9)",
+      "  projection:orders  its position, its store could not be read, see the logs",
+      "  policies  at 9, 0 behind",
+      "  last failures: its store could not be read, see the logs",
+      "personal data backfill: its store could not be read, see the logs",
+      "forget ledger: its store could not be read, see the logs",
+      "tenant: its store could not be read, see the logs",
+      "key rotation: its store could not be read, see the logs",
+      "retention: its store could not be read, see the logs",
+      "dead letter retention: 90s, its store could not be read, see the logs",
+      "subscriber failure retention: 90s, its store could not be read, see the logs",
+      "recipients: its store could not be read, see the logs",
+    ]);
+  });
+
+  it("says a failure may still hold its subscriber while where it stands could not be read", () => {
+    const failures: AppStatus["subscriberFailures"] = [
+      { ...failure, current: null },
+      {
+        ...withoutCode,
+        subscriber: "policies",
+        resolvedAt: "2026-05-02T00:00:00.000Z",
+        current: false,
+      },
+    ];
+    const opened = new Map([["projection:orders", { ...failure, errorMessage: "cannot place" }]]);
+    expect(formatStatus({ status: { ...unread, subscriberFailures: failures }, opened })).toContain(
+      [
+        "  projection:orders  its position, its store could not be read, see the logs",
+        "    failed, not resolved: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "    cannot place",
+        "  policies  at 9, 0 behind",
+        "    last failed, resolved 2026-05-02T00:00:00.000Z: ValidationError on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "personal data backfill",
+      ].join("\n"),
+    );
+    expect(
+      formatStatus({
+        status: { ...unread, lag: UNREADABLE, subscriberFailures: failures },
+        opened,
+      }),
+    ).toContain(
+      [
+        "restores found while running: its store could not be read, see the logs",
+        "subscribers: where they stand, its store could not be read, see the logs",
+        "  projection:orders",
+        "    failed, not resolved: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "    cannot place",
+        "  policies",
+        "    last failed, resolved 2026-05-02T00:00:00.000Z: ValidationError on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "personal data backfill",
+      ].join("\n"),
+    );
+    expect(formatStatus({ status: { ...unread, lag: UNREADABLE } })).toContain(
+      [
+        "subscribers: where they stand, its store could not be read, see the logs",
+        "  last failures: its store could not be read, see the logs",
+        "personal data backfill",
+      ].join("\n"),
+    );
+  });
+});
+
 describe("formatSchema", () => {
   it("says so when no database has tables to version", () => {
     expect(formatSchema([])).toBe("  no tables to version");
+  });
+});
+
+describe("formatRestored", () => {
+  it("says how many restores were found, or that the count could not be read", () => {
+    expect(formatRestored(3)).toBe(
+      "restore recorded: 3 found so far; the background jobs start over from the copy, without the holds it brought back",
+    );
+    expect(formatRestored({ unreadable: true })).toBe(
+      "restore recorded: how many were found so far, its store could not be read, see the logs; the background jobs start over from the copy, without the holds it brought back",
+    );
   });
 });

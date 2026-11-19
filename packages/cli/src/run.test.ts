@@ -1427,6 +1427,46 @@ describe("bounda status", () => {
     );
   });
 
+  it("prints what it read, says which part it could not, and exits 2 so a check alerts", async () => {
+    const unreadable = ["--config", "unreadable.config.ts"];
+    const text = await cli(["status", ...unreadable], fixture);
+    expect(text.code).toBe(EXIT_FAILURE);
+    expect(text.stdout).toMatch(/^restores found while running: \d+$/m);
+    expect(text.stdout).toContain("  last failures: its store could not be read, see the logs\n");
+    expect(text.stdout).toContain(
+      "subscriber failure retention: 30d, its store could not be read, see the logs\n",
+    );
+    expect(text.stdout).toContain("recipients: its store could not be read, see the logs\n");
+    expect(besidesLogs(text.stderr)).toBe(
+      "error: could not read subscriberFailures, subscriberFailureRetention, recipients; see the logs\n",
+    );
+    expect(logged(text.stderr, "error", "a part of the status could not be read")).toEqual([
+      expect.objectContaining({ part: "subscriberFailures" }),
+      expect.objectContaining({ part: "recipients" }),
+    ]);
+    const json = await cli(["status", ...unreadable, "--json"], fixture);
+    expect(json.code).toBe(EXIT_FAILURE);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      subscriberFailures: { unreadable: true },
+      recipients: { unreadable: true },
+      restoresFound: expect.any(Number),
+    });
+    const opened = await cli(["status", ...unreadable, "--json", "--error-text"], fixture);
+    expect(opened.code).toBe(EXIT_FAILURE);
+    expect(JSON.parse(opened.stdout).subscriberFailures).toEqual({ unreadable: true });
+    expect(besidesLogs(opened.stderr)).toBe(
+      [
+        "error: the store is down",
+        "error: could not read subscriberFailures, subscriberFailureRetention, recipients, the failures' text; see the logs",
+        "",
+      ].join("\n"),
+    );
+    const recipients = await cli(["recipients", ...unreadable], fixture);
+    expect(recipients.code).toBe(EXIT_FAILURE);
+    expect(recipients.stdout).toBe("");
+    expect(besidesLogs(recipients.stderr)).toBe("error: could not read recipients; see the logs\n");
+  });
+
   it("documents its options in its help", async () => {
     const help = await cli(["status", "--help"], fixture);
     expect(help.code).toBe(EXIT_OK);

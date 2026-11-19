@@ -10,6 +10,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten, expectRedacted } from "../../testing/index.ts";
 import { settledMark } from "../read-model/sealed-settle.ts";
+import { readPart } from "../test-support.ts";
 import { epochMark, epochNumber } from "./blind-index.ts";
 import { RESEAL_SWITCH_MS } from "./reseal.ts";
 
@@ -252,9 +253,9 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     const old = await keyFingerprints("personalKeys");
     const oldIndex = await keyFingerprints("indexKeys");
     const events = (await adapter.inspect()).find(({ store }) => store === "events")?.rows.length;
-    const older = (await app.status()).keyRotation?.kid;
+    const older = readPart((await app.status()).keyRotation)?.kid;
     await reseal();
-    const status = (await app.status()).keyRotation?.reseal;
+    const status = readPart((await app.status()).keyRotation)?.reseal;
     expect(status).toMatchObject({ step: "expiring", superseded: 0 });
     const tables = await adapter.inspect();
     // No old key's fingerprint is left but in the record of what superseded what, and the
@@ -309,7 +310,7 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     // The database's previous key goes once the last answer filed under it expires.
     clock.advance(2 * DAY);
     await app.runUntilIdle();
-    expect((await app.status()).keyRotation?.reseal).toMatchObject({
+    expect(readPart((await app.status()).keyRotation)?.reseal).toMatchObject({
       step: "complete",
       startedAt: null,
       completedAt: expect.any(String),
@@ -358,7 +359,7 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     await register("ana");
     await register("bob");
     await reseal();
-    expect((await app.status()).keyRotation?.reseal).toMatchObject({ step: "complete" });
+    expect(readPart((await app.status()).keyRotation)?.reseal).toMatchObject({ step: "complete" });
   });
 
   it("indexes a table first written while the keys are replaced under the new key, and marks it", async () => {
@@ -405,7 +406,7 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
       issues: [{ path: [], message: "Expected no reseal keeping keys" }],
     });
     await app.runUntilIdle();
-    expect((await app.status()).keyRotation?.reseal).toMatchObject({ step: "replacing" });
+    expect(readPart((await app.status()).keyRotation)?.reseal).toMatchObject({ step: "replacing" });
     expect(await app.nextDueAt()).toEqual(new Date(rotatedAt + RESEAL_SWITCH_MS));
     // The keys are replaced, nothing is sealed again yet: the old ones still open it.
     expect(await emailOf("ana")).toEqual({ email: "ana@example.com" });
@@ -440,7 +441,7 @@ describe.each(adapters)("a reseal of the tenant's personal data, %s", (_, adapte
     await app.runUntilIdle();
     clock.advance(RESEAL_SWITCH_MS);
     await app.runUntilIdle();
-    expect((await app.status()).keyRotation?.reseal).toMatchObject({ superseded: 0 });
+    expect(readPart((await app.status()).keyRotation)?.reseal).toMatchObject({ superseded: 0 });
     await expectForgotten(app, "ana");
     await expectRedacted(app, "bob");
     expect(await emailOf("bob")).toEqual({ email: null });

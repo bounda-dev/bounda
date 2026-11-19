@@ -23,6 +23,7 @@ import type { FieldsArgs } from "../../modules/view.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { HELD_RECHECK_MS } from "../personal-data/held-text.ts";
 import { masterKey } from "../personal-data/master-key.ts";
+import { readPart } from "../test-support.ts";
 
 // The projection quotes the personal field it read, as a careless one does, while `failing.on`.
 const failing = { on: false };
@@ -279,7 +280,7 @@ describe.each([
     failing.on = true;
     await register(app, "c-1");
     await app.runUntilIdle({ maxPasses: 3 });
-    const [stuck] = (await app.status()).subscriberFailures;
+    const [stuck] = readPart((await app.status()).subscriberFailures);
     expect(stuck?.attempts).toBeGreaterThan(1);
     failing.on = false;
     await app.runUntilIdle();
@@ -404,7 +405,7 @@ describe.each([
     await register(first.app, "c-1");
     await first.app.runUntilIdle({ maxPasses: 3 });
     const failedAt = Date.parse(
-      (await first.app.status()).subscriberFailures[0]?.lastFailedAt ?? "",
+      readPart((await first.app.status()).subscriberFailures)[0]?.lastFailedAt ?? "",
     );
     first.clock.set(new Date(failedAt + DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS));
     expect(await first.app.nextDueAt()).toBeNull();

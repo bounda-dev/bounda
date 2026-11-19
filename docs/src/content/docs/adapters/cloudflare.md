@@ -326,7 +326,10 @@ of an app wherever it runs: the same `commands` and `queries` as `app.commands` 
 `restrict` and `unrestrict`. `streamPersonalData` crosses RPC as a stream of the export's parts,
 read on the object a page at a time as the Worker reads them, and stopped when the Worker stops
 reading, so a person's long history never has to fit in one RPC answer. `bounda status` runs where Node can open the store, so a Durable Object's is read
-through `status()`, from an admin route of the Worker, say.
+through `status()`, from an admin route of the Worker, say. A part the object cannot read comes
+back marked `{ unreadable: true }` rather than failing the call, as on any host
+([observability](/reference/observability/)): check `unreadableParts(status)` before answering it
+as complete.
 Its commands resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })`
 resolves them once their events are stored, for a request that reads nothing after it. A refusal comes
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever

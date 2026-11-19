@@ -64,6 +64,7 @@ import type {
   FieldTypes,
   FieldTypesOf,
   FieldTypesOfRow,
+  ForgetLedgerLag,
   ForgetLedgerReconciliationStatus,
   ForgetOptions,
   ForgetsPersonalData,
@@ -126,6 +127,7 @@ import type {
   ReadEventsArgs,
   ReadOutcome,
   RecipientKind,
+  RecipientStatus,
   RedactedEvent,
   RedactedFields,
   RedactionTarget,
@@ -151,14 +153,22 @@ import type {
   SpecialCategoryData,
   SpecialCategoryKind,
   SpecificPurpose,
+  StatusLag,
   StoredDispatch,
   StoredEvent,
+  SubscriberFailing,
   SubscriberFailure,
   SubscriberFailureRetentionStatus,
   SubscriberFailureStatus,
   SubscriberFailures,
+  SubscriberLag,
   Table,
   TransferSafeguard,
+  UnreadablePartsFunction,
+  UnreadableRetentionStatus,
+  UnreadableSchemaStatus,
+  UnreadableStatus,
+  UnreadableSubscriberLag,
   UnrestrictOptions,
   Where,
   WithholdingReason,
@@ -176,6 +186,7 @@ import {
   SPECIAL_CATEGORY_CONDITIONS,
   SPECIAL_CATEGORY_KINDS,
   SPECIFIC_PURPOSES,
+  unreadableParts,
 } from "@bounda-dev/core";
 import {
   type Adapter,
@@ -2031,7 +2042,41 @@ describe("operations", () => {
   it("types the status every client reads, without text, and the scopes of the tables", () => {
     expectTypeOf<BoundaClient["status"]>().toEqualTypeOf<() => Promise<AppStatus>>();
     expectTypeOf<BoundaApp["status"]>().toEqualTypeOf<BoundaClient["status"]>();
-    expectTypeOf<AppStatus["schema"]>().toEqualTypeOf<readonly SchemaStatus[]>();
+    // A part whose store cannot be read comes back marked, never as a rejection: narrow on
+    // `unreadable`, and `unreadableParts` names every such part.
+    expectTypeOf<UnreadableStatus>().toEqualTypeOf<{ readonly unreadable: true }>();
+    expectTypeOf<UnreadableRetentionStatus>().toExtend<UnreadableStatus>();
+    expectTypeOf(unreadableParts).toEqualTypeOf<UnreadablePartsFunction>();
+    expectTypeOf<UnreadablePartsFunction>().toEqualTypeOf<
+      (status: AppStatus) => readonly string[]
+    >();
+    expectTypeOf<AppStatus["schema"]>().toEqualTypeOf<
+      readonly (SchemaStatus | UnreadableSchemaStatus)[]
+    >();
+    expectTypeOf<UnreadableSchemaStatus>().toEqualTypeOf<{
+      readonly database: string;
+      readonly unreadable: true;
+    }>();
+    expectTypeOf<AppStatus["lag"]>().toEqualTypeOf<StatusLag | UnreadableStatus>();
+    expectTypeOf<StatusLag>().toEqualTypeOf<{
+      readonly lastPosition: number;
+      readonly subscribers: readonly (SubscriberLag | UnreadableSubscriberLag)[];
+      readonly maxLag: number;
+      readonly waitingDeadlines: number;
+      readonly forgetLedger: ForgetLedgerLag | null;
+    }>();
+    expectTypeOf<UnreadableSubscriberLag>().toEqualTypeOf<{
+      readonly subscriber: string;
+      readonly failing?: SubscriberFailing;
+      readonly unreadable: true;
+    }>();
+    expectTypeOf<AppStatus["subscriberFailures"]>().toEqualTypeOf<
+      readonly SubscriberFailureStatus[] | UnreadableStatus
+    >();
+    expectTypeOf<AppStatus["recipients"]>().toEqualTypeOf<
+      readonly RecipientStatus[] | UnreadableStatus
+    >();
+    expectTypeOf<AppStatus["files"]>().not.toExtend<UnreadableStatus>();
     expectTypeOf<SchemaStatus>().toEqualTypeOf<{
       readonly database: string;
       readonly scope: string;
@@ -2052,9 +2097,13 @@ describe("operations", () => {
     expectTypeOf<Adapter["migrate"]>().toEqualTypeOf<
       (scopes: readonly SchemaScopeName[]) => Promise<readonly SchemaVersion[]>
     >();
-    expectTypeOf<AppStatus["restoresFound"]>().toEqualTypeOf<number>();
-    expectTypeOf<AppStatus["keyRotation"]>().toEqualTypeOf<KeyRotationStatus | null>();
-    expectTypeOf<AppStatus["retention"]>().toEqualTypeOf<RetentionStatus | null>();
+    expectTypeOf<AppStatus["restoresFound"]>().toEqualTypeOf<number | UnreadableStatus>();
+    expectTypeOf<AppStatus["keyRotation"]>().toEqualTypeOf<
+      KeyRotationStatus | null | UnreadableStatus
+    >();
+    expectTypeOf<AppStatus["retention"]>().toEqualTypeOf<
+      RetentionStatus | null | UnreadableStatus
+    >();
     expectTypeOf<
       AppStatus["deadLetterRetention"]
     >().toEqualTypeOf<DeadLetterRetentionStatus | null>();
@@ -2065,16 +2114,16 @@ describe("operations", () => {
       | { readonly retentionMs: number; readonly nextDueAt: string | null; readonly held: number }
       | { readonly retentionMs: number; readonly unreadable: true }
     >();
-    expectTypeOf<
-      AppStatus["forgetLedger"]
-    >().toEqualTypeOf<ForgetLedgerReconciliationStatus | null>();
-    expectTypeOf<
-      AppStatus["personalDataBackfill"]
-    >().toEqualTypeOf<PersonalDataBackfillLag | null>();
+    expectTypeOf<AppStatus["forgetLedger"]>().toEqualTypeOf<
+      ForgetLedgerReconciliationStatus | null | UnreadableStatus
+    >();
+    expectTypeOf<AppStatus["personalDataBackfill"]>().toEqualTypeOf<
+      PersonalDataBackfillLag | null | UnreadableStatus
+    >();
     expectTypeOf<
       "errorMessage" | "errorStack" extends keyof SubscriberFailureStatus ? true : false
     >().toEqualTypeOf<false>();
-    expectTypeOf<SubscriberFailureStatus["current"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<SubscriberFailureStatus["current"]>().toEqualTypeOf<boolean | null>();
     expectTypeOf<KeyRotationStatus>().toEqualTypeOf<{
       readonly kid: string;
       readonly previous: readonly string[];

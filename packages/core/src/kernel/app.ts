@@ -203,6 +203,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * every subscriber's lag and last failure without its text, the backfill of personal data, the
    * forget ledger's reconciliation, the key rotation, the retention and the purge of dead letters.
    * What `bounda status` prints. Records nothing in the access log: none of it is personal data.
+   * Never rejects for a store it cannot read: that part is logged and reported unreadable, and
+   * `unreadableParts` names every such part.
    */
   status(): Promise<AppStatus>;
   /**
@@ -1577,7 +1579,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const status = (): Promise<AppStatus> =>
       readAppStatus({
         config,
-        lag: getLag,
+        logger,
+        lag: async () => ({
+          ...(await dispatcher.standings()),
+          waitingDeadlines: worker.waitingDeadlines(),
+          forgetLedger:
+            reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
+        }),
+        backfill: backfill === undefined ? undefined : () => backfill.status(),
         failures: written.subscriberFailures,
         restores,
         reconciliation,

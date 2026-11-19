@@ -13,6 +13,7 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { createMutex } from "../shared/mutex.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
+import type { UnreadableStatus } from "../shared/retention-status.ts";
 import type { TracerFunction } from "../telemetry.ts";
 import {
   type CheckpointedSubscriber,
@@ -55,6 +56,15 @@ export interface SubscriberLag {
 }
 
 /**
+ * A subscriber whose position could not be read, with what this process saw it fail on, if
+ * anything.
+ */
+export interface UnreadableSubscriberLag extends UnreadableStatus {
+  readonly subscriber: string;
+  readonly failing?: SubscriberFailing;
+}
+
+/**
  * A subscriber whose batches keep failing, as this process saw it: the event it is stuck on, the
  * last error, how many deliveries in a row failed, since when, and when background passes try it
  * again. Each process only knows about the failures it met itself; the lag, read from the
@@ -90,6 +100,10 @@ export interface DispatcherLag {
   readonly maxLag: number;
 }
 
+export interface DispatcherStandings extends Omit<DispatcherLag, "subscribers"> {
+  readonly subscribers: readonly (SubscriberLag | UnreadableSubscriberLag)[];
+}
+
 export interface CatchUpThroughArgs {
   readonly position: number;
   readonly aggregateType: string;
@@ -112,6 +126,11 @@ export interface Dispatcher {
    */
   catchUpThrough(args: CatchUpThroughArgs): Promise<boolean>;
   getLag(): Promise<DispatcherLag>;
+  /**
+   * `getLag` for the status: a subscriber whose position cannot be read is logged and reported
+   * unreadable rather than rejecting, and `maxLag` counts only those read.
+   */
+  standings(): Promise<DispatcherStandings>;
   /**
    * The subscriber's `position` as `getLag` reports it.
    */
@@ -271,6 +290,52 @@ export const createDispatcher: CreateDispatcherFunction = ({
     return pending[pending.length - 1]?.position ?? position;
   };
 
+  const failingOf = (subscriber: string): { readonly failing?: SubscriberFailing } => {
+    const current = failing.get(subscriber);
+    return current === undefined
+      ? {}
+      : {
+          failing: {
+            ...current.failure,
+            attempts: current.attempts,
+            since: new Date(current.since).toISOString(),
+            retryAt: new Date(current.retryAt).toISOString(),
+          },
+        };
+  };
+
+  const lagWith = async <T extends UnreadableSubscriberLag>(
+    unreadable: (subscriber: string, error: unknown) => T,
+  ): Promise<{
+    readonly lastPosition: number;
+    readonly subscribers: readonly (SubscriberLag | T)[];
+    readonly maxLag: number;
+  }> => {
+    const lastPosition = await eventStore.lastPosition();
+    const reads = new Map<number, Promise<readonly StoredEvent[]>>();
+    const subscribers = await Promise.all(
+      delivering.map(async (subscriber): Promise<SubscriberLag | T> => {
+        let position: number;
+        try {
+          position = await standing(subscriber, reads, lastPosition);
+        } catch (error) {
+          return unreadable(subscriber.name, error);
+        }
+        return {
+          subscriber: subscriber.name,
+          position,
+          lag: Math.max(0, lastPosition - position),
+          ...failingOf(subscriber.name),
+        };
+      }),
+    );
+    return {
+      lastPosition,
+      subscribers,
+      maxLag: Math.max(0, ...subscribers.map((each) => ("unreadable" in each ? 0 : each.lag))),
+    };
+  };
+
   const backingOff = (subscriber: string): boolean => {
     const current = failing.get(subscriber);
     return current !== undefined && now() < current.retryAt;
@@ -415,35 +480,18 @@ export const createDispatcher: CreateDispatcherFunction = ({
       const subscriber = delivering.find((each) => each.name === name);
       return subscriber === undefined ? checkpointStore.get(name) : standing(subscriber, new Map());
     },
-    getLag: async () => {
-      const lastPosition = await eventStore.lastPosition();
-      const reads = new Map<number, Promise<readonly StoredEvent[]>>();
-      const lags = await Promise.all(
-        delivering.map(async (subscriber) => {
-          const position = await standing(subscriber, reads, lastPosition);
-          const current = failing.get(subscriber.name);
-          return {
-            subscriber: subscriber.name,
-            position,
-            lag: Math.max(0, lastPosition - position),
-            ...(current === undefined
-              ? {}
-              : {
-                  failing: {
-                    ...current.failure,
-                    attempts: current.attempts,
-                    since: new Date(current.since).toISOString(),
-                    retryAt: new Date(current.retryAt).toISOString(),
-                  },
-                }),
-          };
-        }),
-      );
-      return {
-        lastPosition,
-        subscribers: lags,
-        maxLag: Math.max(0, ...lags.map((lag) => lag.lag)),
-      };
-    },
+    getLag: () =>
+      lagWith((_subscriber, error): never => {
+        throw error;
+      }),
+    standings: () =>
+      lagWith((subscriber, error) => {
+        logger.error("a part of the status could not be read", {
+          part: "lag",
+          subscriber,
+          error,
+        });
+        return { subscriber, unreadable: true, ...failingOf(subscriber) };
+      }),
   };
 };

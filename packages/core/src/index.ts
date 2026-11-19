@@ -49,6 +49,7 @@ export type {
   SubscriberFailing,
   SubscriberKind,
   SubscriberLag,
+  UnreadableSubscriberLag,
 } from "./kernel/dispatch/dispatcher.ts";
 export type {
   SubscriberFailureRetentionStanding,
@@ -180,14 +181,21 @@ export {
 } from "./kernel/shared/error-text.ts";
 export type { IdempotencyKeyForFunction } from "./kernel/shared/idempotency-key.ts";
 export { idempotencyKeyFor } from "./kernel/shared/idempotency-key.ts";
-export type { UnreadableRetentionStatus } from "./kernel/shared/retention-status.ts";
+export type {
+  UnreadableRetentionStatus,
+  UnreadableStatus,
+} from "./kernel/shared/retention-status.ts";
 export type {
   AppStatus,
   EncryptedFileStatus,
   RecipientStatus,
   SchemaStatus,
+  StatusLag,
   SubscriberFailureStatus,
+  UnreadablePartsFunction,
+  UnreadableSchemaStatus,
 } from "./kernel/status.ts";
+export { unreadableParts } from "./kernel/status.ts";
 export type { Witness } from "./kernel/witness.ts";
 export * from "./modules/index.ts";
 export type { AppEnv, AppRegistry, EnvSection, Register } from "./register/index.ts";

@@ -64,6 +64,16 @@ failing subscriber is stuck on (see
 `mismatch` on `bounda.snapshots` is worth one too: a snapshot folded to a state the stream does not
 give, so an `evolve` of that aggregate depends on something other than the events.
 
+`app.status()` is meant for the moment something is wrong, so it never rejects because a store it
+reads is down: each part it cannot read, `restoresFound`, the lag, a database of `schema`, a
+subscriber's position, the failures, the backfill, the forget ledger, the tenant, the key rotation,
+the retention, either purge or the recipients, is logged once for the call as
+`a part of the status could not be read`, with the `part` (and the `database` or `subscriber`),
+and comes back as `{ unreadable: true }` (`UnreadableStatus`), while the others come back as
+usual. `unreadableParts(status)` names them, empty when every part was read: a health endpoint
+answers an error when it is not empty, rather than taking a status in part for a whole one.
+`bounda status` prints what it read and exits `2` then.
+
 ## Error text
 
 The message of an error a handler throws may quote what it read, a person's email included, and a

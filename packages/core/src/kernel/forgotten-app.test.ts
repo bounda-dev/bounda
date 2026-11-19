@@ -16,6 +16,7 @@ import type { Registry } from "../modules/registry.ts";
 import { type BoundaApp, createApp } from "./app.ts";
 import { createForgottenRunner } from "./forgotten-app.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
+import { unreadableParts } from "./status.ts";
 import { tracer } from "./telemetry.ts";
 
 // One personal field, and a command that writes it.
@@ -64,8 +65,10 @@ interface Forgotten {
 }
 
 // An app started anew on a store whose tenant an earlier app forgot.
-const forgottenStart = async (role: "all" | "web" = "all"): Promise<Forgotten> => {
-  const adapter = memory();
+const forgottenStart = async (
+  role: "all" | "web" = "all",
+  adapter: Adapter = memory(),
+): Promise<Forgotten> => {
   const clock = createFixedClock(new Date("2026-01-01T00:00:00.000Z"));
   const before = await createApp({ registry, config: { storage: adapter }, clock });
   await (
@@ -152,6 +155,32 @@ describe("an app started for a forgotten tenant", () => {
     expect(await app.deadLetters.list()).toEqual([]);
     // Its facades are no promises: awaiting one gives it back.
     expect(await Promise.resolve(app.commands)).toBe(app.commands);
+  });
+
+  it("reports a part of its status whose store cannot be read unreadable, and still the others", async () => {
+    const base = memory();
+    let down = false;
+    const { app, forgetting } = await forgottenStart("all", {
+      ...base,
+      createStorage: async () => {
+        const ports = await base.createStorage();
+        return {
+          ...ports,
+          eventStore: {
+            ...ports.eventStore,
+            lastPosition: async () => {
+              if (down) throw new Error("events unreadable");
+              return ports.eventStore.lastPosition();
+            },
+          },
+        };
+      },
+    });
+    down = true;
+    const status = await app.status();
+    expect(unreadableParts(status)).toEqual(["lag"]);
+    expect(status.tenant).toMatchObject({ forgottenAt: forgetting.forgottenAt });
+    expect(status.subscriberFailures).toEqual([]);
   });
 
   it("runs its notices in the background in every role but web, until it stops", async () => {

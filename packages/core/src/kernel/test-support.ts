@@ -54,6 +54,7 @@ interface OrderState {
  * The order aggregate with its precise types, for tests that extend it with policies or processes
  * and want typed facades.
  */
+import type { UnreadableStatus } from "./shared/retention-status.ts";
 export const orderAggregate = {
   state: { initialState: { status: "new", total: 0 } satisfies OrderState },
   events: {
@@ -649,3 +650,15 @@ export const eachPerson: EachPersonFunction = (keysOf) => ({
     ),
   discarded: () => createDisposableKey(),
 });
+
+export interface ReadPartFunction {
+  <T>(part: T | UnreadableStatus): T;
+}
+
+// A part of the status a test expects read: an unreadable one fails it there.
+export const readPart: ReadPartFunction = (part) => {
+  if (typeof part === "object" && part !== null && "unreadable" in part) {
+    throw new Error("expected the part of the status to be read");
+  }
+  return part;
+};

@@ -152,7 +152,12 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
     status: () =>
       readAppStatus({
         config,
-        lag: getLag,
+        logger,
+        lag: async () => ({
+          ...(await dispatcher.standings()),
+          waitingDeadlines: 0,
+          forgetLedger: null,
+        }),
         failures: storage.subscriberFailures,
         restores,
         tenant: () => tenantKeys.status(),

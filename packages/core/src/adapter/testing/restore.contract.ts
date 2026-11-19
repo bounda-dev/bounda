@@ -860,7 +860,9 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         await first.app.runUntilIdle();
         clock.advance(RESEAL_SWITCH_MS);
         await first.app.runUntilIdle();
-        expect((await first.app.status()).keyRotation?.reseal).toMatchObject({ superseded: 0 });
+        expect(await first.app.status()).toMatchObject({
+          keyRotation: { reseal: { superseded: 0 } },
+        });
         // No old key is named anywhere but in the record of what superseded what.
         for (const { name, store, rows } of await storage.inspect()) {
           if (store === "supersededKeys") {
@@ -1155,7 +1157,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const found = (await restored.app.status()).restoresFound;
         expect(found).toBeLessThanOrEqual(1);
         await restored.app.restored();
-        expect((await restored.app.status()).restoresFound).toBe(found + 1);
+        expect((await restored.app.status()).restoresFound).toBe(Number(found) + 1);
         expect(await restored.app.forgetAgain([{ personId: "ana" }])).toEqual(["ana"]);
         await restored.app.runUntilIdle();
         await expectForgottenIn(restored, "ana");

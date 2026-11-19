@@ -329,6 +329,19 @@ recipients
 - every [recipient](/guides/personal-data/#recipients), as [`bounda recipients`](#bounda-recipients)
   prints them.
 
+A part whose store cannot be read does not stop the others: it is logged, its line says
+`its store could not be read, see the logs` where the value would be, and the rest is printed as
+usual. A database of `tables` and a subscriber's position each count as a part of their own, so a
+read model's database that is down costs only its own lines; without the head of the stream,
+`subscribers: where they stand, …` lists each last failure under its subscriber instead, as
+`failed, not resolved` when it may still hold the subscriber back. `--json` prints such a part as
+`{ "unreadable": true }`, with `retentionMs` for a purge. stderr then names every part it could not
+read, as `app.status()` and `unreadableParts` from `@bounda-dev/core` name them:
+
+```
+error: could not read lag (projection:customerDirectory), subscriberFailures; see the logs
+```
+
 Under the rule of [error text](#error-text) set to `"include"`, by `--error-text`,
 `BOUNDA_ERROR_TEXT=include` or the configuration, it also prints, under each failure, the text it
 keeps, encrypted under the person the event names: it is read through `app.subscriberFailures.list()`, which records it in the
@@ -340,6 +353,11 @@ person was forgotten says its text went with them.
 | `--json` | Print `app.status()` as JSON; with `--error-text`, `subscriberFailures` holds the failures with their text |
 | `--root`, `--config`, `--registry`, `--error-text` | As for `bounda rebuild` |
 | `--actor <id>` | Who reads the failures' text with `--error-text`, named in the access log |
+
+Exit codes: `0` every part read, `1` bad arguments, `2` the project could not be loaded, or a part
+of the status, or the failures' text asked for, could not be read. A check that runs
+`bounda status` alerts on a store that is down, as it did when nothing could be read, and still
+has the rest printed.
 
 ## `bounda restore`
 
@@ -385,7 +403,8 @@ The restore is counted, so every running instance starts its background jobs ove
 failures the copy brought back are cleared; and with a ledger, it is reconciled at once. Run it
 after `bounda forget --from` when restoring without a ledger (see
 [restores](/guides/personal-data/#restores)). Options: `--root`, `--config`, `--registry`,
-`--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, `2` the project could not be
+`--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, even when how many restores were
+found could not be read back, which it says in place of the count; `2` the project could not be
 loaded.
 
 ## `bounda rekey`
@@ -592,7 +611,9 @@ many persons the store recorded as disclosed to it; under it, whether the worker
 it, presumed, what was recorded before it was declared, and how many of its notices wait as failed
 [dead letters](#bounda-dead-letters). A port the app no longer declares says so: its notices wait as
 dead letters until it is declared again or an operator tells its recipient and discards them. With
-no recipient it prints `recipients: none declared`.
+no recipient it prints `recipients: none declared`. Exit codes: `0` listed, `1` bad arguments, `2`
+the project could not be loaded, or the recipients could not be read, which it says on stderr and
+logs.
 
 | Option | Meaning |
 | --- | --- |

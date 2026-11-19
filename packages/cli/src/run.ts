@@ -21,6 +21,7 @@ import {
   resolveErrorText,
   rewrapTenantKeys,
   type SubscriberFailure,
+  unreadableParts,
   withEncryptedFiles,
   withErrorText,
 } from "@bounda-dev/core";
@@ -48,7 +49,13 @@ import { watchFromFirstRun } from "./generate/watch.ts";
 import { formatInventory, formatInventoryMarkdown } from "./inventory-output.ts";
 import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
-import { formatFiles, formatRecipients, formatSchema, formatStatus } from "./status-output.ts";
+import {
+  formatFiles,
+  formatRecipients,
+  formatRestored,
+  formatSchema,
+  formatStatus,
+} from "./status-output.ts";
 import { standInWorkersRuntime } from "./workers-runtime.ts";
 
 export interface Output {
@@ -667,7 +674,8 @@ interface StatusOptions extends ActingOptions {
 }
 
 // The text of each failure is opened only under the app's rule for error text, `--error-text`
-// included, through the call the access log records.
+// included, through the call the access log records. A part that could not be read is printed as
+// such, named on stderr, and fails the run, as a status that could not be read at all did.
 const runStatus = (
   options: StatusOptions,
   cwd: string,
@@ -676,10 +684,16 @@ const runStatus = (
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
     const status = await app.status();
-    const opened =
-      app.config.runtime.telemetry.errorText === "include"
-        ? await actingAs(app, options).subscriberFailures.list()
-        : undefined;
+    let opened: readonly SubscriberFailure[] | undefined;
+    let unopened = false;
+    if (app.config.runtime.telemetry.errorText === "include") {
+      try {
+        opened = await actingAs(app, options).subscriberFailures.list();
+      } catch (error) {
+        failed(stderr, error, app.config.runtime.telemetry.errorText);
+        unopened = true;
+      }
+    }
     if (options.json) {
       line(
         stdout,
@@ -700,7 +714,10 @@ const runStatus = (
         }),
       );
     }
-    return EXIT_OK;
+    const unread = [...unreadableParts(status), ...(unopened ? ["the failures' text"] : [])];
+    if (unread.length === 0) return EXIT_OK;
+    line(stderr, `error: could not read ${unread.join(", ")}; see the logs`);
+    return EXIT_FAILURE;
   });
 
 interface RecipientsOptions extends ActingOptions {
@@ -722,6 +739,10 @@ const runRecipients = (
       return EXIT_OK;
     }
     const { recipients } = await app.status();
+    if ("unreadable" in recipients) {
+      line(stderr, "error: could not read recipients; see the logs");
+      return EXIT_FAILURE;
+    }
     if (options.json) line(stdout, JSON.stringify(recipients, null, 2));
     else for (const text of formatRecipients(recipients)) line(stdout, text);
     return EXIT_OK;
@@ -841,10 +862,7 @@ const runRestored = (
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
     await app.restored();
-    line(
-      stdout,
-      `restore recorded: ${(await app.status()).restoresFound} found so far; the background jobs start over from the copy, without the holds it brought back`,
-    );
+    line(stdout, formatRestored((await app.status()).restoresFound));
     return EXIT_OK;
   });
 
