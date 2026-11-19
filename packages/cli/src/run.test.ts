@@ -1464,6 +1464,25 @@ describe("bounda status", () => {
     expect(besidesLogs(recipients.stderr)).toBe("error: could not read recipients; see the logs\n");
   });
 
+  it("prints the status without the failures' text it could not open, and exits 2", async () => {
+    await fail();
+    try {
+      process.env.BOUNDA_TEST_ACCESS_LOG_DOWN = "1";
+      const result = await cli(
+        ["status", "--registry", ".bounda/unopenable-registry.ts", "--error-text"],
+        fixture,
+      );
+      expect(result.code).toBe(EXIT_FAILURE);
+      expect(result.stdout).toMatch(/^ {4}failing: Error on Incremented at \d+/m);
+      expect(result.stdout).not.toContain("cannot total");
+      expect(besidesLogs(result.stderr)).toBe(
+        "error: the access log is down\nerror: could not read the failures' text; see the logs\n",
+      );
+    } finally {
+      delete process.env.BOUNDA_TEST_ACCESS_LOG_DOWN;
+    }
+  });
+
   it("documents its options in its help", async () => {
     const help = await cli(["status", "--help"], fixture);
     expect(help.code).toBe(EXIT_OK);
