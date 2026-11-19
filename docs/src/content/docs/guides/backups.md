@@ -121,7 +121,8 @@ stream, and can come back from another moment than it:
 Both are found at start, before the app serves anything, which waits for those read models to be
 projected back; and while it runs, on every pass, and within five seconds in the `web` role. Until
 then a query of such a read model, or an export, is refused with
-[`READ_MODEL_RESTORING`](/reference/errors/#codes): try again once it caught up. A copy taken in the
+[`READ_MODEL_RESTORING`](/reference/errors/#codes): try again once it caught up. A refused export is
+in the [access log](/guides/personal-data/#who-opened-what) as `failed`. A copy taken in the
 five seconds before a checkpoint was recorded differs from it as a projection that lags does, and
 catches up as one.
 
@@ -136,7 +137,8 @@ A restore found then, or one the ledger is not yet reconciled with, refuses the 
 not be read: the reconciliation runs at once, and the read models project what it committed again
 before anything is served. The read after succeeds, and a refused read is in the [access
 log](/guides/personal-data/#who-opened-what) as `failed`. Each read costs the reads of the check,
-shared by the reads that run at once; an export checks once for each page it reads.
+shared by the reads that run at once; an export checks once its header is read and once for each
+page that holds anything for the person, before it hands out any of it.
 
 ## What is guaranteed
 
