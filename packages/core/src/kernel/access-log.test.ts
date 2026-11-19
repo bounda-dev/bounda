@@ -234,6 +234,8 @@ describe("the access log", () => {
       personCount: 1,
       at: AT,
       outcome,
+      errorName: null,
+      errorCode: null,
       restricted: null,
       detail: {
         exportId,
@@ -292,6 +294,8 @@ describe("the access log", () => {
         personCount: 2,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         detail: { letters: 2 },
       },
@@ -302,6 +306,8 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         detail: { letter: first.id },
       },
@@ -313,6 +319,8 @@ describe("the access log", () => {
         personCount: 0,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         detail: { letter: "missing" },
       },
@@ -323,6 +331,8 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "failed",
+        errorName: "Error",
+        errorCode: null,
         restricted: null,
         detail: { letter: first.id },
       },
@@ -333,6 +343,8 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         detail: { letter: second.id },
       },
@@ -364,6 +376,8 @@ describe("the access log", () => {
         personCount: 2,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         unattributed: false,
         detail: { query: "customersOnPlan", readModel: "customerDirectory" },
@@ -375,6 +389,8 @@ describe("the access log", () => {
         personCount: 0,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         unattributed: false,
         detail: { query: "customerCount", readModel: "customerDirectory" },
@@ -386,6 +402,8 @@ describe("the access log", () => {
         personCount: 0,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         unattributed: false,
         detail: { query: "customersOnPlan", readModel: "customerDirectory" },
@@ -397,6 +415,8 @@ describe("the access log", () => {
         personCount: 0,
         at: AT,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: { basis: "legal-claims", persons: [], personCount: 0 },
         unattributed: false,
         detail: { query: "plansOf", readModel: "customerPlans" },
@@ -421,6 +441,8 @@ describe("the access log", () => {
         personCount: 1,
         at: AT,
         outcome: "failed",
+        errorName: "Error",
+        errorCode: null,
         restricted: null,
         unattributed: false,
         detail: { query: "emailCheck", readModel: "customerDirectory" },
@@ -433,6 +455,8 @@ describe("the access log", () => {
         personCount: 0,
         at: AT,
         outcome: "refused",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
         restricted: null,
         unattributed: false,
         detail: { query: "emailCheck", readModel: "customerDirectory" },
@@ -449,13 +473,19 @@ describe("the access log", () => {
     if (letter === undefined) throw new Error("expected a letter");
     await operator.deadLetters.discard(letter.id);
     const curiosity = { includeRestricted: "curiosity" as never };
-    const refused = (operation: string, detail: unknown, restricted: unknown = null) => ({
+    const refused = (
+      operation: string,
+      detail: unknown,
+      restricted: unknown = null,
+      error: unknown = { errorName: "ValidationError", errorCode: "VALIDATION_FAILED" },
+    ) => ({
       operation,
       actor: "operator-1",
       persons: [],
       personCount: 0,
       at: AT,
       outcome: "refused",
+      ...(error as object),
       restricted,
       ...(operation === "query" ? { unattributed: false } : {}),
       detail,
@@ -492,8 +522,14 @@ describe("the access log", () => {
       refused("query", query),
       refused("deadLetters.list", { letters: 0 }),
       { ...refused("deadLetters.get", { letter: letter.id }), actor: null },
-      refused("deadLetters.retry", { letter: letter.id }),
-      refused("deadLetters.discard", { letter: "missing" }),
+      refused("deadLetters.retry", { letter: letter.id }, null, {
+        errorName: "DeadLetterSettledError",
+        errorCode: "DEAD_LETTER_SETTLED",
+      }),
+      refused("deadLetters.discard", { letter: "missing" }, null, {
+        errorName: "NotFoundError",
+        errorCode: "NOT_FOUND",
+      }),
       refused("subscriberFailures.list", { failures: 0 }),
       refused("subscriberFailures.get", { subscriber: "projection:any" }),
       refused("recipientsOf", null),
@@ -525,12 +561,18 @@ describe("the access log", () => {
 
     await expect(app.deadLetters.list()).rejects.toBe(down);
     await expect(app.subscriberFailures.get("projection:customerDirectory")).rejects.toBe(down);
-    expect(records.map(({ access }) => [access.operation, access.persons, access.outcome])).toEqual(
-      [
-        ["deadLetters.list", [], "refused"],
-        ["subscriberFailures.get", [], "refused"],
-      ],
-    );
+    expect(
+      records.map(({ access }) => [
+        access.operation,
+        access.persons,
+        access.outcome,
+        access.errorName,
+        access.errorCode,
+      ]),
+    ).toEqual([
+      ["deadLetters.list", [], "refused", "Error", null],
+      ["subscriberFailures.get", [], "refused", "Error", null],
+    ]);
   });
 
   it("records a query refused because its read model's database went back as refused, naming no one", async () => {
@@ -578,6 +620,8 @@ describe("the access log", () => {
       personCount: 0,
       at: clock.now().toISOString(),
       outcome: "refused",
+      errorName: "ReadModelRestoringError",
+      errorCode: "READ_MODEL_RESTORING",
       restricted: { basis: "legal-claims", persons: [], personCount: 0 },
       unattributed: false,
       detail: { query: "customersOnPlan", readModel: "customerDirectory" },
@@ -599,6 +643,8 @@ describe("the access log", () => {
         persons: [],
         personCount: 0,
         outcome: "ok",
+        errorName: null,
+        errorCode: null,
         restricted: null,
         unattributed: false,
         detail: { query: "customersByDriver", readModel: "customerDirectory" },
@@ -641,6 +687,8 @@ describe("the access log", () => {
       personCount: 1,
       at: AT,
       outcome: "failed",
+      errorName: "Error",
+      errorCode: null,
       restricted: null,
       detail: {
         exportId: expect.any(String),
@@ -657,10 +705,18 @@ describe("the access log", () => {
       },
     };
     expect(records.map(({ access }) => access)).toEqual([
-      { ...failed, outcome: "started" },
+      { ...failed, outcome: "started", errorName: null, errorCode: null },
       failed,
       // Refused before it read: it names no one, since it names no person.
-      { ...failed, actor: null, persons: [], personCount: 0, outcome: "refused" },
+      {
+        ...failed,
+        actor: null,
+        persons: [],
+        personCount: 0,
+        outcome: "refused",
+        errorName: "ValidationError",
+        errorCode: "VALIDATION_FAILED",
+      },
     ]);
   });
 
@@ -916,6 +972,8 @@ describe("the access log", () => {
           personCount: 1,
           at: AT,
           outcome: "ok",
+          errorName: null,
+          errorCode: null,
           restricted: null,
           unattributed: false,
           detail: { query: "customersOnPlan", readModel: "customerDirectory" },

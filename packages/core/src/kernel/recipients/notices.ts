@@ -193,7 +193,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
     }
     const context = { ...causedBy(event), ...actedBy(actor) };
     const tenantWide = event.type === TENANT_FORGOTTEN_EVENT;
-    const record = (outcome: "ok" | "failed", skipped: boolean) =>
+    const record = (outcome: "ok" | "failed", skipped: boolean, error?: unknown) =>
       recordAccess({
         operation: "recipientNotice",
         detail: {
@@ -206,6 +206,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
         actor: context.actor,
         persons: tenantWide ? [] : [event.aggregateId],
         outcome,
+        error,
       });
     if (await superseded(storage, recipients, recipient, event)) {
       await record("ok", true);
@@ -219,7 +220,7 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
     });
     const { policies } = config.forAggregate(recipient.owner);
     await recorded(
-      (outcome) => record(outcome, false),
+      (outcome, error) => record(outcome, false, error),
       () =>
         traced({
           tracer,

@@ -1348,8 +1348,9 @@ person's data in the clear records it, once per call, and an export once more as
 | a query of a read model with fields marked `.personal()`, or of one with a field marked `.person()` that names `includeRestricted` | those the `person` field names in the rows the query read | `{ query, readModel }` |
 | `command`, `policy`, `process` | the restricted persons whose data it read on its [basis](#processing-restricted-data-anyway) | `{ handler }`, the command's type or the policy's or process's key |
 
-Each record is `{ operation, actor, persons, personCount, at, outcome, restricted, detail }`, and a
-query's adds `unattributed`. `restricted` is `{ basis, persons, personCount }` for a call that read
+Each record is
+`{ operation, actor, persons, personCount, at, outcome, errorName, errorCode, restricted, detail }`,
+and a query's adds `unattributed`. `restricted` is `{ basis, persons, personCount }` for a call that read
 restricted data on a basis it named, `includeRestricted` or `processRestricted` or a module's
 `restricted`, the persons whose restricted data it opened, and `null` for every other: `actor` is the client's, from
 [`as`](/concepts/ids-causation-and-correlation/#who-acts), and `null` for a client that names
@@ -1369,7 +1370,11 @@ the table leaves a record however it ends. An export's is `started` in the recor
 before it hands anything out, then `ok`, `failed`, or `cancelled` when the reader of a [streamed
 export](#a-long-history) stopped before its end, having been handed part of it: a `started` with no
 end of the same `exportId` is one whose reader left it, or whose process died, part way; one
-refused before it read has a single record, `refused`.
+refused before it read has a single record, `refused`. A `failed` or `refused` record names what
+the call rejected with as a log line does, `errorName` its class and `errorCode` the `code` of an
+error of Bounda's, such as `READ_MODEL_RESTORING`, `RESTORE_UNRECONCILED` or `VALIDATION_FAILED`,
+`null` for any other; both are `null` on every other record. Never its message: it may quote what
+was read, and the log outlives the traces that carry it.
 
 A query is matched to its read model by the module's place, and to its persons by the rows it
 read through its `table` or `client`, in `repository` and `handler` alike, not by its result: a

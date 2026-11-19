@@ -202,13 +202,14 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       asked?: unknown,
       letThrough: ReadonlySet<string> = new Set(),
     ) =>
-    (outcome: ReadOutcome) =>
+    (outcome: ReadOutcome, error?: unknown) =>
       recordAccess({
         operation,
         detail: { letter: id },
         actor,
         persons: letter === null ? [] : personsOf(letter),
         outcome,
+        error,
         restricted: restrictedRecord(asked, letThrough),
       });
 
@@ -216,15 +217,17 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     list: async (args, options) => {
       const asked = options?.includeRestricted;
       const letThrough = new Set<string>();
-      const record = (letters: readonly StoredDeadLetter[]) => (outcome: ReadOutcome) =>
-        recordAccess({
-          operation: "deadLetters.list",
-          detail: { letters: letters.length },
-          actor,
-          persons: letters.flatMap(personsOf),
-          outcome,
-          restricted: restrictedRecord(asked, letThrough),
-        });
+      const record =
+        (letters: readonly StoredDeadLetter[]) => (outcome: ReadOutcome, error?: unknown) =>
+          recordAccess({
+            operation: "deadLetters.list",
+            detail: { letters: letters.length },
+            actor,
+            persons: letters.flatMap(personsOf),
+            outcome,
+            error,
+            restricted: restrictedRecord(asked, letThrough),
+          });
       const { includeRestricted, letters } = await checked(record([]), async () => ({
         includeRestricted: checkIncludeRestricted("deadLetters.list", asked),
         letters: await storage.deadLetterStore.list(args),

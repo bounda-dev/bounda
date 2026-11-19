@@ -8,8 +8,15 @@ import {
 } from "../../modules/audit.ts";
 import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { AppEnv } from "../../register/index.ts";
+import { errorIdentity } from "../shared/retry.ts";
 
 export const PERSONAL_DATA_ACCESSED = "personal data accessed";
+
+// Named as a log line names it, never quoted: its message may quote what the call read.
+const errorOf = (error: unknown) => {
+  const { errorName, errorCode } = errorIdentity(error);
+  return { errorName, errorCode: errorCode ?? null };
+};
 
 type Operation = PersonalDataAccess["operation"];
 
@@ -19,6 +26,11 @@ export interface RecordAccessArgs<Op extends Operation> {
   readonly actor: string | undefined;
   readonly persons: Iterable<string>;
   readonly outcome: (PersonalDataAccess & { readonly operation: Op })["outcome"];
+  /**
+   * What the call rejected with, named in the record of one `failed` or `refused`; `undefined`
+   * for any other.
+   */
+  readonly error: unknown;
   /**
    * For a query only; any other record leaves it out.
    */
@@ -58,6 +70,7 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
     actor,
     persons,
     outcome,
+    error,
     unattributed = false,
     restricted = null,
   }: RecordAccessArgs<Op>): Promise<void> => {
@@ -70,6 +83,9 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
       personCount: distinct.length,
       at: clock.now().toISOString(),
       outcome,
+      ...(outcome === "failed" || outcome === "refused"
+        ? errorOf(error)
+        : { errorName: null, errorCode: null }),
       restricted:
         restricted === null
           ? null
@@ -92,14 +108,14 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
 
 export interface RecordedFunction {
   <Result>(
-    record: (outcome: AccessOutcome) => Promise<void>,
+    record: (outcome: AccessOutcome, error: unknown) => Promise<void>,
     run: () => Promise<Result>,
   ): Promise<Result>;
 }
 
 export interface CheckedFunction {
   <Checked>(
-    record: (outcome: "refused") => Promise<void>,
+    record: (outcome: "refused", error: unknown) => Promise<void>,
     check: () => Checked | Promise<Checked>,
   ): Promise<Checked>;
 }
@@ -113,7 +129,7 @@ export const checked: CheckedFunction = async (record, check) => {
   try {
     return await check();
   } catch (error) {
-    await record("refused");
+    await record("refused", error);
     throw error;
   }
 };
@@ -128,9 +144,9 @@ export const recorded: RecordedFunction = async (record, run) => {
   try {
     result = await run();
   } catch (error) {
-    await record("failed");
+    await record("failed", error);
     throw error;
   }
-  await record("ok");
+  await record("ok", undefined);
   return result;
 };

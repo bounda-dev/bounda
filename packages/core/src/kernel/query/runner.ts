@@ -223,13 +223,14 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
         // Refused before it read, it names no one: it opened nothing. The basis it named, when it
         // is one, is kept.
         const prepared = await checked(
-          async (outcome) =>
+          async (outcome, error) =>
             recordAccess({
               operation: "query",
               detail,
               actor,
               persons: [],
               outcome,
+              error,
               restricted: isRestrictionBasis(asked) ? { basis: asked, persons: [] } : null,
             }),
           prepare,
@@ -239,13 +240,14 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
         // the persons of the rows it read: a handler may reshape what it read, so its result
         // cannot tell whose data it holds.
         return recorded(
-          async (outcome) =>
+          async (outcome, error) =>
             recordAccess({
               operation: "query",
               detail,
               actor,
               persons: stores.persons,
               outcome,
+              error,
               unattributed: stores.unattributed,
               restricted:
                 includeRestricted === undefined

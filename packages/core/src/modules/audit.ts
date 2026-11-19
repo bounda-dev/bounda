@@ -27,6 +27,16 @@ interface AccessRecord<Outcome extends string = AccessOutcome> {
   readonly at: string;
   readonly outcome: Outcome;
   /**
+   * The class of what a call recorded `failed` or `refused` rejected with, or `typeof` what was
+   * thrown when it is no error, as a log line names it; `null` for every other outcome. Never its
+   * message, which may quote what the call read.
+   */
+  readonly errorName: string | null;
+  /**
+   * The `code` of that error when it is one of Bounda's, `null` otherwise.
+   */
+  readonly errorCode: string | null;
+  /**
    * The restricted data the operation opened on a basis named explicitly, `null` when it named
    * none: a query, a dead letter or a subscriber failure read with `includeRestricted`, a command
    * dispatched with `processRestricted`, a policy or process that declares `restricted`.

@@ -623,7 +623,11 @@ export const exportPersonalData: ExportPersonalDataFunction = async (args) =>
 
 export interface RecordedExportArgs {
   readonly streamed: StreamedExport;
-  readonly record: (outcome: ExportOutcome, counts: ExportedCounts) => Promise<void>;
+  readonly record: (
+    outcome: ExportOutcome,
+    error: unknown,
+    counts: ExportedCounts,
+  ) => Promise<void>;
   readonly onError: (error: unknown) => void;
 }
 
@@ -637,6 +641,7 @@ async function* ended(
 ): AsyncGenerator<PersonalDataExportPart, void, undefined> {
   let counts = started;
   let outcome: ExportOutcome = "cancelled";
+  let failure: unknown;
   try {
     yield { kind: "header", header };
     for await (const part of records) {
@@ -646,10 +651,11 @@ async function* ended(
     outcome = "ok";
   } catch (error) {
     outcome = "failed";
+    failure = error;
     onError(error);
     throw error;
   } finally {
-    await record(outcome, counts);
+    await record(outcome, failure, counts);
   }
 }
 
@@ -659,6 +665,6 @@ async function* ended(
 // of what it records, as `recorded` does.
 export const recordedExport: RecordedExportFunction = async (args) => {
   const started = countPart(NO_EXPORTED_RECORDS, { kind: "header", header: args.streamed.header });
-  await args.record("started", started);
+  await args.record("started", undefined, started);
   return ended(args, started);
 };

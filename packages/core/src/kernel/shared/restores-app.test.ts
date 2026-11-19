@@ -303,7 +303,7 @@ describe("a strict app's export", () => {
   const accesses = (logger: ReturnType<typeof recordingLogger>) =>
     logger.logged
       .filter(({ message }) => message === PERSONAL_DATA_ACCESSED)
-      .map(({ fields }) => [fields?.operation, fields?.outcome]);
+      .map(({ fields }) => [fields?.operation, fields?.outcome, fields?.errorCode]);
 
   it("checks for a restore once the header is read and once for each page it reads, not for every record", async () => {
     const { adapter } = createNodeSqliteAdapter();
@@ -353,7 +353,7 @@ describe("a strict app's export", () => {
     const { app, db, copy, logger } = await copiedBefore();
     restore(db, copy);
     await expect(app.streamPersonalData("c-1")).rejects.toBeInstanceOf(RestoreUnreconciledError);
-    expect(accesses(logger)).toEqual([["exportPersonalData", "failed"]]);
+    expect(accesses(logger)).toEqual([["exportPersonalData", "failed", "RESTORE_UNRECONCILED"]]);
   });
 
   it("refuses a page it read from a copy restored under it before handing any of it out, recorded as failed", async () => {
@@ -368,8 +368,8 @@ describe("a strict app's export", () => {
     await expect(parts.next()).rejects.toBeInstanceOf(RestoreUnreconciledError);
     expect(handed).toEqual(["header", "event", "event"]);
     expect(accesses(logger)).toEqual([
-      ["exportPersonalData", "started"],
-      ["exportPersonalData", "failed"],
+      ["exportPersonalData", "started", null],
+      ["exportPersonalData", "failed", "RESTORE_UNRECONCILED"],
     ]);
   });
 });

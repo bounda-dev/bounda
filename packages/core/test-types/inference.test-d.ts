@@ -805,6 +805,8 @@ describe("personal data", () => {
     expectTypeOf<PersonalDataAccess["personCount"]>().toEqualTypeOf<number>();
     expectTypeOf<PersonalDataAccess["at"]>().toEqualTypeOf<string>();
     expectTypeOf<PersonalDataAccess["restricted"]>().toEqualTypeOf<RestrictedAccess | null>();
+    expectTypeOf<PersonalDataAccess["errorName"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<PersonalDataAccess["errorCode"]>().toEqualTypeOf<string | null>();
     expectTypeOf<RestrictedAccess>().toEqualTypeOf<{
       readonly basis: RestrictionBasis;
       readonly persons: readonly string[];
