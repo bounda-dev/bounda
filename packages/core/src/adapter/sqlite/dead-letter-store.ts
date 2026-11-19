@@ -202,8 +202,10 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
     scan: async ({ after, limit }) =>
       (
         await db.all(
-          `SELECT ${COLUMNS} FROM ${table} WHERE (? IS NULL OR "id" > ?) ORDER BY "id" LIMIT ?`,
-          [after ?? null, after ?? null, limit],
+          after === undefined
+            ? `SELECT ${COLUMNS} FROM ${table} ORDER BY "id" LIMIT ?`
+            : `SELECT ${COLUMNS} FROM ${table} WHERE "id" > ? ORDER BY "id" LIMIT ?`,
+          after === undefined ? [limit] : [after, limit],
         )
       ).map(toLetter),
     forget: async (person, keep = []) =>

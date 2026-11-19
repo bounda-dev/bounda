@@ -254,6 +254,7 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "persons")} ON ${tables.scheduledCommands} USING gin ("persons" jsonb_path_ops)`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "persons")} ON ${tables.deadLetters} USING gin ("persons" jsonb_path_ops)`,
   readPersonsIndexStatement(tables),
+  ...scanIndexStatements(tables),
 ];
 
 export interface InSchemaArgs<T> {
@@ -337,3 +338,18 @@ export interface ReadPersonsIndexStatementFunction {
 // its work read data of.
 export const readPersonsIndexStatement: ReadPersonsIndexStatementFunction = (tables) =>
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "read_persons")} ON ${tables.deadLetters} USING gin ("read_persons" jsonb_path_ops)`;
+
+export interface ScanIndexStatementsFunction {
+  (
+    tables: Pick<StorageTables, "deadLetters" | "scheduledCommands" | "persons" | "personalKeys">,
+  ): readonly string[];
+}
+
+// Migration 12 of the storage tables: what a scan of every record pages by, compared by bytes as
+// SQLite compares them, which the primary keys, in the database's collation, cannot serve.
+export const scanIndexStatements: ScanIndexStatementsFunction = (tables) => [
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "id_bytes")} ON ${tables.deadLetters} ("id" COLLATE "C")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "key_bytes")} ON ${tables.scheduledCommands} ("dedupe_key" COLLATE "C")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "person_bytes")} ON ${tables.persons} ("person" COLLATE "C")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "person_bytes")} ON ${tables.personalKeys} ("person" COLLATE "C")`,
+];
