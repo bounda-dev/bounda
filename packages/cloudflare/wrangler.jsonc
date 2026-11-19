@@ -25,7 +25,12 @@
       { "name": "WITNESSED_STORE", "class_name": "WitnessedStore" },
       { "name": "BARE", "class_name": "Bare" },
       { "name": "EU_STORE", "class_name": "EuStore" },
-      { "name": "UNBOUND_EU_STORE", "class_name": "UnboundEuStore" }
+      { "name": "UNBOUND_EU_STORE", "class_name": "UnboundEuStore" },
+      { "name": "KEEPER", "class_name": "Keeper" },
+      { "name": "EU_KEEPER", "class_name": "EuKeeper" },
+      { "name": "UNBOUND_EU_KEEPER", "class_name": "UnboundEuKeeper" },
+      { "name": "KEPT_STORE", "class_name": "KeptStore" },
+      { "name": "KEPT_KEEPER", "class_name": "KeptKeeper" }
     ]
   },
   "migrations": [
@@ -37,6 +42,10 @@
     { "tag": "v6", "new_sqlite_classes": ["LedgerStore"] },
     { "tag": "v7", "new_sqlite_classes": ["SnapshotStore"] },
     { "tag": "v8", "new_sqlite_classes": ["WitnessedStore"] },
-    { "tag": "v9", "new_sqlite_classes": ["EuStore", "UnboundEuStore"] }
+    { "tag": "v9", "new_sqlite_classes": ["EuStore", "UnboundEuStore"] },
+    {
+      "tag": "v10",
+      "new_sqlite_classes": ["Keeper", "EuKeeper", "UnboundEuKeeper", "KeptStore", "KeptKeeper"]
+    }
   ]
 }

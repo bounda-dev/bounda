@@ -493,7 +493,7 @@ const recordsOf = (
           {
             name: "forget-ledger" as const,
             where: "forget-ledger",
-            location: null,
+            location: ledger.store.location ?? null,
             keptFor: msText(ledger.keepForMs),
           },
         ]),

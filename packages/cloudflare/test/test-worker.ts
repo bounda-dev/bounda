@@ -3,7 +3,8 @@ import { createSequentialIdGenerator } from "@bounda-dev/core";
 import { masterKey } from "@bounda-dev/core/config";
 import { cloudflare } from "../src/definition.ts";
 import { kvForgetLedger } from "../src/forget-ledger.ts";
-import { createBoundaObject, createWorker } from "../src/index.ts";
+import { createBoundaKeeper, createBoundaObject, createWorker } from "../src/index.ts";
+import { durableObjectForgetLedger, durableObjectTenantKeys } from "../src/keeper-stores.ts";
 import { kvTenantKeys } from "../src/tenant-keys.ts";
 import {
   processRegistry,
@@ -156,15 +157,24 @@ export const RegionStore = createBoundaObject({
   clock,
 });
 
+const eu = cloudflare({ binding: "EU_STORE", jurisdiction: "eu" });
+const unboundEu = cloudflare({ binding: "UNBOUND", jurisdiction: "eu" });
+
 /**
  * The app without policies or processes, kept in the EU, which workerd cannot do: its own binding
- * in its `env` tells it so, and it starts without one.
+ * in its `env` tells it so, and it starts without one. Its keys and ledger are in the EU keeper.
  */
 export const EuStore = createBoundaObject({
   registry: quietRegistry,
   config: {
-    storage: cloudflare({ binding: "EU_STORE", jurisdiction: "eu" }),
-    runtime: { personalData: keys },
+    storage: eu,
+    runtime: {
+      personalData: {
+        keyWrapper: keys.keyWrapper,
+        tenantKeys: durableObjectTenantKeys({ storage: eu, binding: "EU_KEEPER" }),
+        forgetLedger: { store: durableObjectForgetLedger({ storage: eu, binding: "EU_KEEPER" }) },
+      },
+    },
   },
   clock,
 });
@@ -176,11 +186,64 @@ export const EuStore = createBoundaObject({
 export const UnboundEuStore = createBoundaObject({
   registry: quietRegistry,
   config: {
-    storage: cloudflare({ binding: "UNBOUND", jurisdiction: "eu" }),
-    runtime: { personalData: keys },
+    storage: unboundEu,
+    runtime: {
+      personalData: {
+        keyWrapper: keys.keyWrapper,
+        tenantKeys: durableObjectTenantKeys({ storage: unboundEu, binding: "EU_KEEPER" }),
+      },
+    },
   },
   clock,
 });
+
+/**
+ * The keeper of the EU objects' keys and ledgers, which starts where workerd has no jurisdictions
+ * as they do.
+ */
+export const EuKeeper = createBoundaKeeper({ config: { storage: eu } });
+
+/**
+ * A keeper with no binding of the app in its `env`, which refuses every call outside the EU.
+ */
+export const UnboundEuKeeper = createBoundaKeeper({ config: { storage: unboundEu } });
+
+/**
+ * The keeper of every tenant's key and ledger kept in no jurisdiction.
+ */
+export const Keeper = createBoundaKeeper({ config: { storage: cloudflare() } });
+
+const kept = cloudflare({ binding: "KEPT_STORE" });
+
+/**
+ * The keeper of the keys and ledgers of `KeptStore`'s objects alone, so the Worker's schedule
+ * wakes none of the tenants other tests keep.
+ */
+export const KeptKeeper = createBoundaKeeper({ config: { storage: kept } });
+
+/**
+ * The configuration of an app whose tenant keys and ledger the keeper holds.
+ */
+export const keptConfig = {
+  storage: kept,
+  runtime: {
+    personalData: {
+      keyWrapper: keys.keyWrapper,
+      tenantKeys: durableObjectTenantKeys({ storage: kept, binding: "KEPT_KEEPER" }),
+      forgetLedger: { store: durableObjectForgetLedger({ storage: kept, binding: "KEPT_KEEPER" }) },
+    },
+  },
+};
+
+/**
+ * The app without policies or processes, its tenant's key and ledger in the keeper.
+ */
+export const KeptStore = createBoundaObject({ registry: quietRegistry, config: keptConfig, clock });
+
+/**
+ * The Worker of the objects whose keys the keeper holds.
+ */
+export const keptWorker = createWorker({ config: keptConfig, tenantOf: () => "default" });
 
 /**
  * An object with no app in it: an empty SQLite for the storage contracts.

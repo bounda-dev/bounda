@@ -1,10 +1,10 @@
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { masterKey } from "@bounda-dev/core/config";
+import { defineTenantKeyStore, masterKey } from "@bounda-dev/core/config";
 import { describe, expect, it, vi } from "vitest";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
-import { KV_TENANT_KEYS_ROOT, kvTenantKeys } from "../src/tenant-keys.ts";
+import { createKvTenantKeyStore, KV_TENANT_KEYS_ROOT, kvTenantKeys } from "../src/tenant-keys.ts";
 import { createWorker } from "../src/worker.ts";
 import type { quietRegistry } from "./app.ts";
 import worker from "./test-worker.ts";
@@ -147,7 +147,15 @@ describe("a rotation of the master key on Cloudflare", () => {
         runtime: {
           personalData: {
             keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
-            tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+            // The records `STORE` keeps in KV, which a store of the EU would hold.
+            tenantKeys: defineTenantKeyStore(
+              ({ env: bound }) =>
+                createKvTenantKeyStore({
+                  namespace: (bound as Cloudflare.Env).TENANT_KEYS,
+                  prefix: KV_TENANT_KEYS_ROOT,
+                }),
+              { location: "jurisdiction eu" },
+            ),
           },
         },
       },

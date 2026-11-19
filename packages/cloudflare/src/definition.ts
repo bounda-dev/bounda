@@ -23,7 +23,8 @@ export interface CloudflareOptions {
    * start. Choose it before the first object exists: an object never moves, and a tenant reached
    * in a new jurisdiction is a new, empty object. Left out, each object is placed near the request
    * that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
-   * which has no jurisdictions.
+   * which has no jurisdictions. The tenant key store and the forget ledger must be kept in it too:
+   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are.
    */
   readonly jurisdiction?: DurableObjectJurisdiction;
 }
@@ -45,9 +46,10 @@ export interface CloudflareFunction {
 /**
  * Storage in the SQLite of the Durable Object the app runs in: events, ledgers and read models,
  * all in one object. Throws `ConfigurationError` for a `jurisdiction` that is not a name; a
- * configuration that puts it beside another storage, or a read model on it in another
- * jurisdiction than `storage`, is refused wherever it is resolved, the record of processing
- * included.
+ * configuration that puts it beside another storage, a read model on it in another jurisdiction
+ * than `storage`, or, with a `jurisdiction`, a tenant key store or forget ledger whose `location`
+ * is not that jurisdiction, as a Workers KV one's never is, is refused wherever it is resolved,
+ * the record of processing included.
  */
 export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options } = {}) => {
   // A Worker's code is not always type-checked.
@@ -104,5 +106,45 @@ export const cloudflareStorageOf: CloudflareStorageOfFunction = (config) => {
       );
     }
   }
+  if (jurisdiction !== undefined) {
+    const personalData: unknown = (config as Partial<Config>).runtime?.personalData;
+    const where = `jurisdiction ${jurisdiction}`;
+    checkKeptIn({
+      where,
+      path: "runtime.personalData.tenantKeys",
+      source: valueAt(personalData, "tenantKeys"),
+      keeper: "durableObjectTenantKeys",
+      define: "defineTenantKeyStore",
+    });
+    checkKeptIn({
+      where,
+      path: "runtime.personalData.forgetLedger.store",
+      source: valueAt(valueAt(personalData, "forgetLedger"), "store"),
+      keeper: "durableObjectForgetLedger",
+      define: "defineForgetLedger",
+    });
+  }
   return storage;
+};
+
+const valueAt = (holder: unknown, key: string): unknown =>
+  typeof holder === "object" && holder !== null ? Reflect.get(holder, key) : undefined;
+
+interface CheckKeptInArgs {
+  readonly where: string;
+  readonly path: string;
+  readonly source: unknown;
+  readonly keeper: string;
+  readonly define: string;
+}
+
+// The tenant key store and the forget ledger hold wrapped keys and the ids of persons: kept
+// anywhere but the jurisdiction the tenants' objects are in, they would be transferred out of it.
+const checkKeptIn = ({ where, path, source, keeper, define }: CheckKeptInArgs): void => {
+  if (source === undefined) return;
+  const location = valueAt(source, "location");
+  if (location === where) return;
+  throw new ConfigurationError(
+    `${path} keeps what it holds ${typeof location === "string" ? `in ${location}` : "where it names no jurisdiction, as Workers KV does"}, and cloudflare() keeps the tenants' objects in ${where}: use ${keeper}({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through ${define}(create, { location: ${JSON.stringify(where)} })`,
+  );
 };
