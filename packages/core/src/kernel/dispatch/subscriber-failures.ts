@@ -117,10 +117,9 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
     const open = openTextWith(sealedKeys(keys));
     return Promise.all(
       failures.map(async (failure) => {
-        const held: string[] = [];
-        for (const person of personsOf([failure])) {
-          if (await restricted(person)) held.push(person);
-        }
+        const sealedUnder = personsOf([failure]);
+        const holds = await Promise.all(sealedUnder.map((person) => restricted(person)));
+        const held = sealedUnder.filter((_, index) => holds[index]);
         if (opens) letThrough.push(...held);
         return opened(failure, open, held.length > 0 && !opens);
       }),

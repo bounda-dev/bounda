@@ -346,12 +346,9 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
         restricted: [],
       };
     }
-    let restricted = false;
-    for (const person of elsewhere) {
-      others.add(person);
-      if (await restrictedOther(person)) restricted = true;
-    }
-    return { values: opened, withheld, restricted: restricted ? held : [] };
+    for (const person of elsewhere) others.add(person);
+    const restricted = await Promise.all(elsewhere.map((person) => restrictedOther(person)));
+    return { values: opened, withheld, restricted: restricted.includes(true) ? held : [] };
   };
   // An error's text, opened, as the person gets it.
   const exportedText = async (

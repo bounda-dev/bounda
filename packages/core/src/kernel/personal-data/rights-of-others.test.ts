@@ -26,6 +26,9 @@ type Dispatch = (payload: unknown, options?: unknown) => Promise<unknown>;
 // Whether the projection of a referral fails, as it does until a fix ships.
 let listing = { fails: true };
 
+// One error the policy throws every time it gives up, when set, as code that keeps one instance.
+let givingUp: { shared: Error | null } = { shared: null };
+
 // A member refers another: the policy thanks the one referred, whose state refuses it, quoting their
 // name, and gives up quoting the refusal; the projection fails quoting the row of the one referred.
 const registry = {
@@ -102,7 +105,7 @@ const registry = {
                 memberId: event.payload.referredId,
                 by: event.aggregateId,
               })) as RejectedDispatch;
-              throw new ValidationError(`gave up: ${thanked.message}`, []);
+              throw givingUp.shared ?? new ValidationError(`gave up: ${thanked.message}`, []);
             },
           },
         },
@@ -154,6 +157,7 @@ const FOR_OTHERS = { reason: "rights-of-others", article: "15(4)" } as const;
 
 const setup = async () => {
   listing = { fails: true };
+  givingUp = { shared: null };
   const adapter = memory();
   const storage = await adapter.createStorage();
   const accesses: PersonalDataAccess[] = [];
@@ -204,6 +208,23 @@ describe("text the work wrote while it read data of someone else", () => {
     await app.stop();
   });
 
+  it("thrown as one instance by two runs, is sealed under whom either read, since its text may quote either", async () => {
+    const { app, storage, commands } = await setup();
+    givingUp = { shared: new ValidationError("gave up", []) };
+    await commands.joinMember?.({ memberId: "cai", name: "Cai" });
+    await commands.referMember?.({ memberId: "ana", referredId: "bea", note: "a friend" });
+    await app.runUntilIdle();
+    const [first] = await storage.deadLetterStore.list({ kind: "policy" });
+    expect(first).toMatchObject({ readPersons: ["bea"] });
+    await commands.referMember?.({ memberId: "ana", referredId: "cai", note: "another" });
+    await app.runUntilIdle();
+    const second = (await storage.deadLetterStore.list({ kind: "policy" })).find(
+      ({ id }) => id !== first?.id,
+    );
+    expect(second).toMatchObject({ readPersons: ["bea", "cai"] });
+    await app.stop();
+  });
+
   it("is held back from the export of each of them, and opened, still marked, with includeWithheld", async () => {
     const { app, letter, accesses } = await referred();
     const withheld = [
@@ -229,6 +250,27 @@ describe("text the work wrote while it read data of someone else", () => {
     expect(accesses.at(-1)).toMatchObject({
       detail: { deadLetters: 1, subscriberFailures: 1, withheld: 2, includeWithheld: true },
     });
+    await app.stop();
+  });
+
+  it("withheld, never tells the person that someone else it quotes is restricted", async () => {
+    const { app, letter } = await referred();
+    await app.restrict("bea", { ground: "accuracy-contested" });
+    const exported = await app.exportPersonalData("ana");
+    expect(exported.deadLetters).toEqual([
+      expect.objectContaining({ id: letter.id, errorMessage: null, restricted: [] }),
+    ]);
+    expect(exported.subscriberFailures).toEqual([
+      expect.objectContaining({ errorMessage: null, restricted: [] }),
+    ]);
+    const opened = await app.exportPersonalData("ana", { includeWithheld: true });
+    expect(opened.deadLetters).toEqual([
+      expect.objectContaining({ restricted: ["errorMessage", "errorStack"] }),
+    ]);
+    await app.restrict("ana", { ground: "accuracy-contested" });
+    expect((await app.exportPersonalData("ana")).deadLetters).toEqual([
+      expect.objectContaining({ errorMessage: null, restricted: ["errorMessage", "errorStack"] }),
+    ]);
     await app.stop();
   });
 
