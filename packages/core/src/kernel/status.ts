@@ -6,8 +6,9 @@ import type {
   SubscriberFailureStore,
 } from "../adapter/storage/subscriber-failure-store.ts";
 import type { ResolvedConfig } from "../config/types.ts";
+import type { Logger } from "../contracts/logger.ts";
 import type { CountryCode, RecipientKind, TransferSafeguard } from "../modules/recipient.ts";
-import type { AppLag } from "./app.ts";
+import type { AppLag, PersonalDataBackfillLag } from "./app.ts";
 import type { DeadLetterRetention, DeadLetterRetentionStatus } from "./dead-letters/retention.ts";
 import type {
   SubscriberFailureRetention,
@@ -22,6 +23,7 @@ import type { RetentionStatus, RetentionSweep } from "./personal-data/retention.
 import type { KeyRotation, KeyRotationStatus } from "./personal-data/rotation.ts";
 import type { TenantKeyStatus } from "./personal-data/tenant-keys.ts";
 import type { RestoreWatch } from "./shared/restores.ts";
+import type { UnreadableStatus } from "./shared/retention-status.ts";
 
 /**
  * A scope of Bounda's tables where it lives: `storage`, a read model's database of its own as
@@ -32,55 +34,78 @@ export interface SchemaStatus extends SchemaVersion {
 }
 
 /**
+ * A database whose versions could not be read.
+ */
+export interface UnreadableSchemaStatus extends UnreadableStatus {
+  readonly database: string;
+}
+
+/**
+ * Every subscriber's lag, as `app.getLag()` reports it; the backfill of personal data is
+ * `AppStatus`'s own part.
+ */
+export interface StatusLag extends Omit<AppLag, "personalDataBackfill"> {}
+
+/**
  * A subscriber's last failure without its text, which `subscriberFailures` opens. `current` while
- * the subscriber is still stuck on it.
+ * the subscriber is still stuck on it, `null` for an unresolved failure while where the subscriber
+ * stands could not be read.
  */
 export interface SubscriberFailureStatus
   extends Omit<StoredSubscriberFailure, "errorMessage" | "errorStack"> {
-  readonly current: boolean;
+  readonly current: boolean | null;
 }
 
 /**
  * Where the runtime's background work stands, as the database says: what `bounda status` prints.
  * Nothing in it is personal data, so reading it records nothing in the access log.
+ *
+ * Never incomplete in silence: a part whose store cannot be read, a database of `schema` or a
+ * subscriber of `lag` included, is logged and comes back as `{ unreadable: true }`
+ * (`UnreadableStatus`), and the other parts still do; `unreadableParts` names them.
  */
 export interface AppStatus {
   /**
    * Every scope of Bounda's tables the app uses, at the version its database holds beside the
-   * latest this version of Bounda migrates it to.
+   * latest this version of Bounda migrates it to, or the database whose versions could not be
+   * read.
    */
-  readonly schema: readonly SchemaStatus[];
+  readonly schema: readonly (SchemaStatus | UnreadableSchemaStatus)[];
   /**
    * How many times a running instance found the database gone back to an earlier copy.
    */
-  readonly restoresFound: number;
-  readonly lag: AppLag;
-  readonly subscriberFailures: readonly SubscriberFailureStatus[];
+  readonly restoresFound: number | UnreadableStatus;
+  /**
+   * Unreadable as a whole when the stream itself, its head or the events past a checkpoint, could
+   * not be read.
+   */
+  readonly lag: StatusLag | UnreadableStatus;
+  readonly subscriberFailures: readonly SubscriberFailureStatus[] | UnreadableStatus;
   /**
    * `null` when no schema marks personal data.
    */
-  readonly personalDataBackfill: AppLag["personalDataBackfill"];
+  readonly personalDataBackfill: PersonalDataBackfillLag | null | UnreadableStatus;
   /**
    * `null` without `runtime.personalData.forgetLedger`.
    */
-  readonly forgetLedger: ForgetLedgerReconciliationStatus | null;
+  readonly forgetLedger: ForgetLedgerReconciliationStatus | null | UnreadableStatus;
   /**
    * The tenant the app serves and its key: the version in force, the older ones still held, the
    * master key they are wrapped under, and when the tenant was forgotten. `null` for an app without
    * keys, which marks nothing personal and names none.
    */
-  readonly tenant: TenantKeyStatus | null;
+  readonly tenant: TenantKeyStatus | null | UnreadableStatus;
   /**
    * Where the keys under the tenant's key stand as it rotates. `null` for an app without keys,
    * and once the tenant is forgotten.
    */
-  readonly keyRotation: KeyRotationStatus | null;
+  readonly keyRotation: KeyRotationStatus | null | UnreadableStatus;
   /**
    * `null` when no schema marks personal data: every retention set, of the app and of each
    * declared category, and the keys kept past a forgetting that no erasure exemption keeps any
    * more.
    */
-  readonly retention: RetentionStatus | null;
+  readonly retention: RetentionStatus | null | UnreadableStatus;
   /**
    * The purge of resolved dead letters past `runtime.deadLetters.retention`, and the failed ones
    * no handler the app runs would retry; `null` once the tenant is forgotten.
@@ -94,7 +119,7 @@ export interface AppStatus {
   /**
    * Every recipient the app declares or the store remembers data went to, by port.
    */
-  readonly recipients: readonly RecipientStatus[];
+  readonly recipients: readonly RecipientStatus[] | UnreadableStatus;
   /**
    * Every database file the app opened under the tenant's keys, and where its encryption stands:
    * one still `"clear"`, or under an `"earlier"` key, is encrypted once no other connection has it
@@ -135,15 +160,17 @@ export interface RecipientStatus {
 
 export interface ReadAppStatusArgs {
   readonly config: ResolvedConfig;
-  readonly lag: () => Promise<AppLag>;
+  readonly logger: Logger;
+  readonly lag: () => Promise<StatusLag>;
+  readonly backfill?: (() => Promise<PersonalDataBackfillLag>) | undefined;
   readonly failures: SubscriberFailureStore;
   readonly restores: RestoreWatch;
-  readonly reconciliation?: ForgetLedgerReconciliation | undefined;
-  readonly rotation?: KeyRotation | undefined;
+  readonly reconciliation?: Pick<ForgetLedgerReconciliation, "status"> | undefined;
+  readonly rotation?: Pick<KeyRotation, "status"> | undefined;
   readonly tenant?: (() => Promise<TenantKeyStatus>) | undefined;
-  readonly retention?: RetentionSweep | undefined;
-  readonly letterRetention?: DeadLetterRetention | undefined;
-  readonly failureRetention?: SubscriberFailureRetention | undefined;
+  readonly retention?: Pick<RetentionSweep, "status"> | undefined;
+  readonly letterRetention?: Pick<DeadLetterRetention, "status"> | undefined;
+  readonly failureRetention?: Pick<SubscriberFailureRetention, "status"> | undefined;
   readonly recipients?: (() => Promise<readonly RecipientStatus[]>) | undefined;
 }
 
@@ -206,9 +233,28 @@ export const schemaOf: SchemaOfFunction = ({ database, scopes }, versions) =>
     .filter(({ scope }) => (scopes as readonly string[]).includes(scope))
     .map((version) => ({ database, ...version }));
 
+const UNREADABLE: UnreadableStatus = { unreadable: true };
+
+export interface IsUnreadableFunction {
+  (part: unknown): part is UnreadableStatus;
+}
+
+/**
+ * Whether a part of `app.status()` came back unreadable, as `{ unreadable: true }`: what narrows
+ * a part before reading it, `restoresFound` included.
+ */
+export const isUnreadable: IsUnreadableFunction = (part): part is UnreadableStatus =>
+  typeof part === "object" && part !== null && "unreadable" in part;
+
+interface ReadablePartFunction {
+  <T>(part: string, read: () => Promise<T>): Promise<T | UnreadableStatus>;
+}
+
 export const readAppStatus: ReadAppStatusFunction = async ({
   config,
+  logger,
   lag,
+  backfill,
   failures,
   restores,
   reconciliation,
@@ -219,11 +265,21 @@ export const readAppStatus: ReadAppStatusFunction = async ({
   failureRetention,
   recipients,
 }) => {
+  const readable: ReadablePartFunction = async (part, read) => {
+    try {
+      return await read();
+    } catch (error) {
+      logger.error("a part of the status could not be read", { part, error });
+      return UNREADABLE;
+    }
+  };
+  const databases = databasesOf(config);
   const [
     schema,
     restoresFound,
     current,
     stored,
+    personalDataBackfill,
     forgetLedger,
     keyRotation,
     tenantKey,
@@ -233,36 +289,63 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     told,
   ] = await Promise.all([
     Promise.all(
-      databasesOf(config).map(async (database) =>
-        schemaOf(database, await database.adapter.schemaVersions()),
-      ),
+      databases.map(async (database) => {
+        try {
+          return schemaOf(database, await database.adapter.schemaVersions());
+        } catch (error) {
+          logger.error("a part of the status could not be read", {
+            part: "schema",
+            database: database.database,
+            error,
+          });
+          return [{ database: database.database, unreadable: true as const }];
+        }
+      }),
     ).then((all) => all.flat()),
-    restores.found(),
-    lag(),
-    failures.list(),
-    reconciliation?.status() ?? null,
-    rotation?.status() ?? null,
-    tenant?.() ?? null,
-    retention?.status() ?? null,
+    readable("restoresFound", () => restores.found()),
+    readable("lag", lag),
+    readable("subscriberFailures", () => failures.list()),
+    readable("personalDataBackfill", async () => (await backfill?.()) ?? null),
+    readable("forgetLedger", async () => (await reconciliation?.status()) ?? null),
+    readable("keyRotation", async () => (await rotation?.status()) ?? null),
+    readable("tenant", async () => (await tenant?.()) ?? null),
+    readable("retention", async () => (await retention?.status()) ?? null),
     letterRetention?.status() ?? null,
     failureRetention?.status() ?? null,
-    recipients?.() ?? [],
+    readable("recipients", async () => (await recipients?.()) ?? []),
   ]);
-  const positions = new Map(current.subscribers.map((each) => [each.subscriber, each.position]));
+  // `null` for a subscriber whose position could not be read, as for every one without the lag.
+  const positions = isUnreadable(current)
+    ? undefined
+    : new Map(
+        current.subscribers.map((each) => [
+          each.subscriber,
+          isUnreadable(each) ? null : each.position,
+        ]),
+      );
+  const positionOf = (subscriber: string): number | null | undefined =>
+    positions === undefined ? null : positions.get(subscriber);
   return {
     schema,
     restoresFound,
     lag: current,
-    // A subscriber the app no longer runs is stuck on nothing.
-    subscriberFailures: stored.map(({ errorMessage: _message, errorStack: _stack, ...failure }) => {
-      const position = positions.get(failure.subscriber);
-      return {
-        ...failure,
-        current:
-          failure.resolvedAt === null && position !== undefined && position < failure.position,
-      };
-    }),
-    personalDataBackfill: current.personalDataBackfill,
+    // A subscriber the app no longer runs is stuck on nothing; one whose position could not be
+    // read may be.
+    subscriberFailures: isUnreadable(stored)
+      ? stored
+      : stored.map(({ errorMessage: _message, errorStack: _stack, ...failure }) => {
+          const position = positionOf(failure.subscriber);
+          return {
+            ...failure,
+            current:
+              failure.resolvedAt !== null || position === undefined
+                ? false
+                : position === null
+                  ? null
+                  : position < failure.position,
+          };
+        }),
+    personalDataBackfill,
     forgetLedger,
     tenant: tenantKey,
     keyRotation,
@@ -270,7 +353,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     deadLetterRetention: purged,
     subscriberFailureRetention: expired,
     recipients: told,
-    files: databasesOf(config).flatMap(({ database, adapter }) =>
+    files: databases.flatMap(({ database, adapter }) =>
       adapter.fileEncryption === undefined
         ? []
         : [
@@ -283,3 +366,44 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     ),
   };
 };
+
+export interface UnreadablePartsFunction {
+  (status: AppStatus): readonly string[];
+}
+
+const PARTS = [
+  "schema",
+  "restoresFound",
+  "lag",
+  "subscriberFailures",
+  "personalDataBackfill",
+  "forgetLedger",
+  "tenant",
+  "keyRotation",
+  "retention",
+  "deadLetterRetention",
+  "subscriberFailureRetention",
+  "recipients",
+] as const satisfies readonly (keyof AppStatus)[];
+
+/**
+ * The parts of `status` that could not be read, in the order of its fields, as the logs name them:
+ * a field of `AppStatus`, `schema` with its database, as `schema (readModels.audit)`, and `lag`
+ * with its subscriber, as `lag (projection:customers)`, unless the lag could not be read at all.
+ * Empty when every part was read: what a host or a script checks before taking the status as
+ * complete.
+ */
+export const unreadableParts: UnreadablePartsFunction = (status) =>
+  PARTS.flatMap((part) => {
+    if (part === "schema") {
+      return status.schema.flatMap((each) =>
+        isUnreadable(each) ? [`schema (${each.database})`] : [],
+      );
+    }
+    if (part === "lag" && !isUnreadable(status.lag)) {
+      return status.lag.subscribers.flatMap((each) =>
+        isUnreadable(each) ? [`lag (${each.subscriber})`] : [],
+      );
+    }
+    return isUnreadable(status[part]) ? [part] : [];
+  });

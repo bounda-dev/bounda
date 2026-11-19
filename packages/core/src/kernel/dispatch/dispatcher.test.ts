@@ -121,6 +121,94 @@ describe("createDispatcher", () => {
     });
   });
 
+  it("reports a subscriber whose checkpoint cannot be read, with what it failed on, and no max lag then", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 3);
+    let down = false;
+    const a = recorder("a");
+    const b: Subscriber = {
+      name: "b",
+      kind: "projection",
+      process: async () => {
+        throw new Error("b cannot handle it");
+      },
+    };
+    const { logger, entries } = createRecordingLogger();
+    const dispatcher = createDispatcher({
+      tracer,
+      clock: createFixedClock(),
+      eventStore,
+      checkpointStore: {
+        ...checkpointStore,
+        get: async (name) => {
+          if (down && name === "b") throw new Error("b's database is down");
+          return checkpointStore.get(name);
+        },
+      },
+      subscribers: [b, a],
+      batchSize: 1,
+      pollIntervalMs: 1_000,
+      logger,
+      errorText: "include",
+    });
+    await dispatcher.processOnce();
+    expect(await dispatcher.standings()).toEqual(await dispatcher.getLag());
+    down = true;
+    expect(await dispatcher.standings()).toEqual({
+      lastPosition: 3,
+      subscribers: [
+        {
+          subscriber: "b",
+          unreadable: true,
+          failing: expect.objectContaining({ position: 1, attempts: 1 }),
+        },
+        { subscriber: "a", position: 1, lag: 2 },
+      ],
+      maxLag: null,
+    });
+    expect(
+      entries.filter(({ message }) => message === "a subscriber's checkpoint could not be read"),
+    ).toEqual([
+      {
+        level: "error",
+        message: "a subscriber's checkpoint could not be read",
+        fields: expect.objectContaining({ subscriber: "b" }),
+      },
+    ]);
+    await expect(dispatcher.getLag()).rejects.toThrow("b's database is down");
+  });
+
+  it("leaves the lag unread for the status when the events past a checkpoint cannot be read, rather than blaming each subscriber", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 3);
+    let down = false;
+    const handling = (name: string): Subscriber => ({
+      ...recorder(name),
+      handles: () => false,
+    });
+    const { logger, entries } = createRecordingLogger();
+    const dispatcher = createDispatcher({
+      tracer,
+      clock: createFixedClock(),
+      eventStore: {
+        ...eventStore,
+        readAll: (args) => {
+          if (down) throw new Error("the events cannot be read");
+          return eventStore.readAll(args);
+        },
+      },
+      checkpointStore,
+      subscribers: [handling("a"), handling("b")],
+      batchSize: 10,
+      pollIntervalMs: 1_000,
+      logger,
+      errorText: "include",
+    });
+    down = true;
+    await expect(dispatcher.standings()).rejects.toThrow("the events cannot be read");
+    expect(entries).toEqual([]);
+  });
+
   it("catches up the subscribers of one kind and leaves the others where they were", async () => {
     const { eventStore, checkpointStore } = await storage();
     await appendMany(eventStore, 3);

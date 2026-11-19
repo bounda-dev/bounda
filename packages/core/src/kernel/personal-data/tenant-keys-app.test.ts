@@ -284,7 +284,7 @@ describe("the keys of a tenant", () => {
       logger,
     });
     const current = await masterKeyOf(env, ["BOUNDA_MASTER_KEY_PREVIOUS"]);
-    expect((await rotated.status()).tenant?.master).toEqual({
+    expect(await rotated.status()).toHaveProperty("tenant.master", {
       kid: current.kid,
       previous: current.previous,
       pending: 1,

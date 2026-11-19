@@ -50,7 +50,7 @@ import { objectClock } from "./object-clock.ts";
 import { type RpcOutcome, settle } from "./outcome.ts";
 import { partLines } from "./parts.ts";
 import type { DurableSqlStorage } from "./sql-database.ts";
-import { nextWake } from "./wake.ts";
+import { nextWake, wakeLagOf } from "./wake.ts";
 import { witnessOf } from "./witnesses.ts";
 
 export interface CreateBoundaObjectArgs<R extends Registry> {
@@ -376,7 +376,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       const at = nextWake({
         idle,
         settled,
-        lag: lag.maxLag,
+        ...wakeLagOf(lag),
         rebuild: rebuilds.length === 0 ? "none" : rebuildFailed ? "held" : "next",
         due,
         now,

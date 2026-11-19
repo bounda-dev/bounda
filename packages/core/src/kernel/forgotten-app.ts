@@ -121,7 +121,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   });
   const retries = createRecipientLetterRetry({ storage, notices, config, ids, clock });
   const getLag = async (): Promise<AppLag> => ({
-    ...(await dispatcher.getLag()),
+    ...(await dispatcher.standings()),
     waitingDeadlines: 0,
     forgetLedger: null,
     personalDataBackfill: null,
@@ -152,7 +152,12 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
     status: () =>
       readAppStatus({
         config,
-        lag: getLag,
+        logger,
+        lag: async () => ({
+          ...(await dispatcher.standings()),
+          waitingDeadlines: 0,
+          forgetLedger: null,
+        }),
         failures: storage.subscriberFailures,
         restores,
         tenant: () => tenantKeys.status(),

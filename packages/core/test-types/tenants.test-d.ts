@@ -21,6 +21,7 @@ import {
   type TenantForgottenResult,
   type TenantKeyStatus,
   type TenantKeyVersions,
+  type UnreadableStatus,
   withEncryptedFiles,
 } from "@bounda-dev/core";
 import type {
@@ -106,7 +107,7 @@ describe("the tenant's client calls", () => {
   });
 
   it("report the tenant's key in the app's status", () => {
-    expectTypeOf<AppStatus["tenant"]>().toEqualTypeOf<TenantKeyStatus | null>();
+    expectTypeOf<AppStatus["tenant"]>().toEqualTypeOf<TenantKeyStatus | null | UnreadableStatus>();
     expectTypeOf<TenantKeyStatus>().toEqualTypeOf<{
       readonly tenant: string;
       readonly forgottenAt: string | null;

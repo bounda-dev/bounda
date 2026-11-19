@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { nextWake } from "../src/wake.ts";
+import { nextWake, wakeLagOf } from "../src/wake.ts";
 
 const base = {
   idle: true,
   settled: false,
   lag: 0,
+  unread: false,
   rebuild: "none",
   due: null,
   now: 1_000,
@@ -26,6 +27,14 @@ describe("nextWake", () => {
     expect(nextWake({ ...base, lag: 3, settled: true, idle: false })).toBe(1_000);
   });
 
+  it("tries again after the retry interval while a subscriber's checkpoint cannot be read", () => {
+    expect(nextWake({ ...base, unread: true })).toBe(6_000);
+    expect(nextWake({ ...base, unread: true, settled: true })).toBe(6_000);
+    expect(nextWake({ ...base, unread: true, idle: false })).toBe(1_000);
+    // The subscribers read still wake it at once for new events.
+    expect(nextWake({ ...base, unread: true, lag: 2 })).toBe(1_000);
+  });
+
   it("wakes at once for a rebuild's next slice, and after the retry interval when one failed", () => {
     expect(nextWake({ ...base, rebuild: "next" })).toBe(1_000);
     expect(nextWake({ ...base, rebuild: "held", settled: true })).toBe(6_000);
@@ -37,5 +46,26 @@ describe("nextWake", () => {
     expect(nextWake({ ...base, due: new Date(10) })).toBe(1_000);
     expect(nextWake({ ...base, due: new Date(3_000), lag: 1, settled: true })).toBe(3_000);
     expect(nextWake({ ...base, due: new Date(9_000), lag: 1, settled: true })).toBe(6_000);
+  });
+});
+
+describe("wakeLagOf", () => {
+  it("takes the furthest lag of the subscribers read, and says when one was not", () => {
+    expect(
+      wakeLagOf({
+        subscribers: [
+          { subscriber: "a", position: 4, lag: 2 },
+          { subscriber: "b", unreadable: true },
+          { subscriber: "c", position: 1, lag: 5 },
+        ],
+        maxLag: null,
+      }),
+    ).toEqual({ lag: 5, unread: true });
+    expect(
+      wakeLagOf({ subscribers: [{ subscriber: "b", unreadable: true }], maxLag: null }),
+    ).toEqual({ lag: 0, unread: true });
+    expect(
+      wakeLagOf({ subscribers: [{ subscriber: "a", position: 4, lag: 0 }], maxLag: 0 }),
+    ).toEqual({ lag: 0, unread: false });
   });
 });

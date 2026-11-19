@@ -402,7 +402,9 @@ has the steps for each engine.
 The runtime reports OpenTelemetry spans and metrics with no adapter to write: register an SDK
 before `boot()` and they show up next to your HTTP server's. Alert on `bounda.dispatcher.lag`, the
 gauge of how far each subscriber is behind. [Observability](/reference/observability/) lists every
-span, attribute and metric.
+span, attribute and metric. `bounda status` and `app.status()` keep answering while a store is
+down, with what they could read and each part they could not
+[marked](/reference/observability/): `bounda status` exits `2` then, so a scheduled check alerts.
 
 ## On Cloudflare
 

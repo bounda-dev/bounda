@@ -146,7 +146,7 @@ describe("the tenant", () => {
     });
     expect(named.tenants).toEqual(["acme"]);
     expect(app.role).toBe("all");
-    expect((await app.status()).tenant?.tenant).toBe("acme");
+    expect(await app.status()).toMatchObject({ tenant: { tenant: "acme" } });
     await app.stop();
     const unnamed = await boot({
       root,
@@ -157,7 +157,7 @@ describe("the tenant", () => {
       config: { storage: memory() },
       tenant: "globex",
     });
-    expect((await unnamed.status()).tenant?.tenant).toBe("globex");
+    expect(await unnamed.status()).toMatchObject({ tenant: { tenant: "globex" } });
     await unnamed.stop();
   });
 });

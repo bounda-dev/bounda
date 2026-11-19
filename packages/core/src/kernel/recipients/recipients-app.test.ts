@@ -17,6 +17,7 @@ import { createTestApp } from "../../testing/index.ts";
 import { createApp } from "../app.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
+import { readPart } from "../test-support.ts";
 
 type Events = Record<string, (payload?: unknown) => unknown>;
 
@@ -1170,7 +1171,9 @@ describe("recipients of personal data", () => {
   it("reports every recipient in the app's status", async () => {
     const { app, register } = await start();
     await register("c-1");
-    expect((await app.status()).recipients.map(({ port, persons }) => [port, persons])).toEqual([
+    expect(
+      readPart((await app.status()).recipients).map(({ port, persons }) => [port, persons]),
+    ).toEqual([
       ["customer.crm", 0],
       ["customer.mailer", 1],
       ["customers.audience", 0],

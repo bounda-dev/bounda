@@ -61,8 +61,27 @@ The lag gauge is what to alert on: a subscriber whose lag grows is a projection 
 failing or stuck, and `app.getLag()` returns the same numbers for a health endpoint, with what a
 failing subscriber is stuck on (see
 [A projection that keeps failing](/guides/deployment/#a-projection-that-keeps-failing)). A
+subscriber whose checkpoint cannot be read, its read model's own database down say, is logged as
+`a subscriber's checkpoint could not be read` and comes back as `{ subscriber, unreadable: true }`
+beside the others, and `maxLag` is then `null`, never a number a health check could take for
+caught up; a backfill that cannot be read is logged and comes back unreadable too. Only the stream
+itself, its head or the events past a checkpoint, makes `getLag()` reject when it cannot be read,
+and the lag gauge leaves out only the subscribers it could not read. A
 `mismatch` on `bounda.snapshots` is worth one too: a snapshot folded to a state the stream does not
 give, so an `evolve` of that aggregate depends on something other than the events.
+
+`app.status()` is meant for the moment something is wrong, so it never rejects because a store it
+reads is down: each part it cannot read comes back as `{ unreadable: true }` (`UnreadableStatus`),
+which `isUnreadable` narrows, while the others come back as usual. `restoresFound`, the lag, a
+database of `schema`, the failures, the backfill, the forget ledger, the tenant, the key rotation,
+the retention and the recipients are each logged once for the call as
+`a part of the status could not be read`, with the `part` (and the `database`); a subscriber's
+checkpoint, as for `getLag()`, as `a subscriber's checkpoint could not be read`; the two purges
+under their own lines, `resolved dead letters could not be read` and
+`subscriber failures past the retention could not be read`, as their sweeps do.
+`unreadableParts(status)` names every such part, empty when every part was read: a health endpoint
+answers an error when it is not empty, rather than taking a status in part for a whole one.
+`bounda status` prints what it read and exits `2` then.
 
 ## Error text
 
