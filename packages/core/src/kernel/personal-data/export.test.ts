@@ -26,6 +26,8 @@ import { exportPersonalData, streamPersonalData } from "./export-stream.ts";
 
 const NO_RECIPIENTS: RecipientsRuntime = { all: [], byPort: {}, byOwner: {} };
 
+const unchecked = async (): Promise<void> => undefined;
+
 type Table = RowTable<Record<string, unknown>>;
 
 const DAY = 86_400_000;
@@ -217,6 +219,7 @@ const setup = async () => {
       recipients: NO_RECIPIENTS,
       personId,
       includeWithheld,
+      onPage: unchecked,
     });
   const streamOf = (personId: string, includeWithheld: boolean) =>
     streamPersonalData({
@@ -231,6 +234,7 @@ const setup = async () => {
       recipients: NO_RECIPIENTS,
       personId,
       includeWithheld,
+      onPage: unchecked,
     });
   const register = (aggregateId: string, email: string) =>
     storage.eventStore.append({
@@ -759,6 +763,7 @@ describe("exportPersonalData", () => {
         recipients: NO_RECIPIENTS,
         personId: "c-1",
         includeWithheld: false,
+        onPage: unchecked,
       });
       expect(exported.readModels.orderNotes?.map((row) => row.key)).toEqual([
         "o-2",
@@ -804,6 +809,7 @@ describe("exportPersonalData", () => {
         recipients: NO_RECIPIENTS,
         personId: "c-1",
         includeWithheld: false,
+        onPage: unchecked,
       }),
     ).rejects.toBe(down);
   });
@@ -920,6 +926,7 @@ describe("exportPersonalData", () => {
       recipients: NO_RECIPIENTS,
       personId: "c-1",
       includeWithheld: false,
+      onPage: unchecked,
     });
     expect(exported.categories.default?.restrictedUntil).toBeNull();
   });
@@ -938,6 +945,7 @@ describe("exportPersonalData", () => {
       recipients: NO_RECIPIENTS,
       personId: "c-1",
       includeWithheld: false,
+      onPage: unchecked,
     });
     const none = { held: false, keptUntil: null, restrictedUntil: null };
     expect(exported.categories).toEqual({
@@ -1297,5 +1305,163 @@ describe("exportPersonalData", () => {
       },
     ]);
     expect((await exportOf("c-1")).subscriberFailures).toEqual([]);
+  });
+});
+
+// Every call made through `target`, `depth` objects deep, logged by its path as a read.
+const loggedReads = <T extends object>(target: T, depth: number, log: string[], path = ""): T =>
+  new Proxy(target, {
+    get: (object, property) => {
+      const found: unknown = Reflect.get(object, property);
+      const at = `${path}${String(property)}`;
+      if (typeof found === "function") {
+        return (...args: unknown[]) => {
+          log.push(`read ${at}`);
+          return Reflect.apply(found, object, args);
+        };
+      }
+      if (typeof found !== "object" || found === null || depth === 1) return found;
+      return loggedReads(found, depth - 1, log, `${at}.`);
+    },
+  });
+
+describe("streamPersonalData's checks", () => {
+  // c-1 has five events, a scheduled command, three dead letters, a subscriber failure and a row:
+  // with two records a page, the header and eight pages to check.
+  const holding = async () => {
+    const context = await setup();
+    const { storage, register, place, sealedReminder, failure, table } = context;
+    await register("c-1", "ana@example.com");
+    for (const orderId of ["o-1", "o-2", "o-3", "o-4"]) {
+      await place(orderId, { customerId: "c-1", total: 10 });
+    }
+    const reminder = await sealedReminder("c-1", "ana@example.com");
+    await storage.scheduler.schedule({
+      dedupeKey: "command:cmd-1",
+      command: { type: "RemindCustomer", aggregateId: "c-1", payload: reminder.payload },
+      executeAt: new Date("2026-01-02T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
+      context: testContext,
+      persons: reminder.persons,
+    });
+    for (const id of ["dl-1", "dl-2", "dl-3"]) {
+      await storage.deadLetterStore.add({
+        ...testDeadLetter(id),
+        ...(await failure("c-1", `${id} for ana@example.com`)),
+        person: "c-1",
+      });
+    }
+    const sealed = await failure("c-1", "cannot index ana@example.com");
+    await storage.subscriberFailures.record({
+      subscriber: "projection:a",
+      position: 1,
+      eventId: "e-1",
+      eventType: "CustomerRegistered",
+      person: "c-1",
+      errorName: "Error",
+      errorMessage: sealed.errorMessage,
+      failedAt: "2026-01-01T00:00:00.000Z",
+    } as never);
+    await table("customerDirectory").insert({
+      customerId: "c-1",
+      email: "ana@example.com",
+      plan: "pro",
+    });
+    return context;
+  };
+
+  const streamWith = (
+    { storage, aggregates, readModels }: Awaited<ReturnType<typeof setup>>,
+    log: string[],
+    onPage: () => Promise<void>,
+  ) => {
+    const reading = loggedReads(storage, 2, log);
+    return streamPersonalData({
+      storage: reading,
+      aggregates,
+      processes: { byName: {} },
+      readModels: {
+        ...readModels,
+        byName: Object.fromEntries(
+          Object.entries(readModels.byName).map(([name, readModel]) => [
+            name,
+            { ...readModel, storage: loggedReads(readModel.storage, 2, log, `${name}.`) },
+          ]),
+        ),
+      },
+      sealing: { keys: reading.personalKeys, indexer: null, redactions: async () => [] },
+      clock: createFixedClock(),
+      batchSize: 2,
+      categories,
+      recipients: NO_RECIPIENTS,
+      personId: "c-1",
+      includeWithheld: false,
+      onPage,
+    });
+  };
+
+  it("runs once the header is read and once for each page with records, after every read for it and before any of it is handed out", async () => {
+    const context = await holding();
+    const log: string[] = [];
+    const streamed = await streamWith(context, log, async () => {
+      log.push("check");
+    });
+    expect(log.at(-1)).toBe("check");
+    expect(log.filter((entry) => entry === "check")).toHaveLength(1);
+    for await (const part of streamed.records) log.push(`record ${part.kind}`);
+    // Nothing read is handed out before a check has run after it.
+    let unchecked: string | null = null;
+    const handedUnchecked: string[] = [];
+    for (const entry of log) {
+      if (entry === "check") unchecked = null;
+      else if (entry.startsWith("read ")) unchecked = entry;
+      else if (unchecked !== null) handedUnchecked.push(`${entry} after ${unchecked}`);
+    }
+    expect(handedUnchecked).toEqual([]);
+    // One check for each page that hands something out, whatever was read for it.
+    const kinds = log.filter((entry) => entry === "check" || entry.startsWith("record "));
+    expect(kinds).toEqual([
+      "check",
+      "check",
+      "record event",
+      "record event",
+      "check",
+      "record event",
+      "record event",
+      "check",
+      "record event",
+      "check",
+      "record scheduledCommand",
+      "check",
+      "record deadLetter",
+      "record deadLetter",
+      "check",
+      "record deadLetter",
+      "check",
+      "record subscriberFailure",
+      "check",
+      "record row",
+    ]);
+    // The keys a page opens, record by record, are among what it reads before its check.
+    expect(log).toContain("read personalKeys.opened");
+    expect(log).toContain("read personalKeys.heldAllOf");
+  });
+
+  it("hands out nothing of the header or of a page whose check throws, and fails with it", async () => {
+    const context = await holding();
+    const refused = new Error("restored under it");
+    await expect(streamWith(context, [], () => Promise.reject(refused))).rejects.toBe(refused);
+    let checks = 0;
+    const streamed = await streamWith(context, [], async () => {
+      checks += 1;
+      if (checks === 3) throw refused;
+    });
+    const handed: unknown[] = [];
+    await expect(
+      (async () => {
+        for await (const part of streamed.records) handed.push(part);
+      })(),
+    ).rejects.toBe(refused);
+    expect(handed.map((part) => (part as { kind: string }).kind)).toEqual(["event", "event"]);
   });
 });

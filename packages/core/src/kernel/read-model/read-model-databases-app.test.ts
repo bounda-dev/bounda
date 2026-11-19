@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { Table } from "../../adapter/storage/table.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ReadModelRestoringError } from "../../contracts/errors.ts";
+import { type LogFields, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { PERSONAL_DATA_ACCESSED } from "../personal-data/access.ts";
 import { GENERATION_INTERVAL_MS } from "../shared/restores.ts";
 import { orderAggregateEntry } from "../test-support.ts";
 import { streamMarkOf } from "./stream-marks.ts";
@@ -73,10 +75,17 @@ describe("a read model in a database of its own that went back", () => {
       worker.commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>
     ).placeOrder?.({ orderId: "o-1", total: 10 });
     await worker.runUntilIdle();
+    const accessed: (LogFields | undefined)[] = [];
     const web = await createApp({
       registry,
       config: { ...config, runtime: { role: "web" } },
       clock,
+      logger: {
+        ...silentLogger,
+        info: (message, fields) => {
+          if (message === PERSONAL_DATA_ACCESSED) accessed.push(fields);
+        },
+      },
     });
     web.start();
     expect(await orderOf(web, "o-1")).toEqual({ orderId: "o-1", total: 10 });
@@ -93,6 +102,14 @@ describe("a read model in a database of its own that went back", () => {
       code: "READ_MODEL_RESTORING",
       readModel: "orderSummary",
     });
+    await expect(web.streamPersonalData("ana")).rejects.toBeInstanceOf(ReadModelRestoringError);
+    // Refused before it read anything, and recorded as an access that failed all the same.
+    expect(accessed.map((fields) => [fields?.operation, fields?.persons, fields?.outcome])).toEqual(
+      [
+        ["exportPersonalData", ["ana"], "failed"],
+        ["exportPersonalData", ["ana"], "failed"],
+      ],
+    );
 
     await worker.runUntilIdle();
     expect(await orderOf(web, "o-1")).toEqual({ orderId: "o-1", total: 10 });

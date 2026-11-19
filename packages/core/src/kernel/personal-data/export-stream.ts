@@ -84,6 +84,11 @@ export interface StreamPersonalDataArgs {
    * Whether what article 15(4) holds back is opened, still marked.
    */
   readonly includeWithheld: boolean;
+  /**
+   * Runs once the header is read and once each page of records is, every value of the page opened,
+   * before anything read for it is handed out; what it throws is the export's failure.
+   */
+  readonly onPage: () => Promise<void>;
 }
 
 // The header, read whole, and every record, each read only as it is asked for.
@@ -97,6 +102,9 @@ export interface StreamedExport {
 export interface StreamPersonalDataFunction {
   (args: StreamPersonalDataArgs): Promise<StreamedExport>;
 }
+
+// An export's records a page at a time, each page built whole before it is handed on.
+interface Pages extends AsyncGenerator<readonly PersonalDataExportRecord[], void, undefined> {}
 
 interface Marked {
   readonly data: ExportedData;
@@ -123,15 +131,29 @@ const markedFields = (marks: PersonalMarks | null, payload: unknown): Marked => 
 async function* paged<Item>(
   read: (after: string | undefined) => Promise<readonly Item[]>,
   keyOf: (item: Item) => string,
-): AsyncGenerator<readonly Item[], void, undefined> {
+  build: (items: readonly Item[]) => Promise<readonly PersonalDataExportRecord[]>,
+): Pages {
   let after: string | undefined;
   for (;;) {
     const page = await read(after);
     if (page.length === 0) return;
-    yield page;
+    yield await build(page);
     after = keyOf(page.at(-1) as Item);
   }
 }
+
+// Each item's record, in order, one at a time; an item built as `null` has none.
+const built = async <Item>(
+  items: readonly Item[],
+  build: (item: Item) => Promise<PersonalDataExportRecord | null>,
+): Promise<readonly PersonalDataExportRecord[]> => {
+  const records: PersonalDataExportRecord[] = [];
+  for (const item of items) {
+    const record = await build(item);
+    if (record !== null) records.push(record);
+  }
+  return records;
+};
 
 // Each read model through its own storage, which may be another adapter's.
 async function* exportedRows(
@@ -143,7 +165,7 @@ async function* exportedRows(
   personId: string,
   batchSize: number,
   restricted: (categories: ExportedCategories) => ExportedRestricted,
-): AsyncGenerator<PersonalDataExportRecord & { readonly kind: "row" }, void, undefined> {
+): Pages {
   // Holds the person's keys alone, each read once.
   const keys = createSealingKeyRing({ keys: sealing.keys, fetching: true });
   let after: unknown;
@@ -156,6 +178,7 @@ async function* exportedRows(
       orderBy: { field: primaryKey, direction: "asc" },
       limit: batchSize,
     });
+    const rows: PersonalDataExportRecord[] = [];
     for (const stored of page) {
       // Every value opened, what a forgetting kept included: the export marks it restricted.
       const { row, retainedFields } = await openRow({
@@ -167,7 +190,7 @@ async function* exportedRows(
       const categories = Object.fromEntries(
         held.map((field) => [field, fields[field]?.category ?? DEFAULT_PERSONAL_CATEGORY]),
       );
-      yield {
+      rows.push({
         kind: "row",
         readModel,
         row: {
@@ -176,8 +199,9 @@ async function* exportedRows(
           categories,
           restricted: [...new Set([...restricted(categories), ...retainedFields])],
         },
-      };
+      });
     }
+    yield rows;
     after = page.at(-1)?.[primaryKey];
     // A person field that is the primary key names one row at most, and a range on it would
     // take the place of the person's own value.
@@ -202,7 +226,7 @@ async function* exportedRedactions(
   personId: string,
   version: number,
   batchSize: number,
-): AsyncGenerator<PersonalDataExportRecord & { readonly kind: "redaction" }, void, undefined> {
+): Pages {
   for (let from = 1; from <= version; from += batchSize) {
     const { events } = await storage.eventStore.load({
       aggregateType: BOUNDA_AGGREGATE,
@@ -210,24 +234,26 @@ async function* exportedRedactions(
       fromVersion: from,
       toVersion: Math.min(from + batchSize - 1, version),
     });
-    for (const event of events) {
-      if (event.type !== PERSONAL_DATA_REDACTED_EVENT) continue;
-      const redaction: ExportedRedaction = {
-        eventId: event.id,
-        at: event.timestamp,
-        events: (event.payload as PersonalDataRedactedPayload).events.map(({ id, fields }) => ({
-          id,
-          fields,
-        })),
-      };
-      yield { kind: "redaction", redaction };
-    }
+    yield events
+      .filter((event) => event.type === PERSONAL_DATA_REDACTED_EVENT)
+      .map((event) => {
+        const redaction: ExportedRedaction = {
+          eventId: event.id,
+          at: event.timestamp,
+          events: (event.payload as PersonalDataRedactedPayload).events.map(({ id, fields }) => ({
+            id,
+            fields,
+          })),
+        };
+        return { kind: "redaction", redaction };
+      });
   }
 }
 
-// Resolves once the header is read, so a refusal rejects before anything is handed out. What the
-// person's own stream says of them holds for the whole export: a change to it since the start,
-// found once the last page is read, rejects it with `PersonalDataChangedError`.
+// Resolves once the header is read and `onPage` let it through, so a refusal rejects before
+// anything is handed out. What the person's own stream says of them holds for the whole export: a
+// change to it since the start, found once the last page is read, rejects it with
+// `PersonalDataChangedError`.
 export const streamPersonalData: StreamPersonalDataFunction = async ({
   storage,
   aggregates,
@@ -240,6 +266,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
   recipients,
   personId,
   includeWithheld,
+  onPage,
 }) => {
   checkPersonId(personId, "exportPersonalData");
   const exportedAt = clock.now().toISOString();
@@ -397,87 +424,83 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     };
   };
 
-  async function* records(): AsyncGenerator<PersonalDataExportRecord, void, undefined> {
-    yield* exportedRedactions(storage, personId, before, batchSize);
+  const exportedEvent = (event: StoredEvent): PersonalDataExportRecord => {
+    const data = eventData(event);
+    return {
+      kind: "event",
+      event: {
+        id: event.id,
+        type: event.type,
+        aggregateType: event.aggregateType,
+        aggregateId: event.aggregateId,
+        version: event.version,
+        position: event.position,
+        timestamp: event.timestamp,
+        ...data,
+        restricted: eventRestricted(event, data.categories),
+        redacted: redactedIn(event).filter((field) => field in data.data),
+      },
+    };
+  };
+
+  // The person's events up to the head the header names.
+  async function* eventPages(): Pages {
     let afterPosition = 0;
-    let page: readonly StoredEvent[];
-    do {
-      page = await storage.eventStore.readByPerson({
-        person: personId,
-        afterPosition,
-        limit: batchSize,
-      });
-      for (const event of page) {
-        if (event.position > position) return yield* rest();
-        const data = eventData(event);
-        yield {
-          kind: "event",
-          event: {
-            id: event.id,
-            type: event.type,
-            aggregateType: event.aggregateType,
-            aggregateId: event.aggregateId,
-            version: event.version,
-            position: event.position,
-            timestamp: event.timestamp,
-            ...data,
-            restricted: eventRestricted(event, data.categories),
-            redacted: redactedIn(event).filter((field) => field in data.data),
-          },
-        };
-        afterPosition = event.position;
-      }
-    } while (page.length === batchSize);
-    yield* rest();
+    for (;;) {
+      const page = (
+        await storage.eventStore.readByPerson({ person: personId, afterPosition, limit: batchSize })
+      ).filter((event) => event.position <= position);
+      yield page.map(exportedEvent);
+      if (page.length < batchSize) return;
+      afterPosition = (page.at(-1) as StoredEvent).position;
+    }
   }
 
-  async function* rest(): AsyncGenerator<PersonalDataExportRecord, void, undefined> {
-    for await (const entries of paged(
-      (after) =>
-        storage.scheduler.listByPerson({
-          person: personId,
-          after,
-          limit: batchSize,
-        }),
+  const scheduledPages = (): Pages =>
+    paged(
+      (after) => storage.scheduler.listByPerson({ person: personId, after, limit: batchSize }),
       ({ dedupeKey }) => dedupeKey,
-    )) {
-      const { openedData } = opener();
-      for (const entry of entries) {
-        const data = await openedData(entry.command.type, entry.command.payload);
-        yield {
-          kind: "scheduledCommand",
-          scheduledCommand: {
-            commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
-            type: entry.command.type,
-            executeAt: entry.executeAt,
-            ...(entry.scheduledAt === undefined ? {} : { scheduledAt: entry.scheduledAt }),
-            ...data,
-            restricted: restrictedFields(data.categories),
-          },
-        };
-      }
-    }
-    for await (const letters of paged(
+      (entries) => {
+        const { openedData } = opener();
+        return built(entries, async (entry) => {
+          const data = await openedData(entry.command.type, entry.command.payload);
+          return {
+            kind: "scheduledCommand",
+            scheduledCommand: {
+              commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
+              type: entry.command.type,
+              executeAt: entry.executeAt,
+              ...(entry.scheduledAt === undefined ? {} : { scheduledAt: entry.scheduledAt }),
+              ...data,
+              restricted: restrictedFields(data.categories),
+            },
+          };
+        });
+      },
+    );
+
+  const letterPages = (): Pages =>
+    paged(
       (after) =>
-        storage.deadLetterStore.listByPerson({
-          person: personId,
-          after,
-          limit: batchSize,
-        }),
+        storage.deadLetterStore.listByPerson({ person: personId, after, limit: batchSize }),
       ({ id }) => id,
-    )) {
-      const opening = opener();
-      for (const letter of letters) {
-        yield { kind: "deadLetter", deadLetter: await exportedLetter(opening, letter) };
-      }
-    }
-    // One row per subscriber: few enough to read whole.
+      (letters) => {
+        const opening = opener();
+        return built(letters, async (letter) => ({
+          kind: "deadLetter",
+          deadLetter: await exportedLetter(opening, letter),
+        }));
+      },
+    );
+
+  // One row per subscriber: few enough to read whole, as one page.
+  const failuresPage = async (): Promise<readonly PersonalDataExportRecord[]> => {
     const { openText } = opener();
-    for (const failure of await storage.subscriberFailures.list()) {
+    return built(await storage.subscriberFailures.list(), async (failure) => {
       const sealedUnder = textPersons(failure);
-      if (!sealedUnder.includes(personId)) continue;
+      if (!sealedUnder.includes(personId)) return null;
       const text = await exportedText(openText, sealedUnder, failure);
-      yield {
+      return {
         kind: "subscriberFailure",
         subscriberFailure: {
           subscriber: failure.subscriber,
@@ -496,50 +519,50 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
           withheld: text.withheld,
         },
       };
-    }
-    // An answer a key it is sealed under no longer opens holds nothing to hand out. One kept
-    // before keys were filed by their HMAC holds no key of its own, and is filed under it in the
-    // clear.
+    });
+  };
+
+  // An answer a key it is sealed under no longer opens holds nothing to hand out. One kept before
+  // keys were filed by their HMAC holds no key of its own, and is filed under it in the clear.
+  const answerPages = (): Pages => {
     const now = clock.now();
-    for await (const records of paged(
+    return paged(
       (after) =>
-        storage.idempotencyStore.listByPerson({
-          person: personId,
-          now,
-          after,
-          limit: batchSize,
-        }),
+        storage.idempotencyStore.listByPerson({ person: personId, now, after, limit: batchSize }),
       ({ key }) => key,
-    )) {
-      for (const record of records) {
-        const remembered =
-          record.answer === null
-            ? null
-            : await openAnswer({
-                keys: storage.personalKeys,
-                atRest: storage.atRest,
-                answer: record.answer,
-              });
-        if (remembered === null) continue;
-        const opened = await shared(
-          record.persons.map(({ person }) => person),
-          { idempotencyKey: remembered.key ?? record.key, outcome: remembered.outcome },
-          ANSWER_FIELDS,
-        );
-        yield {
-          kind: "answer",
-          answer: {
-            idempotencyKey: opened.values.idempotencyKey,
-            expiresAt: record.expiresAt,
-            outcome: opened.values.outcome,
-            restricted: [
-              ...new Set([...(restrictions.length > 0 ? ["outcome"] : []), ...opened.restricted]),
-            ],
-            withheld: opened.withheld,
-          },
-        };
-      }
-    }
+      (records) =>
+        built(records, async (record) => {
+          const remembered =
+            record.answer === null
+              ? null
+              : await openAnswer({
+                  keys: storage.personalKeys,
+                  atRest: storage.atRest,
+                  answer: record.answer,
+                });
+          if (remembered === null) return null;
+          const opened = await shared(
+            record.persons.map(({ person }) => person),
+            { idempotencyKey: remembered.key ?? record.key, outcome: remembered.outcome },
+            ANSWER_FIELDS,
+          );
+          return {
+            kind: "answer",
+            answer: {
+              idempotencyKey: opened.values.idempotencyKey,
+              expiresAt: record.expiresAt,
+              outcome: opened.values.outcome,
+              restricted: [
+                ...new Set([...(restrictions.length > 0 ? ["outcome"] : []), ...opened.restricted]),
+              ],
+              withheld: opened.withheld,
+            },
+          };
+        }),
+    );
+  };
+
+  async function* rowPages(): Pages {
     for (const { name, storage: rowsStorage, personalData, fields, layout } of Object.values(
       readModels.byName,
     )) {
@@ -555,10 +578,31 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
         requestedFields,
       );
     }
+  }
+
+  async function* pages(): Pages {
+    yield* exportedRedactions(storage, personId, before, batchSize);
+    yield* eventPages();
+    yield* scheduledPages();
+    yield* letterPages();
+    yield await failuresPage();
+    yield* answerPages();
+    yield* rowPages();
+  }
+
+  // Each page is built whole, every key and restriction it opens read, before `onPage` runs, so
+  // nothing read for it is handed out unchecked; a page with nothing to hand out needs no check.
+  async function* records(): AsyncGenerator<PersonalDataExportRecord, void, undefined> {
+    for await (const page of pages()) {
+      if (page.length === 0) continue;
+      await onPage();
+      yield* page;
+    }
     const after = await personVersion(storage, personId);
     if (after !== before) throw new PersonalDataChangedError(personId, before, after);
   }
 
+  await onPage();
   return { header, records: records(), others: () => [...others] };
 };
 

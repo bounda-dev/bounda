@@ -7,6 +7,7 @@ import type { EphemeralKeys } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
+import { RestoreUnreconciledError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
@@ -14,6 +15,7 @@ import type { PersonalDataForgottenPayload } from "../../modules/bounda-events.t
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { PERSONAL_DATA_ACCESSED } from "../personal-data/access.ts";
 import { createEphemeralKeys } from "../personal-data/ephemeral-keys.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
 import { HOLD_MAX_MS } from "../personal-data/hold.ts";
@@ -293,7 +295,17 @@ describe("a database restored while the app runs", () => {
 });
 
 describe("a strict app's export", () => {
-  it("checks for a restore once for each page it reads, not for every record", async () => {
+  const strictly = (batchSize: number): RuntimeConfig => ({
+    dispatcher: { batchSize },
+    personalData: { forgetLedger: { store: memory(), strict: true } },
+  });
+
+  const accesses = (logger: ReturnType<typeof recordingLogger>) =>
+    logger.logged
+      .filter(({ message }) => message === PERSONAL_DATA_ACCESSED)
+      .map(({ fields }) => [fields?.operation, fields?.outcome]);
+
+  it("checks for a restore once the header is read and once for each page it reads, not for every record", async () => {
     const { adapter } = createNodeSqliteAdapter();
     let checks = 0;
     const counted = {
@@ -312,16 +324,53 @@ describe("a strict app's export", () => {
         };
       },
     };
-    const { app } = await start({
-      adapter: counted,
-      runtime: { personalData: { forgetLedger: { store: memory(), strict: true } } },
-    });
+    const { app } = await start({ adapter: counted, runtime: strictly(10) });
     for (let index = 0; index < 40; index += 1) await register(app, "c-1");
     checks = 0;
     const exported = await app.exportPersonalData("c-1");
     expect(exported.events).toHaveLength(40);
-    expect(checks).toBeGreaterThan(1);
-    expect(checks).toBeLessThan(10);
+    expect(checks).toBe(5);
+  });
+
+  // c-1 holds five events, a page and a half of them, in the copy and after it; c-2 is forgotten
+  // after the copy, which moves the generation the watch finds the restore by.
+  const copiedBefore = async () => {
+    const { adapter, db } = createNodeSqliteAdapter();
+    const logger = recordingLogger();
+    const { app, clock } = await start({ adapter, logger, runtime: strictly(2) });
+    for (let index = 0; index < 5; index += 1) await register(app, "c-1");
+    await register(app, "c-2");
+    await app.runUntilIdle();
+    const copy = copyOf(db);
+    clock.advance(GENERATION_INTERVAL_MS);
+    await app.forget("c-2");
+    await app.runUntilIdle();
+    logger.logged.length = 0;
+    return { app, db, copy, logger };
+  };
+
+  it("refuses the header it read from a copy restored under it, recorded as failed", async () => {
+    const { app, db, copy, logger } = await copiedBefore();
+    restore(db, copy);
+    await expect(app.streamPersonalData("c-1")).rejects.toBeInstanceOf(RestoreUnreconciledError);
+    expect(accesses(logger)).toEqual([["exportPersonalData", "failed"]]);
+  });
+
+  it("refuses a page it read from a copy restored under it before handing any of it out, recorded as failed", async () => {
+    const { app, db, copy, logger } = await copiedBefore();
+    const parts = (await app.streamPersonalData("c-1"))[Symbol.asyncIterator]();
+    const handed: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const { value } = await parts.next();
+      handed.push((value as { kind: string }).kind);
+    }
+    restore(db, copy);
+    await expect(parts.next()).rejects.toBeInstanceOf(RestoreUnreconciledError);
+    expect(handed).toEqual(["header", "event", "event"]);
+    expect(accesses(logger)).toEqual([
+      ["exportPersonalData", "started"],
+      ["exportPersonalData", "failed"],
+    ]);
   });
 });
 
