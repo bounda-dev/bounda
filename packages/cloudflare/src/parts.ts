@@ -1,4 +1,3 @@
-import type { PersonalDataExportPart } from "@bounda-dev/core";
 import { type RpcRefusal, refusalOf, refused } from "./outcome.ts";
 
 // The last line of a stream whose parts failed with a `BoundaError`, which the client throws as
@@ -8,8 +7,16 @@ interface RefusalLine {
   readonly refusal: RpcRefusal;
 }
 
+// A part of a person's export or of a tenant's, each with its kind.
+interface Part {
+  readonly kind: string;
+}
+
+const isRefusal = <Of extends Part>(line: Of | RefusalLine): line is RefusalLine =>
+  line.kind === "refusal";
+
 export interface PartLinesFunction {
-  (parts: AsyncIterable<PersonalDataExportPart>): ReadableStream<Uint8Array>;
+  <Of extends Part>(parts: AsyncIterable<Of>): ReadableStream<Uint8Array>;
 }
 
 // One JSON per line, read only as the stream is: a `BoundaError` ends it with a line that carries
@@ -20,7 +27,7 @@ export const partLines: PartLinesFunction = (parts) => {
   return new ReadableStream<Uint8Array>(
     {
       pull: async (controller) => {
-        let next: IteratorResult<PersonalDataExportPart>;
+        let next: IteratorResult<Part>;
         try {
           next = await iterator.next();
         } catch (error) {
@@ -43,11 +50,13 @@ export const partLines: PartLinesFunction = (parts) => {
 };
 
 export interface PartsOfFunction {
-  (lines: ReadableStream<Uint8Array>): AsyncGenerator<PersonalDataExportPart, void, undefined>;
+  <Of extends Part>(lines: ReadableStream<Uint8Array>): AsyncGenerator<Of, void, undefined>;
 }
 
 // Stopping early cancels the stream, and with it the export on the object.
-export const partsOf: PartsOfFunction = async function* (lines) {
+export const partsOf: PartsOfFunction = async function* <Of extends Part>(
+  lines: ReadableStream<Uint8Array>,
+) {
   const reader = lines.getReader();
   const decoder = new TextDecoder();
   let pending = "";
@@ -58,15 +67,15 @@ export const partsOf: PartsOfFunction = async function* (lines) {
       let start = 0;
       let end = pending.indexOf("\n");
       while (end !== -1) {
-        const line = JSON.parse(pending.slice(start, end)) as PersonalDataExportPart | RefusalLine;
+        const line = JSON.parse(pending.slice(start, end)) as Of | RefusalLine;
         start = end + 1;
-        if (line.kind === "refusal") throw refused(line.refusal);
+        if (isRefusal(line)) throw refused(line.refusal);
         yield line;
         end = pending.indexOf("\n", start);
       }
       pending = pending.slice(start);
       if (done) {
-        if (pending !== "") throw new Error("A personal data export ended within a part");
+        if (pending !== "") throw new Error("An export ended within a part");
         return;
       }
     }

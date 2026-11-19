@@ -190,6 +190,16 @@ export interface ListByPersonArgs {
   readonly limit?: number | undefined;
 }
 
+/**
+ * A page of every record of a store, by the key it orders them by: those after `after` when
+ * given, at most `limit` of them. Paging by a key no write changes, a record written or removed
+ * meanwhile cannot make another one skip a page or repeat.
+ */
+export interface ScanArgs {
+  readonly after?: string | undefined;
+  readonly limit: number;
+}
+
 export interface KeyedPersonIdFunction {
   (held: KeyedPerson): string;
 }
@@ -268,6 +278,10 @@ export interface PersonalKeyStore {
    * destroyed yet, as `find` hands them out; a person without a key is left out.
    */
   listMany(persons: readonly string[]): Promise<ReadonlyMap<string, readonly HeldPersonalKey[]>>;
+  /**
+   * The persons who hold a key, in force or kept, each once, by id.
+   */
+  persons(args: ScanArgs): Promise<readonly string[]>;
   add(person: string, category: string, key: StoredPersonalKey): Promise<StoredPersonalKey>;
   remove(person: string, fingerprint: string): Promise<boolean>;
   retain(person: string, fingerprint: string, args: RetainKeyArgs): Promise<boolean>;

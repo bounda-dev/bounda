@@ -194,6 +194,8 @@ export const createKeptScheduler: CreateKeptSchedulerFunction = () => {
         ({ dedupeKey }) => dedupeKey,
         page,
       ).map(toScheduled),
+    scan: async (page) =>
+      pageByKey([...entries.values()], ({ dedupeKey }) => dedupeKey, page).map(toScheduled),
     forget: async (person, keep) => {
       const named = [...entries.values()]
         .filter((entry) => namesPerson(entry, person, keep))

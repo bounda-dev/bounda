@@ -42,6 +42,7 @@ import {
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
+  tenantExportContract,
   tenantKeyStoreContract,
   viewContract,
 } from "../testing/index.ts";
@@ -132,6 +133,7 @@ const tableNames = (db: DatabaseSync, prefix: string): unknown[] =>
 describe("the SQLite stores on node:sqlite", () => {
   eventStoreContract({ create: storage });
   personalDataExportContract({ create: async () => nodeSqlite().adapter });
+  tenantExportContract({ create: async () => nodeSqlite().adapter });
   deadLetterRetentionContract({ create: async () => nodeSqlite().adapter });
   subscriberFailureRetentionContract({ create: async () => nodeSqlite().adapter });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });

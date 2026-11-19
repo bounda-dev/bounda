@@ -22,10 +22,16 @@ get today. Each item says why, so nobody discovers it the hard way:
   `pollInterval`; only the event dispatcher is woken by `NOTIFY`. See
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
-- **Parts of the GDPR the code could answer.** An export of a whole tenant, and a jurisdiction for
-  what Bounda keeps in KV on Cloudflare. See [GDPR rights in Bounda](/reference/gdpr/), which also says what is the
+- **Parts of the GDPR the code could answer.** A jurisdiction for what Bounda keeps in KV on
+  Cloudflare. See [GDPR rights in Bounda](/reference/gdpr/), which also says what is the
   controller's.
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
+- **A tenant's export while it is written to.** [Handing a tenant
+  back](/guides/personal-data/#handing-a-tenant-back) is a cut of the stream at its head, and of
+  the rest as it reads it: a write that appends an event fails the export, but what the worker
+  writes beside the stream, a dead letter or a subscriber's failure, is in it or not depending on
+  when it lands. Take it once the tenant receives no more work and the worker is idle; there is no
+  call that holds a tenant read-only meanwhile.
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each
   its own database, schema or Durable Object. See [Tenants](/guides/personal-data/#tenants).
@@ -96,6 +102,7 @@ reaction, [correcting it](/guides/personal-data/#correcting-a-persons-data) so t
 read nowhere, [forgetting them](/guides/personal-data/#retention) after a retention or when a purpose
 ends, their keys [wrapped under their tenant's key](/guides/personal-data/#where-the-keys-live)
 and a master key, kept out of the database and out of JavaScript memory, a whole tenant
+[handed back](/guides/personal-data/#handing-a-tenant-back) to its controller and
 [forgotten](/guides/personal-data/#forgetting-a-tenant) in every copy by destroying its key, their forgetting [applied again](/guides/personal-data/#backups) when a backup is
 restored, and [found](/guides/personal-data/#restores) whether restored under the running app or while it was stopped,
 what was written before a field was marked [sealed in

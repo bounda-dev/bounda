@@ -1,6 +1,12 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { type PersonalDataExportPart, personalDataExportJson } from "@bounda-dev/core";
+import {
+  type PersonalDataExportPart,
+  personalDataExportJson,
+  readTenantExport,
+  type TenantExportPart,
+  tenantExportJsonLines,
+} from "@bounda-dev/core";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
 import { masterKey } from "@bounda-dev/core/config";
 import { expectForgotten, expectRedacted } from "@bounda-dev/core/testing";
@@ -207,6 +213,39 @@ describe("a Bounda Durable Object", () => {
         : [],
     );
     expect(asked).toEqual([true, true, false]);
+  });
+
+  it("hands its tenant back over RPC, a part at a time, as JSON Lines that read back whole", async () => {
+    const { stub, store } = open();
+    const tenant = stub.id.toString();
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "no bell" });
+    await store.commands.placeOrder({ orderId: "o-2", total: 9, customer: "bob", note: "ring" });
+    const parts: TenantExportPart[] = [];
+    for await (const part of await store.as("dpo").exportTenant(tenant)) parts.push(part);
+    expect(parts[0]).toMatchObject({ kind: "header", header: { tenant, position: 2 } });
+    expect(parts.flatMap((part) => (part.kind === "person" ? [part.person.personId] : []))).toEqual(
+      ["ada", "bob"],
+    );
+    expect(parts.flatMap((part) => (part.kind === "event" ? [part.event.payload] : []))).toEqual([
+      expect.objectContaining({ note: "no bell" }),
+      expect.objectContaining({ note: "ring" }),
+    ]);
+    expect(parts.at(-1)).toMatchObject({ kind: "end", counts: { persons: 2, events: 2 } });
+    const read: TenantExportPart[] = [];
+    for await (const part of readTenantExport(
+      tenantExportJsonLines(await store.exportTenant(tenant)),
+    )) {
+      read.push(part);
+    }
+    expect(read.slice(1)).toEqual(parts.slice(1));
+    // Stopping early stops the export on the object.
+    for await (const part of await store.exportTenant(tenant)) {
+      if (part.kind === "person") break;
+    }
+    expect(await rejection(store.exportTenant("acme"))).toMatchObject({
+      name: "ValidationError",
+      code: "VALIDATION_FAILED",
+    });
   });
 
   it("redacts a marked field in its SQLite, so the old value reads nowhere and the export lists the redaction", async () => {

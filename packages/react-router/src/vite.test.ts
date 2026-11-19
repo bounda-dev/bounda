@@ -217,7 +217,7 @@ describe("bounda() Vite plugin", () => {
         '  importActor: Object.values(import.meta.glob("/app/actor.ts"))[0],',
         '  consistency: "read-your-writes",',
         "});",
-        'export { failure, personalDataExportResponse } from "@bounda-dev/react-router/host";',
+        'export { failure, personalDataExportResponse, tenantExportResponse } from "@bounda-dev/react-router/host";',
         "",
       ].join("\n"),
     );
@@ -272,6 +272,7 @@ describe("bounda() Vite plugin", () => {
         "export const handleError = serverOnly;",
         "export const failure = serverOnly;",
         "export const personalDataExportResponse = serverOnly;",
+        "export const tenantExportResponse = serverOnly;",
         "",
       ].join("\n"),
     );
@@ -281,12 +282,14 @@ describe("bounda() Vite plugin", () => {
       failure: () => unknown;
       handleError: () => unknown;
       personalDataExportResponse: () => unknown;
+      tenantExportResponse: () => unknown;
     };
     expect(() => module.bounda.defaultValue).toThrow("server-only");
     expect(() => module.boundaMiddleware()).toThrow("server-only");
     expect(() => module.failure()).toThrow("server-only");
     expect(() => module.handleError()).toThrow("server-only");
     expect(() => module.personalDataExportResponse()).toThrow("server-only");
+    expect(() => module.tenantExportResponse()).toThrow("server-only");
   });
 
   it("serves nothing before the config is resolved", () => {

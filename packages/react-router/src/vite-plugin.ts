@@ -69,7 +69,7 @@ const serverModule = (
     `  consistency: ${JSON.stringify(consistency)},`,
     ...(tenantApps === undefined ? [] : [`  tenantApps: ${tenantAppsLiteral(tenantApps)},`]),
     "});",
-    `export { failure, personalDataExportResponse } from ${JSON.stringify(HOST_ID)};`,
+    `export { failure, personalDataExportResponse, tenantExportResponse } from ${JSON.stringify(HOST_ID)};`,
     "",
   ].join("\n");
 
@@ -84,6 +84,7 @@ const clientModule = (): string =>
     "export const handleError = serverOnly;",
     "export const failure = serverOnly;",
     "export const personalDataExportResponse = serverOnly;",
+    "export const tenantExportResponse = serverOnly;",
     "",
   ].join("\n");
 

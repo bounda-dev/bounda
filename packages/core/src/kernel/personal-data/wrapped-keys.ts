@@ -376,6 +376,7 @@ export const createPersonalKeyWrapping: CreatePersonalKeyWrappingFunction = ({
       find: (person, fingerprint) => keys.find(person, fingerprint),
       list: (person) => keys.list(person),
       listMany: (persons) => keys.listMany(persons),
+      persons: (args) => keys.persons(args),
       // Wrapped on the way in, as every key the store keeps.
       add: async (person, category, key) =>
         keys.add(person, category, { ...(await wrapped(key)), fingerprint: key.fingerprint }),

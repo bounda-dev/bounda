@@ -162,6 +162,7 @@ const trackedPersonalKeys = (
     find: (person, fingerprint) => personalKeys.find(person, fingerprint),
     list: (person) => personalKeys.list(person),
     listMany: (persons) => personalKeys.listMany(persons),
+    persons: (args) => personalKeys.persons(args),
     add: (person, category, key) =>
       tracked(entries, id(person, key.fingerprint), () => personalKeys.add(person, category, key)),
     remove: async (person, fingerprint) => {
@@ -250,6 +251,7 @@ const trackedPersons = (
   return {
     get: (person) => persons.get(person),
     restrictions: (person) => persons.restrictions(person),
+    scan: (args) => persons.scan(args),
     restrict: (person, args) => {
       restricted.add(person);
       return tracked(entries, person, () => persons.restrict(person, args));

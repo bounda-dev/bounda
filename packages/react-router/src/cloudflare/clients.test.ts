@@ -106,6 +106,9 @@ describe("cloudflareClients", () => {
     await client.unrestrict("c-2", { notice: "given" });
     await client.redact("c-2", { events: [redacted] });
     await client.forgetTenant("acme", { despiteLegalObligations: true });
+    for await (const part of await client.exportTenant("acme")) {
+      throw new Error(`no part was sent, got ${part.kind}`);
+    }
     await client.rotateTenantKey({ reseal: true });
     await client.retireTenantKeys();
     expect(store.calls).toEqual([
@@ -127,6 +130,7 @@ describe("cloudflareClients", () => {
       ["acme", "unrestrict", "c-2", "read-your-writes", undefined, { notice: "given" }],
       ["acme", "redact", "c-2", "read-your-writes", undefined, { events: [redacted] }],
       ["acme", "forgetTenant", "acme", undefined, { despiteLegalObligations: true }],
+      ["acme", "exportTenant", "acme", undefined],
       ["acme", "rotateTenantKey", undefined, { reseal: true }],
       ["acme", "retireTenantKeys", undefined],
     ]);

@@ -1,3 +1,5 @@
+import type { SqlDialect } from "./dialect.ts";
+
 export interface CodePointOrderFunction {
   (a: string, b: string): number;
 }
@@ -16,3 +18,12 @@ export const codePointOrder: CodePointOrderFunction = (a, b) => {
   }
   return a.length - b.length;
 };
+
+export interface ByteOrderFunction {
+  (dialect: Pick<SqlDialect, "name">): string;
+}
+
+// What a text column takes to compare by bytes, which in UTF-8 is by code point, as SQLite's BINARY
+// does: PostgreSQL otherwise compares by the database's collation.
+export const byteOrder: ByteOrderFunction = ({ name }) =>
+  name === "postgresql" ? ` COLLATE "C"` : "";

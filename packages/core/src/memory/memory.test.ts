@@ -27,6 +27,7 @@ import {
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
+  tenantExportContract,
   tenantKeyStoreContract,
   viewContract,
 } from "../adapter/testing/index.ts";
@@ -41,6 +42,7 @@ const storage = async () => memory().createStorage();
 describe("memory adapter", () => {
   eventStoreContract({ create: storage });
   personalDataExportContract({ create: async () => memory() });
+  tenantExportContract({ create: async () => memory() });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
   deadLetterStoreContract({ create: storage });

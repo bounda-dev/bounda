@@ -112,6 +112,7 @@ export const deferWrites: DeferWritesFunction = ({
         },
         reseal: later((target, id, letter) => target.deadLetterStore.reseal(id, letter)),
         listByPerson: deadLetterStore.listByPerson,
+        scan: deadLetterStore.scan,
         forget: deadLetterStore.forget,
         firstResolvedAt: deadLetterStore.firstResolvedAt,
         firstHeldAt: deadLetterStore.firstHeldAt,
@@ -147,6 +148,7 @@ export const deferWrites: DeferWritesFunction = ({
         renew: scheduler.renew,
         get: scheduler.get,
         listByPerson: scheduler.listByPerson,
+        scan: scheduler.scan,
         forget: scheduler.forget,
       },
       idempotencyStore: {

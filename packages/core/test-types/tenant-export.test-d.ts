@@ -1,0 +1,252 @@
+import {
+  type BoundaApp,
+  type BoundaClient,
+  type CausationContext,
+  type DeadLetterKind,
+  type DeadLetterStatus,
+  type EventMetadata,
+  type ExportedCategories,
+  type ExportedCategory,
+  type ExportedRestricted,
+  type ExportOutcome,
+  type PersonalDataAccess,
+  type PersonRecipient,
+  type ProcessingRestriction,
+  type ReadTenantExportFunction,
+  readTenantExport,
+  TENANT_EXPORT_FORMAT,
+  TENANT_EXPORT_VERSION,
+  type TenantExportAccess,
+  type TenantExportCategory,
+  type TenantExportCounts,
+  type TenantExportedAnswer,
+  type TenantExportedDeadLetter,
+  type TenantExportedEvent,
+  type TenantExportedPerson,
+  type TenantExportedRow,
+  type TenantExportedScheduledCommand,
+  type TenantExportedSubscriberFailure,
+  type TenantExportHeader,
+  type TenantExportJsonLinesFunction,
+  type TenantExportPart,
+  tenantExportJsonLines,
+} from "@bounda-dev/core";
+import type {
+  DeadLetterStore,
+  DispatchOutcome,
+  ForgetLedgerEntry,
+  PersonalKeyStore,
+  PersonStore,
+  ScanArgs,
+  ScheduledCommand,
+  Scheduler,
+  StoredDeadLetter,
+  StoredPerson,
+} from "@bounda-dev/core/adapter";
+import { describe, expectTypeOf, it } from "vitest";
+
+describe("the tenant export", () => {
+  it("is a call of every client, streamed, a part at a time", () => {
+    expectTypeOf<BoundaClient["exportTenant"]>().toEqualTypeOf<
+      (tenant: string) => Promise<AsyncIterable<TenantExportPart>>
+    >();
+    expectTypeOf<BoundaApp["exportTenant"]>().toEqualTypeOf<BoundaClient["exportTenant"]>();
+  });
+
+  it("names its format and version as literals a reader checks", () => {
+    expectTypeOf(TENANT_EXPORT_FORMAT).toEqualTypeOf<"bounda.tenant-export">();
+    expectTypeOf(TENANT_EXPORT_VERSION).toEqualTypeOf<1>();
+    expectTypeOf<TenantExportHeader>().toEqualTypeOf<{
+      readonly format: "bounda.tenant-export";
+      readonly version: 1;
+      readonly tenant: string;
+      readonly exportId: string;
+      readonly exportedAt: string;
+      readonly position: number;
+      readonly categories: Readonly<Record<string, TenantExportCategory>>;
+      readonly readModels: readonly string[];
+    }>();
+    expectTypeOf<TenantExportCategory>().toEqualTypeOf<
+      Omit<ExportedCategory, "held" | "keptUntil" | "restrictedUntil">
+    >();
+  });
+
+  it("hands out parts of each kind, the header first and the end last", () => {
+    expectTypeOf<TenantExportPart["kind"]>().toEqualTypeOf<
+      | "header"
+      | "person"
+      | "event"
+      | "scheduledCommand"
+      | "deadLetter"
+      | "subscriberFailure"
+      | "answer"
+      | "row"
+      | "forgetLedgerEntry"
+      | "end"
+    >();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "header" }>["header"]
+    >().toEqualTypeOf<TenantExportHeader>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "person" }>["person"]
+    >().toEqualTypeOf<TenantExportedPerson>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "event" }>["event"]
+    >().toEqualTypeOf<TenantExportedEvent>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "scheduledCommand" }>["scheduledCommand"]
+    >().toEqualTypeOf<TenantExportedScheduledCommand>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "deadLetter" }>["deadLetter"]
+    >().toEqualTypeOf<TenantExportedDeadLetter>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "subscriberFailure" }>["subscriberFailure"]
+    >().toEqualTypeOf<TenantExportedSubscriberFailure>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "answer" }>["answer"]
+    >().toEqualTypeOf<TenantExportedAnswer>();
+    expectTypeOf<Extract<TenantExportPart, { kind: "row" }>>().toEqualTypeOf<{
+      readonly kind: "row";
+      readonly readModel: string;
+      readonly row: TenantExportedRow;
+    }>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "forgetLedgerEntry" }>["entry"]
+    >().toEqualTypeOf<ForgetLedgerEntry>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "end" }>["counts"]
+    >().toEqualTypeOf<TenantExportCounts>();
+  });
+
+  it("types each record with every value opened", () => {
+    expectTypeOf<TenantExportedPerson>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly lastActiveAt: string | null;
+      readonly forgottenAt: string | null;
+      readonly categories: Readonly<
+        Record<string, Pick<ExportedCategory, "keptUntil" | "restrictedUntil">>
+      >;
+      readonly restrictions: readonly ProcessingRestriction[];
+      readonly recipients: readonly PersonRecipient[];
+    }>();
+    expectTypeOf<TenantExportedEvent>().toEqualTypeOf<{
+      readonly id: string;
+      readonly type: string;
+      readonly aggregateType: string;
+      readonly aggregateId: string;
+      readonly version: number;
+      readonly position: number;
+      readonly timestamp: string;
+      readonly metadata: EventMetadata;
+      readonly person: string | null;
+      readonly payload: unknown;
+      readonly categories: ExportedCategories;
+      readonly restricted: ExportedRestricted;
+      readonly redacted: readonly string[];
+    }>();
+    expectTypeOf<TenantExportedScheduledCommand>().toEqualTypeOf<{
+      readonly dedupeKey: string;
+      readonly type: string;
+      readonly aggregateId: string;
+      readonly payload: unknown;
+      readonly executeAt: string;
+      readonly scheduledAt?: string;
+      readonly context: CausationContext;
+      readonly attempts: number;
+      readonly persons: readonly string[];
+      readonly categories: ExportedCategories;
+      readonly restricted: ExportedRestricted;
+    }>();
+    expectTypeOf<TenantExportedDeadLetter["kind"]>().toEqualTypeOf<DeadLetterKind>();
+    expectTypeOf<TenantExportedDeadLetter["status"]>().toEqualTypeOf<DeadLetterStatus>();
+    expectTypeOf<TenantExportedDeadLetter["errorMessage"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<TenantExportedDeadLetter["errorStack"]>().toEqualTypeOf<
+      string | null | undefined
+    >();
+    expectTypeOf<TenantExportedDeadLetter["payload"]>().toEqualTypeOf<unknown>();
+    expectTypeOf<TenantExportedDeadLetter["persons"]>().toEqualTypeOf<readonly string[]>();
+    expectTypeOf<TenantExportedSubscriberFailure["errorMessage"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<TenantExportedSubscriberFailure["resolvedAt"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<
+      TenantExportedSubscriberFailure["restricted"]
+    >().toEqualTypeOf<ExportedRestricted>();
+    expectTypeOf<TenantExportedAnswer>().toEqualTypeOf<{
+      readonly idempotencyKey: string;
+      readonly expiresAt: string;
+      readonly outcome: DispatchOutcome;
+      readonly persons: readonly string[];
+      readonly restricted: ExportedRestricted;
+    }>();
+    expectTypeOf<TenantExportedRow>().toEqualTypeOf<{
+      readonly key: unknown;
+      readonly data: Readonly<Record<string, unknown>>;
+      readonly person: string | null;
+      readonly categories: ExportedCategories;
+      readonly restricted: ExportedRestricted;
+    }>();
+  });
+
+  it("counts what it handed out, as the access log records it", () => {
+    expectTypeOf<TenantExportCounts>().toEqualTypeOf<{
+      readonly persons: number;
+      readonly events: number;
+      readonly scheduledCommands: number;
+      readonly deadLetters: number;
+      readonly subscriberFailures: number;
+      readonly answers: number;
+      readonly readModelRows: number;
+      readonly forgetLedgerEntries: number;
+    }>();
+    expectTypeOf<TenantExportAccess["operation"]>().toEqualTypeOf<"exportTenant">();
+    expectTypeOf<TenantExportAccess["outcome"]>().toEqualTypeOf<ExportOutcome>();
+    expectTypeOf<TenantExportAccess["detail"]>().toEqualTypeOf<{
+      readonly exportId: string;
+      readonly persons: number;
+      readonly events: number;
+      readonly scheduledCommands: number;
+      readonly deadLetters: number;
+      readonly subscriberFailures: number;
+      readonly answers: number;
+      readonly readModelRows: number;
+      readonly forgetLedgerEntries: number;
+    }>();
+    expectTypeOf<TenantExportAccess>().toExtend<PersonalDataAccess>();
+    expectTypeOf<
+      Extract<PersonalDataAccess, { operation: "exportTenant" }>
+    >().toEqualTypeOf<TenantExportAccess>();
+  });
+
+  it("writes JSON Lines and reads them back, checked whole", () => {
+    expectTypeOf(tenantExportJsonLines).toEqualTypeOf<TenantExportJsonLinesFunction>();
+    expectTypeOf(tenantExportJsonLines)
+      .parameter(0)
+      .toEqualTypeOf<AsyncIterable<TenantExportPart>>();
+    expectTypeOf(tenantExportJsonLines).returns.toEqualTypeOf<ReadableStream<Uint8Array>>();
+    expectTypeOf(readTenantExport).toEqualTypeOf<ReadTenantExportFunction>();
+    expectTypeOf(readTenantExport)
+      .parameter(0)
+      .toEqualTypeOf<AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>>();
+    expectTypeOf(readTenantExport).returns.toEqualTypeOf<
+      AsyncGenerator<TenantExportPart, void, undefined>
+    >();
+  });
+
+  it("pages every store an adapter brings by a key no write changes", () => {
+    expectTypeOf<ScanArgs>().toEqualTypeOf<{
+      readonly after?: string | undefined;
+      readonly limit: number;
+    }>();
+    expectTypeOf<Scheduler["scan"]>().toEqualTypeOf<
+      (args: ScanArgs) => Promise<readonly ScheduledCommand[]>
+    >();
+    expectTypeOf<DeadLetterStore["scan"]>().toEqualTypeOf<
+      (args: ScanArgs) => Promise<readonly StoredDeadLetter[]>
+    >();
+    expectTypeOf<PersonStore["scan"]>().toEqualTypeOf<
+      (args: ScanArgs) => Promise<readonly StoredPerson[]>
+    >();
+    expectTypeOf<PersonalKeyStore["persons"]>().toEqualTypeOf<
+      (args: ScanArgs) => Promise<readonly string[]>
+    >();
+  });
+});

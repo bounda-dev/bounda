@@ -1,6 +1,7 @@
 import type { KeyRead } from "../adapter/storage/append-checks.ts";
 import type { Hold } from "../adapter/storage/hold.ts";
 import { isReleasedBy } from "../adapter/storage/hold.ts";
+import { pageByKey } from "../adapter/storage/person-page.ts";
 import {
   type DueKey,
   type HeldPersonalKey,
@@ -188,6 +189,12 @@ export const createKeptPersonalKeyStore: CreateKeptPersonalKeyStoreFunction = ({
             const listed = [...of(person).sort(byPerson).map(held), ...supersededHeld(person)];
             return listed.length === 0 ? [] : [[person, listed] as const];
           }),
+        ),
+      persons: async (page) =>
+        pageByKey(
+          [...new Set([...keys.values()].map(({ person }) => person))],
+          (person) => person,
+          page,
         ),
       add: async (person, category, key) => {
         const existing = inForce(person, category);

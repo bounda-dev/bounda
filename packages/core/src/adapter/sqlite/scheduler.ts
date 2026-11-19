@@ -205,6 +205,13 @@ export const createSqliteScheduler: CreateSqliteSchedulerFunction = ({ db, table
           [person, after ?? null, after ?? null, limit ?? -1],
         )
       ).map(toScheduled),
+    scan: async ({ after, limit }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE (? IS NULL OR "dedupe_key" > ?) ORDER BY "dedupe_key" LIMIT ?`,
+          [after ?? null, after ?? null, limit],
+        )
+      ).map(toScheduled),
     forget: async (person, keep = []) =>
       (
         await db.all(

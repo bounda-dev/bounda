@@ -42,6 +42,7 @@ import {
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
+  tenantExportContract,
   tenantKeyStoreContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -125,6 +126,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   });
   eventStoreContract({ create: openStorage });
   personalDataExportContract({ create: async () => fresh() });
+  tenantExportContract({ create: async () => fresh() });
   deadLetterRetentionContract({ create: async () => fresh() });
   subscriberFailureRetentionContract({ create: async () => fresh() });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });

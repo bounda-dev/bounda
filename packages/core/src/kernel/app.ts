@@ -114,6 +114,12 @@ import {
   retentionDueOf,
 } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
+import {
+  NO_TENANT_EXPORT_RECORDS,
+  type TenantExportCounts,
+  type TenantExportPart,
+} from "./personal-data/tenant-export.ts";
+import { recordedTenantExport, streamTenantExport } from "./personal-data/tenant-export-stream.ts";
 import { guardClient } from "./personal-data/tenant-guard.ts";
 import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
 import { checkPersonId, isPersonId } from "./personal-data/transact.ts";
@@ -363,6 +369,23 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * app without keys.
    */
   forgetTenant(tenant: string, options?: ForgetTenantOptions): Promise<TenantForgottenResult>;
+  /**
+   * Hands every piece of data the runtime holds of the tenant back to the controller, as article
+   * 28(3)(g) of the GDPR asks of a processor at the end of its services, before `forgetTenant` or
+   * instead of it: every person, with their restrictions and the recipients of their data, every
+   * event of the stream up to its head, every scheduled command, dead letter, subscriber failure
+   * and remembered answer, every row of every read model and every entry of the forget ledger,
+   * each with every value opened, `personal` or not, nothing held back, a value forgotten or
+   * redacted `null`; never a key. A part at a time, a page of records at most held at once, in the
+   * order `TenantExportPart` says, which `tenantExportJsonLines` writes as a file and
+   * `readTenantExport` reads back and checks. Resolves once the header is read and recorded in
+   * the access log as `started`; recorded again when the reading ends, `ok`, `failed` or
+   * `cancelled`, with how many parts of each kind it handed out. Rejects the reading with
+   * `ConcurrencyError`, without its `end` part, when the stream moved past the header's
+   * `position` while it read: take it once the tenant receives no more work and the worker is
+   * idle. Rejects with `ValidationError`, recording it `refused`, when `tenant` is not the app's.
+   */
+  exportTenant(tenant: string): Promise<AsyncIterable<TenantExportPart>>;
   /**
    * Puts a new version of the tenant's key in force: new keys are wrapped under it, and the worker
    * rewraps every person's key and the database's key under it in the background. The older
@@ -1936,6 +1959,65 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           },
         });
       };
+      const exportTenantAs = async (name: string): Promise<AsyncIterable<TenantExportPart>> => {
+        const exportId = ids.next();
+        const record = (
+          outcome: ExportOutcome,
+          error: unknown,
+          counts: TenantExportCounts = NO_TENANT_EXPORT_RECORDS,
+          persons: readonly string[] = [],
+        ) =>
+          recordAccess({
+            operation: "exportTenant",
+            detail: { exportId, ...counts },
+            actor,
+            persons,
+            personCount: counts.persons,
+            outcome,
+            error,
+          });
+        // Another tenant, or a read model not served, refuses the export before it reads.
+        await checked(record, async () => {
+          if (name !== tenantId) {
+            throw runtimeText(
+              new ValidationError(`exportTenant names tenant ${name}, and the app serves another`, [
+                { path: ["tenant"], message: "Expected the tenant the app serves" },
+              ]),
+            );
+          }
+          await vouchBefore(...readModelNames);
+        });
+        const streamed = await recorded(
+          // Only a failure is recorded here: what resolves is recorded as it starts and ends.
+          async (outcome, error) => {
+            if (outcome === "failed") await record(outcome, error);
+          },
+          () =>
+            streamTenantExport({
+              storage,
+              readModels,
+              aggregates,
+              processes: processDefinitions,
+              sealing,
+              clock,
+              batchSize: config.runtime.dispatcher.batchSize,
+              categories: personalCategories,
+              recipients,
+              tenant: tenantId,
+              exportId,
+              ledger: forgetLedger?.store ?? null,
+              // The header and each page, vouched for before they are handed out.
+              onPage: () => vouchAfter(...readModelNames),
+            }),
+        );
+        return recordedTenantExport({
+          streamed,
+          record,
+          onError: (error) => {
+            if (error instanceof TenantForgottenError) onTenantForgotten();
+          },
+        });
+      };
       const failures = createSubscriberFailures({
         tracer: appTracer,
         store: written.subscriberFailures,
@@ -2124,6 +2206,14 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: () => forgetThisTenant(name, options, actor),
           }),
+        exportTenant: (name) =>
+          tracedOperation({
+            tracer: appTracer,
+            errorText,
+            operation: "exportTenant",
+            actor,
+            run: () => exportTenantAs(name),
+          }),
         rotateTenantKey: (options) =>
           tracedOperation({
             tracer: appTracer,
@@ -2178,6 +2268,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         unrestrict: (personId, options) => gate.unrestrict(personId, options),
         redact: (personId, options) => gate.redact(personId, options),
         forgetTenant: (name, options) => live.forgetTenant(name, options),
+        exportTenant: (name) => gate.exportTenant(name),
         rotateTenantKey: (options) => gate.rotateTenantKey(options),
         retireTenantKeys: () => gate.retireTenantKeys(),
         as: (next) => {

@@ -212,6 +212,13 @@ export const createPostgresqlScheduler: CreatePostgresqlSchedulerFunction = ({ d
           [person, after ?? null, limit ?? null],
         )
       ).map(toScheduled),
+    scan: async ({ after, limit }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE ($1::text IS NULL OR "dedupe_key" COLLATE "C" > $1::text) ORDER BY "dedupe_key" COLLATE "C" LIMIT $2`,
+          [after ?? null, limit],
+        )
+      ).map(toScheduled),
     forget: async (person, keep = []) =>
       (
         await db.all(

@@ -804,6 +804,7 @@ describe("personal data", () => {
       | "process"
       | "scheduledCommand"
       | "exportPersonalData"
+      | "exportTenant"
       | "deadLetters.list"
       | "deadLetters.get"
       | "deadLetters.retry"

@@ -84,6 +84,10 @@ export const recordingStub = (): {
         forgets.push(["forgetTenant", ...args]);
         return answer();
       },
+      exportTenant: async (...args) => {
+        exports.push(["exportTenant", ...args]);
+        return { ok: true, value: new Blob([]).stream() };
+      },
       rotateTenantKey: async (...args) => {
         forgets.push(["rotateTenantKey", ...args]);
         return answer();

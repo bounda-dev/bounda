@@ -52,6 +52,7 @@ const lazyStub = (stubOf: () => Promise<BoundaStub>): BoundaStub => ({
   unrestrict: async (...args) => (await stubOf()).unrestrict(...args),
   redact: async (...args) => (await stubOf()).redact(...args),
   forgetTenant: async (...args) => (await stubOf()).forgetTenant(...args),
+  exportTenant: async (...args) => (await stubOf()).exportTenant(...args),
   rotateTenantKey: async (...args) => (await stubOf()).rotateTenantKey(...args),
   retireTenantKeys: async (...args) => (await stubOf()).retireTenantKeys(...args),
 });
