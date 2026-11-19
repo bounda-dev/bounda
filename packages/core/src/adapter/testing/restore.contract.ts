@@ -1155,9 +1155,10 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         const restored = await start(storage, null, BEFORE_ROTATION, clock);
         // Nothing outside the database says it went back; a restore made in place counted itself.
         const found = (await restored.app.status()).restoresFound;
+        if (typeof found !== "number") throw new Error("the restores found could not be read");
         expect(found).toBeLessThanOrEqual(1);
         await restored.app.restored();
-        expect((await restored.app.status()).restoresFound).toBe(Number(found) + 1);
+        expect((await restored.app.status()).restoresFound).toBe(found + 1);
         expect(await restored.app.forgetAgain([{ personId: "ana" }])).toEqual(["ana"]);
         await restored.app.runUntilIdle();
         await expectForgottenIn(restored, "ana");
