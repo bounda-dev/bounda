@@ -127,9 +127,10 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
     return { resolved: dueAt(resolved), held: dueAt(held) };
   };
 
-  // When held letters are next read: once the first comes due, then at `heldReadAt`.
-  const heldDueAt = ({ held }: Due, at: number): number | null =>
-    held === null || held > at ? held : Math.max(held, heldReadAt);
+  // When held letters are next read: once the first comes due, then at `heldReadAt`, which a letter
+  // that comes due meanwhile waits for too.
+  const heldDueAt = ({ held }: Due): number | null =>
+    held === null ? null : Math.max(held, heldReadAt);
 
   const holdOf = async (
     letter: StoredDeadLetter,
@@ -148,7 +149,7 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
   const heldPage = (at: number, after: string | undefined) =>
     store.listHeld({
       resolvedBy: new Date(at - retentionMs),
-      ...(after === undefined ? {} : { after }),
+      after,
       limit: DEAD_LETTER_PURGE_LIMIT,
     });
 
@@ -172,7 +173,7 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
     const at = clock.now().getTime();
     try {
       const found = await due();
-      const next = earliest(found.resolved, heldDueAt(found, at));
+      const next = earliest(found.resolved, heldDueAt(found));
       return next === null
         ? null
         : new Date(pause.notBefore(Math.max(next, unreadUntil, lease.heldElsewhereUntil())));
@@ -191,7 +192,7 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
       try {
         const found = await due();
         const purging = found.resolved !== null && found.resolved <= at;
-        const heldNext = heldDueAt(found, at);
+        const heldNext = heldDueAt(found);
         const releasing = heldNext !== null && heldNext <= at;
         // A read of the held letters left off, by a pass that found none due, starts over.
         if (!releasing) heldAfter = undefined;
@@ -228,19 +229,17 @@ export const createDeadLetterRetention: CreateDeadLetterRetentionFunction = ({
       const found = await due();
       let held = 0;
       let releasable = false;
-      if (found.held !== null && found.held <= at) {
-        const restricted = restrictedAmong(persons);
-        const open = openTextWith(sealedKeys(keys));
-        let after: string | undefined;
-        do {
-          const page = await heldPage(at, after);
-          for (const letter of page) {
-            if ((await holdOf(letter, restricted, open)).holds) held += 1;
-            else releasable = true;
-          }
-          after = page.length < DEAD_LETTER_PURGE_LIMIT ? undefined : page.at(-1)?.id;
-        } while (after !== undefined);
-      }
+      const restricted = restrictedAmong(persons);
+      const open = openTextWith(sealedKeys(keys));
+      let after: string | undefined;
+      do {
+        const page = await heldPage(at, after);
+        for (const letter of page) {
+          if ((await holdOf(letter, restricted, open)).holds) held += 1;
+          else releasable = true;
+        }
+        after = page.length < DEAD_LETTER_PURGE_LIMIT ? undefined : page.at(-1)?.id;
+      } while (after !== undefined);
       const next = earliest(
         found.resolved,
         releasable ? at : null,

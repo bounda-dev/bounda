@@ -309,7 +309,8 @@ describe("the retention of dead letters under a restriction", () => {
   });
 
   it("keeps a letter for a restriction only while its text still opens", async () => {
-    const { store, personalKeys, clock, retention, resolve, restrict, sealed, ids } = await setUp();
+    const { store, personalKeys, clock, logs, retention, resolve, restrict, sealed, ids } =
+      await setUp();
     await resolve("kept", start, "retried", await sealed("c-1"));
     await resolve("forgotten", start, "retried", await sealed("c-2"));
     await restrict("c-1");
@@ -334,6 +335,11 @@ describe("the retention of dead letters under a restriction", () => {
     expect(await retention.sweep(due)).toBe(1);
     expect(told).toEqual([[]]);
     expect(await ids()).toEqual(["kept"]);
+    expect(logs).toContainEqual({
+      level: "debug",
+      message: "resolved dead letters purged",
+      fields: { purged: 1 },
+    });
     expect(await retention.status()).toMatchObject({ nextDueAt: null, held: 1 });
   });
 
@@ -427,11 +433,55 @@ describe("the retention of dead letters under a restriction", () => {
       return listHeld(args);
     };
     expect(await retention.sweep(due)).toBe(0);
+    pages.length = 0;
+    expect(await retention.status()).toMatchObject({ held: DEAD_LETTER_PURGE_LIMIT + 1 });
+    expect(pages).toEqual([undefined, "l-099"]);
+    pages.length = 1;
     await persons.unrestrict("c-1", { categories: null });
     expect(await retention.sweep(due)).toBe(DEAD_LETTER_PURGE_LIMIT);
     await restrict("c-1");
     expect(await retention.sweep(due)).toBe(0);
     expect(pages).toEqual([undefined, undefined]);
+  });
+
+  it("reads a held letter that comes due meanwhile at the next read of the others, and none before", async () => {
+    const { store, persons, clock, personalKeys, retention, resolve, restrict, sealed } =
+      await setUp();
+    await resolve("first", start, "retried", { person: "c-1" });
+    await resolve("later", later(30 * 60_000), "retried", await sealed("c-2"));
+    await restrict("c-1");
+    await restrict("c-2");
+    for (const { key } of await personalKeys.list("c-2")) {
+      await personalKeys.remove("c-2", key.fingerprint);
+    }
+    const due = later(7 * DAY);
+    clock.set(due);
+    expect(await retention.sweep(due)).toBe(0);
+    expect(await store.count()).toBe(2);
+    await persons.unrestrict("c-1", { categories: null });
+    clock.set(new Date(due.getTime() + 1));
+    expect(await retention.sweep(clock.now())).toBe(1);
+    const reread = new Date(due.getTime() + HELD_RECHECK_MS);
+    expect(await retention.nextDueAt()).toEqual(reread);
+    expect(await retention.sweep(new Date(reread.getTime() - 1))).toBe(0);
+    expect(await store.count()).toBe(1);
+    clock.set(reread);
+    expect(await retention.sweep(reread)).toBe(1);
+    expect(await store.count()).toBe(0);
+  });
+
+  it("names whichever comes first, a letter to purge or a held one to read", async () => {
+    const { clock, retention, resolve, restrict } = await setUp();
+    await resolve("free", later(2 * DAY));
+    await resolve("held", later(DAY), "retried", { person: "c-1" });
+    await restrict("c-1");
+    expect(await retention.nextDueAt()).toEqual(later(8 * DAY));
+    await resolve("sooner", later(DAY / 2));
+    expect(await retention.nextDueAt()).toEqual(later(7 * DAY + DAY / 2));
+    clock.set(later(8 * DAY));
+    expect(await retention.status()).toMatchObject({
+      nextDueAt: later(7 * DAY + DAY / 2).toISOString(),
+    });
   });
 
   it("reads a letter it could not release again with the others a while later", async () => {

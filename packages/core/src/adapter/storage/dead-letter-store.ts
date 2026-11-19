@@ -145,7 +145,7 @@ export interface PurgeDeadLettersArgs {
  */
 export interface ListHeldDeadLettersArgs {
   readonly resolvedBy: Date;
-  readonly after?: string;
+  readonly after?: string | undefined;
   readonly limit: number;
 }
 
