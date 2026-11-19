@@ -430,11 +430,13 @@ declares them: the record of processing lists the databases each kind of data is
 adapter, not who hosts them.
 
 An app that is itself a processor for its customers, one [tenant](/guides/personal-data/#tenants)
-each, deletes a customer's data at the end of the service, as 28(3)(g) asks, with
-[`forgetTenant`](/guides/personal-data/#forgetting-a-tenant), in every copy of what was sealed.
-Returning it is not
-covered: there is no export of a whole tenant, only of each person in it, by an id the app knows.
-The per-person calls are how it assists its controller with their requests, 28(3)(e).
+each, deletes or returns a customer's data at the end of the service, as 28(3)(g) asks and as the
+customer chooses: [`exportTenant`](/guides/personal-data/#handing-a-tenant-back) returns it, every
+person, event, scheduled command, dead letter, subscriber failure, remembered answer, read-model
+row and forget ledger entry, every value opened and nothing held back, as JSON Lines that
+`readTenantExport` checks are whole; [`forgetTenant`](/guides/personal-data/#forgetting-a-tenant)
+then deletes it, in every copy of what was sealed. The export is recorded in the access log. The
+per-person calls are how it assists its controller with their requests, 28(3)(e).
 
 Processing under the controller's authority, article 29, is the app's to enforce; the access log
 names the [actor](/concepts/ids-causation-and-correlation/#who-acts) of every read, and the event

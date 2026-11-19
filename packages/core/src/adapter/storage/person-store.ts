@@ -1,5 +1,6 @@
 import type { RestrictionGround } from "../../modules/personal-data.ts";
 import type { Hold } from "./hold.ts";
+import type { ScanArgs } from "./personal-key-store.ts";
 
 /**
  * What the runtime keeps of a person apart from their key: whether the processing of their data
@@ -106,6 +107,10 @@ export interface PersonStore {
    * The person's restrictions, oldest first; none for a person never restricted.
    */
   restrictions(person: string): Promise<readonly StoredRestriction[]>;
+  /**
+   * Every person's row, by `person`.
+   */
+  scan(args: ScanArgs): Promise<readonly StoredPerson[]>;
   /**
    * Adds the rows of a restriction, creating the person's row when they are new, and keeps
    * `restrictedSince` the oldest of them. Resolves `false`, changing nothing, when every category

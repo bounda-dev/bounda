@@ -6,6 +6,7 @@ import type {
 } from "../storage/personal-key-store.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { holdEndOf, holdOf, releasedBy as released } from "./hold.ts";
+import { byteOrder } from "./order.ts";
 import { WHOLE_PERSON } from "./person-store.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
@@ -22,7 +23,7 @@ export interface CreateSqlPersonalKeyStoreArgs {
    * Already quoted: the keys a reseal superseded.
    */
   readonly superseded: string;
-  readonly dialect: Pick<SqlDialect, "placeholder">;
+  readonly dialect: Pick<SqlDialect, "placeholder" | "name">;
 }
 
 export interface CreateSqlPersonalKeyStoreFunction {
@@ -91,6 +92,7 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
   dialect,
 }) => {
   const p = dialect.placeholder;
+  const byCode = byteOrder(dialect);
   // One equality per id, so the index on `kid` answers each.
   const wrappedUnder = (
     kids: readonly (string | null)[],
@@ -162,6 +164,15 @@ export const createSqlPersonalKeyStore: CreateSqlPersonalKeyStoreFunction = ({
       }
       return listed;
     },
+    persons: async ({ after, limit }) =>
+      (
+        await db.all(
+          after === undefined
+            ? `SELECT "person" FROM ${table} GROUP BY "person" ORDER BY "person"${byCode} LIMIT ${p(1)}`
+            : `SELECT "person" FROM ${table} WHERE "person"${byCode} > ${p(1)} GROUP BY "person" ORDER BY "person"${byCode} LIMIT ${p(2)}`,
+          after === undefined ? [limit] : [after, limit],
+        )
+      ).map((row) => String(row.person)),
     // Whichever writer inserted first, every one answers with the key in force. A new key starts
     // from the person's last activity recorded since their last forgetting as a whole, so a key
     // made for an inactive person, as the backfill makes, still comes due.

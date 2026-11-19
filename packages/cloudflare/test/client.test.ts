@@ -84,6 +84,17 @@ describe("connect", () => {
     ]);
   });
 
+  it("hands a tenant back through the stub, with the actor of as", async () => {
+    const { stub, exports } = recordingStub();
+    const parts = await connect<typeof registry>(stub).as("dpo").exportTenant("acme");
+    for await (const part of parts) throw new Error(`no part was sent, got ${part.kind}`);
+    await connect<typeof registry>(stub).exportTenant("acme");
+    expect(exports).toStrictEqual([
+      ["exportTenant", "acme", "dpo"],
+      ["exportTenant", "acme", undefined],
+    ]);
+  });
+
   it("sends the actor of as with every call that acts, and none before it", async () => {
     const recorded = recordingStub();
     const store = connect<typeof registry>(recorded.stub, { consistency: "eventual" });

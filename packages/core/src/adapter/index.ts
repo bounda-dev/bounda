@@ -125,6 +125,7 @@ export type {
   PersonalKeyStore,
   RetainKeyArgs,
   RewrappedKey,
+  ScanArgs,
   SealedValue,
   StoredPersonalKey,
 } from "./storage/personal-key-store.ts";

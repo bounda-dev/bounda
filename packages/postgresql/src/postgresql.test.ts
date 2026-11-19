@@ -42,6 +42,7 @@ import {
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
+  tenantExportContract,
   tenantKeyStoreContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -125,6 +126,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   });
   eventStoreContract({ create: openStorage });
   personalDataExportContract({ create: async () => fresh() });
+  tenantExportContract({ create: async () => fresh() });
   deadLetterRetentionContract({ create: async () => fresh() });
   subscriberFailureRetentionContract({ create: async () => fresh() });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
@@ -994,6 +996,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         ORDER BY "indexname"`;
       expect(indexes.map(({ indexdef }) => indexdef.replaceAll(prefix, ""))).toEqual([
         "CREATE UNIQUE INDEX checkpoints_pkey ON public.checkpoints USING btree (subscriber)",
+        'CREATE INDEX dead_letters_id_bytes_idx ON public.dead_letters USING btree (id COLLATE "C")',
         "CREATE INDEX dead_letters_listing_idx ON public.dead_letters USING btree (status, first_failed_at, id)",
         "CREATE INDEX dead_letters_person_idx ON public.dead_letters USING btree (person)",
         "CREATE INDEX dead_letters_persons_idx ON public.dead_letters USING gin (persons jsonb_path_ops)",
@@ -1007,6 +1010,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         'CREATE INDEX events_person_idx ON public.events USING btree (person, "position")',
         'CREATE UNIQUE INDEX events_pkey ON public.events USING btree ("position")',
         "CREATE INDEX idempotency_keys_expires_at_idx ON public.idempotency_keys USING btree (expires_at)",
+        'CREATE INDEX idempotency_keys_key_bytes_idx ON public.idempotency_keys USING btree (key COLLATE "C")',
         "CREATE INDEX idempotency_keys_persons_idx ON public.idempotency_keys USING gin (persons jsonb_path_ops)",
         "CREATE UNIQUE INDEX idempotency_keys_pkey ON public.idempotency_keys USING btree (key)",
         "CREATE UNIQUE INDEX inbox_pkey ON public.inbox USING btree (handler, event_id)",
@@ -1016,10 +1020,12 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         "CREATE INDEX personal_keys_held_idx ON public.personal_keys USING btree (held_until) WHERE (held_until IS NOT NULL)",
         "CREATE UNIQUE INDEX personal_keys_in_force_idx ON public.personal_keys USING btree (person, category) WHERE (retained_since IS NULL)",
         "CREATE INDEX personal_keys_kid_idx ON public.personal_keys USING btree (kid, person)",
+        'CREATE INDEX personal_keys_person_bytes_idx ON public.personal_keys USING btree (person COLLATE "C")',
         "CREATE UNIQUE INDEX personal_keys_pkey ON public.personal_keys USING btree (person, fingerprint)",
         "CREATE INDEX personal_keys_retained_idx ON public.personal_keys USING btree (retained_since) WHERE (retained_since IS NOT NULL)",
         "CREATE INDEX persons_held_idx ON public.persons USING btree (held_until) WHERE ((last_active_at IS NOT NULL) AND (forgotten_at IS NULL) AND (restricted_since IS NULL) AND (held_until IS NOT NULL))",
         "CREATE INDEX persons_idle_idx ON public.persons USING btree (last_active_at, person) WHERE ((last_active_at IS NOT NULL) AND (forgotten_at IS NULL) AND (restricted_since IS NULL))",
+        'CREATE INDEX persons_person_bytes_idx ON public.persons USING btree (person COLLATE "C")',
         "CREATE UNIQUE INDEX persons_pkey ON public.persons USING btree (person)",
         "CREATE UNIQUE INDEX recipients_pkey ON public.recipients USING btree (port)",
         "CREATE UNIQUE INDEX restricted_persons_pkey ON public.restricted_persons USING btree (person, source, category)",
@@ -1027,6 +1033,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         "CREATE UNIQUE INDEX restrictions_pkey ON public.restrictions USING btree (person, ground, category)",
         "CREATE INDEX scheduled_commands_claimed_at_idx ON public.scheduled_commands USING btree (claimed_at) WHERE (claimed_at IS NOT NULL)",
         "CREATE INDEX scheduled_commands_execute_at_idx ON public.scheduled_commands USING btree (execute_at)",
+        'CREATE INDEX scheduled_commands_key_bytes_idx ON public.scheduled_commands USING btree (dedupe_key COLLATE "C")',
         "CREATE INDEX scheduled_commands_persons_idx ON public.scheduled_commands USING gin (persons jsonb_path_ops)",
         "CREATE UNIQUE INDEX scheduled_commands_pkey ON public.scheduled_commands USING btree (dedupe_key)",
         "CREATE INDEX scheduled_commands_unclaimed_idx ON public.scheduled_commands USING btree (execute_at) WHERE (claimed_at IS NULL)",

@@ -125,6 +125,30 @@ export interface ExportAccess extends AccessRecord<ExportOutcome> {
 }
 
 /**
+ * `exportTenant`, recorded as it starts and as it ends, as `ExportAccess` is, with how many parts
+ * of each kind it handed out by then. It hands out the data of every person of the tenant: `persons`
+ * are the first of them, in the order the export hands them out, and `personCount` all of them so
+ * far, none at its start.
+ */
+export interface TenantExportAccess extends AccessRecord<ExportOutcome> {
+  readonly operation: "exportTenant";
+  readonly detail: {
+    /**
+     * The export's own id, the same in every record of it and in the export's header.
+     */
+    readonly exportId: string;
+    readonly persons: number;
+    readonly events: number;
+    readonly scheduledCommands: number;
+    readonly deadLetters: number;
+    readonly subscriberFailures: number;
+    readonly answers: number;
+    readonly readModelRows: number;
+    readonly forgetLedgerEntries: number;
+  };
+}
+
+/**
  * `deadLetters.list`, with how many letters it read. `persons` are those the letters name, under
  * whose key their error text or payload is sealed.
  */
@@ -236,6 +260,7 @@ export type PersonalDataAccess =
   | RecipientsOfAccess
   | RestrictedProcessingAccess
   | ExportAccess
+  | TenantExportAccess
   | DeadLettersListAccess
   | DeadLetterAccess
   | SubscriberFailuresListAccess

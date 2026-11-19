@@ -140,6 +140,7 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = ({ r
         ({ id }) => id,
         page,
       ).map(copy),
+    scan: async (page) => pageByKey(select({}), ({ id }) => id, page).map(copy),
     forget: async (person, keep) => {
       const named = select({}).filter((letter) => namesPerson(letter, person, keep));
       for (const { id } of named) letters.delete(id);

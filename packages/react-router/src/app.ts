@@ -3,6 +3,7 @@ import type { Bounda } from "./create-bounda.ts";
 
 export { failure } from "./failure.ts";
 export { personalDataExportResponse } from "./personal-data-export.ts";
+export { tenantExportResponse } from "./tenant-export.ts";
 
 const missing = (): never => {
   throw new Error(

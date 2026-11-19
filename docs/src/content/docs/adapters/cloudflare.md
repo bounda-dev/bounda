@@ -223,8 +223,10 @@ namespace when the binding has no id. KV has no compare-and-set; each tenant's r
 its own object alone, one at a time, so none is needed. `prefix` keeps the records under another
 root, for two apps on one namespace.
 
-The object answers `forgetTenant`, `rotateTenantKey`, its `reseal` included, and
-`retireTenantKeys` through its stub, and `connect(stub)` types them; once forgotten, every call
+The object answers `exportTenant`, which [hands the tenant
+back](/guides/personal-data/#handing-a-tenant-back) before it is forgotten, `forgetTenant`,
+`rotateTenantKey`, its `reseal` included, and `retireTenantKeys` through its stub, and
+`connect(stub)` types them; once forgotten, every call
 rejects with `TenantForgottenError`, which `createWorker` answers with `410`. Once its recipients
 are told, the object empties its storage with `deleteAll()` and holds nothing but the forgetting;
 Cloudflare keeps the storage's point-in-time history for
@@ -371,9 +373,10 @@ export default {
 of an app wherever it runs: the same `commands` and `queries` as `app.commands` and
 `app.queries`, typed from your modules, plus `getLag()`, `status()`, `events`, `deadLetters`,
 `subscriberFailures`, `rebuildReadModel`, `forget`, `exportPersonalData`, `streamPersonalData`,
-`restrict` and `unrestrict`. `streamPersonalData` crosses RPC as a stream of the export's parts,
-read on the object a page at a time as the Worker reads them, and stopped when the Worker stops
-reading, so a person's long history never has to fit in one RPC answer. `bounda status` runs where Node can open the store, so a Durable Object's is read
+`restrict`, `unrestrict` and `exportTenant`. `streamPersonalData` and `exportTenant` cross RPC as a
+stream of the export's parts, one JSON per line, read on the object a page at a time as the Worker
+reads them, and stopped when the Worker stops reading, so a person's long history, or a whole
+tenant, never has to fit in one RPC answer. `bounda status` runs where Node can open the store, so a Durable Object's is read
 through `status()`, from an admin route of the Worker, say. A part the object cannot read comes
 back marked `{ unreadable: true }` rather than failing the call, as on any host
 ([observability](/reference/observability/)): check `unreadableParts(status)` before answering it

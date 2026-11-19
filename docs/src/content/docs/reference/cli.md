@@ -728,6 +728,54 @@ Exit codes: `0` done, `1` bad arguments, or a person and `--from` both or neithe
 could not be loaded, the export or the forget failed, or the file could not be read or has a line
 that is neither a person's id nor an entry, in which case nobody is forgotten.
 
+## `bounda export-tenant`
+
+[Hands a tenant back](/guides/personal-data/#handing-a-tenant-back) to its controller, as
+article 28(3)(g) asks of a processor at the end of its service: every person, event, scheduled
+command, dead letter, subscriber failure, remembered answer, read-model row and forget ledger
+entry, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
+time whatever the tenant holds. It boots the project for that tenant, unless `--tenant` names
+another, which it refuses. Recorded in the access log, `started` and then how it ended.
+
+```bash
+bounda export-tenant acme --output acme.jsonl --actor ops-ana
+```
+
+```
+exported tenant acme to /srv/acme.jsonl: 1204 persons, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant
+```
+
+Without `--output` the lines go to standard output, written as fast as it takes them, and the
+summary to standard error. With `--output` the file is written beside its place and moved there
+only once whole, readable by its owner alone. When the stream moves while it reads, it fails
+without its `end` line and writes no file: take it once the tenant receives no more work.
+
+| Option | Meaning |
+| --- | --- |
+| `--output <file>` | Write it to this file instead of printing it |
+| `--root`, `--config`, `--registry`, `--error-text`, `--actor`, `--tenant` | As for `bounda rebuild` |
+
+Exit codes: `0` exported, `1` bad arguments, `2` the project could not be loaded or the export was
+refused or failed.
+
+## `bounda check-tenant-export`
+
+Checks that a file `bounda export-tenant` wrote holds the whole export, as `readTenantExport` does:
+a header of the format and version it knows first, every part of a known kind in its place, and
+last an `end` whose counts are those of the parts before it. It reads the file alone, without the
+project, so it runs wherever the file is, before the tenant is forgotten.
+
+```bash
+bounda check-tenant-export acme.jsonl
+```
+
+```
+/srv/acme.jsonl is a whole export of tenant acme up to position 98112: 1204 persons, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries
+```
+
+Exit codes: `0` whole, `2` the file cannot be read or is not a whole export, with the first thing
+out of place on standard error.
+
 ## `bounda forget-tenant`
 
 [Forgets a tenant](/guides/personal-data/#forgetting-a-tenant) as a whole: destroys its key, so
@@ -866,7 +914,9 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 or `app.as(actor).deadLetters`, `bounda personal-data export` is
 `personalDataExportJson(await app.as(actor).streamPersonalData(person))`,
 `bounda forget <person>` is `app.as(actor).forget(person, { categories, objection })`,
-`bounda forget --from` is `app.forgetAgain(entries, { actor })`, `bounda forget-tenant` is
+`bounda forget --from` is `app.forgetAgain(entries, { actor })`, `bounda export-tenant` is
+`tenantExportJsonLines(await app.as(actor).exportTenant(tenant))`, `bounda check-tenant-export`
+is `readTenantExport(createReadStream(file))`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
 `rewrapTenantKeys({ config, env })` for `rewrap-master`. The

@@ -245,6 +245,7 @@ export const forgottenApp = <R extends Registry>({
       }
       return { tenant, forgottenAt: forgetting.at, eventId: forgetting.eventId };
     },
+    exportTenant: reject,
     rotateTenantKey: reject,
     retireTenantKeys: reject,
     as: (next) => {

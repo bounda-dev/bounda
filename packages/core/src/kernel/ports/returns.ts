@@ -129,6 +129,24 @@ export const buildPortReturns: BuildPortReturnsFunction = ({ registry, categorie
   return { byOwner };
 };
 
+export interface PortsByCategoryFunction {
+  (returns: PortReturns): ReadonlyMap<string, readonly string[]>;
+}
+
+// The ports, `<owner>.<port>`, whose calls return data of each category, sorted.
+export const portsByCategory: PortsByCategoryFunction = ({ byOwner }) => {
+  const byCategory = new Map<string, Set<string>>();
+  for (const [owner, ports] of Object.entries(byOwner)) {
+    for (const [port, declaration] of Object.entries(ports)) {
+      const calls = "call" in declaration ? [declaration.call] : Object.values(declaration.methods);
+      for (const category of calls.flatMap((call) => call.categories)) {
+        byCategory.set(category, (byCategory.get(category) ?? new Set()).add(`${owner}.${port}`));
+      }
+    }
+  }
+  return new Map([...byCategory].map(([category, ports]) => [category, [...ports].sort()]));
+};
+
 // Runs before the caller receives the answer, so a refusal it throws keeps the data from it.
 export interface ReturnsRun {
   read(reads: readonly ReturnedRead[]): Promise<void>;

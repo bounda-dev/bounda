@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
@@ -18,10 +18,13 @@ import {
   type Registry,
   type RestrictionGround,
   type RestrictionNotice,
+  readTenantExport,
   rebuildReadModel,
   resolveErrorText,
   rewrapTenantKeys,
   type SubscriberFailure,
+  type TenantExportPart,
+  tenantExportJsonLines,
   unreadableParts,
   withEncryptedFiles,
   withErrorText,
@@ -36,7 +39,7 @@ import type { Config, ErrorText } from "@bounda-dev/core/config";
 import { boot, createConsoleLogger, loadProject } from "@bounda-dev/core/node";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { formatLetter, formatRetried } from "./dead-letter-output.ts";
-import { writeToFile, writeToOutput } from "./export-output.ts";
+import { formatTenantExportCounts, writeToFile, writeToOutput } from "./export-output.ts";
 import {
   expireKvLedger,
   type KvLedgerModule,
@@ -819,6 +822,75 @@ const runForgetTenant = (
   });
 };
 
+type HeaderPart = Extract<TenantExportPart, { readonly kind: "header" }>;
+
+type EndPart = Extract<TenantExportPart, { readonly kind: "end" }>;
+
+interface ExportTenantOptions extends ActingOptions {
+  readonly output?: string;
+}
+
+// Written as it is read, whatever the tenant holds: the controller's data, where the operator
+// hands it over. Said done only once the export's end came, so a file is whole.
+const runExportTenant = (
+  tenant: string,
+  options: ExportTenantOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp({ ...options, tenant: options.tenant ?? tenant }, cwd, stderr, async (app) => {
+    const parts = await actingAs(app, options).exportTenant(tenant);
+    // The export ends with its counts, or rejects.
+    let last: TenantExportPart | undefined;
+    const noted = async function* (): AsyncGenerator<TenantExportPart, void, undefined> {
+      for await (const part of parts) {
+        last = part;
+        yield part;
+      }
+    };
+    const body = tenantExportJsonLines(noted());
+    let where = "standard output";
+    if (options.output === undefined) await writeToOutput(stdout, body);
+    else {
+      where = resolve(cwd, options.output);
+      await writeToFile(where, body);
+    }
+    line(
+      stderr,
+      `exported tenant ${tenant} to ${where}: ${formatTenantExportCounts((last as EndPart).counts)}; check it with bounda check-tenant-export before forgetting the tenant`,
+    );
+    return EXIT_OK;
+  });
+
+// Reads the file alone, without the app: what the operator runs on the copy they hand over.
+const runCheckTenantExport = async (
+  file: string,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const path = resolve(cwd, file);
+  try {
+    // Read whole, it starts with its header and ends with its counts.
+    let first: TenantExportPart | undefined;
+    let last: TenantExportPart | undefined;
+    for await (const part of readTenantExport(createReadStream(path))) {
+      first ??= part;
+      last = part;
+    }
+    const { tenant, position } = (first as HeaderPart).header;
+    line(
+      stdout,
+      `${path} is a whole export of tenant ${tenant} up to position ${position}: ${formatTenantExportCounts((last as EndPart).counts)}`,
+    );
+    return EXIT_OK;
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+};
+
 interface RotateTenantKeyOptions extends ActingOptions {
   readonly reseal: boolean;
 }
@@ -1395,6 +1467,31 @@ export const runCli: RunCliFunction = async ({
   ).action(async (tenant: string, options: ForgetTenantOptions) => {
     exitCode = await runForgetTenant(tenant, options, cwd, stdout, stderr);
   });
+
+  actingOptions(
+    program
+      .command("export-tenant")
+      .description(
+        "hand a tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log",
+      )
+      .argument("<tenant>", "the tenant to export, the one the app serves")
+      .option(
+        "--output <file>",
+        "write it to this file, readable by its owner alone, and only once whole, instead of printing it",
+      ),
+  ).action(async (tenant: string, options: ExportTenantOptions) => {
+    exitCode = await runExportTenant(tenant, options, cwd, stdout, stderr);
+  });
+
+  program
+    .command("check-tenant-export")
+    .description(
+      "check that a file bounda export-tenant wrote is whole, every part in its place and counted by its end, before the tenant is forgotten",
+    )
+    .argument("<file>", "the file the export was written to")
+    .action(async (file: string) => {
+      exitCode = await runCheckTenantExport(file, cwd, stdout, stderr);
+    });
 
   const tenantKey = program
     .command("tenant-key")

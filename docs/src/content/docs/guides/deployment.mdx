@@ -42,7 +42,9 @@ boot an app for each: one process per tenant, or several apps in one, each with 
 ([React Router](/guides/react-router/#tenants)); on Cloudflare every tenant is its own Durable
 Object. Give every database its own tenant name: a second database that claims a tenant whose key
 belongs to another is refused at the start. Run `bounda migrate --tenant <name>` once per tenant's
-database.
+database. When a tenant's service ends, [hand its data
+back](/guides/personal-data/#handing-a-tenant-back) with `bounda export-tenant`, then [forget
+it](/guides/personal-data/#forgetting-a-tenant) with `bounda forget-tenant`.
 
 ## Roles
 

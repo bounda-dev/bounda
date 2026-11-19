@@ -67,7 +67,7 @@ export interface ListAllIdempotencyRecordsArgs {
   /**
    * Only the records filed after this key, which pages through them while others come and go.
    */
-  readonly after?: string;
+  readonly after?: string | undefined;
   readonly limit?: number;
   readonly offset?: number;
 }

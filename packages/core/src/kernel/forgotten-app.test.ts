@@ -102,6 +102,7 @@ describe("an app started for a forgotten tenant", () => {
       () => app.rebuildReadModel("anything" as never),
       () => app.forget("c-1"),
       () => app.exportPersonalData("c-1"),
+      () => app.exportTenant("default"),
       () => app.recipientsOf("c-1"),
       () => app.restrict("c-1", { ground: "objection" } as never),
       () => app.unrestrict("c-1", {} as never),

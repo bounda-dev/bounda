@@ -15,9 +15,9 @@ import type { RecipientKind, TransferSafeguard } from "../../modules/recipient.t
 import type { Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import { schemaArgs } from "../aggregate/build-aggregates.ts";
-import { buildPortReturns } from "../ports/returns.ts";
+import { buildPortReturns, portsByCategory } from "../ports/returns.ts";
 import { processStateArgs } from "../process/deadlines.ts";
-import { buildPersonalCategories, formatRetention, type PersonalCategories } from "./categories.ts";
+import { buildPersonalCategories, formatRetention } from "./categories.ts";
 import {
   classifySchema,
   classifyView,
@@ -439,22 +439,6 @@ const recipientsOf = (registry: Registry): InventoryRecipient[] =>
       }),
   );
 
-const portsByCategory = (
-  registry: Registry,
-  categories: PersonalCategories,
-): ReadonlyMap<string, readonly string[]> => {
-  const byCategory = new Map<string, Set<string>>();
-  for (const [owner, ports] of Object.entries(buildPortReturns({ registry, categories }).byOwner)) {
-    for (const [port, declaration] of Object.entries(ports)) {
-      const calls = "call" in declaration ? [declaration.call] : Object.values(declaration.methods);
-      for (const category of calls.flatMap((call) => call.categories)) {
-        byCategory.set(category, (byCategory.get(category) ?? new Set()).add(`${owner}.${port}`));
-      }
-    }
-  }
-  return new Map([...byCategory].map(([category, ports]) => [category, [...ports].sort()]));
-};
-
 const recordsOf = (
   registry: Registry,
   config: ResolvedConfig,
@@ -556,7 +540,7 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
     });
   }
   const recipients = recipientsOf(registry);
-  const returning = portsByCategory(registry, categories);
+  const returning = portsByCategory(buildPortReturns({ registry, categories }));
   return {
     categories: categories.all.map((category) => ({
       name: category.name,
