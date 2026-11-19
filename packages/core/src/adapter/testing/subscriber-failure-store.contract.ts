@@ -227,6 +227,21 @@ export const subscriberFailureStoreContract: SubscriberFailureStoreContractFunct
       expect(await store.get("projection:orders")).toBeNull();
     });
 
+    it("removes nothing failed again on the same event after it was resolved, though it counts from one again", async () => {
+      await store.record(failure());
+      const read = await store.get("projection:orders");
+      if (read === null) throw new Error("no failure");
+      await store.resolve("projection:orders", new Date(at(1)));
+      await store.record(failure({ failedAt: at(2) }));
+      expect(await store.get("projection:orders")).toMatchObject({
+        attempts: 1,
+        resolvedAt: null,
+        lastFailedAt: at(2),
+      });
+      expect(await store.remove(read, [])).toBe(false);
+      expect(await store.get("projection:orders")).not.toBeNull();
+    });
+
     it("records a failure afresh once its last one was removed", async () => {
       await store.record(failure());
       const read = await store.get("projection:orders");
