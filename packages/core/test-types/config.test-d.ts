@@ -448,6 +448,11 @@ describe("defineConfig", () => {
       };
     });
     expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();
+    expectTypeOf(
+      defineForgetLedger(() => ({}) as ForgetLedger, { location: "jurisdiction eu" }).location,
+    ).toEqualTypeOf<string | undefined>();
+    // @ts-expect-error a location is a name, such as "jurisdiction eu"
+    defineForgetLedger(() => ({}) as ForgetLedger, { location: ["eu"] });
     defineConfig({
       storage: sqlite,
       ports,
