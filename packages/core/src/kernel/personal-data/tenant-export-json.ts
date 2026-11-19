@@ -48,9 +48,6 @@ const KINDS: ReadonlySet<string> = new Set<TenantExportRecord["kind"]>([
   "forgetLedgerEntry",
 ]);
 
-const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 // The part a line holds, whose kind and first-level shape are checked; what lies inside a record is
 // the app's data, handed on as it is.
 const partOf = (line: string, number: number): TenantExportPart => {
@@ -60,13 +57,13 @@ const partOf = (line: string, number: number): TenantExportPart => {
   } catch {
     throw new Error(`Line ${number} of the tenant export is not JSON`);
   }
-  if (!isObject(parsed) || typeof parsed.kind !== "string") {
+  // Any JSON but `null` reads a `kind`, which only an object of a part has as text.
+  const kind = (parsed as { readonly kind?: unknown } | null)?.kind;
+  if (typeof kind !== "string") {
     throw new Error(`Line ${number} of the tenant export is not a part`);
   }
-  if (parsed.kind === "header" || parsed.kind === "end" || KINDS.has(parsed.kind)) {
-    return parsed as unknown as TenantExportPart;
-  }
-  throw new Error(`Line ${number} of the tenant export is a part of unknown kind ${parsed.kind}`);
+  if (kind === "header" || kind === "end" || KINDS.has(kind)) return parsed as TenantExportPart;
+  throw new Error(`Line ${number} of the tenant export is a part of unknown kind ${kind}`);
 };
 
 const sameCounts = (a: TenantExportCounts, b: TenantExportCounts): boolean =>

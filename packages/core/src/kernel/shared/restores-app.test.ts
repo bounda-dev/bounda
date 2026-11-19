@@ -356,6 +356,25 @@ describe("a strict app's export", () => {
     expect(accesses(logger)).toEqual([["exportPersonalData", "failed", "RESTORE_UNRECONCILED"]]);
   });
 
+  it("refuses a tenant export whose header it read from a copy restored under it, recorded as failed", async () => {
+    const { app, db, copy, logger } = await copiedBefore();
+    restore(db, copy);
+    await expect(app.exportTenant("default")).rejects.toBeInstanceOf(RestoreUnreconciledError);
+    expect(accesses(logger)).toEqual([["exportTenant", "failed", "RESTORE_UNRECONCILED"]]);
+  });
+
+  it("refuses a page of a tenant export it read from a copy restored under it, recorded as failed", async () => {
+    const { app, db, copy, logger } = await copiedBefore();
+    const parts = (await app.exportTenant("default"))[Symbol.asyncIterator]();
+    expect((await parts.next()).value?.kind).toBe("header");
+    restore(db, copy);
+    await expect(parts.next()).rejects.toBeInstanceOf(RestoreUnreconciledError);
+    expect(accesses(logger)).toEqual([
+      ["exportTenant", "started", null],
+      ["exportTenant", "failed", "RESTORE_UNRECONCILED"],
+    ]);
+  });
+
   it("refuses a page it read from a copy restored under it before handing any of it out, recorded as failed", async () => {
     const { app, db, copy, logger } = await copiedBefore();
     const parts = (await app.streamPersonalData("c-1"))[Symbol.asyncIterator]();

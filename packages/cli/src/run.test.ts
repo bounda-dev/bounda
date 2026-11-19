@@ -1863,6 +1863,24 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     ]) {
       expect(forget.stdout.replace(/\s+/g, " ")).toContain(text);
     }
+    const exporting = await cli(["export-tenant", "--help"], fixture);
+    for (const text of [
+      "hand a tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log",
+      "<tenant>",
+      "the tenant to export, the one the app serves",
+      "--output <file>",
+      "write it to this file, readable by its owner alone, and only once whole, instead of printing it",
+    ]) {
+      expect(exporting.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
+    const checking = await cli(["check-tenant-export", "--help"], fixture);
+    for (const text of [
+      "check that a file bounda export-tenant wrote is whole, every part in its place and counted by its end, before the tenant is forgotten",
+      "<file>",
+      "the file the export was written to",
+    ]) {
+      expect(checking.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
     const keys = await cli(["tenant-key", "--help"], fixture);
     expect(keys.stdout).toContain("rotate the tenant's key, and retire its older versions");
     for (const [command, text] of [

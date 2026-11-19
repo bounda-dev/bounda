@@ -86,12 +86,22 @@ describe("tenantExportJsonLines", () => {
       }
     })();
     const reader = tenantExportJsonLines(parts).getReader();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pulled).toEqual([]);
     await reader.read();
     expect(pulled).toEqual(["header"]);
     await reader.cancel();
     expect(closed).toBe(true);
     expect(pulled).toEqual(["header"]);
+  });
+
+  it("cancels parts that cannot be closed", async () => {
+    const endless: AsyncIterable<TenantExportPart> = {
+      [Symbol.asyncIterator]: () => ({ next: async () => ({ done: false, value: header }) }),
+    };
+    const reader = tenantExportJsonLines(endless).getReader();
+    await reader.read();
+    await expect(reader.cancel()).resolves.toBeUndefined();
   });
 
   it("errors the stream with what a part rejects with", async () => {
@@ -110,7 +120,7 @@ describe("readTenantExport", () => {
     const text = linesOf(header, person, row("a"), end({ persons: 1, readModelRows: 1 }));
     const encoded = encoder.encode(text.replace("ana", "añá"));
     const chunks: Uint8Array[] = [];
-    for (let at = 0; at < encoded.length; at += 7) chunks.push(encoded.slice(at, at + 7));
+    for (let at = 0; at < encoded.length; at += 1) chunks.push(encoded.slice(at, at + 1));
     const parts = await read(
       (async function* () {
         yield* chunks;
@@ -136,6 +146,17 @@ describe("readTenantExport", () => {
     [
       "a line that is not a part",
       [linesOf(header, [1, 2])],
+      "Line 2 of the tenant export is not a part",
+    ],
+    ["a line that is null", [linesOf(header, null)], "Line 2 of the tenant export is not a part"],
+    [
+      "a line that is text",
+      [linesOf(header, "person")],
+      "Line 2 of the tenant export is not a part",
+    ],
+    [
+      "a part whose kind is no text",
+      [linesOf(header, { kind: 1 })],
       "Line 2 of the tenant export is not a part",
     ],
     [
@@ -185,15 +206,16 @@ describe("readTenantExport", () => {
       [linesOf(header, end(), end())],
       "Line 3 of the tenant export comes after its end",
     ],
-    ["bytes that are no UTF-8", ["�"], ""],
   ])("refuses %s", async (_name, chunks, message) => {
-    const body =
-      chunks[0] === "�"
-        ? (async function* () {
-            yield new Uint8Array([0xff, 0xfe, 0x0a]);
-          })()
-        : bytes(...chunks);
-    await expect(read(body)).rejects.toThrow(message);
+    await expect(read(bytes(...chunks))).rejects.toThrow(message);
+  });
+
+  it("refuses bytes that are no UTF-8, rather than reading them as other text", async () => {
+    const body = (async function* () {
+      yield encoder.encode(linesOf(header));
+      yield new Uint8Array([0x22, 0xff, 0x22, 0x0a]);
+    })();
+    await expect(read(body)).rejects.toBeInstanceOf(TypeError);
   });
 
   it("refuses a header of another format or version, naming both", async () => {
@@ -218,7 +240,31 @@ describe("readTenantExport", () => {
   });
 
   it("reads the rows of each read model in the header's order, skipping one without rows", async () => {
-    const parts = [header, row("a"), row("a"), row("b"), end({ readModelRows: 3 })];
+    const failure: TenantExportPart = {
+      kind: "subscriberFailure",
+      subscriberFailure: {
+        subscriber: "projection:a",
+        position: 1,
+        eventId: "e-1",
+        eventType: "T",
+        person: null,
+        errorName: "Error",
+        errorMessage: "x",
+        attempts: 1,
+        firstFailedAt: "2026-01-01T00:00:00.000Z",
+        lastFailedAt: "2026-01-01T00:00:00.000Z",
+        resolvedAt: null,
+        restricted: [],
+      },
+    };
+    const parts = [
+      header,
+      failure,
+      row("a"),
+      row("a"),
+      row("b"),
+      end({ subscriberFailures: 1, readModelRows: 3 }),
+    ];
     expect(await read(bytes(linesOf(...parts)))).toEqual(parts);
     const second = [header, row("b"), end({ readModelRows: 1 })];
     expect(await read(bytes(linesOf(...second)))).toEqual(second);

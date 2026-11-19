@@ -115,7 +115,7 @@ interface Pages extends AsyncGenerator<readonly TenantExportRecord[], void, unde
 // categories, or a key a forgetting kept under an erasure exemption, by category.
 interface PersonRestrictions {
   readonly whole: boolean;
-  readonly requested: ReadonlySet<string>;
+  readonly requested: ReadonlySet<string | null>;
   readonly kept: ReadonlySet<string>;
 }
 
@@ -137,7 +137,7 @@ const distinct = (persons: readonly KeyedPerson[] | undefined): readonly string[
 ];
 
 // Pages by a key no write changes, so a record written or removed meanwhile cannot make another
-// one skip a page or repeat; the last page is the one shorter than a batch.
+// one skip a page or repeat; the last page is the one shorter than a batch, empty maybe.
 async function* paged<Item>(
   read: (after: string | undefined) => Promise<readonly Item[]>,
   keyOf: (item: Item) => string,
@@ -147,7 +147,7 @@ async function* paged<Item>(
   let after: string | undefined;
   for (;;) {
     const page = await read(after);
-    if (page.length > 0) yield await build(page);
+    yield await build(page);
     if (page.length < batchSize) return;
     after = keyOf(page.at(-1) as Item);
   }
@@ -258,7 +258,8 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
         const keys = await storage.personalKeys.list(person);
         return {
           whole: rows.some(({ category }) => category === null),
-          requested: new Set(rows.flatMap(({ category }) => (category === null ? [] : [category]))),
+          // A restriction of them as a whole, `null`, is `whole`.
+          requested: new Set(rows.map(({ category }) => category)),
           kept: new Set(
             keys.filter(({ retainedSince }) => retainedSince !== null).map((key) => key.category),
           ),
@@ -338,7 +339,8 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
             forgottenAt: person?.forgottenAt ?? null,
             categories: Object.fromEntries(
               Object.entries(information.categories)
-                .filter(([, { held, restrictedUntil }]) => held || restrictedUntil !== null)
+                // A key kept past a forgetting is held too.
+                .filter(([, { held }]) => held)
                 .map(([name, { keptUntil, restrictedUntil }]) => [
                   name,
                   { keptUntil, restrictedUntil },
@@ -382,7 +384,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
           },
         };
       });
-      if (page.length < read.length || read.length < batchSize) return;
+      // The head is an event, so a page that reaches it ends the loop, and none is empty before.
       afterPosition = (page.at(-1) as StoredEvent).position;
     }
   };
@@ -457,11 +459,11 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
             persons: _persons,
             ...rest
           } = letter;
-          const opened =
-            stored === undefined
-              ? undefined
-              : (await openCommandPayload({ payload: stored, keys: storage.personalKeys, keyOf }))
-                  .payload;
+          const { payload: opened } = await openCommandPayload({
+            payload: stored,
+            keys: storage.personalKeys,
+            keyOf,
+          });
           const persons = distinct(letter.persons);
           const of = categoriesOf(commandMarks(letter.eventType), opened);
           const restricted = [
@@ -513,12 +515,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
   const answerPages = (): Pages => {
     const now = clock.now();
     return paged(
-      (after) =>
-        storage.idempotencyStore.list({
-          now,
-          ...(after === undefined ? {} : { after }),
-          limit: batchSize,
-        }),
+      (after) => storage.idempotencyStore.list({ now, after, limit: batchSize }),
       ({ key }) => key,
       (records) => {
         const restrictionsOf = restrictionsOfPage();
@@ -556,8 +553,11 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
     for (const { name, storage: rows, fields, layout, personalData } of Object.values(
       readModels.byName,
     )) {
-      const primaryKey = Object.keys(fields).find((field) => fields[field]?.isPrimaryKey);
-      if (primaryKey === undefined) continue;
+      // Every read model has one, which building it checks.
+      const [primaryKey] = Object.entries(fields).find(([, field]) => field.isPrimaryKey) as [
+        string,
+        unknown,
+      ];
       let after: unknown;
       for (;;) {
         const page = await rows.table.findMany({
@@ -576,11 +576,17 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
           });
           const person =
             personalData === null ? null : ((row[personalData.person] as string | null) ?? null);
-          const of: Record<string, string> = Object.fromEntries(
-            (personalData?.personal ?? [])
-              .filter((field) => row[field] !== undefined)
-              .map((field) => [field, fields[field]?.category ?? DEFAULT_PERSONAL_CATEGORY]),
-          );
+          const of: Record<string, string> =
+            personalData === null
+              ? {}
+              : Object.fromEntries(
+                  Object.entries(fields)
+                    .filter(
+                      ([field]) =>
+                        personalData.personal.includes(field) && row[field] !== undefined,
+                    )
+                    .map(([field, { category }]) => [field, category ?? DEFAULT_PERSONAL_CATEGORY]),
+                );
           return {
             kind: "row",
             readModel: name,
@@ -602,7 +608,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
           };
         });
         if (page.length < batchSize) break;
-        after = page.at(-1)?.[primaryKey];
+        after = (page.at(-1) as Record<string, unknown>)[primaryKey];
       }
     }
   }

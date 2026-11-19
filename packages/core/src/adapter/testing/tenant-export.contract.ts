@@ -484,6 +484,8 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
           ),
         ),
       ).rejects.toThrow("ends before its end part");
+      // The app still serves: the failure was no forgetting of the tenant.
+      expect((await collect(await app.exportTenant(DEFAULT_TENANT))).at(-1)?.kind).toBe("end");
     });
 
     it("records the export as it starts and as it ends, naming the first persons and counting them all", async () => {
@@ -543,7 +545,11 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       await app.runUntilIdle();
       accesses.length = 0;
       reads.read = 0;
-      await expect(app.exportTenant("another")).rejects.toBeInstanceOf(ValidationError);
+      await expect(app.exportTenant("another")).rejects.toMatchObject({
+        name: "ValidationError",
+        message: "exportTenant names tenant another, and the app serves another",
+        issues: [{ path: ["tenant"], message: "Expected the tenant the app serves" }],
+      });
       expect(reads.read).toBe(0);
       expect(accesses).toEqual([
         expect.objectContaining({

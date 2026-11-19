@@ -67,6 +67,7 @@ const registry: Registry = {
             z.object({
               customerId: person(z.string()),
               note: personal(z.string(), invoices).optional(),
+              phone: personal(z.string()).optional(),
               total: z.number(),
             }),
           evolve: () => ({}),
@@ -192,7 +193,14 @@ const setup = async () => {
     streamTenantExport({
       storage,
       aggregates,
-      processes: { byName: {} },
+      // A process whose state marks an email, as its schema would.
+      processes: {
+        byName: {
+          "customer.watch": {
+            personal: { person: null, fields: ["email"], categories: { email: "default" } },
+          },
+        },
+      } as never,
       readModels,
       sealing: { keys: storage.personalKeys, indexer: null, redactions: async () => [] },
       clock: createFixedClock(),
@@ -256,6 +264,7 @@ const setup = async () => {
     });
   return {
     storage,
+    written,
     stream,
     exported,
     register,
@@ -397,10 +406,38 @@ describe("streamTenantExport", () => {
     ]);
   });
 
+  it("names the fields of a process's lifecycle event its state marks, and none of a process it does not have", async () => {
+    const { exported, written } = await setup();
+    for (const process of ["customer.watch", "customer.gone"]) {
+      await written.eventStore.append({
+        aggregateType: `process:${process}`,
+        aggregateId: "c-1",
+        expectedVersion: 0,
+        events: [
+          pendingEvent({
+            aggregateType: `process:${process}`,
+            aggregateId: "c-1",
+            version: 1,
+            type: "ProcessHandled",
+            payload: { state: { email: "ana@example.com", step: 1 } },
+            person: "c-1",
+          }),
+        ],
+      });
+    }
+    expect(
+      of(await exported(), "event").map(({ event }) => [event.payload, event.categories]),
+    ).toEqual([
+      [{ state: { email: "ana@example.com", step: 1 } }, { email: "default" }],
+      [{ state: { email: "ana@example.com", step: 1 } }, {}],
+    ]);
+  });
+
   it("marks restricted the fields a forgetting kept, opened under a key it kept, and no field after", async () => {
     const { exported, register, place, storage } = await setup();
     await register("c-1", "ana@example.com");
-    await place("o-1", { customerId: "c-1", note: "ring twice", total: 10 });
+    // Opened under two keys, one of which a forgetting keeps.
+    await place("o-1", { customerId: "c-1", note: "ring twice", phone: "555", total: 10 });
     const invoiceKey = (await storage.personalKeys.list("c-1")).find(
       ({ category }) => category === "invoices",
     );
@@ -769,6 +806,102 @@ describe("streamTenantExport", () => {
       ["ring twice", ["note"]],
       [undefined, []],
     ]);
+  });
+
+  it("marks what a command or letter holds of anyone restricted, or of a key a forgetting kept", async () => {
+    const { exported, storage, reminder, restrict, keyed } = await setup();
+    const ana = await reminder("c-1", "ana@example.com");
+    const bo = await keyed("c-2");
+    // Stored before Bounda recorded when a command was scheduled.
+    await storage.scheduler.schedule({
+      dedupeKey: "command:a",
+      command: { type: "RemindCustomer", aggregateId: "c", payload: ana.payload },
+      executeAt: new Date("2026-01-03T00:00:00.000Z"),
+      scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
+      context: testContext,
+      persons: [...ana.persons, bo],
+    });
+    const scan = storage.scheduler.scan;
+    Object.assign(storage.scheduler, {
+      scan: async (args: Parameters<typeof scan>[0]) =>
+        (await scan(args)).map(({ scheduledAt: _scheduledAt, ...entry }) => entry),
+    });
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("dl-1"),
+      kind: "scheduled",
+      handler: "RemindCustomer",
+      eventType: "RemindCustomer",
+      payload: ana.payload,
+      persons: [...ana.persons, bo],
+    });
+    const marked = async () => {
+      const parts = await exported();
+      return [
+        ...of(parts, "scheduledCommand").map(({ scheduledCommand }) => scheduledCommand.restricted),
+        ...of(parts, "deadLetter").map(({ deadLetter }) => deadLetter.restricted),
+      ];
+    };
+    const [command] = of(await exported(), "scheduledCommand");
+    expect(command?.scheduledCommand).not.toHaveProperty("scheduledAt");
+    expect(command?.scheduledCommand.persons).toEqual(["c-1", "c-2"]);
+    expect(await marked()).toEqual([[], []]);
+    // One of the two it names is restricted.
+    await restrict("c-2", null);
+    expect(await marked()).toEqual([["email"], ["email"]]);
+    await storage.persons.unrestrict("c-2", { categories: null });
+    const [key] = await storage.personalKeys.list("c-1");
+    await storage.personalKeys.retain("c-1", key?.key.fingerprint ?? "", {
+      since: "2026-01-10T00:00:00.000Z",
+      lastActiveAt: "2026-01-05T00:00:00.000Z",
+    });
+    expect(await marked()).toEqual([["email"], ["email"]]);
+  });
+
+  it("marks a row opened under a key in force, written after a forgetting kept another, as what it is", async () => {
+    const { exported, storage, table } = await setup();
+    await storage.personalKeys.create("c-1", "invoices");
+    const notes = table("orderNotes");
+    await notes.upsert({ orderId: "o-1", customerId: "c-1", note: "before", total: 1 });
+    const [kept] = await storage.personalKeys.list("c-1");
+    await storage.personalKeys.retain("c-1", kept?.key.fingerprint ?? "", {
+      since: "2026-01-10T00:00:00.000Z",
+      lastActiveAt: "2026-01-05T00:00:00.000Z",
+    });
+    await storage.personalKeys.create("c-1", "invoices");
+    await table("orderNotes").upsert({
+      orderId: "o-2",
+      customerId: "c-1",
+      note: "after",
+      total: 2,
+    });
+    expect(of(await exported(), "row").map(({ row }) => [row.data.note, row.restricted])).toEqual([
+      ["before", ["note"]],
+      ["after", []],
+    ]);
+  });
+
+  it("reads each store of persons once a page, and once more only when a page was full", async () => {
+    const { exported, register, restrict, storage } = await setup();
+    for (const person of ["c-1", "c-2", "c-3"]) await register(person, `${person}@example.com`);
+    await restrict("c-4", null);
+    const calls: string[] = [];
+    const scan = storage.persons.scan;
+    const persons = storage.personalKeys.persons;
+    Object.assign(storage.persons, {
+      scan: async (args: Parameters<typeof scan>[0]) => {
+        calls.push(`rows after ${args.after ?? "-"}`);
+        return scan(args);
+      },
+    });
+    Object.assign(storage.personalKeys, {
+      persons: async (args: Parameters<typeof persons>[0]) => {
+        calls.push(`keys after ${args.after ?? "-"}`);
+        return persons(args);
+      },
+    });
+    const ids = of(await exported({ batchSize: 2 }), "person").map(({ person }) => person.personId);
+    expect(ids).toEqual(["c-1", "c-2", "c-3", "c-4"]);
+    expect(calls).toEqual(["rows after -", "keys after -", "keys after c-2"]);
   });
 
   it("hands out every entry of the forget ledger, a page at a time, and none without a ledger", async () => {

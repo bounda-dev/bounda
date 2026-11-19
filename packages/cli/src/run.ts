@@ -23,7 +23,6 @@ import {
   resolveErrorText,
   rewrapTenantKeys,
   type SubscriberFailure,
-  type TenantExportCounts,
   type TenantExportPart,
   tenantExportJsonLines,
   unreadableParts,
@@ -823,6 +822,10 @@ const runForgetTenant = (
   });
 };
 
+type HeaderPart = Extract<TenantExportPart, { readonly kind: "header" }>;
+
+type EndPart = Extract<TenantExportPart, { readonly kind: "end" }>;
+
 interface ExportTenantOptions extends ActingOptions {
   readonly output?: string;
 }
@@ -838,10 +841,11 @@ const runExportTenant = (
 ): Promise<number> =>
   withApp({ ...options, tenant: options.tenant ?? tenant }, cwd, stderr, async (app) => {
     const parts = await actingAs(app, options).exportTenant(tenant);
-    let counts: TenantExportCounts | undefined;
+    // The export ends with its counts, or rejects.
+    let last: TenantExportPart | undefined;
     const noted = async function* (): AsyncGenerator<TenantExportPart, void, undefined> {
       for await (const part of parts) {
-        if (part.kind === "end") counts = part.counts;
+        last = part;
         yield part;
       }
     };
@@ -854,7 +858,7 @@ const runExportTenant = (
     }
     line(
       stderr,
-      `exported tenant ${tenant} to ${where}: ${formatTenantExportCounts(counts as TenantExportCounts)}; check it with bounda check-tenant-export before forgetting the tenant`,
+      `exported tenant ${tenant} to ${where}: ${formatTenantExportCounts((last as EndPart).counts)}; check it with bounda check-tenant-export before forgetting the tenant`,
     );
     return EXIT_OK;
   });
@@ -868,16 +872,17 @@ const runCheckTenantExport = async (
 ): Promise<number> => {
   const path = resolve(cwd, file);
   try {
-    let tenant = "";
-    let position = 0;
-    let counts: TenantExportCounts | undefined;
+    // Read whole, it starts with its header and ends with its counts.
+    let first: TenantExportPart | undefined;
+    let last: TenantExportPart | undefined;
     for await (const part of readTenantExport(createReadStream(path))) {
-      if (part.kind === "header") ({ tenant, position } = part.header);
-      if (part.kind === "end") counts = part.counts;
+      first ??= part;
+      last = part;
     }
+    const { tenant, position } = (first as HeaderPart).header;
     line(
       stdout,
-      `${path} is a whole export of tenant ${tenant} up to position ${position}: ${formatTenantExportCounts(counts as TenantExportCounts)}`,
+      `${path} is a whole export of tenant ${tenant} up to position ${position}: ${formatTenantExportCounts((last as EndPart).counts)}`,
     );
     return EXIT_OK;
   } catch (error) {
