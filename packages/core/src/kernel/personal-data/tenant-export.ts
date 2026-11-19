@@ -25,9 +25,16 @@ export const TENANT_EXPORT_VERSION: 1 = 1;
 
 /**
  * A category of the app as `app/personal-data.ts` declares it, as `ExportedCategory` tells a
- * person of it, without what only holds for one person.
+ * person of it, without what only holds for one person, and with the ports that bring its data in.
  */
-export type TenantExportCategory = Omit<ExportedCategory, "held" | "keptUntil" | "restrictedUntil">;
+export interface TenantExportCategory
+  extends Omit<ExportedCategory, "held" | "keptUntil" | "restrictedUntil"> {
+  /**
+   * The ports whose calls return data of it, `<aggregate or read model>.<port>`, as their
+   * `returnsPersonalData` says: where it comes from besides what the app is given.
+   */
+  readonly ports: readonly string[];
+}
 
 /**
  * What a tenant export hands out before any record: its format, the tenant, when it was taken, the

@@ -80,6 +80,10 @@ export interface StreamTenantExportArgs {
   readonly batchSize: number;
   readonly categories: PersonalCategories;
   readonly recipients: RecipientsRuntime;
+  /**
+   * The ports that return each category's data, by category.
+   */
+  readonly ports: ReadonlyMap<string, readonly string[]>;
   readonly tenant: string;
   readonly exportId: string;
   /**
@@ -212,6 +216,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
   batchSize,
   categories,
   recipients,
+  ports,
   tenant,
   exportId,
   ledger,
@@ -229,7 +234,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
       restrictedUntil: _restrictedUntil,
       ...rest
     } = category;
-    appCategories[name] = rest;
+    appCategories[name] = { ...rest, ports: ports.get(name) ?? [] };
   }
   const header: TenantExportHeader = {
     format: TENANT_EXPORT_FORMAT,

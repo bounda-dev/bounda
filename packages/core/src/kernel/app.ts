@@ -130,7 +130,7 @@ import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
 import { createPorts, type TestChoice } from "./ports/ports.ts";
-import { buildPortReturns } from "./ports/returns.ts";
+import { buildPortReturns, portsByCategory } from "./ports/returns.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber, projectionSubscriberName } from "./projection/runner.ts";
@@ -953,6 +953,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
     const returns = buildPortReturns({ registry, categories: personalCategories });
+    const returningPorts = portsByCategory(returns);
     const notices = createRecipientNotices({
       tracer: appTracer,
       recipients,
@@ -2011,6 +2012,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               batchSize: config.runtime.dispatcher.batchSize,
               categories: personalCategories,
               recipients,
+              ports: returningPorts,
               tenant: tenantId,
               exportId,
               ledger: forgetLedger?.store ?? null,

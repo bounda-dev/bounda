@@ -199,6 +199,7 @@ const setup = async () => {
       batchSize,
       categories,
       recipients: NO_RECIPIENTS,
+      ports: new Map([["invoices", ["order.billing", "order.ledger"]]]),
       tenant: "acme",
       exportId: "x-1",
       ledger,
@@ -318,6 +319,7 @@ describe("streamTenantExport", () => {
             erasureExemptions: [],
             sources: [],
             retention: "30d",
+            ports: [],
           },
           invoices: {
             basis: "legal-obligation",
@@ -328,6 +330,7 @@ describe("streamTenantExport", () => {
             erasureExemptions: [{ exemption: "legal-obligation", article: "17(3)(b)" }],
             sources: ["data-subject"],
             retention: "60d",
+            ports: ["order.billing", "order.ledger"],
           },
         },
         readModels: ["orderNotes", "orderTotals"],

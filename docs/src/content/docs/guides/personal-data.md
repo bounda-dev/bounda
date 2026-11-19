@@ -2466,7 +2466,7 @@ It resolves once the header is read, then hands out, in this order:
 
 | Part | What it holds |
 | --- | --- |
-| `header` | `format` (`"bounda.tenant-export"`) and `version` (`1`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, every category of the app as `app/personal-data.ts` declares it, and every read model, in the order their rows come |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`1`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, and every read model, in the order their rows come |
 | `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
 | `event` | every event of the stream up to the header's `position`, as the handlers read it today: upcast, its whole `payload` opened, with its `metadata` and the `person` it names; `categories` names the category of each field marked `personal`, `restricted` the fields the controller may only keep, and `redacted` the fields a [redaction](#correcting-a-persons-data) sealed for good |
 | `scheduledCommand` | every command waiting to run, its payload opened, with the `persons` it names |

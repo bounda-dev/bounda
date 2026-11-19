@@ -66,9 +66,10 @@ describe("the tenant export", () => {
       readonly categories: Readonly<Record<string, TenantExportCategory>>;
       readonly readModels: readonly string[];
     }>();
-    expectTypeOf<TenantExportCategory>().toEqualTypeOf<
+    expectTypeOf<Omit<TenantExportCategory, "ports">>().toEqualTypeOf<
       Omit<ExportedCategory, "held" | "keptUntil" | "restrictedUntil">
     >();
+    expectTypeOf<TenantExportCategory["ports"]>().toEqualTypeOf<readonly string[]>();
   });
 
   it("hands out parts of each kind, the header first and the end last", () => {
