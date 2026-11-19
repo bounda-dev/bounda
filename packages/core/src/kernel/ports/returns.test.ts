@@ -117,6 +117,16 @@ describe("buildPortReturns", () => {
   });
 
   it("refuses a port that declares what it returns and has no implementation", () => {
+    const registry = registryOf(false);
+    const portless = {
+      ...registry,
+      aggregates: { customer: { ...registry.aggregates.customer, ports: undefined } },
+    } as unknown as Registry;
+    expect(() => buildPortReturns({ registry: portless, categories })).toThrow(
+      new ConfigurationError(
+        "Port customer.crm: it exports returnsPersonalData and has no implementation in infrastructure/crm/",
+      ),
+    );
     expect(() => buildPortReturns({ registry: registryOf(false, {}), categories })).toThrow(
       new ConfigurationError(
         "Port customer.crm: it exports returnsPersonalData and has no implementation in infrastructure/crm/",
@@ -152,8 +162,12 @@ describe("bindReturns", () => {
       ping: async () => "pong",
       version: 2,
     };
-    const ports = bindReturns(returns, "customer", { crm, other: 1 }, run);
-    expect(ports.other).toBe(1);
+    const odd = bindReturns(built({ version: { persons } }), "customer", { crm }, run)
+      .crm as typeof crm;
+    expect(odd.version).toBe(2);
+    const other = { find: async () => "other" };
+    const ports = bindReturns(returns, "customer", { crm, other }, run);
+    expect(ports.other).toBe(other);
     const bound = ports.crm as typeof crm;
     expect(bound).toBe(ports.crm);
     expect(bound.find).toBe(bound.find);
@@ -205,6 +219,17 @@ describe("bindReturns", () => {
     const bound = bindReturns(returns, "customer", { crm }, run).crm as typeof crm;
     await expect(bound.find("c-1")).rejects.toBe(failure);
     await expect(bound.sync()).rejects.toBe(failure);
+    const named = bindReturns(
+      built({ find: { persons, personsOnError: () => 7 } }),
+      "customer",
+      { crm },
+      run,
+    ).crm as typeof crm;
+    await expect(named.find("c-1")).rejects.toThrow(
+      new ConfigurationError(
+        "Port customer.crm: method find: personsOnError named 7, which is no person id",
+      ),
+    );
     await expect(bound.bare()).rejects.toBe(failure);
     expect(reads).toEqual([
       [{ person: "c-1", categories: ["default"] }],
@@ -220,6 +245,27 @@ describe("bindReturns", () => {
     const refusal = new Error("restricted");
     const crm = { find: async (value: unknown) => value, sync: () => ({ id: "c-1" }) };
     const bound = bindReturns(returns, "customer", { crm }, recorder().run).crm as typeof crm;
+    const call = bindReturns(
+      built({ persons: () => 1 }),
+      "customer",
+      {
+        crm: async () => ({}),
+      },
+      recorder().run,
+    ).crm as () => Promise<object>;
+    await expect(call()).rejects.toThrow(
+      new ConfigurationError("Port customer.crm: persons named 1, which is no person id"),
+    );
+    const { reads, run } = recorder();
+    const odd = bindReturns(
+      returns,
+      "customer",
+      { crm: { ...crm, sync: async () => ({ id: "c-3" }), find: () => null } },
+      run,
+    ).crm as typeof crm;
+    await expect(odd.sync()).resolves.toEqual({ id: "c-3" });
+    expect(reads).toEqual([[{ person: "c-3", categories: ["default"] }]]);
+    expect(() => odd.find(1)).toThrow(ConfigurationError);
     await expect(bound.find(42)).rejects.toThrow(
       new ConfigurationError(
         "Port customer.crm: method find: persons named 42, which is no person id",

@@ -66,7 +66,7 @@ const checkedCall = (
     fail("categories must list the categories of the personal data returned");
   }
   for (const category of named as readonly unknown[]) {
-    if (typeof category !== "string" || categories.of(category) === undefined) {
+    if (categories.of(category as string) === undefined) {
       fail(`categories names ${JSON.stringify(category)}, which the app does not have`);
     }
   }
@@ -157,9 +157,7 @@ const readsOf = (persons: readonly string[], categories: readonly string[]): Ret
   persons.map((person) => ({ person, categories }));
 
 const isThenable = (value: unknown): value is PromiseLike<unknown> =>
-  (typeof value === "object" || typeof value === "function") &&
-  value !== null &&
-  typeof (value as { then?: unknown }).then === "function";
+  typeof (value as { readonly then?: unknown } | null | undefined)?.then === "function";
 
 const called = (
   where: string,

@@ -907,8 +907,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
     });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
-    const declaredReturns = buildPortReturns({ registry, categories: personalCategories });
-    const returns = Object.keys(declaredReturns.byOwner).length === 0 ? undefined : declaredReturns;
+    const returns = buildPortReturns({ registry, categories: personalCategories });
     const notices = createRecipientNotices({
       tracer: appTracer,
       recipients,

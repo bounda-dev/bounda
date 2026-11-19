@@ -74,6 +74,10 @@ let introducing = false;
 // Whether the notifier's handler of a forgetting fails.
 let confirming = false;
 
+// What the reactions that only some tests run do: check the friend through a command, read them
+// on a basis, fail the process quoting them.
+let reacting = { checking: false, onBasis: false, failingProcess: false };
+
 // What the projection of a vouch reads through the driver, by whose row: as `rawReadOf` is told.
 let rawReads: string[] = [];
 
@@ -130,6 +134,22 @@ const registry = {
             }) => [events.memberJoined?.({ name: command.payload.name })],
           },
         },
+        checkFriend: {
+          module: {
+            payload: ({ z, notPersonal, person }: CommandPayloadArgs) =>
+              z.object({ memberId: person(z.string()), friendId: notPersonal(z.string()) }),
+            handler: async ({
+              command,
+              directory: port,
+            }: {
+              command: { payload: { friendId: string } };
+              directory: Directory;
+            }) => {
+              const friend = await port.lookup(command.payload.friendId);
+              throw new ValidationError(`cannot check ${friend.name}`, []);
+            },
+          },
+        },
         vouchFor: {
           module: {
             payload: ({ z, notPersonal, person }: CommandPayloadArgs) =>
@@ -155,6 +175,39 @@ const registry = {
         },
       },
       policies: {
+        // Checks the friend through a command, whose handler fails quoting them.
+        checkOnMemberVouched: {
+          module: {
+            handler: async ({
+              event,
+              commands,
+            }: {
+              event: { aggregateId: string; payload: { friendId: string } };
+              commands: Record<string, Dispatch>;
+            }) => {
+              if (!reacting.checking) return;
+              await commands.checkFriend?.({
+                memberId: event.aggregateId,
+                friendId: event.payload.friendId,
+              });
+            },
+          },
+        },
+        // Reads the friend on a basis that opens a restriction.
+        recallOnMemberVouched: {
+          module: {
+            restricted: "legal-claims",
+            handler: async ({
+              event,
+              directory: port,
+            }: {
+              event: { payload: { friendId: string } };
+              directory: Directory;
+            }) => {
+              if (reacting.onBasis) await port.lookup(event.payload.friendId);
+            },
+          },
+        },
         // Tells the notifier the friend's name it read from the directory.
         introduceOnMemberVouched: {
           module: {
@@ -207,7 +260,10 @@ const registry = {
                   event: { payload: { friendId: string } };
                   directory: Directory;
                 }) => {
-                  await port.lookup(event.payload.friendId);
+                  const friend = await port.lookup(event.payload.friendId);
+                  if (reacting.failingProcess) {
+                    throw new ValidationError(`cannot welcome ${friend.name}`, []);
+                  }
                   return {};
                 },
               },
@@ -223,7 +279,11 @@ const registry = {
       view: {
         fields: ({ f }: FieldsArgs) => ({ id: f.string().primaryKey().notPersonal() }),
       },
-      ports: { lookup: { memory: { default: lookup } } },
+      ports: {
+        lookup: { memory: { default: lookup } },
+        audience: { memory: { default: notifier } },
+      },
+      recipients: { audience: notifierModule },
       returns: {
         lookup: {
           returnsPersonalData: { persons: ({ result }: { result: Person }) => result.personId },
@@ -257,6 +317,21 @@ const registry = {
             return personId;
           },
           handler: ({ repositoryData }: { repositoryData: string }) => repositoryData,
+        },
+        share: {
+          payload: ({ z }: { z: typeof import("zod").z }) => z.object({ personId: z.string() }),
+          handler: async ({
+            query,
+            lookup: port,
+            audience,
+          }: {
+            query: { payload: { personId: string } };
+            lookup: Lookup;
+            audience: Notifier;
+          }) => {
+            await audience.send((await port(query.payload.personId)).name);
+            return null;
+          },
         },
         nobody: {
           payload: ({ z }: { z: typeof import("zod").z }) => z.object({}),
@@ -339,6 +414,7 @@ const setup = async () => {
   rawReads = [];
   introducing = false;
   confirming = false;
+  reacting = { checking: false, onBasis: false, failingProcess: false };
   const adapter = memory();
   const storage = await adapter.createStorage();
   const accesses: PersonalDataAccess[] = [];
@@ -351,7 +427,7 @@ const setup = async () => {
     ports: {
       member: { directory: "memory", notifier: "memory" },
       members: { lookup: "memory" },
-      people: { lookup: "memory" },
+      people: { lookup: "memory", audience: "memory" },
     } as never,
     logger: silentLogger,
     config: { runtime: { policies: { retry: { strategy: "none" } } } },
@@ -528,16 +604,16 @@ describe("a declared read", () => {
   it("counts as read of the person when the run tells a recipient", async () => {
     const { app, commands } = await setup();
     introducing = true;
-    expect(await app.recipientsOf("bea")).toEqual([
+    expect(await app.recipientsOf("bea")).toContainEqual(
       expect.objectContaining({ port: "member.notifier", status: "declared" }),
-    ]);
+    );
     await commands.joinMember?.({ memberId: "cai", name: "Cai" });
     await app.runUntilIdle();
     await commands.vouchFor?.({ memberId: "cai", friendId: "bea" });
     await app.runUntilIdle();
-    expect(await app.recipientsOf("bea")).toEqual([
+    expect(await app.recipientsOf("bea")).toContainEqual(
       expect.objectContaining({ port: "member.notifier", status: "disclosed" }),
-    ]);
+    );
     await app.stop();
   });
 
@@ -593,6 +669,64 @@ describe("a recipient's handler", () => {
     const told = letters.find(({ handler }) => handler === "member.notifier");
     expect(told).toMatchObject({ readPersons: ["zoe"] });
     expect(JSON.stringify(told)).not.toContain("Zoe Ruiz");
+    await app.stop();
+  });
+});
+
+describe("a reaction", () => {
+  it("seals what a command it dispatched throws under whom the command's port named", async () => {
+    const { app, storage, commands } = await setup();
+    reacting.checking = true;
+    await commands.vouchFor?.({ memberId: "ana", friendId: "bea" });
+    await app.runUntilIdle();
+    const letter = (await storage.deadLetterStore.list({ kind: "policy" })).find(
+      ({ handler }) => handler === "member.checkOnMemberVouched",
+    );
+    expect(letter).toMatchObject({ readPersons: ["bea"] });
+    expect(JSON.stringify(letter)).not.toContain("Bea Sanz");
+    await app.stop();
+  });
+
+  it("logs whom a policy's basis let it read through a port", async () => {
+    const { app, commands, accesses } = await setup();
+    await app.restrict("bea", { ground: "accuracy-contested" });
+    reacting.onBasis = true;
+    accesses.length = 0;
+    await commands.vouchFor?.(
+      { memberId: "ana", friendId: "bea" },
+      { processRestricted: "legal-claims" },
+    );
+    await app.runUntilIdle();
+    expect(
+      accesses
+        .filter(({ operation }) => operation === "policy")
+        .map(({ persons, restricted }) => [persons, restricted]),
+    ).toEqual([[["bea"], { basis: "legal-claims", personCount: 1, persons: ["bea"] }]]);
+    await app.stop();
+  });
+
+  it("of a process, seals what it throws under whom its port named", async () => {
+    const { app, storage, commands } = await setup();
+    reacting.failingProcess = true;
+    await commands.vouchFor?.({ memberId: "ana", friendId: "bea" });
+    await app.runUntilIdle();
+    const [letter] = await storage.deadLetterStore.list({ kind: "process" });
+    expect(letter).toMatchObject({ readPersons: ["bea"] });
+    expect(JSON.stringify(letter)).not.toContain("Bea Sanz");
+    await app.stop();
+  });
+});
+
+describe("a query that tells a recipient", () => {
+  it("records as disclosed the data its port returned", async () => {
+    const { app, queries } = await setup();
+    expect(await app.recipientsOf("bea")).toContainEqual(
+      expect.objectContaining({ port: "people.audience", status: "declared" }),
+    );
+    await queries.share?.({ personId: "bea" });
+    expect(await app.recipientsOf("bea")).toContainEqual(
+      expect.objectContaining({ port: "people.audience", status: "disclosed" }),
+    );
     await app.stop();
   });
 });

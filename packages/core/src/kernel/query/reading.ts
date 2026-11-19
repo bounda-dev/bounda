@@ -182,7 +182,7 @@ export const reading: ReadingFunction = ({ storage, layout, keys, indexer, view,
       onRaw: () => {
         if (layout.clear) unattributed = true;
       },
-      ...(rawRead === undefined ? {} : { rawRead }),
+      rawRead,
     }),
   };
 };

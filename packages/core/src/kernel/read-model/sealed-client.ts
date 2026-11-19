@@ -15,7 +15,7 @@ export interface SealedClientArgs {
   // Called each time `raw` is taken.
   readonly onRaw?: () => void;
   // What `rawReadOf` says a raw read returned; nothing is noted without it.
-  readonly rawRead?: (reads: readonly ReturnedRead[]) => Promise<void>;
+  readonly rawRead?: ((reads: readonly ReturnedRead[]) => Promise<void>) | undefined;
 }
 
 export interface SealedClientFunction {
