@@ -11,8 +11,16 @@ import { DeadLetterSettledError } from "../contracts/errors.ts";
 import { createStoreEntries, type WithEntries } from "./entries.ts";
 import { jsonCopy } from "./json-copy.ts";
 
+export interface CreateKeptDeadLetterStoreArgs {
+  /**
+   * Whether the person holds a restriction, answered at once, so `purge` and `removeHeld` check it
+   * in the step that removes.
+   */
+  readonly restricted: (person: string) => boolean;
+}
+
 export interface CreateKeptDeadLetterStoreFunction {
-  (): WithEntries<DeadLetterStore, string>;
+  (args: CreateKeptDeadLetterStoreArgs): WithEntries<DeadLetterStore, string>;
 }
 
 const matches = (letter: StoredDeadLetter, args: ListDeadLettersArgs): boolean =>
@@ -43,8 +51,12 @@ interface Resolved extends StoredDeadLetter {
   readonly resolvedAt: string;
 }
 
-export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () => {
+export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = ({ restricted }) => {
   const letters = new Map<string, StoredDeadLetter>();
+  const held = ({ person, statePerson, readPersons = [], persons = [] }: StoredDeadLetter) =>
+    [person, statePerson, ...readPersons, ...persons.map((named) => named.person)].some(
+      (named) => named !== null && named !== undefined && restricted(named),
+    );
 
   const select = (args: ListDeadLettersArgs): StoredDeadLetter[] =>
     [...letters.values()].filter((letter) => matches(letter, args)).sort(byFirstFailure);
@@ -133,15 +145,47 @@ export const createKeptDeadLetterStore: CreateKeptDeadLetterStoreFunction = () =
       return named.map(copy);
     },
     firstResolvedAt: async () => {
-      const [first] = resolved();
+      const [first] = resolved().filter((letter) => !held(letter));
+      return first === undefined ? null : new Date(first.resolvedAt);
+    },
+    firstHeldAt: async () => {
+      const [first] = resolved().filter(held);
       return first === undefined ? null : new Date(first.resolvedAt);
     },
     purge: async ({ resolvedBy, limit }) => {
       const due = resolved()
-        .filter((letter) => Date.parse(letter.resolvedAt) <= resolvedBy.getTime())
+        .filter((letter) => Date.parse(letter.resolvedAt) <= resolvedBy.getTime() && !held(letter))
         .slice(0, limit);
       for (const { id } of due) letters.delete(id);
       return due.length;
+    },
+    listHeld: async ({ resolvedBy, after, limit }) =>
+      resolved()
+        .filter(
+          (letter) =>
+            Date.parse(letter.resolvedAt) <= resolvedBy.getTime() &&
+            held(letter) &&
+            (after === undefined || codePointOrder(letter.id, after) > 0),
+        )
+        .sort((a, b) => codePointOrder(a.id, b.id))
+        .slice(0, limit)
+        .map(copy),
+    removeHeld: async (letter, unlessRestricted) => {
+      const kept = letters.get(letter.id);
+      if (
+        kept?.resolvedAt === undefined ||
+        kept.resolvedAt !== letter.resolvedAt ||
+        JSON.stringify(kept.errorMessage) !== JSON.stringify(letter.errorMessage) ||
+        JSON.stringify(kept.persons ?? []) !== JSON.stringify(letter.persons ?? []) ||
+        unlessRestricted.some(restricted)
+      ) {
+        return false;
+      }
+      letters.delete(letter.id);
+      return true;
+    },
+    clear: async (keepEventId) => {
+      for (const [id, { eventId }] of letters) if (eventId !== keepEventId) letters.delete(id);
     },
   };
   return { store, entries: createStoreEntries(letters, (id: string) => id) };

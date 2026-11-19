@@ -1362,7 +1362,10 @@ describe("bounda status", () => {
       ),
       expect.stringMatching(/^key rotation: (not configured|under \S+, every key wrapped .*)$/),
       "retention: not configured",
-      "dead letter retention: not configured",
+      // The fixture's database holds a letter another test may have resolved.
+      expect.stringMatching(
+        /^dead letter retention: 30d, next purge (when a letter is resolved|\d{4}-)/,
+      ),
       "subscriber failure retention: 30d, next purge when a failure is resolved",
       "recipients: none declared",
     ]);

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeadLetterSettledError } from "../../contracts/errors.ts";
+import type { Storage } from "../adapter.ts";
 import type {
   DeadLetterStore,
   NewDeadLetter,
@@ -12,7 +13,11 @@ import { testKeyedPerson as held, testSealedValue as sealed } from "./fixtures.t
 const resolvedAt = new Date("2026-01-03T00:00:00.000Z");
 
 export interface DeadLetterStoreContractArgs {
-  readonly create: () => Promise<DeadLetterStore>;
+  /**
+   * A fresh, empty storage: its dead letters, and its persons, whose restrictions `purge` and
+   * `removeHeld` check.
+   */
+  readonly create: () => Promise<Pick<Storage, "deadLetterStore" | "persons">>;
 }
 
 export interface DeadLetterStoreContractFunction {
@@ -43,10 +48,14 @@ const letter = (id: string, overrides: Partial<NewDeadLetter> = {}): NewDeadLett
 export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ create }) => {
   describe("dead letter store contract", () => {
     let store: DeadLetterStore;
+    let persons: Storage["persons"];
 
     beforeEach(async () => {
-      store = await create();
+      ({ deadLetterStore: store, persons } = await create());
     });
+
+    const restrict = (person: string, categories: readonly string[] | null = null) =>
+      persons.restrict(person, { ground: "legal-claims", categories, since: resolvedAt });
 
     it("adds letters as failed and reads them back", async () => {
       const added = await store.add(letter("a", { errorStack: "Error: timeout\n  at x" }));
@@ -249,6 +258,124 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect(await store.purge({ resolvedBy: at(30), limit: 10 })).toBe(1);
       expect(await store.firstResolvedAt()).toBeNull();
       expect((await store.list()).map(({ id }) => id)).toEqual(["failed"]);
+    });
+
+    // Letters resolved a day apart, each naming c-1 in another place.
+    const naming = async () => {
+      const at = (day: number) => new Date(Date.UTC(2026, 0, day));
+      await store.add(letter("free", { person: "c-2" }));
+      await store.add(letter("person", { person: "c-1" }));
+      await store.add(letter("state", { statePerson: "c-1" }));
+      await store.add(letter("read", { readPersons: ["c-3", "c-1"] }));
+      await store.add(letter("keyed", { kind: "scheduled", persons: [held("c-1", "k1")] }));
+      await store.add(letter("failed", { person: "c-1" }));
+      for (const [day, id] of ["person", "state", "read", "keyed", "free"].entries()) {
+        await store.updateStatus(id, "retried", at(day + 1));
+      }
+      return at;
+    };
+
+    it("purges no resolved letter that names a person with a restriction, wherever it names them", async () => {
+      const at = await naming();
+      await restrict("c-1");
+      expect(await store.firstResolvedAt()).toEqual(at(5));
+      expect(await store.firstHeldAt()).toEqual(at(1));
+      expect(await store.purge({ resolvedBy: at(30), limit: 10 })).toBe(1);
+      expect((await store.list()).map(({ id }) => id).sort()).toEqual([
+        "failed",
+        "keyed",
+        "person",
+        "read",
+        "state",
+      ]);
+      expect(await store.firstResolvedAt()).toBeNull();
+      await persons.unrestrict("c-1", { categories: null });
+      expect(await store.firstHeldAt()).toBeNull();
+      expect(await store.firstResolvedAt()).toEqual(at(1));
+      expect(await store.purge({ resolvedBy: at(30), limit: 10 })).toBe(4);
+      expect((await store.list()).map(({ id }) => id)).toEqual(["failed"]);
+    });
+
+    it("holds a letter for a restriction of the person on one category too", async () => {
+      await store.add(letter("a", { person: "c-1" }));
+      await store.updateStatus("a", "discarded", resolvedAt);
+      await restrict("c-1", ["health"]);
+      expect(await store.purge({ resolvedBy: resolvedAt, limit: 10 })).toBe(0);
+      expect(await store.firstHeldAt()).toEqual(resolvedAt);
+    });
+
+    it("lists the resolved letters a restriction holds, by id, a page after another", async () => {
+      const at = await naming();
+      await restrict("c-1");
+      const ids = async (args: { resolvedBy: Date; after?: string; limit: number }) =>
+        (await store.listHeld(args)).map(({ id }) => id);
+      expect(await ids({ resolvedBy: at(30), limit: 10 })).toEqual([
+        "keyed",
+        "person",
+        "read",
+        "state",
+      ]);
+      expect(await ids({ resolvedBy: at(30), limit: 2 })).toEqual(["keyed", "person"]);
+      expect(await ids({ resolvedBy: at(30), after: "person", limit: 10 })).toEqual([
+        "read",
+        "state",
+      ]);
+      expect(await ids({ resolvedBy: at(2), limit: 10 })).toEqual(["person", "state"]);
+      expect(await store.listHeld({ resolvedBy: at(1), limit: 1 })).toEqual([
+        await store.get("person"),
+      ]);
+    });
+
+    it("removes a held letter only while it is as read and none it is told of has a restriction", async () => {
+      await naming();
+      await restrict("c-1");
+      const read = async (id: string) => {
+        const found = await store.get(id);
+        if (found === null) throw new Error(`no letter ${id}`);
+        return found;
+      };
+      const person = await read("person");
+      await restrict("c-4");
+      expect(await store.removeHeld(person, ["c-5", "c-4"])).toBe(false);
+      expect(await store.removeHeld(person, ["c-5"])).toBe(true);
+      expect(await store.removeHeld(person, [])).toBe(false);
+      expect(await store.get("person")).toBeNull();
+
+      const state = await read("state");
+      expect(await store.removeHeld({ ...state, resolvedAt: resolvedAt.toISOString() }, [])).toBe(
+        false,
+      );
+      expect(await store.removeHeld({ ...state, errorMessage: "other" }, [])).toBe(false);
+      expect(await store.removeHeld({ ...state, persons: [held("c-1", "k1")] }, [])).toBe(false);
+      expect(await store.removeHeld(state, [])).toBe(true);
+
+      const keyed = await read("keyed");
+      expect(await store.removeHeld({ ...keyed, persons: [] }, [])).toBe(false);
+      expect(await store.removeHeld(keyed, [])).toBe(true);
+
+      await store.add(letter("sealed", { person: "c-1", errorMessage: sealed("c-1", "k1") }));
+      await store.updateStatus("sealed", "retried", resolvedAt);
+      const resealed = await read("sealed");
+      await store.reseal("sealed", { person: "c-1", errorMessage: sealed("c-1", "k2") });
+      expect(await store.removeHeld(resealed, [])).toBe(false);
+      expect(await store.removeHeld(await read("sealed"), [])).toBe(true);
+
+      const failed = await read("failed");
+      expect(await store.removeHeld(failed, [])).toBe(false);
+      expect(await store.get("failed")).not.toBeNull();
+    });
+
+    it("clears every letter, or every one but those of an event", async () => {
+      await store.add(letter("a"));
+      await store.add(letter("b", { eventId: "kept" }));
+      await store.add(letter("c", { eventId: "kept" }));
+      await store.updateStatus("c", "retried", resolvedAt);
+      await store.add(letter("d"));
+      await store.updateStatus("d", "discarded", resolvedAt);
+      await store.clear("kept");
+      expect((await store.list()).map(({ id }) => id).sort()).toEqual(["b", "c"]);
+      await store.clear();
+      expect(await store.list()).toEqual([]);
     });
 
     it("lets one of two concurrent status changes through", async () => {

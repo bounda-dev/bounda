@@ -63,24 +63,41 @@ logged and left as it is.
 
 ## Keeping resolved letters
 
-A letter that was retried or discarded records when, as `resolvedAt`. With
-[`runtime.deadLetters.retention`](/reference/configuration/#dead-letters) set, the scheduled-command
-worker removes each one once it was resolved that long ago, a batch on each pass, together with its
-error text and payload; a `failed` letter stays until someone settles it. Without it resolved
-letters are kept for good.
+A letter that was retried or discarded records when, as `resolvedAt`. The scheduled-command
+worker removes each one once it was resolved longer ago than
+[`runtime.deadLetters.retention`](/reference/configuration/#dead-letters), 30 days unless you set
+another, a batch on each pass, together with its error text and payload. A `failed` letter stays
+until someone settles it, even one whose handler the app no longer has: only an operator knows
+whether the work it dropped is still owed, and discarding it settles it.
 
 ```ts
 export default defineConfig({
   storage: sqlite({ path: "./data/app.db" }),
-  runtime: { deadLetters: { retention: "30d" } },
+  runtime: { deadLetters: { retention: "90d" } },
 });
 ```
+
+A resolved letter that names a person whose processing is
+[restricted](/guides/personal-data/#restricting-processing), in `person`, `statePerson`,
+`readPersons` or the fields of its command, stays past the retention until the restriction is
+lifted: a restriction keeps data from being erased. The check is made in the step that removes the
+letter, so a restriction recorded meanwhile still keeps it, and the letters kept are read again
+every hour, since a restriction lifted on another instance tells nobody here. A restriction keeps
+a letter only while what it holds of the person still opens: once a key its error text is sealed
+under is gone, the person forgotten, as a whole or in that category, or the text sealed for good
+by a redaction, nothing of theirs is left in the text, and the letter goes, unless the fields of a
+command a forgetting kept name them. `bounda status` counts the letters kept this way.
 
 A host without a polling worker, such as a Durable Object, is woken for it through `nextDueAt()`.
 One instance purges at a time, under a lease the others leave alone until it lapses. A process
 instance whose letter was discarded stays given up once the letter is gone: discarding wrote
 `ProcessAbandoned` in its stream, so the events that reach it afterwards are dropped whatever
 became of the letter.
+
+[Forgetting a tenant](/guides/personal-data/#forgetting-a-tenant) removes every letter, failed or
+not, but those of the notices of the forgetting to its recipients, which go once every recipient
+was told: no letter of the tenant's work is retried again, and another instance that still holds
+keys in memory has no text left to open.
 
 ## What a letter holds
 

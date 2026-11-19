@@ -93,6 +93,7 @@ export interface SettleTenantForgettingArgs {
     | "snapshotStore"
     | "idempotencyStore"
     | "subscriberFailures"
+    | "deadLetterStore"
   >;
   readonly readModels: readonly ForgottenReadModel[];
   readonly tenant: string;
@@ -110,9 +111,10 @@ export interface SettleTenantForgettingFunction {
 /**
  * What a tenant's forgetting leaves in its database once its key is destroyed: the binding marked,
  * `TenantForgotten` appended unless the store holds it, every person's key and the database's key
- * removed, every snapshot, remembered answer and subscriber failure with them, and the rows of the
- * read models that may hold personal data deleted, those kept in the clear among them: what
- * another instance would still open with a key it keeps in memory is gone. Every step can run
+ * removed, every snapshot, remembered answer, subscriber failure and dead letter with them but the
+ * letters of the notices of the forgetting itself, and the rows of the read models that may hold
+ * personal data deleted, those kept in the clear among them: what another instance would still
+ * open with a key it keeps in memory is gone. Every step can run
  * again: a start that finds the tenant forgotten runs it all, for a forgetting cut short or a
  * database restored from a copy.
  */
@@ -162,6 +164,9 @@ export const settleTenantForgetting: SettleTenantForgettingFunction = async ({
   await storage.idempotencyStore.clear();
   // No subscriber of the tenant runs again to resolve its last failure, so no retention would end it.
   await storage.subscriberFailures.clear();
+  // Nor does any letter retention, nor a retry of the work the tenant gave up on; the forgotten app
+  // tells the recipients of the forgetting alone, through letters of its own.
+  await storage.deadLetterStore.clear(forgetting.eventId);
   for (const { name, storage: readModel } of readModels) {
     await readModel.transact({
       subscriber: projectionSubscriberName(name),

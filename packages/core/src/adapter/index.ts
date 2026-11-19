@@ -36,6 +36,7 @@ export type {
   DeadLetterStore,
   ListDeadLettersArgs,
   ListFailedDeadLettersArgs,
+  ListHeldDeadLettersArgs,
   NewDeadLetter,
   PurgeDeadLettersArgs,
   ResealedDeadLetter,

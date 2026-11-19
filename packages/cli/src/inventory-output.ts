@@ -85,7 +85,7 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
 const keptFor = (record: InventoryRecord): string => {
   if (record.keptFor === null) return RECORDS[record.name].kept;
   if (record.name === "dead-letters") {
-    return `retried or discarded letters for ${record.keptFor}, failed ones until resolved; unreadable once their person is forgotten`;
+    return `retried or discarded letters for ${record.keptFor}, longer while a person they hold data of is restricted and that data still opens, failed ones until resolved; unreadable once their person is forgotten`;
   }
   if (record.name === "subscriber-failures") {
     return `until the subscriber's next failure replaces it, or for ${record.keptFor} once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten`;

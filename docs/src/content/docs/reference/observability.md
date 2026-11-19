@@ -82,7 +82,9 @@ An error whose message Bounda writes from names and ids alone, such as `Concurre
 stack. To find out what a reaction failed on, follow the log line that filed its dead letter:
 `policy dead-lettered`, `process dead-lettered`, `recipient notice dead-lettered` and `scheduled command dropped` carry `letterId`,
 and `app.deadLetters.get(letterId)` opens the text the letter keeps encrypted under the person
-(see [what a letter holds](/guides/dead-letters/#what-a-letter-holds)). A projection has no
+(see [what a letter holds](/guides/dead-letters/#what-a-letter-holds)) until the letter, once
+retried or discarded, is [purged](/guides/dead-letters/#keeping-resolved-letters), 30 days later by
+default. A projection has no
 letter: its batch is delivered again until it goes through, so the runtime keeps the last failure
 of each subscriber instead, its text encrypted under the person the event names and everyone whose
 rows its projection read, named in `readPersons`, or in the clear when that is nobody, whatever

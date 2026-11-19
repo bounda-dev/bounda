@@ -60,7 +60,7 @@ describe("the Durable Object adapter", () => {
   eventStoreContract({ create: freshStorage, concurrent: false });
   checkpointStoreContract({ create: async () => (await freshStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await freshStorage()).inboxLedger });
-  deadLetterStoreContract({ create: async () => (await freshStorage()).deadLetterStore });
+  deadLetterStoreContract({ create: freshStorage });
   schedulerContract({ create: async () => (await freshStorage()).scheduler });
   idempotencyStoreContract({ create: freshStorage });
   snapshotStoreContract({ create: freshStorage });

@@ -22,6 +22,7 @@ import {
   DEFAULT_CATCH_UP_TIMEOUT_MS,
   DEFAULT_COMMANDS,
   DEFAULT_CONCURRENCY_RETRIES,
+  DEFAULT_DEAD_LETTER_RETENTION_MS,
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
   DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
   DEFAULT_IDEMPOTENCY_KEY_LIFETIME_MS,
@@ -329,7 +330,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
         forgetLedger: resolveForgetLedger(parsed.runtime?.personalData?.forgetLedger),
       },
       deadLetters: {
-        retentionMs: parsed.runtime?.deadLetters?.retention ?? null,
+        retentionMs: parsed.runtime?.deadLetters?.retention ?? DEFAULT_DEAD_LETTER_RETENTION_MS,
       },
       subscriberFailures: {
         retentionMs:

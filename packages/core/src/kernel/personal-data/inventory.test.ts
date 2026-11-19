@@ -653,11 +653,12 @@ describe("personalDataInventory", () => {
       location: null,
       keptFor: "400d",
     });
+    // Bounded by default, as data protection by default asks (article 25(2)).
     expect(records).toContainEqual({
       name: "dead-letters",
       where: "memory",
       location: null,
-      keptFor: null,
+      keptFor: "30d",
     });
     expect(security).toEqual({ masterKey: true, tenantKeys: true, forgetLedger: true });
     expect(findings.map(({ message }) => message)).toEqual([

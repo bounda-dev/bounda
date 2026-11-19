@@ -139,6 +139,16 @@ export interface PurgeDeadLettersArgs {
   readonly limit: number;
 }
 
+/**
+ * What `listHeld` finds: up to `limit` letters resolved at or before `resolvedBy`, after the `id`
+ * `after` when given.
+ */
+export interface ListHeldDeadLettersArgs {
+  readonly resolvedBy: Date;
+  readonly after?: string;
+  readonly limit: number;
+}
+
 export interface ListDeadLettersArgs {
   readonly kind?: DeadLetterKind;
   readonly handler?: string;
@@ -193,12 +203,34 @@ export interface DeadLetterStore {
    */
   forget(person: string, keep?: readonly string[]): Promise<readonly StoredDeadLetter[]>;
   /**
-   * The earliest `resolvedAt` of the letters held, `null` when none is resolved.
+   * The earliest `resolvedAt` of the resolved letters that name no person with a restriction,
+   * those `purge` removes; `null` when there is none.
    */
   firstResolvedAt(): Promise<Date | null>;
   /**
-   * Removes the resolved letters `args` names, earliest `resolvedAt` first, and resolves to how
-   * many it removed. A `failed` letter always stays.
+   * The earliest `resolvedAt` of the resolved letters that name a person with a restriction, in
+   * `person`, `statePerson`, `readPersons` or `persons`; `null` when there is none.
+   */
+  firstHeldAt(): Promise<Date | null>;
+  /**
+   * Removes the resolved letters `args` names, earliest `resolvedAt` first, but those that name a
+   * person with a restriction, checked in the same step, and resolves to how many it removed. A
+   * `failed` letter always stays.
    */
   purge(args: PurgeDeadLettersArgs): Promise<number>;
+  /**
+   * The resolved letters `args` names that name a person with a restriction, those `purge` leaves,
+   * by `id`.
+   */
+  listHeld(args: ListHeldDeadLettersArgs): Promise<readonly StoredDeadLetter[]>;
+  /**
+   * Removes a resolved letter `listHeld` found, while its `resolvedAt`, `errorMessage` and
+   * `persons` are as read and none of `unlessRestricted` has a restriction, checked in the same
+   * step; resolves to whether it removed it.
+   */
+  removeHeld(letter: StoredDeadLetter, unlessRestricted: readonly string[]): Promise<boolean>;
+  /**
+   * Removes every letter, whatever its status, but those of the event `keepEventId` when given.
+   */
+  clear(keepEventId?: string): Promise<void>;
 }

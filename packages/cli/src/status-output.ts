@@ -142,10 +142,14 @@ const retentionOf = ({ retention }: AppStatus): string[] => {
   ];
 };
 
-const purgeOf = ({ deadLetterRetention: purge }: AppStatus): string =>
-  purge === null
-    ? "not configured"
-    : `${days(purge.retentionMs)}, next purge ${purge.nextDueAt ?? "when a letter is resolved"}`;
+const purgeOf = ({ deadLetterRetention: purge }: AppStatus): string => {
+  if (purge === null)
+    return "none kept but the notices of the forgetting, the tenant was forgotten";
+  const next = `${days(purge.retentionMs)}, next purge ${purge.nextDueAt ?? "when a letter is resolved"}`;
+  return purge.held === 0
+    ? next
+    : `${next}; ${plural(purge.held, "letter")} past it kept while a person it holds data of is restricted`;
+};
 
 const failurePurgeOf = ({ subscriberFailureRetention: purge }: AppStatus): string => {
   if (purge === null) return "none kept, the tenant was forgotten";

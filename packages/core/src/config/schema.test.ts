@@ -7,6 +7,7 @@ import { defineTenantKeyStore } from "../kernel/personal-data/tenant-key-source.
 import { memory } from "../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import {
+  DEFAULT_DEAD_LETTER_RETENTION_MS,
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
   DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
   DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
@@ -89,7 +90,7 @@ describe("resolveConfig", () => {
         catchUp: { timeoutMs: 2_000, pollIntervalMs: 15 },
       },
       personalData: { retention: null, keyWrapper: null, tenantKeys: null, forgetLedger: null },
-      deadLetters: { retentionMs: null },
+      deadLetters: { retentionMs: DEFAULT_DEAD_LETTER_RETENTION_MS },
       subscriberFailures: { retentionMs: DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS },
       telemetry: { errorText: "omit" },
       overrides: {},

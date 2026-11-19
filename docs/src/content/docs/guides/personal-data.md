@@ -630,9 +630,10 @@ keep whatever you wrote to them, an event's payload written in the clear, with t
 you did not mark, stays readable, a command's payload left unmarked is stored as it came, and the
 error of work that names nobody, such as a deadline of a process whose state names nobody or a
 scheduled command whose payload marks nothing, stays in its dead letter in the clear. Log and throw with ids, not the data itself,
-and mark every field that holds it. A letter retried or discarded keeps its text until
-[`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters) removes it, sealed
-or not; set it to bound how long that is. A subscriber's last failure, kept in the clear when its
+and mark every field that holds it. A letter retried or discarded keeps its text, sealed or not,
+until it was resolved longer ago than
+[`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters), 30 days by
+default. A subscriber's last failure, kept in the clear when its
 event names nobody, goes once the subscriber got past it, or the app stopped running it, longer ago
 than [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures), 30
 days by default.
@@ -1678,9 +1679,12 @@ commits:
   so do `subscriberFailures.list` and `get`. A subscriber's last failure whose text is sealed under
   a restricted person is kept past
   [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) until
-  the restriction is lifted, since keeping the data is what the person asked for; `bounda status`
-  counts them. Once its text no longer opens, its person forgotten since, as a whole or in any
-  category, nothing of theirs is left in it, and the restriction keeps it no longer.
+  the restriction is lifted, since keeping the data is what the person asked for, and so is a
+  resolved letter that names them past
+  [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters); `bounda status`
+  counts both. Once the text no longer opens, its person forgotten since, as a whole or in any
+  category, nothing of theirs is left in it, and the restriction keeps it no longer, unless a
+  letter names them in the fields of a command a forgetting kept.
 - **What a forgetting kept.** A command, a policy or a process step reads a field opened under a
   key a forgetting kept as `null`, as if forgotten: those keys are never lifted, so nothing waits
   for them, and the business goes on with the rest. A query leaves the row out unless it reads on
@@ -1929,9 +1933,10 @@ database. The record lists:
   of the European Economic Area, and the categories it receives;
 - what the runtime keeps about persons besides those fields: their keys, their activity and
   restrictions, its own events about them, [remembered answers](#remembered-answers) for as long as
-  `runtime.commands.idempotencyKeyLifetime` keeps them, dead letters for as long as
+  `runtime.commands.idempotencyKeyLifetime` keeps them, dead letters until an operator resolves
+  them and then for as long as
   [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters) keeps resolved
-  ones, the last failure of each subscriber until its next one replaces it or
+  ones, longer while a person whose data they hold is restricted, the last failure of each subscriber until its next one replaces it or
   [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) has passed
   since the subscriber got past it or the app stopped running it, each with the error
   text encrypted under everyone whose data the work read and [held back](#someone-elses-data) from
@@ -2419,13 +2424,15 @@ It runs in this order, every step safe to run again:
 2. The database marks the tenant forgotten, and `TenantForgotten` is appended to the stream
    `bounda:<tenant>`, with the categories the tenant's persons held keys of and the
    [recipients](#recipients) to tell.
-3. Every person's key, the database's key, every snapshot, every remembered answer and every
-   subscriber's last failure are deleted, and every read model's rows, but those of a read model whose view says it holds no personal data
+3. Every person's key, the database's key, every snapshot, every remembered answer, every
+   subscriber's last failure and every dead letter but those of the notices of the forgetting are
+   deleted, failed letters too, since no work of the tenant's is retried again, and every read
+   model's rows, but those of a read model whose view says it holds no personal data
    (`holdsPersonalData: false`): what another instance would still open with a key it keeps in
    memory, or a projection kept in the clear, is gone.
 
-Once every recipient is told, its notice delivered or its dead letter resolved, what the engine
-keeps beyond the tenant's key goes too: an [encrypted file](#encrypted-database-files)'s keys,
+Once every recipient is told, its notice delivered or its dead letter resolved, the letters of the
+notices are deleted, and what the engine keeps beyond the tenant's key goes too: an [encrypted file](#encrypted-database-files)'s keys,
 which the record kept under the master key so the notices could still read the file, are
 destroyed, and the file and its copies open no more, the app running on an empty database in
 memory; a Durable Object empties its storage. A PostgreSQL database stays, every read model's rows
@@ -2927,8 +2934,9 @@ message says what to do. A person with no restriction, or none of whose values a
 covers, rejects with an `Error` saying so.
 
 `expectTenantForgotten` checks a [tenant's forgetting](#forgetting-a-tenant): that the app refuses
-every call, that its database holds no key, no snapshot and no remembered answer, that the tenant
-key store holds no version of its key, and that no value of any of its persons turns up in the
+every call, that its database holds no key, no snapshot and no remembered answer, no subscriber
+failure or dead letter but those of the notices of the forgetting, that the tenant key store holds
+no version of its key, and that no value of any of its persons turns up in the
 clear wherever `expectForgotten` searches:
 
 ```ts

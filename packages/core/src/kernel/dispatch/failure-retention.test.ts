@@ -3,9 +3,10 @@ import type { NewSubscriberFailure } from "../../adapter/storage/subscriber-fail
 import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
 import { sealError } from "../personal-data/errors.ts";
+import { HELD_RECHECK_MS } from "../personal-data/held-text.ts";
 import { HOLD_MS } from "../personal-data/hold.ts";
 import { createRecordingLogger, keysOver } from "../test-support.ts";
-import { createSubscriberFailureRetention, HELD_FAILURE_RECHECK_MS } from "./failure-retention.ts";
+import { createSubscriberFailureRetention } from "./failure-retention.ts";
 
 const DAY = 86_400_000;
 const start = new Date("2026-01-01T00:00:00.000Z");
@@ -184,8 +185,8 @@ describe("the retention of subscriber failures", () => {
     expect(await retention.status()).toEqual({ retentionMs: 7 * DAY, nextDueAt: null, held: 2 });
     await persons.unrestrict("c-3", { categories: null });
     // Lifted elsewhere: this instance reads the held failures again a while later.
-    expect(await retention.sweep(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS - 1))).toBe(0);
-    expect(await retention.sweep(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS))).toBe(1);
+    expect(await retention.sweep(new Date(due.getTime() + HELD_RECHECK_MS - 1))).toBe(0);
+    expect(await retention.sweep(new Date(due.getTime() + HELD_RECHECK_MS))).toBe(1);
     expect(await subscribersOf(store)).toEqual(["projection:orders"]);
   });
 
@@ -251,11 +252,11 @@ describe("the retention of subscriber failures", () => {
     await restrict("c-1");
     const due = later(7 * DAY);
     clock.set(due);
-    expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS));
+    expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HELD_RECHECK_MS));
     expect(await retention.sweep(due)).toBe(0);
     await persons.unrestrict("c-1", { categories: null });
-    expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS));
-    clock.set(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS));
+    expect(await retention.nextDueAt()).toEqual(new Date(due.getTime() + HELD_RECHECK_MS));
+    clock.set(new Date(due.getTime() + HELD_RECHECK_MS));
     expect(await retention.nextDueAt()).toEqual(clock.now());
   });
 
@@ -265,8 +266,8 @@ describe("the retention of subscriber failures", () => {
     await resolved("policies", later(DAY));
     await restrict("c-1");
     clock.set(later(7 * DAY));
-    expect(await retention.nextDueAt()).toEqual(later(7 * DAY + HELD_FAILURE_RECHECK_MS));
-    clock.set(later(8 * DAY - HELD_FAILURE_RECHECK_MS + 1));
+    expect(await retention.nextDueAt()).toEqual(later(7 * DAY + HELD_RECHECK_MS));
+    clock.set(later(8 * DAY - HELD_RECHECK_MS + 1));
     expect(await retention.nextDueAt()).toEqual(later(8 * DAY));
   });
 

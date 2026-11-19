@@ -162,6 +162,7 @@ export const postgresql: PostgresqlFunction = (options) => {
           deadLetterStore: createPostgresqlDeadLetterStore({
             db: database,
             table: tables.deadLetters,
+            restrictions: tables.restrictions,
           }),
           scheduler: createPostgresqlScheduler({ db: database, table: tables.scheduledCommands }),
           idempotencyStore: createPostgresqlIdempotencyStore({

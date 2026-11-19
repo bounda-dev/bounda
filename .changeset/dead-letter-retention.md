@@ -1,0 +1,7 @@
+---
+"@bounda-dev/core": minor
+"@bounda-dev/cli": minor
+"@bounda-dev/postgresql": minor
+---
+
+Resolved dead letters no longer stay for good by default: `runtime.deadLetters.retention` defaults to 30 days (`DEFAULT_DEAD_LETTER_RETENTION_MS` in `@bounda-dev/core/config`), after which the scheduled-command worker removes a retried or discarded letter with its error text and payload; a `failed` letter still stays until an operator settles it. A resolved letter that names a restricted person, in `person`, `statePerson`, `readPersons` or `persons`, is kept past the retention until the restriction is lifted, checked in the same step that removes it, unless what it holds of them no longer opens, their key gone since; `app.status().deadLetterRetention` gains `held`, and `bounda status` prints it. `app.status().deadLetterRetention` is no longer `null` but in an app whose tenant was forgotten. A tenant's forgetting removes every dead letter but those of the notices of the forgetting, which go once every recipient was told, and `expectTenantForgotten` reports a dead letter or a subscriber failure of the tenant's work left behind. `deadLetterRetentionContract` checks the purge and the hold on every storage adapter. Custom storage adapters implement the new `DeadLetterStore` methods `firstHeldAt`, `listHeld`, `removeHeld` and `clear`, and `purge` and `firstResolvedAt` now leave out every letter that names a person with a restriction; `deadLetterStoreContract` now takes a storage with its `deadLetterStore` and `persons`.

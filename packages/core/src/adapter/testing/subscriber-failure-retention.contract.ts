@@ -3,7 +3,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
-import { HELD_FAILURE_RECHECK_MS } from "../../kernel/dispatch/failure-retention.ts";
+import { HELD_RECHECK_MS } from "../../kernel/personal-data/held-text.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
 import { defineTenantKeyStore } from "../../kernel/personal-data/tenant-key-source.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
@@ -169,7 +169,7 @@ export const subscriberFailureRetentionContract: SubscriberFailureRetentionContr
       expect(await kept()).toHaveLength(1);
       expect((await app.status()).subscriberFailureRetention).toMatchObject({ held: 1 });
       await app.unrestrict("c-1", { notice: "given" });
-      clock.set(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS));
+      clock.set(new Date(due.getTime() + HELD_RECHECK_MS));
       await app.runUntilIdle();
       expect(await kept()).toEqual([]);
     });

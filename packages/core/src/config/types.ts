@@ -247,8 +247,9 @@ export interface ResolvedForgetLedgerConfig {
 export interface DeadLettersConfig {
   /**
    * How long a letter is kept once retried or discarded. Past it, the scheduled-command worker
-   * removes it, its error text with it; a `failed` letter is never removed. No default: without
-   * it resolved letters are kept.
+   * removes it, its error text with it, unless a person it holds data of is restricted and that
+   * data still opens, until the restriction is lifted; a `failed` letter is never removed.
+   * Defaults to 30 days, `DEFAULT_DEAD_LETTER_RETENTION_MS`.
    */
   readonly retention?: DurationInput;
 }
@@ -469,12 +470,7 @@ export interface ResolvedConfig {
        */
       readonly forgetLedger: ResolvedForgetLedgerConfig | null;
     };
-    readonly deadLetters: {
-      /**
-       * `null` when no retention is configured.
-       */
-      readonly retentionMs: number | null;
-    };
+    readonly deadLetters: { readonly retentionMs: number };
     readonly subscriberFailures: { readonly retentionMs: number };
     readonly telemetry: { readonly errorText: ErrorText };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;

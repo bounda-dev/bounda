@@ -7,13 +7,10 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith, textPersons } from "../personal-data/errors.ts";
+import { HELD_RECHECK_MS, stillOpens } from "../personal-data/held-text.ts";
 import { createPause } from "../personal-data/hold.ts";
 import { restrictedAmong } from "../personal-data/restricted-reads.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
-
-// How long a failure past the retention that a restriction holds waits before it is read again:
-// a restriction lifted in another instance tells nobody here.
-export const HELD_FAILURE_RECHECK_MS = 3_600_000;
 
 /**
  * Where the purge of subscriber failures stands: when the earliest failure comes due, `null` when
@@ -73,19 +70,6 @@ interface Due {
   readonly holders: readonly string[];
 }
 
-// A text that cannot be read for another reason than a key gone is taken to open, so a restriction
-// keeps it rather than lose it, and one row never stops the purge of the others.
-const opens = async (
-  open: (value: StoredSubscriberFailure["errorMessage"]) => Promise<string | null>,
-  { errorMessage }: StoredSubscriberFailure,
-): Promise<boolean> => {
-  try {
-    return (await open(errorMessage)) !== null;
-  } catch {
-    return true;
-  }
-};
-
 interface Standing {
   readonly due: readonly Due[];
   readonly held: number;
@@ -139,7 +123,7 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
       const holds = await Promise.all(sealedUnder.map(restricted));
       if (!holds.includes(true)) {
         due.push({ failure, holders: sealedUnder });
-      } else if (await opens(open, failure)) {
+      } else if (await stillOpens(open, failure.errorMessage)) {
         held += 1;
       } else {
         due.push({ failure, holders: [] });
@@ -151,7 +135,7 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
   // The next time a sweep reads the store: when the earliest failure comes due, or when a held one
   // is read again.
   const readAgainAt = ({ held, next }: Standing, at: number): number | null => {
-    const recheck = held > 0 ? at + HELD_FAILURE_RECHECK_MS : null;
+    const recheck = held > 0 ? at + HELD_RECHECK_MS : null;
     if (next === null) return recheck;
     return recheck === null ? next : Math.min(next, recheck);
   };
