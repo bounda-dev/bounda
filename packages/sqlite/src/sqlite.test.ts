@@ -59,7 +59,7 @@ describe("sqlite adapter in memory", () => {
   personStoreContract({ create: async () => (await openStorage()).persons });
   tenancyContract({ create: () => openStorage() });
   tenantKeyStoreContract({ create: () => sqlite({ memory: true }).createTenantKeyStore() });
-  subscriberFailureStoreContract({ create: async () => (await openStorage()).subscriberFailures });
+  subscriberFailureStoreContract({ create: openStorage });
   tableContract({
     create: async () =>
       (

@@ -164,7 +164,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       return fresh({ tablePrefix: "bounda_", schema: `inspected_${run}_${prefixes}` });
     },
   });
-  subscriberFailureStoreContract({ create: async () => (await openStorage()).subscriberFailures });
+  subscriberFailureStoreContract({ create: openStorage });
   forgetLedgerContract({
     create: async () => {
       await closeOpened();

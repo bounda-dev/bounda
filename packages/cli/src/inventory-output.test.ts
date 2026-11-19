@@ -293,6 +293,15 @@ describe("formatInventory", () => {
         "Complete: every field is classified",
       ].join("\n"),
     );
+    // A record no setting bounds, as one from a core before the failures' retention.
+    expect(
+      formatInventory({
+        ...empty,
+        records: [{ name: "subscriber-failures", where: "memory", location: null, keptFor: null }],
+      }),
+    ).toContain(
+      "until the subscriber's next failure replaces it, unreadable once their person is forgotten (memory)",
+    );
   });
 });
 

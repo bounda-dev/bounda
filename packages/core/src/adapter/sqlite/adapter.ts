@@ -283,6 +283,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           subscriberFailures: createSqlSubscriberFailureStore({
             db,
             table: tables.subscriberFailures,
+            restrictions: tables.restrictions,
             dialect: sqliteDialect,
           }),
           indexKeys: createSqlIndexKeyStore({

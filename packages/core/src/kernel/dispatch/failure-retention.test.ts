@@ -115,12 +115,39 @@ describe("the retention of subscriber failures", () => {
     const { store, retention, resolved, fail } = await setUp();
     await resolved("policies", start);
     const remove = store.remove;
-    store.remove = async (read) => {
+    store.remove = async (read, persons) => {
       await fail("policies", later(7 * DAY));
-      return remove(read);
+      return remove(read, persons);
     };
     expect(await retention.sweep(later(7 * DAY))).toBe(0);
     expect(await store.get("policies")).toMatchObject({ resolvedAt: null, attempts: 1 });
+  });
+
+  it("keeps a failure whose person is restricted while the sweep removes it, and reads it again next pass", async () => {
+    const { clock, store, retention, resolved, restrict, logs } = await setUp();
+    await resolved("policies", start, { person: "c-1", readPersons: ["c-2"] });
+    const remove = store.remove;
+    const told: (readonly string[])[] = [];
+    store.remove = async (read, persons) => {
+      told.push(persons);
+      await restrict("c-2");
+      return remove(read, persons);
+    };
+    const due = later(7 * DAY);
+    expect(await retention.sweep(due)).toBe(0);
+    expect(told).toEqual([["c-1", "c-2"]]);
+    expect(await store.get("policies")).not.toBeNull();
+    const list = store.list;
+    let reads = 0;
+    store.list = () => {
+      reads += 1;
+      return list();
+    };
+    expect(await retention.sweep(new Date(due.getTime() + 1))).toBe(0);
+    expect(reads).toBe(1);
+    clock.set(due);
+    expect(await retention.status()).toMatchObject({ held: 1 });
+    expect(logs).toEqual([]);
   });
 
   it("keeps a failure past the retention while a person its text is sealed under is restricted", async () => {
@@ -194,8 +221,8 @@ describe("the retention of subscriber failures", () => {
     await resolved("policies", start);
     const remove = store.remove;
     let failures = 2;
-    store.remove = (read) => {
-      if (failures === 0) return remove(read);
+    store.remove = (read, persons) => {
+      if (failures === 0) return remove(read, persons);
       failures -= 1;
       return Promise.reject(new Error("database is down"));
     };
@@ -214,6 +241,26 @@ describe("the retention of subscriber failures", () => {
     expect(await retention.sweep(new Date(resumed))).toBe(0);
     expect(await retention.sweep(new Date(resumed + 2 * HOLD_MS))).toBe(1);
     expect(await retention.nextDueAt()).toBeNull();
+  });
+
+  it("names the end of the pause as when it is due while the store cannot be read, and logs it", async () => {
+    const { clock, store, logs, retention, resolved } = await setUp();
+    await resolved("policies", start);
+    const { list } = store;
+    store.list = () => Promise.reject(new Error("database is down"));
+    expect(await retention.nextDueAt()).toEqual(later(HOLD_MS));
+    expect(logs).toEqual([
+      expect.objectContaining({
+        level: "error",
+        message: "subscriber failures past the retention could not be read",
+        fields: expect.objectContaining({ errorMessage: "database is down" }),
+      }),
+    ]);
+    expect(await retention.sweep(later(HOLD_MS - 1))).toBe(0);
+    store.list = list;
+    clock.set(later(7 * DAY));
+    expect(await retention.nextDueAt()).toEqual(later(7 * DAY));
+    expect(await retention.sweep(later(7 * DAY))).toBe(1);
   });
 
   it("reads again at once after a restore, though a pass had read it or a store paused it", async () => {

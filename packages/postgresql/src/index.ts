@@ -211,6 +211,7 @@ export const postgresql: PostgresqlFunction = (options) => {
           subscriberFailures: createSqlSubscriberFailureStore({
             db,
             table: tables.subscriberFailures,
+            restrictions: tables.restrictions,
             dialect: postgresqlDialect,
           }),
           indexKeys: createSqlIndexKeyStore({

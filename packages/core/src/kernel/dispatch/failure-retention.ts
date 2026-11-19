@@ -33,7 +33,8 @@ export interface SubscriberFailureRetention {
   sweep(now: Date): Promise<number>;
   /**
    * When the next sweep has a failure to remove, or a held one to read again; `null` when no
-   * failure will come due without a resolution.
+   * failure will come due without a resolution. Never rejects: a store that fails is logged, and
+   * pauses the sweep, whose end it names.
    */
   nextDueAt(): Promise<Date | null>;
   status(): Promise<SubscriberFailureRetentionStatus>;
@@ -124,13 +125,15 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
       try {
         const found = await standing(at);
         let purged = 0;
+        let kept = false;
         for (const failure of found.due) {
-          if (await store.remove(failure)) purged += 1;
+          if (await store.remove(failure, textPersons(failure))) purged += 1;
+          else kept = true;
         }
-        unreadUntil = Math.min(
-          readAgainAt(found, at) ?? Number.POSITIVE_INFINITY,
-          at + retentionMs,
-        );
+        // A failure recorded, resolved or restricted since the read is read again on the next pass.
+        unreadUntil = kept
+          ? Number.NEGATIVE_INFINITY
+          : Math.min(readAgainAt(found, at) ?? Number.POSITIVE_INFINITY, at + retentionMs);
         pause.resume();
         if (purged > 0) logger.debug("subscriber failures past the retention purged", { purged });
         return purged;
@@ -142,9 +145,16 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
     },
     nextDueAt: async () => {
       const at = clock.now().getTime();
-      const found = await standing(at);
-      const due = found.due.length > 0 ? at : readAgainAt(found, at);
-      return due === null ? null : new Date(pause.notBefore(Math.max(due, unreadUntil)));
+      try {
+        const found = await standing(at);
+        const due = found.due.length > 0 ? at : readAgainAt(found, at);
+        return due === null ? null : new Date(pause.notBefore(Math.max(due, unreadUntil)));
+      } catch (error) {
+        // A host still wakes to try again, once the sweep would.
+        pause.pause(at);
+        logger.error("subscriber failures past the retention could not be read", { error });
+        return new Date(pause.notBefore(at));
+      }
     },
     status: async () => {
       const at = clock.now().getTime();

@@ -143,7 +143,7 @@ describe("the SQLite stores on node:sqlite", () => {
   tenancyContract({ create: storage });
   tenantKeyStoreContract({ create: () => nodeSqlite().adapter.createTenantKeyStore() });
   inspectionContract({ create: async () => nodeSqlite().adapter });
-  subscriberFailureStoreContract({ create: async () => (await storage()).subscriberFailures });
+  subscriberFailureStoreContract({ create: storage });
   forgetLedgerContract({
     create: async () => {
       const { adapter } = nodeSqlite();

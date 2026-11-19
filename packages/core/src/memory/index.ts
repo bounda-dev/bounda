@@ -195,7 +195,9 @@ export const memory: MemoryFunction = (options = {}) => {
       });
       const idempotencyStore = createKeptIdempotencyStore({ holds: personalKeys.holds });
       const snapshotStore = createMemorySnapshotStore({ holds: personalKeys.holds });
-      const subscriberFailures = createMemorySubscriberFailureStore();
+      const subscriberFailures = createMemorySubscriberFailureStore({
+        restricted: (person) => persons.restrictionsOf(person).length > 0,
+      });
       const indexKeys = createMemoryIndexKeyStore();
       const tenancy = createMemoryTenancyStore();
       const recipients = createKeptRecipientStore();

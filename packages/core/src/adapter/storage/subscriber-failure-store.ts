@@ -83,10 +83,11 @@ export interface SubscriberFailureStore {
   list(): Promise<readonly StoredSubscriberFailure[]>;
   /**
    * Removes the subscriber's last failure while it is still the one `failure` describes, neither
-   * recorded again nor resolved since, and resolves to whether it did. Only the runtime calls it,
-   * once the failure outlived `runtime.subscriberFailures.retention`.
+   * recorded again nor resolved since, and none of `unlessRestricted` holds a restriction of
+   * processing, both checked in the step that removes it; resolves to whether it did. Only the
+   * runtime calls it, once the failure outlived `runtime.subscriberFailures.retention`.
    */
-  remove(failure: SubscriberFailureVersion): Promise<boolean>;
+  remove(failure: SubscriberFailureVersion, unlessRestricted: readonly string[]): Promise<boolean>;
   /**
    * Removes every failure. Only the runtime calls it, as a tenant's forgetting settles.
    */
