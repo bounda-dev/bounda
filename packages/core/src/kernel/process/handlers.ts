@@ -1,4 +1,4 @@
-import type { KeyedPerson, PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import type { KeyedPerson } from "../../adapter/storage/personal-key-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { ReactionDispatchResult } from "../../contracts/command.ts";
@@ -17,6 +17,10 @@ import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personTouchedByEvent } from "../personal-data/persons.ts";
 import { checkStatePerson } from "../personal-data/process-state.ts";
 import { refuseRestrictedRead } from "../personal-data/refusal.ts";
+import { keyedReturned, refuseReturned } from "../personal-data/returned.ts";
+import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
+import { bindPorts } from "../ports/bind.ts";
+import type { PortReturns } from "../ports/returns.ts";
 import { type Disclosures, openedOf } from "../recipients/gate.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
@@ -100,11 +104,13 @@ export interface CreateProcessHandlersArgs {
   readonly logger: Logger;
   readonly intentions: ForgetIntentions;
   /**
-   * The keys a step on restricted data reads the categories of.
+   * The keys a step on restricted data reads the categories of, and what its ports return is read
+   * under.
    */
-  readonly keys: Pick<PersonalKeyStore, "find">;
+  readonly keys: Pick<PersonalKeys, "find" | "held" | "create">;
   readonly recordAccess: RecordAccess;
   readonly disclosures?: Disclosures | undefined;
+  readonly returns?: PortReturns | undefined;
 }
 
 export interface CreateProcessHandlersFunction {
@@ -124,6 +130,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
   keys,
   recordAccess,
   disclosures,
+  returns,
 }) => {
   // Refused before the handler runs, unless the process declares the basis it runs on: then run,
   // and recorded however it settles when it let restricted data through.
@@ -132,28 +139,33 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     actor: string | undefined,
     reads: { readonly opened: readonly KeyedPerson[]; readonly touches: readonly string[] },
     within: UnitStores,
-    step: () => Promise<Result>,
+    step: (letThrough: Set<string>) => Promise<Result>,
   ): Promise<Result> => {
     const basis = process.restricted;
-    const letThrough = await refuseRestrictedRead({
-      persons: within.persons,
-      keys,
-      ...reads,
-      basis: basis ?? undefined,
-    });
-    if (basis === null || letThrough.length === 0) return step();
+    // The restricted persons `basis` let the step read, its ports' answers included.
+    const letThrough = new Set(
+      await refuseRestrictedRead({
+        persons: within.persons,
+        keys,
+        ...reads,
+        basis: basis ?? undefined,
+      }),
+    );
+    if (basis === null) return step(letThrough);
     return recorded(
-      (outcome, error) =>
-        recordAccess({
+      async (outcome, error) => {
+        if (letThrough.size === 0) return;
+        await recordAccess({
           operation: "process",
           detail: { handler: process.name },
           actor,
-          persons: letThrough,
+          persons: [...letThrough],
           outcome,
           error,
-          restricted: { basis, persons: letThrough },
-        }),
-      step,
+          restricted: { basis, persons: [...letThrough] },
+        });
+      },
+      () => step(letThrough),
     );
   };
 
@@ -187,14 +199,25 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     own: Readonly<Record<string, unknown>>,
     within: UnitStores,
     actor: string | undefined,
+    letThrough: Set<string>,
   ): Record<string, unknown> =>
     withPorts(
-      disclosures?.bind(process.aggregate, process.ports, {
+      bindPorts({ disclosures, returns }, process.aggregate, process.ports, {
         opened: () => openedOf(within.reads()),
         basis: process.restricted ?? undefined,
         handler: process.name,
         actor,
-      }) ?? process.ports,
+        read: async (reads) => {
+          for (const one of await refuseReturned({
+            persons: within.persons,
+            basis: process.restricted ?? undefined,
+            reads,
+          })) {
+            letThrough.add(one);
+          }
+          within.read(await keyedReturned(keys, reads));
+        },
+      }),
       {
         commands: reaction.commands,
         signal: reaction.signal,
@@ -262,7 +285,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
           touches: [statePerson, eventPerson].filter((person) => person !== null),
         },
         within,
-        async () => {
+        async (letThrough) => {
           const { returned } = await traced({
             tracer,
             errorText: config.runtime.telemetry.errorText,
@@ -293,6 +316,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
                         { event, state: instance.state, aggregateId: instanceId },
                         within,
                         context.actor,
+                        letThrough,
                       ),
                     ),
                   ),
@@ -343,7 +367,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       within,
     );
     return runOf(reaction, () =>
-      restrictedStep(process, context.actor, reads, within, async () => {
+      restrictedStep(process, context.actor, reads, within, async (letThrough) => {
         const { returned, decided } = await traced({
           tracer,
           errorText: config.runtime.telemetry.errorText,
@@ -368,6 +392,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
                       { state: instance.state, aggregateId: instanceId },
                       within,
                       context.actor,
+                      letThrough,
                     ),
                   ),
                 ),

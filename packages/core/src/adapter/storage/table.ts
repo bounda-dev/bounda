@@ -1,3 +1,5 @@
+import type { PersonalCategoryName } from "../../modules/personal-data.ts";
+import type { ReturnedPersons } from "../../modules/port-returns.ts";
 import type { FieldAccess } from "../../modules/view.ts";
 
 /**
@@ -174,4 +176,18 @@ export interface ReadClient<
     field: Field,
     value: NonNullable<Row[Field]>,
   ): Promise<readonly string[]>;
+  /**
+   * Says whose personal data a read through `raw` returned, which Bounda cannot see: the run then
+   * counts as having opened their data of `categories`, the categories of the fields the read model
+   * marks `.personal()` when left out. In a projection, an error it throws is encrypted under their
+   * keys too, so a subscriber failure's text is listed in their export, withheld from anyone
+   * else's, reached by their forgetting and covered by their restriction. In a query, the access
+   * log names them, and a person whose processing is restricted throws `ProcessingRestrictedError`
+   * unless the query names a basis that opens it. Throws `ConfigurationError` without categories in
+   * a read model that marks no field `.personal()`.
+   */
+  rawReadOf(
+    persons: ReturnedPersons,
+    options?: { readonly categories?: readonly [PersonalCategoryName, ...PersonalCategoryName[]] },
+  ): Promise<void>;
 }

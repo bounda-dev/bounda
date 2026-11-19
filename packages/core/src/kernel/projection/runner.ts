@@ -167,6 +167,20 @@ export const projectBatch: ProjectBatchFunction = async ({
     onRaw: () => {
       raw = true;
     },
+    // Under the key a value of the person in the category is written under now: one they no
+    // longer hold reads as forgotten, as such a value would.
+    rawRead: async (reads) => {
+      for (const { person, categories } of reads) {
+        for (const category of categories) {
+          const key = await sealing.keys.forWrite(person, category, current);
+          opened.push({
+            person,
+            fingerprint: key.fingerprint,
+            ...(key.retained ? { retained: true as const } : {}),
+          });
+        }
+      }
+    },
   });
   const settled = async (count: number): Promise<number> => {
     if (raw && sealing.layout.personal.length > 0) await settleUnsettled({ context, transaction });

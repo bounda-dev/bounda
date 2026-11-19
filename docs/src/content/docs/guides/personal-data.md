@@ -937,11 +937,12 @@ Text the app's code wrote is another matter: an error a handler threw, or a reje
 remembered, may quote whatever the work read, and Bounda knows whose data that was. A dead letter's
 error text, and a subscriber's last failure's, is encrypted under the keys of everyone whose data
 the work read: the person its event names, the one its process state names, those whose aggregates
-the commands it dispatched loaded, and those whose rows a projection read through its `table`,
-sealed or in the clear. The
+the commands it dispatched loaded, those whose rows a projection read through its `table`,
+sealed or in the clear, and those a [port's answer](/guides/calling-the-outside-world/#personal-data-a-port-returns)
+or a raw read named, as below. The
 letter names them in `person`, `statePerson` and `readPersons`, the failure in `person` and
 `readPersons`. A remembered rejection is encrypted under everyone whose data the state it was
-decided on held, and the person the command touches. Each of them finds the record in their
+decided on held, those its ports' answers named, and the person the command touches. Each of them finds the record in their
 export and in a [restriction](#restricting-processing) or a [redaction](#correcting-a-persons-data)
 of theirs, and the text opens only while every one of them holds their keys, so forgetting any of
 them makes it unreadable.
@@ -976,9 +977,30 @@ everyone else whose data the values it opened may quote; a value opened of someo
 is [restricted](#restricting-processing) is named in its record's `restricted` too. Never hand such an export to the person as
 it is: hand them the one without it, and what the controller decided to release.
 
-What a handler took from a port and quoted, or a projection read through `client.raw`, Bounda
-cannot see: text built from it comes out as the person's, and is the controller's to read before
-handing an export over.
+What a port answers, or a projection reads through `client.raw`, Bounda cannot read, so the code
+that has it says whose it is. A port says it in its module's `returnsPersonalData`, required of
+every port whose calls answer what can hold text (see [personal data a port
+returns](/guides/calling-the-outside-world/#personal-data-a-port-returns)); a projection or a query
+says it after a raw read with `client.rawReadOf`:
+
+```ts
+export const project = async ({ event, client }: Projection.Args) => {
+  const rows = await client.raw.execute({
+    sql: "SELECT member_id, name FROM members WHERE referred_by = ?",
+    args: [event.aggregateId],
+  });
+  await client.rawReadOf(rows.rows.map((row) => String(row.member_id)));
+  // ...
+};
+```
+
+`rawReadOf` takes the person ids, and `{ categories }`, those of the fields the read model marks
+`.personal()` when left out; one that marks none names them, or it throws `ConfigurationError`. In
+a projection, what it throws is then encrypted under those persons too, under the key a value of
+theirs of each category is written under, so one forgotten in it reads as forgotten. In a query,
+the access log names them, and a restricted person throws `ProcessingRestrictedError` unless the
+query asks with `includeRestricted`. What the code does not declare, Bounda cannot see: text built
+from it comes out as the person's, and is the controller's to read before handing an export over.
 
 ### A long history
 
@@ -1689,6 +1711,11 @@ commits:
   `restrict` may still read the rows until the copy catches up: `restrict` resolves like a
   command, so `catchUpReadModels({ through })` waits for it. See
   [Queries](/guides/read-models/#restricted-rows).
+- **What a port answered, or a raw read returned.** A call whose port's
+  [`returnsPersonalData`](/guides/calling-the-outside-world/#personal-data-a-port-returns) names
+  a restricted person, in a category their restriction covers or as a whole, throws
+  `ProcessingRestrictedError` before the handler sees the answer, as `client.rawReadOf` does in a
+  query.
 - **Dead letters and subscriber failures.** `deadLetters.list` and `get` keep a letter that names a
   restricted person sealed, its error text and fields reading as `null`, and say `restricted: true`;
   so do `subscriberFailures.list` and `get`. A subscriber's last failure whose text is sealed under

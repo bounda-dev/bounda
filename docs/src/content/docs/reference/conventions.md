@@ -19,7 +19,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/state.ts` | optional: `initialState`, and `aggregateId` (the payload field holding the id) |
 | `app/domain/<aggregate>/<event>.ts` | `payload` (optional), and `begin` for the event that opens the aggregate or `evolve`, or both; nothing else at run time |
 | `app/domain/<aggregate>/<event>.upcast.ts` | `upcasts`, oldest version first, next to its event |
-| `app/domain/<aggregate>/<port>.ts` | `interface <Port>`, named after the file; it is a port because `infrastructure/<port>/` exists. For a port that sends personal data out, `recipient`, `satisfies Port.Recipient`, and the six handlers that tell it: `onPersonalDataForgotten`, `onProcessingRestricted`, `onProcessingRestrictionLiftAnnounced`, `onProcessingRestrictionLifted`, `onPersonalDataRedacted` and `onTenantForgotten` (see [Recipients](/guides/personal-data/#recipients)) |
+| `app/domain/<aggregate>/<port>.ts` | `interface <Port>`, named after the file; it is a port because `infrastructure/<port>/` exists. For a port that sends personal data out, `recipient`, `satisfies Port.Recipient`, and the six handlers that tell it: `onPersonalDataForgotten`, `onProcessingRestricted`, `onProcessingRestrictionLiftAnnounced`, `onProcessingRestrictionLifted`, `onPersonalDataRedacted` and `onTenantForgotten` (see [Recipients](/guides/personal-data/#recipients)). For a port whose calls answer what can hold text, `returnsPersonalData`, `satisfies Port.ReturnsPersonalData`: whose personal data each call returns, or `false` (see [personal data a port returns](/guides/calling-the-outside-world/#personal-data-a-port-returns)) |
 | `app/domain/<aggregate>/infrastructure/<port>/<implementation>.ts` | `export default ... satisfies <Port>`, or `create`, typed as `CreateImplementation<Port>` |
 | `app/domain/<aggregate>/commands/<command>.ts` | `payload` (optional), `rejections` (optional), `handler` |
 | `app/domain/<aggregate>/policies/<action>-on-<event>.ts` | `handler`; `on`, `delay` and `restricted`, the [basis it processes restricted data on](/guides/personal-data/#processing-restricted-data-anyway), optional |
@@ -35,7 +35,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/read/<read-model>/projections/bounda/personal-data-forgotten.ts` | `project`, required once its view keeps a field in the clear with `.personal({ clear: true })`, or a projection of the read model sees a field marked `personal` and the view marks no field `.personal()` |
 | `app/read/<read-model>/projections/bounda/processing-restricted.ts`, `processing-restriction-lift-announced.ts`, `processing-restriction-lifted.ts` | `project`, optional |
 | `app/read/<read-model>/queries/<query>.ts` | `payload` (optional), `repository` (optional), `handler` |
-| `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate, `recipient` and its handlers included; only the queries' `handler` receives them |
+| `app/read/<read-model>/<port>.ts`, `infrastructure/<port>/<implementation>.ts` | as in an aggregate, `recipient`, its handlers and `returnsPersonalData` included; only the queries' `handler` receives them |
 
 Any other module or directory at the root of an aggregate or a read model is yours: a value
 object, a domain service, a helper the handlers import. The generator leaves it alone, and so it
@@ -85,6 +85,9 @@ payload or of a process's state that can hold text is marked neither `personal`,
 neither `.personal()`, `.person()` nor `.notPersonal()`, and while a payload or a state is not an
 object or keeps keys it does not declare, naming each
 ([fields that hold no personal data](/guides/personal-data/#fields-that-hold-no-personal-data)).
+`<Module>PortReturns` fails to compile while a port answers what can hold text and its module does
+not export `returnsPersonalData`, or exports one that does not fit the port
+([personal data a port returns](/guides/calling-the-outside-world/#personal-data-a-port-returns)).
 The app refuses to start on the same rules, with `ConfigurationError`. The generated registry is checked against
 `Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
 fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
@@ -133,6 +136,9 @@ Some rules need the modules themselves, so the app checks them when it is create
   categories the app has, or without one of its six handlers; one that has no implementation; a
   `recipient.formerly` key that is not `"<aggregate or read model>.<port>"`, that is a port of the
   app, or that two ports name;
+- a port whose `returnsPersonalData` is neither `false` nor an object, declares a call without a
+  `persons` function, with a `personsOnError` that is no function, or with categories the app does
+  not have, or that has no implementation;
 - an `app/personal-data.ts` whose `categories` is not an object, declares `default`, names a
   category with anything but letters, digits, `-` and `_` after a first letter, or gives one a
   basis article 6 does not name, a retention that is not a duration longer than none, no purpose
@@ -175,8 +181,8 @@ and not failed on:
 | --- | --- |
 | `.bounda/registry.ts` | Every module, grouped as the runtime needs it, and `app/audit.ts` as `audit` and `app/personal-data.ts` as `personalData` when there are. `boot()` imports it |
 | `.bounda/register.d.ts` | Registers the registry type, the type of the `ports` section and the names of the categories of personal data with `@bounda-dev/core/register`, so `boot()` and `BoundaApp` are typed for the project without a type argument, `defineConfig` checks the implementation names, and `personal({ category })` and `forget` check the categories |
-| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), one `<ReadModel>Forgetting` check per read model, one `<Aggregate>Classification` and one `<ReadModel>Classification` check per aggregate and read model, one `<Owner>Recipients` check per aggregate or read model whose ports declare recipients, `PersonalCategory`, the names `app/personal-data.ts` declares, and its `PersonalDataDeclaration` check |
-| `**/+types/<name>.ts` | The argument types each module imports, a port's only when it declares a `recipient`: `Port.Recipient` and its handlers' arguments. An implementation has none: it imports its port |
+| `.bounda/types.ts` | The state, events, ports, commands, rows and queries maps the `+types` build on, how each read model stores its fields (`<ReadModel>FieldTypes`, which decides what its table filters each field by), one `<ReadModel>Forgetting` check per read model, one `<Aggregate>Classification` and one `<ReadModel>Classification` check per aggregate and read model, one `<Owner>Recipients` check per aggregate or read model whose ports declare recipients, one `<Owner>PortReturns` check per aggregate or read model with ports, `PersonalCategory`, the names `app/personal-data.ts` declares, and its `PersonalDataDeclaration` check |
+| `**/+types/<name>.ts` | The argument types each module imports; a port's: `Port.ReturnsPersonalData`, and, when it declares a `recipient`, `Port.Recipient` and its handlers' arguments. An implementation has none: it imports its port |
 
 They are derived from your code, so they are not versioned. `tsconfig.json` must include them as
 `.bounda/**/*` (TypeScript skips a bare `.bounda` entry because the directory starts with a dot);
