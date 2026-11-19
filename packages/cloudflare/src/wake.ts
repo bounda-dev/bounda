@@ -1,11 +1,16 @@
+import type { AppLag } from "@bounda-dev/core";
+
 export interface NextWakeArgs {
   // `false` when the last round of work ran out of passes with work left.
   readonly idle: boolean;
   // `true` after an alarm: events still behind the head are held by a retry back-off, not new.
   // `false` after a command: they are new and should be handled at once.
   readonly settled: boolean;
-  // How far the furthest subscriber is behind the head of the stream.
+  // How far the furthest subscriber read is behind the head of the stream.
   readonly lag: number;
+  // `true` when a subscriber's checkpoint could not be read: it may be behind, so the object tries
+  // again after `retryMs`.
+  readonly unread: boolean;
   // A paused read model rebuild: `"next"` when its next slice can run at once, `"held"` when the
   // last one failed and should wait `retryMs`.
   readonly rebuild: "none" | "next" | "held";
@@ -20,11 +25,31 @@ export interface NextWakeFunction {
 }
 
 // A time on the app clock, in milliseconds like `now`, not a delay.
-export const nextWake: NextWakeFunction = ({ idle, settled, lag, rebuild, due, now, retryMs }) => {
+export const nextWake: NextWakeFunction = ({
+  idle,
+  settled,
+  lag,
+  unread,
+  rebuild,
+  due,
+  now,
+  retryMs,
+}) => {
   const candidates: number[] = [];
   if (!idle || rebuild === "next") candidates.push(now);
   if (lag > 0) candidates.push(settled ? now + retryMs : now);
+  if (unread) candidates.push(now + retryMs);
   if (rebuild === "held") candidates.push(now + retryMs);
   if (due !== null) candidates.push(Math.max(due.getTime(), now));
   return candidates.length === 0 ? null : Math.min(...candidates);
 };
+
+export interface WakeLagOfFunction {
+  (lag: Pick<AppLag, "subscribers" | "maxLag">): Pick<NextWakeArgs, "lag" | "unread">;
+}
+
+// The lag the subscribers read are behind, and whether one could not be read.
+export const wakeLagOf: WakeLagOfFunction = ({ subscribers, maxLag }) => ({
+  lag: Math.max(0, ...subscribers.map((each) => ("lag" in each ? each.lag : 0))),
+  unread: maxLag === null,
+});

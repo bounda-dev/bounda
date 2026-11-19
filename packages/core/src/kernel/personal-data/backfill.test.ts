@@ -637,3 +637,40 @@ describe("marks walked again once others walked since", () => {
     expect(await pass()).toBeGreaterThan(again);
   });
 });
+
+describe("the backfill's standing when it cannot be read", () => {
+  it("reports it unreadable in the lag and the status, logs why, and still reports the rest", async () => {
+    const base = memory();
+    let down = false;
+    const adapter: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const ports = await base.createStorage();
+        return {
+          ...ports,
+          checkpointStore: {
+            ...ports.checkpointStore,
+            get: (name) =>
+              down && name.startsWith(BACKFILL_PREFIX)
+                ? Promise.reject(new Error("the backfill's rows are down"))
+                : ports.checkpointStore.get(name),
+          },
+        };
+      },
+    };
+    const { logger, logs } = recording();
+    const { app } = await start({ adapter, marks: marked, logger });
+    const read = await app.getLag();
+    expect(read.personalDataBackfill).toMatchObject({ caughtUp: expect.any(Boolean) });
+    down = true;
+    expect(await app.getLag()).toEqual({ ...read, personalDataBackfill: { unreadable: true } });
+    expect(logs.filter(([level]) => level === "error")).toEqual([
+      [
+        "error",
+        "the personal data backfill could not be read",
+        expect.objectContaining({ errorName: "Error" }),
+      ],
+    ]);
+    expect((await app.status()).personalDataBackfill).toEqual({ unreadable: true });
+  });
+});

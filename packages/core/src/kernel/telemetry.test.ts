@@ -1,5 +1,6 @@
 import { SpanStatusCode } from "@opentelemetry/api";
 import { afterEach, describe, expect, it } from "vitest";
+import type { Adapter, CreateReadModelArgs } from "../adapter/adapter.ts";
 import { DomainError, ValidationError } from "../contracts/errors.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { memory } from "../memory/index.ts";
@@ -418,6 +419,50 @@ describe("telemetry", () => {
         }),
       }),
     ]);
+    await app.stop();
+  });
+
+  it("observes the lag of every subscriber it can read, leaving out one whose checkpoint it cannot", async () => {
+    const telemetry = installFakeTelemetry();
+    active = telemetry;
+    const base = memory();
+    let down = false;
+    const adapter: Adapter = {
+      ...base,
+      createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
+        const ports = await base.createReadModel<Row>(args);
+        return {
+          ...ports,
+          checkpointStore: {
+            ...ports.checkpointStore,
+            get: (name) =>
+              down
+                ? Promise.reject(new Error("the read model is down"))
+                : ports.checkpointStore.get(name),
+          },
+        };
+      },
+    };
+    const app = await createApp({
+      registry,
+      config: {
+        storage: adapter,
+        ports: { order: { notifier: "memory" } },
+        runtime: { policies: { retry: { strategy: "none" } } },
+      },
+      logger: silentLogger,
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    down = true;
+    const observed = (await telemetry.observe()).filter(({ metric }) => metric === METRICS.lag);
+    expect(observed).toContainEqual({
+      metric: METRICS.lag,
+      value: 1,
+      attributes: { [ATTRIBUTES.subscriber]: "policies" },
+    });
+    expect(observed.map(({ attributes }) => attributes[ATTRIBUTES.subscriber])).not.toContain(
+      "projection:orderSummary",
+    );
     await app.stop();
   });
 

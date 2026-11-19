@@ -67,12 +67,18 @@ const objectLogs = (entries: readonly unknown[][]) =>
 // Runs alarms until the walk over what was written before the personal data marks has caught up,
 // so a test of what an alarm wakes for next sees nothing else due.
 const backfilled = async (instance: {
-  lag(): Promise<{ ok: boolean; value?: { personalDataBackfill: { caughtUp: boolean } | null } }>;
+  lag(): Promise<{
+    ok: boolean;
+    value?: { personalDataBackfill: { caughtUp: boolean } | { unreadable: true } | null };
+  }>;
   alarm(): Promise<void>;
 }): Promise<void> => {
   for (;;) {
-    const lag = await instance.lag();
-    if (lag.value?.personalDataBackfill?.caughtUp !== false) return;
+    const backfill = (await instance.lag()).value?.personalDataBackfill;
+    if (backfill !== undefined && backfill !== null && "unreadable" in backfill) {
+      throw new Error("the backfill could not be read");
+    }
+    if (backfill?.caughtUp !== false) return;
     await instance.alarm();
   }
 };
@@ -337,10 +343,13 @@ describe("a Bounda Durable Object", () => {
     // subscriber no read-your-writes waits for: three events behind here, at most one event a
     // subscriber an alarm in this object, each alarm arming the next at once while it lags. The
     // runtime may run a due alarm on its own as well, so each one leaves it at most that far behind.
-    const restrictions = async () =>
-      (await store.getLag()).subscribers.find(
+    const restrictions = async () => {
+      const found = (await store.getLag()).subscribers.find(
         ({ subscriber }) => subscriber === "restrictions:customers",
-      )?.lag ?? 0;
+      );
+      if (found !== undefined && "unreadable" in found) throw new Error("its checkpoint is unread");
+      return found?.lag ?? 0;
+    };
     expect(await restrictions()).toBeLessThanOrEqual(3);
     for (const behind of [2, 1, 0]) {
       if ((await restrictions()) > 0) expect(await alarmOf(stub)).toBeLessThanOrEqual(Date.now());

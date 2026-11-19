@@ -377,5 +377,6 @@ effect happened.
 
 `app.getLag()` reports how far behind the head of the global stream each subscriber is. Zero means
 every consequence of every stored event has happened; a number that keeps growing means a subscriber
-is failing and retrying. In tests, [asserting it is zero](/guides/testing/#nothing-left-behind)
+is failing and retrying; `null` means a subscriber's checkpoint could not be read, so nobody knows
+([observability](/reference/observability/)). In tests, [asserting it is zero](/guides/testing/#nothing-left-behind)
 proves nothing was left pending.

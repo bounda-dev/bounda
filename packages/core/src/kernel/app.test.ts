@@ -14,11 +14,14 @@ import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
 import { readYourWrites } from "./read-your-writes.ts";
+import { unreadableParts } from "./status.ts";
 import {
   createRecordingLogger,
   eventually,
+  lagIn,
   type OrderProcessConfigArgs,
   orderAggregateEntry,
+  readPart,
   sentMessages,
 } from "./test-support.ts";
 
@@ -405,7 +408,7 @@ describe("createApp", () => {
     expect(await app.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
     const lag = await app.getLag();
     const lagOf = (subscriber: string) =>
-      lag.subscribers.find((entry) => entry.subscriber === subscriber)?.lag;
+      lagIn(lag.subscribers.find((entry) => entry.subscriber === subscriber));
     expect(lagOf("projection:orderSummary")).toBe(0);
     expect(lagOf("policies")).toBe(2);
     expect(lagOf("processes")).toBe(2);
@@ -649,8 +652,8 @@ describe("implementations built by create", () => {
     const unnamed = await createApp({ registry: lifecycleRegistry, config: { storage: memory() } });
     expect(create.mock.calls[0]?.[0]).toMatchObject({ tenant: "acme" });
     expect(create.mock.calls[1]?.[0]).not.toHaveProperty("tenant");
-    expect((await named.status()).tenant?.tenant).toBe("acme");
-    expect((await unnamed.status()).tenant?.tenant).toBe("default");
+    expect(await named.status()).toMatchObject({ tenant: { tenant: "acme" } });
+    expect(await unnamed.status()).toMatchObject({ tenant: { tenant: "default" } });
     await named.stop();
     await unnamed.stop();
   });
@@ -715,6 +718,86 @@ describe("implementations built by create", () => {
     ).rejects.toThrow("read model database is down");
     expect(counting.closes()).toEqual({ storage: 1, readModels: 1 });
     expect(log).toEqual(["notifier closed"]);
+  });
+
+  it("reports a part of the status whose store cannot be read unreadable, and still the others", async () => {
+    const base = memory();
+    let down = false;
+    const refuse = (what: string) => async (): Promise<never> => {
+      throw new Error(`${what} unreadable`);
+    };
+    const adapter: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const ports = await base.createStorage();
+        return {
+          ...ports,
+          subscriberFailures: {
+            ...ports.subscriberFailures,
+            list: (...args) =>
+              down ? refuse("failures")() : ports.subscriberFailures.list(...args),
+          },
+        };
+      },
+      createReadModel: async <Row extends object>(args: CreateReadModelArgs) => {
+        const ports = await base.createReadModel<Row>(args);
+        return {
+          ...ports,
+          checkpointStore: {
+            ...ports.checkpointStore,
+            get: (name) => (down ? refuse("read model")() : ports.checkpointStore.get(name)),
+          },
+        };
+      },
+    };
+    const { logger, entries } = createRecordingLogger();
+    const app = await createApp({
+      registry,
+      config: { storage: adapter, ports: { order: { notifier: "memory" } } },
+      logger,
+    });
+    const read = await app.status();
+    const { personalDataBackfill: _backfill, ...lag } = await app.getLag();
+    expect(read.lag).toEqual(lag);
+    down = true;
+    const status = await app.status();
+    expect(unreadableParts(read)).toEqual([]);
+    expect(unreadableParts(status)).toEqual([
+      "lag (projection:orderSummary)",
+      "subscriberFailures",
+      // Its purge reads the same store.
+      "subscriberFailureRetention",
+    ]);
+    expect(status).toEqual({
+      ...read,
+      lag: {
+        ...read.lag,
+        maxLag: null,
+        subscribers: readPart(read.lag).subscribers.map((each) =>
+          each.subscriber === "projection:orderSummary"
+            ? { subscriber: each.subscriber, unreadable: true }
+            : each,
+        ),
+      },
+      subscriberFailures: { unreadable: true },
+      subscriberFailureRetention: {
+        retentionMs: readPart(read.subscriberFailureRetention)?.retentionMs,
+        unreadable: true,
+      },
+    });
+    expect(
+      entries
+        .filter(({ level }) => level === "error")
+        .map(({ message, fields }) => [message, fields?.part ?? fields?.subscriber])
+        .sort(),
+    ).toEqual([
+      ["a part of the status could not be read", "subscriberFailures"],
+      ["a subscriber's checkpoint could not be read", "projection:orderSummary"],
+      ["subscriber failures past the retention could not be read", undefined],
+    ]);
+    // The lag as `getLag()` reports it is the status' lag, with the backfill the status reads apart.
+    expect(await app.getLag()).toEqual({ ...status.lag, personalDataBackfill: null });
+    await app.stop();
   });
 
   it("closes the read models and the storage when a step after opening them fails", async () => {

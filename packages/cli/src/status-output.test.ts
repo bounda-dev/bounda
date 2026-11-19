@@ -1,6 +1,6 @@
 import type { AppStatus, SubscriberFailure } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
-import { formatSchema, formatStatus } from "./status-output.ts";
+import { formatRestored, formatSchema, formatStatus } from "./status-output.ts";
 
 const failure = {
   subscriber: "projection:orders",
@@ -34,7 +34,6 @@ const status: AppStatus = {
     ],
     waitingDeadlines: 0,
     forgetLedger: { reconciled: true },
-    personalDataBackfill: { position: 9, caughtUp: false },
   },
   subscriberFailures: [
     { ...failure, current: true },
@@ -301,8 +300,212 @@ describe("formatStatus", () => {
   });
 });
 
+describe("formatStatus of a status with parts that could not be read", () => {
+  const UNREADABLE = { unreadable: true } as const;
+  const unread: AppStatus = {
+    ...status,
+    schema: [
+      { database: "storage", scope: "storage", version: 2, latest: 2 },
+      { database: "readModels.reports", unreadable: true },
+    ],
+    restoresFound: UNREADABLE,
+    lag: {
+      lastPosition: 9,
+      maxLag: 0,
+      subscribers: [
+        { subscriber: "projection:orders", unreadable: true },
+        { subscriber: "policies", position: 9, lag: 0 },
+      ],
+      waitingDeadlines: 0,
+      forgetLedger: null,
+    },
+    subscriberFailures: UNREADABLE,
+    personalDataBackfill: UNREADABLE,
+    forgetLedger: UNREADABLE,
+    tenant: UNREADABLE,
+    keyRotation: UNREADABLE,
+    retention: UNREADABLE,
+    deadLetterRetention: { retentionMs: 90_000, unreadable: true },
+    subscriberFailureRetention: { retentionMs: 90_000, unreadable: true },
+    recipients: UNREADABLE,
+    files: [],
+  };
+
+  it("prints what it read, and says of each other part that its store could not be read", () => {
+    expect(formatStatus({ status: unread }).split("\n")).toEqual([
+      "tables",
+      "  storage  storage  2 of 2",
+      "  readModels.reports  its store could not be read, see the logs",
+      "restores found while running: its store could not be read, see the logs",
+      "subscribers (head at 9)",
+      "  projection:orders  its position, its store could not be read, see the logs",
+      "  policies  at 9, 0 behind",
+      "  last failures: its store could not be read, see the logs",
+      "personal data backfill: its store could not be read, see the logs",
+      "forget ledger: its store could not be read, see the logs",
+      "tenant: its store could not be read, see the logs",
+      "key rotation: its store could not be read, see the logs",
+      "retention: its store could not be read, see the logs",
+      "dead letter retention: 90s, its store could not be read, see the logs",
+      "subscriber failure retention: 90s, its store could not be read, see the logs",
+      "recipients: its store could not be read, see the logs",
+    ]);
+  });
+
+  it("says a failure may still hold its subscriber while where it stands could not be read", () => {
+    const failures: AppStatus["subscriberFailures"] = [
+      { ...failure, current: null },
+      {
+        ...withoutCode,
+        subscriber: "policies",
+        resolvedAt: "2026-05-02T00:00:00.000Z",
+        current: false,
+      },
+    ];
+    const opened = new Map([["projection:orders", { ...failure, errorMessage: "cannot place" }]]);
+    expect(formatStatus({ status: { ...unread, subscriberFailures: failures }, opened })).toContain(
+      [
+        "  projection:orders  its position, its store could not be read, see the logs",
+        "    failed, not resolved: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "    cannot place",
+        "  policies  at 9, 0 behind",
+        "    last failed, resolved 2026-05-02T00:00:00.000Z: ValidationError on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "personal data backfill",
+      ].join("\n"),
+    );
+    expect(
+      formatStatus({
+        status: { ...unread, lag: UNREADABLE, subscriberFailures: failures },
+        opened,
+      }),
+    ).toContain(
+      [
+        "restores found while running: its store could not be read, see the logs",
+        "subscribers: where they stand, its store could not be read, see the logs",
+        "  projection:orders",
+        "    failed, not resolved: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "    cannot place",
+        "  policies",
+        "    last failed, resolved 2026-05-02T00:00:00.000Z: ValidationError on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "personal data backfill",
+      ].join("\n"),
+    );
+    expect(formatStatus({ status: { ...unread, lag: UNREADABLE } })).toContain(
+      [
+        "subscribers: where they stand, its store could not be read, see the logs",
+        "  last failures: its store could not be read, see the logs",
+        "personal data backfill",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("formatStatus of the parts it reads", () => {
+  it("lists the failures of subscribers the app no longer runs, resolved or not", () => {
+    const gone: AppStatus = {
+      ...status,
+      subscriberFailures: [
+        { ...failure, subscriber: "projection:retired", current: false },
+        {
+          ...withoutCode,
+          subscriber: "policies:old",
+          resolvedAt: "2026-05-02T00:00:00.000Z",
+          current: false,
+        },
+      ],
+    };
+    const opened = new Map([["projection:retired", { ...failure, errorMessage: "cannot total" }]]);
+    expect(formatStatus({ status: gone, opened })).toContain(
+      [
+        "  processes  at 9, 0 behind",
+        "  projection:retired  no longer run",
+        "    last failed, not resolved: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "    cannot total",
+        "  policies:old  no longer run",
+        "    last failed, resolved 2026-05-02T00:00:00.000Z: ValidationError on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z",
+        "personal data backfill",
+      ].join("\n"),
+    );
+  });
+
+  it("says a failure its subscriber got past is resolved since, while the store still holds it", () => {
+    const past: AppStatus = {
+      ...status,
+      subscriberFailures: [{ ...failure, subscriber: "policies", current: false }],
+    };
+    expect(formatStatus({ status: past })).toContain(
+      "  policies  at 9, 0 behind\n    last failed, resolved since: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z\n",
+    );
+  });
+
+  it("lists every older key and version, a rotation not configured, and keys kept with or without a retention", () => {
+    const tenant = {
+      tenant: "acme",
+      forgottenAt: null,
+      kid: "t-3",
+      previous: ["t-2", "t-1"],
+      master: { kid: "m-1", previous: [], pending: 0 },
+    };
+    const rotation = {
+      kid: "k-3",
+      previous: ["k-2", "k-1"],
+      pending: 0,
+      completeAt: null,
+      reseal: null,
+    };
+    const printed = formatStatus({ status: { ...status, tenant, keyRotation: rotation } });
+    expect(printed).toContain(
+      "tenant: acme, key t-3 (older t-2, t-1), wrapped under master key m-1\n",
+    );
+    expect(printed).toContain("key rotation: under k-3 (previous k-2, k-1), every key wrapped\n");
+    expect(formatStatus({ status: { ...status, keyRotation: null } })).toContain(
+      "key rotation: not configured\n",
+    );
+    const retention = (categories: number, keptBeyond: number) =>
+      formatStatus({
+        status: {
+          ...status,
+          retention: {
+            categories: Array.from({ length: categories }, (_, index) => ({
+              category: `c-${index}`,
+              retention: "1y",
+              due: 0,
+              nextDueAt: null,
+            })),
+            keptBeyond,
+          },
+        },
+      }).split("\n");
+    const retentionOf = (categories: number, keptBeyond: number) => {
+      const lines = retention(categories, keptBeyond);
+      const from = lines.findIndex((line) => line.startsWith("retention"));
+      return lines.slice(
+        from,
+        lines.findIndex((line) => line.startsWith("dead letter retention")),
+      );
+    };
+    expect(retentionOf(0, 2)).toEqual([
+      "retention",
+      "  2 keys kept past a forgetting that no erasure exemption keeps",
+    ]);
+    expect(retentionOf(1, 0)).toEqual(["retention", "  c-0  1y, 0 keys past it, next due never"]);
+    expect(retentionOf(0, 0)).toEqual(["retention: not configured"]);
+  });
+});
+
 describe("formatSchema", () => {
   it("says so when no database has tables to version", () => {
     expect(formatSchema([])).toBe("  no tables to version");
+  });
+});
+
+describe("formatRestored", () => {
+  it("says how many restores were found, or that the count could not be read", () => {
+    expect(formatRestored(3)).toBe(
+      "restore recorded: 3 found so far; the background jobs start over from the copy, without the holds it brought back",
+    );
+    expect(formatRestored({ unreadable: true })).toBe(
+      "restore recorded: how many were found so far, its store could not be read, see the logs; the background jobs start over from the copy, without the holds it brought back",
+    );
   });
 });

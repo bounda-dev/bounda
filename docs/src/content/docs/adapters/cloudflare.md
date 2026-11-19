@@ -326,7 +326,10 @@ of an app wherever it runs: the same `commands` and `queries` as `app.commands` 
 `restrict` and `unrestrict`. `streamPersonalData` crosses RPC as a stream of the export's parts,
 read on the object a page at a time as the Worker reads them, and stopped when the Worker stops
 reading, so a person's long history never has to fit in one RPC answer. `bounda status` runs where Node can open the store, so a Durable Object's is read
-through `status()`, from an admin route of the Worker, say.
+through `status()`, from an admin route of the Worker, say. A part the object cannot read comes
+back marked `{ unreadable: true }` rather than failing the call, as on any host
+([observability](/reference/observability/)): check `unreadableParts(status)` before answering it
+as complete.
 Its commands resolve once the read models reflect them; `connect(stub, { consistency: "eventual" })`
 resolves them once their events are stored, for a request that reads nothing after it. A refusal comes
 back as an `Error` with the same `name`, `message`, `code` and, for validation, `issues`, whatever
@@ -444,6 +447,9 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   `getLag()`, which the object also asks before arming its alarm, reads the events after each
   checkpoint, less than one batch, once per distinct checkpoint. A row read costs a thousandth of a
   row written, but a health check that calls `getLag()` every few seconds pays it on every call.
+  A checkpoint it cannot read leaves `maxLag` `null`, and the object then tries again a retry
+  interval later, as for a rebuild slice that failed, still waking at once for the new events of
+  the other subscribers.
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
   request. A scheduled command, dead letter, snapshot or remembered rejection that holds personal
   data writes two more rows for each person it names, and as many again when it goes: the entry

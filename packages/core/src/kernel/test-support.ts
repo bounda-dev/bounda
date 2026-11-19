@@ -54,6 +54,9 @@ interface OrderState {
  * The order aggregate with its precise types, for tests that extend it with policies or processes
  * and want typed facades.
  */
+import type { SubscriberLag, UnreadableSubscriberLag } from "./dispatch/dispatcher.ts";
+import type { UnreadableStatus } from "./shared/retention-status.ts";
+import { isUnreadable } from "./status.ts";
 export const orderAggregate = {
   state: { initialState: { status: "new", total: 0 } satisfies OrderState },
   events: {
@@ -649,3 +652,25 @@ export const eachPerson: EachPersonFunction = (keysOf) => ({
     ),
   discarded: () => createDisposableKey(),
 });
+
+export interface ReadPartFunction {
+  <T>(part: T | UnreadableStatus): T;
+}
+
+// A part of the status a test expects read: an unreadable one fails it there.
+export const readPart: ReadPartFunction = (part) => {
+  if (isUnreadable(part)) {
+    throw new Error("expected the part of the status to be read");
+  }
+  return part;
+};
+
+export interface LagInFunction {
+  (subscriber: SubscriberLag | UnreadableSubscriberLag | undefined): number | undefined;
+}
+
+// A subscriber's lag a test expects read: an unreadable one fails it there.
+export const lagIn: LagInFunction = (subscriber) => {
+  if (subscriber === undefined) return undefined;
+  return readPart<SubscriberLag>(subscriber).lag;
+};

@@ -589,7 +589,7 @@ describe("a libSQL file left in the clear while another process held it", () => 
       await expect(app.forgetTenant("default")).rejects.toThrow(
         "is still in the clear, so forgetting the tenant would leave it readable",
       );
-      expect((await app.status()).tenant?.forgottenAt).toBeNull();
+      expect((await app.status()).tenant).toMatchObject({ forgottenAt: null });
       await letGo();
       await app.runUntilIdle();
       expect((await app.status()).files).toMatchObject([{ state: "current" }]);
