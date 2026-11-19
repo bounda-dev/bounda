@@ -117,7 +117,10 @@ describe("runtime.deadLetters.retention", () => {
     await before.app.stop();
     const order = registry.aggregates.order as unknown as Record<string, unknown>;
     const { app, clock } = await createTestApp({
-      registry: { ...registry, aggregates: { order: { ...order, policies: {} } } } as Registry,
+      registry: {
+        ...registry,
+        aggregates: { order: { ...order, policies: {} } },
+      } as unknown as Registry,
       adapter,
     });
     stops.push(() => app.stop());
