@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CONNECTION_HOLDER, closeConnectionsOnce } from "./close-once.ts";
+import { CONNECTION_HOLDER, closeConnectionsLeftOpen, closeConnectionsOnce } from "./close-once.ts";
 
 const CLOSES = 20;
 
@@ -194,6 +194,40 @@ describe("closing a libSQL connection", () => {
         database.close();
         expect(() => database.prepare("SELECT 1")).toThrow("not open");
       })();
+      await collect();
+    } finally {
+      process.off("uncaughtException", record);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it("closes what is still open as the process exits, each once, the databases held themselves", async () => {
+    closeConnectionsOnce();
+    const held = new Database(":memory:");
+    held.prepare("SELECT 1");
+    const closed = new Database(":memory:");
+    closed.prepare("SELECT 1");
+    closed.close();
+    // Only the handle of a database dropped unclosed, collected before its registry's callback runs.
+    const handle = (() => {
+      const dropped = new Database(":memory:");
+      dropped.prepare("SELECT 1");
+      return Reflect.get(dropped, "db");
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const errors: unknown[] = [];
+    const record = (error: unknown): void => {
+      errors.push(error);
+    };
+    process.on("uncaughtException", record);
+    try {
+      collectGarbage();
+      closeConnectionsLeftOpen();
+      expect(held.open).toBe(false);
+      expect(() => held.close()).not.toThrow();
+      expect(() =>
+        Database.prototype.prepare.call({ db: handle, open: false }, "SELECT 1"),
+      ).toThrow("not open");
       await collect();
     } finally {
       process.off("uncaughtException", record);

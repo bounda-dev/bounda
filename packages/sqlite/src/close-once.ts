@@ -16,10 +16,18 @@ export interface CloseConnectionsOnceFunction {
   (): void;
 }
 
+export interface CloseConnectionsLeftOpenFunction {
+  (): void;
+}
+
 // Where a closed database keeps the statement that holds its connection.
 export const CONNECTION_HOLDER = Symbol("bounda.connectionHolder");
 
 let patched = false;
+let closeLeftOpen = (): void => undefined;
+
+// Closes the connections still open, each once, as the patch does when the process exits.
+export const closeConnectionsLeftOpen: CloseConnectionsLeftOpenFunction = () => closeLeftOpen();
 
 // libSQL's native module closes a connection twice when its own handle is the last thing holding
 // it (tursodatabase/libsql#2251, fixed in crate 0.10, which no npm `libsql` 0.5 is built from yet:
@@ -54,22 +62,22 @@ export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
   // The connections not closed yet, by handle, with their database until it is collected.
   const unclosed = new Map<unknown, WeakRef<NativeDatabase>>();
   const closeHandle = (db: unknown): void => {
-    unclosed.delete(db);
-    closeHolding({ db, open: true } as NativeDatabase);
+    if (unclosed.delete(db)) closeHolding({ db, open: true } as NativeDatabase);
   };
   const abandoned = new FinalizationRegistry<unknown>(closeHandle);
   // A database still held is closed itself, so it says so to whatever closes it after.
-  process.once("exit", () => {
+  closeLeftOpen = () => {
     for (const [db, held] of unclosed) {
       try {
         const database = held.deref();
         if (database === undefined) closeHandle(db);
         else database.close();
       } catch {
-        // The process ends either way: the others are still closed.
+        // One that fails to close leaves the others to.
       }
     }
-  });
+  };
+  process.once("exit", closeConnectionsLeftOpen);
   const tracked = new WeakSet<NativeDatabase>();
   const track = (database: NativeDatabase): void => {
     if (tracked.has(database) || !database.open) return;
