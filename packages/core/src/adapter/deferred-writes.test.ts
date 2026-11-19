@@ -255,7 +255,7 @@ describe("deferWrites", () => {
     const storage = await memory().createStorage();
     await storage.deadLetterStore.add(testDeadLetter("live"));
     const { stores, flush, withdrawLetters } = deferWrites(storage);
-    await stores.deadLetterStore.add({ ...testDeadLetter("held"), person: "c-1" });
+    await stores.deadLetterStore.add({ ...testDeadLetter("held"), persons: [held("c-1", null)] });
     await stores.deadLetterStore.add({ ...testDeadLetter("notice"), eventId: "kept" });
     await stores.deadLetterStore.clear("kept");
     expect(await storage.deadLetterStore.list()).toEqual([]);
