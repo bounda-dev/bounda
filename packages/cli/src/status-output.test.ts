@@ -400,6 +400,72 @@ describe("formatStatus of a status with parts that could not be read", () => {
   });
 });
 
+describe("formatStatus of the parts it reads", () => {
+  it("says a failure its subscriber got past is resolved since, while the store still holds it", () => {
+    const past: AppStatus = {
+      ...status,
+      subscriberFailures: [{ ...failure, subscriber: "policies", current: false }],
+    };
+    expect(formatStatus({ status: past })).toContain(
+      "  policies  at 9, 0 behind\n    last failed, resolved since: ValidationError (VALIDATION_FAILED) on OrderPlaced at 7, 3 attempts since 2026-05-01T00:00:00.000Z\n",
+    );
+  });
+
+  it("lists every older key and version, a rotation not configured, and keys kept with or without a retention", () => {
+    const tenant = {
+      tenant: "acme",
+      forgottenAt: null,
+      kid: "t-3",
+      previous: ["t-2", "t-1"],
+      master: { kid: "m-1", previous: [], pending: 0 },
+    };
+    const rotation = {
+      kid: "k-3",
+      previous: ["k-2", "k-1"],
+      pending: 0,
+      completeAt: null,
+      reseal: null,
+    };
+    const printed = formatStatus({ status: { ...status, tenant, keyRotation: rotation } });
+    expect(printed).toContain(
+      "tenant: acme, key t-3 (older t-2, t-1), wrapped under master key m-1\n",
+    );
+    expect(printed).toContain("key rotation: under k-3 (previous k-2, k-1), every key wrapped\n");
+    expect(formatStatus({ status: { ...status, keyRotation: null } })).toContain(
+      "key rotation: not configured\n",
+    );
+    const retention = (categories: number, keptBeyond: number) =>
+      formatStatus({
+        status: {
+          ...status,
+          retention: {
+            categories: Array.from({ length: categories }, (_, index) => ({
+              category: `c-${index}`,
+              retention: "1y",
+              due: 0,
+              nextDueAt: null,
+            })),
+            keptBeyond,
+          },
+        },
+      }).split("\n");
+    const retentionOf = (categories: number, keptBeyond: number) => {
+      const lines = retention(categories, keptBeyond);
+      const from = lines.findIndex((line) => line.startsWith("retention"));
+      return lines.slice(
+        from,
+        lines.findIndex((line) => line.startsWith("dead letter retention")),
+      );
+    };
+    expect(retentionOf(0, 2)).toEqual([
+      "retention",
+      "  2 keys kept past a forgetting that no erasure exemption keeps",
+    ]);
+    expect(retentionOf(1, 0)).toEqual(["retention", "  c-0  1y, 0 keys past it, next due never"]);
+    expect(retentionOf(0, 0)).toEqual(["retention: not configured"]);
+  });
+});
+
 describe("formatSchema", () => {
   it("says so when no database has tables to version", () => {
     expect(formatSchema([])).toBe("  no tables to version");

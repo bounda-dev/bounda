@@ -1569,23 +1569,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
 
     const events = createGlobalStream({ eventStore: written.eventStore });
-    const getLag = async (): Promise<AppLag> => ({
-      ...(await dispatcher.getLag()),
+    // What this instance knows of its own, beside what the dispatcher reads.
+    const known = (): Pick<AppLag, "waitingDeadlines" | "forgetLedger"> => ({
       waitingDeadlines: worker.waitingDeadlines(),
       forgetLedger:
         reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
+    });
+    const getLag = async (): Promise<AppLag> => ({
+      ...(await dispatcher.getLag()),
+      ...known(),
       personalDataBackfill: backfill === undefined ? null : await backfill.status(),
     });
     const status = (): Promise<AppStatus> =>
       readAppStatus({
         config,
         logger,
-        lag: async () => ({
-          ...(await dispatcher.standings()),
-          waitingDeadlines: worker.waitingDeadlines(),
-          forgetLedger:
-            reconciliation === undefined ? null : { reconciled: reconciliation.reconciled() },
-        }),
+        lag: async () => ({ ...(await dispatcher.standings()), ...known() }),
         backfill: backfill === undefined ? undefined : () => backfill.status(),
         failures: written.subscriberFailures,
         restores,

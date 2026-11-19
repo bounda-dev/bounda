@@ -27,8 +27,9 @@ export interface FormatSchemaFunction {
 
 const UNREADABLE = "its store could not be read, see the logs";
 
-const unreadable = (part: unknown): part is UnreadableStatus =>
-  typeof part === "object" && part !== null && "unreadable" in part;
+// A part that may be `null` is checked for it first.
+const unreadable = (part: object | number): part is UnreadableStatus =>
+  typeof part === "object" && "unreadable" in part;
 
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 

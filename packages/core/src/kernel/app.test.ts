@@ -756,6 +756,8 @@ describe("implementations built by create", () => {
       logger,
     });
     const read = await app.status();
+    const { personalDataBackfill: _backfill, ...lag } = await app.getLag();
+    expect(read.lag).toEqual(lag);
     down = true;
     const status = await app.status();
     expect(unreadableParts(read)).toEqual([]);
