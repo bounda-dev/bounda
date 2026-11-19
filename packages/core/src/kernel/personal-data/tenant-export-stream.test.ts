@@ -17,6 +17,7 @@ import { buildReadModels } from "../read-model/build-read-models.ts";
 import { sealedTable } from "../read-model/sealed-table.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
+import { recipientsOf } from "../recipients/listing.ts";
 import { keysOver, testWrapping } from "../test-support.ts";
 import { sealAnswer } from "./answers.ts";
 import { createAtRestSealer } from "./at-rest.ts";
@@ -878,6 +879,52 @@ describe("streamTenantExport", () => {
       ["before", ["note"]],
       ["after", []],
     ]);
+  });
+
+  it("lists each person's recipients as recipientsOf does, their disclosures read once a page", async () => {
+    const { exported, register, storage } = await setup();
+    for (const person of ["c-1", "c-2", "c-3"]) await register(person, `${person}@example.com`);
+    const disclosed = (person: string, category: string) => ({
+      person,
+      port: "customer.mailer",
+      recipient: "Postmark",
+      kind: "processor",
+      country: "US",
+      safeguard: "standard-contractual-clauses",
+      category,
+    });
+    await storage.recipients.disclose(
+      [disclosed("c-1", "default"), disclosed("c-1", "invoices"), disclosed("c-3", "default")],
+      "2026-01-02T00:00:00.000Z",
+    );
+    // A port declared after the persons' data existed, presumed to hold it.
+    await storage.recipients.declare(
+      [{ port: "customer.crm", categories: ["default"] }],
+      1,
+      "2026-01-03T00:00:00.000Z",
+    );
+    await storage.recipients.presumeThrough(3);
+    const calls: string[] = [];
+    const { disclosures, disclosuresOfMany } = storage.recipients;
+    Object.assign(storage.recipients, {
+      disclosures: async (person: string) => {
+        calls.push(`one ${person}`);
+        return disclosures(person);
+      },
+      disclosuresOfMany: async (persons: readonly string[]) => {
+        calls.push(`page ${persons.join(",")}`);
+        return disclosuresOfMany(persons);
+      },
+    });
+    const persons = of(await exported({ batchSize: 2 }), "person").map(({ person }) => person);
+    expect(calls).toEqual(["page c-1,c-2", "page c-3"]);
+    calls.length = 0;
+    for (const { personId, recipients } of persons) {
+      expect(recipients).toEqual(
+        await recipientsOf({ storage, recipients: NO_RECIPIENTS, categories, personId }),
+      );
+    }
+    expect(persons.map(({ recipients }) => recipients.length)).toEqual([1, 0, 1]);
   });
 
   it("reads each store of persons once a page, and once more only when a page was full", async () => {

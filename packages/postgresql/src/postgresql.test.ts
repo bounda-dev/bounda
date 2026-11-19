@@ -1010,6 +1010,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         'CREATE INDEX events_person_idx ON public.events USING btree (person, "position")',
         'CREATE UNIQUE INDEX events_pkey ON public.events USING btree ("position")',
         "CREATE INDEX idempotency_keys_expires_at_idx ON public.idempotency_keys USING btree (expires_at)",
+        'CREATE INDEX idempotency_keys_key_bytes_idx ON public.idempotency_keys USING btree (key COLLATE "C")',
         "CREATE INDEX idempotency_keys_persons_idx ON public.idempotency_keys USING gin (persons jsonb_path_ops)",
         "CREATE UNIQUE INDEX idempotency_keys_pkey ON public.idempotency_keys USING btree (key)",
         "CREATE UNIQUE INDEX inbox_pkey ON public.inbox USING btree (handler, event_id)",

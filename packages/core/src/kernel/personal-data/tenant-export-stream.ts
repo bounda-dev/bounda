@@ -11,6 +11,7 @@ import type { Clock } from "../../contracts/clock.ts";
 import { ConcurrencyError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { type ExportOutcome, MAX_ACCESS_PERSONS } from "../../modules/audit.ts";
+import type { PersonRecipient } from "../../modules/recipient.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
@@ -20,7 +21,7 @@ import type { ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { openRow } from "../read-model/sealed-rows.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
-import { recipientsOf } from "../recipients/listing.ts";
+import { recipientsOfPage } from "../recipients/listing.ts";
 import { isRecord } from "../shared/merge-fields.ts";
 import { openAnswer } from "./answers.ts";
 import type { PersonalCategories } from "./categories.ts";
@@ -323,6 +324,13 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
     );
     for await (const page of ids) {
       const keys = await storage.personalKeys.listMany(page);
+      const listed = await recipientsOfPage({
+        storage,
+        recipients,
+        categories,
+        persons: page,
+        keys,
+      });
       yield await built(page, async (personId) => {
         // A person the store keeps a row of is read before their id comes out of the merge.
         const person = rows.get(personId) ?? null;
@@ -352,7 +360,8 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
               person?.restrictedSince == null
                 ? []
                 : processingRestrictionsOf(await storage.persons.restrictions(personId)),
-            recipients: await recipientsOf({ storage, recipients, categories, personId }),
+            // Every person of the page is listed.
+            recipients: listed.get(personId) as readonly PersonRecipient[],
           },
         };
       });

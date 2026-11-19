@@ -81,6 +81,30 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       ]);
     });
 
+    it("lists the disclosures of several persons at once, as disclosures does for each, past what a statement binds", async () => {
+      const many = Array.from({ length: 205 }, (_, index) => `m-${index}`);
+      const rows = [
+        disclosure({ port: "order.mailer" }),
+        disclosure(),
+        disclosure({ person: "c-2", category: "profile" }),
+        ...many.map((person) => disclosure({ person })),
+      ];
+      await storage.recipients.disclose(rows, at(1));
+      const listed = await storage.recipients.disclosuresOfMany([
+        "c-1",
+        "c-2",
+        "c-3",
+        "c-1",
+        ...many,
+      ]);
+      expect([...listed.keys()].sort()).toEqual(["c-1", "c-2", ...many].sort());
+      for (const person of ["c-1", "c-2", "m-0", "m-204"]) {
+        expect(listed.get(person)).toEqual(await storage.recipients.disclosures(person));
+      }
+      expect(listed.get("c-1")).toHaveLength(2);
+      expect(await storage.recipients.disclosuresOfMany([])).toEqual(new Map());
+    });
+
     it("forgets a person's disclosures of the categories named, or all of them", async () => {
       await storage.recipients.disclose(
         [

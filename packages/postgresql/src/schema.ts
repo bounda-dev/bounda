@@ -341,15 +341,20 @@ export const readPersonsIndexStatement: ReadPersonsIndexStatementFunction = (tab
 
 export interface ScanIndexStatementsFunction {
   (
-    tables: Pick<StorageTables, "deadLetters" | "scheduledCommands" | "persons" | "personalKeys">,
+    tables: Pick<
+      StorageTables,
+      "deadLetters" | "scheduledCommands" | "persons" | "personalKeys" | "idempotencyKeys"
+    >,
   ): readonly string[];
 }
 
-// Migration 12 of the storage tables: what a scan of every record pages by, compared by bytes as
-// SQLite compares them, which the primary keys, in the database's collation, cannot serve.
+// Migration 12 of the storage tables: what a scan of every record, and the listing of remembered
+// answers, page by, compared by bytes as SQLite compares them, which the primary keys, in the
+// database's collation, cannot serve.
 export const scanIndexStatements: ScanIndexStatementsFunction = (tables) => [
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.deadLetters, "id_bytes")} ON ${tables.deadLetters} ("id" COLLATE "C")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "key_bytes")} ON ${tables.scheduledCommands} ("dedupe_key" COLLATE "C")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.persons, "person_bytes")} ON ${tables.persons} ("person" COLLATE "C")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "person_bytes")} ON ${tables.personalKeys} ("person" COLLATE "C")`,
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "key_bytes")} ON ${tables.idempotencyKeys} ("key" COLLATE "C")`,
 ];

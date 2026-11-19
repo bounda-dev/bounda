@@ -328,6 +328,7 @@ const trackedRecipients = (kept: KeptRecipientStore, undos: Undos): RecipientSto
   return {
     disclose: through(store.disclose),
     disclosures: store.disclosures,
+    disclosuresOfMany: store.disclosuresOfMany,
     forget: through(store.forget),
     declare: through(store.declare),
     declared: store.declared,

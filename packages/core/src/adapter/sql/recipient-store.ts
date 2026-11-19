@@ -43,6 +43,9 @@ const declaredRecipient = (row: Readonly<Record<string, unknown>>): DeclaredReci
   declaredAt: String(row.declared_at),
 });
 
+// Within the hundred parameters a Durable Object's SQLite binds to one statement.
+const PERSONS_PER_STATEMENT = 90;
+
 /**
  * `RecipientStore` on the SQL SQLite and PostgreSQL both speak. A disclosure is inserted with
  * `ON CONFLICT DO NOTHING` first, so two writers recording the same one tell which of them added
@@ -90,6 +93,22 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
         );
       }
       return added;
+    },
+    disclosuresOfMany: async (persons) => {
+      const listed = new Map<string, StoredDisclosure[]>();
+      const distinct = [...new Set(persons)];
+      for (let start = 0; start < distinct.length; start += PERSONS_PER_STATEMENT) {
+        const chunk = distinct.slice(start, start + PERSONS_PER_STATEMENT);
+        const rows = await db.all(
+          `SELECT ${DISCLOSURE_COLUMNS} FROM ${disclosures} WHERE "person" IN (${chunk.map((_, index) => p(index + 1)).join(", ")}) ORDER BY "person", "port", "recipient", "category"`,
+          chunk,
+        );
+        for (const row of rows) {
+          const disclosure = storedDisclosure(row);
+          listed.set(disclosure.person, [...(listed.get(disclosure.person) ?? []), disclosure]);
+        }
+      }
+      return listed;
     },
     disclosures: async (person) =>
       (
