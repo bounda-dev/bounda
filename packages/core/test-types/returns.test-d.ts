@@ -1,5 +1,6 @@
 import type {
   ClassifiesReturns,
+  InventoryCategory,
   PersonalCategoryName,
   PersonalDataReturned,
   PortCall,
@@ -123,5 +124,11 @@ describe("rawReadOf", () => {
       NonNullable<NonNullable<Parameters<RawReadOf>[1]>["categories"]>[number]
     >().toEqualTypeOf<PersonalCategoryName>();
     expectTypeOf<ReturnType<RawReadOf>>().toEqualTypeOf<Promise<void>>();
+  });
+});
+
+describe("the record of processing", () => {
+  it("lists, per category, the ports whose calls return its data", () => {
+    expectTypeOf<InventoryCategory["ports"]>().toEqualTypeOf<readonly string[]>();
   });
 });

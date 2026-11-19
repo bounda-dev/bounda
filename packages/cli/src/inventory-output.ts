@@ -178,6 +178,9 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
       `    for: ${purposesOf(category)}`,
       `    from: ${sourcesOf(category)}`,
     );
+    if (category.ports.length > 0) {
+      lines.push(`    returned by: ${category.ports.join(", ")}`);
+    }
     if (category.special !== null) {
       lines.push(`    special categories (article 9): ${specialOf(category.special)}`);
     }
@@ -276,6 +279,7 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
         "Purposes",
         "Processed for",
         "Sources",
+        "Returned by ports",
         "Time limit for erasure",
         "Kept past erasure (article 17(3))",
         "Fields",
@@ -288,6 +292,9 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
         purposesOf(category),
         processedForOf(category),
         sourcesOf(category),
+        category.ports.length === 0
+          ? "none"
+          : category.ports.map((port) => `\`${port}\``).join(", "),
         retentionOf(category.retention),
         exemptionsOf(category),
         String(category.fields),

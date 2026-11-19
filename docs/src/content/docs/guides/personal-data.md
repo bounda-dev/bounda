@@ -1958,9 +1958,10 @@ database. The record lists:
 
 - each [category](#categories), with its basis, the [special categories of data and the criminal
   data](#special-categories-and-criminal-data) it holds, with their condition or authority, its
-  purposes and those the GDPR has [rules for](#purposes-and-exemptions), its sources, how long after
-  the person's last activity it is kept, the exemptions of article 17(3) that keep it past erasure,
-  and how many fields are in it;
+  purposes and those the GDPR has [rules for](#purposes-and-exemptions), its sources, the ports
+  whose calls [return its data](/guides/calling-the-outside-world/#personal-data-a-port-returns),
+  how long after the person's last activity it is kept, the exemptions of article 17(3) that keep it
+  past erasure, and how many fields are in it;
 - each [automated decision](#categories) the app declares, with its categories, logic,
   significance, consequences, whether it profiles, its ground, the special data it decides on and
   its measures;

@@ -492,8 +492,8 @@ on each record the fields a restriction covers.
 Prints the record of processing activities of article 30 of the GDPR, as far as the modules and the
 configuration say it: the categories of personal data with their basis, the special categories of
 data and the criminal data they hold, with their condition or authority, their purposes, those the
-GDPR has rules for, their sources and retention and the exemptions of article 17(3) that keep them
-past erasure, the automated decisions, with the special data they decide on and their measures, every
+GDPR has rules for, their sources, the ports whose calls return their data, their retention and the
+exemptions of article 17(3) that keep them past erasure, the automated decisions, with the special data they decide on and their measures, every
 event, command, process state and read model that holds personal data, whose and where, every
 recipient, what the runtime keeps about persons and for how long, and the fields marked
 `notPersonal`. It loads the project as `bounda rebuild` does and opens no database; in a Cloudflare

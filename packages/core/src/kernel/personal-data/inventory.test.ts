@@ -92,7 +92,27 @@ const registry = {
           handlers: {},
         },
       },
-      ports: { mailer: { memory: { default: {} } } },
+      ports: {
+        mailer: { memory: { default: {} } },
+        crm: { memory: { default: {} } },
+        archive: { memory: { default: {} } },
+        ledger: { memory: { default: {} } },
+      },
+      returns: {
+        crm: {
+          returnsPersonalData: {
+            find: { persons: () => null, categories: ["invoices", "contact"] },
+            ping: false,
+          },
+        },
+        archive: {
+          returnsPersonalData: {
+            first: { persons: () => null, categories: ["contact"] },
+            second: { persons: () => null, categories: ["contact"] },
+          },
+        },
+        ledger: { returnsPersonalData: false },
+      },
       recipients: {
         mailer: {
           ...handlers,
@@ -109,6 +129,8 @@ const registry = {
   },
   readModels: {
     customers: {
+      ports: { lookup: { memory: { default: {} } } },
+      returns: { lookup: { returnsPersonalData: { persons: () => null } } },
       view: {
         fields: ({ f }: FieldsArgs) => ({
           id: f.string().primaryKey().notPersonal(),
@@ -146,7 +168,7 @@ const config: Config = {
 
 // Built in each test, which a mutation tool's run of that test sees.
 describe("personalDataInventory", () => {
-  it("lists every category with its basis, purposes, sources, retention, exemptions from erasure and how many fields it holds", () => {
+  it("lists every category with its basis, purposes, sources, the ports that return its data, retention, exemptions from erasure and how many fields it holds", () => {
     const inventory = personalDataInventory({ registry, config });
     const said = {
       special: null,
@@ -164,6 +186,7 @@ describe("personalDataInventory", () => {
         processedFor: [],
         erasureExemptions: [],
         sources: [],
+        ports: ["customers.lookup"],
         retention: "2y",
         fields: 2,
       },
@@ -173,6 +196,7 @@ describe("personalDataInventory", () => {
         ...said,
         processedFor: ["direct-marketing"],
         erasureExemptions: [],
+        ports: ["customer.archive", "customer.crm"],
         retention: "730d",
         fields: 2,
       },
@@ -182,6 +206,7 @@ describe("personalDataInventory", () => {
         ...said,
         processedFor: [],
         erasureExemptions: [{ exemption: "legal-obligation", article: "17(3)(b)" }],
+        ports: ["customer.crm"],
         retention: "6y",
         fields: 1,
       },
