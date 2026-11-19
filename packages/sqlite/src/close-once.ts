@@ -23,13 +23,15 @@ let patched = false;
 
 // libSQL's native module closes a connection twice when its own handle is the last thing holding
 // it (tursodatabase/libsql#2251, fixed in crate 0.10, which no npm `libsql` 0.5 is built from yet:
-// drop this once one is), whether the database is closed or collected unclosed. The second close
-// reads freed memory, which on Windows ends the process with an access violation. A statement still
-// holding the connection turns the native close into a letting go, and the connection is closed
-// once, when that statement is collected. A database dropped without a close is closed that way
-// before its handle can be collected: the registry keeps the handle until then. Patches the copy of
-// the module @libsql/client loads; if that copy cannot be found, say in a bundle, the adapter works
-// as before rather than failing.
+// drop this once one is), whether the database is closed, collected unclosed, or left open when the
+// process exits, which collects every handle left. The second close reads freed memory, which on
+// Windows ends the process with an access violation. A statement still holding the connection
+// turns the native close into a letting go, and the connection is closed once, when that statement
+// is collected. A database dropped without a close is closed that way before its handle can be
+// collected: the registry keeps the handle until then, and the process closes those left as it
+// exits, since the registry's callbacks no longer run then. Patches the copy of the module
+// @libsql/client loads; if that copy cannot be found, say in a bundle, the adapter works as before
+// rather than failing.
 export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
   if (patched) return;
   patched = true;
@@ -49,13 +51,27 @@ export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
       close.call(database);
     }
   };
-  const abandoned = new FinalizationRegistry<unknown>((db) => {
+  // The handles of the connections not closed yet, collected or not.
+  const unclosed = new Set<unknown>();
+  const closeHandle = (db: unknown): void => {
+    unclosed.delete(db);
     closeHolding({ db, open: true } as NativeDatabase);
+  };
+  const abandoned = new FinalizationRegistry<unknown>(closeHandle);
+  process.once("exit", () => {
+    for (const db of unclosed) {
+      try {
+        closeHandle(db);
+      } catch {
+        // The process ends either way: the others are still closed.
+      }
+    }
   });
   const tracked = new WeakSet<NativeDatabase>();
   const track = (database: NativeDatabase): void => {
     if (tracked.has(database)) return;
     tracked.add(database);
+    unclosed.add(database.db);
     abandoned.register(database, database.db, database);
   };
   prototype.prepare = function (this: NativeDatabase, sql: string): unknown {
@@ -68,6 +84,7 @@ export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
   };
   prototype.close = function (this: NativeDatabase): void {
     abandoned.unregister(this);
+    unclosed.delete(this.db);
     closeHolding(this);
   };
 };

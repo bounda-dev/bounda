@@ -31,56 +31,92 @@ afterAll(async () => {
   });
 });
 
-// Opens and closes storage on a file again and again, in a process of its own, each time once the
-// statements it ran have been collected: then nothing but the connection's own handle holds it
-// when the client closes. Each time it also drops a client in memory without closing it, whose
-// connection is in the same state when collected. Resolves how the process ended.
-const closeAfterCollecting = (path: string): Promise<string> =>
+// Runs `script` in a process of its own, where freed memory faults when it can, and resolves how the
+// process ended and what it printed.
+const run = (script: string): Promise<{ readonly ended: string; readonly printed: string }> =>
   new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [
-        "--expose-gc",
-        "--input-type=module",
-        "-e",
-        `import { setImmediate } from "node:timers/promises";
-        import { createClient } from "@libsql/client";
-        import { sqlite } from "./index.ts";
-        const collect = async () => {
-          for (let round = 0; round < 3; round += 1) {
-            globalThis.gc();
-            await setImmediate();
-          }
-        };
-        for (let time = 0; time < ${CLOSES}; time += 1) {
-          const storage = await sqlite({ path: ${JSON.stringify(path)} }).createStorage();
-          await storage.eventStore.lastPosition();
-          await createClient({ url: ":memory:" }).execute("SELECT 1");
-          await collect();
-          await storage.close();
-        }
-        await collect();`,
-      ],
-      {
-        cwd: import.meta.dirname,
-        env: { ...process.env, ...FREED_MEMORY_FAULTS },
-        stdio: ["ignore", "ignore", "pipe"],
-      },
-    );
+    const child = spawn(process.execPath, ["--expose-gc", "--input-type=module", "-e", script], {
+      cwd: import.meta.dirname,
+      env: { ...process.env, ...FREED_MEMORY_FAULTS },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let printed = "";
     let errors = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      printed += chunk;
+    });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       errors += chunk;
     });
     child.once("error", reject);
     child.once("close", (code, signal) => {
-      resolve(code === 0 ? "exited" : `ended with ${signal ?? code}: ${errors.slice(-2000)}`);
+      resolve({
+        ended: code === 0 ? "exited" : `ended with ${signal ?? code}: ${errors.slice(-2000)}`,
+        printed,
+      });
     });
   });
+
+// Opens and closes storage on a file again and again, each time once the statements it ran have
+// been collected: then nothing but the connection's own handle holds it when the client closes.
+// Each time it also drops a client in memory without closing it, whose connection is in the same
+// state when collected.
+const closeAfterCollecting = async (path: string): Promise<string> =>
+  (
+    await run(`import { setImmediate } from "node:timers/promises";
+    import { createClient } from "@libsql/client";
+    import { sqlite } from "./index.ts";
+    const collect = async () => {
+      for (let round = 0; round < 3; round += 1) {
+        globalThis.gc();
+        await setImmediate();
+      }
+    };
+    for (let time = 0; time < ${CLOSES}; time += 1) {
+      const storage = await sqlite({ path: ${JSON.stringify(path)} }).createStorage();
+      await storage.eventStore.lastPosition();
+      await createClient({ url: ":memory:" }).execute("SELECT 1");
+      await collect();
+      await storage.close();
+    }
+    await collect();`)
+  ).ended;
+
+// Exits with storage open on a file, a client in memory dropped without closing it, and a database
+// left open, which an exit listener added after the patch's own finds closed.
+const exitWithConnectionsOpen = (path: string) =>
+  run(`import { writeSync } from "node:fs";
+  import { createRequire } from "node:module";
+  import { createClient } from "@libsql/client";
+  import { sqlite } from "./index.ts";
+  const Database = createRequire(createRequire(import.meta.url).resolve("@libsql/client"))("libsql");
+  const storage = await sqlite({ path: ${JSON.stringify(path)} }).createStorage();
+  await storage.eventStore.lastPosition();
+  await createClient({ url: ":memory:" }).execute("SELECT 1");
+  globalThis.gc();
+  const left = new Database(":memory:");
+  left.prepare("SELECT 1");
+  process.once("exit", () => {
+    try {
+      left.prepare("SELECT 1");
+      writeSync(1, "left open");
+    } catch {
+      writeSync(1, "closed");
+    }
+  });`);
 
 describe("closing a libSQL file", () => {
   it("closes each connection once, closed or dropped, even when nothing but its own handle holds it", async () => {
     expect(await closeAfterCollecting(join(directory, "closed.db"))).toBe("exited");
+  });
+
+  it("closes each connection once as the process exits with it open, collected or not", async () => {
+    expect(await exitWithConnectionsOpen(join(directory, "left.db"))).toEqual({
+      ended: "exited",
+      printed: "closed",
+    });
   });
 });
 
