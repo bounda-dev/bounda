@@ -95,7 +95,7 @@ const earliest = (...times: readonly (number | null)[]): number | null =>
  * resolved after the read comes due a whole retention later.
  *
  * The store leaves every letter that names a person with a restriction, checked as it removes.
- * Those past the retention are read here, a page a pass, once they come due and again every
+ * Those past the retention are read here, a page a pass, once the first comes due and again every
  * `HELD_RECHECK_MS`, since a restriction lifted in another instance tells nobody here: a
  * restriction keeps a letter only while what it holds of the person still opens. The fields a
  * scheduled command sealed open for as long as the letter names them, since a forget removes the

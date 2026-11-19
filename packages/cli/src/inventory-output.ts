@@ -61,7 +61,7 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
   "dead-letters": {
     holds:
       "the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4))",
-    kept: "until an operator resolves them, then for as long as the app's retention keeps them, unreadable once their person is forgotten",
+    kept: "for good once retried or discarded, unreadable once their person is forgotten",
   },
   "subscriber-failures": {
     holds:
