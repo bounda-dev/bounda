@@ -31,7 +31,11 @@ export const restrictionViewOf: RestrictionViewOfFunction = (includeRestricted) 
   return includeRestricted === "erasure-exemption" ? "retained" : "all";
 };
 
-export const isRestrictionBasis = (basis: unknown): basis is RestrictionBasis =>
+export interface IsRestrictionBasisFunction {
+  (basis: unknown): basis is RestrictionBasis;
+}
+
+export const isRestrictionBasis: IsRestrictionBasisFunction = (basis): basis is RestrictionBasis =>
   RESTRICTION_BASES.includes(basis as RestrictionBasis);
 
 export interface CheckIncludeRestrictedFunction {

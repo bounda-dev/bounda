@@ -43,7 +43,8 @@ export type AccessOutcome = "ok" | "failed";
 /**
  * How a call that reads personal data ended: as `AccessOutcome` says, or `refused` when it
  * rejected before it opened anything, so its error quotes nothing it read: an argument that does
- * not validate, a read model whose database is not served, a dead letter already settled.
+ * not validate, a read model whose database is not served, a dead letter already settled, a read
+ * of stored letters or failures, still sealed, that failed.
  */
 export type ReadOutcome = AccessOutcome | "refused";
 

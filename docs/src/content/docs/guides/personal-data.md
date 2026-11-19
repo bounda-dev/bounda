@@ -1360,7 +1360,8 @@ out, `failed` when it rejected after reading, since its error may quote what it 
 handler's `cannot reach ana@example.com` does, and `refused` when it rejected before it opened
 anything: an argument that does not validate, an `includeRestricted` that is no basis, a read
 model whose database is [not served](/guides/backups/#read-models-in-another-database), a
-dead letter already settled or not there. A refused call names no one, since it opened nothing,
+dead letter already settled or not there, a read of stored letters or failures, still sealed, that
+failed. A refused call names no one, since it opened nothing,
 but the person an export or `recipientsOf` was asked for, and keeps in `restricted` the basis it
 named, when it is one. A `get` of a dead letter or a subscriber's failure that finds none is
 recorded `ok`, naming no one, as a query that matches no row is. So every call of an operation in

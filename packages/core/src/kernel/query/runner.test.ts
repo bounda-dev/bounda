@@ -238,6 +238,10 @@ describe("query runner", () => {
     const unknown = runner.run({ type: "Nope", payload: {} });
     await expect(unknown).rejects.toBeInstanceOf(NotFoundError);
     await expect(unknown).rejects.toThrow('Unknown query "Nope"');
+    // The basis is checked once the query is known, among what it checks before it reads.
+    await expect(
+      runner.run({ type: "Nope", payload: {}, includeRestricted: "curiosity" as never }),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });
 

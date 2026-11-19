@@ -500,6 +500,39 @@ describe("the access log", () => {
     ]);
   });
 
+  it("records a read of stored letters or failures that fails before it opened any as refused, naming no one", async () => {
+    const base = memory();
+    const down = new Error("store down");
+    const failing: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        return {
+          ...storage,
+          deadLetterStore: { ...storage.deadLetterStore, list: () => Promise.reject(down) },
+          subscriberFailures: { ...storage.subscriberFailures, get: () => Promise.reject(down) },
+        };
+      },
+    };
+    const records: OnPersonalDataAccessArgs[] = [];
+    const { app } = await createTestApp({
+      registry: registryWith(),
+      adapter: failing,
+      onPersonalDataAccess: (args) => {
+        records.push(args);
+      },
+    });
+
+    await expect(app.deadLetters.list()).rejects.toBe(down);
+    await expect(app.subscriberFailures.get("projection:customerDirectory")).rejects.toBe(down);
+    expect(records.map(({ access }) => [access.operation, access.persons, access.outcome])).toEqual(
+      [
+        ["deadLetters.list", [], "refused"],
+        ["subscriberFailures.get", [], "refused"],
+      ],
+    );
+  });
+
   it("records a query refused because its read model's database went back as refused, naming no one", async () => {
     const records: PersonalDataAccess[] = [];
     const directory = memory();

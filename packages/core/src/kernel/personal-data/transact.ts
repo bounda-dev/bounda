@@ -33,7 +33,11 @@ export interface CheckPersonIdFunction {
   (personId: unknown, subject: string): asserts personId is string;
 }
 
-export const isPersonId = (personId: unknown): personId is string =>
+export interface IsPersonIdFunction {
+  (personId: unknown): personId is string;
+}
+
+export const isPersonId: IsPersonIdFunction = (personId): personId is string =>
   typeof personId === "string" && personId !== "";
 
 export const checkPersonId: CheckPersonIdFunction = (personId, subject) => {

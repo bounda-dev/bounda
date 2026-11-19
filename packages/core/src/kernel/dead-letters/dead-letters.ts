@@ -191,33 +191,32 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   const restrictedRecord = (asked: unknown, letThrough: Iterable<string>) =>
     isRestrictionBasis(asked) ? { basis: asked, persons: [...letThrough] } : null;
 
-  // Each call is recorded however it settles: a retry that fails again rejects with the handler's
-  // error, which may quote the person. One refused before it read the letter, or that found none,
-  // names no one.
-  const letterCall = (
-    operation: "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard",
-    id: string,
-    asked?: unknown,
-  ) => {
-    const call = { letter: null as StoredDeadLetter | null, letThrough: new Set<string>() };
-    const record = (outcome: ReadOutcome) =>
+  // Each call is recorded however it settles, with the letter it read: a retry that fails again
+  // rejects with the handler's error, which may quote the person. One refused before it read the
+  // letter, or that found none, names no one.
+  const letterRecord =
+    (
+      operation: "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard",
+      id: string,
+      letter: StoredDeadLetter | null,
+      asked?: unknown,
+      letThrough: ReadonlySet<string> = new Set(),
+    ) =>
+    (outcome: ReadOutcome) =>
       recordAccess({
         operation,
         detail: { letter: id },
         actor,
-        persons: call.letter === null ? [] : personsOf(call.letter),
+        persons: letter === null ? [] : personsOf(letter),
         outcome,
-        restricted: restrictedRecord(asked, call.letThrough),
+        restricted: restrictedRecord(asked, letThrough),
       });
-    return { call, record };
-  };
 
   const calls: DeadLetters = {
     list: async (args, options) => {
       const asked = options?.includeRestricted;
-      let letters: readonly StoredDeadLetter[] = [];
       const letThrough = new Set<string>();
-      const record = (outcome: ReadOutcome) =>
+      const record = (letters: readonly StoredDeadLetter[]) => (outcome: ReadOutcome) =>
         recordAccess({
           operation: "deadLetters.list",
           detail: { letters: letters.length },
@@ -226,16 +225,15 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
           outcome,
           restricted: restrictedRecord(asked, letThrough),
         });
-      const { includeRestricted, stored } = await checked(record, async () => ({
+      const { includeRestricted, letters } = await checked(record([]), async () => ({
         includeRestricted: checkIncludeRestricted("deadLetters.list", asked),
-        stored: await storage.deadLetterStore.list(args),
+        letters: await storage.deadLetterStore.list(args),
       }));
-      letters = stored;
       const view = restrictionViewOf(includeRestricted);
       // Each person's key and restrictions read once for the whole page.
       const keyOf = sealedKeys(storage.personalKeys);
       const restricted = restrictedAmong(storage.persons);
-      return recorded(record, async () => {
+      return recorded(record(letters), async () => {
         const read = await Promise.all(
           letters.map((letter) => withParked(letter, keyOf, view, restricted, letThrough)),
         );
@@ -246,34 +244,37 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
     count: (args) => storage.deadLetterStore.count(args),
     get: async (id, options) => {
       const asked = options?.includeRestricted;
-      const { call, record } = letterCall("deadLetters.get", id, asked);
-      const { includeRestricted, letter } = await checked(record, async () => ({
-        includeRestricted: checkIncludeRestricted("deadLetters.get", asked),
-        letter: await storage.deadLetterStore.get(id),
-      }));
+      const letThrough = new Set<string>();
+      const { includeRestricted, letter } = await checked(
+        letterRecord("deadLetters.get", id, null, asked),
+        async () => ({
+          includeRestricted: checkIncludeRestricted("deadLetters.get", asked),
+          letter: await storage.deadLetterStore.get(id),
+        }),
+      );
+      const record = letterRecord("deadLetters.get", id, letter, asked, letThrough);
       // Recorded as a query that matches no row is.
       if (letter === null) {
         await record("ok");
         return null;
       }
-      call.letter = letter;
       return recorded(record, async () => {
         const read = await withParked(
           letter,
           undefined,
           restrictionViewOf(includeRestricted),
           undefined,
-          call.letThrough,
+          letThrough,
         );
         await vouch?.();
         return read;
       });
     },
     retry: async (id) => {
-      const { call, record } = letterCall("deadLetters.retry", id);
-      const letter = await checked(record, () => failedLetter(id));
-      call.letter = letter;
-      return recorded(record, async () => {
+      const letter = await checked(letterRecord("deadLetters.retry", id, null), () =>
+        failedLetter(id),
+      );
+      return recorded(letterRecord("deadLetters.retry", id, letter), async () => {
         await retries.retry(letter, actor).catch((error: unknown) => {
           throw thrownValue(error);
         });
@@ -290,10 +291,10 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       });
     },
     discard: async (id) => {
-      const { call, record } = letterCall("deadLetters.discard", id);
-      const letter = await checked(record, () => failedLetter(id));
-      call.letter = letter;
-      return recorded(record, async () => {
+      const letter = await checked(letterRecord("deadLetters.discard", id, null), () =>
+        failedLetter(id),
+      );
+      return recorded(letterRecord("deadLetters.discard", id, letter), async () => {
         const at = clock.now();
         if (letter.kind === "process") await processes.abandon({ letter, at, actor });
         else await storage.deadLetterStore.updateStatus(id, "discarded", at);
