@@ -6,6 +6,7 @@ import { memory } from "../../memory/index.ts";
 import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import { PartialBatchError } from "../dispatch/delivery.ts";
 import { createDisposableKey, type PersonalKey } from "../personal-data/crypto.ts";
+import { readersOf, readUnder } from "../personal-data/reads.ts";
 import type { ProjectionRuntime, ReadModelRuntime } from "../read-model/build-read-models.ts";
 import { sealedLayoutOf } from "../read-model/sealed-rows.ts";
 import { KeysMissingError } from "../read-model/sealing-keys.ts";
@@ -208,6 +209,49 @@ describe("projectBatch with sealed fields", () => {
       });
       expect(asked).toEqual(expected);
     }
+  });
+});
+
+describe("projectBatch with a raw read", () => {
+  it("notes on what a projection throws whom rawReadOf named, under the key a value of theirs goes under", async () => {
+    const { layout, storage } = await setUp();
+    const inForce = await createDisposableKey();
+    const kept = { ...(await createDisposableKey()), retained: true };
+    const keys = {
+      forWrite: async (_person: string, category: string) =>
+        category === "invoices" ? kept : inForce,
+      forOpen: async () => null,
+      kept: async () => false,
+    };
+    const failure = new Error("cannot list them");
+    const rejected = await storage
+      .transact({
+        subscriber: "s",
+        wait: true,
+        work: (transaction) =>
+          projectBatch({
+            tracer,
+            readModel: projecting(async ({ client }) => {
+              await (
+                client as { rawReadOf(persons: unknown, options?: object): Promise<void> }
+              ).rawReadOf(["bea", "cai"], { categories: ["default", "invoices"] });
+              throw failure;
+            }),
+            events: [event("CustomerRegistered")],
+            transaction,
+            sealing: { layout, keys: keys as never, indexer: null },
+            logger: silentLogger,
+            errorText: "omit",
+            budget,
+          }),
+      })
+      .catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(PartialBatchError);
+    expect(readUnder({ person: "bea", error: failure })).toEqual([
+      { person: "bea", fingerprint: inForce.fingerprint },
+      { person: "bea", fingerprint: kept.fingerprint, retained: true },
+    ]);
+    expect(readersOf(failure, [])).toEqual(["bea", "cai"]);
   });
 });
 

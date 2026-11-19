@@ -3,6 +3,7 @@ import { isRetainedKey, type RestrictionView } from "../../adapter/storage/restr
 import type { ReadClient, Table } from "../../adapter/storage/table.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { BlindIndexer } from "../personal-data/blind-index.ts";
+import type { ReturnedRead } from "../ports/returns.ts";
 import { sealedClient } from "../read-model/sealed-client.ts";
 import {
   type OpenedRow,
@@ -41,6 +42,8 @@ export interface ReadingArgs {
   readonly keys: SealingKeyRing;
   readonly indexer: BlindIndexer | null;
   readonly view: RestrictionView;
+  // What `client.rawReadOf` says a raw read returned.
+  readonly rawRead?: (reads: readonly ReturnedRead[]) => Promise<void>;
 }
 
 export interface ReadingFunction {
@@ -64,7 +67,7 @@ const primaryKeyOf = (layout: SealedLayout): string =>
  * without them is refused. `count` reads no row, so it notes no one; taking `client.raw` is noted
  * as a read of rows whose persons are unknown when a personal field is kept in the clear.
  */
-export const reading: ReadingFunction = ({ storage, layout, keys, indexer, view }) => {
+export const reading: ReadingFunction = ({ storage, layout, keys, indexer, view, rawRead }) => {
   const { table: all, client, restricted } = storage;
   const restricting = layout.person !== null;
   const table = view === "all" || !restricting ? all : restricted[view];
@@ -179,6 +182,7 @@ export const reading: ReadingFunction = ({ storage, layout, keys, indexer, view 
       onRaw: () => {
         if (layout.clear) unattributed = true;
       },
+      rawRead,
     }),
   };
 };

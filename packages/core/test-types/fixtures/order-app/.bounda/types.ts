@@ -20,6 +20,7 @@ export type OrderEvents = {
 };
 export type OrderPorts = {
   readonly auditLog: import("../app/domain/order/audit-log.ts").AuditLog;
+  readonly contacts: import("../app/domain/order/contacts.ts").Contacts;
   readonly inventory: import("../app/domain/order/inventory.ts").Inventory;
   readonly mailer: import("../app/domain/order/mailer.ts").Mailer;
   readonly reminders: import("../app/domain/order/reminders.ts").Reminders;
@@ -36,6 +37,13 @@ export type OrderClassification = [
 export type OrderRecipients = [
   Expect<core.NotifiesRecipient<"order.mailer", typeof import("../app/domain/order/mailer.ts"), import("../app/domain/order/mailer.ts").Mailer>>,
 ];
+export type OrderPortReturns = [
+  Expect<core.ClassifiesReturns<"order.auditLog", typeof import("../app/domain/order/audit-log.ts"), import("../app/domain/order/audit-log.ts").AuditLog>>,
+  Expect<core.ClassifiesReturns<"order.contacts", typeof import("../app/domain/order/contacts.ts"), import("../app/domain/order/contacts.ts").Contacts>>,
+  Expect<core.ClassifiesReturns<"order.inventory", typeof import("../app/domain/order/inventory.ts"), import("../app/domain/order/inventory.ts").Inventory>>,
+  Expect<core.ClassifiesReturns<"order.mailer", typeof import("../app/domain/order/mailer.ts"), import("../app/domain/order/mailer.ts").Mailer>>,
+  Expect<core.ClassifiesReturns<"order.reminders", typeof import("../app/domain/order/reminders.ts"), import("../app/domain/order/reminders.ts").Reminders>>,
+];
 
 export type Events = {
   readonly customer: CustomerEvents;
@@ -45,6 +53,7 @@ export type Events = {
 export type PortsConfig = {
   readonly order: {
     readonly auditLog?: "memory";
+    readonly contacts?: "memory";
     readonly inventory: "fake" | "http" | "memory";
     readonly mailer?: "memory";
     readonly reminders?: "fake";
@@ -57,6 +66,7 @@ export type PortsConfig = {
 export type TestPorts = {
   readonly order?: {
     readonly auditLog?: "memory" | OrderPorts["auditLog"];
+    readonly contacts?: "memory" | OrderPorts["contacts"];
     readonly inventory?: "fake" | "http" | "memory" | OrderPorts["inventory"];
     readonly mailer?: "memory" | OrderPorts["mailer"];
     readonly reminders?: "fake" | OrderPorts["reminders"];
@@ -113,6 +123,9 @@ export type OrderSummaryForgetting = Expect<
   >
 >;
 export type OrderSummaryClassification = Expect<core.ClassifiesColumns<"orderSummary", typeof import("../app/read/order-summary/view.ts")>>;
+export type OrderSummaryPortReturns = [
+  Expect<core.ClassifiesReturns<"orderSummary.rates", typeof import("../app/read/order-summary/rates.ts"), import("../app/read/order-summary/rates.ts").Rates>>,
+];
 
 export type Queries = core.QueriesFacadeOf<{
   readonly getCustomer: typeof import("../app/read/customer-directory/queries/get-customer.ts");

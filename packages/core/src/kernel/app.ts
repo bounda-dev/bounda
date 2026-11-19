@@ -130,6 +130,7 @@ import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor } from "./policy/executor.ts";
 import { createPolicySubscriber } from "./policy/runner.ts";
 import { createPorts, type TestChoice } from "./ports/ports.ts";
+import { buildPortReturns } from "./ports/returns.ts";
 import { buildProcesses } from "./process/build-processes.ts";
 import { createProcessRunner } from "./process/runner.ts";
 import { createProjectionSubscriber, projectionSubscriberName } from "./projection/runner.ts";
@@ -951,6 +952,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
     });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
+    const returns = buildPortReturns({ registry, categories: personalCategories });
     const notices = createRecipientNotices({
       tracer: appTracer,
       recipients,
@@ -958,6 +960,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       config,
       clock,
       recordAccess,
+      returns,
     });
     const delivery = createRecipientDelivery({
       recipients,
@@ -1101,6 +1104,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
       recordAccess,
       disclosures,
+      returns,
       marks,
       earlierAnswers,
       onRejection: (rejection) => {
@@ -1116,6 +1120,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       recordAccess,
       errorText,
       disclosures,
+      returns,
+      persons: storage.persons,
       // The dispatcher is built further down; a query only asks once the app is assembled.
       standing: (subscriber) => dispatcher.positionOf(subscriber),
       vouch: {
@@ -1138,6 +1144,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       intentions,
       recordAccess,
       disclosures,
+      returns,
     });
     const policies = buildPolicies({ registry, aggregates });
     const policyExecutor = createPolicyExecutor({
@@ -1153,6 +1160,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       keys: storage.personalKeys,
       recordAccess,
       disclosures,
+      returns,
     });
     const reactive = [
       {

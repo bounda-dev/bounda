@@ -28,8 +28,13 @@ const collectImports = (model: ProjectModel): readonly ImportEntry[] => {
   // otherwise share both the alias and the prefix that makes aliases unique.
   const addPorts = ({ name, ports }: Pick<AggregateModel | ReadModelModel, "name" | "ports">) => {
     for (const port of ports) {
-      // A port that declares a recipient is read at run time, for its declaration and handlers.
-      add(joinKeys(name, port.key), port.key, port.path, port.recipient ? "namespace" : "type");
+      // A port that declares a recipient, or what its calls return, is read at run time.
+      add(
+        joinKeys(name, port.key),
+        port.key,
+        port.path,
+        port.recipient || port.returns ? "namespace" : "type",
+      );
       for (const implementation of port.implementations) {
         add(joinKeys(name, port.key, keyOf(implementation.name)), port.key, implementation.path);
       }
@@ -159,6 +164,20 @@ const emitRecipients = (
   ];
 };
 
+/**
+ * The modules of the ports that export `returnsPersonalData`, checked against `PortReturnsModule`
+ * by the registry's type.
+ */
+const emitReturns = (
+  owner: Pick<AggregateModel | ReadModelModel, "ports">,
+  aliases: Aliases,
+  indent: string,
+): string[] => {
+  const ports = owner.ports.filter((port) => port.returns);
+  if (ports.length === 0) return [];
+  return [`${indent}returns: ${record(ports.map((port) => [port.key, aliases.of(port.path)]))},`];
+};
+
 const emitProcesses = (aggregate: AggregateModel, aliases: Aliases, indent: string): string => {
   if (aggregate.processes.length === 0) return "{}";
   const inner = `${indent}  `;
@@ -215,6 +234,7 @@ const emitAggregate = (
     ...emitUpcasts(aggregate, aliases, indent),
     ...emitPorts(aggregate, aliases, indent),
     ...emitRecipients(aggregate, aliases, indent),
+    ...emitReturns(aggregate, aliases, indent),
     `${indent}commands: ${emitEntries(aggregate.commands, aliases)},`,
     `${indent}policies: ${emitEntries(aggregate.policies, aliases)},`,
     `${indent}processes: ${emitProcesses(aggregate, aliases, indent)},`,
@@ -239,6 +259,7 @@ const emitReadModel = (readModel: ReadModelModel, aliases: Aliases): string => {
     `${indent}view: ${aliases.of(readModel.view.path)},`,
     ...emitPorts(readModel, aliases, indent),
     ...emitRecipients(readModel, aliases, indent),
+    ...emitReturns(readModel, aliases, indent),
     `${indent}projections: ${emitProjections(readModel, aliases)},`,
     `${indent}queries: ${record(readModel.queries.map((query) => [query.key, aliases.of(query.path)]))},`,
     "    },",

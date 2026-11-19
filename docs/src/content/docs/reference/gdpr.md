@@ -193,7 +193,8 @@ it. Text the app's code wrote, an error's or a remembered rejection's, may quote
 read, so Bounda seals it under everyone whose data the work read: the error text of a [dead
 letter](/guides/dead-letters/#what-a-letter-holds) and of a subscriber's last failure under the
 person its event names, the one its process state names, those whose aggregates the commands it
-dispatched loaded and those whose rows a projection read; a remembered rejection under the person
+dispatched loaded, those whose rows a projection read and those a port's answer or a raw read
+named; a remembered rejection under the person
 the command touches and everyone whose data the state it was decided on held. A value sealed under
 the person alone comes out; one sealed under someone else too reads `null`, and its record names
 it in `withheld`, with `reason: "rights-of-others"` and `article: "15(4)"`, so the controller sees
@@ -202,10 +203,12 @@ what was held back and why. See [someone else's data](/guides/personal-data/#som
 Weighing the other person's rights against the person's is the controller's, and recital 63 asks
 that it never end in refusing the person everything: `includeWithheld` opens the held-back values,
 still marked, for the controller to read before deciding what to release, and the access log names
-the other persons whose data they may quote. What Bounda cannot see stays the controller's to read
-before handing an export over: a field the app marked for one person that holds another's, such as
-a note that names a friend, and text a handler built from what a port returned or a projection
-read through `client.raw`.
+the other persons whose data they may quote. What a port returned, or a projection read through
+`client.raw`, counts as read of whom the code names, in the port's `returnsPersonalData`, which
+every port whose calls answer text must export, and with `client.rawReadOf`. What Bounda cannot
+see stays the controller's to read before handing an export over: a field the app marked for one
+person that holds another's, such as a note that names a friend, and a raw read the code does not
+declare.
 
 What the export cannot hold is what Bounda does not know of: a field left unmarked, a read model
 without a field marked `.person()`, and whatever a port sent out. An app that owes the person more

@@ -58,9 +58,10 @@ is what is not sealed:
 - **Fields kept in the clear.** A field marked `.personal({ clear: true })` is stored as it is, so
   a route that opens the read model's database, a script on its tables, or a query's `client.raw`
   reads it without a record; a query that takes `client.raw` on such a read model is recorded with
-  `unattributed: true`.
+  `unattributed: true`, naming only whom it declares with `client.rawReadOf`.
 - **Read models without personal fields.** A query of one is not recorded, even when its rows
-  hold a person's id: an id alone is what every event already carries.
+  hold a person's id: an id alone is what every event already carries. One whose port's answer or
+  raw read names someone is.
 - **Calls refused before they are known to read personal data.** A query whose name no read model
   serves, an actor that `as` refuses, a request a host refuses before it reaches the app (the
   tenant it names, the RPC that carries it), and a query, an export, `recipientsOf` or a read of
@@ -81,7 +82,7 @@ query reads through its `table` and its `client`, and nothing opens their sealed
 basis named:
 
 - **Fields kept in the clear** are read as they are by code that reads a read model directly and by
-  a query's `client.raw`.
+  a query's `client.raw`, which refuses only the restricted persons `client.rawReadOf` names.
 - **SQL a query writes** has its `LIMIT` applied before the restricted rows are dropped, so a page
   may come back short; `table` pages exactly.
 

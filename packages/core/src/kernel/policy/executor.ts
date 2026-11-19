@@ -1,4 +1,3 @@
-import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -13,6 +12,10 @@ import { openedUnder, withoutRetained } from "../personal-data/event-store.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import { personTouchedByEvent } from "../personal-data/persons.ts";
 import { refuseRestrictedRead } from "../personal-data/refusal.ts";
+import { readReturned } from "../personal-data/returned.ts";
+import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
+import { bindPorts } from "../ports/bind.ts";
+import type { PortReturns } from "../ports/returns.ts";
 import { type Disclosures, openedOf } from "../recipients/gate.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
@@ -62,11 +65,13 @@ export interface CreatePolicyExecutorArgs {
   readonly logger: Logger;
   readonly intentions: ForgetIntentions;
   /**
-   * The keys a run on restricted data reads the categories of.
+   * The keys a run on restricted data reads the categories of, and what its ports return is read
+   * under.
    */
-  readonly keys: Pick<PersonalKeyStore, "find">;
+  readonly keys: Pick<PersonalKeys, "find" | "heldAllOf" | "create">;
   readonly recordAccess: RecordAccess;
   readonly disclosures?: Disclosures | undefined;
+  readonly returns?: PortReturns | undefined;
 }
 
 export interface CreatePolicyExecutorFunction {
@@ -86,6 +91,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   keys,
   recordAccess,
   disclosures,
+  returns,
 }) => ({
   run: async ({ policy, event: delivered, attempt, retryId, actor, within }) => {
     // What a forgetting kept reads as `null` to a policy that declares no basis for it.
@@ -94,13 +100,16 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
     // The runtime's own events name no person and carry ids alone: telling those the data went to
     // of a restriction or a forgetting is what a policy on them is for.
     const person = personTouchedByEvent({ aggregates, event });
-    const letThrough = await refuseRestrictedRead({
-      persons: within.persons,
-      keys,
-      opened: openedUnder(event),
-      touches: person === null ? [] : [person],
-      basis: policy.restricted ?? undefined,
-    });
+    // The restricted persons `basis` let the run read, its ports' answers included.
+    const letThrough = new Set(
+      await refuseRestrictedRead({
+        persons: within.persons,
+        keys,
+        opened: openedUnder(event),
+        touches: person === null ? [] : [person],
+        basis: policy.restricted ?? undefined,
+      }),
+    );
     const idempotencyKey = deriveIdempotencyKey({
       kind: "policy",
       handler: policy.name,
@@ -142,12 +151,23 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
           run: async () => {
             await policy.handler(
               withPorts(
-                disclosures?.bind(policy.aggregate, policy.ports, {
+                bindPorts({ disclosures, returns }, policy.aggregate, policy.ports, {
                   opened: () => openedOf(within.reads()),
                   basis: policy.restricted ?? undefined,
                   handler: policy.name,
                   actor: context.actor,
-                }) ?? policy.ports,
+                  read: async (reads) => {
+                    within.read(
+                      await readReturned({
+                        persons: within.persons,
+                        keys,
+                        basis: policy.restricted ?? undefined,
+                        reads,
+                        letThrough,
+                      }),
+                    );
+                  },
+                }),
                 {
                   event,
                   commands: reaction.commands,
@@ -167,19 +187,21 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
     });
     const basis = policy.restricted;
     try {
-      await (basis === null || letThrough.length === 0
+      await (basis === null
         ? handled
         : recorded(
-            (outcome, error) =>
-              recordAccess({
+            async (outcome, error) => {
+              if (letThrough.size === 0) return;
+              await recordAccess({
                 operation: "policy",
                 detail: { handler: policy.name },
                 actor: context.actor,
-                persons: letThrough,
+                persons: [...letThrough],
                 outcome,
                 error,
-                restricted: { basis, persons: letThrough },
-              }),
+                restricted: { basis, persons: [...letThrough] },
+              });
+            },
             () => handled,
           ));
     } catch (error) {

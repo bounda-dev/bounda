@@ -116,6 +116,85 @@ corrected. The port declares it in its own module, with the handlers that tell i
 records whose data each call hands it and tells it when it has to know: see
 [Recipients](/guides/personal-data/#recipients).
 
+## Personal data a port returns
+
+What a call answers, Bounda cannot read: a CRM's contact, a directory's entry, a provider's
+profile. A handler that quotes it in an error, or in a rejection its command remembers, writes
+someone's personal data into text Bounda keeps, and only the port knows whose. So a port whose
+calls answer what can hold text says, in its own module, whose personal data each call returns:
+
+```ts
+// app/domain/customer/crm.ts
+import type { Port } from "./+types/crm";
+
+export interface Contact {
+  readonly customerId: string;
+  readonly email: string;
+}
+
+export interface Crm {
+  contact(customerId: string): Promise<Contact | null>;
+  household(customerId: string): Promise<readonly Contact[]>;
+  ping(): Promise<boolean>;
+}
+
+export const returnsPersonalData = {
+  contact: { persons: ({ result }) => result?.customerId, categories: ["contact"] },
+  household: {
+    persons: ({ args: [customerId], result }) => [customerId, ...result.map((c) => c.customerId)],
+    personsOnError: ({ args: [customerId] }) => customerId,
+    categories: ["contact"],
+  },
+} satisfies Port.ReturnsPersonalData;
+```
+
+Each method maps to `false`, when it returns nobody's data, or to what it returns: `persons`, a
+function of the call's `args` and its `result`, the promise awaited, that names the person ids,
+one, several or none, `null` and `undefined` naming nobody; `personsOnError`, the same of a call
+that failed, naming whom its `error` may quote, nobody when left out; and the
+[categories](/guides/personal-data/#categories) of the data, `default` when left out. A port that
+is a function takes one such declaration, or `false`, for its calls, and a port whose calls return
+nobody's data at all says `export const returnsPersonalData = false`.
+
+The run that called it then counts as having read that data, as if it had opened fields of those
+persons of those categories, each under the key they hold for the category, created when they hold
+none, as a field of theirs would be:
+
+- the text of a dead letter, of a subscriber's failure or of a remembered rejection is encrypted
+  under their keys too, so it is listed in their export, withheld from anyone else's (article
+  15(4)), unreadable once they are forgotten, and covered by their restriction: see
+  [someone else's data](/guides/personal-data/#someone-elses-data);
+- a person whose processing is [restricted](/guides/personal-data/#restricting-processing) in one
+  of the categories, or as a whole, makes the call throw `ProcessingRestrictedError` before the
+  handler sees the answer, unless the command names a basis with `processRestricted`, the policy or
+  process declares one, or the query asks with `includeRestricted`, and the access log records whom
+  that basis let through; a recipient's handler, which tells of a restriction, is never refused;
+- a call that tells a [recipient](/guides/personal-data/#what-was-disclosed) afterwards records
+  the data as disclosed to it, and a command's events are appended only while the persons still
+  hold the keys the data was read under;
+- a query's access record names them.
+
+What a port returns comes from somewhere other than the person, as articles 14 and 15(1)(g) see it:
+name the provider among the category's [`sources`](/guides/personal-data/#categories), as
+`{ kind: "third-party", name: "HubSpot" }`. A person whose data a command, a policy, a process
+step or a recipient's handler read through a port holds a key of its categories from then on, so
+[their export](/guides/personal-data/#exporting-a-persons-data) lists those categories with their
+sources; a query keeps nothing of what it reads, so it gives them none, and the [record of processing
+activities](/guides/personal-data/#the-record-of-processing-activities) lists, under each category,
+the ports that return its data.
+
+The generator types `Port.ReturnsPersonalData` with the port's interface, so `args` and `result`
+are typed, a method the port does not have or a category the app does not declare does not
+compile, and a method that answers synchronously can only be `false`: what a call returns is read
+once its promise settles. `.bounda/types.ts` fails to compile at `<Module>PortReturns` while a
+method, or a port that is a function, answers what can hold text and the module does not export
+`returnsPersonalData`, naming it, and while a port that is a function has a method that answers
+text, since its declaration says what its calls return; split such a port in two. The app refuses
+to start, with `ConfigurationError`, on a declaration that is not `false` or an object, without a
+`persons` function, or with categories the app does not declare. A `persons` that names something
+other than an id, or a method declared as returning data that answers without a promise, makes the
+call throw `ConfigurationError`.
+
 ## An account per tenant
 
 Some providers differ by tenant: each venue charges through its own Stripe account, each customer

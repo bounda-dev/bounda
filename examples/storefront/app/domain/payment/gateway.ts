@@ -1,3 +1,5 @@
+import type { Port } from "./+types/gateway";
+
 export interface CreateIntentArgs {
   readonly paymentId: string;
   readonly orderId: string;
@@ -19,3 +21,6 @@ export interface Gateway {
   createIntent(args: CreateIntentArgs): Promise<{ readonly intentId: string }>;
   refund(args: RefundArgs): Promise<{ readonly refundId: string }>;
 }
+
+// The provider answers its own ids, nothing of the customer's.
+export const returnsPersonalData = false satisfies Port.ReturnsPersonalData;

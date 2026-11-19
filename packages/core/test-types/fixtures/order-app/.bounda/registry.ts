@@ -7,7 +7,9 @@ import type * as orderAuditLog from "../app/domain/order/audit-log.ts";
 import * as cancelOrder from "../app/domain/order/commands/cancel-order.ts";
 import * as payOrder from "../app/domain/order/commands/pay-order.ts";
 import * as placeOrder from "../app/domain/order/commands/place-order.ts";
+import * as orderContacts from "../app/domain/order/contacts.ts";
 import * as orderAuditLogMemory from "../app/domain/order/infrastructure/audit-log/memory.ts";
+import * as orderContactsMemory from "../app/domain/order/infrastructure/contacts/memory.ts";
 import * as orderInventoryFake from "../app/domain/order/infrastructure/inventory/fake.ts";
 import * as orderInventoryHttp from "../app/domain/order/infrastructure/inventory/http.ts";
 import * as orderInventoryMemory from "../app/domain/order/infrastructure/inventory/memory.ts";
@@ -66,6 +68,9 @@ export const registry = {
         auditLog: {
           memory: orderAuditLogMemory satisfies ImplementationModule<orderAuditLog.AuditLog>,
         },
+        contacts: {
+          memory: orderContactsMemory satisfies ImplementationModule<orderContacts.Contacts>,
+        },
         inventory: {
           fake: orderInventoryFake satisfies ImplementationModule<orderInventory.Inventory>,
           http: orderInventoryHttp satisfies ImplementationModule<orderInventory.Inventory>,
@@ -79,6 +84,7 @@ export const registry = {
         },
       },
       recipients: { mailer: orderMailer },
+      returns: { contacts: orderContacts },
       commands: { cancelOrder: { module: cancelOrder }, payOrder: { module: payOrder }, placeOrder: { module: placeOrder } },
       policies: { boundaAuditOnPersonalDataForgotten: { module: boundaAuditOnPersonalDataForgotten, source: "bounda" }, boundaAuditOnProcessingRestrictionLifted: { module: boundaAuditOnProcessingRestrictionLifted, source: "bounda" }, customerGreetOnCustomerRegistered: { module: customerGreetOnCustomerRegistered, source: "customer" }, notifyOnOrderPlaced: { module: notifyOnOrderPlaced }, sendReceiptOnOrderPaid: { module: sendReceiptOnOrderPaid } },
       processes: {

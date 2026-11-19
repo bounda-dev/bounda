@@ -315,25 +315,27 @@ const RECIPIENT_ARGS: readonly (readonly [string, string])[] = [
   ["OnTenantForgottenArgs", "core.RecipientTenantForgottenArgs"],
 ];
 
-// A port module that declares a recipient: its declaration, and what each handler receives, the
-// port itself under its name.
-const recipientFiles = (
-  owner: AggregateModel | ReadModelModel,
-  typesPath: string,
-): GeneratedFile[] =>
-  owner.ports
-    .filter((port) => port.recipient)
-    .map((port) =>
-      render(plusTypesPath(port.path), typesPath, {
-        imports: { generated: true, module: null },
-        extraTypes: [`type Ports = { readonly ${port.key}: ${portsType(owner)}["${port.key}"] };`],
-        namespace: "Port",
-        members: [
-          ["Recipient", "core.RecipientDeclaration"],
-          ...RECIPIENT_ARGS.map(([name, type]) => [name, `${type}<Ports>`] as const),
-        ],
-      }),
-    );
+// Every port module: what its calls return of whom, and, for one that declares a recipient, its
+// declaration, and what each handler receives, the port itself under its name.
+const portFiles = (owner: AggregateModel | ReadModelModel, typesPath: string): GeneratedFile[] =>
+  owner.ports.map((port) =>
+    render(plusTypesPath(port.path), typesPath, {
+      imports: { generated: true, module: null },
+      extraTypes: port.recipient
+        ? [`type Ports = { readonly ${port.key}: ${portsType(owner)}["${port.key}"] };`]
+        : [],
+      namespace: "Port",
+      members: [
+        ["ReturnsPersonalData", `core.ReturnsPersonalData<${portsType(owner)}["${port.key}"]>`],
+        ...(port.recipient
+          ? [
+              ["Recipient", "core.RecipientDeclaration"] as const,
+              ...RECIPIENT_ARGS.map(([name, type]) => [name, `${type}<Ports>`] as const),
+            ]
+          : []),
+      ],
+    }),
+  );
 
 /**
  * One `+types/<name>.ts` next to every user module, instantiating the generic argument types of
@@ -360,11 +362,11 @@ export const emitPlusTypes: EmitPlusTypesFunction = ({ model, typesPath }) => [
     ...commandFiles(aggregate, typesPath),
     ...policyFiles(model, aggregate, typesPath),
     ...processFiles(model, aggregate, typesPath),
-    ...recipientFiles(aggregate, typesPath),
+    ...portFiles(aggregate, typesPath),
   ]),
   ...model.readModels.flatMap((readModel) => [
     ...readModelFiles(model, readModel, typesPath),
-    ...recipientFiles(readModel, typesPath),
+    ...portFiles(readModel, typesPath),
   ]),
   ...personalDataFiles(model, typesPath),
 ];
