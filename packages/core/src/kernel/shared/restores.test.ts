@@ -9,6 +9,7 @@ import {
   GENERATION_INTERVAL_MS,
   RESTORE_GENERATION,
   RESTORE_MARK,
+  RESTORE_UNCLAIMED,
   RESTORES_FOUND,
 } from "./restores.ts";
 
@@ -57,6 +58,99 @@ describe("createRestoreWatch", () => {
     expect(found.map((each) => each?.first).sort()).toEqual([false, true]);
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
     expect(await Promise.all([one.check(at(2)), other.check(at(2))])).toEqual([null, null]);
+  });
+
+  // What `Adapter.restore` leaves: the copy counted past the database, for the first to take.
+  const restoredInPlace = async (store: CheckpointStore, restores: number) => {
+    await store.set(RESTORES_FOUND, restores);
+    await store.set(RESTORE_GENERATION, 7);
+    await store.set(RESTORE_UNCLAIMED, restores);
+  };
+
+  it.each([true, false])(
+    "finds at start a restore counted in place, and takes it once a start went through, counting it no more (ledger: %s)",
+    async (marks) => {
+      const { checkpointStore, watchOver } = await setUp({ marks });
+      await restoredInPlace(checkpointStore, 3);
+      // A start that fails before it went through leaves it for the next.
+      expect(await watchOver().start()).toEqual({ first: true });
+      const through = watchOver();
+      expect(await through.start()).toEqual({ first: true });
+      await through.started();
+      await through.started();
+      expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
+      expect(await checkpointStore.get(RESTORE_UNCLAIMED)).toBe(0);
+      expect(await watchOver().start()).toBeNull();
+    },
+  );
+
+  it("still counts at start a restore the ledger's mark tells, over a restore counted in place the copy held", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    await restoredInPlace(checkpointStore, 3);
+    await ledger.raiseMark(RESTORE_MARK, 20);
+    const watch = watchOver();
+    expect(await watch.start()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(4);
+    await watch.started();
+    expect(await watchOver().start()).toBeNull();
+  });
+
+  it("takes nothing once a start found nothing, and logs a store it could not take it in", async () => {
+    const { checkpointStore, entries, watchOver } = await setUp({
+      marks: false,
+      wrap: (store) => ({
+        ...store,
+        compareAndSet: async (subscriber, expected, position) => {
+          if (subscriber === RESTORE_UNCLAIMED) throw new Error("store is down");
+          return store.compareAndSet(subscriber, expected, position);
+        },
+      }),
+    });
+    const nothing = watchOver();
+    expect(await nothing.start()).toBeNull();
+    await nothing.started();
+    expect(entries).toEqual([]);
+    await restoredInPlace(checkpointStore, 2);
+    const found = watchOver();
+    await found.start();
+    await found.started();
+    expect(entries).toEqual([
+      expect.objectContaining({
+        level: "error",
+        message: "the restore found at start could not be taken",
+        fields: expect.objectContaining({ errorName: "Error" }),
+      }),
+    ]);
+  });
+
+  it("lets one running instance take a restore counted in place, the others finding it after", async () => {
+    const { checkpointStore, watchOver } = await setUp({ marks: false });
+    const one = watchOver();
+    const other = watchOver();
+    await one.check(at(0));
+    await other.check(at(0));
+    await restoredInPlace(checkpointStore, 1);
+    const found = await Promise.all([one.check(at(1)), other.check(at(1))]);
+    expect(found.map((each) => each?.first).sort()).toEqual([false, true]);
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+  });
+
+  it("lets no running instance take a count a copy left behind, the restore it finds being another", async () => {
+    const { checkpointStore, watchOver } = await setUp({ marks: false });
+    const watch = watchOver();
+    await watch.check(at(0));
+    await checkpointStore.set(RESTORES_FOUND, 2);
+    await checkpointStore.set(RESTORE_UNCLAIMED, 1);
+    expect(await watch.check(at(1))).toEqual({ first: false });
+    expect(await checkpointStore.get(RESTORE_UNCLAIMED)).toBe(1);
+  });
+
+  it("takes nothing a copy of an older count left behind", async () => {
+    const { checkpointStore, watchOver } = await setUp({ marks: false });
+    await checkpointStore.set(RESTORES_FOUND, 4);
+    await checkpointStore.set(RESTORE_UNCLAIMED, 3);
+    expect(await watchOver().start()).toBeNull();
+    expect(await checkpointStore.get(RESTORE_UNCLAIMED)).toBe(3);
   });
 
   it("logs a store it could not read, and finds nothing", async () => {

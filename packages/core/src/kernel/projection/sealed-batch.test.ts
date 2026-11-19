@@ -231,6 +231,7 @@ describe("createProjectionSubscriber", () => {
           queries: {},
         } as ReadModelRuntime,
         sealing: { keys: eachPerson(() => []), indexer: null, redactions: async () => [] },
+        marked: false,
         logger: silentLogger,
         errorText: "omit",
         budget,

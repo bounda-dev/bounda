@@ -1,5 +1,7 @@
 /// <reference types="node" />
+import { existsSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { ConfigurationError } from "../../contracts/errors.ts";
 import type { Adapter } from "../adapter.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
@@ -82,6 +84,25 @@ export const createNodeSqliteAdapter: CreateNodeSqliteAdapterFunction = (path = 
     acquire: () => ({ db: database, raw: db, isBusy }),
     release: async () => {},
     ephemeral: path === ":memory:",
+    openCopy: async (copy) => {
+      if (!existsSync(copy)) throw new ConfigurationError(`There is no copy at ${copy}`);
+      const source = new DatabaseSync(copy, { readOnly: true });
+      try {
+        source.prepare("SELECT count(*) FROM sqlite_master").get();
+      } catch (error) {
+        source.close();
+        throw new ConfigurationError(`The copy at ${copy} does not open as a database`, {
+          cause: error,
+        });
+      }
+      return {
+        db: {
+          all: async (sql: string, params: readonly unknown[]) =>
+            source.prepare(sql).all(...bind(params)) as Record<string, unknown>[],
+        },
+        close: async () => source.close(),
+      };
+    },
   });
   return { adapter, db, transactions: () => opened };
 };

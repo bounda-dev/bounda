@@ -43,9 +43,12 @@ Within one process, on a file or in memory, the adapter runs its statements, and
 sends through `client.raw`, one after another around its write transactions, so they never wait
 on a lock of their own. A file is opened in WAL mode, so other processes keep reading while one
 writes, and a statement waits up to five seconds for another process's write instead of failing
-at once. A file not in WAL mode yet, such as one just restored from a backup, is switched by
+at once. A statement that waited longer fails, and the adapter opens its connections afresh, as
+libSQL leaves the one that waited inside a transaction nobody else sees. A file not in WAL mode
+yet, such as one just restored from a backup, is switched by
 whichever process opens it first; others starting at the same moment try again for those same
-five seconds rather than fail. That is enough for a web process, a worker
+five seconds rather than fail. `bounda restore` puts a copy back in place under a running app, as
+[Backups and restores](/guides/backups/#restoring) says. That is enough for a web process, a worker
 and `bounda rebuild` on one file; for heavier contention, or for more than one machine, use
 [PostgreSQL](/adapters/postgresql/).
 

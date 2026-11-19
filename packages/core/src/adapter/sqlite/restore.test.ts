@@ -56,15 +56,10 @@ describe("restoring a node:sqlite database", () => {
         backUp: async () => {
           db.exec(`VACUUM INTO '${copy}'`);
         },
-        // In place, through SQLite's backup API, as the sqlite3 shell's .restore does: the app's
-        // connection sees the copy at its next statement.
+        // In place, in one write transaction on the app's own connection, as `bounda restore`
+        // does: the app sees the database as it was or as the copy has it.
         restore: async () => {
-          const source = new DatabaseSync(copy, { readOnly: true });
-          try {
-            await backup(source, path);
-          } finally {
-            source.close();
-          }
+          await adapter.restore?.({ copy });
           return adapter;
         },
       };
@@ -212,6 +207,47 @@ describe("a restore under a running app", () => {
       db.prepare('SELECT "forgotten_at" FROM "bounda_tenancy"').get()?.forgotten_at,
     ).not.toBeNull();
     await app.stop();
+  });
+
+  it("in place through the adapter, without a forget ledger, is counted once and taken by the instance that finds it first, running or started after", async () => {
+    for (const running of [true, false]) {
+      const path = fresh("store");
+      const copy = fresh("backup");
+      const { adapter, db } = createNodeSqliteAdapter(path);
+      const config = { storage: adapter, runtime: { personalData: createEphemeralKeys() } };
+      const before = await createApp({ registry, config });
+      await register(before, "c-1");
+      db.exec(`VACUUM INTO '${copy}'`);
+      await register(before, "c-2");
+      const { logger, entries } = createRecordingLogger();
+      if (running) {
+        const app = await createApp({ registry, config, logger });
+        await adapter.restore?.({ copy });
+        await app.runUntilIdle();
+        expect((await app.status()).restoresFound).toBe(1);
+        await app.stop();
+      } else {
+        await before.stop();
+        await adapter.restore?.({ copy });
+        const app = await createApp({ registry, config, logger });
+        await app.runUntilIdle();
+        expect((await app.status()).restoresFound).toBe(1);
+        await app.stop();
+      }
+      expect(
+        entries.filter(
+          ({ message }) =>
+            message === "the database went back to an earlier copy; background jobs start over",
+        ),
+      ).toEqual([
+        {
+          level: "warn",
+          message: "the database went back to an earlier copy; background jobs start over",
+          fields: { first: true },
+        },
+      ]);
+      if (running) await before.stop();
+    }
   });
 
   it("without a forget ledger, is logged as bringing persons back", async () => {

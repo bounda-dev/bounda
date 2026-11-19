@@ -37,6 +37,10 @@ export const createMemoryRestrictedPersons: CreateMemoryRestrictedPersonsFunctio
         positions = new Map([...positions, [person, position]]);
         return true;
       },
+      clear: async () => {
+        rows = [];
+        positions = new Map();
+      },
       request: async (person, restrictions) => {
         rows = rows.filter((row) => row.person !== person);
         for (const { ground, categories } of restrictions) {

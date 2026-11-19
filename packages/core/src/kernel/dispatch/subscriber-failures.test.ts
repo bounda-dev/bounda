@@ -169,4 +169,39 @@ describe("createSubscriberFailures", () => {
       failures.get("projection:a", { includeRestricted: "curiosity" as never }),
     ).rejects.toThrow("subscriberFailures.get names a basis restricted data is not read on");
   });
+
+  it("records a read it refuses once read as failed, and hands nothing out", async () => {
+    const storage = await memory().createStorage();
+    await storage.subscriberFailures.record({
+      subscriber: "projection:x",
+      position: 1,
+      eventId: "e-1",
+      eventType: "OrderPlaced",
+      person: null,
+      errorName: "TypeError",
+      errorMessage: "x is not a function",
+      failedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const outcomes: unknown[] = [];
+    const failures = createSubscriberFailures({
+      tracer,
+      store: storage.subscriberFailures,
+      keys: testWrapping().over(storage.personalKeys),
+      persons: storage.persons,
+      actor: undefined,
+      recordAccess: async ({ operation, outcome }) => {
+        outcomes.push([operation, outcome]);
+      },
+      errorText: "omit",
+      vouch: async () => {
+        throw new Error("restored");
+      },
+    });
+    await expect(failures.list()).rejects.toThrow("restored");
+    await expect(failures.get("projection:x")).rejects.toThrow("restored");
+    expect(outcomes).toEqual([
+      ["subscriberFailures.list", "failed"],
+      ["subscriberFailures.get", "failed"],
+    ]);
+  });
 });

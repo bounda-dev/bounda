@@ -56,6 +56,10 @@ export const createSqlRestrictedPersonsStore: CreateSqlRestrictedPersonsStoreFun
       ]);
       return Number(held?.position) === position;
     },
+    clear: async () => {
+      await db.run(`DELETE FROM ${table}`, []);
+      await db.run(`DELETE FROM ${positions}`, []);
+    },
     request: async (person, restrictions) => {
       await db.run(`DELETE FROM ${table} WHERE "person" = ${p(1)}`, [person]);
       for (const { ground, categories } of restrictions) {

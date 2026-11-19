@@ -105,6 +105,7 @@ describe("readAppStatus", () => {
       failures: subscriberFailures,
       restores: {
         start: async () => null,
+        started: async () => undefined,
         check: async () => null,
         declare: async () => ({ first: true }),
         flush: async () => undefined,

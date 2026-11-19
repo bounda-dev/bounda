@@ -80,6 +80,9 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   CONCURRENCY_CONFLICT: 409,
   CHAIN_DEPTH_EXCEEDED: 409,
   TENANT_FORGOTTEN: 410,
+  // What a restore found keeps from serving until it is settled: the same request succeeds then.
+  READ_MODEL_RESTORING: 503,
+  RESTORE_UNRECONCILED: 503,
   HANDLER_TIMEOUT: 504,
 };
 

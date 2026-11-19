@@ -92,6 +92,11 @@ export interface CreateDeadLettersArgs {
    */
   readonly actor?: string | undefined;
   readonly recordAccess: RecordAccess;
+  /**
+   * Throws to refuse what a read would hand out, once it read: the access log records the
+   * refusal as the read's outcome.
+   */
+  readonly vouch?: () => Promise<void>;
 }
 
 export interface CreateDeadLettersFunction {
@@ -113,6 +118,7 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
   tracer,
   actor,
   recordAccess,
+  vouch,
 }) => {
   const failedLetter = async (id: string): Promise<StoredDeadLetter> => {
     const letter = await storage.deadLetterStore.get(id);
@@ -230,10 +236,13 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
             outcome,
             restricted: restrictedRecord(includeRestricted, letThrough),
           }),
-        () =>
-          Promise.all(
+        async () => {
+          const read = await Promise.all(
             letters.map((letter) => withParked(letter, keyOf, view, restricted, letThrough)),
-          ),
+          );
+          await vouch?.();
+          return read;
+        },
       );
     },
     count: (args) => storage.deadLetterStore.count(args),
@@ -248,14 +257,17 @@ export const createDeadLetters: CreateDeadLettersFunction = ({
       return recordedLetter(
         "deadLetters.get",
         letter,
-        () =>
-          withParked(
+        async () => {
+          const read = await withParked(
             letter,
             undefined,
             restrictionViewOf(includeRestricted),
             undefined,
             letThrough,
-          ),
+          );
+          await vouch?.();
+          return read;
+        },
         includeRestricted,
         letThrough,
       );

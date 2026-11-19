@@ -18,6 +18,13 @@ export const RESTORE_GENERATION = "runtime:generation";
 export const RESTORES_FOUND = "runtime:restores";
 
 /**
+ * The count of a restore an adapter made in place and counted in its own transaction, until the
+ * instance that finds it first takes it: what lets an app without a forget ledger, stopped or
+ * running, find such a restore, and counts it exactly once.
+ */
+export const RESTORE_UNCLAIMED = "runtime:restore-unclaimed";
+
+/**
  * The forget ledger's mark the generation is raised to, outside the database: what tells a copy
  * restored while the app was stopped.
  */
@@ -42,6 +49,11 @@ export interface RestoreWatch {
    * read is logged and asked again by `check`.
    */
   start(): Promise<Restored | null>;
+  /**
+   * Takes the restore counted in place that `start` found, once the start went through: a start
+   * that fails before leaves it for the next. Never rejects.
+   */
+  started(): Promise<void>;
   /**
    * Reads the rows and resolves to what this instance learnt: `null` while the database holds at
    * least what it read last. Moves the generation after activity, a write to the stream since the
@@ -130,6 +142,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   let unmarked = marks !== null;
   let witness: WatchedEvent | null = null;
   let checking: Promise<Restored | null> | null = null;
+  // The count of a restore counted in place that `start` found, until the start went through.
+  let foundAtStart = 0;
   // Activity of a caller that joined a check under way, for the next one.
   let joinedActive = false;
 
@@ -173,6 +187,16 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     seen = { generation: moved ? generation : await checkpoints.get(RESTORE_GENERATION), restores };
     movedAt = Number.NEGATIVE_INFINITY;
     return { first };
+  };
+
+  // Whether this instance takes the restore counted in place, whose count the database holds.
+  const take = async (stored: Seen): Promise<boolean> => {
+    const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
+    // The count it read moved past what this instance had read, so it is never 0 here.
+    return (
+      unclaimed === stored.restores &&
+      (await checkpoints.compareAndSet(RESTORE_UNCLAIMED, unclaimed, 0))
+    );
   };
 
   const raise = async (generation: number): Promise<void> => {
@@ -227,7 +251,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     ) {
       // A count past what this instance read was moved by the instance that found it first.
       if (stored.restores > seen.restores) {
-        restored = { first: false };
+        restored = { first: await take(stored) };
       } else {
         restored = await count(stored, seen.restores, 0);
         current = seen;
@@ -255,13 +279,27 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         head = await events.lastPosition();
         await watchHead(head);
         seen = stored;
-        const restored = await compareWithMark(stored);
+        // One counted where it was made moved the generation past the mark; one the mark tells came
+        // after, as a copy of a database that held it.
+        const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
+        foundAtStart = unclaimed === stored.restores ? unclaimed : 0;
+        const restored =
+          (await compareWithMark(stored)) ?? (foundAtStart > 0 ? { first: true } : null);
         // A mark only goes up: past a restore it is already higher.
         await raise(stored.generation);
         return restored;
       } catch (error) {
         return logged("the database could not be compared with the forget ledger's mark")(error);
       }
+    },
+    started: async () => {
+      if (foundAtStart === 0) return;
+      try {
+        await checkpoints.compareAndSet(RESTORE_UNCLAIMED, foundAtStart, 0);
+      } catch (error) {
+        logger.error("the restore found at start could not be taken", { error });
+      }
+      foundAtStart = 0;
     },
     check: (now, { active = false } = {}) => {
       if (checking !== null) {

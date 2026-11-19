@@ -22,7 +22,15 @@ import { createApp } from "../app.ts";
 import { masterKey } from "../personal-data/master-key.ts";
 import { defineTenantKeyStore } from "../personal-data/tenant-key-source.ts";
 import { createRecordingLogger, orderAggregateEntry } from "../test-support.ts";
-import { pendingRebuilds, rebuildReadModel, rebuiltMark, startedMark } from "./rebuild.ts";
+import {
+  pendingRebuilds,
+  rebuildReadModel,
+  rebuiltMark,
+  resetReadModel,
+  startedMark,
+} from "./rebuild.ts";
+import { sealedLayoutOf } from "./sealed-rows.ts";
+import { eventMark, streamMarkOf } from "./stream-marks.ts";
 
 interface Row {
   readonly orderId: string;
@@ -568,6 +576,108 @@ describe("rebuildReadModel", () => {
       position: 2,
       lag: 0,
     });
+    await app.stop();
+  });
+
+  it("marks the checkpoint of a read model in a database of its own with the event it stands at, and no other", async () => {
+    mode = "ok";
+    const main = memory();
+    const reporting = memory();
+    const base = { ports: { order: { notifier: "memory" } } };
+    const app = await createApp({
+      registry,
+      config: { ...base, storage: main, readModels: { orderSummary: reporting } },
+    });
+    const reportingCheckpoints = (await reporting.createStorage()).checkpointStore;
+    const mark = streamMarkOf(SUBSCRIBER);
+    // Nothing projected, nothing marked.
+    await app.rebuildReadModel("orderSummary");
+    expect(await reportingCheckpoints.list()).not.toContainEqual(
+      expect.objectContaining({ subscriber: mark }),
+    );
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.commands.placeOrder({ orderId: "o-2", total: 20 });
+    await app.runUntilIdle();
+    const [, second] = await app.events.read({ limit: 10 });
+    expect(await reportingCheckpoints.get(mark)).toBe(eventMark(second?.id ?? ""));
+    await reportingCheckpoints.remove(mark);
+    await app.rebuildReadModel("orderSummary");
+    expect(await reportingCheckpoints.get(mark)).toBe(eventMark(second?.id ?? ""));
+    await app.stop();
+
+    // On the storage's database, named there or not, nothing is marked.
+    for (const readModels of [{}, { orderSummary: main }]) {
+      const same = memory();
+      const on = await createApp({
+        registry,
+        config: {
+          ...base,
+          storage: same,
+          readModels: "orderSummary" in readModels ? { orderSummary: same } : {},
+        },
+      });
+      await on.commands.placeOrder({ orderId: "o-1", total: 10 });
+      await on.runUntilIdle();
+      await on.rebuildReadModel("orderSummary");
+      const rows = (await (await same.createStorage()).checkpointStore.list()).map(
+        ({ subscriber }) => subscriber,
+      );
+      expect(rows).toContain(SUBSCRIBER);
+      expect(rows.filter((row) => row.startsWith("restore:"))).toEqual([]);
+      await on.stop();
+    }
+  });
+
+  it("empties a read model and projects it again from the start, once every rebuild of it is fenced off", async () => {
+    mode = "ok";
+    const main = memory();
+    const reporting = memory();
+    const app = await createApp({
+      registry,
+      config: {
+        storage: main,
+        readModels: { orderSummary: reporting },
+        ports: { order: { notifier: "memory" } },
+      },
+    });
+    await app.commands.placeOrder({ orderId: "o-1", total: 10 });
+    await app.runUntilIdle();
+    const fields = { orderId: f.string().primaryKey().notPersonal(), total: f.number() };
+    const storage = await reporting.createReadModel<Record<string, unknown>>({
+      name: "orderSummary",
+      fields,
+      logger: silentLogger,
+    });
+    let release = (): void => undefined;
+    const holding = new Promise<void>((started) => {
+      void storage.transact({
+        subscriber: SUBSCRIBER,
+        wait: true,
+        work: async ({ table }) => {
+          await table.upsert({ orderId: "o-9", total: 9 });
+          await new Promise<void>((resolve) => {
+            release = resolve;
+            started();
+          });
+        },
+      });
+    });
+    await holding;
+    const reset = resetReadModel({
+      readModel: {
+        name: "orderSummary",
+        storage,
+        layout: sealedLayoutOf({ readModel: "orderSummary", fields }),
+      },
+      adapter: reporting,
+      logger: silentLogger,
+    });
+    release();
+    await reset;
+    expect(await storage.table.findMany()).toEqual([]);
+    expect(await storage.checkpointStore.get(SUBSCRIBER)).toBe(0);
+    await app.runUntilIdle();
+    expect(await storage.table.findMany()).toEqual([{ orderId: "o-1", total: 10 }]);
     await app.stop();
   });
 

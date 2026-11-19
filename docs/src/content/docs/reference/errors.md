@@ -113,6 +113,18 @@ dead letter with `errorType: "retriable_exhausted"`.
   set and the [forget ledger](/guides/personal-data/#the-forget-ledger) could not be read through:
   the app does not start, since a person a restored backup brought back could be read. `cause` is
   the ledger's error. Starting again tries again.
+- **`RESTORE_UNRECONCILED`** (`RestoreUnreconciledError`; a read's answer). Thrown, when
+  `runtime.personalData.forgetLedger.strict` is set, by a query, an export or a read of the dead letters or the subscribers' failures that found the
+  database
+  [restored from an earlier copy](/guides/backups/#strict-reads), or that ran before the forget
+  ledger was reconciled with one: nothing it read is handed out. `cause` is the ledger's error when
+  it could not be read. Transient: the same read succeeds once the ledger is reconciled and the read
+  models projected what it committed again.
+- **`READ_MODEL_RESTORING`** (`ReadModelRestoringError`, with `readModel`; a read's answer). Thrown
+  by a query or export of a read model whose
+  [database of its own](/guides/backups/#read-models-in-another-database) was restored from
+  another moment than the stream: it stands behind where it was, or is projected again from the
+  start. Nothing was read from it. Transient: the same read succeeds once it caught up.
 - **`STORAGE_SCHEMA_TOO_NEW`** (`StorageSchemaTooNewError`; a start's answer). Thrown by
   `createApp`, and so by `boot` and the CLI, and by `migrateTables` and `bounda migrate`, when a newer version of Bounda has
   [migrated the database's Bounda tables](/guides/deployment/#schema) past what this version
@@ -154,6 +166,8 @@ The hosts map the codes a client can cause to a status:
 | `DOMAIN_ERROR` | 409, with `rejected` | 409, with `rejected` |
 | `PROCESSING_RESTRICTED` | 409 | 409 |
 | `TENANT_FORGOTTEN` | 410 | 410 |
+| `READ_MODEL_RESTORING` | 503 | rethrown |
+| `RESTORE_UNRECONCILED` | 503 | rethrown |
 | `IDEMPOTENCY_KEY_CONFLICT` | 500, code `INTERNAL`, logged | 422 |
 | `IDEMPOTENT_ANSWER_ERASED` | 500, code `INTERNAL`, logged | 410 |
 | `CONCURRENCY_CONFLICT` | 409 | rethrown |

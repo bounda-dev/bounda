@@ -234,6 +234,13 @@ export interface CreateReadModelArgs {
   readonly logger: Logger;
 }
 
+export interface RestoreArgs {
+  /**
+   * Where the copy is, as the engine names a database: a file's path for SQLite.
+   */
+  readonly copy: string;
+}
+
 /**
  * A storage adapter, as `sqlite({ path })` returns: the definition `bounda.config.ts` holds plus
  * the factories the kernel calls at boot and when rebuilding a read model.
@@ -305,6 +312,19 @@ export interface Adapter<Name extends string = string, Options = unknown>
    * version migrated, writing nothing.
    */
   migrate(scopes: readonly SchemaScopeName[]): Promise<readonly SchemaVersion[]>;
+  /**
+   * Puts back a copy of this database, taken with the engine's own tools, in place and in one
+   * write transaction: an app running on it reads the database as it was or as the copy has it,
+   * never in between. The restore is counted in the same transaction, once, and the first instance
+   * to find it, running or started after, forget ledger or not, starts its background jobs over as
+   * after any other. Every table, index and trigger
+   * becomes the copy's, its Bounda tables brought to the versions this database held. Throws
+   * `ConfigurationError` for a copy that is missing, does not open, or is another tenant's, and
+   * `StorageSchemaTooNewError` for one a newer version migrated; either way nothing changes.
+   * What `bounda restore` runs. Absent from an adapter whose engine has its own way, as
+   * PostgreSQL's `pg_restore --single-transaction`, or none.
+   */
+  restore?(args: RestoreArgs): Promise<void>;
 }
 
 /**

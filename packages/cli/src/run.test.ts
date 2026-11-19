@@ -1919,6 +1919,80 @@ export default { storage: adapter };
   });
 });
 
+describe("bounda restore", () => {
+  const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
+  const restoredFrom = (): readonly string[] =>
+    (Reflect.get(globalThis, "restoredFrom") as string[] | undefined) ?? [];
+
+  it("puts the copy back through the storage, which counts the restore itself, and records nothing more", async () => {
+    const result = await cli(
+      ["restore", "backups/app.db", "--config", "restore.config.ts"],
+      fixture,
+    );
+    expect(result.code).toBe(EXIT_OK);
+    expect(besidesLogs(result.stderr)).toBe("");
+    expect(result.stderr).not.toContain("went back to an earlier copy");
+    expect(restoredFrom().at(-1)).toBe(join(fixture, "backups/app.db"));
+    expect(result.stdout).toBe(
+      "restored backups/app.db in place, in one transaction: running instances find the restore at their next pass, and a stopped app when it starts\n",
+    );
+  });
+
+  it("fails on a copy the storage refuses, and on a storage that restores with its engine's tools", async () => {
+    const refused = await cli(
+      ["restore", "refused.db", "--config", "restore.config.ts", "--error-text"],
+      fixture,
+    );
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(refused.stdout).toBe("");
+    expect(refused.stderr).toContain(
+      `error: The copy at ${join(fixture, "refused.db")} is not one`,
+    );
+    const memory = await cli(["restore", "app.db"], fixture);
+    expect(memory.code).toBe(EXIT_FAILURE);
+    expect(memory.stderr).toContain(
+      'error: storage "memory" is restored with its engine\'s own tools: see https://docs.bounda.dev/guides/backups/',
+    );
+  });
+
+  it("restores a configuration without a runtime, opens the files of the tenant --tenant names, and fails on a project that does not load", async () => {
+    const bare = await cli(["restore", "app.db", "--config", "restore-bare.config.ts"], fixture);
+    expect(bare.code).toBe(EXIT_OK);
+    expect(restoredFrom().at(-1)).toBe(join(fixture, "app.db"));
+    process.env.ENCRYPTED_MASTER = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
+      "base64",
+    );
+    try {
+      const encrypted = await cli(
+        ["restore", "app.db", "--config", "encrypted.config.ts", "--tenant", "umbrella"],
+        fixture,
+      );
+      expect(encrypted.code).toBe(EXIT_FAILURE);
+      expect((Reflect.get(globalThis, "encryptedOpenedFor") as string[]).at(-1)).toBe("umbrella");
+      expect((Reflect.get(globalThis, "encryptedKeysOf") as string[]).at(-1)).toBe("umbrella");
+    } finally {
+      delete process.env.ENCRYPTED_MASTER;
+    }
+    const missing = await cli(["restore", "app.db", "--config", "missing.config.ts"], fixture);
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stdout).toBe("");
+    // The one line that says why it did not load.
+    expect(missing.stderr).toMatch(/^error: [^\n]*\n$/);
+  });
+
+  it("documents itself in its help", async () => {
+    const help = await cli(["restore", "--help"], fixture);
+    expect(help.code).toBe(EXIT_OK);
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "put a copy of a SQLite file back in place, in one transaction through the app's own engine",
+    );
+    expect(help.stdout).toContain("<copy>");
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "the copy of the database file, taken with VACUUM INTO or the sqlite3 shell",
+    );
+  });
+});
+
 describe("bounda restored", () => {
   const fixture = resolve(import.meta.dirname, "fixtures/rebuild-project");
 

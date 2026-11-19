@@ -87,8 +87,20 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
     }
     return ready === undefined ? task() : ready.then(task);
   };
+  // A statement that met another connection's write past the busy timeout can leave libSQL's
+  // connection inside a transaction nothing ends: it goes on reading and writing what no other
+  // connection sees, holds the file's write lock, and loses it all when closed. Its connections
+  // are opened afresh instead, while the queue keeps every other statement of the process out.
+  const recovering = async <T>(task: () => Promise<T>): Promise<T> => {
+    try {
+      return await task();
+    } catch (error) {
+      if (wal && isBusy(error)) await client.reconnect();
+      throw error;
+    }
+  };
   const outside = <T>(task: () => Promise<T>): Promise<T> =>
-    tracked(prepared(() => (local ? serially(task) : task())));
+    tracked(prepared(() => (local ? serially(() => recovering(task)) : task())));
   const direct = executorOf(client);
   const raw = local
     ? new Proxy(client, {
@@ -117,17 +129,19 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
       write: (work) =>
         tracked(
           prepared(() =>
-            serially(async () => {
-              const transaction = await client.transaction("write");
-              try {
-                const result = await work({ ...executorOf(transaction), raw: transaction });
-                await transaction.commit();
-                return result;
-              } catch (error) {
-                await transaction.rollback();
-                throw error;
-              }
-            }),
+            serially(() =>
+              recovering(async () => {
+                const transaction = await client.transaction("write");
+                try {
+                  const result = await work({ ...executorOf(transaction), raw: transaction });
+                  await transaction.commit();
+                  return result;
+                } catch (error) {
+                  await transaction.rollback();
+                  throw error;
+                }
+              }),
+            ),
           ),
         ),
     },

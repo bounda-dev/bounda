@@ -56,6 +56,7 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
   concurrent = true,
 }) => {
   describe("restricted reads contract", () => {
+    let adapter: Adapter;
     let orders: ReadModelStorage<RestrictedRow>;
     let ids: ReadModelStorage<{ readonly customerId: string; readonly total: number }>;
     let plain: ReadModelStorage<{ readonly sku: string; readonly customerId: string }>;
@@ -68,7 +69,7 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       });
 
     beforeEach(async () => {
-      const adapter: Adapter = await create();
+      adapter = await create();
       orders = await adapter.createReadModel<RestrictedRow>({
         name: "orders",
         fields: restrictedFields,
@@ -212,6 +213,43 @@ export const restrictedReadsContract: RestrictedReadsContractFunction = ({
       await write((store) => store.request("ana", [{ ground: "legal-claims", categories: null }]));
       expect(await plain.restricted.among(["ana"], "unrestricted")).toEqual(new Set());
       expect(await plain.restricted.unrestricted.count()).toBe(1);
+    });
+
+    it("forgets every person and position once cleared, and rolls the clearing back with its transaction", async () => {
+      await write(async (store) => {
+        await store.request("ana", [{ ground: "legal-claims", categories: null }]);
+        await store.request("bo", [{ ground: "legal-claims", categories: ["profile"] }]);
+        await store.advance("ana", 9);
+      });
+      await expect(
+        write(async (store) => {
+          await store.clear();
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await orders.restricted.among(["ana", "bo"], "unrestricted")).toEqual(
+        new Set(["ana", "bo"]),
+      );
+      await write((store) => store.clear());
+      expect(await orders.restricted.among(["ana", "bo", "cy"], "unrestricted")).toEqual(new Set());
+      expect(
+        (await adapter.inspect())
+          .filter(({ store }) => store === "restrictedPersons" || store === "restrictedPositions")
+          .flatMap(({ rows }) => rows),
+      ).toEqual([]);
+      expect(await found(orders.restricted.unrestricted)).toEqual([
+        "o-1",
+        "o-2",
+        "o-3",
+        "o-4",
+        "o-5",
+      ]);
+      // A stream read again from the start moves the person from its first event.
+      const moved: boolean[] = [];
+      await write(async (store) => {
+        moved.push(await store.advance("ana", 1));
+      });
+      expect(moved).toEqual([true]);
     });
 
     it("moves each person only forward, and rolls the move back with its transaction", async () => {
