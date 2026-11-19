@@ -168,6 +168,7 @@ export type {
   NewSubscriberFailure,
   StoredSubscriberFailure,
   SubscriberFailureStore,
+  SubscriberFailureVersion,
 } from "./storage/subscriber-failure-store.ts";
 export type {
   FieldFilter,

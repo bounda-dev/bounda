@@ -41,6 +41,7 @@ import { createRestrictedRetries } from "./dead-letters/restricted.ts";
 import { createDeadLetterRetention } from "./dead-letters/retention.ts";
 import { createDeadLetterRetry } from "./dead-letters/retry.ts";
 import { createDispatcher, type DispatcherLag } from "./dispatch/dispatcher.ts";
+import { createSubscriberFailureRetention } from "./dispatch/failure-retention.ts";
 import { createLastFailures } from "./dispatch/last-failures.ts";
 import { alignReactiveCheckpoints } from "./dispatch/reactive-checkpoints.ts";
 import {
@@ -1354,51 +1355,60 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     };
     // A pass checks first whether the tenant was forgotten elsewhere, once the check exists.
     let tenantCheck: () => Promise<void> = async () => undefined;
+    const subscribers = [
+      ...Object.values(readModels.byName).map((readModel) =>
+        createProjectionSubscriber({
+          tracer: appTracer,
+          readModel,
+          sealing,
+          logger,
+          errorText,
+          budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
+          marked: ownDatabase(readModel.name),
+        }),
+      ),
+      ...hosts.map((readModel) =>
+        createRestrictedPersonsSubscriber({
+          tracer: appTracer,
+          readModel,
+          logger,
+          errorText,
+          marked: ownDatabase(readModel.name),
+        }),
+      ),
+      ...following,
+      ...Object.values(aggregates.byName)
+        .filter(takesSnapshots)
+        .map((aggregate) =>
+          createSnapshotSubscriber({
+            aggregate,
+            eventStore: storage.eventStore,
+            snapshotStore: storage.snapshotStore,
+            loader,
+            logger,
+            ...(test === undefined ? {} : { strict: { onError: test.onSnapshotError } }),
+          }),
+        ),
+      ...(recordsActivity
+        ? [createRetentionSubscriber({ persons: storage.persons, keys: storage.personalKeys })]
+        : []),
+      ...(forgetLedger === null
+        ? []
+        : [createLedgerOutbox({ ledger: forgetLedger.store, keepForMs, clock })]),
+    ];
+    const failureRetention = createSubscriberFailureRetention({
+      store: written.subscriberFailures,
+      persons: storage.persons,
+      subscribers: subscribers.map(({ name }) => name),
+      retentionMs: config.runtime.subscriberFailures.retentionMs,
+      clock,
+      logger,
+    });
     const dispatcher = createDispatcher({
       tracer: appTracer,
       eventStore: storage.eventStore,
       checkpointStore: storage.checkpointStore,
-      subscribers: [
-        ...Object.values(readModels.byName).map((readModel) =>
-          createProjectionSubscriber({
-            tracer: appTracer,
-            readModel,
-            sealing,
-            logger,
-            errorText,
-            budget: { clock, maxMs: config.runtime.dispatcher.projectionBatchTimeMs },
-            marked: ownDatabase(readModel.name),
-          }),
-        ),
-        ...hosts.map((readModel) =>
-          createRestrictedPersonsSubscriber({
-            tracer: appTracer,
-            readModel,
-            logger,
-            errorText,
-            marked: ownDatabase(readModel.name),
-          }),
-        ),
-        ...following,
-        ...Object.values(aggregates.byName)
-          .filter(takesSnapshots)
-          .map((aggregate) =>
-            createSnapshotSubscriber({
-              aggregate,
-              eventStore: storage.eventStore,
-              snapshotStore: storage.snapshotStore,
-              loader,
-              logger,
-              ...(test === undefined ? {} : { strict: { onError: test.onSnapshotError } }),
-            }),
-          ),
-        ...(recordsActivity
-          ? [createRetentionSubscriber({ persons: storage.persons, keys: storage.personalKeys })]
-          : []),
-        ...(forgetLedger === null
-          ? []
-          : [createLedgerOutbox({ ledger: forgetLedger.store, keepForMs, clock })]),
-      ],
+      subscribers,
       batchSize: config.runtime.dispatcher.batchSize,
       pollIntervalMs: config.runtime.dispatcher.pollIntervalMs,
       backoff: config.runtime.dispatcher.backoff,
@@ -1440,6 +1450,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
       retention,
       letterRetention,
+      failureRetention,
       rotation,
       reseal,
       reconciliation,
@@ -1533,6 +1544,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         scheduledDueAt(),
         retention?.nextDueAt() ?? null,
         letterRetention?.nextDueAt() ?? null,
+        failureRetention.nextDueAt(),
         rotation?.nextDueAt() ?? null,
         reseal?.nextDueAt() ?? null,
         reconciliation?.nextDueAt() ?? null,
@@ -1581,6 +1593,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         tenant: hierarchy === null ? undefined : () => hierarchy.tenantKeys.status(),
         retention,
         letterRetention,
+        failureRetention,
         recipients: () => recipientStatuses({ storage: written, recipients }),
       });
     // A copy restored while the app was stopped holds less than the forget ledger's mark: the

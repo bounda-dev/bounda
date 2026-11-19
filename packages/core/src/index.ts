@@ -47,6 +47,7 @@ export type {
   SubscriberKind,
   SubscriberLag,
 } from "./kernel/dispatch/dispatcher.ts";
+export type { SubscriberFailureRetentionStatus } from "./kernel/dispatch/failure-retention.ts";
 export type {
   SubscriberFailure,
   SubscriberFailures,

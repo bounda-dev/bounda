@@ -56,6 +56,22 @@ export const createMemorySubscriberFailureStore: CreateMemorySubscriberFailureSt
         [...failures.values()]
           .sort((a, b) => (a.subscriber < b.subscriber ? -1 : 1))
           .map((kept) => jsonCopy(kept)),
+      remove: async (failure) => {
+        const kept = failures.get(failure.subscriber);
+        if (
+          kept === undefined ||
+          kept.eventId !== failure.eventId ||
+          kept.attempts !== failure.attempts ||
+          kept.lastFailedAt !== failure.lastFailedAt ||
+          kept.resolvedAt !== failure.resolvedAt
+        ) {
+          return false;
+        }
+        return failures.delete(failure.subscriber);
+      },
+      clear: async () => {
+        failures.clear();
+      },
       rows: () => [...failures.values()],
     };
   };

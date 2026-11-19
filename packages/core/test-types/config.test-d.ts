@@ -306,6 +306,19 @@ describe("defineConfig", () => {
       // @ts-expect-error the retention of dead letters is app-wide, never per aggregate
       runtime: { overrides: { order: { deadLetters: { retention: "30d" } } } },
     });
+    defineConfig({ storage: sqlite, ports, runtime: { subscriberFailures: { retention: "7d" } } });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error "a week" is not a duration string
+      runtime: { subscriberFailures: { retention: "a week" } },
+    });
+    defineConfig({
+      storage: sqlite,
+      ports,
+      // @ts-expect-error the retention of subscriber failures is app-wide, never per aggregate
+      runtime: { overrides: { order: { subscriberFailures: { retention: "7d" } } } },
+    });
     defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "include" } } });
     defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "omit" } } });
     expectTypeOf<NonNullable<NonNullable<Config["runtime"]>["telemetry"]>>().toEqualTypeOf<{

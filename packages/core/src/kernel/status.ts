@@ -9,6 +9,10 @@ import type { ResolvedConfig } from "../config/types.ts";
 import type { CountryCode, RecipientKind, TransferSafeguard } from "../modules/recipient.ts";
 import type { AppLag } from "./app.ts";
 import type { DeadLetterRetention, DeadLetterRetentionStatus } from "./dead-letters/retention.ts";
+import type {
+  SubscriberFailureRetention,
+  SubscriberFailureRetentionStatus,
+} from "./dispatch/failure-retention.ts";
 import { sharesStorage } from "./personal-data/forget-ledger.ts";
 import type {
   ForgetLedgerReconciliation,
@@ -82,6 +86,11 @@ export interface AppStatus {
    */
   readonly deadLetterRetention: DeadLetterRetentionStatus | null;
   /**
+   * The purge of subscriber failures past `runtime.subscriberFailures.retention`; `null` once the
+   * tenant is forgotten, which removed them all.
+   */
+  readonly subscriberFailureRetention: SubscriberFailureRetentionStatus | null;
+  /**
    * Every recipient the app declares or the store remembers data went to, by port.
    */
   readonly recipients: readonly RecipientStatus[];
@@ -133,6 +142,7 @@ export interface ReadAppStatusArgs {
   readonly tenant?: (() => Promise<TenantKeyStatus>) | undefined;
   readonly retention?: RetentionSweep | undefined;
   readonly letterRetention?: DeadLetterRetention | undefined;
+  readonly failureRetention?: SubscriberFailureRetention | undefined;
   readonly recipients?: (() => Promise<readonly RecipientStatus[]>) | undefined;
 }
 
@@ -205,6 +215,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
   tenant,
   retention,
   letterRetention,
+  failureRetention,
   recipients,
 }) => {
   const [
@@ -217,6 +228,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     tenantKey,
     retained,
     purged,
+    expired,
     told,
   ] = await Promise.all([
     Promise.all(
@@ -232,6 +244,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     tenant?.() ?? null,
     retention?.status() ?? null,
     letterRetention?.status() ?? null,
+    failureRetention?.status() ?? null,
     recipients?.() ?? [],
   ]);
   const positions = new Map(current.subscribers.map((each) => [each.subscriber, each.position]));
@@ -254,6 +267,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     keyRotation,
     retention: retained,
     deadLetterRetention: purged,
+    subscriberFailureRetention: expired,
     recipients: told,
     files: databasesOf(config).flatMap(({ database, adapter }) =>
       adapter.fileEncryption === undefined

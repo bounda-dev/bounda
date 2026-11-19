@@ -81,4 +81,23 @@ export interface SubscriberFailureStore {
    * Every subscriber's last failure, by subscriber.
    */
   list(): Promise<readonly StoredSubscriberFailure[]>;
+  /**
+   * Removes the subscriber's last failure while it is still the one `failure` describes, neither
+   * recorded again nor resolved since, and resolves to whether it did. Only the runtime calls it,
+   * once the failure outlived `runtime.subscriberFailures.retention`.
+   */
+  remove(failure: SubscriberFailureVersion): Promise<boolean>;
+  /**
+   * Removes every failure. Only the runtime calls it, as a tenant's forgetting settles.
+   */
+  clear(): Promise<void>;
 }
+
+/**
+ * What tells one recorded state of a subscriber's last failure from the next: a record counts one
+ * attempt more and moves `lastFailedAt`, a resolution sets `resolvedAt`.
+ */
+export type SubscriberFailureVersion = Pick<
+  StoredSubscriberFailure,
+  "subscriber" | "eventId" | "attempts" | "lastFailedAt" | "resolvedAt"
+>;

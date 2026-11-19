@@ -871,7 +871,7 @@ describe("redact, in detail", () => {
 
   it("tries a redaction it could not settle again, a poll later", async () => {
     const base = memory();
-    let failing = true;
+    let failing = false;
     const adapter: Adapter = {
       ...base,
       createStorage: async () => {
@@ -893,6 +893,9 @@ describe("redact, in detail", () => {
     };
     const { app, clock, register, target, logged, scrubs } = await setUp(undefined, adapter);
     const registered = await register("ana", "ana@old.example");
+    // A pass first, after which the purge of subscriber failures reads nothing for a while.
+    await app.runUntilIdle();
+    failing = true;
     await app.redact("ana", { events: [target(registered, ["email"])] });
     await app.runUntilIdle();
     expect(logged.filter(({ level }) => level === "error")).toEqual([

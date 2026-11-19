@@ -1363,6 +1363,7 @@ describe("bounda status", () => {
       expect.stringMatching(/^key rotation: (not configured|under \S+, every key wrapped .*)$/),
       "retention: not configured",
       "dead letter retention: not configured",
+      "subscriber failure retention: 30d, next purge when a failure is resolved",
       "recipients: none declared",
     ]);
     expect(logged(result.stderr, "info", "personal data accessed")).toEqual([]);

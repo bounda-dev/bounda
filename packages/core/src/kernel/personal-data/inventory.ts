@@ -456,7 +456,12 @@ const recordsOf = (
       location,
       keptFor: msText(config.runtime.deadLetters.retentionMs),
     },
-    { name: "subscriber-failures", where: storage, location, keptFor: null },
+    {
+      name: "subscriber-failures",
+      where: storage,
+      location,
+      keptFor: msText(config.runtime.subscriberFailures.retentionMs),
+    },
     ...(recipients.length === 0
       ? []
       : [{ name: "disclosures" as const, where: storage, location, keptFor: null }]),

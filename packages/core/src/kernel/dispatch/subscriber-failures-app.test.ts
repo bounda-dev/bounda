@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { Table } from "../../adapter/storage/table.ts";
+import { DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS } from "../../config/defaults.ts";
+import type { RuntimeConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
@@ -17,6 +19,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { masterKey } from "../personal-data/master-key.ts";
+import { HELD_FAILURE_RECHECK_MS } from "./failure-retention.ts";
 
 // The projection quotes the personal field it read, as a careless one does, while `failing.on`.
 const failing = { on: false };
@@ -174,6 +177,7 @@ const categorized = {
 } as unknown as Registry;
 
 const SUBSCRIBER = "projection:customers";
+const DAY = 86_400_000;
 
 interface Logged {
   readonly level: string;
@@ -198,18 +202,19 @@ afterEach(async () => {
 
 let started = 0;
 
-const start = async (adapter: Adapter, of: Registry = registry) => {
+const start = async (adapter: Adapter, of: Registry = registry, runtime?: RuntimeConfig) => {
   started += 1;
   const logger = recordingLogger();
+  const clock = createFixedClock(new Date("2026-05-01T00:00:00.000Z"));
   const app = await createApp<Registry>({
     registry: of,
-    config: { storage: adapter },
+    config: { storage: adapter, ...(runtime === undefined ? {} : { runtime }) },
     ids: createSequentialIdGenerator({ prefix: `app-${started}` }),
-    clock: createFixedClock(new Date("2026-05-01T00:00:00.000Z")),
+    clock,
     logger,
   });
   stops.push(() => app.stop());
-  return { app, logger };
+  return { app, logger, clock };
 };
 
 const register = (app: BoundaApp<Registry>, customerId: string) =>
@@ -351,6 +356,58 @@ describe.each([
     });
   });
 
+  it("purges a failure past runtime.subscriberFailures.retention, held while its person is restricted", async () => {
+    const adapter = adapterOf();
+    const { app, clock } = await start(adapter, registry, {
+      subscriberFailures: { retention: "1d" },
+    });
+    failing.on = true;
+    await register(app, "c-1");
+    await app.runUntilIdle({ maxPasses: 3 });
+    failing.on = false;
+    await app.runUntilIdle();
+    const resolvedAt = clock.now().getTime();
+    const due = new Date(resolvedAt + DAY);
+    expect((await app.status()).subscriberFailureRetention).toEqual({
+      retentionMs: DAY,
+      nextDueAt: due.toISOString(),
+      held: 0,
+    });
+    expect(await app.nextDueAt()).toEqual(due);
+    await app.restrict("c-1", { ground: "legal-claims" });
+    clock.set(due);
+    await app.runUntilIdle();
+    expect((await app.status()).subscriberFailures).toHaveLength(1);
+    expect((await app.status()).subscriberFailureRetention).toMatchObject({ held: 1 });
+    await app.unrestrict("c-1", { notice: "given" });
+    clock.set(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS));
+    await app.runUntilIdle();
+    expect((await app.status()).subscriberFailures).toEqual([]);
+    expect(await (await adapter.createStorage()).subscriberFailures.list()).toEqual([]);
+    expect(await app.nextDueAt()).toBeNull();
+  });
+
+  it("keeps a failure the subscriber is stuck on, and purges it once the app no longer runs the subscriber", async () => {
+    const adapter = adapterOf();
+    const first = await start(adapter);
+    failing.on = true;
+    await register(first.app, "c-1");
+    await first.app.runUntilIdle({ maxPasses: 3 });
+    const failedAt = Date.parse(
+      (await first.app.status()).subscriberFailures[0]?.lastFailedAt ?? "",
+    );
+    first.clock.set(new Date(failedAt + DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS));
+    expect(await first.app.nextDueAt()).toBeNull();
+    await first.app.stop();
+    const second = await start(adapter, { ...registry, readModels: {} } as Registry);
+    expect(await second.app.nextDueAt()).toEqual(
+      new Date(failedAt + DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS),
+    );
+    second.clock.set(new Date(failedAt + DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS));
+    await second.app.runUntilIdle();
+    expect(await (await adapter.createStorage()).subscriberFailures.list()).toEqual([]);
+  });
+
   it("is resolved by an instance that gets the subscriber past it, though another met it", async () => {
     const adapter = adapterOf();
     const first = await start(adapter);
@@ -386,6 +443,11 @@ describe("the status of the app", () => {
       keyRotation: { previous: [], pending: 0 },
       retention: { categories: [], keptBeyond: 0 },
       deadLetterRetention: null,
+      subscriberFailureRetention: {
+        retentionMs: DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
+        nextDueAt: null,
+        held: 0,
+      },
     });
   });
 

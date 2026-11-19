@@ -70,6 +70,11 @@ const status: AppStatus = {
     keptBeyond: 1,
   },
   deadLetterRetention: { retentionMs: 90_000, nextDueAt: null },
+  subscriberFailureRetention: {
+    retentionMs: 2_592_000_000,
+    nextDueAt: "2026-05-04T00:00:00.000Z",
+    held: 2,
+  },
   recipients: [
     {
       port: "customer.crm",
@@ -138,6 +143,7 @@ describe("formatStatus", () => {
       "  invoices  6y, 2 keys past it, next due never",
       "  1 key kept past a forgetting that no erasure exemption keeps",
       "dead letter retention: 90s, next purge when a letter is resolved",
+      "subscriber failure retention: 30d, next purge 2026-05-04T00:00:00.000Z; 2 failures past it kept while a person it is sealed under is restricted",
       "recipients",
       "  customer.crm  Brevo, third-party, FR: contact, invoices; 1 person disclosed to it",
       "    being told what was recorded before it was declared",
@@ -179,19 +185,31 @@ describe("formatStatus", () => {
       },
       retention: null,
       deadLetterRetention: null,
+      subscriberFailureRetention: null,
       recipients: [],
       files: [],
     };
     const lines = formatStatus({ status: bare }).split("\n");
-    expect(lines.slice(-7)).toEqual([
+    expect(lines.slice(-8)).toEqual([
       "personal data backfill: no personal data marked",
       "forget ledger: reconciled, applied through nothing yet, last run 2026-05-01T00:00:00.000Z",
       "tenant: no keys: no personal data marked",
       "key rotation: under k-1, every key wrapped (checked 2026-05-01T00:00:00.000Z)",
       "retention: no personal data marked",
       "dead letter retention: not configured",
+      "subscriber failure retention: none kept, the tenant was forgotten",
       "recipients: none declared",
     ]);
+    const purging = (held: number, nextDueAt: string | null) =>
+      formatStatus({
+        status: { ...bare, subscriberFailureRetention: { retentionMs: 90_000, nextDueAt, held } },
+      });
+    expect(purging(0, null)).toContain(
+      "subscriber failure retention: 90s, next purge when a failure is resolved\n",
+    );
+    expect(purging(1, "2026-05-04T00:00:00.000Z")).toContain(
+      "subscriber failure retention: 90s, next purge 2026-05-04T00:00:00.000Z; 1 failure past it kept while a person it is sealed under is restricted\n",
+    );
     expect(
       formatStatus({ status: { ...bare, retention: { categories: [], keptBeyond: 0 } } }),
     ).toContain("retention: not configured\n");

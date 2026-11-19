@@ -96,5 +96,19 @@ export const createSqlSubscriberFailureStore: CreateSqlSubscriberFailureStoreFun
       (await db.all(`SELECT ${COLUMNS} FROM ${table}`, []))
         .map(failureOf)
         .sort((a, b) => codePointOrder(a.subscriber, b.subscriber)),
+    remove: async (failure) =>
+      (
+        await db.all(
+          `DELETE FROM ${table} WHERE "subscriber" = ${p(1)} AND "event_id" = ${p(2)} AND "attempts" = ${p(3)} AND "last_failed_at" = ${p(4)} AND COALESCE("resolved_at", '') = ${p(5)} RETURNING "subscriber"`,
+          [
+            failure.subscriber,
+            failure.eventId,
+            failure.attempts,
+            failure.lastFailedAt,
+            failure.resolvedAt ?? "",
+          ],
+        )
+      ).length > 0,
+    clear: () => db.run(`DELETE FROM ${table}`, []),
   };
 };

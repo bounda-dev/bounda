@@ -254,6 +254,20 @@ export interface DeadLettersConfig {
 }
 
 /**
+ * Runtime settings for the last failure the runtime keeps of each subscriber.
+ */
+export interface SubscriberFailuresConfig {
+  /**
+   * How long a subscriber's last failure is kept once the subscriber got past it, or, for a
+   * subscriber the app no longer runs, after it last failed. Past it, the scheduled-command worker
+   * removes it, its error text with it, unless a person its text is sealed under is restricted,
+   * until the restriction is lifted. Defaults to 30 days,
+   * `DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS`.
+   */
+  readonly retention?: DurationInput;
+}
+
+/**
  * Whether the runtime's logs and spans carry the text of an error: `"omit"` keeps its class name
  * and its `code` only; `"include"` adds its message and its stack.
  */
@@ -344,6 +358,7 @@ export interface RuntimeConfig {
   readonly dispatcher?: DispatcherConfig;
   readonly personalData?: PersonalDataConfig;
   readonly deadLetters?: DeadLettersConfig;
+  readonly subscriberFailures?: SubscriberFailuresConfig;
   readonly telemetry?: TelemetryConfig;
   readonly overrides?: Readonly<Record<string, AggregateOverrides>>;
 }
@@ -460,6 +475,7 @@ export interface ResolvedConfig {
        */
       readonly retentionMs: number | null;
     };
+    readonly subscriberFailures: { readonly retentionMs: number };
     readonly telemetry: { readonly errorText: ErrorText };
     readonly overrides: Readonly<Record<string, ResolvedAggregateRuntime>>;
   };

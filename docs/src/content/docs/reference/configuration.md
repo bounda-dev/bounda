@@ -185,6 +185,16 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   whose letter was discarded stays given up after the letter is gone. It is app-wide. See
   [keeping resolved letters](/guides/dead-letters/#keeping-resolved-letters).
 
+### Subscriber failures
+
+- **`subscriberFailures.retention`**, `30d` by default (`DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS`
+  in `@bounda-dev/core/config`). How long the last failure of a subscriber is kept once the
+  subscriber got past it, or, for a subscriber the app no longer runs, once it last failed on it.
+  Past it, the scheduled-command worker removes it, its error text with it; a failure a subscriber
+  is still stuck on stays. A failure whose text is sealed under a person whose processing is
+  [restricted](/guides/personal-data/#restricting-processing) stays until the restriction is
+  lifted. It is app-wide. See [error text](/reference/observability/#error-text).
+
 ### Telemetry
 
 - **`telemetry.errorText`**, `"omit"` by default. Whether the runtime's log lines and spans carry
