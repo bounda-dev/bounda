@@ -6,6 +6,7 @@ import {
   FORGET_LEDGER_GRACE_MS,
   type PersonalDataForgottenPayload,
   personalDataInventory,
+  type TenantExportPart,
 } from "@bounda-dev/core";
 import type { TenantKeyRecord, TenantKeyStore } from "@bounda-dev/core/adapter";
 import { forgetLedgerContract, tenantKeyStoreContract } from "@bounda-dev/core/adapter/testing";
@@ -501,6 +502,26 @@ describe("cloudflare() with a jurisdiction", () => {
 const keptKeys = () => durableObjectTenantKeys({ storage, binding: "KEPT_KEEPER" }).create({ env });
 
 describe("a Durable Object whose keys and ledger the keeper holds", () => {
+  it("hands its tenant back with the entries of the ledger its keeper holds", async () => {
+    const tenant = `${fresh()}handed-back`;
+    const stub = env.KEPT_STORE.get(env.KEPT_STORE.idFromName(tenant));
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "bell" });
+    await store.forget("ada");
+    const parts: TenantExportPart[] = [];
+    for await (const part of await store.exportTenant(tenant)) parts.push(part);
+    const entries = parts.flatMap((part) =>
+      part.kind === "forgetLedgerEntry" ? [part.entry] : [],
+    );
+    expect(entries).toEqual([
+      expect.objectContaining({ personId: "ada", categories: null, reason: "requested" }),
+    ]);
+    const kept = await (
+      await durableObjectForgetLedger({ storage, binding: "KEPT_KEEPER" }).create({ env, tenant })
+    ).read({ limit: 10 });
+    expect(entries).toEqual(kept);
+  });
+
   it("forgets its tenant: the keeper keeps the forgetting, and the object serves nothing more", async () => {
     const tenant = `${fresh()}forgotten`;
     const stub = env.KEPT_STORE.get(env.KEPT_STORE.idFromName(tenant));
