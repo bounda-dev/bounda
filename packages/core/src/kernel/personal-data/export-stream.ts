@@ -131,15 +131,29 @@ const markedFields = (marks: PersonalMarks | null, payload: unknown): Marked => 
 async function* paged<Item>(
   read: (after: string | undefined) => Promise<readonly Item[]>,
   keyOf: (item: Item) => string,
-): AsyncGenerator<readonly Item[], void, undefined> {
+  build: (items: readonly Item[]) => Promise<readonly PersonalDataExportRecord[]>,
+): Pages {
   let after: string | undefined;
   for (;;) {
     const page = await read(after);
     if (page.length === 0) return;
-    yield page;
+    yield await build(page);
     after = keyOf(page.at(-1) as Item);
   }
 }
+
+// Each item's record, in order, one at a time; an item built as `null` has none.
+const built = async <Item>(
+  items: readonly Item[],
+  build: (item: Item) => Promise<PersonalDataExportRecord | null>,
+): Promise<readonly PersonalDataExportRecord[]> => {
+  const records: PersonalDataExportRecord[] = [];
+  for (const item of items) {
+    const record = await build(item);
+    if (record !== null) records.push(record);
+  }
+  return records;
+};
 
 // Each read model through its own storage, which may be another adapter's.
 async function* exportedRows(
@@ -442,55 +456,51 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     }
   }
 
-  async function* scheduledPages(): Pages {
-    for await (const entries of paged(
+  const scheduledPages = (): Pages =>
+    paged(
       (after) => storage.scheduler.listByPerson({ person: personId, after, limit: batchSize }),
       ({ dedupeKey }) => dedupeKey,
-    )) {
-      const { openedData } = opener();
-      const page: PersonalDataExportRecord[] = [];
-      for (const entry of entries) {
-        const data = await openedData(entry.command.type, entry.command.payload);
-        page.push({
-          kind: "scheduledCommand",
-          scheduledCommand: {
-            commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
-            type: entry.command.type,
-            executeAt: entry.executeAt,
-            ...(entry.scheduledAt === undefined ? {} : { scheduledAt: entry.scheduledAt }),
-            ...data,
-            restricted: restrictedFields(data.categories),
-          },
+      (entries) => {
+        const { openedData } = opener();
+        return built(entries, async (entry) => {
+          const data = await openedData(entry.command.type, entry.command.payload);
+          return {
+            kind: "scheduledCommand",
+            scheduledCommand: {
+              commandId: scheduledCommandId(entry.dedupeKey) ?? entry.dedupeKey,
+              type: entry.command.type,
+              executeAt: entry.executeAt,
+              ...(entry.scheduledAt === undefined ? {} : { scheduledAt: entry.scheduledAt }),
+              ...data,
+              restricted: restrictedFields(data.categories),
+            },
+          };
         });
-      }
-      yield page;
-    }
-  }
+      },
+    );
 
-  async function* letterPages(): Pages {
-    for await (const letters of paged(
+  const letterPages = (): Pages =>
+    paged(
       (after) =>
         storage.deadLetterStore.listByPerson({ person: personId, after, limit: batchSize }),
       ({ id }) => id,
-    )) {
-      const opening = opener();
-      const page: PersonalDataExportRecord[] = [];
-      for (const letter of letters) {
-        page.push({ kind: "deadLetter", deadLetter: await exportedLetter(opening, letter) });
-      }
-      yield page;
-    }
-  }
+      (letters) => {
+        const opening = opener();
+        return built(letters, async (letter) => ({
+          kind: "deadLetter",
+          deadLetter: await exportedLetter(opening, letter),
+        }));
+      },
+    );
 
   // One row per subscriber: few enough to read whole, as one page.
   const failuresPage = async (): Promise<readonly PersonalDataExportRecord[]> => {
     const { openText } = opener();
-    const page: PersonalDataExportRecord[] = [];
-    for (const failure of await storage.subscriberFailures.list()) {
+    return built(await storage.subscriberFailures.list(), async (failure) => {
       const sealedUnder = textPersons(failure);
-      if (!sealedUnder.includes(personId)) continue;
+      if (!sealedUnder.includes(personId)) return null;
       const text = await exportedText(openText, sealedUnder, failure);
-      page.push({
+      return {
         kind: "subscriberFailure",
         subscriberFailure: {
           subscriber: failure.subscriber,
@@ -508,52 +518,49 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
           ],
           withheld: text.withheld,
         },
-      });
-    }
-    return page;
+      };
+    });
   };
 
   // An answer a key it is sealed under no longer opens holds nothing to hand out. One kept before
   // keys were filed by their HMAC holds no key of its own, and is filed under it in the clear.
-  async function* answerPages(): Pages {
+  const answerPages = (): Pages => {
     const now = clock.now();
-    for await (const records of paged(
+    return paged(
       (after) =>
         storage.idempotencyStore.listByPerson({ person: personId, now, after, limit: batchSize }),
       ({ key }) => key,
-    )) {
-      const page: PersonalDataExportRecord[] = [];
-      for (const record of records) {
-        const remembered =
-          record.answer === null
-            ? null
-            : await openAnswer({
-                keys: storage.personalKeys,
-                atRest: storage.atRest,
-                answer: record.answer,
-              });
-        if (remembered === null) continue;
-        const opened = await shared(
-          record.persons.map(({ person }) => person),
-          { idempotencyKey: remembered.key ?? record.key, outcome: remembered.outcome },
-          ANSWER_FIELDS,
-        );
-        page.push({
-          kind: "answer",
-          answer: {
-            idempotencyKey: opened.values.idempotencyKey,
-            expiresAt: record.expiresAt,
-            outcome: opened.values.outcome,
-            restricted: [
-              ...new Set([...(restrictions.length > 0 ? ["outcome"] : []), ...opened.restricted]),
-            ],
-            withheld: opened.withheld,
-          },
-        });
-      }
-      yield page;
-    }
-  }
+      (records) =>
+        built(records, async (record) => {
+          const remembered =
+            record.answer === null
+              ? null
+              : await openAnswer({
+                  keys: storage.personalKeys,
+                  atRest: storage.atRest,
+                  answer: record.answer,
+                });
+          if (remembered === null) return null;
+          const opened = await shared(
+            record.persons.map(({ person }) => person),
+            { idempotencyKey: remembered.key ?? record.key, outcome: remembered.outcome },
+            ANSWER_FIELDS,
+          );
+          return {
+            kind: "answer",
+            answer: {
+              idempotencyKey: opened.values.idempotencyKey,
+              expiresAt: record.expiresAt,
+              outcome: opened.values.outcome,
+              restricted: [
+                ...new Set([...(restrictions.length > 0 ? ["outcome"] : []), ...opened.restricted]),
+              ],
+              withheld: opened.withheld,
+            },
+          };
+        }),
+    );
+  };
 
   async function* rowPages(): Pages {
     for (const { name, storage: rowsStorage, personalData, fields, layout } of Object.values(

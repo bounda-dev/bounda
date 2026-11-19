@@ -137,7 +137,7 @@ not be read: the reconciliation runs at once, and the read models project what i
 before anything is served. The read after succeeds, and a refused read is in the [access
 log](/guides/personal-data/#who-opened-what) as `failed`. Each read costs the reads of the check,
 shared by the reads that run at once; an export checks once its header is read and once for each
-page it reads, before it hands out any of it.
+page that holds anything for the person, before it hands out any of it.
 
 ## What is guaranteed
 
