@@ -9,6 +9,7 @@ import type { AppStorage } from "../events/app-event-store.ts";
 import type { RecordAccess } from "../personal-data/access.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
+import type { PortReturns } from "../ports/returns.ts";
 import type { Disclosures } from "../recipients/gate.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
@@ -44,6 +45,7 @@ export interface CreateProcessRunnerArgs {
   readonly intentions: ForgetIntentions;
   readonly recordAccess: RecordAccess;
   readonly disclosures?: Disclosures | undefined;
+  readonly returns?: PortReturns | undefined;
 }
 
 export interface CreateProcessRunnerFunction {
@@ -69,6 +71,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
   intentions,
   recordAccess,
   disclosures,
+  returns,
 }) => {
   const units = createProcessUnits({ storage, config, ids, clock });
   const failures = createProcessFailures({
@@ -91,6 +94,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     keys: storage.personalKeys,
     recordAccess,
     disclosures,
+    returns,
   });
   const schedule = createDeadlineSchedule({ storage, units, clock });
   const deadlineStep = createDeadlineStep({ units, handlers, ids });

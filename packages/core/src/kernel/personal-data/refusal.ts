@@ -61,7 +61,11 @@ export interface RestrictedRead {
   readonly requested: readonly string[];
 }
 
-const covers = (restrictions: readonly StoredRestriction[], category: string | null): boolean =>
+export interface CoversFunction {
+  (restrictions: readonly StoredRestriction[], category: string | null): boolean;
+}
+
+export const covers: CoversFunction = (restrictions, category) =>
   restrictions.some((row) => row.category === null || row.category === category);
 
 /**

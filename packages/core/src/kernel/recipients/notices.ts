@@ -20,6 +20,8 @@ import type { Subscriber } from "../dispatch/dispatcher.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import { type RecordAccess, recorded } from "../personal-data/access.ts";
 import { sealError } from "../personal-data/errors.ts";
+import { keyedReturned } from "../personal-data/returned.ts";
+import { bindReturns, type PortReturns } from "../ports/returns.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveDeadLetterId, deriveIdempotencyKey } from "../shared/idempotency-key.ts";
 import type { ReactionOutcome } from "../shared/in-order.ts";
@@ -115,7 +117,12 @@ export interface RecipientNotices {
 
 export interface CreateRecipientNoticesArgs {
   readonly recipients: RecipientsRuntime;
-  readonly storage: Pick<AppStorage, "eventStore" | "recipients">;
+  readonly storage: Pick<AppStorage, "eventStore" | "recipients" | "personalKeys">;
+  /**
+   * What the port's calls return of whom: read as the notice's, and never refused, since telling
+   * a recipient is what a restriction asks for.
+   */
+  readonly returns?: PortReturns | undefined;
   readonly config: ResolvedConfig;
   readonly tracer: TracerFunction;
   readonly clock: Clock;
@@ -175,9 +182,10 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
   tracer,
   clock,
   recordAccess,
+  returns,
 }) => ({
   // A notice writes nothing: the unit it runs on commits the claim, or the letter, alone.
-  run: async ({ port, event, attempt, retryId, actor, told: given }) => {
+  run: async ({ port, event, attempt, retryId, actor, told: given, within: unit }) => {
     const recipient = recipients.byPort[port];
     const handler = HANDLER_OF[event.type];
     if (handler === undefined) return;
@@ -247,7 +255,22 @@ export const createRecipientNotices: CreateRecipientNoticesFunction = ({
                   presumed: told.presumed,
                   idempotencyKey,
                   signal,
-                  [recipient.name]: recipient.implementation(),
+                  ...(returns === undefined
+                    ? { [recipient.name]: recipient.implementation() }
+                    : bindReturns(
+                        returns,
+                        recipient.owner,
+                        {
+                          get [recipient.name]() {
+                            return recipient.implementation();
+                          },
+                        },
+                        {
+                          read: async (reads) => {
+                            unit.read(await keyedReturned(storage.personalKeys, reads));
+                          },
+                        },
+                      )),
                 });
               },
               timeoutMs: policies.timeoutMs,

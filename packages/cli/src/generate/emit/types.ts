@@ -82,6 +82,13 @@ export interface ClassificationTypeNameFunction {
 export const classificationTypeName: ClassificationTypeNameFunction = (moduleName) =>
   `${typeNameOf(moduleName)}Classification`;
 
+export interface PortReturnsTypeNameFunction {
+  (moduleName: string): string;
+}
+
+export const portReturnsTypeName: PortReturnsTypeNameFunction = (moduleName) =>
+  `${typeNameOf(moduleName)}PortReturns`;
+
 export interface RecipientsTypeNameFunction {
   (moduleName: string): string;
 }
@@ -190,6 +197,25 @@ const emitRecipients = (owner: PortsOwner, path: string): readonly string[] => {
       ...ports.map((port) => {
         const specifier = importPath({ from: path, to: port.path });
         return `  ${EXPECT_TYPE_NAME}<core.NotifiesRecipient<"${owner.name}.${port.key}", typeof import("${specifier}"), import("${specifier}").${port.typeName}>>,`;
+      }),
+      "];",
+    ].join("\n"),
+  ];
+};
+
+/**
+ * One check per port, failing to compile while a call or a method of it answers what can hold text
+ * and its module does not say, in `returnsPersonalData`, whose personal data it returns; nothing for
+ * an owner without ports.
+ */
+const emitPortReturns = (owner: PortsOwner, path: string): readonly string[] => {
+  if (owner.ports.length === 0) return [];
+  return [
+    [
+      `export type ${portReturnsTypeName(owner.name)} = [`,
+      ...owner.ports.map((port) => {
+        const specifier = importPath({ from: path, to: port.path });
+        return `  ${EXPECT_TYPE_NAME}<core.ClassifiesReturns<"${owner.name}.${port.key}", typeof import("${specifier}"), import("${specifier}").${port.typeName}>>,`;
       }),
       "];",
     ].join("\n"),
@@ -372,6 +398,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
         emitPorts(aggregate, path),
         emitAggregateClassification(aggregate, path),
         ...emitRecipients(aggregate, path),
+        ...emitPortReturns(aggregate, path),
       ].join("\n"),
     );
   }
@@ -410,6 +437,7 @@ export const emitTypes: EmitTypesFunction = ({ model, path, inferredStates = {} 
         emitForgetting(model, readModel, path),
         `export type ${classificationTypeName(readModel.name)} = ${EXPECT_TYPE_NAME}<core.ClassifiesColumns<"${readModel.name}", ${typeofImport(path, readModel.view.path)}>>;`,
         ...emitRecipients(readModel, path),
+        ...emitPortReturns(readModel, path),
       ].join("\n"),
     );
   }

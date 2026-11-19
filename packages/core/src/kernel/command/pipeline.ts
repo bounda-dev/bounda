@@ -52,7 +52,10 @@ import { createEarlierAnswers, type EarlierAnswers } from "../personal-data/earl
 import { hidingRetained } from "../personal-data/event-store.ts";
 import { personOfCommand } from "../personal-data/persons.ts";
 import { refuseRestricted, refuseRestrictedRead } from "../personal-data/refusal.ts";
+import { readReturned } from "../personal-data/returned.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
+import { bindPorts } from "../ports/bind.ts";
+import type { PortReturns } from "../ports/returns.ts";
 import type { Disclosures } from "../recipients/gate.ts";
 import { openedOf, PersonalDataChangedError } from "../recipients/gate.ts";
 import { actedBy } from "../shared/causation.ts";
@@ -147,6 +150,10 @@ export interface CreateCommandPipelineArgs {
    * without it.
    */
   readonly disclosures?: Disclosures | undefined;
+  /**
+   * What the handlers' calls to a port return of whom; the ports as they are without it.
+   */
+  readonly returns?: PortReturns | undefined;
   /**
    * The fingerprint of the app's marks, as `marksFingerprint` names them: a remembered answer is
    * sealed under them, and one sealed under others is erased.
@@ -442,6 +449,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
   recordAccess,
   onRejection,
   disclosures,
+  returns,
   marks,
   earlierAnswers = createEarlierAnswers({ storage, atRest: storage.atRest, clock }),
 }) => {
@@ -456,6 +464,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     store: EventStore,
     signals: readonly AbortSignal[],
     onLoad: (loaded: LoadedAggregate) => void,
+    onReturned: (read: readonly KeyedPerson[]) => void,
     touches: readonly string[],
     letThrough: Set<string>,
     carried: readonly KeyedPerson[],
@@ -494,13 +503,25 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       }
       const state = { ...folded.state, id: command.aggregateId, version };
       const issued = new WeakSet<DomainError>();
-      const ports =
-        disclosures?.bind(aggregate.name, aggregate.ports, {
-          opened: () => openedOf([...persons, ...carried]),
-          basis,
-          handler: command.type,
-          actor: command.metadata.actor,
-        }) ?? aggregate.ports;
+      // What the handler's ports returned of whom, read as the state is.
+      const returned: KeyedPerson[] = [];
+      const ports = bindPorts({ disclosures, returns }, aggregate.name, aggregate.ports, {
+        opened: () => openedOf([...persons, ...carried, ...returned]),
+        basis,
+        handler: command.type,
+        actor: command.metadata.actor,
+        read: async (reads) => {
+          const keyed = await readReturned({
+            persons: storage.persons,
+            keys: storage.personalKeys,
+            basis,
+            reads,
+            letThrough,
+          });
+          returned.push(...keyed);
+          onReturned(keyed);
+        },
+      });
       const produced = (await withTimeout({
         run: (signal) =>
           runtime.handler(
@@ -533,7 +554,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
       for (const signal of signals) signal.throwIfAborted();
       if (produced instanceof DomainError) {
         if (!issued.has(produced)) throw new ForeignRejectionError(command, produced);
-        rejectedPersons.set(produced, persons);
+        rejectedPersons.set(produced, [...persons, ...returned]);
         return produced;
       }
       const events = toPendingEvents(
@@ -554,7 +575,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
           aggregateId: command.aggregateId,
           expectedVersion: version,
           events,
-          persons,
+          persons: [...persons, ...returned],
           touches,
           ...(basis === undefined ? {} : { basis }),
         });
@@ -738,7 +759,18 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
     // The restricted persons `basis` let the command read, recorded however it settles.
     const letThrough = new Set<string>();
     const run = (store: EventStore): Promise<StoredDispatch | DomainError> =>
-      execute(aggregate, runtime, command, store, signals, onLoad, touches, letThrough, opened);
+      execute(
+        aggregate,
+        runtime,
+        command,
+        store,
+        signals,
+        onLoad,
+        (read) => within?.read(read),
+        touches,
+        letThrough,
+        opened,
+      );
     const perform = async (): Promise<DispatchResult | DomainError> => {
       await refuseRestricted({ persons: stores.persons, person, basis });
       if (options.delay !== undefined) {

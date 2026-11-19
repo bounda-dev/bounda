@@ -14,6 +14,7 @@ import type { HasPayload, PayloadInputOf } from "./payload.ts";
 import type { PersonalDataModule } from "./personal-data.ts";
 import type { PolicyEntry } from "./policy.ts";
 import type { PortModules } from "./port.ts";
+import type { PortReturnsModule } from "./port-returns.ts";
 import type { ProcessEntry } from "./process.ts";
 import type { ProjectionModule } from "./projection.ts";
 import type { QueryModule, QueryOptions, QueryResultOf } from "./query.ts";
@@ -37,6 +38,10 @@ export interface AggregateEntry {
    * The modules of the ports that declare a recipient, by port.
    */
   readonly recipients?: Readonly<Record<string, RecipientModule>>;
+  /**
+   * The modules of the ports that export `returnsPersonalData`, by port.
+   */
+  readonly returns?: Readonly<Record<string, PortReturnsModule>>;
   readonly commands: Readonly<Record<string, CommandEntry>>;
   readonly policies: Readonly<Record<string, PolicyEntry>>;
   readonly processes: Readonly<Record<string, ProcessEntry>>;
@@ -46,6 +51,7 @@ export interface ReadModelEntry {
   readonly view: ViewModule;
   readonly ports?: PortModules;
   readonly recipients?: Readonly<Record<string, RecipientModule>>;
+  readonly returns?: Readonly<Record<string, PortReturnsModule>>;
   // By the aggregate whose events they project, then by event: `projections.order.orderPlaced`.
   readonly projections: Readonly<Record<string, Readonly<Record<string, ProjectionModule>>>>;
   readonly queries: Readonly<Record<string, QueryModule>>;

@@ -156,6 +156,15 @@ export type {
   PortModules,
 } from "./port.ts";
 export type {
+  ClassifiesReturns,
+  FailedPortCall,
+  PersonalDataReturned,
+  PortCall,
+  PortReturnsModule,
+  ReturnedPersons,
+  ReturnsPersonalData,
+} from "./port-returns.ts";
+export type {
   AppEventModules,
   DeadlineFieldSchema,
   InstantFieldSchema,
