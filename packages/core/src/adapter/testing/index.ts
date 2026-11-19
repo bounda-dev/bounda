@@ -4,6 +4,11 @@ export type {
 } from "./checkpoint-store.contract.ts";
 export { checkpointStoreContract } from "./checkpoint-store.contract.ts";
 export type {
+  DeadLetterRetentionContractArgs,
+  DeadLetterRetentionContractFunction,
+} from "./dead-letter-retention.contract.ts";
+export { deadLetterRetentionContract } from "./dead-letter-retention.contract.ts";
+export type {
   DeadLetterStoreContractArgs,
   DeadLetterStoreContractFunction,
 } from "./dead-letter-store.contract.ts";

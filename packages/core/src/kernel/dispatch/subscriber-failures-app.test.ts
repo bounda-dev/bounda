@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { Table } from "../../adapter/storage/table.ts";
-import { DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS } from "../../config/defaults.ts";
+import {
+  DEFAULT_DEAD_LETTER_RETENTION_MS,
+  DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
+} from "../../config/defaults.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -18,8 +21,8 @@ import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { HELD_RECHECK_MS } from "../personal-data/held-text.ts";
 import { masterKey } from "../personal-data/master-key.ts";
-import { HELD_FAILURE_RECHECK_MS } from "./failure-retention.ts";
 
 // The projection quotes the personal field it read, as a careless one does, while `failing.on`.
 const failing = { on: false };
@@ -387,7 +390,7 @@ describe.each([
     expect((await app.status()).subscriberFailures).toHaveLength(1);
     expect((await app.status()).subscriberFailureRetention).toMatchObject({ held: 1 });
     await app.unrestrict("c-1", { notice: "given" });
-    clock.set(new Date(due.getTime() + HELD_FAILURE_RECHECK_MS));
+    clock.set(new Date(due.getTime() + HELD_RECHECK_MS));
     await app.runUntilIdle();
     expect((await app.status()).subscriberFailures).toEqual([]);
     expect(await (await adapter.createStorage()).subscriberFailures.list()).toEqual([]);
@@ -449,7 +452,11 @@ describe("the status of the app", () => {
       tenant: { tenant: "default", forgottenAt: null, previous: [] },
       keyRotation: { previous: [], pending: 0 },
       retention: { categories: [], keptBeyond: 0 },
-      deadLetterRetention: null,
+      deadLetterRetention: {
+        retentionMs: DEFAULT_DEAD_LETTER_RETENTION_MS,
+        nextDueAt: null,
+        held: 0,
+      },
       subscriberFailureRetention: {
         retentionMs: DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
         nextDueAt: null,

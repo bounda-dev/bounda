@@ -24,6 +24,7 @@ export type {
 export { defineTenantKeyStore } from "../kernel/personal-data/tenant-key-source.ts";
 export { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 export {
+  DEFAULT_DEAD_LETTER_RETENTION_MS,
   DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS,
   DEFAULT_FORGET_LEDGER_TIMEOUT_MS,
   DEFAULT_SNAPSHOT_VERIFY,

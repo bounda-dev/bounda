@@ -43,6 +43,10 @@ export const DEFAULT_CATCH_UP_POLL_MS: number = 15;
  */
 export const DEFAULT_FORGET_LEDGER_RECONCILE_EVERY_MS: number = 5 * 60_000;
 /**
+ * `runtime.deadLetters.retention` when it is left out.
+ */
+export const DEFAULT_DEAD_LETTER_RETENTION_MS: number = 30 * 86_400_000;
+/**
  * `runtime.subscriberFailures.retention` when it is left out.
  */
 export const DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS: number = 30 * 86_400_000;

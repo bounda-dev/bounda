@@ -16,6 +16,7 @@ import type { Storage } from "@bounda-dev/core/adapter";
 import {
   checkpointStoreContract,
   contractFields,
+  deadLetterRetentionContract,
   deadLetterStoreContract,
   eventStoreContract,
   inboxLedgerContract,
@@ -50,10 +51,11 @@ const openStorage = (adapter = sqlite({ memory: true })): Promise<Storage> =>
 describe("sqlite adapter in memory", () => {
   eventStoreContract({ create: openStorage });
   personalDataExportContract({ create: async () => sqlite({ memory: true }) });
+  deadLetterRetentionContract({ create: async () => sqlite({ memory: true }) });
   subscriberFailureRetentionContract({ create: async () => sqlite({ memory: true }) });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
-  deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
+  deadLetterStoreContract({ create: openStorage });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
   snapshotStoreContract({ create: () => openStorage() });
   storageTransactionContract({ create: () => openStorage() });

@@ -316,10 +316,12 @@ recipients
   the tenant's data was [resealed](/guides/personal-data/#recovering-from-a-full-compromise), by a
   `reseal` line with the step under way, since when and how many old keys it still keeps, or
   `complete` and when; the
-  [retention](/guides/personal-data/#inactivity) and the [purge of resolved dead
-  letters](/guides/dead-letters/#keeping-resolved-letters), each `not configured` when it is off,
-  and the [purge of subscriber failures](/reference/configuration/#subscriber-failures), with how
-  many past it are kept while a person their text is sealed under is restricted.
+  [retention](/guides/personal-data/#inactivity), `not configured` when it is off, and the
+  purges of [resolved dead letters](/guides/dead-letters/#keeping-resolved-letters) and of
+  [subscriber failures](/reference/configuration/#subscriber-failures), each with how many past it
+  are kept while a person whose data they hold is restricted, the first with the failed letters of
+  a handler the app no longer runs, which wait for an operator to discard them, and each saying so
+  when its store could not be read, the reason in the logs.
   The retention has a line for the app's, which forgets persons as a whole, under `default`, and
   one for each category of `app/personal-data.ts`, which [forgets its
   keys](/guides/personal-data/#each-category-for-its-own-time), with how many are past it now and

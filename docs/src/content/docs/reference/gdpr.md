@@ -49,8 +49,11 @@ else, in a port's own store, a log, a file, another service, is the app's to ans
   subscriber's last failure once it is resolved, or its subscriber gone, for
   [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures), 30 days
   by default, kept longer only while a person its text is sealed under is restricted, and resolved
-  dead letters after [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters)
-  when it is set.
+  dead letters after [`runtime.deadLetters.retention`](/guides/dead-letters/#keeping-resolved-letters),
+  30 days by default, kept longer only while a person whose data they hold is restricted; a
+  `failed` letter stays until an operator settles it, since only they know whether the work it
+  dropped is still owed, and `bounda status` counts those whose handler the app no longer runs, so
+  none is kept unseen.
 - **Integrity and confidentiality, 5(1)(f).** Bounda: personal fields are encrypted at rest under
   a key per person and category, in events, process states, stored commands, dead letters and read
   models, and snapshots under the database's key, all under a [hierarchy of
@@ -280,7 +283,8 @@ serves [nothing it should not](/guides/backups/#read-models-in-another-database)
 **A whole tenant.** [`forgetTenant`](/guides/personal-data/#forgetting-a-tenant) destroys the
 tenant's key, so nothing sealed of it opens again in the database or any copy of it, and deletes
 what an instance could still open with a key it keeps in memory, or that is kept in the clear and
-nothing would end: snapshots, remembered answers, subscribers' last failures and read models' rows.
+nothing would end: snapshots, remembered answers, subscribers' last failures, dead letters but
+those of the notices of the forgetting, and read models' rows.
 What a copy kept in the clear is in the [limitations](/reference/limitations/).
 
 **Left to the app.** Deciding that a ground of 17(1) applies; what the app writes outside the
@@ -297,9 +301,10 @@ four grounds of 18(1), `accuracy-contested`, `unlawful-processing`, `legal-claim
 asks, the data is kept and nothing else: commands that would touch it are refused with
 `ProcessingRestrictedError`, policies and processes wait as dead letters, queries leave the rows
 out, dead letters keep it sealed, a disclosure to a recipient is refused, and the retention that
-would forget the person, or remove a subscriber's last failure sealed under them, waits until the
-restriction is lifted, since keeping the data is what 18(1)(b) and (c) ask; a failure whose text
-no longer opens, its person forgotten, holds nothing left to keep and goes. A call processes it
+would forget the person, or remove a subscriber's last failure or a resolved dead letter that holds
+their data, waits until the restriction is lifted, since keeping the data is what 18(1)(b) and (c)
+ask; a failure or a letter whose text no longer opens, its person forgotten, holds nothing left to
+keep and goes. A call processes it
 anyway only by [naming a basis of 18(2)](/guides/personal-data/#processing-restricted-data-anyway),
 consent, legal claims, the protection of another's rights or public interest, which the access log
 records; what a forgetting kept under an exemption of 17(3) is restricted too, and opens only on
@@ -404,8 +409,10 @@ under the person's key, and a read-model column too, unless it asks to be kept i
 then obliges its read model to project the forgetting; the runtime's logs and spans carry no error's
 text unless [`errorText: "include"`](/reference/observability/#error-text) puts it there, which the
 record of processing flags; every call that hands a person's data out in the clear is recorded, and
-one whose record cannot be kept fails; an app with personal fields on a database that outlives the
-process does not start without a master key and a tenant key store. What is necessary for each
+one whose record cannot be kept fails; what the runtime keeps of its own work, remembered answers,
+subscribers' last failures and resolved dead letters, is removed after a retention that has a
+default; an app with personal fields on a database that outlives the process does not start without
+a master key and a tenant key store. What is necessary for each
 purpose, and so what is collected at all, stays the controller's design.
 
 ## Controllers and processors (articles 26 to 29)

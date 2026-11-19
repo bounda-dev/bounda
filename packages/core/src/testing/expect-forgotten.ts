@@ -6,6 +6,7 @@ import { categoryOf, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
 import { needlesOf } from "../kernel/shared/value-search.ts";
 import type { Witness } from "../kernel/witness.ts";
+import { TENANT_FORGOTTEN_EVENT } from "../modules/bounda-events.ts";
 import type { PersonalCategoryName } from "../modules/personal-data.ts";
 import type { PersonData } from "./person-data.ts";
 import { findIn, outsidePlaces, type Place, placesOfTable } from "./places.ts";
@@ -365,11 +366,22 @@ const EMPTIED: readonly InspectedStore[] = [
   "idempotencyKeys",
 ];
 
+// The tables a forgotten tenant's database keeps only what tells its recipients of the forgetting
+// in: no subscriber or letter of the work the tenant gave up on runs or is retried again.
+const NOTICES_ONLY: readonly InspectedStore[] = ["deadLetters", "subscriberFailures"];
+
+const ofForgetting = (row: Readonly<Record<string, unknown>>): boolean =>
+  (row.event_type ?? row.eventType) === TENANT_FORGOTTEN_EVENT;
+
 const tenantProblems = (tables: readonly InspectedTable[]): string[] => {
   const problems: string[] = [];
   for (const table of tables) {
     if (table.store !== null && EMPTIED.includes(table.store) && table.rows.length > 0) {
       problems.push(`${table.name} still holds ${table.rows.length} row(s)`);
+    }
+    const left = table.rows.filter((row) => !ofForgetting(row)).length;
+    if (table.store !== null && NOTICES_ONLY.includes(table.store) && left > 0) {
+      problems.push(`${table.name} still holds ${left} row(s) of the tenant's work`);
     }
   }
   const tenancy = tables.find((table) => table.store === "tenancy")?.rows[0];
@@ -395,8 +407,9 @@ const tenantProblems = (tables: readonly InspectedTable[]): string[] => {
 
 /**
  * Checks that nothing personal of a tenant is left readable once `forgetTenant` forgot it: the
- * app refuses every call, its database holds no key, no snapshot and no remembered answer, the
- * tenant key store holds no version of its key, and no value of any of its persons turns up in the
+ * app refuses every call, its database holds no key, no snapshot and no remembered answer, no
+ * subscriber failure or dead letter but those of the notices of the forgetting, the tenant key
+ * store holds no version of its key, and no value of any of its persons turns up in the
  * clear anywhere `expectForgotten` searches. Rejects with a `TenantNotForgottenError` that lists
  * what is left, and resolves when nothing is.
  *

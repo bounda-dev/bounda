@@ -7,24 +7,30 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith, textPersons } from "../personal-data/errors.ts";
+import { HELD_RECHECK_MS, stillOpens } from "../personal-data/held-text.ts";
 import { createPause } from "../personal-data/hold.ts";
 import { restrictedAmong } from "../personal-data/restricted-reads.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
-
-// How long a failure past the retention that a restriction holds waits before it is read again:
-// a restriction lifted in another instance tells nobody here.
-export const HELD_FAILURE_RECHECK_MS = 3_600_000;
+import type { UnreadableRetentionStatus } from "../shared/retention-status.ts";
 
 /**
  * Where the purge of subscriber failures stands: when the earliest failure comes due, `null` when
  * none will without a resolution, and how many past the retention are kept because a person their
  * text is sealed under is restricted and it still opens.
  */
-export interface SubscriberFailureRetentionStatus {
+export interface SubscriberFailureRetentionStanding {
   readonly retentionMs: number;
   readonly nextDueAt: string | null;
   readonly held: number;
 }
+
+/**
+ * The purge of subscriber failures as `app.status()` reports it: where it stands, or that its
+ * store could not be read.
+ */
+export type SubscriberFailureRetentionStatus =
+  | SubscriberFailureRetentionStanding
+  | UnreadableRetentionStatus;
 
 export interface SubscriberFailureRetention {
   /**
@@ -39,6 +45,9 @@ export interface SubscriberFailureRetention {
    * pauses the sweep, whose end it names.
    */
   nextDueAt(): Promise<Date | null>;
+  /**
+   * Never rejects: a store that fails is logged, and the purge reported unreadable.
+   */
   status(): Promise<SubscriberFailureRetentionStatus>;
   /**
    * After the database went back to a copy: forgets what this instance knew of the purge.
@@ -72,19 +81,6 @@ interface Due {
    */
   readonly holders: readonly string[];
 }
-
-// A text that cannot be read for another reason than a key gone is taken to open, so a restriction
-// keeps it rather than lose it, and one row never stops the purge of the others.
-const opens = async (
-  open: (value: StoredSubscriberFailure["errorMessage"]) => Promise<string | null>,
-  { errorMessage }: StoredSubscriberFailure,
-): Promise<boolean> => {
-  try {
-    return (await open(errorMessage)) !== null;
-  } catch {
-    return true;
-  }
-};
 
 interface Standing {
   readonly due: readonly Due[];
@@ -139,7 +135,7 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
       const holds = await Promise.all(sealedUnder.map(restricted));
       if (!holds.includes(true)) {
         due.push({ failure, holders: sealedUnder });
-      } else if (await opens(open, failure)) {
+      } else if (await stillOpens(open, failure.errorMessage)) {
         held += 1;
       } else {
         due.push({ failure, holders: [] });
@@ -151,7 +147,7 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
   // The next time a sweep reads the store: when the earliest failure comes due, or when a held one
   // is read again.
   const readAgainAt = ({ held, next }: Standing, at: number): number | null => {
-    const recheck = held > 0 ? at + HELD_FAILURE_RECHECK_MS : null;
+    const recheck = held > 0 ? at + HELD_RECHECK_MS : null;
     if (next === null) return recheck;
     return recheck === null ? next : Math.min(next, recheck);
   };
@@ -196,13 +192,18 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
     },
     status: async () => {
       const at = clock.now().getTime();
-      const { due, held, next } = await standing(at);
-      const dueAt = due.length > 0 ? at : next;
-      return {
-        retentionMs,
-        nextDueAt: dueAt === null ? null : new Date(dueAt).toISOString(),
-        held,
-      };
+      try {
+        const { due, held, next } = await standing(at);
+        const dueAt = due.length > 0 ? at : next;
+        return {
+          retentionMs,
+          nextDueAt: dueAt === null ? null : new Date(dueAt).toISOString(),
+          held,
+        };
+      } catch (error) {
+        logger.error("subscriber failures past the retention could not be read", { error });
+        return { retentionMs, unreadable: true };
+      }
     },
     restored: () => {
       unreadUntil = Number.NEGATIVE_INFINITY;

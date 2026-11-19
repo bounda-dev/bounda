@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { Table } from "../../adapter/storage/table.ts";
+import { testDeadLetter } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { TenantForgottenError, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
@@ -242,8 +243,16 @@ describe("forgetTenant", () => {
       errorMessage: "cannot project c-1@example.com",
       failedAt: "2026-01-01T00:00:00.000Z",
     });
+    // Letters of the work the tenant gave up on, failed and resolved, whose text no key reaches.
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("failed"),
+      errorMessage: "c-1@example.com",
+    });
+    await storage.deadLetterStore.add(testDeadLetter("resolved"));
+    await storage.deadLetterStore.updateStatus("resolved", "discarded", new Date());
     const { eventId } = await app.forgetTenant("default", { despiteLegalObligations: true });
     expect(await storage.subscriberFailures.list()).toEqual([]);
+    expect(await storage.deadLetterStore.list()).toEqual([]);
     expect((await app.status()).subscriberFailureRetention).toBeNull();
     const events = await storage.eventStore.readAll({ afterPosition: 0, limit: 10 });
     expect(events.map(({ type, aggregateId }) => [type, aggregateId])).toEqual([
@@ -441,7 +450,19 @@ describe("forgetTenant", () => {
     first.db.close();
     copyFileSync(copy, file);
     const restored = createNodeSqliteAdapter(file);
+    // A notice of the forgetting a recipient was not told yet, and a letter of the tenant's work.
+    const letters = (await restored.adapter.createStorage()).deadLetterStore;
+    await letters.add({
+      ...testDeadLetter("notice"),
+      kind: "recipient",
+      eventId,
+      eventType: "TenantForgotten",
+      aggregateType: "bounda",
+      aggregateId: "default",
+    });
+    await letters.add(testDeadLetter("work"));
     const after = await start(restored.adapter);
+    expect((await letters.list()).map(({ id }) => id)).toEqual(["notice"]);
     await expect(after.exportPersonalData("c-1")).rejects.toThrow(TenantForgottenError);
     const events = await after.status().then(async () => {
       const storage = await restored.adapter.createStorage();
@@ -470,10 +491,28 @@ describe("forgetTenant", () => {
   });
 
   it("finds a tenant not forgotten, and names what is left", async () => {
-    const { app } = await createTestApp({ registry, config: snapshotted });
+    const adapter = memory();
+    const { app } = await createTestApp({ registry, config: snapshotted, adapter });
     stops.push(() => app.stop());
     await register(app, "c-1");
     await app.runUntilIdle();
+    const storage = await adapter.createStorage();
+    await storage.deadLetterStore.add(testDeadLetter("work"));
+    // What tells a recipient of the forgetting is left.
+    await storage.deadLetterStore.add({
+      ...testDeadLetter("notice"),
+      eventType: "TenantForgotten",
+    });
+    await storage.subscriberFailures.record({
+      subscriber: "projection:customers",
+      position: 1,
+      eventId: "e-1",
+      eventType: "CustomerRegistered",
+      person: null,
+      errorName: "Error",
+      errorMessage: "boom",
+      failedAt: "2026-01-01T00:00:00.000Z",
+    });
     const error = await expectTenantForgotten(app).catch((thrown: unknown) => thrown);
     expect(error).toMatchObject({ name: "TenantNotForgottenError" });
     expect((error as { problems: readonly string[] }).problems).toEqual(
@@ -484,6 +523,8 @@ describe("forgetTenant", () => {
         "bounda_index_keys still holds 1 row(s)",
         expect.stringContaining("bounda_personal_keys still holds"),
         expect.stringContaining("the tenant key store still holds a version of default's key"),
+        "bounda_dead_letters still holds 1 row(s) of the tenant's work",
+        "bounda_subscriber_failures still holds 1 row(s) of the tenant's work",
       ]),
     );
     expect((error as { found: readonly unknown[] }).found.length).toBeGreaterThan(0);

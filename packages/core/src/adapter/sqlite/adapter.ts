@@ -227,6 +227,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             db: database,
             table: tables.deadLetters,
             personRows: tables.personRows,
+            restrictions: tables.restrictions,
           }),
           scheduler: createSqliteScheduler({
             db: database,

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { DeadLetterKind } from "../../adapter/storage/dead-letter-store.ts";
+import { testDeadLetter } from "../../adapter/testing/fixtures.ts";
+import { DEFAULT_DEAD_LETTER_RETENTION_MS } from "../../config/defaults.ts";
 import type { Config } from "../../config/types.ts";
 import { ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
@@ -85,13 +88,54 @@ describe("runtime.deadLetters.retention", () => {
     expect(await app.nextDueAt()).toBeNull();
   });
 
-  it("keeps resolved letters without a retention", async () => {
+  it("purges resolved letters after the default retention when none is configured", async () => {
     const { app, clock, failed } = await setUp({});
     const discarded = await failed("o-1");
     await app.deadLetters.discard(discarded);
-    expect(await app.nextDueAt()).toBeNull();
-    clock.set(new Date(clock.now().getTime() + 3650 * DAY));
+    const due = new Date(clock.now().getTime() + DEFAULT_DEAD_LETTER_RETENTION_MS);
+    expect(await app.nextDueAt()).toEqual(due);
+    expect((await app.status()).deadLetterRetention).toEqual({
+      retentionMs: DEFAULT_DEAD_LETTER_RETENTION_MS,
+      nextDueAt: due.toISOString(),
+      held: 0,
+      withoutHandler: 0,
+    });
+    clock.set(new Date(due.getTime() - 1));
     await app.runUntilIdle();
     expect(await app.deadLetters.get(discarded)).toMatchObject({ status: "discarded" });
+    clock.set(due);
+    await app.runUntilIdle();
+    expect(await app.deadLetters.get(discarded)).toBeNull();
+  });
+
+  it("counts the failed letters of a policy the app no longer has, which no purge removes", async () => {
+    const adapter = memory();
+    const before = await createTestApp({ registry, adapter });
+    stops.push(() => before.app.stop());
+    await (
+      before.app.commands as unknown as Record<string, (payload: unknown) => unknown>
+    ).placeOrder?.({ orderId: "o-1" });
+    await before.app.runUntilIdle();
+    // The policy still runs: its letter waits for a retry.
+    expect((await before.app.status()).deadLetterRetention).toMatchObject({ withoutHandler: 0 });
+    await before.app.stop();
+    // A kind no release writes, as a store may cast one.
+    await (await adapter.createStorage()).deadLetterStore.add({
+      ...testDeadLetter("legacy"),
+      kind: "legacy" as DeadLetterKind,
+    });
+    const order = registry.aggregates.order as unknown as Record<string, unknown>;
+    const { app, clock } = await createTestApp({
+      registry: {
+        ...registry,
+        aggregates: { order: { ...order, policies: {} } },
+      } as unknown as Registry,
+      adapter,
+    });
+    stops.push(() => app.stop());
+    expect((await app.status()).deadLetterRetention).toMatchObject({ withoutHandler: 2 });
+    clock.set(new Date(clock.now().getTime() + 10 * DEFAULT_DEAD_LETTER_RETENTION_MS));
+    await app.runUntilIdle();
+    expect(await app.deadLetters.count({ status: "failed" })).toBe(2);
   });
 });

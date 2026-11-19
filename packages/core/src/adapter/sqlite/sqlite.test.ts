@@ -19,6 +19,7 @@ import {
   type ContractRow,
   checkpointStoreContract,
   contractFields,
+  deadLetterRetentionContract,
   deadLetterStoreContract,
   eventStoreContract,
   forgetLedgerContract,
@@ -131,10 +132,11 @@ const tableNames = (db: DatabaseSync, prefix: string): unknown[] =>
 describe("the SQLite stores on node:sqlite", () => {
   eventStoreContract({ create: storage });
   personalDataExportContract({ create: async () => nodeSqlite().adapter });
+  deadLetterRetentionContract({ create: async () => nodeSqlite().adapter });
   subscriberFailureRetentionContract({ create: async () => nodeSqlite().adapter });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
-  deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
+  deadLetterStoreContract({ create: storage });
   schedulerContract({ create: async () => (await storage()).scheduler });
   idempotencyStoreContract({ create: storage });
   snapshotStoreContract({ create: storage });

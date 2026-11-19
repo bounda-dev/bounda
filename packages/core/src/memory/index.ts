@@ -186,9 +186,11 @@ export const memory: MemoryFunction = (options = {}) => {
     createStorage: async () => {
       const notifier = createMemoryEventNotifier();
       const inboxLedger = createKeptInboxLedger();
-      const deadLetterStore = createKeptDeadLetterStore();
       const scheduler = createKeptScheduler();
       const persons = createKeptPersonStore();
+      const deadLetterStore = createKeptDeadLetterStore({
+        restricted: (person) => persons.restrictionsOf(person).length > 0,
+      });
       const personalKeys = createKeptPersonalKeyStore({
         restricted: persons.restricted,
         lastActiveAt: persons.lastActiveAt,

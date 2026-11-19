@@ -179,10 +179,14 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
 
 ### Dead letters
 
-- **`deadLetters.retention`**, none by default. How long a dead letter is kept once it was retried
-  or discarded. Past it, the scheduled-command worker removes it, its error text and payload with
-  it; a `failed` letter is never removed. Without it resolved letters are kept. A process instance
-  whose letter was discarded stays given up after the letter is gone. It is app-wide. See
+- **`deadLetters.retention`**, `30d` by default (`DEFAULT_DEAD_LETTER_RETENTION_MS` in
+  `@bounda-dev/core/config`). How long a dead letter is kept once it was retried or discarded.
+  Past it, the scheduled-command worker removes it, its error text and payload with it; a `failed`
+  letter is never removed. A letter that names a person whose processing is
+  [restricted](/guides/personal-data/#restricting-processing) stays until the restriction is
+  lifted, unless what it holds of them no longer opens, their key gone, since nothing of theirs is
+  left in it to keep. A process instance whose letter was discarded stays given up after the letter
+  is gone. It is app-wide. See
   [keeping resolved letters](/guides/dead-letters/#keeping-resolved-letters).
 
 ### Subscriber failures

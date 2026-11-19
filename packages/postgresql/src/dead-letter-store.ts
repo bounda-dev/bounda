@@ -21,6 +21,8 @@ import { naming, outsideKept } from "./held-keys.ts";
 export interface CreatePostgresqlDeadLetterStoreArgs {
   readonly db: PostgresqlDatabase;
   readonly table: string;
+  // The storage's restrictions table, which `purge` and `removeHeld` check in their statement.
+  readonly restrictions: string;
 }
 
 export interface CreatePostgresqlDeadLetterStoreFunction {
@@ -84,7 +86,17 @@ const filters = (
 export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFunction = ({
   db,
   table,
+  restrictions,
 }) => {
+  // A condition true for a letter, the row `l`, that names a person with a restriction.
+  const held = `EXISTS (SELECT 1 FROM ${restrictions} AS "r" WHERE "r"."person" IN ("l"."person", "l"."state_person") OR "l"."read_persons" @> jsonb_build_array("r"."person") OR "l"."persons" @> jsonb_build_array(jsonb_build_object('person', "r"."person")))`;
+  const firstResolvedAt = async (holding: boolean): Promise<Date | null> => {
+    const [row] = await db.all(
+      `SELECT "resolved_at" FROM ${table} AS "l" WHERE "resolved_at" IS NOT NULL AND ${holding ? "" : "NOT "}${held} ORDER BY "resolved_at" LIMIT 1`,
+      [],
+    );
+    return row === undefined ? null : new Date(String(row.resolved_at));
+  };
   const get = async (id: string): Promise<StoredDeadLetter | null> => {
     const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "id" = $1`, [id]);
     return row === undefined ? null : toLetter(row);
@@ -184,19 +196,54 @@ export const createPostgresqlDeadLetterStore: CreatePostgresqlDeadLetterStoreFun
       )
         .map(toLetter)
         .sort(byFirstFailure),
-    firstResolvedAt: async () => {
-      const [row] = await db.all(
-        `SELECT "resolved_at" FROM ${table} WHERE "resolved_at" IS NOT NULL ORDER BY "resolved_at" LIMIT 1`,
-        [],
-      );
-      return row === undefined ? null : new Date(String(row.resolved_at));
-    },
+    firstResolvedAt: () => firstResolvedAt(false),
+    firstHeldAt: () => firstResolvedAt(true),
     purge: async ({ resolvedBy, limit }) =>
       (
         await db.all(
-          `DELETE FROM ${table} WHERE "id" IN (SELECT "id" FROM ${table} WHERE "resolved_at" <= $1 ORDER BY "resolved_at", "id" COLLATE "C" LIMIT $2) RETURNING "id"`,
+          `DELETE FROM ${table} WHERE "id" IN (SELECT "id" FROM ${table} AS "l" WHERE "resolved_at" <= $1 AND NOT ${held} ORDER BY "resolved_at", "id" COLLATE "C" LIMIT $2) RETURNING "id"`,
           [resolvedBy.toISOString(), limit],
         )
       ).length,
+    listHeld: async ({ resolvedBy, after, limit }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} AS "l" WHERE "resolved_at" <= $1 AND ${held} AND ($2::text IS NULL OR "id" COLLATE "C" > $2::text) ORDER BY "id" COLLATE "C" LIMIT $3`,
+          [resolvedBy.toISOString(), after ?? null, limit],
+        )
+      ).map(toLetter),
+    removeHeld: async (letter, unlessRestricted) => {
+      const unless =
+        unlessRestricted.length === 0
+          ? ""
+          : ` AND NOT EXISTS (SELECT 1 FROM ${restrictions} WHERE "person" IN (${unlessRestricted.map((_, index) => `$${index + 5}`).join(", ")}))`;
+      const removed = await db.all(
+        `DELETE FROM ${table} WHERE "id" = $1 AND "resolved_at" = $2 AND "error_message"::jsonb = $3::jsonb AND "persons" = $4::jsonb${unless} RETURNING "id"`,
+        [
+          letter.id,
+          letter.resolvedAt ?? null,
+          postgresqlDialect.encode("json", letter.errorMessage),
+          postgresqlDialect.encode("json", letter.persons ?? []),
+          ...unlessRestricted,
+        ],
+      );
+      return removed.length > 0;
+    },
+    failedByHandler: async () =>
+      (
+        await db.all(
+          `SELECT "kind", "handler", count(*) AS "count" FROM ${table} WHERE "status" = 'failed' GROUP BY "kind", "handler" ORDER BY "kind" COLLATE "C", "handler" COLLATE "C"`,
+          [],
+        )
+      ).map((row) => ({
+        kind: String(row.kind) as DeadLetterKind,
+        handler: String(row.handler),
+        count: Number(row.count),
+      })),
+    clear: async (keepEventId) => {
+      await db.run(`DELETE FROM ${table} WHERE $1::text IS NULL OR "event_id" <> $1::text`, [
+        keepEventId ?? null,
+      ]);
+    },
   };
 };

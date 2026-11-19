@@ -251,6 +251,19 @@ describe("deferWrites", () => {
     expect(await kept("clear")).toEqual([false, false, false]);
   });
 
+  it("clears the letters it holds back with the live ones, but those of the event kept", async () => {
+    const storage = await memory().createStorage();
+    await storage.deadLetterStore.add(testDeadLetter("live"));
+    const { stores, flush, withdrawLetters } = deferWrites(storage);
+    await stores.deadLetterStore.add({ ...testDeadLetter("held"), persons: [held("c-1", null)] });
+    await stores.deadLetterStore.add({ ...testDeadLetter("notice"), eventId: "kept" });
+    await stores.deadLetterStore.clear("kept");
+    expect(await storage.deadLetterStore.list()).toEqual([]);
+    expect(withdrawLetters("c-1")).toEqual([]);
+    await flush(storage);
+    expect((await storage.deadLetterStore.list()).map(({ id }) => id)).toEqual(["notice"]);
+  });
+
   it("lists what names a person from the live stores, not from the writes held back", async () => {
     const storage = await memory().createStorage();
     const persons = [held("c-1", "1")];

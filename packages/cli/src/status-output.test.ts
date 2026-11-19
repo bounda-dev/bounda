@@ -69,7 +69,7 @@ const status: AppStatus = {
     ],
     keptBeyond: 1,
   },
-  deadLetterRetention: { retentionMs: 90_000, nextDueAt: null },
+  deadLetterRetention: { retentionMs: 90_000, nextDueAt: null, held: 0, withoutHandler: 0 },
   subscriberFailureRetention: {
     retentionMs: 2_592_000_000,
     nextDueAt: "2026-05-04T00:00:00.000Z",
@@ -196,7 +196,7 @@ describe("formatStatus", () => {
       "tenant: no keys: no personal data marked",
       "key rotation: under k-1, every key wrapped (checked 2026-05-01T00:00:00.000Z)",
       "retention: no personal data marked",
-      "dead letter retention: not configured",
+      "dead letter retention: none kept but the notices of the forgetting, the tenant was forgotten",
       "subscriber failure retention: none kept, the tenant was forgotten",
       "recipients: none declared",
     ]);
@@ -209,6 +209,43 @@ describe("formatStatus", () => {
     );
     expect(purging(1, "2026-05-04T00:00:00.000Z")).toContain(
       "subscriber failure retention: 90s, next purge 2026-05-04T00:00:00.000Z; 1 failure past it kept while a person it is sealed under is restricted\n",
+    );
+    const letters = (held: number, withoutHandler = 0) =>
+      formatStatus({
+        status: {
+          ...bare,
+          deadLetterRetention: {
+            retentionMs: 90_000,
+            nextDueAt: "2026-05-04T00:00:00.000Z",
+            held,
+            withoutHandler,
+          },
+        },
+      });
+    expect(letters(0)).toContain(
+      "dead letter retention: 90s, next purge 2026-05-04T00:00:00.000Z\n",
+    );
+    expect(letters(2)).toContain(
+      "dead letter retention: 90s, next purge 2026-05-04T00:00:00.000Z; 2 letters past it kept while a person it holds data of is restricted\n",
+    );
+    expect(letters(0, 1)).toContain(
+      "dead letter retention: 90s, next purge 2026-05-04T00:00:00.000Z; 1 failed letter of a handler the app no longer runs, kept until discarded: bounda dead-letters list --status failed\n",
+    );
+    expect(letters(1, 3)).toContain(
+      "; 1 letter past it kept while a person it holds data of is restricted; 3 failed letters of a handler",
+    );
+    const unreadable = formatStatus({
+      status: {
+        ...bare,
+        deadLetterRetention: { retentionMs: 90_000, unreadable: true },
+        subscriberFailureRetention: { retentionMs: 90_000, unreadable: true },
+      },
+    });
+    expect(unreadable).toContain(
+      "dead letter retention: 90s, its store could not be read, see the logs\n",
+    );
+    expect(unreadable).toContain(
+      "subscriber failure retention: 90s, its store could not be read, see the logs\n",
     );
     expect(
       formatStatus({ status: { ...bare, retention: { categories: [], keptBeyond: 0 } } }),

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../adapter/adapter.ts";
+import { testDeadLetter } from "../adapter/testing/fixtures.ts";
 import { resolveConfig } from "../config/schema.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
 import {
@@ -300,12 +301,16 @@ describe("the runner of a forgotten tenant", () => {
       logger: silentLogger,
       errorText: "omit",
     });
+    await storage.deadLetterStore.add({ ...testDeadLetter("told"), kind: "recipient" });
     expect(await runner.runUntilIdle(5)).toBe(true);
     expect(discharged).toBe(0);
     expect(counted.at(-1)).toEqual({ kind: "recipient", status: "failed" });
+    expect(await storage.deadLetterStore.get("told")).not.toBeNull();
     failed = 0;
     expect(await runner.runUntilIdle(5)).toBe(true);
     expect(discharged).toBe(1);
+    // Every recipient told: the letters of the notices go with what the database held for them.
+    expect(await storage.deadLetterStore.list()).toEqual([]);
     expect(await runner.runUntilIdle(5)).toBe(true);
     expect(discharged).toBe(1);
     await storage.close();

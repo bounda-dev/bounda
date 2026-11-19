@@ -23,6 +23,8 @@ export interface CreateSqliteDeadLetterStoreArgs {
   readonly table: string;
   // Where the rows that name a person are indexed by person.
   readonly personRows: string;
+  // The storage's restrictions table, which `purge` and `removeHeld` check in their statement.
+  readonly restrictions: string;
 }
 
 export interface CreateSqliteDeadLetterStoreFunction {
@@ -94,9 +96,19 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
   db,
   table,
   personRows,
+  restrictions,
 }) => {
   const names = naming({ personRows, indexed: PERSON_INDEXED.deadLetters });
   const reading = readingLetter(personRows);
+  // A condition true for a letter, the row `l`, that names a person with a restriction.
+  const held = `EXISTS (SELECT 1 FROM ${restrictions} AS "r" WHERE "r"."person" IN ("l"."person", "l"."state_person") OR "r"."person" IN (SELECT "value" FROM json_each("l"."read_persons")) OR "r"."person" IN (SELECT json_extract("value", '$.person') FROM json_each("l"."persons")))`;
+  const firstResolvedAt = async (holding: boolean): Promise<Date | null> => {
+    const [row] = await db.all(
+      `SELECT "resolved_at" FROM ${table} AS "l" WHERE "resolved_at" IS NOT NULL AND ${holding ? "" : "NOT "}${held} ORDER BY "resolved_at" LIMIT 1`,
+      [],
+    );
+    return row === undefined ? null : new Date(String(row.resolved_at));
+  };
   const get = async (id: string): Promise<StoredDeadLetter | null> => {
     const [row] = await db.all(`SELECT ${COLUMNS} FROM ${table} WHERE "id" = ?`, [id]);
     return row === undefined ? null : toLetter(row);
@@ -196,19 +208,54 @@ export const createSqliteDeadLetterStore: CreateSqliteDeadLetterStoreFunction = 
       )
         .map(toLetter)
         .sort(byFirstFailure),
-    firstResolvedAt: async () => {
-      const [row] = await db.all(
-        `SELECT "resolved_at" FROM ${table} WHERE "resolved_at" IS NOT NULL ORDER BY "resolved_at" LIMIT 1`,
-        [],
-      );
-      return row === undefined ? null : new Date(String(row.resolved_at));
-    },
+    firstResolvedAt: () => firstResolvedAt(false),
+    firstHeldAt: () => firstResolvedAt(true),
     purge: async ({ resolvedBy, limit }) =>
       (
         await db.all(
-          `DELETE FROM ${table} WHERE "id" IN (SELECT "id" FROM ${table} WHERE "resolved_at" <= ? ORDER BY "resolved_at", "id" LIMIT ?) RETURNING "id"`,
+          `DELETE FROM ${table} WHERE "id" IN (SELECT "id" FROM ${table} AS "l" WHERE "resolved_at" <= ? AND NOT ${held} ORDER BY "resolved_at", "id" LIMIT ?) RETURNING "id"`,
           [resolvedBy.toISOString(), limit],
         )
       ).length,
+    listHeld: async ({ resolvedBy, after, limit }) =>
+      (
+        await db.all(
+          `SELECT ${COLUMNS} FROM ${table} AS "l" WHERE "resolved_at" <= ? AND ${held} AND (? IS NULL OR "id" > ?) ORDER BY "id" LIMIT ?`,
+          [resolvedBy.toISOString(), after ?? null, after ?? null, limit],
+        )
+      ).map(toLetter),
+    removeHeld: async (letter, unlessRestricted) => {
+      const unless =
+        unlessRestricted.length === 0
+          ? ""
+          : ` AND NOT EXISTS (SELECT 1 FROM ${restrictions} WHERE "person" IN (${unlessRestricted.map(() => "?").join(", ")}))`;
+      const removed = await db.all(
+        `DELETE FROM ${table} WHERE "id" = ? AND "resolved_at" = ? AND json("error_message") = json(?) AND json("persons") = json(?)${unless} RETURNING "id"`,
+        [
+          letter.id,
+          letter.resolvedAt ?? null,
+          encodeErrorText(letter.errorMessage),
+          JSON.stringify(letter.persons ?? []),
+          ...unlessRestricted,
+        ],
+      );
+      return removed.length > 0;
+    },
+    failedByHandler: async () =>
+      (
+        await db.all(
+          `SELECT "kind", "handler", count(*) AS "count" FROM ${table} WHERE "status" = 'failed' GROUP BY "kind", "handler" ORDER BY "kind", "handler"`,
+          [],
+        )
+      ).map((row) => ({
+        kind: String(row.kind) as DeadLetterKind,
+        handler: String(row.handler),
+        count: Number(row.count),
+      })),
+    clear: (keepEventId) =>
+      db.run(`DELETE FROM ${table} WHERE ? IS NULL OR "event_id" <> ?`, [
+        keepEventId ?? null,
+        keepEventId ?? null,
+      ]),
   };
 };

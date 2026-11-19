@@ -5,6 +5,7 @@ import {
   type ContractRow,
   checkpointStoreContract,
   contractFields,
+  deadLetterRetentionContract,
   deadLetterStoreContract,
   eventStoreContract,
   forgetLedgerContract,
@@ -42,7 +43,7 @@ describe("memory adapter", () => {
   personalDataExportContract({ create: async () => memory() });
   checkpointStoreContract({ create: async () => (await storage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await storage()).inboxLedger });
-  deadLetterStoreContract({ create: async () => (await storage()).deadLetterStore });
+  deadLetterStoreContract({ create: storage });
   schedulerContract({ create: async () => (await storage()).scheduler });
   idempotencyStoreContract({ create: storage });
   snapshotStoreContract({ create: storage });
@@ -54,6 +55,7 @@ describe("memory adapter", () => {
   tenantKeyStoreContract({ create: () => memory().createTenantKeyStore() });
   inspectionContract({ create: async () => memory() });
   subscriberFailureStoreContract({ create: storage });
+  deadLetterRetentionContract({ create: async () => memory() });
   subscriberFailureRetentionContract({ create: async () => memory() });
   forgetLedgerContract({
     create: async () => {

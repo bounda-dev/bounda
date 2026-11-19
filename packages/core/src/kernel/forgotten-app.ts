@@ -94,6 +94,8 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
     if (discharged) return;
     if ((await dispatcher.getLag()).maxLag > 0) return;
     if ((await storage.deadLetterStore.count({ kind: "recipient", status: "failed" })) > 0) return;
+    // Every notice of the forgetting delivered or settled: its letters serve nobody any longer.
+    await storage.deadLetterStore.clear();
     await discharge();
     discharged = true;
   };

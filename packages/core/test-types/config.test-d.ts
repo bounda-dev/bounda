@@ -1,4 +1,11 @@
-import type { PersonalDataForgottenReason, RedactedEvent } from "@bounda-dev/core";
+import type {
+  AppStatus,
+  DeadLetterRetentionStanding,
+  PersonalDataForgottenReason,
+  RedactedEvent,
+  SubscriberFailureRetentionStanding,
+  UnreadableRetentionStatus,
+} from "@bounda-dev/core";
 import {
   type DurationInput,
   ERROR_TEXT_VARIABLE,
@@ -21,6 +28,7 @@ import type {
 } from "@bounda-dev/core/adapter";
 import {
   type Config,
+  DEFAULT_DEAD_LETTER_RETENTION_MS,
   defineConfig,
   defineForgetLedger,
   defineKeyWrapper,
@@ -31,6 +39,7 @@ import {
   type KeyWrapper,
   type KeyWrapperDefinition,
   masterKey,
+  type ResolvedConfig,
 } from "@bounda-dev/core/config";
 import { describe, expectTypeOf, it } from "vitest";
 
@@ -319,6 +328,25 @@ describe("defineConfig", () => {
       // @ts-expect-error the retention of subscriber failures is app-wide, never per aggregate
       runtime: { overrides: { order: { subscriberFailures: { retention: "7d" } } } },
     });
+    // Resolved letters are always purged: the retention has a default, never `null`.
+    expectTypeOf<ResolvedConfig["runtime"]["deadLetters"]>().toEqualTypeOf<{
+      readonly retentionMs: number;
+    }>();
+    expectTypeOf(DEFAULT_DEAD_LETTER_RETENTION_MS).toEqualTypeOf<number>();
+    // A purge whose store cannot be read is reported, never thrown: narrow on `unreadable`.
+    expectTypeOf<NonNullable<AppStatus["deadLetterRetention"]>>().toEqualTypeOf<
+      | {
+          readonly retentionMs: number;
+          readonly nextDueAt: string | null;
+          readonly held: number;
+          readonly withoutHandler: number;
+        }
+      | { readonly retentionMs: number; readonly unreadable: true }
+    >();
+    expectTypeOf<NonNullable<AppStatus["subscriberFailureRetention"]>>().toEqualTypeOf<
+      SubscriberFailureRetentionStanding | UnreadableRetentionStatus
+    >();
+    expectTypeOf<DeadLetterRetentionStanding>().not.toHaveProperty("unreadable");
     defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "include" } } });
     defineConfig({ storage: sqlite, ports, runtime: { telemetry: { errorText: "omit" } } });
     expectTypeOf<NonNullable<NonNullable<Config["runtime"]>["telemetry"]>>().toEqualTypeOf<{

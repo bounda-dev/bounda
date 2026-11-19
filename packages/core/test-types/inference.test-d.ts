@@ -2061,11 +2061,10 @@ describe("operations", () => {
     expectTypeOf<
       AppStatus["subscriberFailureRetention"]
     >().toEqualTypeOf<SubscriberFailureRetentionStatus | null>();
-    expectTypeOf<SubscriberFailureRetentionStatus>().toEqualTypeOf<{
-      readonly retentionMs: number;
-      readonly nextDueAt: string | null;
-      readonly held: number;
-    }>();
+    expectTypeOf<SubscriberFailureRetentionStatus>().toEqualTypeOf<
+      | { readonly retentionMs: number; readonly nextDueAt: string | null; readonly held: number }
+      | { readonly retentionMs: number; readonly unreadable: true }
+    >();
     expectTypeOf<
       AppStatus["forgetLedger"]
     >().toEqualTypeOf<ForgetLedgerReconciliationStatus | null>();

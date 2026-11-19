@@ -1,5 +1,6 @@
 import type { ObservableResult } from "@opentelemetry/api";
 import { type Adapter, isAdapter } from "../adapter/adapter.ts";
+import type { DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type {
@@ -1165,17 +1166,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             forgotten: wrapping.drop,
           })
         : undefined;
-    const letterRetentionMs = config.runtime.deadLetters.retentionMs;
-    const letterRetention =
-      letterRetentionMs === null
-        ? undefined
-        : createDeadLetterRetention({
-            store: written.deadLetterStore,
-            checkpoints: written.checkpointStore,
-            retentionMs: letterRetentionMs,
-            clock,
-            logger,
-          });
+    const handlersOf: Readonly<Record<DeadLetterKind, Readonly<Record<string, unknown>>>> = {
+      policy: policies.byName,
+      process: processDefinitions.byName,
+      scheduled: aggregates.commandsByType,
+      recipient: recipients.byPort,
+    };
+    const letterRetention = createDeadLetterRetention({
+      store: written.deadLetterStore,
+      checkpoints: written.checkpointStore,
+      persons: storage.persons,
+      keys: storage.personalKeys,
+      // A kind no release writes, cast by a store, has no handler.
+      handles: (kind, handler) => handlersOf[kind]?.[handler] !== undefined,
+      retentionMs: config.runtime.deadLetters.retentionMs,
+      clock,
+      logger,
+    });
     const redactions: Redactions = {
       storage: written,
       wrapping,
@@ -1528,7 +1535,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       const due = await Promise.all([
         scheduledDueAt(),
         retention?.nextDueAt() ?? null,
-        letterRetention?.nextDueAt() ?? null,
+        letterRetention.nextDueAt(),
         failureRetention.nextDueAt(),
         rotation?.nextDueAt() ?? null,
         reseal?.nextDueAt() ?? null,

@@ -34,9 +34,10 @@ export interface DeferredWriteTarget {
  * every write in order, and `flush` runs the writes recorded so far against another set of the
  * same stores, a transaction's or the live ones. `add` answers the letter as filed, whatever the
  * store holds under that id already; `get` and `listByPerson` on the idempotency store answer a
- * record `put` recorded before anything `live` holds, as its writes since left it. `tryClaim`, `claimDue`, both `renew`, both `purge`, the
- * `forget` of the scheduler and the dead letter store, and `clear` act at once, on `live`, since
- * their answer decides what happens next.
+ * record `put` recorded before anything `live` holds, as its writes since left it. `tryClaim`,
+ * `claimDue`, both `renew`, both `purge`, the `forget` of the scheduler and the dead letter store,
+ * `removeHeld` and both `clear` act at once, on `live`, since their answer decides what happens
+ * next.
  */
 export interface DeferredWrites {
   readonly stores: DeferredStores;
@@ -113,7 +114,19 @@ export const deferWrites: DeferWritesFunction = ({
         listByPerson: deadLetterStore.listByPerson,
         forget: deadLetterStore.forget,
         firstResolvedAt: deadLetterStore.firstResolvedAt,
+        firstHeldAt: deadLetterStore.firstHeldAt,
         purge: deadLetterStore.purge,
+        listHeld: deadLetterStore.listHeld,
+        failedByHandler: deadLetterStore.failedByHandler,
+        removeHeld: deadLetterStore.removeHeld,
+        clear: async (keepEventId) => {
+          for (const [id, { eventId }] of letters) {
+            if (eventId === keepEventId) continue;
+            letters.delete(id);
+            recorded.push((target) => target.deadLetterStore.remove(id));
+          }
+          await deadLetterStore.clear(keepEventId);
+        },
       },
       scheduler: {
         claimDue: scheduler.claimDue,

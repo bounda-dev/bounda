@@ -19,6 +19,7 @@ import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
 import {
   checkpointStoreContract,
   contractFields,
+  deadLetterRetentionContract,
   deadLetterStoreContract,
   eventStoreContract,
   forgetLedgerContract,
@@ -124,10 +125,11 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   });
   eventStoreContract({ create: openStorage });
   personalDataExportContract({ create: async () => fresh() });
+  deadLetterRetentionContract({ create: async () => fresh() });
   subscriberFailureRetentionContract({ create: async () => fresh() });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });
   inboxLedgerContract({ create: async () => (await openStorage()).inboxLedger });
-  deadLetterStoreContract({ create: async () => (await openStorage()).deadLetterStore });
+  deadLetterStoreContract({ create: openStorage });
   schedulerContract({ create: async () => (await openStorage()).scheduler });
   idempotencyStoreContract({ create: () => openStorage() });
   snapshotStoreContract({ create: () => openStorage() });
