@@ -179,8 +179,34 @@ describe("an app started for a forgotten tenant", () => {
     down = true;
     const status = await app.status();
     expect(unreadableParts(status)).toEqual(["lag"]);
+    await expect(app.getLag()).rejects.toThrow("events unreadable");
     expect(status.tenant).toMatchObject({ forgottenAt: forgetting.forgottenAt });
     expect(status.subscriberFailures).toEqual([]);
+  });
+
+  it("reports a subscriber whose checkpoint cannot be read unreadable in its lag, with no max lag", async () => {
+    const base = memory();
+    let down = false;
+    const { app } = await forgottenStart("all", {
+      ...base,
+      createStorage: async () => {
+        const ports = await base.createStorage();
+        return {
+          ...ports,
+          checkpointStore: {
+            ...ports.checkpointStore,
+            get: (name) =>
+              down
+                ? Promise.reject(new Error("checkpoints unreadable"))
+                : ports.checkpointStore.get(name),
+          },
+        };
+      },
+    });
+    down = true;
+    const lag = await app.getLag();
+    expect(lag.maxLag).toBeNull();
+    expect(lag.subscribers).toEqual([{ subscriber: expect.any(String), unreadable: true }]);
   });
 
   it("runs its notices in the background in every role but web, until it stops", async () => {

@@ -203,7 +203,8 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * from one behind, it reads the events after each checkpoint, less than one batch, once per
    * distinct checkpoint: on a Durable Object those are rows read, billed on every call. A
    * checkpoint or a backfill that cannot be read is logged and reported unreadable, `maxLag` then
-   * `null`; rejects only when the head of the stream cannot be read.
+   * `null`; rejects only when the stream itself, its head or the events past a checkpoint, cannot
+   * be read.
    */
   getLag(): Promise<AppLag>;
   /**
@@ -1541,8 +1542,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       unit: "{event}",
     });
     const observeLag = async (observer: ObservableResult): Promise<void> => {
-      const current = await dispatcher.getLag();
+      // A subscriber whose checkpoint cannot be read is logged and left out, not the others.
+      const current = await dispatcher.standings();
       for (const subscriber of current.subscribers) {
+        if ("unreadable" in subscriber) continue;
         observer.observe(subscriber.lag, { [ATTRIBUTES.subscriber]: subscriber.subscriber });
       }
     };

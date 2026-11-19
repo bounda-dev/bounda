@@ -376,7 +376,8 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       const at = nextWake({
         idle,
         settled,
-        lag: lag.maxLag,
+        lag: Math.max(0, ...lag.subscribers.map((each) => ("lag" in each ? each.lag : 0))),
+        unread: lag.maxLag === null,
         rebuild: rebuilds.length === 0 ? "none" : rebuildFailed ? "held" : "next",
         due,
         now,

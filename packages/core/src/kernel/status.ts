@@ -76,7 +76,8 @@ export interface AppStatus {
    */
   readonly restoresFound: number | UnreadableStatus;
   /**
-   * Unreadable as a whole when the head of the stream could not be read.
+   * Unreadable as a whole when the stream itself, its head or the events past a checkpoint, could
+   * not be read.
    */
   readonly lag: StatusLag | UnreadableStatus;
   readonly subscriberFailures: readonly SubscriberFailureStatus[] | UnreadableStatus;

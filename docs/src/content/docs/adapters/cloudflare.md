@@ -447,8 +447,9 @@ instead of `@cloudflare/workers-types`. There is no `prepare` script: every scri
   `getLag()`, which the object also asks before arming its alarm, reads the events after each
   checkpoint, less than one batch, once per distinct checkpoint. A row read costs a thousandth of a
   row written, but a health check that calls `getLag()` every few seconds pays it on every call.
-  A checkpoint it cannot read leaves `maxLag` `null`, and the object then tries again after the
-  poll interval.
+  A checkpoint it cannot read leaves `maxLag` `null`, and the object then tries again a retry
+  interval later, as for a rebuild slice that failed, still waking at once for the new events of
+  the other subscribers.
   Each policy or process reaction adds its own writes, and the alarm that runs it is one more
   request. A scheduled command, dead letter, snapshot or remembered rejection that holds personal
   data writes two more rows for each person it names, and as many again when it goes: the entry

@@ -64,8 +64,9 @@ failing subscriber is stuck on (see
 subscriber whose checkpoint cannot be read, its read model's own database down say, is logged as
 `a subscriber's checkpoint could not be read` and comes back as `{ subscriber, unreadable: true }`
 beside the others, and `maxLag` is then `null`, never a number a health check could take for
-caught up; a backfill that cannot be read is logged and comes back unreadable too. Only a stream
-whose head cannot be read makes `getLag()` reject. A
+caught up; a backfill that cannot be read is logged and comes back unreadable too. Only the stream
+itself, its head or the events past a checkpoint, makes `getLag()` reject when it cannot be read,
+and the lag gauge leaves out only the subscribers it could not read. A
 `mismatch` on `bounda.snapshots` is worth one too: a snapshot folded to a state the stream does not
 give, so an `evolve` of that aggregate depends on something other than the events.
 

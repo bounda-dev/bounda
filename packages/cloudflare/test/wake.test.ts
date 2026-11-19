@@ -5,6 +5,7 @@ const base = {
   idle: true,
   settled: false,
   lag: 0,
+  unread: false,
   rebuild: "none",
   due: null,
   now: 1_000,
@@ -27,9 +28,11 @@ describe("nextWake", () => {
   });
 
   it("tries again after the retry interval while a subscriber's checkpoint cannot be read", () => {
-    expect(nextWake({ ...base, lag: null })).toBe(6_000);
-    expect(nextWake({ ...base, lag: null, settled: true })).toBe(6_000);
-    expect(nextWake({ ...base, lag: null, idle: false })).toBe(1_000);
+    expect(nextWake({ ...base, unread: true })).toBe(6_000);
+    expect(nextWake({ ...base, unread: true, settled: true })).toBe(6_000);
+    expect(nextWake({ ...base, unread: true, idle: false })).toBe(1_000);
+    // The subscribers read still wake it at once for new events.
+    expect(nextWake({ ...base, unread: true, lag: 2 })).toBe(1_000);
   });
 
   it("wakes at once for a rebuild's next slice, and after the retry interval when one failed", () => {
