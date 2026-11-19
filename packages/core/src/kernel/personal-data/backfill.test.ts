@@ -664,8 +664,12 @@ describe("the backfill's standing when it cannot be read", () => {
     expect(read.personalDataBackfill).toMatchObject({ caughtUp: expect.any(Boolean) });
     down = true;
     expect(await app.getLag()).toEqual({ ...read, personalDataBackfill: { unreadable: true } });
-    expect(logs.filter(([level]) => level === "error").map(([, message]) => message)).toEqual([
-      "the personal data backfill could not be read",
+    expect(logs.filter(([level]) => level === "error")).toEqual([
+      [
+        "error",
+        "the personal data backfill could not be read",
+        expect.objectContaining({ errorName: "Error" }),
+      ],
     ]);
     expect((await app.status()).personalDataBackfill).toEqual({ unreadable: true });
   });
