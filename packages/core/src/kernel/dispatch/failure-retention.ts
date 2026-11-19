@@ -73,6 +73,19 @@ interface Due {
   readonly holders: readonly string[];
 }
 
+// A text that cannot be read for another reason than a key gone is taken to open, so a restriction
+// keeps it rather than lose it, and one row never stops the purge of the others.
+const opens = async (
+  open: (value: StoredSubscriberFailure["errorMessage"]) => Promise<string | null>,
+  { errorMessage }: StoredSubscriberFailure,
+): Promise<boolean> => {
+  try {
+    return (await open(errorMessage)) !== null;
+  } catch {
+    return true;
+  }
+};
+
 interface Standing {
   readonly due: readonly Due[];
   readonly held: number;
@@ -123,11 +136,14 @@ export const createSubscriberFailureRetention: CreateSubscriberFailureRetentionF
         continue;
       }
       const sealedUnder = textPersons(failure);
-      const holders =
-        sealedUnder.length > 0 && (await open(failure.errorMessage)) !== null ? sealedUnder : [];
-      const holds = await Promise.all(holders.map(restricted));
-      if (holds.includes(true)) held += 1;
-      else due.push({ failure, holders });
+      const holds = await Promise.all(sealedUnder.map(restricted));
+      if (!holds.includes(true)) {
+        due.push({ failure, holders: sealedUnder });
+      } else if (await opens(open, failure)) {
+        held += 1;
+      } else {
+        due.push({ failure, holders: [] });
+      }
     }
     return { due, held, next: next === Number.POSITIVE_INFINITY ? null : next };
   };

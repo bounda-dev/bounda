@@ -222,6 +222,29 @@ describe("the retention of subscriber failures", () => {
     expect(told).toEqual([[]]);
   });
 
+  it("keeps for its restriction a failure whose text cannot be read, and purges the others", async () => {
+    const { store, keys, logs, retention, resolved, restrict, sealed } = await setUp();
+    await resolved("projection:orders", start, await sealed("c-1"));
+    await resolved("policies", start);
+    await restrict("c-1");
+    const opened = keys.opened;
+    keys.opened = (person, fingerprint) =>
+      person === "c-1"
+        ? Promise.reject(new Error("key store is down"))
+        : opened(person, fingerprint);
+    expect(await retention.sweep(later(7 * DAY))).toBe(1);
+    expect(await subscribersOf(store)).toEqual(["projection:orders"]);
+    expect(logs.filter(({ level }) => level === "error")).toEqual([]);
+  });
+
+  it("opens no text of a failure none of whose persons is restricted", async () => {
+    const { store, keys, retention, resolved, sealed } = await setUp();
+    await resolved("policies", start, await sealed("c-1"));
+    keys.opened = () => Promise.reject(new Error("opened"));
+    expect(await retention.sweep(later(7 * DAY))).toBe(1);
+    expect(await store.list()).toEqual([]);
+  });
+
   it("wakes a host only to read a held failure again, never while the sweep would not read it", async () => {
     const { clock, retention, resolved, restrict, persons } = await setUp();
     await resolved("projection:orders", start, { person: "c-1" });
