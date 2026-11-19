@@ -1,3 +1,5 @@
+import type { AppLag } from "@bounda-dev/core";
+
 export interface NextWakeArgs {
   // `false` when the last round of work ran out of passes with work left.
   readonly idle: boolean;
@@ -41,3 +43,13 @@ export const nextWake: NextWakeFunction = ({
   if (due !== null) candidates.push(Math.max(due.getTime(), now));
   return candidates.length === 0 ? null : Math.min(...candidates);
 };
+
+export interface WakeLagOfFunction {
+  (lag: Pick<AppLag, "subscribers" | "maxLag">): Pick<NextWakeArgs, "lag" | "unread">;
+}
+
+// The lag the subscribers read are behind, and whether one could not be read.
+export const wakeLagOf: WakeLagOfFunction = ({ subscribers, maxLag }) => ({
+  lag: Math.max(0, ...subscribers.map((each) => ("lag" in each ? each.lag : 0))),
+  unread: maxLag === null,
+});

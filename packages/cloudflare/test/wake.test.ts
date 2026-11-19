@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextWake } from "../src/wake.ts";
+import { nextWake, wakeLagOf } from "../src/wake.ts";
 
 const base = {
   idle: true,
@@ -46,5 +46,26 @@ describe("nextWake", () => {
     expect(nextWake({ ...base, due: new Date(10) })).toBe(1_000);
     expect(nextWake({ ...base, due: new Date(3_000), lag: 1, settled: true })).toBe(3_000);
     expect(nextWake({ ...base, due: new Date(9_000), lag: 1, settled: true })).toBe(6_000);
+  });
+});
+
+describe("wakeLagOf", () => {
+  it("takes the furthest lag of the subscribers read, and says when one was not", () => {
+    expect(
+      wakeLagOf({
+        subscribers: [
+          { subscriber: "a", position: 4, lag: 2 },
+          { subscriber: "b", unreadable: true },
+          { subscriber: "c", position: 1, lag: 5 },
+        ],
+        maxLag: null,
+      }),
+    ).toEqual({ lag: 5, unread: true });
+    expect(
+      wakeLagOf({ subscribers: [{ subscriber: "b", unreadable: true }], maxLag: null }),
+    ).toEqual({ lag: 0, unread: true });
+    expect(
+      wakeLagOf({ subscribers: [{ subscriber: "a", position: 4, lag: 0 }], maxLag: 0 }),
+    ).toEqual({ lag: 0, unread: false });
   });
 });
