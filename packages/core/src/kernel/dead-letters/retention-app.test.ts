@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { DeadLetterKind } from "../../adapter/storage/dead-letter-store.ts";
+import { testDeadLetter } from "../../adapter/testing/fixtures.ts";
 import { DEFAULT_DEAD_LETTER_RETENTION_MS } from "../../config/defaults.ts";
 import type { Config } from "../../config/types.ts";
 import { ValidationError } from "../../contracts/errors.ts";
@@ -114,7 +116,14 @@ describe("runtime.deadLetters.retention", () => {
       before.app.commands as unknown as Record<string, (payload: unknown) => unknown>
     ).placeOrder?.({ orderId: "o-1" });
     await before.app.runUntilIdle();
+    // The policy still runs: its letter waits for a retry.
+    expect((await before.app.status()).deadLetterRetention).toMatchObject({ withoutHandler: 0 });
     await before.app.stop();
+    // A kind no release writes, as a store may cast one.
+    await (await adapter.createStorage()).deadLetterStore.add({
+      ...testDeadLetter("legacy"),
+      kind: "legacy" as DeadLetterKind,
+    });
     const order = registry.aggregates.order as unknown as Record<string, unknown>;
     const { app, clock } = await createTestApp({
       registry: {
@@ -124,9 +133,9 @@ describe("runtime.deadLetters.retention", () => {
       adapter,
     });
     stops.push(() => app.stop());
-    expect((await app.status()).deadLetterRetention).toMatchObject({ withoutHandler: 1 });
+    expect((await app.status()).deadLetterRetention).toMatchObject({ withoutHandler: 2 });
     clock.set(new Date(clock.now().getTime() + 10 * DEFAULT_DEAD_LETTER_RETENTION_MS));
     await app.runUntilIdle();
-    expect(await app.deadLetters.count({ status: "failed" })).toBe(1);
+    expect(await app.deadLetters.count({ status: "failed" })).toBe(2);
   });
 });
