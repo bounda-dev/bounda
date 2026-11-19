@@ -18,7 +18,7 @@ export const HELD_FAILURE_RECHECK_MS = 3_600_000;
 /**
  * Where the purge of subscriber failures stands: when the earliest failure comes due, `null` when
  * none will without a resolution, and how many past the retention are kept because a person their
- * text is sealed under is restricted.
+ * text is sealed under is restricted and it still opens.
  */
 export interface SubscriberFailureRetentionStatus {
   readonly retentionMs: number;

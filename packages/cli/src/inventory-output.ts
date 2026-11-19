@@ -88,7 +88,7 @@ const keptFor = (record: InventoryRecord): string => {
     return `retried or discarded letters for ${record.keptFor}, failed ones until resolved; unreadable once their person is forgotten`;
   }
   if (record.name === "subscriber-failures") {
-    return `until the subscriber's next failure replaces it, or for ${record.keptFor} once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted; unreadable once their person is forgotten`;
+    return `until the subscriber's next failure replaces it, or for ${record.keptFor} once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten`;
   }
   if (record.name === "remembered-answers") {
     return `${record.keptFor}, or until erased by a forgetting`;
