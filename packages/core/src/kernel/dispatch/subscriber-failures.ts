@@ -4,13 +4,15 @@ import type {
   SubscriberFailureStore,
 } from "../../adapter/storage/subscriber-failure-store.ts";
 import type { ErrorText } from "../../config/types.ts";
+import type { ReadOutcome } from "../../modules/audit.ts";
 import type { RestrictionBasis } from "../../modules/personal-data.ts";
-import { type RecordAccess, recorded } from "../personal-data/access.ts";
+import { checked, type RecordAccess, recorded } from "../personal-data/access.ts";
 import { sealedKeys } from "../personal-data/commands.ts";
 import { openTextWith, textPersons } from "../personal-data/errors.ts";
 import {
   checkIncludeRestricted,
   type IncludeRestrictedOptions,
+  isRestrictionBasis,
   restrictedAmong,
   restrictionViewOf,
 } from "../personal-data/restricted-reads.ts";
@@ -126,63 +128,68 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
     );
   };
 
-  const restrictedRecord = (
-    includeRestricted: RestrictionBasis | undefined,
-    letThrough: readonly string[],
-  ) => (includeRestricted === undefined ? null : { basis: includeRestricted, persons: letThrough });
+  // Only a call refused before it read can name what is no basis.
+  const restrictedRecord = (asked: unknown, letThrough: readonly string[]) =>
+    isRestrictionBasis(asked) ? { basis: asked, persons: letThrough } : null;
 
+  // Each call is recorded with the failures it read: refused before it read, or having found
+  // nothing, it names no one.
   const list = async (options?: IncludeRestrictedOptions) => {
-    const includeRestricted = checkIncludeRestricted(
-      "subscriberFailures.list",
-      options?.includeRestricted,
-    );
-    const failures = await store.list();
+    const asked = options?.includeRestricted;
     const letThrough: string[] = [];
-    return recorded(
-      (outcome) =>
+    const record =
+      (failures: readonly StoredSubscriberFailure[]) => (outcome: ReadOutcome, error: unknown) =>
         recordAccess({
           operation: "subscriberFailures.list",
           detail: { failures: failures.length },
           actor,
           persons: personsOf(failures),
           outcome,
-          restricted: restrictedRecord(includeRestricted, letThrough),
-        }),
-      async () => {
-        const listed = await read(failures, includeRestricted, letThrough);
-        await vouch?.();
-        return listed;
-      },
-    );
+          error,
+          restricted: restrictedRecord(asked, letThrough),
+        });
+    const { includeRestricted, failures } = await checked(record([]), async () => ({
+      includeRestricted: checkIncludeRestricted("subscriberFailures.list", asked),
+      failures: await store.list(),
+    }));
+    return recorded(record(failures), async () => {
+      const listed = await read(failures, includeRestricted, letThrough);
+      await vouch?.();
+      return listed;
+    });
   };
 
   const get = async (
     subscriber: string,
     options?: IncludeRestrictedOptions,
   ): Promise<SubscriberFailure | null> => {
-    const includeRestricted = checkIncludeRestricted(
-      "subscriberFailures.get",
-      options?.includeRestricted,
-    );
-    const failure = await store.get(subscriber);
-    if (failure === null) return null;
+    const asked = options?.includeRestricted;
     const letThrough: string[] = [];
-    return recorded(
-      (outcome) =>
+    const record =
+      (failures: readonly StoredSubscriberFailure[]) => (outcome: ReadOutcome, error: unknown) =>
         recordAccess({
           operation: "subscriberFailures.get",
           detail: { subscriber },
           actor,
-          persons: personsOf([failure]),
+          persons: personsOf(failures),
           outcome,
-          restricted: restrictedRecord(includeRestricted, letThrough),
-        }),
-      async () => {
-        const [found] = await read([failure], includeRestricted, letThrough);
-        await vouch?.();
-        return found as SubscriberFailure;
-      },
-    );
+          error,
+          restricted: restrictedRecord(asked, letThrough),
+        });
+    const { includeRestricted, failure } = await checked(record([]), async () => ({
+      includeRestricted: checkIncludeRestricted("subscriberFailures.get", asked),
+      failure: await store.get(subscriber),
+    }));
+    // Recorded as a query that matches no row is.
+    if (failure === null) {
+      await record([])("ok", undefined);
+      return null;
+    }
+    return recorded(record([failure]), async () => {
+      const [first] = await read([failure], includeRestricted, letThrough);
+      await vouch?.();
+      return first as SubscriberFailure;
+    });
   };
 
   return {

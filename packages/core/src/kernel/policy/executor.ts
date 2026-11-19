@@ -170,13 +170,14 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       await (basis === null || letThrough.length === 0
         ? handled
         : recorded(
-            (outcome) =>
+            (outcome, error) =>
               recordAccess({
                 operation: "policy",
                 detail: { handler: policy.name },
                 actor: context.actor,
                 persons: letThrough,
                 outcome,
+                error,
                 restricted: { basis, persons: letThrough },
               }),
             () => handled,

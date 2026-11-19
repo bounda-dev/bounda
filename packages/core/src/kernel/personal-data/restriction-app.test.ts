@@ -41,6 +41,8 @@ const filed: (string | null)[] = [];
 const audited: (string | null)[] = [];
 const reminded: (string | null)[] = [];
 const recalled: (string | null)[] = [];
+// The handlers a test makes throw: "nudge", "report", "call".
+const failing = new Set<string>();
 
 interface CallProcessConfigArgs {
   readonly events: {
@@ -120,6 +122,7 @@ const callProcess = (seen: string[], restricted?: RestrictionBasis) => ({
       customerCalled: {
         handler: ({ aggregateId }: { aggregateId: string }) => {
           seen.push(aggregateId);
+          if (failing.has("call")) throw new Error("call down");
         },
       },
     },
@@ -204,7 +207,10 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
             module: {
               payload: ({ z, notPersonal }: CommandPayloadArgs) =>
                 z.object({ customerId: notPersonal(z.string()) }),
-              handler: ({ events }: { events: Events }) => [events.customerNudged?.({})],
+              handler: ({ events }: { events: Events }) => {
+                if (failing.has("nudge")) throw new Error("nudge down");
+                return [events.customerNudged?.({})];
+              },
             },
           },
           callCustomer: {
@@ -287,6 +293,7 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
                 };
               }) => {
                 reported.push(event.aggregateId);
+                if (failing.has("report")) throw new Error("report down");
                 if (reportBasis === undefined) return;
                 await commands.nudgeCustomer({ customerId: event.aggregateId });
                 // A delayed command goes without the basis, which would refuse it otherwise.
@@ -469,6 +476,7 @@ const setup = async ({
   ]) {
     seen.length = 0;
   }
+  failing.clear();
   const accesses: PersonalDataAccess[] = [];
   const { app, clock } = await createTestApp({
     registry: registryWith(reportBasis === undefined ? {} : { reportBasis }),
@@ -1021,5 +1029,36 @@ describe("a policy that names a basis that is none", () => {
     await expect(createTestApp({ registry })).rejects.toThrow(
       'aggregates.customer.policies.reportOnCustomerRegistered: restricted "curiosity" is not a basis of article 18(2); use one of "consent", "legal-claims", "protection-of-rights", "public-interest", "erasure-exemption"',
     );
+  });
+});
+
+describe("restricted processing that fails", () => {
+  it("is recorded as failed, naming what it rejected with, never its message", async () => {
+    const { app, commands, register, accesses } = await setup({ reportBasis: "legal-claims" });
+    await app.restrict("ana", { ground: "legal-claims" });
+    await commands.registerCustomer?.(
+      { customerId: "ana", email: "ana@example.com", plan: "pro" },
+      { processRestricted: "legal-claims" },
+    );
+    await register("bo");
+    const failed = (operation: string) =>
+      accesses
+        .filter((access) => access.operation === operation && access.outcome === "failed")
+        .map(({ errorName, errorCode }) => [errorName, errorCode]);
+
+    failing.add("nudge");
+    await expect(
+      commands.nudgeCustomer?.({ customerId: "ana" }, { processRestricted: "legal-claims" }),
+    ).rejects.toThrow("nudge down");
+    expect(failed("command")).toEqual([["Error", null]]);
+
+    failing.add("report");
+    failing.add("call");
+    await commands.callCustomer?.({ customerId: "ana" }, { processRestricted: "legal-claims" });
+    await app.runUntilIdle();
+    expect(failed("policy")[0]).toEqual(["Error", null]);
+    expect(failed("process")[0]).toEqual(["Error", null]);
+    expect(JSON.stringify(accesses)).not.toContain("down");
+    await app.stop();
   });
 });

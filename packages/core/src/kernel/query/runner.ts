@@ -4,8 +4,12 @@ import { NotFoundError } from "../../contracts/errors.ts";
 import type { RestrictionBasis } from "../../modules/personal-data.ts";
 import type { QueryOptions } from "../../modules/query.ts";
 import { validatePayload } from "../command/validate.ts";
-import { type RecordAccess, recorded } from "../personal-data/access.ts";
-import { checkIncludeRestricted, restrictionViewOf } from "../personal-data/restricted-reads.ts";
+import { checked, type RecordAccess, recorded } from "../personal-data/access.ts";
+import {
+  checkIncludeRestricted,
+  isRestrictionBasis,
+  restrictionViewOf,
+} from "../personal-data/restricted-reads.ts";
 import type { ModulePorts } from "../ports/ports.ts";
 import type { SealingSource } from "../projection/runner.ts";
 import { projectionSubscriberName } from "../projection/runner.ts";
@@ -119,12 +123,84 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
     { type, payload, actor, includeRestricted: asked }: RunQueryArgs,
     nested: QueriesFacadeRuntime,
   ): Promise<unknown> => {
-    const includeRestricted = checkIncludeRestricted(`query ${type}`, asked);
     const query = queries.byType[type];
     if (query === undefined) throw runtimeText(new NotFoundError(`Unknown query "${type}"`));
     const readModel = readModels.byName[query.readModel];
     if (readModel === undefined)
       throw runtimeText(new NotFoundError(`Unknown read model "${query.readModel}"`));
+    // What the query does before it reads: a refusal here opens nothing.
+    const prepare = async () => {
+      const includeRestricted = checkIncludeRestricted(`query ${type}`, asked);
+      const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
+      await vouch?.before(query.readModel);
+      if (query.repository !== null && isRecord(parsed)) {
+        checkPayloadFields(
+          `readModels.${query.readModel}.queries.${query.key}`,
+          Object.keys(parsed),
+        );
+      }
+      // The rows read reflect the stream through where the projection stands, read first: a
+      // change of a person past it, which the rows may not show yet, refuses a disclosure.
+      const fence =
+        disclosures === undefined || !disclosures.tells(query.readModel)
+          ? undefined
+          : await standing(projectionSubscriberName(query.readModel));
+      return {
+        includeRestricted,
+        parsed,
+        fence,
+        stores: storesOf(readModel, restrictionViewOf(includeRestricted)),
+      };
+    };
+    type Prepared = Awaited<ReturnType<typeof prepare>>;
+    const run = async ({
+      includeRestricted,
+      parsed,
+      fence,
+      stores,
+    }: Prepared): Promise<unknown> => {
+      const { table, client } = stores;
+      const repositoryData =
+        query.repository === null
+          ? undefined
+          : await query.repository({
+              ...(parsed as Record<string, unknown>),
+              client,
+              table,
+              actor,
+            });
+      const args = {
+        query: { type, payload: parsed },
+        repositoryData,
+        table,
+        queries: nested,
+        actor,
+      };
+      const readModelPorts =
+        disclosures?.bind(query.readModel, ports[query.readModel] ?? {}, {
+          opened: () =>
+            [...stores.persons].flatMap((person) =>
+              categoriesOf(readModel).map((category) => ({
+                person,
+                fingerprint: null,
+                category,
+                fence,
+              })),
+            ),
+          basis: includeRestricted,
+          handler: query.key,
+          actor,
+        }) ??
+        ports[query.readModel] ??
+        {};
+      // A handler that can send what it reads out waits for its reads to be vouched for.
+      if (Object.keys(readModelPorts).length > 0) await vouch?.after(query.readModel);
+      const answer = await query.handler(
+        Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
+      );
+      await vouch?.after(query.readModel);
+      return answer;
+    };
     return traced({
       tracer,
       errorText,
@@ -135,82 +211,43 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
         ...actorAttribute(actor),
       },
       run: async () => {
-        const parsed = validatePayload({ schema: query.schema, payload, subject: `query ${type}` });
-        await vouch?.before(query.readModel);
-        const stores = storesOf(readModel, restrictionViewOf(includeRestricted));
-        const { table, client } = stores;
-        if (query.repository !== null && isRecord(parsed)) {
-          checkPayloadFields(
-            `readModels.${query.readModel}.queries.${query.key}`,
-            Object.keys(parsed),
-          );
-        }
-        // The rows read reflect the stream through where the projection stands, read first: a
-        // change of a person past it, which the rows may not show yet, refuses a disclosure.
-        const fence =
-          disclosures === undefined || !disclosures.tells(query.readModel)
-            ? undefined
-            : await standing(projectionSubscriberName(query.readModel));
-        const run = async (): Promise<unknown> => {
-          const repositoryData =
-            query.repository === null
-              ? undefined
-              : await query.repository({
-                  ...(parsed as Record<string, unknown>),
-                  client,
-                  table,
-                  actor,
-                });
-          const args = {
-            query: { type, payload: parsed },
-            repositoryData,
-            table,
-            queries: nested,
-            actor,
-          };
-          const readModelPorts =
-            disclosures?.bind(query.readModel, ports[query.readModel] ?? {}, {
-              opened: () =>
-                [...stores.persons].flatMap((person) =>
-                  categoriesOf(readModel).map((category) => ({
-                    person,
-                    fingerprint: null,
-                    category,
-                    fence,
-                  })),
-                ),
-              basis: includeRestricted,
-              handler: query.key,
-              actor,
-            }) ??
-            ports[query.readModel] ??
-            {};
-          // A handler that can send what it reads out waits for its reads to be vouched for.
-          if (Object.keys(readModelPorts).length > 0) await vouch?.after(query.readModel);
-          const answer = await query.handler(
-            Object.keys(readModelPorts).length === 0 ? args : withPorts(readModelPorts, args),
-          );
-          await vouch?.after(query.readModel);
-          return answer;
-        };
-        // Recorded once its handler settles, before its result or error is handed out, naming
-        // the persons of the rows it read: a handler may reshape what it read, so its result
-        // cannot tell whose data it holds. A read model with no field marked `.personal()` is
-        // recorded only when restricted rows were asked for.
+        // A read model with no field marked `.personal()` is recorded only when restricted rows
+        // were asked for.
         if (
           readModel.personalData === null ||
-          (includeRestricted === undefined && readModel.personalData.personal.length === 0)
+          (asked === undefined && readModel.personalData.personal.length === 0)
         ) {
-          return run();
+          return run(await prepare());
         }
-        return recorded(
-          async (outcome) =>
+        const detail = { query: query.key, readModel: query.readModel };
+        // Refused before it read, it names no one: it opened nothing. The basis it named, when it
+        // is one, is kept.
+        const prepared = await checked(
+          async (outcome, error) =>
             recordAccess({
               operation: "query",
-              detail: { query: query.key, readModel: query.readModel },
+              detail,
+              actor,
+              persons: [],
+              outcome,
+              error,
+              restricted: isRestrictionBasis(asked) ? { basis: asked, persons: [] } : null,
+            }),
+          prepare,
+        );
+        const { includeRestricted, stores } = prepared;
+        // Recorded once its handler settles, before its result or error is handed out, naming
+        // the persons of the rows it read: a handler may reshape what it read, so its result
+        // cannot tell whose data it holds.
+        return recorded(
+          async (outcome, error) =>
+            recordAccess({
+              operation: "query",
+              detail,
               actor,
               persons: stores.persons,
               outcome,
+              error,
               unattributed: stores.unattributed,
               restricted:
                 includeRestricted === undefined
@@ -226,7 +263,7 @@ export const createQueryRunner: CreateQueryRunnerFunction = ({
                       ]),
                     },
             }),
-          run,
+          () => run(prepared),
         );
       },
     });

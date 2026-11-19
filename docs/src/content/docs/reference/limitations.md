@@ -55,6 +55,12 @@ is what is not sealed:
   `unattributed: true`.
 - **Read models without personal fields.** A query of one is not recorded, even when its rows
   hold a person's id: an id alone is what every event already carries.
+- **Calls refused before they are known to read personal data.** A query whose name no read model
+  serves, an actor that `as` refuses, a request a host refuses before it reaches the app (the
+  tenant it names, the RPC that carries it), and a query, an export, `recipientsOf` or a read of
+  the subscribers' failures of a [forgotten tenant](/guides/personal-data/#forgetting-a-tenant),
+  refused because nothing of it is left to read: none of these reaches an operation the log
+  records.
 - **The global stream.** `app.events.read()` hands out events as stored, personal fields
   encrypted, so it opens nothing and is not recorded; what decrypts them, such as a projection,
   is the runtime's own work.

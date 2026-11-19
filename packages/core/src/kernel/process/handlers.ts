@@ -143,13 +143,14 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
     });
     if (basis === null || letThrough.length === 0) return step();
     return recorded(
-      (outcome) =>
+      (outcome, error) =>
         recordAccess({
           operation: "process",
           detail: { handler: process.name },
           actor,
           persons: letThrough,
           outcome,
+          error,
           restricted: { basis, persons: letThrough },
         }),
       step,

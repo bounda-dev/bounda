@@ -59,7 +59,8 @@ else, in a port's own store, a log, a file, another service, is the app's to ans
   keys](/guides/personal-data/#three-keys-deep) no copy of the database opens on its own (see
   [article 32](#security-article-32)).
 - **Accountability, 5(2).** Bounda: the [access log](/guides/personal-data/#who-opened-what)
-  records every call that hands a person's data out in the clear, the event store records
+  records every call that hands a person's data out in the clear, and every call that asks for it
+  and is refused before it reads, the event store records
   [who acted](/concepts/ids-causation-and-correlation/#who-acts) on every command, forgetting,
   restriction and redaction, and the [test helpers](/guides/personal-data/#in-tests),
   `expectForgotten`, `expectRedacted` and `expectRestricted`, prove in CI that a right was honoured

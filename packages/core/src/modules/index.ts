@@ -18,6 +18,7 @@ export type {
   OnPersonalDataAccessArgs,
   PersonalDataAccess,
   QueryAccess,
+  ReadOutcome,
   RecipientNoticeAccess,
   RecipientsOfAccess,
   RestrictedAccess,

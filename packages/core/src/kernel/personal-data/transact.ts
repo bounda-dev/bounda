@@ -33,8 +33,15 @@ export interface CheckPersonIdFunction {
   (personId: unknown, subject: string): asserts personId is string;
 }
 
+export interface IsPersonIdFunction {
+  (personId: unknown): personId is string;
+}
+
+export const isPersonId: IsPersonIdFunction = (personId): personId is string =>
+  typeof personId === "string" && personId !== "";
+
 export const checkPersonId: CheckPersonIdFunction = (personId, subject) => {
-  if (typeof personId !== "string" || personId === "") {
+  if (!isPersonId(personId)) {
     throw new ValidationError(`${subject} needs the id of the person`, [
       { path: ["personId"], message: "Expected a non-empty string" },
     ]);

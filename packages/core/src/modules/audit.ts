@@ -27,6 +27,16 @@ interface AccessRecord<Outcome extends string = AccessOutcome> {
   readonly at: string;
   readonly outcome: Outcome;
   /**
+   * The class of what a call recorded `failed` or `refused` rejected with, or `typeof` what was
+   * thrown when it is no error, as a log line names it; `null` for every other outcome. Never its
+   * message, which may quote what the call read.
+   */
+  readonly errorName: string | null;
+  /**
+   * The `code` of that error when it is one of Bounda's, `null` otherwise.
+   */
+  readonly errorCode: string | null;
+  /**
    * The restricted data the operation opened on a basis named explicitly, `null` when it named
    * none: a query, a dead letter or a subscriber failure read with `includeRestricted`, a command
    * dispatched with `processRestricted`, a policy or process that declares `restricted`.
@@ -36,17 +46,26 @@ interface AccessRecord<Outcome extends string = AccessOutcome> {
 
 /**
  * How an operation that read personal data ended: `ok` when it handed its result out; `failed`
- * when it rejected after reading, with an error that may quote what it read.
+ * when it rejected once it read, with an error that may quote what it read.
  */
 export type AccessOutcome = "ok" | "failed";
+
+/**
+ * How a call that reads personal data ended: as `AccessOutcome` says, or `refused` when it
+ * rejected before it opened anything, so its error quotes nothing it read: an argument that does
+ * not validate, a read model whose database is not served, a dead letter already settled, a read
+ * of stored letters or failures, still sealed, that failed.
+ */
+export type ReadOutcome = AccessOutcome | "refused";
 
 /**
  * Where an export stands: `started` before it hands anything out, so one its reader leaves unread,
  * or whose process dies, is recorded all the same; then how it ended, in a second record with the
  * same `exportId`: `ok`, `failed`, or `cancelled` when its reader stopped before the end. A
- * `started` with no end may have handed out anything up to the whole export.
+ * `started` with no end may have handed out anything up to the whole export. An export refused
+ * before it read anything has one record, `refused`.
  */
-export type ExportOutcome = "started" | AccessOutcome | "cancelled";
+export type ExportOutcome = "started" | ReadOutcome | "cancelled";
 
 /**
  * The persons whose restricted data an operation opened, and the basis it named, as article 18(2)
@@ -62,7 +81,7 @@ export interface RestrictedAccess {
  * A query of a read model with fields marked `.personal()`. `persons` are those the `person`
  * field names in the rows the query read through its `table` or `client`.
  */
-export interface QueryAccess extends AccessRecord {
+export interface QueryAccess extends AccessRecord<ReadOutcome> {
   readonly operation: "query";
   /**
    * `true` when the query took `client.raw`, the driver itself: whose rows it read there is
@@ -109,7 +128,7 @@ export interface ExportAccess extends AccessRecord<ExportOutcome> {
  * `deadLetters.list`, with how many letters it read. `persons` are those the letters name, under
  * whose key their error text or payload is sealed.
  */
-export interface DeadLettersListAccess extends AccessRecord {
+export interface DeadLettersListAccess extends AccessRecord<ReadOutcome> {
   readonly operation: "deadLetters.list";
   readonly detail: {
     readonly letters: number;
@@ -119,7 +138,7 @@ export interface DeadLettersListAccess extends AccessRecord {
 /**
  * `deadLetters.get`, `retry` or `discard` of one letter.
  */
-export interface DeadLetterAccess extends AccessRecord {
+export interface DeadLetterAccess extends AccessRecord<ReadOutcome> {
   readonly operation: "deadLetters.get" | "deadLetters.retry" | "deadLetters.discard";
   readonly detail: {
     readonly letter: string;
@@ -130,7 +149,7 @@ export interface DeadLetterAccess extends AccessRecord {
  * `subscriberFailures.list`, with how many failures it read. `persons` are those the failures'
  * events name, under whose key their error text is sealed.
  */
-export interface SubscriberFailuresListAccess extends AccessRecord {
+export interface SubscriberFailuresListAccess extends AccessRecord<ReadOutcome> {
   readonly operation: "subscriberFailures.list";
   readonly detail: {
     readonly failures: number;
@@ -140,7 +159,7 @@ export interface SubscriberFailuresListAccess extends AccessRecord {
 /**
  * `subscriberFailures.get` of one subscriber's last failure.
  */
-export interface SubscriberFailureAccess extends AccessRecord {
+export interface SubscriberFailureAccess extends AccessRecord<ReadOutcome> {
   readonly operation: "subscriberFailures.get";
   readonly detail: {
     readonly subscriber: string;
@@ -205,7 +224,7 @@ export interface RecipientNoticeAccess extends AccessRecord {
 /**
  * `recipientsOf`, with how many recipients it listed; `null` when it failed.
  */
-export interface RecipientsOfAccess extends AccessRecord {
+export interface RecipientsOfAccess extends AccessRecord<ReadOutcome> {
   readonly operation: "recipientsOf";
   readonly detail: { readonly recipients: number } | null;
 }
@@ -235,9 +254,10 @@ export interface OnPersonalDataAccessArgs {
 
 /**
  * Where the access log goes, exported from `app/audit.ts`: a log pipeline, a SIEM, a table of
- * another database. Called once per operation that reads personal data in the clear, after it
- * read and before it settles, whether it hands its result out or rejects, and for an export also
- * before it hands anything out; never sampled. The operation waits for it and rejects with what
+ * another database. Called once per call of an operation that reads personal data in the clear,
+ * however it ends: after it read and before it settles, whether it hands its result out or
+ * rejects, or as it is refused before it reads; for an export also before it hands anything out.
+ * Never sampled. The operation waits for it and rejects with what
  * it throws, handing nothing out, since data handed out unrecorded defeats the log. Without
  * `app/audit.ts`, each record goes to the app's logger at `info`.
  */

@@ -1259,6 +1259,8 @@ describe("recipients of personal data", () => {
       persons: ["c-1"],
       detail: null,
       outcome: "failed",
+      errorName: "Error",
+      errorCode: null,
     });
     await app.stop();
   });

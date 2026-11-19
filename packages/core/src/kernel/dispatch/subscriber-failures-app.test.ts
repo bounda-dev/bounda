@@ -294,8 +294,15 @@ describe.each([
       detail: { subscriber: SUBSCRIBER },
       persons: ["c-1"],
     });
+    // Found nothing, recorded as a query that matches no row is.
     expect(await app.subscriberFailures.get("projection:nothing")).toBeNull();
-    expect(accesses(logger)).toHaveLength(1);
+    expect(accesses(logger)).toHaveLength(2);
+    expect(accesses(logger).at(-1)).toMatchObject({
+      operation: "subscriberFailures.get",
+      detail: { subscriber: "projection:nothing" },
+      persons: [],
+      outcome: "ok",
+    });
   });
 
   it("reads the text as null once the person is forgotten, and hands it to their export", async () => {

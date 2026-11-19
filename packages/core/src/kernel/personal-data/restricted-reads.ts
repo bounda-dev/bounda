@@ -31,6 +31,13 @@ export const restrictionViewOf: RestrictionViewOfFunction = (includeRestricted) 
   return includeRestricted === "erasure-exemption" ? "retained" : "all";
 };
 
+export interface IsRestrictionBasisFunction {
+  (basis: unknown): basis is RestrictionBasis;
+}
+
+export const isRestrictionBasis: IsRestrictionBasisFunction = (basis): basis is RestrictionBasis =>
+  RESTRICTION_BASES.includes(basis as RestrictionBasis);
+
 export interface CheckIncludeRestrictedFunction {
   (subject: string, basis: unknown): RestrictionBasis | undefined;
 }
@@ -39,9 +46,7 @@ export interface CheckIncludeRestrictedFunction {
  * Throws `ValidationError` for a basis restricted data is never read on.
  */
 export const checkIncludeRestricted: CheckIncludeRestrictedFunction = (subject, basis) => {
-  if (basis === undefined || RESTRICTION_BASES.includes(basis as RestrictionBasis)) {
-    return basis as RestrictionBasis | undefined;
-  }
+  if (basis === undefined || isRestrictionBasis(basis)) return basis;
   throw new ValidationError(`${subject} names a basis restricted data is not read on`, [
     {
       path: ["includeRestricted"],

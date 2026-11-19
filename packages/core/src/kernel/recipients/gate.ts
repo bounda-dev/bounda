@@ -209,6 +209,7 @@ export const createDisclosures: CreateDisclosuresFunction = ({
       actor: run.actor,
       persons,
       outcome: "ok",
+      error: undefined,
       restricted:
         run.basis === undefined || letThrough.length === 0
           ? null
