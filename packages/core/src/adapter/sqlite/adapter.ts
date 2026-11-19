@@ -38,6 +38,7 @@ import {
   sqliteTenantKeysScope,
 } from "./migrations.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
+import { restoreSqliteCopy, type SqliteCopy } from "./restore-copy.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
 import { storageTablesFor } from "./schema.ts";
 import { createSqliteSnapshotStore } from "./snapshot-store.ts";
@@ -89,6 +90,12 @@ export interface CreateSqliteAdapterArgs<Name extends string, Options, Raw> {
    * Where the file stands, as `Adapter.fileEncryption`.
    */
   readonly fileEncryption?: FileEncryption;
+  /**
+   * Opens a copy of the database for reading, what `Adapter.restore` puts back; throws
+   * `ConfigurationError` for one that is missing or does not open. The adapter has no `restore`
+   * without it.
+   */
+  readonly openCopy?: (copy: string) => Promise<SqliteCopy>;
 }
 
 export interface CreateSqliteAdapterFunction {
@@ -116,6 +123,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
   discard,
   encryptedFile,
   fileEncryption,
+  openCopy,
 }: CreateSqliteAdapterArgs<Name, Options, Raw>): Adapter<Name, Options> => {
   /**
    * Opens what `work` builds on an acquired connection, and releases it when `work` throws: the
@@ -168,6 +176,25 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
     ...(ephemeralKeys === undefined ? {} : { ephemeralKeys }),
     ...(encryptedFile === undefined ? {} : { encryptedFile }),
     ...(fileEncryption === undefined ? {} : { fileEncryption }),
+    ...(openCopy === undefined
+      ? {}
+      : {
+          restore: async ({ copy }) => {
+            const opened = await openCopy(copy);
+            try {
+              await briefly(({ db }) =>
+                restoreSqliteCopy({
+                  copy: opened.db,
+                  live: db,
+                  prefix: tablePrefix,
+                  scopes: Object.values(scopes),
+                }),
+              );
+            } finally {
+              await opened.close();
+            }
+          },
+        }),
     schemaVersions: () => briefly(({ db }) => versionsOn(db)),
     migrate: (names) =>
       briefly(async ({ db, isBusy }) => {

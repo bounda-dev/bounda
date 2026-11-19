@@ -9,6 +9,7 @@ import {
 import { createSqliteAdapter, SQLITE_BUSY_TIMEOUT_MS } from "@bounda-dev/core/adapter/sqlite";
 import { type Client, createClient } from "@libsql/client";
 import { closeConnectionsOnce } from "./close-once.ts";
+import { openLibsqlCopy } from "./copy.ts";
 import { createSqliteDatabase, type LibsqlConnection } from "./database.ts";
 import { fileEncryptionOf, prepareFile } from "./encryption.ts";
 import { resolveSqliteOptions, type SqliteOptions } from "./options.ts";
@@ -99,6 +100,25 @@ const libsqlAdapter = (
     ephemeral: location === "memory",
     ...("path" in options && options.encrypt !== false && keyed === null
       ? { encryptedFile: encryptedFileAt(options) }
+      : {}),
+    // A copy of a file the tenant's keys encrypt is under the key in force when it was taken.
+    ...(location === "file"
+      ? {
+          openCopy: async (copy: string) =>
+            openLibsqlCopy({
+              copy,
+              // A file in the clear has no key; one under the tenant's keys was opened under the key
+              // in force, and a copy may be under an earlier one, or from before it was encrypted.
+              keys:
+                keyed === null
+                  ? [null]
+                  : [
+                      keyed.inForce.key,
+                      ...(await keyed.keys.previous()).map(({ key }) => key),
+                      null,
+                    ],
+            }),
+        }
       : {}),
     ...(keyed === null
       ? {}

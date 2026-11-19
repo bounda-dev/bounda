@@ -3,6 +3,8 @@ import type { Adapter } from "../../adapter/adapter.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { fieldBuilder as f } from "../../modules/view.ts";
+import { eventMark, streamMarkOf } from "../read-model/stream-marks.ts";
 import { tracer } from "../telemetry.ts";
 import {
   createRestrictedPersonsSubscriber,
@@ -60,4 +62,45 @@ describe("createRestrictedPersonsSubscriber", () => {
       ].map((each) => subscriber.handles?.(each)),
     ).toEqual([true, true, false, false]);
   });
+});
+
+describe("the checkpoint of a database's copy of who is restricted", () => {
+  const restricted = {
+    id: "e-1",
+    position: 1,
+    aggregateType: "bounda",
+    aggregateId: "ana",
+    type: "ProcessingRestricted",
+    payload: { personId: "ana", restrictions: [{ ground: "legal-claims", categories: null }] },
+  } as unknown as StoredEvent;
+
+  it.each([
+    [false, []],
+    [true, [{ subscriber: streamMarkOf("restrictions:orders"), position: eventMark("e-1") }]],
+  ])(
+    "is marked with the event it stands at only in a database of read models alone (%s)",
+    async (marked, marks) => {
+      const storage = await memory().createReadModel<Record<string, unknown>>({
+        name: "orders",
+        fields: { orderId: f.string().primaryKey(), customerId: f.string().person() },
+        logger: silentLogger,
+      });
+      const subscriber = createRestrictedPersonsSubscriber({
+        tracer,
+        readModel: { name: "orders", storage },
+        logger: silentLogger,
+        errorText: "omit",
+        ...(marked ? { marked } : {}),
+      });
+      await subscriber.deliver({
+        read: async (after) => (after < 1 ? [restricted] : []),
+        batchSize: 10,
+        wait: true,
+      });
+      expect(await storage.checkpointStore.list()).toEqual([
+        { subscriber: "restrictions:orders", position: 1 },
+        ...marks,
+      ]);
+    },
+  );
 });

@@ -336,6 +336,32 @@ person was forgotten says its text went with them.
 | `--root`, `--config`, `--registry`, `--error-text` | As for `bounda rebuild` |
 | `--actor <id>` | Who reads the failures' text with `--error-text`, named in the access log |
 
+## `bounda restore`
+
+Puts a copy of the storage's SQLite file back in place, with the app running or not: in one write
+transaction through libSQL, the app's own engine, so a running app reads the database as it was or
+as the copy has it, never in between. The restore is counted in the same transaction, once: every
+running instance finds it at its next pass, and a stopped app when it starts, with a forget ledger
+or without one, so no `bounda restored` follows it. It loads the
+configuration as `bounda migrate` does, and opens a file encrypted under the tenant's keys, and its
+copy, through them.
+
+```bash
+bounda restore /backups/app.db
+```
+
+```
+restored /backups/app.db in place, in one transaction: running instances find the restore at their next pass, and a stopped app when it starts
+```
+
+Every table, index and trigger becomes the copy's, Bounda's tables brought to the versions the
+database held. A copy that is missing, does not open, is another tenant's, or that a newer version
+of Bounda migrated is refused, and nothing changes. A
+storage on another engine is refused: restore it with the engine's tools, as
+[Backups and restores](/guides/backups/#restoring) says. Options: `--root`, `--config`,
+`--registry`, `--tenant`, `--error-text`, as for `bounda rebuild`. Exit codes: `0` restored, `2`
+refused or the project could not be loaded.
+
 ## `bounda restored`
 
 Says the database was restored from a copy while the app was stopped, for an app without a
@@ -801,7 +827,8 @@ It throws `ConventionError` when the layout breaks a convention; `formatConventi
 `actor` for `--actor`; an app exposes the same as `app.rebuildReadModel(name)`, and
 `app.as(actor).rebuildReadModel(name)`. `bounda status` is `app.status()`, and its failures' text
 `app.as(actor).subscriberFailures.list()`; `bounda migrate` is `migrateTables({ config })` from
-`@bounda-dev/core`; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
+`@bounda-dev/core`; `bounda restore` is `adapter.restore({ copy })` on the storage
+`withEncryptedFiles` opens; `bounda restored` is `app.restored()`. `bounda dead-letters` is `app.deadLetters` on a booted app,
 or `app.as(actor).deadLetters`, `bounda personal-data export` is
 `personalDataExportJson(await app.as(actor).streamPersonalData(person))`,
 `bounda forget <person>` is `app.as(actor).forget(person, { categories, objection })`,

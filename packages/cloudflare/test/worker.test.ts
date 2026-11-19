@@ -490,6 +490,41 @@ describe("createWorker", () => {
     });
   });
 
+  it.each([
+    [
+      "READ_MODEL_RESTORING",
+      'Read model "orders" was restored from another moment than the stream',
+    ],
+    ["RESTORE_UNRECONCILED", "The database was restored from an earlier copy"],
+  ])(
+    "answers a query refused with %s as a 503, which the same request later passes",
+    async (code, message) => {
+      const { stub } = recordingStub();
+      const worker = createWorker({
+        config: { storage: cloudflare({ binding: "SPY" }) },
+        tenantOf: () => "acme",
+      });
+      const response = await worker.fetch?.(
+        new Request("https://bounda.test/queries/orderSummary", {
+          method: "POST",
+          body: "{}",
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        {
+          SPY: {
+            idFromName: (name: string) => name,
+            get: () => ({
+              ...stub,
+              query: async () => ({ ok: false, refusal: { name: "Refusal", code, message } }),
+            }),
+          },
+        } as unknown as Cloudflare.Env,
+        createExecutionContext(),
+      );
+      expect(response?.status).toBe(503);
+      expect(await response?.json()).toEqual({ error: { code, message } });
+    },
+  );
+
   it("knows no command or query that is not the app's own, whatever the prototype offers", async () => {
     for (const path of [
       "/commands/constructor",

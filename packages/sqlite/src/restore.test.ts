@@ -35,55 +35,6 @@ const clientOf = (path: string): Client => {
   return client;
 };
 
-interface SchemaObject {
-  readonly type: string;
-  readonly name: string;
-  readonly sql: string | null;
-}
-
-const schemaOf = async (client: Client): Promise<readonly SchemaObject[]> =>
-  (
-    await client.execute("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
-  ).rows.map(({ type, name, sql }) => ({
-    type: String(type),
-    name: String(name),
-    sql: sql === null ? null : String(sql),
-  }));
-
-// In place, in one write transaction through the app's own engine, as pg_restore --clean
-// --single-transaction does: the app's connections see the database before the restore or after
-// it, never in between. Every table, index and trigger goes, and the copy's come back with its rows.
-const restoreInPlace = async (client: Client, copy: string): Promise<void> => {
-  const source = clientOf(copy);
-  const copied = await schemaOf(source);
-  const tables = copied.filter(({ type }) => type === "table");
-  const rows = await Promise.all(
-    tables.map(async ({ name }) => ({
-      name,
-      rows: (await source.execute(`SELECT * FROM "${name}"`)).rows,
-    })),
-  );
-  const live = (await schemaOf(client)).filter(({ type }) => type === "table");
-  await client.batch(
-    [
-      ...live.map(({ name }) => `DROP TABLE "${name}"`),
-      ...tables.flatMap(({ sql }) => (sql === null ? [] : [sql])),
-      ...rows.flatMap(({ name, rows: values }) =>
-        values.map((row) => {
-          const columns = Object.keys(row);
-          return {
-            sql: `INSERT INTO "${name}" (${columns.map((column) => `"${column}"`).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
-            args: columns.map((column) => row[column] ?? null),
-          };
-        }),
-      ),
-      // After the rows, so no trigger writes what the copy already holds.
-      ...copied.flatMap(({ type, sql }) => (type === "table" || sql === null ? [] : [sql])),
-    ],
-    "write",
-  );
-};
-
 // A file in the clear, which a backup tool copies through its own connection.
 describe("restoring a libSQL file in the clear under a running app", () => {
   restoreContract({
@@ -99,9 +50,12 @@ describe("restoring a libSQL file in the clear under a running app", () => {
         backUp: async () => {
           await client.execute(`VACUUM INTO '${copy}'`);
         },
+        // In place, in one write transaction through the app's own engine, as `bounda restore`
+        // does: the app sees the database as it was or as the copy has it, never in between.
         restore: async () => {
-          await restoreInPlace(client, copy);
-          return sqlite({ path, encrypt: false });
+          const storage = sqlite({ path, encrypt: false });
+          await storage.restore?.({ copy });
+          return storage;
         },
       };
     },
@@ -154,6 +108,34 @@ describe("restoring a libSQL file encrypted under its tenant's key beside the lo
           await copyWithLog(path, copy);
         },
         restore: async () => {
+          path = fresh("restored");
+          await copyWithLog(copy, path);
+          return sqlite({ path });
+        },
+      };
+    },
+  });
+});
+
+describe("restoring a libSQL file encrypted under its tenant's key under a running app", () => {
+  restoreContract({
+    hot: true,
+    create: async () => {
+      let path = fresh("store");
+      const copy = fresh("backup");
+      return {
+        storage: sqlite({ path }),
+        forgetLedger: sqlite({ path: fresh("ledger") }),
+        backUp: async () => {
+          await copyWithLog(path, copy);
+        },
+        // Under the running app, in place through the adapter it opened, which holds the tenant's
+        // keys the copy opens under; with the app stopped, beside the lost one.
+        restore: async (opened) => {
+          if (opened !== undefined) {
+            await opened.restore?.({ copy });
+            return opened;
+          }
           path = fresh("restored");
           await copyWithLog(copy, path);
           return sqlite({ path });

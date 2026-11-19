@@ -60,6 +60,11 @@ export interface CreateSubscriberFailuresArgs {
   readonly recordAccess: RecordAccess;
   readonly errorText: ErrorText;
   readonly tracer: TracerFunction;
+  /**
+   * Throws to refuse what a read would hand out, once it read: the access log records the
+   * refusal as the read's outcome.
+   */
+  readonly vouch?: () => Promise<void>;
 }
 
 export interface CreateSubscriberFailuresFunction {
@@ -77,6 +82,7 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
   recordAccess,
   errorText,
   tracer,
+  vouch,
 }) => {
   const opened = async (
     { errorMessage, errorStack, ...failure }: StoredSubscriberFailure,
@@ -139,7 +145,11 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
           outcome,
           restricted: restrictedRecord(includeRestricted, letThrough),
         }),
-      () => read(failures, includeRestricted, letThrough),
+      async () => {
+        const listed = await read(failures, includeRestricted, letThrough);
+        await vouch?.();
+        return listed;
+      },
     );
   };
 
@@ -164,7 +174,11 @@ export const createSubscriberFailures: CreateSubscriberFailuresFunction = ({
           outcome,
           restricted: restrictedRecord(includeRestricted, letThrough),
         }),
-      async () => (await read([failure], includeRestricted, letThrough))[0] as SubscriberFailure,
+      async () => {
+        const [found] = await read([failure], includeRestricted, letThrough);
+        await vouch?.();
+        return found as SubscriberFailure;
+      },
     );
   };
 

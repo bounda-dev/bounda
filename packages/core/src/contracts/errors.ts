@@ -299,6 +299,23 @@ export class ForgetLedgerUnreconciledError extends BoundaError {
 }
 
 /**
+ * Thrown, when `runtime.personalData.forgetLedger.strict` is set, by a read that found the database
+ * restored from an earlier copy, or that ran while the forget ledger was not yet reconciled with
+ * such a copy: what it read may hold a person forgotten or restricted since, so nothing is handed
+ * out. Transient: the same read succeeds once the ledger is reconciled. `cause` is why the ledger
+ * failed, when it did.
+ */
+export class RestoreUnreconciledError extends BoundaError {
+  constructor(cause?: unknown) {
+    super(
+      "RESTORE_UNRECONCILED",
+      "The database was restored from an earlier copy and the forget ledger is not reconciled with it yet: runtime.personalData.forgetLedger.strict hands out nothing read from it until it is",
+      cause === undefined ? undefined : { cause },
+    );
+  }
+}
+
+/**
  * Thrown by `forget`, and by every other forgetting, when `runtime.personalData.forgetLedger.strict`
  * is set and the forget ledger did not take the forgetting's intention: nothing was forgotten, and
  * calling again tries again. `cause` is why the ledger failed, a `ForgetLedgerTimeoutError` when
@@ -409,6 +426,24 @@ export class RebuildSupersededError extends BoundaError {
     super(
       "REBUILD_SUPERSEDED",
       `Another rebuild of read model "${readModel}" took over; this one stopped without writing`,
+    );
+    this.readModel = readModel;
+  }
+}
+
+/**
+ * Thrown by a query of a read model whose database of its own was restored from another moment
+ * than the stream: it stands behind where it was, or held what a copy of the stream it no longer
+ * matches wrote, and is projected again until it is back. Nothing was read from it. Transient:
+ * the same query succeeds once the read model has caught up.
+ */
+export class ReadModelRestoringError extends BoundaError {
+  readonly readModel: string;
+
+  constructor(readModel: string) {
+    super(
+      "READ_MODEL_RESTORING",
+      `Read model "${readModel}" was restored from another moment than the stream, and serves once it is projected back to where it stood`,
     );
     this.readModel = readModel;
   }

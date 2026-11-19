@@ -31,6 +31,7 @@ import {
   KeysMissingError,
   type SealingKeys,
 } from "../read-model/sealing-keys.ts";
+import { markedCompareAndSet } from "../read-model/stream-marks.ts";
 import { tableIndexer } from "../read-model/table-indexer.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import { ATTRIBUTES, actorAttribute, type TracerFunction, traced } from "../telemetry.ts";
@@ -291,6 +292,11 @@ export interface CreateProjectionSubscriberArgs {
   readonly errorText: ErrorText;
   readonly tracer: TracerFunction;
   readonly budget: ProjectionBudget;
+  /**
+   * Whether the read model lives in a database of its own, where each checkpoint is marked with
+   * the event it stands at, so a restore of either database is told apart.
+   */
+  readonly marked: boolean;
 }
 
 export interface CreateProjectionSubscriberFunction {
@@ -316,6 +322,7 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
   errorText,
   tracer,
   budget,
+  marked,
 }) => {
   const name = projectionSubscriberName(readModel.name);
   const { storage, layout } = readModel;
@@ -339,8 +346,14 @@ export const createProjectionSubscriber: CreateProjectionSubscriberFunction = ({
             work: (transaction) =>
               work({
                 get: () => transaction.checkpointStore.get(name),
-                compareAndSet: (expected, position) =>
-                  transaction.checkpointStore.compareAndSet(name, expected, position),
+                compareAndSet: marked
+                  ? markedCompareAndSet({
+                      checkpoints: transaction.checkpointStore,
+                      subscriber: name,
+                      events,
+                    })
+                  : (expected, position) =>
+                      transaction.checkpointStore.compareAndSet(name, expected, position),
                 transaction,
                 keys,
                 redacted,

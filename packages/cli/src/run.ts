@@ -843,6 +843,48 @@ const runRestored = (
     return EXIT_OK;
   });
 
+// In place, through the adapter's own engine, which counts the restore in the same transaction.
+const runRestore = async (
+  copy: string,
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const logger = logTo(stderr);
+  const project = await load(options, cwd, logger, stderr);
+  if (project === undefined) return EXIT_FAILURE;
+  const { config, tenant } = project;
+  let unsupported: string | null = null;
+  try {
+    await withEncryptedFiles({
+      config,
+      env: process.env,
+      logger,
+      ...(tenant === undefined ? {} : { tenant }),
+      work: async ({ storage }) => {
+        if (!isAdapter(storage) || storage.restore === undefined) unsupported = storage.name;
+        else await storage.restore({ copy: resolve(cwd, copy) });
+      },
+    });
+  } catch (error) {
+    return failed(stderr, error, resolveErrorText(errorTextArgs(options, config)));
+  }
+  // Names the adapter alone: printed in full.
+  if (unsupported !== null) {
+    line(
+      stderr,
+      `error: storage "${unsupported}" is restored with its engine's own tools: see https://docs.bounda.dev/guides/backups/`,
+    );
+    return EXIT_FAILURE;
+  }
+  line(
+    stdout,
+    `restored ${copy} in place, in one transaction: running instances find the restore at their next pass, and a stopped app when it starts`,
+  );
+  return EXIT_OK;
+};
+
 // Opens every database file the configuration encrypts under the tenant's keys, as a start would,
 // which encrypts under the key in force a file left in the clear or under an earlier key, and
 // tries again on any still waiting: what an operator runs once the file is the process's alone.
@@ -1355,6 +1397,20 @@ export const runCli: RunCliFunction = async ({
       ),
   ).action(async (options: ProjectOptions) => {
     exitCode = await runRewrapMaster(options, cwd, stdout, stderr);
+  });
+
+  projectOptions(
+    program
+      .command("restore")
+      .argument(
+        "<copy>",
+        "the copy of the database file, taken with VACUUM INTO or the sqlite3 shell",
+      )
+      .description(
+        "put a copy of a SQLite file back in place, in one transaction through the app's own engine, under a running app or not",
+      ),
+  ).action(async (copy: string, options: ProjectOptions) => {
+    exitCode = await runRestore(copy, options, cwd, stdout, stderr);
   });
 
   projectOptions(

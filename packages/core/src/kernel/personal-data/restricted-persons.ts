@@ -16,6 +16,7 @@ import {
   createCheckpointedSubscriber,
 } from "../dispatch/delivery.ts";
 import type { ReadModelRuntime } from "../read-model/build-read-models.ts";
+import { markedCompareAndSet } from "../read-model/stream-marks.ts";
 import { qualifiedEventType } from "../shared/qualified-event.ts";
 import type { TracerFunction } from "../telemetry.ts";
 
@@ -70,6 +71,11 @@ export interface CreateRestrictedPersonsSubscriberArgs {
   readonly logger: Logger;
   readonly errorText: ErrorText;
   readonly tracer: TracerFunction;
+  /**
+   * Whether the database is one of read models alone, where the checkpoint is marked with the event
+   * it stands at, as a projection's is there.
+   */
+  readonly marked?: boolean;
 }
 
 export interface CreateRestrictedPersonsSubscriberFunction {
@@ -87,6 +93,7 @@ export const createRestrictedPersonsSubscriber: CreateRestrictedPersonsSubscribe
   logger,
   errorText,
   tracer,
+  marked = false,
 }) => {
   const name = restrictedPersonsSubscriberName(readModel.name);
   const { storage } = readModel;
@@ -94,15 +101,21 @@ export const createRestrictedPersonsSubscriber: CreateRestrictedPersonsSubscribe
     name,
     kind: "projection",
     position: () => storage.checkpointStore.get(name),
-    claim: ({ wait, work }) =>
+    claim: ({ wait, events, work }) =>
       storage.transact({
         subscriber: name,
         wait,
         work: (transaction) =>
           work({
             get: () => transaction.checkpointStore.get(name),
-            compareAndSet: (expected, position) =>
-              transaction.checkpointStore.compareAndSet(name, expected, position),
+            compareAndSet: marked
+              ? markedCompareAndSet({
+                  checkpoints: transaction.checkpointStore,
+                  subscriber: name,
+                  events,
+                })
+              : (expected, position) =>
+                  transaction.checkpointStore.compareAndSet(name, expected, position),
             restrictedPersons: transaction.restrictedPersons,
           }),
       }),
