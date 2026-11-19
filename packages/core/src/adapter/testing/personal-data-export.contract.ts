@@ -538,6 +538,8 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
           personCount: 1,
           at: "2026-03-01T00:00:00.000Z",
           outcome: "started",
+          errorName: null,
+          errorCode: null,
           restricted: null,
           detail: {
             exportId: expect.any(String),

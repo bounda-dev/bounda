@@ -866,6 +866,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
               actor,
               persons: through,
               outcome: "ok",
+              error: undefined,
               restricted: { basis, persons: through },
             });
           }
@@ -887,7 +888,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
         const performRecorded = (): Promise<DispatchResult | DomainError> =>
           basis === undefined
             ? perform()
-            : recorded(async (outcome) => {
+            : recorded(async (outcome, error) => {
                 if (letThrough.size === 0) return;
                 await recordAccess({
                   operation: "command",
@@ -895,6 +896,7 @@ export const createCommandPipeline: CreateCommandPipelineFunction = ({
                   actor: actor,
                   persons: letThrough,
                   outcome,
+                  error,
                   restricted: { basis, persons: letThrough },
                 });
               }, perform);

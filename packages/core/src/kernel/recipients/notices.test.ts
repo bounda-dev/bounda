@@ -305,6 +305,10 @@ describe("createRecipientNotices", () => {
       notices().run({ port: "customer.mailer", event, attempt: 1, within: unit() }),
     ).rejects.toThrow("customer.mailer is down");
     expect(accesses.map(({ outcome }) => outcome)).toEqual(["failed"]);
+    // What it rejected with goes to the record, which names it without quoting it.
+    expect((accesses[0] as unknown as { error: unknown }).error).toMatchObject({
+      message: "customer.mailer is down",
+    });
   });
 
   it("skips a notice a later forgetting of the person as a whole told the recipient, under any of its keys", async () => {

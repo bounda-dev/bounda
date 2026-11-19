@@ -103,11 +103,11 @@ describe("a read model in a database of its own that went back", () => {
       readModel: "orderSummary",
     });
     await expect(web.streamPersonalData("ana")).rejects.toBeInstanceOf(ReadModelRestoringError);
-    // Refused before it read anything, and recorded as an access that failed all the same.
+    // Refused before it read anything, and recorded all the same.
     expect(accessed.map((fields) => [fields?.operation, fields?.persons, fields?.outcome])).toEqual(
       [
-        ["exportPersonalData", ["ana"], "failed"],
-        ["exportPersonalData", ["ana"], "failed"],
+        ["exportPersonalData", ["ana"], "refused"],
+        ["exportPersonalData", ["ana"], "refused"],
       ],
     );
 
