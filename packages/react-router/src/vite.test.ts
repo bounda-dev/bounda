@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createFixedClock, type FixedClock } from "@bounda-dev/core";
 import type { Logger, Plugin, ResolvedConfig, ViteDevServer } from "vite";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bounda } from "./vite.ts";
 import { createBoundaPlugin } from "./vite-plugin.ts";
 
@@ -15,6 +15,16 @@ const temporary: string[] = [];
 // Inferring the state of an aggregate without state.ts starts TypeScript's API, a native process
 // that takes every core: the generator's own tests measured it past 5 s on a loaded Windows runner.
 const INFERENCE_TIMEOUT_MS = 30_000;
+
+// Starting the plugin imports the generator, which Vitest transforms on its first import, about a
+// second alone, then writes the project's generated files, tens of milliseconds alone: a case that
+// generates four times took 6.5 s on a loaded runner. The import runs once before the cases, and
+// each case has the time its disk work takes under load.
+const GENERATION_TIMEOUT_MS = 30_000;
+
+beforeAll(async () => {
+  await import("@bounda-dev/cli");
+}, GENERATION_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.all(temporary.map((directory) => rm(directory, { recursive: true, force: true })));
@@ -146,7 +156,7 @@ const until = async (condition: () => Promise<boolean>, timeoutMs = 15_000): Pro
   }
 };
 
-describe("bounda() Vite plugin", () => {
+describe("bounda() Vite plugin", { timeout: GENERATION_TIMEOUT_MS }, () => {
   it("resolves the app module and nothing else, before Vite's own resolver", () => {
     const { plugin, resolve: resolveId } = harness("/project");
     expect(plugin.name).toBe("bounda");
