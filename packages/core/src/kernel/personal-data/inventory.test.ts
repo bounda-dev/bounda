@@ -130,7 +130,9 @@ const registry = {
   readModels: {
     customers: {
       ports: { lookup: { memory: { default: {} } } },
-      returns: { lookup: { returnsPersonalData: { persons: () => null } } },
+      returns: {
+        lookup: { returnsPersonalData: { persons: () => null, categories: ["contact"] } },
+      },
       view: {
         fields: ({ f }: FieldsArgs) => ({
           id: f.string().primaryKey().notPersonal(),
@@ -186,7 +188,7 @@ describe("personalDataInventory", () => {
         processedFor: [],
         erasureExemptions: [],
         sources: [],
-        ports: ["customers.lookup"],
+        ports: [],
         retention: "2y",
         fields: 2,
       },
@@ -196,7 +198,7 @@ describe("personalDataInventory", () => {
         ...said,
         processedFor: ["direct-marketing"],
         erasureExemptions: [],
-        ports: ["customer.archive", "customer.crm"],
+        ports: ["customer.archive", "customer.crm", "customers.lookup"],
         retention: "730d",
         fields: 2,
       },
