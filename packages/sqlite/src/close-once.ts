@@ -51,17 +51,20 @@ export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
       close.call(database);
     }
   };
-  // The handles of the connections not closed yet, collected or not.
-  const unclosed = new Set<unknown>();
+  // The connections not closed yet, by handle, with their database until it is collected.
+  const unclosed = new Map<unknown, WeakRef<NativeDatabase>>();
   const closeHandle = (db: unknown): void => {
     unclosed.delete(db);
     closeHolding({ db, open: true } as NativeDatabase);
   };
   const abandoned = new FinalizationRegistry<unknown>(closeHandle);
+  // A database still held is closed itself, so it says so to whatever closes it after.
   process.once("exit", () => {
-    for (const db of unclosed) {
+    for (const [db, held] of unclosed) {
       try {
-        closeHandle(db);
+        const database = held.deref();
+        if (database === undefined) closeHandle(db);
+        else database.close();
       } catch {
         // The process ends either way: the others are still closed.
       }
@@ -69,9 +72,9 @@ export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
   });
   const tracked = new WeakSet<NativeDatabase>();
   const track = (database: NativeDatabase): void => {
-    if (tracked.has(database)) return;
+    if (tracked.has(database) || !database.open) return;
     tracked.add(database);
-    unclosed.add(database.db);
+    unclosed.set(database.db, new WeakRef(database));
     abandoned.register(database, database.db, database);
   };
   prototype.prepare = function (this: NativeDatabase, sql: string): unknown {

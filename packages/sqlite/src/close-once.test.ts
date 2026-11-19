@@ -85,7 +85,7 @@ const closeAfterCollecting = async (path: string): Promise<string> =>
   ).ended;
 
 // Exits with storage open on a file, a client in memory dropped without closing it, and a database
-// left open, which an exit listener added after the patch's own finds closed.
+// left open, which an exit listener added after the patch's own finds closed and closes again.
 const exitWithConnectionsOpen = (path: string) =>
   run(`import { writeSync } from "node:fs";
   import { createRequire } from "node:module";
@@ -99,12 +99,8 @@ const exitWithConnectionsOpen = (path: string) =>
   const left = new Database(":memory:");
   left.prepare("SELECT 1");
   process.once("exit", () => {
-    try {
-      left.prepare("SELECT 1");
-      writeSync(1, "left open");
-    } catch {
-      writeSync(1, "closed");
-    }
+    writeSync(1, left.open ? "left open" : "closed");
+    left.close();
   });`);
 
 describe("closing a libSQL file", () => {
@@ -112,7 +108,7 @@ describe("closing a libSQL file", () => {
     expect(await closeAfterCollecting(join(directory, "closed.db"))).toBe("exited");
   });
 
-  it("closes each connection once as the process exits with it open, collected or not", async () => {
+  it("closes each connection once as the process exits with it open", async () => {
     expect(await exitWithConnectionsOpen(join(directory, "left.db"))).toEqual({
       ended: "exited",
       printed: "closed",
@@ -177,6 +173,26 @@ describe("closing a libSQL connection", () => {
         const database = new Database(":memory:");
         database.prepare("SELECT 1");
         database.close();
+      })();
+      await collect();
+    } finally {
+      process.off("uncaughtException", record);
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it("leaves a database prepared on only once closed to be collected without closing it again", async () => {
+    closeConnectionsOnce();
+    const errors: unknown[] = [];
+    const record = (error: unknown): void => {
+      errors.push(error);
+    };
+    process.on("uncaughtException", record);
+    try {
+      (() => {
+        const database = new Database(":memory:");
+        database.close();
+        expect(() => database.prepare("SELECT 1")).toThrow("not open");
       })();
       await collect();
     } finally {
