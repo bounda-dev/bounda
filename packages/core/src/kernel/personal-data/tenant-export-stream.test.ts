@@ -928,7 +928,8 @@ describe("streamTenantExport", () => {
       country: "US",
       safeguard: "standard-contractual-clauses",
       categories: ["default"],
-    } as RecipientRuntime;
+      // What the listing never reads.
+    } as unknown as RecipientRuntime;
     const runtime: RecipientsRuntime = {
       all: [crm],
       byPort: { [crm.port]: crm },
