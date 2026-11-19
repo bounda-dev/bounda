@@ -176,9 +176,10 @@ none, as a field of theirs would be:
 
 What a port returns comes from somewhere other than the person, as articles 14 and 15(1)(g) see it:
 name the provider among the category's [`sources`](/guides/personal-data/#categories), as
-`{ kind: "third-party", name: "HubSpot" }`. A person a call returns data of holds a key of its
-categories from then on, so [their export](/guides/personal-data/#exporting-a-persons-data) lists
-those categories with their sources, and the [record of processing
+`{ kind: "third-party", name: "HubSpot" }`. A person whose data a command, a policy, a process
+step or a recipient's handler read through a port holds a key of its categories from then on, so
+[their export](/guides/personal-data/#exporting-a-persons-data) lists those categories with their
+sources; a query keeps nothing of what it reads, so it gives them none, and the [record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities) lists, under each category,
 the ports that return its data.
 
