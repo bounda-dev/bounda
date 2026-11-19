@@ -535,17 +535,19 @@ Economic Area its `safeguard`: `adequacy` (article 45), `standard-contractual-cl
 processing lists every transfer.
 
 On Cloudflare, `cloudflare({ jurisdiction: "eu" })` keeps every tenant's Durable Object, its
-events, read models and keys, in the EU. Every way Bounda reaches an object follows it, an object
+events, read models and keys, in the EU, and the keeper objects that hold each tenant's key and
+forget ledger with them. Every way Bounda reaches an object follows it, an object or a keeper
 created elsewhere refuses to start, so no tenant has part of its data outside, and the record of
-processing says where each holder is kept. `create-bounda` writes it. See
-[Data location](/adapters/cloudflare/#data-location).
+processing says where each holder is kept, the forget ledger included. The app refuses to start on
+a tenant key store or a forget ledger that does not name the same jurisdiction, as one in Workers
+KV, whose pairs Cloudflare does not hold to a jurisdiction, never does. `create-bounda` writes it.
+See [Data location](/adapters/cloudflare/#data-location).
 
 Left to the controller: the safeguard itself, the clauses signed and the transfer impact
 assessment, and where the rest of the app's data lives. Bounda does not choose where a database
 is: a PostgreSQL server, a SQLite file and their backups are where the app puts them. On
-Cloudflare, the jurisdiction holds the objects, not the Worker that serves each request near it,
-nor the tenant keys and the forget ledger in KV, wrapped keys and pseudonymous ids that KV keeps
-wherever it does.
+Cloudflare, the jurisdiction holds the objects, not the Worker that serves each request near it;
+and a store of your own that names a jurisdiction through its `location` is taken at its word.
 
 ## Remedies (articles 77 to 82)
 

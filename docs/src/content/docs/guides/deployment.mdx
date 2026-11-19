@@ -409,7 +409,8 @@ down, with what they could read and each part they could not
 ## On Cloudflare
 
 A Cloudflare app has no process to run and no role to pick: a Worker answers requests and a
-Durable Object per tenant holds the store. Commands update the read models before they answer,
+Durable Object per tenant holds the store, with a keeper object per tenant holding its key and
+forget ledger in the same [jurisdiction](/adapters/cloudflare/#data-location); deploy both classes. Commands update the read models before they answer,
 unless the Worker asks for `"eventual"`; policies, processes and scheduled commands run in the
 object's alarm. [The Cloudflare adapter](/adapters/cloudflare/) covers it, limits and cost
 included.

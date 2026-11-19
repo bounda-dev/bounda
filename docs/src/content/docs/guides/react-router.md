@@ -379,12 +379,14 @@ export default defineConfig({
 
 ```ts
 // workers/app.ts
-import { createBoundaObject } from "@bounda-dev/cloudflare";
+import { createBoundaKeeper, createBoundaObject } from "@bounda-dev/cloudflare";
 import { createRequestHandler } from "react-router";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
 export class Store extends createBoundaObject({ registry, config }) {}
+// Each tenant's key and forget ledger, apart from its store: see the adapter's tenant keys.
+export class Keeper extends createBoundaKeeper({ config }) {}
 
 const handler = createRequestHandler(
   () => import("virtual:react-router/server-build"),
@@ -400,8 +402,13 @@ export default { fetch: (request: Request) => handler(request) };
   "name": "my-app",
   "main": "./workers/app.ts",
   "compatibility_date": "2026-09-21",
-  "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }]
+  "durable_objects": {
+    "bindings": [
+      { "name": "STORE", "class_name": "Store" },
+      { "name": "KEEPER", "class_name": "Keeper" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store", "Keeper"] }]
 }
 ```
 

@@ -165,66 +165,104 @@ Each object is a [tenant](/guides/personal-data/#tenants), named by the name it 
 through, `idFromName`'s, or by its id when it has none; its key wraps the keys of its persons and of
 its database, and lives outside the object, so that [forgetting the
 tenant](/guides/personal-data/#forgetting-a-tenant) reaches every point-in-time restore of its
-storage too. `kvTenantKeys({ binding })` keeps every tenant's key in a KV namespace, one key each
-under `bounda/tenant-keys/` and the tenant's name, wrapped under the master key:
+storage too. `durableObjectTenantKeys({ storage })` keeps each tenant's key, wrapped under the master
+key, in a keeper: a Durable Object of its own, the class `createBoundaKeeper({ config })` returns,
+one per tenant, in the [jurisdiction](#data-location) `storage` names:
 
 ```ts
-import { cloudflare, kvTenantKeys } from "@bounda-dev/cloudflare";
+// bounda.config.ts
+import { cloudflare, durableObjectForgetLedger, durableObjectTenantKeys } from "@bounda-dev/cloudflare";
 import { defineConfig, masterKey } from "@bounda-dev/core/config";
 
+const storage = cloudflare({ jurisdiction: "eu" });
+
 export default defineConfig({
-  storage: cloudflare(),
+  storage,
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
-      tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
+      tenantKeys: durableObjectTenantKeys({ storage }),
+      forgetLedger: { store: durableObjectForgetLedger({ storage }) },
     },
   },
 });
 ```
 
-```jsonc
-// wrangler.jsonc
-"kv_namespaces": [{ "binding": "TENANT_KEYS" }]
+```ts
+// src/worker.ts
+import { createBoundaKeeper, createBoundaObject } from "@bounda-dev/cloudflare";
+
+export class Store extends createBoundaObject({ registry, config }) {}
+export class Keeper extends createBoundaKeeper({ config }) {}
 ```
 
-`wrangler deploy` creates the namespace when the binding has no id. An object whose `env` lacks the
-binding fails to start with a `ConfigurationError` that names it. KV has no compare-and-set, which a
-store written by several writers needs; each tenant's record is written by its own object alone,
-one at a time, so none is needed. `prefix` keeps the records under another root, for two apps on one
-namespace. The object answers `forgetTenant`, `rotateTenantKey`, its `reseal` included, and
-`retireTenantKeys` through its stub, and `connect(stub)` types them; once forgotten, every call rejects with
-`TenantForgottenError`, which `createWorker` answers with `410`. Once its recipients are told, the
-object empties its storage with `deleteAll()` and holds nothing but the forgetting; Cloudflare
-keeps the storage's point-in-time history for 30 days, where what was not sealed under the tenant's
-key, a read model's column [in the clear](/guides/personal-data/#in-the-clear), stays until then.
+```jsonc
+// wrangler.jsonc
+"durable_objects": {
+  "bindings": [
+    { "name": "STORE", "class_name": "Store" },
+    { "name": "KEEPER", "class_name": "Keeper" }
+  ]
+},
+"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store", "Keeper"] }]
+```
+
+`KEEPER` is the binding both stores reach unless `binding` names another. An object whose `env`
+lacks it fails to start with a `ConfigurationError` that names it. Each tenant's record is a row in
+its keeper's SQLite, written under compare-and-set; one more keeper, the directory, lists the
+tenants with a record, which a [rotation of the master key](#rotating-the-master-key) goes through.
+Restoring a tenant's object leaves its keeper as it was. A keeper checks where it was created as a
+tenant's object does, and refuses every call outside the jurisdiction `cloudflare()` names, or for a
+tenant other than its own.
+
+`kvTenantKeys({ binding })` keeps the records in a Workers KV namespace instead, one key each
+under `bounda/tenant-keys/` and the tenant's name, for an app whose `cloudflare()` names no
+jurisdiction: KV is cached outside any jurisdiction, so with one the app refuses to start on it
+(see [data location](#data-location)). Bind it under `kv_namespaces`; `wrangler deploy` creates the
+namespace when the binding has no id. KV has no compare-and-set; each tenant's record is written by
+its own object alone, one at a time, so none is needed. `prefix` keeps the records under another
+root, for two apps on one namespace.
+
+The object answers `forgetTenant`, `rotateTenantKey`, its `reseal` included, and
+`retireTenantKeys` through its stub, and `connect(stub)` types them; once forgotten, every call
+rejects with `TenantForgottenError`, which `createWorker` answers with `410`. Once its recipients
+are told, the object empties its storage with `deleteAll()` and holds nothing but the forgetting;
+Cloudflare keeps the storage's point-in-time history for
+[30 days](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), where what
+was not sealed under the tenant's key, a read model's column
+[in the clear](/guides/personal-data/#in-the-clear), stays until then. A keeper's history is kept as
+long, and Bounda never restores one: a keeper restored by hand to before a forgetting brings the
+tenant's key back, which, with the tenant's object restored too, opens its data again until that
+history ages out.
 
 ## The forget ledger
 
 Cloudflare restores a Durable Object's storage to a point in time, which brings back the keys of
-everyone forgotten after it. `kvForgetLedger({ binding })` keeps the record of every forgetting
-in a KV namespace instead, outside every object, and an object that starts forgets again whoever
-its restored storage brought back; restoring the storage restarts the object. Bind the namespace
-in `wrangler.jsonc` and name it in `runtime.personalData.forgetLedger.store`; an object whose
-`env` lacks the binding, or that was reached through an id without a name, fails to start with a
-`ConfigurationError`. Each object keeps its entries under its own name, and reads the ledger once
-more a minute after it starts, since KV may take that long to list a key. The periodic
-reconciliation never wakes an object on its own, and with `keepFor` each key expires in KV by
-itself; `bounda forget-ledger expire` gives the keys written before `keepFor` was set theirs.
-Every forgetting writes its intention to KV before the object commits it, so one the object did not
-get to commit, because it was evicted or its transaction failed, is committed at its next start;
-with `strict`, a forgetting KV does not take fails and forgets nobody. An entry lives in its key's
-metadata, which KV caps at 1024 bytes; the categories and keys of a forgetting with too many to fit
-there, some thirty, go to the key's value, which a read fetches for the entries it hands out alone,
-and `bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile. See
+everyone forgotten after it. `durableObjectForgetLedger({ storage })` keeps the record of every
+forgetting in the tenant's keeper, outside its object and in the same jurisdiction, and an object
+that starts forgets again whoever its restored storage brought back; restoring the storage restarts
+the object. A read sees every write at once, and with `keepFor` the periodic reconciliation prunes
+the entries past it. The periodic reconciliation never wakes an object on its own. Every
+forgetting writes its intention to the keeper before the object commits it, so one the object did
+not get to commit, because it was evicted or its transaction failed, is committed at its next start;
+with `strict`, a forgetting the keeper does not take fails and forgets nobody. See
 [backups](/guides/personal-data/#backups).
+
+`kvForgetLedger({ binding })` keeps it in a KV namespace instead, for an app whose `cloudflare()`
+names no jurisdiction. An object whose `env` lacks the binding, or that was reached through an id
+without a name, fails to start with a `ConfigurationError`. Each object keeps its entries under its
+own name, and reads the ledger once more a minute after it starts, since KV may take that long to
+list a key. With `keepFor` each key expires in KV by itself; `bounda forget-ledger expire` gives
+the keys written before `keepFor` was set theirs. An entry lives in its key's metadata, which KV
+caps at 1024 bytes; the categories and keys of a forgetting with too many to fit there, some
+thirty, go to the key's value, which a read fetches for the entries it hands out alone, and
+`bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile.
 
 ## Rotating the master key
 
 A rotation of the [master key](/guides/personal-data/#rotating-the-master-key) rewraps each
-tenant's key in the tenant key store, and on Cloudflare the tenant's own object does it, KV's one
-writer of its record: an object that sleeps through the rotation would keep its key under the
-previous master key. The `scheduled` of `createWorker` reaches them: it lists the tenants of the
+tenant's key in the tenant key store, and on Cloudflare the tenant's own object does it: an object
+that sleeps through the rotation would keep its key under the previous master key. The `scheduled` of `createWorker` reaches them: it lists the tenants of the
 store still under a previous master key and calls `wake()` on each one's object, which arms its
 alarm at once and rewraps its record there. Give the Worker a cron trigger while a rotation is under
 way:
@@ -271,9 +309,18 @@ configuration names none, refuses to start with a `ConfigurationError`.
   app refuses to start on one that names another, and so does `bounda personal-data inventory`.
 - `workerd` has no jurisdictions where it runs locally, under `wrangler dev`, `vite dev` and the
   tests: there every object stays on your machine and the setting is ignored.
-- The jurisdiction holds the object, not the Worker in front of it, which runs near each request,
-  nor what lives in KV: [tenant keys](#tenant-keys) and the [forget ledger](#the-forget-ledger)
-  are wrapped keys and pseudonymous ids, kept wherever KV keeps them.
+- The jurisdiction holds the objects, not the Worker in front of them, which runs near each
+  request. [Tenant keys](#tenant-keys) and the [forget ledger](#the-forget-ledger), wrapped keys
+  and the ids of persons, are held to it too: with a jurisdiction, the app refuses to start on a
+  tenant key store or a forget ledger whose `location` is not that jurisdiction, and so does
+  `bounda personal-data inventory`. The keeper's, `durableObjectTenantKeys({ storage })` and
+  `durableObjectForgetLedger({ storage })`, are in it. Workers KV is not: its
+  [compatibility table](https://developers.cloudflare.com/data-localization/compatibility/) says
+  jurisdictional restrictions for KV pairs are not supported today, and even a namespace created in
+  a [jurisdiction](https://developers.cloudflare.com/kv/reference/data-location/) is cached
+  outside it, so `kvTenantKeys` and `kvForgetLedger` are refused. A store of your own names its
+  place through `defineTenantKeyStore(create, { location: "jurisdiction eu" })` or
+  `defineForgetLedger(create, { location })`, which you then answer for.
 - [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) says where
   each holder is kept: `cloudflare, jurisdiction eu`.
 
