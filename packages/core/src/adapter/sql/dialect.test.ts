@@ -6,6 +6,11 @@ const FIELD_TYPES: readonly FieldType[] = ["string", "number", "boolean", "date"
 const when = new Date("2026-01-02T03:04:05.000Z");
 
 describe("sqliteDialect", () => {
+  it("writes text as a literal, its quotes doubled and its backslashes as they are", () => {
+    expect(sqliteDialect.literal("")).toBe("''");
+    expect(sqliteDialect.literal("it's a \\ 'x'")).toBe("'it''s a \\ ''x'''");
+  });
+
   it("uses ? placeholders and text-friendly column types", () => {
     expect(sqliteDialect.placeholder(1)).toBe("?");
     expect(sqliteDialect.placeholder(7)).toBe("?");
@@ -46,6 +51,12 @@ describe("sqliteDialect", () => {
 });
 
 describe("postgresqlDialect", () => {
+  it("writes text as a literal, its quotes doubled, and one with a backslash as an escape string", () => {
+    expect(postgresqlDialect.literal("")).toBe("''");
+    expect(postgresqlDialect.literal("it's 'x'")).toBe("'it''s ''x'''");
+    expect(postgresqlDialect.literal("a \\ b \\ it's")).toBe("E'a \\\\ b \\\\ it''s'");
+  });
+
   it("uses $n placeholders and native column types", () => {
     expect([1, 2, 10].map(postgresqlDialect.placeholder)).toEqual(["$1", "$2", "$10"]);
     expect(FIELD_TYPES.map((type) => postgresqlDialect.columnType(type))).toEqual([

@@ -5,6 +5,7 @@ import { ConfigurationError, RebuildSupersededError } from "../../contracts/erro
 import { silentLogger } from "../../contracts/logger.ts";
 import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import type { SqlDatabase } from "../sql/database.ts";
+import { tableNameFor } from "../sql/identifiers.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { DEFAULT_PERSONAL_CATEGORY, type KeyedPerson } from "../storage/personal-key-store.ts";
 import {
@@ -34,6 +35,7 @@ import {
   readModelTransactionContract,
   recipientStoreContract,
   restrictedReadsContract,
+  restrictedSqlContract,
   schedulerContract,
   snapshotStoreContract,
   storageSchemaContract,
@@ -173,6 +175,14 @@ describe("the SQLite stores on node:sqlite", () => {
     locking: "single-writer",
   });
   restrictedReadsContract({ create: async () => nodeSqlite().adapter });
+  restrictedSqlContract({
+    create: async () => ({
+      storage: nodeSqlite().adapter,
+      table: (readModel) => tableNameFor({ prefix: "bounda_", readModel }),
+      raw: async (driver, sql) =>
+        (driver as DatabaseSync).prepare(sql).all() as Record<string, unknown>[],
+    }),
+  });
   storageSchemaContract({
     create: async () => {
       const { adapter, db } = nodeSqlite();

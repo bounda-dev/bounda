@@ -1,3 +1,4 @@
+import { ConfigurationError } from "../../contracts/errors.ts";
 import type { FieldsRecord } from "../../modules/view.ts";
 import {
   type RestrictedPersonsStore,
@@ -88,21 +89,34 @@ export interface RestrictedRowsConditionFunction {
   (args: RestrictedRowsConditionArgs): SqlCondition;
 }
 
+// The copy is named, not aliased, so no alias of the statement around it can stand for it.
+const requestedSql = (
+  { restrictedPersons, person }: Omit<RestrictedRowsConditionArgs, "categories" | "dialect">,
+  among: readonly string[],
+): string =>
+  `NOT EXISTS (SELECT 1 FROM ${restrictedPersons} WHERE ${restrictedPersons}."person" = ${person} AND ${restrictedPersons}."category" IN (${among.join(", ")}))`;
+
+const requestedCategories = (categories: readonly string[]): readonly string[] => [
+  WHOLE_PERSON,
+  ...categories,
+];
+
 /**
  * True for a row whose person asked for no restriction that covers it: neither as a whole nor in a
  * category of the read model.
  */
 export const restrictedRowsCondition: RestrictedRowsConditionFunction = ({
-  restrictedPersons,
-  person,
   categories,
   dialect,
+  ...names
 }) => {
   return (offset) => {
-    const params: unknown[] = [WHOLE_PERSON, ...categories];
-    const among = params.map((_, index) => dialect.placeholder(offset + index + 1)).join(", ");
+    const params = requestedCategories(categories);
     return {
-      sql: `NOT EXISTS (SELECT 1 FROM ${restrictedPersons} AS "r" WHERE "r"."person" = ${person} AND "r"."category" IN (${among}))`,
+      sql: requestedSql(
+        names,
+        params.map((_, index) => dialect.placeholder(offset + index + 1)),
+      ),
       params,
     };
   };
@@ -120,18 +134,18 @@ export interface RetainedRowsConditionFunction {
   (args: RetainedRowsConditionArgs): SqlCondition;
 }
 
+const retainedSql = (keys: readonly string[], pattern: (index: number) => string): string =>
+  keys.map((key, index) => `(${key} IS NULL OR ${key} NOT LIKE ${pattern(index)})`).join(" AND ");
+
+const RETAINED_PATTERN = `${RETAINED_KEY_PREFIX}%`;
+
 /**
  * True for a row with no value under a key a forgetting kept under an erasure exemption.
  */
 export const retainedRowsCondition: RetainedRowsConditionFunction = ({ keys, dialect }) => {
   return (offset) => ({
-    sql: keys
-      .map(
-        (key, index) =>
-          `(${key} IS NULL OR ${key} NOT LIKE ${dialect.placeholder(offset + index + 1)})`,
-      )
-      .join(" AND "),
-    params: keys.map(() => `${RETAINED_KEY_PREFIX}%`),
+    sql: retainedSql(keys, (index) => dialect.placeholder(offset + index + 1)),
+    params: keys.map(() => RETAINED_PATTERN),
   });
 };
 
@@ -191,10 +205,9 @@ export const createSqlRestrictedReads: CreateSqlRestrictedReadsFunction = <Row e
     });
   const plain = tableOf();
   const columns = columnsOf({ readModel, fields, dialect });
-  const qualified = (field: string) =>
-    `${quoteIdentifier(table)}.${quoteIdentifier(
-      columns.find((column) => column.field === field)?.name ?? field,
-    )}`;
+  const columnOf = (field: string) =>
+    quoteIdentifier(columns.find((column) => column.field === field)?.name ?? field);
+  const qualified = (field: string) => `${quoteIdentifier(table)}.${columnOf(field)}`;
   const requested =
     restricted === null
       ? null
@@ -214,6 +227,28 @@ export const createSqlRestrictedReads: CreateSqlRestrictedReadsFunction = <Row e
   };
   return {
     ...tables,
+    condition: (view, alias) => {
+      // Unquoted, an alias reads as the copy's name, in either engine, whatever its case.
+      if (alias !== undefined && `"${alias.toLowerCase()}"` === restrictedPersons) {
+        throw new ConfigurationError(
+          `Read model "${readModel}": the alias "${alias}" names the table of who is restricted; alias the read model's table otherwise`,
+        );
+      }
+      if (restricted === null) return "(1 = 1)";
+      const on = (field: string) => `${alias ?? quoteIdentifier(table)}.${columnOf(field)}`;
+      const person = on(restricted.person);
+      // Always true, yet on the same column, so an alias the statement lacks fails on every basis.
+      if (view === "all") return `(${person} IS NULL OR ${person} IS NOT NULL)`;
+      const requestedPart = requestedSql(
+        { restrictedPersons, person },
+        requestedCategories(restricted.categories).map(dialect.literal),
+      );
+      if (view === "retained" || restricted.keyFields.length === 0) return `(${requestedPart})`;
+      const retainedPart = retainedSql(restricted.keyFields.map(on), () =>
+        dialect.literal(RETAINED_PATTERN),
+      );
+      return `(${requestedPart} AND ${retainedPart})`;
+    },
     among: async (persons, view) => {
       const found = new Set<string>();
       if (restricted === null || view === "all" || persons.length === 0) return found;
