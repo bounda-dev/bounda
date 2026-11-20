@@ -1,6 +1,0 @@
----
-"@bounda-dev/core": minor
-"@bounda-dev/cli": minor
----
-
-Declare special categories of data and criminal data. A category in `app/personal-data.ts` takes `special: { kinds, condition }`, the kinds of article 9(1) it holds and the condition of article 9(2) it is processed on, and `criminal: { authority }`, the authority of article 10 for data on criminal convictions and offences, both checked by the generated types and at start; a category on `legal-obligation` cannot rest its special data on `explicit-consent`. An automated decision on special data must rest on `explicit-consent` or `substantial-public-interest` and say its `measures` (article 22(4)); any decision may say them. The export's categories and the record of processing state `special` and `criminal`, the export's `rights` let special data on explicit consent be withdrawn and carried whatever the basis, and `bounda personal-data inventory` reports a personal field named like special or criminal data in a category that does not declare them (`looks-special`). A decision's `categories` now keep the names of the app's categories, so an app with an automated decision compiles and an undeclared category is refused where it is written.
