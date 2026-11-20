@@ -381,7 +381,35 @@ export const restrictedSqlContract: RestrictedSqlContractFunction = ({ create })
         expect(await rowsOf("retained")).toEqual(await tableRows(notes.restricted.retained));
         expect(await rowsOf("all", "N")).toEqual(["n-1", "n-2", "n-3", "n-4", "n-5"]);
         const copy = `${target.table("notes").slice(0, -"rm_notes".length)}RESTRICTED_PERSONS`;
-        await expect(rowsOf("unrestricted", copy)).rejects.toThrow(ConfigurationError);
+        expect(() => notes.restricted.condition("unrestricted", copy)).toThrow(
+          new ConfigurationError(
+            `Read model "notes": the alias "${copy}" names the table of who is restricted; alias the read model's table otherwise`,
+          ),
+        );
+      });
+
+      it("is always true in a read model whose rows are no one's", async () => {
+        target = await create();
+        notes = await target.storage.createReadModel({
+          name: "skus",
+          fields: { sku: f.string().primaryKey(), customerId: f.string() },
+          logger: silentLogger,
+        });
+        await notes.table.upsert({ sku: "s-1", customerId: "ana" });
+        await notes.transact({
+          subscriber: "restrictions:skus",
+          wait: true,
+          work: ({ restrictedPersons }) =>
+            restrictedPersons.request("ana", [{ ground: "legal-claims", categories: null }]),
+        });
+        for (const view of ["unrestricted", "retained", "all"] as const) {
+          expect(notes.restricted.condition(view, "s")).toBe("(1 = 1)");
+          expect(
+            await notes.client.all(
+              `SELECT sku FROM ${target.table("skus")} AS s WHERE ${notes.restricted.condition(view, "s")}`,
+            ),
+          ).toEqual([{ sku: "s-1" }]);
+        }
       });
     });
   });
