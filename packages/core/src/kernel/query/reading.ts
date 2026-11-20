@@ -61,11 +61,11 @@ const primaryKeyOf = (layout: SealedLayout): string =>
  * opened, and the rows of the persons `view` leaves out are not read, and whose rows they read is
  * noted. `table` leaves them out in the statement itself; `client` refuses a statement without a
  * condition `unrestricted` rendered, which leaves them out there, and drops from what its SQL
- * answers any row of theirs one let through. A row holding a value under a key a forgetting kept is left out but on a basis that
- * reads it, and its value is never opened then. A sealed value names its person, so a statement
- * need select the field marked `.person()` only beside a personal field kept in the clear, and the
- * primary key or its key field beside such a field of a person a forgetting kept a key of; a row
- * without them is refused. `count` reads no row, so it notes no one; taking `client.raw` is noted
+ * answers any row of theirs one let through. A row holding a value under a key a forgetting kept
+ * is left out but on a basis that reads it, and its value is never opened then. A sealed value
+ * names its person, so a statement need select the field marked `.person()` only beside a personal
+ * field kept in the clear, and the primary key or its key field beside such a field of a person a
+ * forgetting kept a key of; a row without them is refused. `count` reads no row, so it notes no one; taking `client.raw` is noted
  * as a read of rows whose persons are unknown when a personal field is kept in the clear.
  */
 export const reading: ReadingFunction = ({ storage, layout, keys, indexer, view, rawRead }) => {
