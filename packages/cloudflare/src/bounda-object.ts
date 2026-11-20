@@ -212,6 +212,11 @@ export interface BoundaObjectMethods {
     options?: ForgetTenantOptions,
   ): Promise<RpcOutcome<TenantForgottenResult>>;
   /**
+   * Hands the object's tenant back, as `BoundaClient.exportTenant` does: once the header is read,
+   * the parts, one JSON per line, read only as the stream is; cancelling it stops the export.
+   */
+  exportTenant(tenant: string, actor?: string): Promise<RpcOutcome<ReadableStream<Uint8Array>>>;
+  /**
    * Puts a new version of the tenant's key in force, as `BoundaClient.rotateTenantKey` does; the
    * alarm rewraps every key under it, or with `reseal` replaces every key and seals the object's
    * personal data again under the new ones.
@@ -610,6 +615,10 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         await this.#rearm(false, true);
         return forgotten;
       });
+    }
+
+    exportTenant(tenant: string, actor?: string): Promise<RpcOutcome<ReadableStream<Uint8Array>>> {
+      return settle(async () => partLines(await this.#as(actor).exportTenant(tenant)));
     }
 
     rotateTenantKey(

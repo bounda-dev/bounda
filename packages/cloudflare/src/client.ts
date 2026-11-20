@@ -16,6 +16,7 @@ import {
   type ListDeadLettersArgs,
   type PersonalDataExport,
   type PersonalDataExportOptions,
+  type PersonalDataExportPart,
   type PersonRecipient,
   type QueriesFacade,
   type QueryOptions,
@@ -28,6 +29,7 @@ import {
   type StoredDispatch,
   type StoredEvent,
   type SubscriberFailure,
+  type TenantExportPart,
   type TenantForgottenResult,
   type TenantKeyVersions,
   type UnrestrictOptions,
@@ -107,6 +109,7 @@ export interface BoundaStub {
     options: RedactRequest,
   ): PromiseLike<unknown>;
   forgetTenant(tenant: string, actor?: string, options?: ForgetTenantOptions): PromiseLike<unknown>;
+  exportTenant(tenant: string, actor?: string): PromiseLike<unknown>;
   rotateTenantKey(actor?: string, options?: RotateTenantKeyOptions): PromiseLike<unknown>;
   retireTenantKeys(actor?: string): PromiseLike<unknown>;
 }
@@ -203,7 +206,7 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
     exportPersonalData: (personId, options) =>
       unwrap<PersonalDataExport>(stub.exportPersonalData(personId, actor, options)),
     streamPersonalData: async (personId, options) =>
-      partsOf(
+      partsOf<PersonalDataExportPart>(
         await unwrap<ReadableStream<Uint8Array>>(stub.streamPersonalData(personId, actor, options)),
       ),
     recipientsOf: (personId) =>
@@ -216,6 +219,10 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       unwrap<StoredDispatch>(stub.redact(personId, consistency, actor, options)),
     forgetTenant: (tenant, options) =>
       unwrap<TenantForgottenResult>(stub.forgetTenant(tenant, actor, options)),
+    exportTenant: async (tenant) =>
+      partsOf<TenantExportPart>(
+        await unwrap<ReadableStream<Uint8Array>>(stub.exportTenant(tenant, actor)),
+      ),
     rotateTenantKey: (options) => unwrap<TenantKeyVersions>(stub.rotateTenantKey(actor, options)),
     retireTenantKeys: () => unwrap<readonly string[]>(stub.retireTenantKeys(actor)),
     as: (next) => {

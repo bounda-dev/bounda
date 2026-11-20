@@ -25,6 +25,11 @@ export interface RecordAccessArgs<Op extends Operation> {
   readonly detail: (PersonalDataAccess & { readonly operation: Op })["detail"];
   readonly actor: string | undefined;
   readonly persons: Iterable<string>;
+  /**
+   * How many persons in all, for a call that reads more than it can name: `persons` then holds the
+   * first of them, each once. Counted from `persons` when absent.
+   */
+  readonly personCount?: number;
   readonly outcome: (PersonalDataAccess & { readonly operation: Op })["outcome"];
   /**
    * What the call rejected with, named in the record of one `failed` or `refused`; `undefined`
@@ -69,6 +74,7 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
     detail,
     actor,
     persons,
+    personCount,
     outcome,
     error,
     unattributed = false,
@@ -80,7 +86,7 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
       operation,
       actor: actor ?? null,
       persons: distinct.slice(0, MAX_ACCESS_PERSONS),
-      personCount: distinct.length,
+      personCount: personCount ?? distinct.length,
       at: clock.now().toISOString(),
       outcome,
       ...(outcome === "failed" || outcome === "refused"

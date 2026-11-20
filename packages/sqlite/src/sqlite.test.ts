@@ -38,6 +38,7 @@ import {
   subscriberFailureStoreContract,
   tableContract,
   tenancyContract,
+  tenantExportContract,
   tenantKeyStoreContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -53,6 +54,7 @@ const openStorage = (adapter = sqlite({ memory: true })): Promise<Storage> =>
 describe("sqlite adapter in memory", () => {
   eventStoreContract({ create: openStorage });
   personalDataExportContract({ create: async () => sqlite({ memory: true }) });
+  tenantExportContract({ create: async () => sqlite({ memory: true }) });
   deadLetterRetentionContract({ create: async () => sqlite({ memory: true }) });
   subscriberFailureRetentionContract({ create: async () => sqlite({ memory: true }) });
   checkpointStoreContract({ create: async () => (await openStorage()).checkpointStore });

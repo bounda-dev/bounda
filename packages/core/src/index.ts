@@ -143,6 +143,31 @@ export type {
   RetentionStatus,
 } from "./kernel/personal-data/retention.ts";
 export type { KeyRotationStatus } from "./kernel/personal-data/rotation.ts";
+export type {
+  TenantExportCategory,
+  TenantExportCounts,
+  TenantExportedAnswer,
+  TenantExportedDeadLetter,
+  TenantExportedEvent,
+  TenantExportedPerson,
+  TenantExportedRow,
+  TenantExportedScheduledCommand,
+  TenantExportedSubscriberFailure,
+  TenantExportHeader,
+  TenantExportPart,
+} from "./kernel/personal-data/tenant-export.ts";
+export {
+  TENANT_EXPORT_FORMAT,
+  TENANT_EXPORT_VERSION,
+} from "./kernel/personal-data/tenant-export.ts";
+export type {
+  ReadTenantExportFunction,
+  TenantExportJsonLinesFunction,
+} from "./kernel/personal-data/tenant-export-json.ts";
+export {
+  readTenantExport,
+  tenantExportJsonLines,
+} from "./kernel/personal-data/tenant-export-json.ts";
 export type { TenantKeyStatus } from "./kernel/personal-data/tenant-keys.ts";
 export { DEFAULT_TENANT } from "./kernel/personal-data/tenant-keys.ts";
 export {

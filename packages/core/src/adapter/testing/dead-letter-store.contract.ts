@@ -146,6 +146,20 @@ export const deadLetterStoreContract: DeadLetterStoreContractFunction = ({ creat
       expect((await store.list({ limit: 1 })).map(({ id }) => id)).toEqual(["c"]);
     });
 
+    it("scans every letter by id, by code point, whatever its status, a page at a time", async () => {
+      for (const [index, id] of ["b", "\u{1F600}", "a", "！", "B"].entries()) {
+        await store.add(letter(id, { firstFailedAt: `2026-01-0${5 - index}T00:00:00.000Z` }));
+      }
+      await store.updateStatus("a", "retried", resolvedAt);
+      const idsOf = (page: readonly StoredDeadLetter[]) => page.map(({ id }) => id);
+      expect(idsOf(await store.scan({ limit: 10 }))).toEqual(["B", "a", "b", "！", "\u{1F600}"]);
+      expect(idsOf(await store.scan({ limit: 2 }))).toEqual(["B", "a"]);
+      expect(idsOf(await store.scan({ after: "a", limit: 2 }))).toEqual(["b", "！"]);
+      expect(idsOf(await store.scan({ after: "！", limit: 2 }))).toEqual(["\u{1F600}"]);
+      expect(await store.scan({ after: "\u{1F600}", limit: 2 })).toEqual([]);
+      expect((await store.scan({ after: "B", limit: 1 }))[0]).toEqual(await store.get("a"));
+    });
+
     it("is idempotent on id", async () => {
       await store.add(letter("a"));
       await store.add(letter("a", { attempts: 99 }));

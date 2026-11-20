@@ -180,6 +180,30 @@ browser saved is not valid JSON, and a new request exports the person as they ar
 browser goes away, the body is cancelled, which stops the export where it was and records it in
 the access log as `cancelled`.
 
+## Handing a tenant back
+
+A loader answers the whole [tenant's export](/guides/personal-data/#handing-a-tenant-back), for
+its controller to take its data back at the end of the service, with `tenantExportResponse`, which
+streams the JSON Lines of `tenantExportJsonLines` as they are read, on Node and on Cloudflare
+alike:
+
+```ts
+// app/routes/admin.tenant-export.ts
+import { bounda, tenantExportResponse } from "@bounda-dev/react-router/app";
+import type { Route } from "./+types/admin.tenant-export";
+
+export const loader = async ({ context }: Route.LoaderArgs) =>
+  tenantExportResponse(context.get(bounda).as("operator-7"), "acme");
+```
+
+It holds every person's data: guard the route as your most sensitive one. The response has
+`content-type` `application/jsonl; charset=utf-8`, `content-disposition` `attachment;
+filename="tenant-export.jsonl"` and `cache-control: no-store`; a third argument adds to it, as a
+`ResponseInit`, its headers over these. A refusal, such as another tenant's name or a forgotten
+tenant, rejects before the response is made. A later one, a `ConcurrencyError` when the stream
+moved while it was read, cuts the body short of its `end` line, which `readTenantExport` and
+`bounda check-tenant-export` refuse.
+
 ## When the client goes away
 
 A command keeps going when the browser closes the tab: the request has already arrived, and

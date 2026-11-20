@@ -1,4 +1,5 @@
 import type { StorageTransaction } from "../../adapter/adapter.ts";
+import type { DeclaredRecipient } from "../../adapter/storage/recipient-store.ts";
 import {
   BOUNDA_AGGREGATE,
   PERSONAL_DATA_FORGOTTEN_EVENT,
@@ -95,11 +96,21 @@ export interface PresumedOfFunction {
  * port declared, or presumed again after a restore, once the person's data already existed, but
  * those a forgetting told it to erase since.
  */
-export const presumedOf: PresumedOfFunction = async (transaction, personId) => {
+export const presumedOf: PresumedOfFunction = async (transaction, personId) =>
+  presumedAmong(transaction, personId, await transaction.recipients.declared());
+
+export interface PresumedAmongFunction {
+  (
+    transaction: Pick<StorageTransaction, "eventStore">,
+    personId: string,
+    recipients: readonly DeclaredRecipient[],
+  ): Promise<Map<string, Set<string>>>;
+}
+
+// `presumedOf` with the declared recipients read already, as for a page of persons at once.
+export const presumedAmong: PresumedAmongFunction = async (transaction, personId, recipients) => {
   const presumed = new Map<string, Set<string>>();
-  const declared = (await transaction.recipients.declared()).filter(
-    ({ presumedThrough }) => presumedThrough > 0,
-  );
+  const declared = recipients.filter(({ presumedThrough }) => presumedThrough > 0);
   if (declared.length > 0) {
     const [first] = await transaction.eventStore.readByPerson({
       person: personId,

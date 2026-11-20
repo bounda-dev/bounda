@@ -220,6 +220,39 @@ export const personStoreContract: PersonStoreContractFunction = ({ create }) => 
       });
     });
 
+    it("scans every person's row by id, by code point, a page at a time, whatever made it", async () => {
+      for (const person of ["b", "\u{1F600}", "a", "！"]) {
+        await store.record({ person, position: 1, lastActiveAt: at(1), forgottenAt: null });
+      }
+      await store.restrict("B", { ground: "legal-claims", categories: null, since });
+      await store.unrestrict("B", { categories: null });
+      await store.unrestrict("never", { categories: null });
+      const personsOf = (page: readonly { readonly person: string }[]) =>
+        page.map(({ person }) => person);
+      expect(personsOf(await store.scan({ limit: 10 }))).toEqual([
+        "B",
+        "a",
+        "b",
+        "！",
+        "\u{1F600}",
+      ]);
+      expect(personsOf(await store.scan({ limit: 2 }))).toEqual(["B", "a"]);
+      expect(personsOf(await store.scan({ after: "a", limit: 2 }))).toEqual(["b", "！"]);
+      expect(personsOf(await store.scan({ after: "！", limit: 2 }))).toEqual(["\u{1F600}"]);
+      expect(await store.scan({ after: "\u{1F600}", limit: 2 })).toEqual([]);
+      expect(await store.scan({ after: "", limit: 1 })).toEqual([
+        {
+          person: "B",
+          restrictedSince: null,
+          lastActiveAt: null,
+          position: 0,
+          forgottenAt: null,
+          hold: null,
+        },
+      ]);
+      expect((await store.scan({ after: "B", limit: 1 }))[0]).toEqual(await store.get("a"));
+    });
+
     it("ignores a record of a position the row has recorded already, or one before it", async () => {
       await store.record({ person: "c-1", position: 5, lastActiveAt: at(2), forgottenAt: null });
       await store.record({ person: "c-1", position: 5, lastActiveAt: at(9), forgottenAt: at(9) });

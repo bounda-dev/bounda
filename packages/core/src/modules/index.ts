@@ -25,6 +25,7 @@ export type {
   RestrictedProcessingAccess,
   SubscriberFailureAccess,
   SubscriberFailuresListAccess,
+  TenantExportAccess,
 } from "./audit.ts";
 export { MAX_ACCESS_PERSONS } from "./audit.ts";
 export type {

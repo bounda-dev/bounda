@@ -49,6 +49,15 @@ const LATEST = [
   { scope: "storage", version: 11 },
 ];
 
+// PostgreSQL's storage takes one more: the indexes that compare text by bytes, as SQLite's does.
+const STORAGE_LATEST: Readonly<Record<StorageSchemaContractArgs["dialect"], number>> = {
+  sqlite: 11,
+  postgresql: 12,
+};
+
+const latestOf = (dialect: StorageSchemaContractArgs["dialect"]) =>
+  dialect === "sqlite" ? LATEST : [...LATEST, { scope: "storage", version: 12 }];
+
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
   (
     await execute(
@@ -139,7 +148,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       await opened(target.adapter, async () => undefined);
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual(
-        LATEST,
+        latestOf(dialect),
       );
     });
 
@@ -159,20 +168,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const target = await create();
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
-        { scope: "storage", version: 0, latest: 11 },
+        { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 0, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
-        { scope: "storage", version: 0, latest: 11 },
+        { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 0, latest: 7 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
-        { scope: "storage", version: 11, latest: 11 },
+        { scope: "storage", version: STORAGE_LATEST[dialect], latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 3, latest: 3 },
         { scope: "forget-ledger", version: 7, latest: 7 },
         { scope: "tenant-keys", version: 1, latest: 1 },
@@ -211,7 +220,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         await Promise.all(storages.map((storage) => storage.close()));
       }
       expect((await versionsOf(target)).map(({ scope, version }) => ({ scope, version }))).toEqual(
-        LATEST,
+        latestOf(dialect),
       );
     });
 
@@ -229,7 +238,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         code: "STORAGE_SCHEMA_TOO_NEW",
         scope: "storage",
         version: 999,
-        supported: 11,
+        supported: STORAGE_LATEST[dialect],
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
@@ -248,7 +257,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         expect(await shapeOf(target, dialect)).toEqual(await shapeOf(fresh, dialect));
         expect(
           (await versionsOf(target)).map(({ scope, version: at }) => ({ scope, version: at })),
-        ).toEqual(LATEST);
+        ).toEqual(latestOf(dialect));
       });
     }
 

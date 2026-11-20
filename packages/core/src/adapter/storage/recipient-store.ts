@@ -75,6 +75,12 @@ export interface RecipientSummary {
 export interface RecipientStore {
   disclose(disclosures: readonly Disclosure[], at: string): Promise<readonly Disclosure[]>;
   disclosures(person: string): Promise<readonly StoredDisclosure[]>;
+  /**
+   * `disclosures` of each of `persons` at once, by person; a person without any is left out.
+   */
+  disclosuresOfMany(
+    persons: readonly string[],
+  ): Promise<ReadonlyMap<string, readonly StoredDisclosure[]>>;
   forget(person: string, categories: readonly string[] | null): Promise<void>;
   declare(
     ports: readonly RecipientPort[],

@@ -1,5 +1,9 @@
 import type { StorageTransaction } from "../../adapter/adapter.ts";
-import type { PersonalKeyStore } from "../../adapter/storage/personal-key-store.ts";
+import type {
+  HeldPersonalKey,
+  PersonalKeyStore,
+} from "../../adapter/storage/personal-key-store.ts";
+import type { StoredDisclosure } from "../../adapter/storage/recipient-store.ts";
 import type { PersonalCategoryName } from "../../modules/personal-data.ts";
 import type {
   CountryCode,
@@ -9,7 +13,7 @@ import type {
 } from "../../modules/recipient.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { RecipientStatus } from "../status.ts";
-import { presumedOf } from "./addressing.ts";
+import { presumedAmong, presumedOf } from "./addressing.ts";
 import type { RecipientsRuntime } from "./build.ts";
 
 export interface RecipientsOfArgs {
@@ -54,7 +58,79 @@ export const recipientsOf: RecipientsOfFunction = async ({
   recipients,
   categories,
   personId,
+}) =>
+  recipientsFrom({
+    recipients,
+    categories,
+    disclosures: await storage.recipients.disclosures(personId),
+    // A category the person holds no key of now was never theirs, or was forgotten and its
+    // recipients told.
+    held: new Set((await storage.personalKeys.list(personId)).map(({ category }) => category)),
+    presumed: await presumedOf(storage, personId),
+  });
+
+export interface RecipientsOfPageArgs {
+  readonly storage: Pick<StorageTransaction, "recipients" | "eventStore">;
+  readonly recipients: RecipientsRuntime;
+  readonly categories: PersonalCategories;
+  readonly persons: readonly string[];
+  /**
+   * The keys of `persons`, by person, as `PersonalKeyStore.listMany` reads them.
+   */
+  readonly keys: ReadonlyMap<string, readonly Pick<HeldPersonalKey, "category">[]>;
+}
+
+export interface RecipientsOfPageFunction {
+  (args: RecipientsOfPageArgs): Promise<ReadonlyMap<string, readonly PersonRecipient[]>>;
+}
+
+/**
+ * `recipientsOf` of each of a page of persons, their disclosures and the declared recipients each
+ * read once for the page.
+ */
+export const recipientsOfPage: RecipientsOfPageFunction = async ({
+  storage,
+  recipients,
+  categories,
+  persons,
+  keys,
 }) => {
+  const [disclosures, declared] = await Promise.all([
+    storage.recipients.disclosuresOfMany(persons),
+    storage.recipients.declared(),
+  ]);
+  const listed = new Map<string, readonly PersonRecipient[]>();
+  for (const personId of persons) {
+    listed.set(
+      personId,
+      recipientsFrom({
+        recipients,
+        categories,
+        disclosures: disclosures.get(personId) ?? [],
+        held: new Set((keys.get(personId) ?? []).map(({ category }) => category)),
+        presumed: await presumedAmong(storage, personId, declared),
+      }),
+    );
+  }
+  return listed;
+};
+
+interface RecipientsFromArgs {
+  readonly recipients: RecipientsRuntime;
+  readonly categories: PersonalCategories;
+  readonly disclosures: readonly StoredDisclosure[];
+  // The categories the person holds a key of.
+  readonly held: ReadonlySet<string>;
+  readonly presumed: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+const recipientsFrom = ({
+  recipients,
+  categories,
+  disclosures,
+  held,
+  presumed,
+}: RecipientsFromArgs): readonly PersonRecipient[] => {
   const listed: PersonRecipient[] = [];
   const entry = (
     identity: Identity,
@@ -86,7 +162,7 @@ export const recipientsOf: RecipientsOfFunction = async ({
     string,
     { identity: Identity; names: Set<string>; first: string; last: string }
   >();
-  for (const row of await storage.recipients.disclosures(personId)) {
+  for (const row of disclosures) {
     const port = recipients.byPort[row.port]?.port ?? row.port;
     const key = JSON.stringify([port, row.recipient, row.kind, row.country, row.safeguard]);
     const held = disclosed.get(key);
@@ -125,10 +201,7 @@ export const recipientsOf: RecipientsOfFunction = async ({
           safeguard: recipient.safeguard,
         };
   };
-  // A category the person holds no key of now was never theirs, or was forgotten and its
-  // recipients told.
-  const held = new Set((await storage.personalKeys.list(personId)).map(({ category }) => category));
-  for (const [port, names] of await presumedOf(storage, personId)) {
+  for (const [port, names] of presumed) {
     const identity = identityOf(port);
     if (identity === null) continue;
     const left = [...names].filter(

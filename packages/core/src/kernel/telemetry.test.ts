@@ -214,6 +214,9 @@ describe("telemetry", () => {
     for await (const _part of await user.streamPersonalData("p-2")) {
       // Read to its end.
     }
+    for await (const _part of await user.exportTenant("default")) {
+      // Read to its end.
+    }
     await user.recipientsOf("p-2");
     await user.deadLetters.list();
     // The bound client's type offers neither, as an operator asks those of the app.
@@ -265,6 +268,7 @@ describe("telemetry", () => {
         "unrestrict",
         "exportPersonalData",
         "streamPersonalData",
+        "exportTenant",
         "recipientsOf",
         "deadLetters.list",
         "deadLetters.count",

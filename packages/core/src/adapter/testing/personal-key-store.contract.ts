@@ -82,6 +82,25 @@ export const personalKeyStoreContract: PersonalKeyStoreContractFunction = ({ cre
       expect(await store.get("c-1", D)).toEqual(stored("again"));
     });
 
+    it("scans the persons who hold a key, in force or kept, each once, by code point, a page at a time", async () => {
+      for (const person of ["b", "\u{1F600}", "a", "！", "gone"]) {
+        await store.add(person, D, stored(person));
+      }
+      await store.add("a", "invoices", stored("a-invoices"));
+      await store.add("B", "invoices", stored("B"));
+      await store.retain("B", "f-B", {
+        since: "2026-02-01T00:00:00.000Z",
+        lastActiveAt: "2026-01-15T00:00:00.000Z",
+      });
+      await store.remove("gone", "f-gone");
+      expect(await store.persons({ limit: 10 })).toEqual(["B", "a", "b", "！", "\u{1F600}"]);
+      expect(await store.persons({ limit: 2 })).toEqual(["B", "a"]);
+      expect(await store.persons({ after: "a", limit: 2 })).toEqual(["b", "！"]);
+      expect(await store.persons({ after: "！", limit: 2 })).toEqual(["\u{1F600}"]);
+      expect(await store.persons({ after: "\u{1F600}", limit: 2 })).toEqual([]);
+      expect(await store.persons({ after: "", limit: 1 })).toEqual(["B"]);
+    });
+
     it("keeps the id of the key a key is wrapped under", async () => {
       await store.add("c-1", D, wrapped("first", "kid-1"));
       expect(await store.get("c-1", D)).toEqual(wrapped("first", "kid-1"));

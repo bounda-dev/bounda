@@ -58,11 +58,11 @@ async function* source(
 
 describe("the parts of a streamed export over RPC", () => {
   it("arrive as they were written, whatever their text holds", async () => {
-    expect(await collect(partsOf(partLines(source([header, redaction, answer]))))).toEqual([
-      header,
-      redaction,
-      answer,
-    ]);
+    expect(
+      await collect(
+        partsOf<PersonalDataExportPart>(partLines(source([header, redaction, answer]))),
+      ),
+    ).toEqual([header, redaction, answer]);
     // Split anywhere, inside a character too.
     const bytes = new TextEncoder().encode(
       `${JSON.stringify(header)}\n${JSON.stringify(answer)}\n`,
@@ -75,7 +75,7 @@ describe("the parts of a streamed export over RPC", () => {
         controller.close();
       },
     });
-    expect(await collect(partsOf(split))).toEqual([header, answer]);
+    expect(await collect(partsOf<PersonalDataExportPart>(split))).toEqual([header, answer]);
   });
 
   it("are read only as the stream is, never ahead of it", async () => {
@@ -107,7 +107,7 @@ describe("the parts of a streamed export over RPC", () => {
   it("end with the refusal a Bounda error carries, after the parts before it", async () => {
     const read: PersonalDataExportPart[] = [];
     const reading = (async () => {
-      for await (const part of partsOf(
+      for await (const part of partsOf<PersonalDataExportPart>(
         partLines(
           source(
             [header],
@@ -128,13 +128,15 @@ describe("the parts of a streamed export over RPC", () => {
   });
 
   it("error the stream for any other error", async () => {
-    const parts = partsOf(partLines(source([header], new Error("disk"))));
+    const parts = partsOf<PersonalDataExportPart>(partLines(source([header], new Error("disk"))));
     await expect(collect(parts)).rejects.toThrow("disk");
   });
 
   it("stop the export when the reader stops", async () => {
     const closed = { value: false };
-    for await (const part of partsOf(partLines(source([header, answer], undefined, closed)))) {
+    for await (const part of partsOf<PersonalDataExportPart>(
+      partLines(source([header, answer], undefined, closed)),
+    )) {
       expect(part).toEqual(header);
       break;
     }
@@ -143,8 +145,8 @@ describe("the parts of a streamed export over RPC", () => {
 
   it("refuse a stream that ends within a part", async () => {
     const cut = new Blob([JSON.stringify(header).slice(0, 10)]).stream();
-    await expect(collect(partsOf(cut))).rejects.toThrow(
-      "A personal data export ended within a part",
+    await expect(collect(partsOf<PersonalDataExportPart>(cut))).rejects.toThrow(
+      "An export ended within a part",
     );
   });
 });

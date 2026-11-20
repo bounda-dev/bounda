@@ -465,6 +465,20 @@ export const storageTransactionContract: StorageTransactionContractFunction = ({
       ]);
     });
 
+    it("lists every person and every holder of a key through a transaction, as committed", async () => {
+      await storage.personalKeys.add("c-1", D, stored("1"));
+      await storage.persons.record({
+        person: "c-2",
+        position: 1,
+        lastActiveAt: now.toISOString(),
+        forgottenAt: null,
+      });
+      await storage.transact(async (tx) => {
+        expect(await tx.personalKeys.persons({ limit: 10 })).toEqual(["c-1"]);
+        expect((await tx.persons.scan({ limit: 10 })).map(({ person }) => person)).toEqual(["c-2"]);
+      });
+    });
+
     it("holds a person and a key with the rest, or not at all", async () => {
       const key = stored("1");
       await storage.personalKeys.add("c-1", D, key);

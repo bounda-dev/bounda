@@ -1,6 +1,6 @@
 import type { NewCommand } from "../../contracts/command.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
-import type { KeyedPerson, ListByPersonArgs } from "./personal-key-store.ts";
+import type { KeyedPerson, ListByPersonArgs, ScanArgs } from "./personal-key-store.ts";
 
 /**
  * A command waiting for its time. `dedupeKey` identifies the entry: scheduling the same key
@@ -186,6 +186,10 @@ export interface Scheduler {
    * The commands whose `persons` names `person`, claimed or not, by `dedupeKey`.
    */
   listByPerson(args: ListByPersonArgs): Promise<readonly ScheduledCommand[]>;
+  /**
+   * Every command, claimed or not, by `dedupeKey`.
+   */
+  scan(args: ScanArgs): Promise<readonly ScheduledCommand[]>;
   /**
    * Removes every command whose `persons` names `person` under a key outside `keep`, or read in
    * the clear, claimed or not, and resolves to them in the order of `list`: a worker running one

@@ -32,6 +32,7 @@ import {
   restrictedPersonsTableStatements,
   restrictionStatements,
   type StorageTables,
+  scanIndexStatements,
   statePersonIndexStatement,
   storageSchemaStatements,
   subscriberFailuresTableStatement,
@@ -297,6 +298,12 @@ export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema,
           await tx.run(`ALTER TABLE ${tables[table]} ADD COLUMN "${column}" ${definition}`, []);
         }
         await tx.run(readPersonsIndexStatement(tables), []);
+      },
+    },
+    {
+      version: 12,
+      migrate: async (tx) => {
+        for (const statement of scanIndexStatements(tables)) await tx.run(statement, []);
       },
     },
   ],
