@@ -303,7 +303,8 @@ four grounds of 18(1), `accuracy-contested`, `unlawful-processing`, `legal-claim
 `objection-pending`, for the person as a whole or for some categories. From then on, as 18(2)
 asks, the data is kept and nothing else: commands that would touch it are refused with
 `ProcessingRestrictedError`, policies and processes wait as dead letters, queries leave the rows
-out, dead letters keep it sealed, a disclosure to a recipient is refused, and the retention that
+out, in the database itself for the SQL they write too, so no page or count holds them, dead
+letters keep it sealed, a disclosure to a recipient is refused, and the retention that
 would forget the person, or remove a subscriber's last failure or a resolved dead letter that holds
 their data, waits until the restriction is lifted, since keeping the data is what 18(1)(b) and (c)
 ask; a failure or a letter whose text no longer opens, its person forgotten, holds nothing left to

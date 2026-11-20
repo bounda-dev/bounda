@@ -77,8 +77,10 @@ basis named:
 
 - **Fields kept in the clear** are read as they are by code that reads a read model directly and by
   a query's `client.raw`, which refuses only the restricted persons `client.rawReadOf` names.
-- **SQL a query writes** has its `LIMIT` applied before the restricted rows are dropped, so a page
-  may come back short; `table` pages exactly.
+- **SQL a query writes** leaves the rows out in the database through `client.unrestricted()`, which
+  `client.get` and `client.all` require in every statement. They check only that one is there: a
+  statement that reads the table under a second alias needs it on that one too, and one through
+  `client.raw`, the driver, leaves the rows out only when it holds it.
 
 ## What it does get
 

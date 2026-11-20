@@ -1000,7 +1000,8 @@ it does for a category the app does not have. In
 a projection, what it throws is then encrypted under those persons too, under the key a value of
 theirs of each category is written under, so one forgotten in it reads as forgotten. In a query,
 the access log names them, and a restricted person throws `ProcessingRestrictedError` unless the
-query asks with `includeRestricted`. What the code does not declare, Bounda cannot see: text built
+query asks with `includeRestricted`; a raw statement over the query's own read model with
+`client.unrestricted()` in its `WHERE` reads none of their rows to begin with. What the code does not declare, Bounda cannot see: text built
 from it comes out as the person's, and is the controller's to read before handing an export over.
 
 ### A long history
@@ -1256,9 +1257,10 @@ Hand-written SQL compares the index column to what `client.blindIndex(field, val
 
 ```ts
 export const repository = async ({ client, email }: Query.RepositoryArgs) =>
-  client.get('SELECT * FROM "bounda_rm_customer_directory" WHERE "email__index" = ?', [
-    await client.blindIndex("email", email),
-  ]);
+  client.get(
+    `SELECT * FROM "bounda_rm_customer_directory" WHERE ${client.unrestricted()} AND "email__index" = ?`,
+    [await client.blindIndex("email", email)],
+  );
 ```
 
 While a [reseal](#recovering-from-a-full-compromise) moves the table under the database's new key,
@@ -1701,13 +1703,17 @@ commits:
   [`.person()`](#personal-data-in-read-models) names a person restricted as a whole, or restricted
   in a category a field of the read model marked `.personal()` holds, and every row holding a value
   under a key a forgetting kept ([What a forgetting kept](#what-a-forgetting-kept)). `table` leaves
-  them out in the statement itself, so a page and a count are cut after; `client.get` and
-  `client.all` drop them from what their SQL answers. A sealed value names its person, so a
-  statement need not select the `.person()` field; one that selects a field kept in the clear
-  without it is refused with `ConfigurationError`, as is one that selects such a field of a person
-  a forgetting kept a key of without the primary key, which tells which key the row's value is
-  under. Nothing else opens a value of a restricted person: a direct read of the table and
-  `client.raw` see ciphertext. Queries read who is restricted from a copy kept
+  them out in the statement itself, so a page and a count are cut after. So does hand-written SQL,
+  through `client.unrestricted()` in its `WHERE`: the condition on who is restricted, rendered for
+  the basis the query names, so `LIMIT`, `OFFSET` and aggregates count only the rows the query may
+  read. `client.get` and `client.all` refuse with `ConfigurationError`, before they run, a
+  statement without it, and still drop from what it answers a row of a restricted person it let
+  through. A sealed value names its person, so a statement need not select the `.person()` field;
+  one that selects a field kept in the clear without it is refused with `ConfigurationError`, as is
+  one that selects such a field of a person a forgetting kept a key of without the primary key,
+  which tells which key the row's value is under. Nothing else opens a value of a restricted
+  person: a direct read of the table and `client.raw` see ciphertext, and a statement through
+  `client.raw` leaves restricted rows out only with `client.unrestricted()` in it. Queries read who is restricted from a copy kept
   beside the read models, written from the stream as a projection is, so a query right after
   `restrict` may still read the rows until the copy catches up: `restrict` resolves like a
   command, so `catchUpReadModels({ through })` waits for it. See

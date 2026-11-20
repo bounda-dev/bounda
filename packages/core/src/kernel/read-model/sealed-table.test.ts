@@ -221,6 +221,65 @@ describe("sealedClient", () => {
       'Read model "customers": field "note" has no blind index',
     );
   });
+
+  it("renders a condition always true and runs a statement without it, as a projection's client does", async () => {
+    const { context } = await setUp();
+    const ran: string[] = [];
+    const client = sealedClient({
+      context,
+      client: {
+        get: async (sql) => {
+          ran.push(sql);
+          return null;
+        },
+        all: async (sql) => {
+          ran.push(sql);
+          return [];
+        },
+        raw: null,
+      },
+    });
+    expect(client.unrestricted()).toBe("(1 = 1)");
+    expect(client.unrestricted("_Orders_2")).toBe("(1 = 1)");
+    expect(await client.get("one")).toBeNull();
+    expect(await client.all("all")).toEqual([]);
+    expect(ran).toEqual(["one", "all"]);
+    for (const alias of ["", "2o", "o.x", 'o"', "o-x", "o x"]) {
+      expect(() => client.unrestricted(alias)).toThrow(
+        `Read model "customers": client.unrestricted names the alias ${JSON.stringify(alias)}, which is not a plain SQL identifier: alias the table with letters, digits and underscores`,
+      );
+    }
+  });
+
+  it("refuses, before it runs, a statement holding no condition it rendered, when fenced", async () => {
+    const { context } = await setUp();
+    const ran: string[] = [];
+    const client = sealedClient({
+      context,
+      client: {
+        get: async (sql) => {
+          ran.push(sql);
+          return null;
+        },
+        all: async (sql) => {
+          ran.push(sql);
+          return [];
+        },
+        raw: null,
+      },
+      unrestricted: (alias) => `<${alias ?? "table"}>`,
+      fenced: true,
+    });
+    const refused =
+      'A query of read model "customers" ran SQL through client without client.unrestricted() in it: put it in the statement\'s WHERE, so the rows of restricted persons are left out before LIMIT, OFFSET and aggregates count them';
+    await expect(client.all("SELECT <o>")).rejects.toThrow(refused);
+    expect(client.unrestricted("o")).toBe("<o>");
+    await expect(client.get("SELECT <table>")).rejects.toThrow(refused);
+    expect(client.unrestricted()).toBe("<table>");
+    await client.all("SELECT 1 WHERE <o>");
+    await client.get("SELECT 2 WHERE <table>");
+    expect(ran).toEqual(["SELECT 1 WHERE <o>", "SELECT 2 WHERE <table>"]);
+  });
 });
 
 describe("applyForgetting", () => {

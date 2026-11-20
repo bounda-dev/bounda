@@ -39,7 +39,7 @@ import { createMemoryRestrictedPersons } from "./restricted-persons.ts";
 import { createKeptScheduler } from "./scheduler.ts";
 import { createMemorySnapshotStore } from "./snapshot-store.ts";
 import { createMemorySubscriberFailureStore } from "./subscriber-failure-store.ts";
-import { createMemoryReadClient, createMemoryTable, type MemoryTable } from "./table.ts";
+import { createMemoryReadClient, createMemoryTable, type MemoryTable, runsNoSql } from "./table.ts";
 import { createMemoryTenancyStore } from "./tenancy-store.ts";
 import { createMemoryTenantKeyStore } from "./tenant-key-store.ts";
 import {
@@ -133,6 +133,7 @@ export const memory: MemoryFunction = (options = {}) => {
 
   // Each read asks the table live then, so a rebuild that swapped it is read.
   const restrictedReads = <Row extends object>(
+    name: string,
     target: LiveTable,
     fields: FieldsRecord,
   ): RestrictedReads<Row> => {
@@ -164,6 +165,9 @@ export const memory: MemoryFunction = (options = {}) => {
     return {
       unrestricted: keeping("unrestricted"),
       retained: keeping("retained"),
+      condition: () => {
+        throw runsNoSql(name);
+      },
       among: async (persons, view) => new Set(persons.filter((person) => leftOut(person, view))),
     };
   };
@@ -319,7 +323,7 @@ export const memory: MemoryFunction = (options = {}) => {
       return {
         table,
         client,
-        restricted: restrictedReads<Row>(target, fields),
+        restricted: restrictedReads<Row>(name, target, fields),
         checkpointStore,
         transact: async ({ subscriber, wait, work }) => {
           const release = await locks.acquire(subscriber, wait);

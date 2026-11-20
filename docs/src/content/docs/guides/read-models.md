@@ -184,14 +184,32 @@ A query never reads the rows of a person whose processing is
 names someone restricted as a whole, or restricted in a category a field marked `.personal()`
 holds, and those holding a value under a key a forgetting kept under an erasure exemption. `table` leaves them out
 in its own statement, so `findMany` with a `limit` fills the page with the others and `count`
-counts the others. `client.get` and `client.all` run your SQL as it is and drop those rows from
-what it answers, so a `LIMIT` in it may return fewer rows, and `client.get` answers `null` when
-the one row it read is left out, though others match: read through `table` where paging or the
-first match must be exact. A sealed value names its person, so your SQL need not select the person
-field; a row it answers with a field kept in the clear and without the one marked `.person()`
-cannot be told apart, and the query rejects with `ConfigurationError`: select the person field too.
-What a query reads through `client.raw`, the driver itself, nobody filters, and nobody opens: a
-sealed field comes out as ciphertext. Whose personal data a raw read returned, the query says with
+counts the others. SQL you write does the same with `client.unrestricted()` in its `WHERE`:
+
+```ts
+export const repository = ({ client, customerId, offset }: Query.RepositoryArgs) =>
+  client.all(
+    `SELECT o.order_id, o.total FROM bounda_rm_order_summary AS o
+     WHERE ${client.unrestricted("o")} AND o.customer_id = ?
+     ORDER BY o.order_id LIMIT 20 OFFSET ?`,
+    [customerId, offset],
+  );
+```
+
+It renders the condition on who is restricted, for the basis the query names with
+`includeRestricted` if any, over the columns of the alias you give the read model's table, or of
+the table itself without one. The database leaves the rows out before `LIMIT`, `OFFSET`, `COUNT`
+or a `GROUP BY` sees them, so a page is full and a total counts only what the query may read. It
+binds no parameter, so it fits `?` and `$1` alike. In a read model with a field marked
+`.person()`, `client.get` and `client.all` refuse a statement without it, before it runs, with
+`ConfigurationError`: one cut or counted before the rows were left out would come back short, or
+count persons it may not read. A row of a restricted person that a statement lets through anyway,
+as one that puts the condition beside an `OR` does, is still dropped from what it answers. A sealed
+value names its person, so your SQL need not select the person field; a row it answers with a
+field kept in the clear and without the one marked `.person()` cannot be told apart, and the query
+rejects with `ConfigurationError`: select the person field too. What a query reads through
+`client.raw`, the driver itself, nobody filters but the SQL you give it, `client.unrestricted()`
+included, and nobody opens: a sealed field comes out as ciphertext. Whose personal data a raw read returned, the query says with
 `client.rawReadOf(persons)`, which names them in the access log and refuses a restricted one
 ([someone else's data](/guides/personal-data/#someone-elses-data)). A sealed field matches in SQL only through its blind index
 column, `<column>__index`, compared to `await client.blindIndex(field, value)`. Who is

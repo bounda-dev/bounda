@@ -177,6 +177,18 @@ export interface ReadClient<
     value: NonNullable<Row[Field]>,
   ): Promise<readonly string[]>;
   /**
+   * A condition for the `WHERE` of SQL run through `get`, `all` or `raw`, true for the rows the
+   * query may read under a restriction of processing, on the basis `includeRestricted` names if
+   * any. The database leaves the others out before `LIMIT`, `OFFSET` and aggregates count, so a
+   * page is full and a total counts only the rows read. `alias` is the read model's table as the
+   * statement aliases it, a plain SQL identifier; without it, the table's own name. It binds no
+   * parameter. In a query of a read model with a field marked `.person()`, `get` and `all` throw
+   * `ConfigurationError` for a statement without it; in a projection, which reads every row, it is
+   * always true. Throws `ConfigurationError` for an alias that is not a plain SQL identifier, and
+   * in a query on the in-memory adapter, which runs no SQL.
+   */
+  unrestricted(alias?: string): string;
+  /**
    * Says whose personal data a read through `raw` returned, which Bounda cannot see: the run then
    * counts as having opened their data of `categories`, the categories of the fields the read model
    * marks `.personal()` when left out. In a projection, an error it throws is encrypted under their

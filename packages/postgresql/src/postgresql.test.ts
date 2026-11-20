@@ -15,7 +15,7 @@ import {
   ValidationError,
 } from "@bounda-dev/core";
 import type { Storage } from "@bounda-dev/core/adapter";
-import type { SqlExecutor } from "@bounda-dev/core/adapter/sql";
+import { type SqlExecutor, tableNameFor } from "@bounda-dev/core/adapter/sql";
 import {
   checkpointStoreContract,
   contractFields,
@@ -34,6 +34,7 @@ import {
   readModelTransactionContract,
   recipientStoreContract,
   restrictedReadsContract,
+  restrictedSqlContract,
   schedulerContract,
   snapshotStoreContract,
   storageSchemaContract,
@@ -253,6 +254,17 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     create: async () => {
       await closeOpened();
       return fresh();
+    },
+  });
+  restrictedSqlContract({
+    create: async () => {
+      const storage = fresh();
+      const prefix = `t${run}_${prefixes}_`;
+      return {
+        storage,
+        table: (readModel) => tableNameFor({ prefix, readModel }),
+        raw: async (driver, sql) => (driver as Sql).unsafe(sql),
+      };
     },
   });
 

@@ -388,14 +388,16 @@ const registryWith = ({ reportBasis }: { readonly reportBasis?: RestrictionBasis
           bySql: {
             repository: ({ client }: { client: ReadClient<CustomerRow> }) =>
               client.all(
-                'SELECT "customer_id", "email" FROM "bounda_rm_customers" ORDER BY "customer_id"',
+                `SELECT "customer_id", "email" FROM "bounda_rm_customers" WHERE ${client.unrestricted()} OR 1 = 1 ORDER BY "customer_id"`,
               ),
             handler: ({ repositoryData }: { repositoryData: readonly CustomerRow[] }) =>
               repositoryData.map((row) => row.customerId),
           },
           emailsBySql: {
             repository: ({ client }: { client: ReadClient<CustomerRow> }) =>
-              client.all('SELECT "email" FROM "bounda_rm_customers"'),
+              client.all(
+                `SELECT "email" FROM "bounda_rm_customers" WHERE ${client.unrestricted()} OR 1 = 1`,
+              ),
             handler: ({ repositoryData }: { repositoryData: readonly CustomerRow[] }) =>
               repositoryData.length,
           },
@@ -1006,7 +1008,7 @@ describe("restriction of processing in a read model's own database", () => {
 });
 
 describe("restriction of processing through SQL a query writes", () => {
-  it("drops the restricted rows the client reads, telling whose a row is by its sealed values when the statement left the person out", async () => {
+  it("drops the restricted rows a statement let through, telling whose a row is by its sealed values when the statement left the person out", async () => {
     const { app, queries, register } = await setup({ adapter: createNodeSqliteAdapter().adapter });
     for (const customer of ["ana", "bo"]) await register(customer);
     await app.runUntilIdle();
