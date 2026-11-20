@@ -1001,7 +1001,8 @@ a projection, what it throws is then encrypted under those persons too, under th
 theirs of each category is written under, so one forgotten in it reads as forgotten. In a query,
 the access log names them, and a restricted person throws `ProcessingRestrictedError` unless the
 query asks with `includeRestricted`; a raw statement over the query's own read model with
-`client.unrestricted()` in its `WHERE` reads none of their rows to begin with. What the code does not declare, Bounda cannot see: text built
+`client.unrestricted()` in its `WHERE` reads none of their rows to begin with. What the code does
+not declare, Bounda cannot see: text built
 from it comes out as the person's, and is the controller's to read before handing an export over.
 
 ### A long history
@@ -1714,7 +1715,8 @@ commits:
   one that selects such a field of a person a forgetting kept a key of without the primary key,
   which tells which key the row's value is under. Nothing else opens a value of a restricted
   person: a direct read of the table and `client.raw` see ciphertext, and a statement through
-  `client.raw` leaves restricted rows out only with `client.unrestricted()` in it. Queries read who is restricted from a copy kept
+  `client.raw` leaves restricted rows out only with `client.unrestricted()` in it. Queries read who
+  is restricted from a copy kept
   beside the read models, written from the stream as a projection is, so a query right after
   `restrict` may still read the rows until the copy catches up: `restrict` resolves like a
   command, so `catchUpReadModels({ through })` waits for it. See

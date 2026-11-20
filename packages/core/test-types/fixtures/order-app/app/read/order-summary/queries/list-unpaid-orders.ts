@@ -5,7 +5,7 @@ export const payload = ({ z }: Query.PayloadArgs) =>
 
 export const repository = ({ client, customerId, limit }: Query.RepositoryArgs) =>
   client.all(
-    `SELECT * FROM order_summary AS o WHERE ${client.unrestricted("o")} AND o.customer_id = ? AND o.status = 'placed' LIMIT ?`,
+    `SELECT * FROM bounda_rm_order_summary AS o WHERE ${client.unrestricted("o")} AND o.customer_id = ? AND o.status = 'placed' LIMIT ?`,
     [customerId, limit],
   );
 

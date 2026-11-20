@@ -209,7 +209,8 @@ value names its person, so your SQL need not select the person field; a row it a
 field kept in the clear and without the one marked `.person()` cannot be told apart, and the query
 rejects with `ConfigurationError`: select the person field too. What a query reads through
 `client.raw`, the driver itself, nobody filters but the SQL you give it, `client.unrestricted()`
-included, and nobody opens: a sealed field comes out as ciphertext. Whose personal data a raw read returned, the query says with
+included, and nobody opens: a sealed field comes out as ciphertext. Whose personal data a raw read
+returned, the query says with
 `client.rawReadOf(persons)`, which names them in the access log and refuses a restricted one
 ([someone else's data](/guides/personal-data/#someone-elses-data)). A sealed field matches in SQL only through its blind index
 column, `<column>__index`, compared to `await client.blindIndex(field, value)`. Who is
