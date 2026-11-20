@@ -13,6 +13,7 @@ import {
   type Table,
 } from "@bounda-dev/core";
 import type { Storage } from "@bounda-dev/core/adapter";
+import { DEFAULT_TABLE_PREFIX, tableNameFor } from "@bounda-dev/core/adapter/sql";
 import {
   checkpointStoreContract,
   contractFields,
@@ -28,6 +29,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   restrictedReadsContract,
+  restrictedSqlContract,
   schedulerContract,
   snapshotStoreContract,
   storageSchemaContract,
@@ -88,6 +90,14 @@ describe("sqlite adapter in memory, under concurrent use", () => {
     locking: "single-writer",
   });
   restrictedReadsContract({ create: async () => sqlite({ memory: true }) });
+  restrictedSqlContract({
+    create: async () => ({
+      storage: sqlite({ memory: true }),
+      table: (readModel) => tableNameFor({ prefix: DEFAULT_TABLE_PREFIX, readModel }),
+      raw: async (driver, sql) =>
+        (await (driver as Client).execute(sql)).rows as unknown as Record<string, unknown>[],
+    }),
+  });
 
   it("lets a read, its own or a query's on client.raw, wait for a write transaction in flight", async () => {
     const adapter = sqlite({ memory: true });

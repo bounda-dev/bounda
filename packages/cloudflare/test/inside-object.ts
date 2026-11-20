@@ -6,6 +6,9 @@ const isPort = (value: unknown): value is object =>
   Object.getPrototypeOf(value) === Object.prototype &&
   Object.values(value).some((member) => typeof member === "function");
 
+// Members that touch no storage and answer at once, as their callers expect: run where they are.
+const SYNCHRONOUS: ReadonlySet<PropertyKey> = new Set(["condition"]);
+
 /**
  * Wraps what an adapter hands out inside a Durable Object so that code outside it can use it: a
  * Durable Object's storage only answers calls made from the object's own context, so every method
@@ -18,6 +21,9 @@ export const insideObject = <T>(stub: DurableObjectStub, value: T): T => {
     get: (target, property, receiver) => {
       const member: unknown = Reflect.get(target, property, receiver);
       if (typeof member !== "function") return insideObject(stub, member);
+      if (SYNCHRONOUS.has(property)) {
+        return (...args: unknown[]) => Reflect.apply(member, target, args) as unknown;
+      }
       return async (...args: unknown[]) =>
         insideObject(
           stub,

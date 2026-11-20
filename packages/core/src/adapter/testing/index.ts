@@ -93,6 +93,12 @@ export type {
   RestrictedRow,
 } from "./restricted-reads.contract.ts";
 export { restrictedFields, restrictedReadsContract } from "./restricted-reads.contract.ts";
+export type {
+  RestrictedSqlContractArgs,
+  RestrictedSqlContractFunction,
+  RestrictedSqlTarget,
+} from "./restricted-sql.contract.ts";
+export { restrictedSqlContract } from "./restricted-sql.contract.ts";
 export type { SchedulerContractArgs, SchedulerContractFunction } from "./scheduler.contract.ts";
 export { schedulerContract } from "./scheduler.contract.ts";
 export type {

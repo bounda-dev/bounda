@@ -134,12 +134,13 @@ await app.runUntilIdle();
 ```
 
 **A query in SQL.** `list-orders-by-customer.ts` reads the table directly through `client` and
-still gets rows typed from the view's fields:
+still gets rows typed from the view's fields. `client.unrestricted()` in its `WHERE` leaves out the
+orders of a customer whose processing is restricted, in the database:
 
 ```ts
 export const repository = ({ client, customerId }: Query.RepositoryArgs) =>
   client.all(
-    "SELECT * FROM bounda_rm_order_summary WHERE customer_id = ? ORDER BY placed_at, order_id",
+    `SELECT * FROM bounda_rm_order_summary WHERE ${client.unrestricted()} AND customer_id = ? ORDER BY placed_at, order_id`,
     [customerId],
   );
 ```

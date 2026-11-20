@@ -16,9 +16,11 @@ import {
   personalDataExportContract,
   personalKeyStoreContract,
   personStoreContract,
+  type RestrictedRow,
   readModelRebuildContract,
   readModelTransactionContract,
   recipientStoreContract,
+  restrictedFields,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -440,6 +442,21 @@ describe("memory adapter", () => {
   readModelRebuildContract({ create: async () => memory() });
   readModelTransactionContract({ create: async () => memory(), locking: "per-subscriber" });
   restrictedReadsContract({ create: async () => memory() });
+
+  it("runs no SQL, so renders no condition for it", async () => {
+    const orders = await memory().createReadModel<RestrictedRow>({
+      name: "orders",
+      fields: restrictedFields,
+      logger: silentLogger,
+    });
+    const noSql =
+      'Read model "orders" uses the in-memory adapter, which runs no SQL. Use table.findOne / table.findMany in the repository, or configure a SQL adapter.';
+    expect(() => orders.restricted.condition("unrestricted")).toThrow(
+      new ConfigurationError(noSql),
+    );
+    await expect(orders.client.all("SELECT 1")).rejects.toThrow(new ConfigurationError(noSql));
+    await expect(orders.client.get("SELECT 1")).rejects.toThrow(new ConfigurationError(noSql));
+  });
 
   it("is a full adapter with one storage per instance, isolated from other instances", async () => {
     const adapter = memory();

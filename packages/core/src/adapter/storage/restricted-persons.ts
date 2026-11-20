@@ -69,6 +69,14 @@ export interface RestrictedReads<Row extends object> {
    */
   readonly retained: Table<Row>;
   /**
+   * The condition, in the read model's SQL and binding no parameter, true for the rows `view`
+   * reads, as the two tables above leave the others out: what `client.unrestricted()` puts in
+   * hand-written SQL. Its columns are those of `alias`, a plain SQL identifier the kernel has
+   * checked, or of the read model's table. Throws `ConfigurationError` for an adapter that runs no
+   * SQL.
+   */
+  condition(view: RestrictionView, alias?: string): string;
+  /**
    * Which of `persons` a restriction they asked for leaves out of this read model, whatever their
    * rows hold: none for `all`.
    */

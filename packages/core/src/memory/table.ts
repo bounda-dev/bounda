@@ -246,6 +246,15 @@ export interface CreateMemoryReadClientFunction {
   }): StoredReadClient<Row, Table<Row>>;
 }
 
+export interface RunsNoSqlFunction {
+  (readModel: string): ConfigurationError;
+}
+
+export const runsNoSql: RunsNoSqlFunction = (readModel) =>
+  new ConfigurationError(
+    `Read model "${readModel}" uses the in-memory adapter, which runs no SQL. Use table.findOne / table.findMany in the repository, or configure a SQL adapter.`,
+  );
+
 export const createMemoryReadClient: CreateMemoryReadClientFunction = <Row extends object>({
   name,
   table,
@@ -254,9 +263,7 @@ export const createMemoryReadClient: CreateMemoryReadClientFunction = <Row exten
   readonly table: Table<Row>;
 }): StoredReadClient<Row, Table<Row>> => {
   const unsupported = (): never => {
-    throw new ConfigurationError(
-      `Read model "${name}" uses the in-memory adapter, which runs no SQL. Use table.findOne / table.findMany in the repository, or configure a SQL adapter.`,
-    );
+    throw runsNoSql(name);
   };
   return { get: async () => unsupported(), all: async () => unsupported(), raw: table };
 };

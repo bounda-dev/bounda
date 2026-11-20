@@ -4,6 +4,8 @@ export interface SqlDialect {
   readonly name: "sqlite" | "postgresql";
   // `index` counts from 1.
   placeholder(index: number): string;
+  // `text` as a string literal, for SQL that binds no parameter.
+  literal(text: string): string;
   // As `CREATE TABLE` declares it and as the engine reports it back: evolving a table compares the
   // two.
   columnType(type: FieldType): string;
@@ -57,6 +59,7 @@ const POSTGRESQL_TYPES: Readonly<Record<FieldType, string>> = {
 export const sqliteDialect: SqlDialect = {
   name: "sqlite",
   placeholder: () => "?",
+  literal: (text) => `'${text.replaceAll("'", "''")}'`,
   columnType: (type) => SQLITE_TYPES[type],
   // SQLite's default, `BINARY`, compares UTF-8 bytes: by code point.
   collation: () => null,
@@ -100,6 +103,11 @@ const jsonParameter = (value: unknown): { toJSON(): unknown } => ({
 export const postgresqlDialect: SqlDialect = {
   name: "postgresql",
   placeholder: (index) => `$${index}`,
+  // An escape string reads a backslash alike whatever `standard_conforming_strings` says.
+  literal: (text) =>
+    text.includes("\\")
+      ? `E'${text.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`
+      : `'${text.replaceAll("'", "''")}'`,
   columnType: (type) => POSTGRESQL_TYPES[type],
   // A column takes the database's collation unless it names one; "C" compares bytes, which in UTF-8
   // is by code point.

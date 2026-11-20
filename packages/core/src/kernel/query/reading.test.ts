@@ -7,7 +7,7 @@ import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import { createDisposableKey, type PersonalKey } from "../personal-data/crypto.ts";
 import { sealedLayoutOf } from "../read-model/sealed-rows.ts";
 import type { SealingKeyRing } from "../read-model/sealing-keys.ts";
-import { reading } from "./reading.ts";
+import { type ReadingArgs, reading } from "./reading.ts";
 
 const fields: FieldsRecord = {
   orderId: f.string().primaryKey(),
@@ -61,10 +61,18 @@ const setUp = async (viewFields: FieldsRecord = fields, retained: readonly strin
   return { storage, layout, keys, stores: stores(), storesIn: stores };
 };
 
+// A condition every statement holds, so a client over it runs any SQL once it rendered one.
 const noRestrictions: RestrictedReads<Record<string, unknown>> = {
   unrestricted: {} as never,
   retained: {} as never,
+  condition: () => "",
   among: async () => new Set(),
+};
+
+const fenced = (args: ReadingArgs) => {
+  const stores = reading(args);
+  stores.client.unrestricted();
+  return stores;
 };
 
 describe("reading", () => {
@@ -176,7 +184,7 @@ describe("reading", () => {
     const found = stored.map(({ orderId, customerId, email }) => ({ orderId, customerId, email }));
     const raw = { driver: true };
     const asked: string[][] = [];
-    const stores = reading({
+    const stores = fenced({
       storage: {
         table: {} as never,
         client: {
@@ -222,7 +230,7 @@ describe("reading", () => {
   it("reads every row through the client for a view that leaves out nobody, asking nothing", async () => {
     const { layout, keys } = await setUp();
     const found = [{ orderId: "o-1", customerId: "ana" }];
-    const stores = reading({
+    const stores = fenced({
       storage: {
         table: {} as never,
         client: { get: async () => null, all: async () => found, raw: null },
@@ -244,7 +252,7 @@ describe("reading", () => {
 
   it("refuses a row the client reads with a field kept in the clear and without the one marked person, and notes the driver taken as unattributed", async () => {
     const { layout, keys } = await setUp(clearFields);
-    const stores = reading({
+    const stores = fenced({
       storage: {
         table: {} as never,
         client: {
@@ -276,7 +284,7 @@ describe("reading", () => {
       { orderId: "o-1", customerId: "ana", email: "a@x" },
       { orderId: "o-3", customerId: "cy", email: "c@x" },
     ];
-    const stores = reading({
+    const stores = fenced({
       storage: {
         table: storage.table,
         client: {
@@ -296,7 +304,7 @@ describe("reading", () => {
     await expect(stores.client.all("no key")).rejects.toThrow(
       'A query of read model "customers" read a field marked .personal({ clear: true }) of a person a forgetting kept a key of through client without "orderId", its primary key: select it too, so the rows under that key are left out',
     );
-    const noKept = reading({
+    const noKept = fenced({
       storage: {
         table: storage.table,
         client: {
@@ -340,7 +348,7 @@ describe("reading fields kept in the clear through the client", () => {
       const asked: number[] = [];
       return {
         asked,
-        stores: reading({
+        stores: fenced({
           storage: {
             table: {
               ...storage.table,
@@ -416,7 +424,7 @@ describe("reading what a copy has not caught up with", () => {
       { orderId: "o-1", customerId: "cy", email: "old@x" },
       { orderId: "o-2", customerId: "cy", email: "new@x" },
     ];
-    const client = reading({
+    const client = fenced({
       storage: {
         table: storage.table,
         client: { get: async () => null, all: async () => rows, raw: null },
@@ -450,7 +458,7 @@ describe("what the client asks of a read model with fields sealed and in the cle
       keys,
       storage,
       stores: (view: "unrestricted" | "all" = "unrestricted") =>
-        reading({
+        fenced({
           storage: {
             table: storage.table,
             client: { get: async () => null, all: async () => rows, raw: null },

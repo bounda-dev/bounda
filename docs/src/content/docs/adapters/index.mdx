@@ -134,13 +134,16 @@ the driver, for anything the adapter does not cover.
 ```ts
 export const repository: Query.RepositoryFunction = ({ customerId, client }) =>
   client.all(
-    "SELECT order_id, total FROM bounda_rm_order_summary WHERE customer_id = ? ORDER BY total DESC",
+    `SELECT order_id, total FROM bounda_rm_order_summary WHERE ${client.unrestricted()} AND customer_id = ? ORDER BY total DESC`,
     [customerId],
   );
 ```
 
 Placeholders are the driver's: `?` on SQLite, `$1`, `$2` on PostgreSQL. A query written in SQL
-is tied to one of them; `table` (`findMany`, `count`, ...) works on both. A sealed column comes back
+is tied to one of them; `table` (`findMany`, `count`, ...) works on both. `client.unrestricted()`
+binds no parameter, so it fits either: it leaves out the rows of persons whose processing is
+restricted, and a read model with a field marked `.person()` requires it in every statement
+([restricted rows](/guides/read-models/#restricted-rows)). A sealed column comes back
 opened through `client.get` and `client.all`, as text through `client.raw`, and matches only through
 its blind index column, compared to `await client.blindIndex(field, value)`.
 
