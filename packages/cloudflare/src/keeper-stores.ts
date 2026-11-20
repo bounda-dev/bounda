@@ -100,7 +100,8 @@ const locationOf = (storage: CloudflareDefinition) =>
  * the jurisdiction `storage` names, outside the tenant's object, so neither a restore of that
  * object nor a copy of it brings back the key of a tenant `forgetTenant` destroyed. Its writes
  * compare the revision and set the record at once. A binding missing from the object's `env`
- * fails its start with `ConfigurationError`, and so does a `storage` that is not `cloudflare()`.
+ * fails its start with `ConfigurationError`, and so does a `storage` that is not `cloudflare()`,
+ * or opening it outside a Worker, as `bounda tenant-key rewrap-master` would from a terminal.
  */
 export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
   storage,
@@ -143,7 +144,7 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
  * ledger whole. Its reads see every write at once, and with `keepFor` the keeper removes each
  * entry once past it on its own alarm, whether the tenant's object is awake or not. A binding
  * missing from the object's `env` fails its start with `ConfigurationError`, and so does a
- * `storage` that is not `cloudflare()`.
+ * `storage` that is not `cloudflare()`, or opening it outside a Worker.
  */
 export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
   storage,
