@@ -16,7 +16,7 @@ import {
   defineTenantKeyStore,
   masterKey,
 } from "@bounda-dev/core/config";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
 import { cloudflare, cloudflareStorageOf } from "../src/definition.ts";
@@ -27,6 +27,7 @@ import {
   durableObjectTenantKeys,
 } from "../src/keeper-stores.ts";
 import { kvTenantKeys } from "../src/tenant-keys.ts";
+import { inWorkerRuntime, LEDGER_IN_OBJECT, ROTATE_IN_WORKER } from "../src/worker-runtime.ts";
 import { quietRegistry } from "./app.ts";
 import { clock } from "./clock.ts";
 import { keptConfig, keptWorker } from "./test-worker.ts";
@@ -292,6 +293,46 @@ describe("the keeper stores' configuration", () => {
         ),
       );
     }
+  });
+});
+
+describe("the stores outside a Worker", () => {
+  it("refuse to open from a terminal, saying where they are opened instead", async () => {
+    expect(inWorkerRuntime()).toBe(true);
+    vi.stubGlobal("navigator", { userAgent: "Node.js/25" });
+    try {
+      expect(inWorkerRuntime()).toBe(false);
+      const opening = [
+        [
+          () => durableObjectTenantKeys({ storage }).create({ env }),
+          `runtime.personalData.tenantKeys is kept in keeper Durable Objects, which only a Worker reaches, and this runs outside one: ${ROTATE_IN_WORKER}`,
+        ],
+        [
+          () => durableObjectForgetLedger({ storage }).create({ env, tenant: "acme" }),
+          `runtime.personalData.forgetLedger.store is kept in keeper Durable Objects, which only a Worker reaches, and this runs outside one: ${LEDGER_IN_OBJECT}`,
+        ],
+        [
+          () => kvTenantKeys({ binding: "TENANT_KEYS" }).create({ env }),
+          `runtime.personalData.tenantKeys names the KV binding TENANT_KEYS, which only a Worker holds, and this runs outside one: ${ROTATE_IN_WORKER}`,
+        ],
+        [
+          () => kvForgetLedger({ binding: "FORGET_LEDGER" }).create({ env, tenant: "acme" }),
+          `runtime.personalData.forgetLedger.store names the KV binding FORGET_LEDGER, which only a Worker holds, and this runs outside one: ${LEDGER_IN_OBJECT}; bounda forget-ledger expire reaches the namespace through wrangler`,
+        ],
+      ] as const;
+      for (const [open, message] of opening) {
+        await expect((async () => open())()).rejects.toThrow(new ConfigurationError(message));
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    vi.stubGlobal("navigator", undefined);
+    try {
+      expect(inWorkerRuntime()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(inWorkerRuntime()).toBe(true);
   });
 });
 

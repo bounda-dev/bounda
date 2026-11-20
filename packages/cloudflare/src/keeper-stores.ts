@@ -1,5 +1,5 @@
 import { ConfigurationError } from "@bounda-dev/core";
-import type { ForgetLedger, TenantKeyStore } from "@bounda-dev/core/adapter";
+import { type ForgetLedger, runtimeText, type TenantKeyStore } from "@bounda-dev/core/adapter";
 import {
   defineForgetLedger,
   defineTenantKeyStore,
@@ -10,6 +10,7 @@ import { type CloudflareDefinition, isCloudflareDefinition } from "./definition.
 import { namespaceIn } from "./jurisdiction.ts";
 import { type BoundaKeeperMethods, KEEPER_DIRECTORY, keeperNameOf } from "./keeper.ts";
 import { unwrap } from "./outcome.ts";
+import { inWorkerRuntime, LEDGER_IN_OBJECT, ROTATE_IN_WORKER } from "./worker-runtime.ts";
 
 /**
  * The binding of the keeper Durable Object that `durableObjectTenantKeys` and
@@ -53,8 +54,10 @@ const isNamespace = (value: unknown): value is DurableObjectNamespace =>
 // A Worker's code is not always type-checked.
 const jurisdictionOf = (storage: unknown, what: string): DurableObjectJurisdiction | undefined => {
   if (!isCloudflareDefinition(storage)) {
-    throw new ConfigurationError(
-      `${what} takes the app's storage, its cloudflare(), whose jurisdiction the keeper shares`,
+    throw runtimeText(
+      new ConfigurationError(
+        `${what} takes the app's storage, its cloudflare(), whose jurisdiction the keeper shares`,
+      ),
     );
   }
   return storage.options.jurisdiction;
@@ -65,11 +68,21 @@ const keepersIn = (
   binding: string,
   jurisdiction: DurableObjectJurisdiction | undefined,
   path: string,
+  instead: string,
 ): KeeperNamespace => {
+  if (!inWorkerRuntime()) {
+    throw runtimeText(
+      new ConfigurationError(
+        `${path} is kept in keeper Durable Objects, which only a Worker reaches, and this runs outside one: ${instead}`,
+      ),
+    );
+  }
   const bound: unknown = Reflect.get(env, binding);
   if (!isNamespace(bound)) {
-    throw new ConfigurationError(
-      `${path} names the keeper binding ${binding}, which the Worker's env does not hold: bind the class createBoundaKeeper() returns under durable_objects in wrangler.jsonc`,
+    throw runtimeText(
+      new ConfigurationError(
+        `${path} names the keeper binding ${binding}, which the Worker's env does not hold: bind the class createBoundaKeeper() returns under durable_objects in wrangler.jsonc`,
+      ),
     );
   }
   const namespace = namespaceIn(bound, jurisdiction);
@@ -95,7 +108,13 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
 }) => {
   const jurisdiction = jurisdictionOf(storage, "durableObjectTenantKeys()");
   return defineTenantKeyStore(({ env }): TenantKeyStore => {
-    const { keeper } = keepersIn(env, binding, jurisdiction, "runtime.personalData.tenantKeys");
+    const { keeper } = keepersIn(
+      env,
+      binding,
+      jurisdiction,
+      "runtime.personalData.tenantKeys",
+      ROTATE_IN_WORKER,
+    );
     const directory = keeper(KEEPER_DIRECTORY);
     // An object reads and writes its own tenant's record alone; the schedule goes through many.
     const keepers = new Map<string, BoundaKeeperMethods>();
@@ -137,10 +156,13 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
       binding,
       jurisdiction,
       "runtime.personalData.forgetLedger.store",
+      LEDGER_IN_OBJECT,
     );
     if (tenant === undefined) {
-      throw new ConfigurationError(
-        "A keeper forget ledger keeps each tenant's entries in the tenant's own keeper, and this app names no tenant: run it in a Bounda Durable Object, or give createApp a tenant",
+      throw runtimeText(
+        new ConfigurationError(
+          "A keeper forget ledger keeps each tenant's entries in the tenant's own keeper, and this app names no tenant: run it in a Bounda Durable Object, or give createApp a tenant",
+        ),
       );
     }
     const own = keeper(keeperNameOf(tenant));

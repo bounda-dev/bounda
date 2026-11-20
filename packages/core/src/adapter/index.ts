@@ -1,3 +1,5 @@
+export type { RuntimeTextFunction } from "../kernel/shared/runtime-text.ts";
+export { runtimeText } from "../kernel/shared/runtime-text.ts";
 export type {
   Adapter,
   CommitReadModelRebuildArgs,

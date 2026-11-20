@@ -7,6 +7,7 @@ import type {
   UnreadableRetentionStatus,
 } from "@bounda-dev/core";
 import {
+  ConfigurationError,
   type DurationInput,
   ERROR_TEXT_VARIABLE,
   type ErrorFields,
@@ -25,7 +26,9 @@ import type {
   LedgerRestriction,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
+  RuntimeTextFunction,
 } from "@bounda-dev/core/adapter";
+import { runtimeText } from "@bounda-dev/core/adapter";
 import {
   type Config,
   DEFAULT_DEAD_LETTER_RETENTION_MS,
@@ -538,5 +541,15 @@ describe("defineConfig", () => {
     });
     // @ts-expect-error a ledger reads in pages
     defineForgetLedger(() => ({ append: async () => {}, read: async () => [] as string[] }));
+  });
+});
+
+describe("runtimeText", () => {
+  it("vouches for an error's message and hands the same error back, typed as it was", () => {
+    const refusal = runtimeText(new ConfigurationError("The Worker has no binding KEEPER"));
+    expectTypeOf(refusal).toEqualTypeOf<ConfigurationError>();
+    expectTypeOf(runtimeText).toEqualTypeOf<RuntimeTextFunction>();
+    // @ts-expect-error only an error is vouched for
+    runtimeText("The Worker has no binding KEEPER");
   });
 });

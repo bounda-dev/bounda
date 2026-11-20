@@ -855,6 +855,10 @@ rewrapped globex
 2 tenant key(s) rewrapped; none is left under a previous master key: remove them
 ```
 
+On Cloudflare the tenant key store, in keeper Durable Objects or in KV, is reached only from a
+Worker: `rewrap-master` exits with `2` there, saying so, and each tenant's object rewraps its own
+key when [`createWorker`'s `scheduled`](/adapters/cloudflare/#rotating-the-master-key) wakes it.
+
 Both take `--root`, `--config`, `--registry`,
 `--error-text`, `--actor` and `--tenant`. Exit codes: `0` done, `1` bad arguments, `2` the project
 could not be loaded or the call was refused.

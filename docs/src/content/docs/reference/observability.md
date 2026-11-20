@@ -98,7 +98,8 @@ default no span and no log line of the runtime carries the text of an error:
 
 An error whose message Bounda writes from names and ids alone, such as `ConcurrencyError`,
 `ClaimLostError`, `HandlerTimeoutError` or a dead letter not found, keeps its message, never its
-stack. To find out what a reaction failed on, follow the log line that filed its dead letter:
+stack, and so does an adapter's or a store's refusal it vouches for with `runtimeText(error)` from
+`@bounda-dev/core/adapter`, as the Cloudflare stores do for a binding the host lacks. To find out what a reaction failed on, follow the log line that filed its dead letter:
 `policy dead-lettered`, `process dead-lettered`, `recipient notice dead-lettered` and `scheduled command dropped` carry `letterId`,
 and `app.deadLetters.get(letterId)` opens the text the letter keeps encrypted under the person
 (see [what a letter holds](/guides/dead-letters/#what-a-letter-holds)) until the letter, once

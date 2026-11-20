@@ -36,8 +36,12 @@ export interface RuntimeTextFunction {
   <E extends Error>(error: E): E;
 }
 
-// For an error the runtime makes with a message written from names and ids alone: logs, spans
-// and the CLI carry its text even when they carry no error's text.
+/**
+ * Vouches that `error`'s message is written from names, ids, codes and numbers alone, never from
+ * data a handler read, and returns it: logs, spans and the CLI then carry its text even where they
+ * carry no error's text (`runtime.telemetry.errorText`). For an adapter's or a store's own
+ * refusals, such as a binding a configuration names and the host lacks.
+ */
 export const runtimeText: RuntimeTextFunction = (error) => {
   vouched.add(error);
   return error;

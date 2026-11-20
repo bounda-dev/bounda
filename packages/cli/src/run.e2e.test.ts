@@ -116,6 +116,62 @@ describe("bounda binary end to end", () => {
     });
   }, 60_000);
 
+  it("says where a Cloudflare project's tenant keys are rewrapped, since a terminal reaches no keeper or KV namespace", async () => {
+    const rewrap = (config: string) =>
+      run(
+        process.execPath,
+        [
+          join(repoRoot, "packages/cli/src/cli.ts"),
+          "tenant-key",
+          "rewrap-master",
+          "--config",
+          config,
+        ],
+        {
+          cwd: join(repoRoot, "packages/cli/src/fixtures/cloudflare-project"),
+          env: {
+            ...process.env,
+            NODE_NO_WARNINGS: "1",
+            BOUNDA_MASTER_KEY: "5hmVukCECFtCyFw3rgVhT/y8hR2OrZBY5JonQlvHN1U=",
+          },
+        },
+      );
+    await expect(rewrap("bounda.keeper.config.ts")).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining(
+        "runtime.personalData.tenantKeys is kept in keeper Durable Objects, which only a Worker reaches, and this runs outside one: each tenant's key is rewrapped in its own Durable Object, which the scheduled handler of createWorker wakes",
+      ),
+    });
+    await expect(rewrap("bounda.kv.config.ts")).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining(
+        "runtime.personalData.tenantKeys names the KV binding TENANT_KEYS, which only a Worker holds, and this runs outside one: each tenant's key is rewrapped in its own Durable Object",
+      ),
+    });
+    // The record of processing reads the keeper's stores without opening them.
+    const { stdout } = await run(
+      process.execPath,
+      [
+        join(repoRoot, "packages/cli/src/cli.ts"),
+        "personal-data",
+        "inventory",
+        "--json",
+        "--config",
+        "bounda.keeper.config.ts",
+      ],
+      {
+        cwd: join(repoRoot, "packages/cli/src/fixtures/cloudflare-project"),
+        env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      },
+    );
+    expect((JSON.parse(stdout) as PersonalDataInventory).records).toContainEqual({
+      name: "forget-ledger",
+      where: "forget-ledger",
+      location: "jurisdiction eu",
+      keptFor: null,
+    });
+  }, 60_000);
+
   it("refuses the record of a Cloudflare project the app would refuse to start", async () => {
     const refused = run(
       process.execPath,
