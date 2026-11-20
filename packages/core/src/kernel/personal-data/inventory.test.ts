@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Config } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
+import { createMemoryForgetLedgers } from "../../memory/forget-ledger.ts";
 import { memory } from "../../memory/index.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
+import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
 import { personalDataInventory } from "./inventory.ts";
 import { masterKey } from "./master-key.ts";
 
@@ -691,6 +693,25 @@ describe("personalDataInventory", () => {
     expect(findings.map(({ message }) => message)).toEqual([
       "3 personal fields are in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one",
     ]);
+  });
+
+  it("states where the forget ledger keeps its entries, as its store pins it", () => {
+    const recordOf = (store: ForgetLedgerSource) =>
+      personalDataInventory({
+        registry: { aggregates: {}, readModels: {} },
+        config: { storage: memory(), runtime: { personalData: { forgetLedger: { store } } } },
+      }).records.find(({ name }) => name === "forget-ledger");
+    const ledger = () => createMemoryForgetLedgers().ledgerOf(undefined);
+    expect(recordOf(defineForgetLedger(ledger, { location: "jurisdiction eu" }))).toEqual({
+      name: "forget-ledger",
+      where: "forget-ledger",
+      location: "jurisdiction eu",
+      keptFor: null,
+    });
+    expect(recordOf(defineForgetLedger(ledger))?.location).toBeNull();
+    expect(recordOf({ ...memory(), location: "jurisdiction us" })?.location).toBe(
+      "jurisdiction us",
+    );
   });
 
   it("counts one personal field without a basis as one", () => {

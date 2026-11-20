@@ -1,4 +1,4 @@
-import { createBoundaObject } from "@bounda-dev/cloudflare";
+import { createBoundaKeeper, createBoundaObject } from "@bounda-dev/cloudflare";
 import { createRequestHandler } from "react-router";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
@@ -8,6 +8,12 @@ import config from "../bounda.config.ts";
  * with everything it keeps in the object's own SQLite; app/tenant.ts picks it for each request.
  */
 export class Store extends createBoundaObject({ registry, config }) {}
+
+/**
+ * The Durable Object class bound as KEEPER in wrangler.jsonc: each tenant's key and forget ledger,
+ * outside the tenant's object and in the same jurisdiction.
+ */
+export class Keeper extends createBoundaKeeper({ config }) {}
 
 const handler = createRequestHandler(
   () => import("virtual:react-router/server-build"),

@@ -52,6 +52,7 @@ import {
   defineTenantKeyStore,
   masterKey,
   type ProjectConfig,
+  type StoreDefinitionOptions,
   type TenantConfigArgs,
   type TenantKeySource,
   type TenantKeyStoreDefinition,
@@ -198,6 +199,17 @@ describe("the tenant in the configuration", () => {
     });
     expectTypeOf(own).toEqualTypeOf<TenantKeyStoreDefinition>();
     expectTypeOf(own).toExtend<TenantKeySource>();
+    const located = defineTenantKeyStore(() => ({}) as TenantKeyStore, {
+      location: "jurisdiction eu",
+    });
+    expectTypeOf(located).toEqualTypeOf<TenantKeyStoreDefinition>();
+    expectTypeOf(located.location).toEqualTypeOf<string | undefined>();
+    expectTypeOf<Parameters<typeof defineTenantKeyStore>[1]>().toEqualTypeOf<
+      StoreDefinitionOptions | undefined
+    >();
+    expectTypeOf<StoreDefinitionOptions>().toEqualTypeOf<{ readonly location?: string }>();
+    // @ts-expect-error a location is a name, such as "jurisdiction eu"
+    defineTenantKeyStore(() => ({}) as TenantKeyStore, { location: 7 });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { tenantKeys: own } } });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { tenantKeys: keys } } });
     defineConfig({

@@ -1,4 +1,4 @@
-import { createBoundaObject, createWorker } from "@bounda-dev/cloudflare";
+import { createBoundaKeeper, createBoundaObject, createWorker } from "@bounda-dev/cloudflare";
 import { registry } from "../.bounda/registry.ts";
 import config from "../bounda.config.ts";
 
@@ -9,6 +9,12 @@ import config from "../bounda.config.ts";
  * arms itself.
  */
 export class Store extends createBoundaObject({ registry, config }) {}
+
+/**
+ * The Durable Object class bound as KEEPER in wrangler.jsonc: each tenant's key and forget ledger,
+ * outside the tenant's object and in the same jurisdiction.
+ */
+export class Keeper extends createBoundaKeeper({ config }) {}
 
 /**
  * The Worker in front: a JSON API that routes each request to the tenant's object, picked by

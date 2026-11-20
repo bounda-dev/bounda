@@ -1094,6 +1094,8 @@ const runRewrapMaster = async (
   stdout: Output,
   stderr: Output,
 ): Promise<number> => {
+  // A Cloudflare project's configuration loads, so its store says where the rotation runs.
+  standInWorkersRuntime();
   const logger = logTo(stderr);
   let config: Config;
   try {

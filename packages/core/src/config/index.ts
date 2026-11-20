@@ -18,6 +18,7 @@ export { masterKey } from "../kernel/personal-data/master-key.ts";
 export type {
   CreateTenantKeyStoreArgs,
   DefineTenantKeyStoreFunction,
+  StoreDefinitionOptions,
   TenantKeySource,
   TenantKeyStoreDefinition,
 } from "../kernel/personal-data/tenant-key-source.ts";

@@ -20,6 +20,23 @@ export interface CreateTenantKeyStoreArgs {
 export interface TenantKeyStoreDefinition {
   readonly kind: "bounda-tenant-key-store";
   create(args: CreateTenantKeyStoreArgs): TenantKeyStore | Promise<TenantKeyStore>;
+  /**
+   * Where the store keeps the keys, when it pins it, as an adapter's `location` does, such as
+   * `"jurisdiction eu"`.
+   */
+  readonly location?: string;
+}
+
+/**
+ * Options of `defineTenantKeyStore` and `defineForgetLedger`.
+ */
+export interface StoreDefinitionOptions {
+  /**
+   * Where the store keeps what it holds, when it pins it, written as an adapter's `location` is,
+   * such as `"jurisdiction eu"`: the record of processing states it, and an app on Cloudflare
+   * whose `cloudflare({ jurisdiction })` names one refuses a store that does not name the same.
+   */
+  readonly location?: string;
 }
 
 /**
@@ -29,7 +46,10 @@ export interface TenantKeyStoreDefinition {
 export type TenantKeySource = Adapter | TenantKeyStoreDefinition;
 
 export interface DefineTenantKeyStoreFunction {
-  (create: TenantKeyStoreDefinition["create"]): TenantKeyStoreDefinition;
+  (
+    create: TenantKeyStoreDefinition["create"],
+    options?: StoreDefinitionOptions,
+  ): TenantKeyStoreDefinition;
 }
 
 /**
@@ -38,9 +58,10 @@ export interface DefineTenantKeyStoreFunction {
  * list its tenants in pages, and its `put` must compare the revision and set the record at once,
  * unless one writer alone writes each tenant's record, when it says `oneWriterPerTenant: true`.
  */
-export const defineTenantKeyStore: DefineTenantKeyStoreFunction = (create) => ({
+export const defineTenantKeyStore: DefineTenantKeyStoreFunction = (create, { location } = {}) => ({
   kind: "bounda-tenant-key-store",
   create,
+  ...(location === undefined ? {} : { location }),
 });
 
 export interface IsTenantKeySourceFunction {

@@ -135,8 +135,11 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
 - **`personalData.tenantKeys`**, required with `keyWrapper`, except over `memory()`. Where the
   tenant's key lives, apart from the storage's database: an adapter pointed at another database,
   such as `sqlite({ path: "./keys/tenant-keys.db" })` or `postgresql({ url: TENANT_KEYS_URL })`, a
-  store from `defineTenantKeyStore`, or `kvTenantKeys({ binding })` on Cloudflare. An adapter that
-  points at the storage's own database fails the start. `forgetTenant` destroys the key there. See
+  store from `defineTenantKeyStore`, or on Cloudflare `durableObjectTenantKeys({ storage })`, in the
+  app's jurisdiction, or `kvTenantKeys({ binding })`, for an app that names none. An adapter that
+  points at the storage's own database fails the start, and so, under `cloudflare({ jurisdiction
+  })`, does a store whose `location` is not that jurisdiction: `defineTenantKeyStore(create, {
+  location })` names one's. `forgetTenant` destroys the key there. See
   [the tenant key store](/guides/personal-data/#the-tenant-key-store).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
   database, before it commits, by person's id, event id, time, reason and the fingerprints of the
@@ -146,8 +149,11 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   - **`store`**, required. The ledger: an adapter pointed at another database than `storage`, such
     as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`, which creates its
     `bounda_forget_ledger` table there on first use, with `bounda_forget_ledger_marks` for the mark
-    that tells a [restore](/guides/personal-data/#restores) made while the app was stopped; `kvForgetLedger({ binding })` from
-    `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`.
+    that tells a [restore](/guides/personal-data/#restores) made while the app was stopped; `durableObjectForgetLedger({
+    storage })` or, for an app that names no jurisdiction, `kvForgetLedger({ binding })` from
+    `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`,
+    whose `location` option names where it keeps its entries, as the record of processing states it
+    and a jurisdiction requires.
     Every forgetting writes its intention to it before it commits, and the runtime copies every
     `PersonalDataForgotten` to it again from the stream in the background. An adapter pointing at
     the storage's own database fails the start.

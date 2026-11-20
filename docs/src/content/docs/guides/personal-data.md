@@ -2076,7 +2076,7 @@ hierarchy, envelope encryption as a cloud KMS does it:
 - the **master key**, which never enters the database nor the tenant key store: an environment
   variable, a Worker's secret, or a KMS;
 - the **tenant's key**, one per tenant, wrapped under the master key and kept in a **tenant key
-  store** apart from the tenant's database: another database, a KV namespace, a vault;
+  store** apart from the tenant's database: another database, a keeper Durable Object, a vault;
 - the **persons' keys**, one per person and category, and the **database's key**, which derives
   the [blind indexes](#sealed-at-rest) and seals what the runtime keeps of
   several persons at once (a snapshot's state, a remembered answer that names nobody), all
@@ -2135,7 +2135,7 @@ over any adapter gets the same (see [In tests](#in-tests)).
 A project from `create-bounda` comes with both: a master key generated for it in `.env` on Node, or
 in `.dev.vars` on Cloudflare, both left out of Git, and a tenant key store where each runtime keeps
 one (`./keys/tenant-keys.db` with SQLite, a second PostgreSQL database in `TENANT_KEYS_URL`, the
-`TENANT_KEYS` KV namespace on Cloudflare). In production, set the variable the way the host keeps
+keeper Durable Object on Cloudflare, with the forget ledger beside it). In production, set the variable the way the host keeps
 secrets. On Cloudflare that is a secret of the Worker:
 
 ```sh
@@ -2173,8 +2173,9 @@ person forgotten on another instance is forgotten here at once.
 
 `runtime.personalData.tenantKeys` takes an adapter pointed at another database than the storage's,
 which creates its table there (`bounda_tenant_keys`), or a store of your own from
-`defineTenantKeyStore`; on Cloudflare, `kvTenantKeys({ binding })` keeps each tenant's record in a
-KV namespace (see [Cloudflare](/adapters/cloudflare/#tenant-keys)). One store serves any number of
+`defineTenantKeyStore`; on Cloudflare, `durableObjectTenantKeys({ storage })` keeps each tenant's
+record in a keeper Durable Object of its own, in the app's jurisdiction, and `kvTenantKeys({ binding
+})` in a KV namespace, for an app that names none (see [Cloudflare](/adapters/cloudflare/#tenant-keys)). One store serves any number of
 tenants, one record each, and an adapter that points at the storage's own database is refused at
 the start: every copy of the database would carry the key that unlocks it.
 
@@ -2659,32 +2660,33 @@ storage's own database, which a restore would roll back with it, fails the start
 ledger.
 
 On Cloudflare a restore of a Durable Object's storage goes back to a point in time, the ledger
-with it if it lived there, so the ledger is a KV namespace:
+with it if it lived there, so the ledger lives in the tenant's keeper, another Durable Object in
+the same jurisdiction:
 
 ```ts
-import { cloudflare, kvForgetLedger, kvTenantKeys } from "@bounda-dev/cloudflare";
+import { cloudflare, durableObjectForgetLedger, durableObjectTenantKeys } from "@bounda-dev/cloudflare";
 import { defineConfig, masterKey } from "@bounda-dev/core/config";
 
+const storage = cloudflare({ jurisdiction: "eu" });
+
 export default defineConfig({
-  storage: cloudflare(),
+  storage,
   runtime: {
     personalData: {
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
-      tenantKeys: kvTenantKeys({ binding: "TENANT_KEYS" }),
-      forgetLedger: { store: kvForgetLedger({ binding: "FORGET_LEDGER" }) },
+      tenantKeys: durableObjectTenantKeys({ storage }),
+      forgetLedger: { store: durableObjectForgetLedger({ storage }) },
     },
   },
 });
 ```
 
-```jsonc
-// wrangler.jsonc
-"kv_namespaces": [{ "binding": "FORGET_LEDGER", "id": "<the namespace's id>" }]
-```
-
-Every object keeps its entries under its own name, so an object reached through an id without a
-name fails to start; `createWorker` names each by its tenant. KV may take up to a minute to list a key it
-just wrote, so an object that starts reads the ledger once more a minute later, and wakes for it.
+The Worker exports the keeper's class, `createBoundaKeeper({ config })`, bound as `KEEPER` (see
+[Cloudflare](/adapters/cloudflare/#tenant-keys)). An app whose `cloudflare()` names no jurisdiction
+may keep the ledger in a KV namespace instead, `kvForgetLedger({ binding })`: every object keeps
+its entries under its own name, so an object reached through an id without a name fails to start,
+and since KV may take up to a minute to list a key it just wrote, an object that starts reads the
+ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
 environment, the tenant and `keepForMs` when the app starts: it keeps every field of an entry, the
 reason and the fingerprints included, which the reconciliation decides by; its `read` returns

@@ -29,9 +29,11 @@ export const namespaceIn: NamespaceInFunction = (namespace, jurisdiction) => {
 export interface CheckObjectJurisdictionArgs {
   readonly id: DurableObjectId;
   readonly jurisdiction: DurableObjectJurisdiction | undefined;
-  // The object's own namespace, when its `env` has the binding: what tells a runtime without
+  // A namespace of the Worker, when its `env` has the binding: what tells a runtime without
   // jurisdictions.
   readonly namespace: DurableObjectNamespace | undefined;
+  // What the object is, for the refusal: a tenant's, or the keeper of tenants' keys and ledgers.
+  readonly kind?: "tenant" | "keeper";
 }
 
 export interface CheckObjectJurisdictionFunction {
@@ -47,6 +49,7 @@ export const checkObjectJurisdiction: CheckObjectJurisdictionFunction = ({
   id,
   jurisdiction,
   namespace,
+  kind = "tenant",
 }) => {
   const actual = id.jurisdiction;
   if (actual === jurisdiction) return;
@@ -58,6 +61,8 @@ export const checkObjectJurisdiction: CheckObjectJurisdictionFunction = ({
     return;
   }
   throw new ConfigurationError(
-    `This Durable Object was created in ${named(actual)}, and cloudflare() names ${named(jurisdiction)}: a tenant reached in two jurisdictions is two objects, each with part of its data. Reach the objects through tenantStub(), or through the namespace's jurisdiction() as cloudflare() names it`,
+    kind === "tenant"
+      ? `This Durable Object was created in ${named(actual)}, and cloudflare() names ${named(jurisdiction)}: a tenant reached in two jurisdictions is two objects, each with part of its data. Reach the objects through tenantStub(), or through the namespace's jurisdiction() as cloudflare() names it`
+      : `This keeper Durable Object was created in ${named(actual)}, and cloudflare() names ${named(jurisdiction)}: the keys and ledger entries it holds never leave where it was created. Reach it through durableObjectTenantKeys() and durableObjectForgetLedger() alone`,
   );
 };

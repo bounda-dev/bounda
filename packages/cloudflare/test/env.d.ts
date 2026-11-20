@@ -1,6 +1,10 @@
 import type {
   Bare,
+  EuKeeper,
   EuStore,
+  Keeper,
+  KeptKeeper,
+  KeptStore,
   LedgerStore,
   ProcessStore,
   QuietStore,
@@ -9,6 +13,7 @@ import type {
   SlicedStore,
   SnapshotStore,
   Store,
+  UnboundEuKeeper,
   UnboundEuStore,
   WitnessedStore,
   WrappedStore,
@@ -32,6 +37,11 @@ declare global {
       readonly BARE: DurableObjectNamespace<Bare>;
       readonly EU_STORE: DurableObjectNamespace<InstanceType<typeof EuStore>>;
       readonly UNBOUND_EU_STORE: DurableObjectNamespace<InstanceType<typeof UnboundEuStore>>;
+      readonly KEEPER: DurableObjectNamespace<InstanceType<typeof Keeper>>;
+      readonly EU_KEEPER: DurableObjectNamespace<InstanceType<typeof EuKeeper>>;
+      readonly UNBOUND_EU_KEEPER: DurableObjectNamespace<InstanceType<typeof UnboundEuKeeper>>;
+      readonly KEPT_KEEPER: DurableObjectNamespace<InstanceType<typeof KeptKeeper>>;
+      readonly KEPT_STORE: DurableObjectNamespace<InstanceType<typeof KeptStore>>;
       readonly STORE_REGION: string;
       readonly BOUNDA_MASTER_KEY: string;
     }

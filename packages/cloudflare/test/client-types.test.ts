@@ -9,10 +9,22 @@ import type {
   StoredDispatch,
   StoredEvent,
 } from "@bounda-dev/core";
+import type { VersionedTenantKeyRecord } from "@bounda-dev/core/adapter";
+import type { ForgetLedgerDefinition, TenantKeyStoreDefinition } from "@bounda-dev/core/config";
 import type { CreateTestAppArgs } from "@bounda-dev/core/testing";
 import { describe, expectTypeOf, it } from "vitest";
 import { type BoundaStub, connect } from "../src/client.ts";
-import { cloudflare } from "../src/definition.ts";
+import { type CloudflareDefinition, cloudflare } from "../src/definition.ts";
+import {
+  type BoundaKeeperClass,
+  type BoundaKeeperMethods,
+  createBoundaKeeper,
+  type DEFAULT_KEEPER_BINDING,
+  type DurableObjectKeeperOptions,
+  durableObjectForgetLedger,
+  durableObjectTenantKeys,
+  type RpcOutcome,
+} from "../src/index.ts";
 import { tenantStub } from "../src/tenant-stub.ts";
 import type { regionRegistry, registry } from "./app.ts";
 import type { Store } from "./test-worker.ts";
@@ -106,5 +118,28 @@ describe("the env implementations receive on Cloudflare", () => {
   it("stays optional for a registry whose implementations need none", () => {
     const withoutEnv: CreateTestAppArgs<typeof registry> = { registry: {} as typeof registry };
     void withoutEnv;
+  });
+});
+
+describe("the keeper", () => {
+  it("gives tenant key stores and forget ledgers of the app's storage, and a class to bind", () => {
+    const storage = cloudflare({ jurisdiction: "eu" });
+    expectTypeOf(durableObjectTenantKeys({ storage })).toEqualTypeOf<TenantKeyStoreDefinition>();
+    expectTypeOf(
+      durableObjectForgetLedger({ storage, binding: "KEEPER" }),
+    ).toEqualTypeOf<ForgetLedgerDefinition>();
+    expectTypeOf<DurableObjectKeeperOptions>().toEqualTypeOf<{
+      readonly storage: CloudflareDefinition;
+      readonly binding?: string;
+    }>();
+    const elsewhere = () =>
+      // @ts-expect-error the keeper shares the jurisdiction of the app's cloudflare(), not another adapter's
+      durableObjectTenantKeys({ storage: { kind: "bounda-adapter", name: "sqlite", options: {} } });
+    void elsewhere;
+    expectTypeOf(createBoundaKeeper({ config: { storage } })).toEqualTypeOf<BoundaKeeperClass>();
+    expectTypeOf<ReturnType<BoundaKeeperMethods["getTenantKeys"]>>().toEqualTypeOf<
+      Promise<RpcOutcome<VersionedTenantKeyRecord | null>>
+    >();
+    expectTypeOf<typeof DEFAULT_KEEPER_BINDING>().toEqualTypeOf<"KEEPER">();
   });
 });

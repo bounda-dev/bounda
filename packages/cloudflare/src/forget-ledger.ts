@@ -7,8 +7,10 @@ import {
   type LedgerDisclosure,
   type LedgerRedaction,
   type LedgerRestriction,
+  runtimeText,
 } from "@bounda-dev/core/adapter";
 import { defineForgetLedger, type ForgetLedgerDefinition } from "@bounda-dev/core/config";
+import { inWorkerRuntime, LEDGER_IN_OBJECT } from "./worker-runtime.ts";
 
 /**
  * How long Workers KV may take to show a written key in `list`.
@@ -316,20 +318,34 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
  * an id without a name fails its start. KV lists a new key within
  * about a minute, so an object that starts reads the ledger once more after `KV_LIST_DELAY_MS`:
  * a forgetting made in the last minute before a restore is applied by then. A binding missing
- * from the object's `env` fails its start with `ConfigurationError`.
+ * from the object's `env` fails its start with `ConfigurationError`, and so does opening it
+ * outside a Worker. KV holds its keys to no
+ * jurisdiction, so an app whose `cloudflare()` names one refuses it with `ConfigurationError`:
+ * use `durableObjectForgetLedger` there.
  */
 export const kvForgetLedger: KvForgetLedgerFunction = ({ binding }) =>
   defineForgetLedger(({ env, tenant, keepForMs }) => {
+    if (!inWorkerRuntime()) {
+      throw runtimeText(
+        new ConfigurationError(
+          `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which only a Worker holds, and this runs outside one: ${LEDGER_IN_OBJECT}; bounda forget-ledger expire reaches the namespace through wrangler`,
+        ),
+      );
+    }
     const namespace: unknown = Reflect.get(env, binding);
     if (!isKvNamespace(namespace)) {
-      throw new ConfigurationError(
-        `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
+      throw runtimeText(
+        new ConfigurationError(
+          `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
+        ),
       );
     }
     // Objects without a name would all read one another's entries under one prefix.
     if (tenant === undefined) {
-      throw new ConfigurationError(
-        "A KV forget ledger keeps each object's entries under its name, and this object has none: reach it through idFromName",
+      throw runtimeText(
+        new ConfigurationError(
+          "A KV forget ledger keeps each object's entries under its name, and this object has none: reach it through idFromName",
+        ),
       );
     }
     return createKvForgetLedger({

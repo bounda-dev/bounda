@@ -52,7 +52,9 @@ At start, stop the app, put the copy back and start it:
 - **PostgreSQL.** `pg_restore`, or a point-in-time restore to another server and `url` pointed at
   it.
 - **Durable Object.** `ctx.storage.onNextSessionRestoreBookmark(bookmark)` with a bookmark from
-  `getBookmarkForTime`, then `ctx.abort()`: the object restarts on the restored storage.
+  `getBookmarkForTime`, then `ctx.abort()`: the object restarts on the restored storage. Restore
+  the tenant's object, never its [keeper](/adapters/cloudflare/#tenant-keys), which holds the
+  tenant's key and the ledger a restore is reconciled with.
 
 The app finds the restore before it serves anything, by the forget ledger's mark, reads the
 ledger, forgets again whoever the copy brought back, and the read models hear of it before the

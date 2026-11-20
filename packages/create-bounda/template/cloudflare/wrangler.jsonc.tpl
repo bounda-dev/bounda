@@ -9,15 +9,16 @@
   "compatibility_date": "2026-09-21",
   // The page in public/ is served before the Worker runs.
   "assets": { "directory": "./public" },
-  // One Durable Object class; every tenant gets its own instance, with its own SQLite.
+  // Every tenant gets its own Store, with its own SQLite, and its own Keeper, which holds its key
+  // and forget ledger apart from it, so forgetting the tenant reaches every restore of its store.
   "durable_objects": {
-    "bindings": [{ "name": "STORE", "class_name": "Store" }]
+    "bindings": [
+      { "name": "STORE", "class_name": "Store" },
+      { "name": "KEEPER", "class_name": "Keeper" }
+    ]
   },
-  // The object keeps its events and read models in SQLite, so the class is created as a SQLite class.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
-  // Each tenant's key, apart from its object, so forgetting the tenant reaches every restore of it.
-  // Deploying creates the namespace.
-  "kv_namespaces": [{ "binding": "TENANT_KEYS" }],
+  // Both keep what they hold in SQLite, so the classes are created as SQLite classes.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store", "Keeper"] }],
   "observability": { "enabled": true },
   "upload_source_maps": true
 }

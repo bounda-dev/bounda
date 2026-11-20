@@ -34,6 +34,23 @@ export {
   kvForgetLedger,
   planKvForgetLedgerExpiry,
 } from "./forget-ledger.ts";
+export type {
+  BoundaKeeperClass,
+  BoundaKeeperMethods,
+  CreateBoundaKeeperArgs,
+  CreateBoundaKeeperFunction,
+} from "./keeper.ts";
+export { createBoundaKeeper } from "./keeper.ts";
+export type {
+  DurableObjectForgetLedgerFunction,
+  DurableObjectKeeperOptions,
+  DurableObjectTenantKeysFunction,
+} from "./keeper-stores.ts";
+export {
+  DEFAULT_KEEPER_BINDING,
+  durableObjectForgetLedger,
+  durableObjectTenantKeys,
+} from "./keeper-stores.ts";
 export { workersLogger } from "./logger.ts";
 export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
 export type { DurableSqlStorage } from "./sql-database.ts";
