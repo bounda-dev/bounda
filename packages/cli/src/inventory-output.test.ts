@@ -308,6 +308,13 @@ describe("formatInventory", () => {
     ).toContain(
       "until the subscriber's next failure replaces it, unreadable once their person is forgotten (memory)",
     );
+    // A record bounded by a setting no wording of its own is written for.
+    expect(
+      formatInventory({
+        ...empty,
+        records: [{ name: "personal-keys", where: "memory", location: null, keptFor: "1d" }],
+      }),
+    ).toContain("; 1d (memory)");
     // A ledger without keepFor: kept until its tenant is forgotten and told.
     expect(
       formatInventory({

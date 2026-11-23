@@ -123,7 +123,7 @@ const minute = (index: number): string =>
 
 describe("the KV forget ledger's listing", () => {
   it("clears every entry and mark of its object over every page, listed before the first delete", async () => {
-    const { namespace, keys, deleted } = countingNamespace();
+    const { namespace, keys, deleted, pages } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     const other = createKvForgetLedger({ namespace, prefix: "q/" });
     const entries = Array.from({ length: 2_005 }, (_, index) => ({
@@ -139,11 +139,14 @@ describe("the KV forget ledger's listing", () => {
     await other.raiseMark("restore:generation", 2);
     // KV deletes one key a call: a clear deletes a batch within what an invocation may make.
     const rounds: boolean[] = [];
+    const listed = pages();
     for (let done = false; !done; ) {
       done = await ledger.clear();
       rounds.push(done);
     }
     expect(rounds).toEqual([false, false, false, false, true]);
+    // Every page of the entries, then the marks', each round: 3 + 1, 2 + 1, 2 + 1, 1 + 1, 1 + 1.
+    expect(pages() - listed).toBe(14);
     expect(deleted).toHaveLength(entries.length + 1);
     // A cursor that counts keys would skip a page if listing went on past deletes.
     expect([...keys.keys()].sort()).toEqual([
@@ -365,6 +368,23 @@ describe("the KV forget ledger's listing", () => {
     expect(read[0]).not.toHaveProperty("disclosure");
   });
 
+  it("clears in one call a ledger whose keys fill one batch exactly", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    await ledger.append(
+      Array.from({ length: 499 }, (_, index) => ({
+        personId: `c-${index}`,
+        eventId: `e-${String(index).padStart(4, "0")}`,
+        forgottenAt: minute(index),
+        categories: null,
+        reason: "requested" as const,
+      })),
+    );
+    await ledger.raiseMark("restore:generation", 1);
+    expect(await ledger.clear()).toBe(true);
+    expect(keys.size).toBe(0);
+  });
+
   it("fills a page past an entry whose value is gone, so a short page means the ledger ends", async () => {
     const { namespace, keys } = countingNamespace();
     const values = new Map([
@@ -385,6 +405,21 @@ describe("the KV forget ledger's listing", () => {
     ] as const) {
       keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(index), inValue: true });
     }
+    // Never more than asked for, however many were left out.
+    const more = createKvForgetLedger({ namespace: reading, prefix: "q/" });
+    for (const index of [1, 2, 3, 4, 5, 6]) {
+      keys.set(`q/${9 - index}:e-${index}`, {
+        personId: "c-1",
+        forgottenAt: minute(index),
+        inValue: true,
+      });
+      if (index !== 1) values.set(`q/${9 - index}:e-${index}`, JSON.stringify({ categories: [] }));
+    }
+    expect((await more.read({ limit: 3 })).map(({ eventId }) => eventId)).toEqual([
+      "e-2",
+      "e-3",
+      "e-4",
+    ]);
     // e-2, whose value is gone, makes way for e-1.
     const page = await ledger.read({ limit: 3 });
     expect(page.map(({ eventId }) => eventId)).toEqual(["e-4", "e-3", "e-1"]);

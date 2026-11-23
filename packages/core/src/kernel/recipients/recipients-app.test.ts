@@ -1596,7 +1596,7 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
     expect(told).toEqual(presumedAll);
     expect(errors).toContainEqual([
       "the forget ledger could not be read for the disclosures the database lost: every declared recipient is presumed to hold the tenant's data",
-      expect.objectContaining({ tenant: "default" }),
+      { tenant: "default", errorName: "Error" },
     ]);
     expect(await ledger.read({ limit: 10 })).toEqual([]);
   });
