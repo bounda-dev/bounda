@@ -314,9 +314,9 @@ configuration names none, refuses to start with a `ConfigurationError`.
   on another adapter, such as a PostgreSQL server or a Turso database, declares the same with
   `location: "eu"`, and so does the key wrapper, `masterKey({ from, location: "eu" })` or a KMS
   through `defineKeyWrapper`, or the app refuses to start on it, and so does the record of
-  processing. Cloudflare holds the objects to the jurisdiction, not the Worker's secrets: where
-  the master key in `BOUNDA_MASTER_KEY` is kept is yours to answer for, as with any declared
-  location.
+  processing. The object checks its own jurisdiction, but Bounda cannot see where Cloudflare
+  keeps a Worker's secrets: where the master key in `BOUNDA_MASTER_KEY` is kept is yours to
+  answer for, as with any declared location.
 - `workerd` has no jurisdictions where it runs locally, under `wrangler dev`, `vite dev` and the
   tests: there every object stays on your machine and the setting is ignored.
 - The jurisdiction holds the objects, not the Worker in front of them, which runs near each

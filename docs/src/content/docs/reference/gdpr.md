@@ -564,9 +564,9 @@ Left to the controller: the safeguard itself, the clauses signed and the transfe
 assessment, and the truth of every `location` but the one Cloudflare holds an object to. Bounda
 cannot see where a PostgreSQL server, a SQLite file or a process runs, so a declared location is
 taken at its word, and the processes of a Node app must run where its storage is. Backups, logs and
-the access log `app/audit.ts` are where the app puts them; on Cloudflare, the platform holds the
-objects to their jurisdiction, not the Worker's secrets, so the master key's location is the
-controller's to keep true. One app keeps its stores in one
+the access log `app/audit.ts` are where the app puts them; on Cloudflare, an object checks its
+own jurisdiction, but Bounda cannot see where a Worker's secrets are kept, so the master key's
+location is the controller's to keep true. One app keeps its stores in one
 jurisdiction: stores in two, even between which a transfer needs no safeguard, as from the EU to an
 adequate country, are declared by giving `storage` no location and each store its own, and the
 record then lists `storage` as a finding. On Cloudflare, the jurisdiction holds the objects, not the

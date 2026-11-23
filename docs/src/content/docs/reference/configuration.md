@@ -78,9 +78,10 @@ export default defineConfig({
   key's included, and lists every store of personal data, and the key wrapper, that declares none
   as a finding, which makes the command exit `1`.
 - A location is a non-empty name, compared as written: `"eu"` and `"EU"` are two. Bounda cannot see
-  where a server, a file or a process is, so it is taken at its word; on Cloudflare the platform
-  holds each object to its jurisdiction, not a Worker's secrets. A local file, `memory()` and
-  `masterKey` declare where the host runs, and the app's processes run where its storage is.
+  where a server, a file or a process is, so it is taken at its word; on Cloudflare an object
+  checks its own jurisdiction, but not where a Worker's secrets are kept. A local file,
+  `memory()` and `masterKey` declare where the host runs, and the app's processes run where its
+  storage is.
 - `create-bounda` writes `"eu"`. See [transfers out of the
   EEA](/reference/gdpr/#transfers-out-of-the-eea-articles-44-to-49).
 
