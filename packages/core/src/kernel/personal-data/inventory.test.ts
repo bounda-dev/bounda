@@ -837,6 +837,37 @@ describe("personalDataInventory", () => {
       "declare one through defineTenantKeyStore(create, { location })",
       "declare one through defineForgetLedger(create, { location })",
     ]);
+    // One database under two names is one place to declare.
+    const shared = memory();
+    expect(
+      personalDataInventory({
+        registry: members,
+        config: { storage: shared, readModels: { members: shared } },
+      }).findings.map(({ message }) => message.slice(0, message.indexOf(" declares"))),
+    ).toEqual(["storage"]);
+    // A disclosure names its person in storage, though no field of the app is personal.
+    expect(
+      personalDataInventory({
+        registry: {
+          aggregates: {
+            customer: {
+              events: {},
+              commands: {},
+              policies: {},
+              processes: {},
+              recipients: {
+                mailer: {
+                  ...handlers,
+                  recipient: { name: "Mailer", kind: "processor", country: "DE", categories: [] },
+                },
+              },
+            },
+          },
+          readModels: {},
+        } as unknown as Registry,
+        config: { storage: memory() },
+      }).findings.map(({ message }) => message.slice(0, message.indexOf(" declares"))),
+    ).toEqual(["storage"]);
     // Nothing personal, nothing to place.
     expect(
       personalDataInventory({

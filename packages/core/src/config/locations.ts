@@ -1,4 +1,4 @@
-import type { AdapterDefinition } from "../adapter/adapter-definition.ts";
+import { type AdapterDefinition, isAdapterDefinition } from "../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { ForgetLedgerSource } from "../kernel/personal-data/forget-ledger.ts";
 import type { TenantKeySource } from "../kernel/personal-data/tenant-key-source.ts";
@@ -29,9 +29,6 @@ const locationOf = (path: string, holder: object): string | undefined => {
 interface Kept {
   readonly path: string;
   readonly holder: object;
-  /**
-   * How to declare a location on it: an adapter's option, or a definition's.
-   */
   readonly fix: (location: string) => string;
 }
 

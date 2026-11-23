@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
+import { type AdapterDefinition, isAdapterDefinition } from "../../adapter/adapter-definition.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ResolvedConfig } from "../../config/types.ts";
 import { capitalize } from "../../modules/naming.ts";
@@ -505,25 +505,38 @@ const recordsOf = (
 interface Placed {
   readonly path: string;
   readonly declared: object;
-  readonly define: string;
+  readonly through: string;
 }
+
+const optionsOf = (adapter: AdapterDefinition): string => `the options of its ${adapter.name}()`;
+
+const declaredThrough = (declared: object, define: string): string =>
+  isAdapterDefinition(declared) ? optionsOf(declared) : `${define}(create, { location })`;
 
 // Each store of personal data that declares no location; under a storage that declares one,
 // `resolveConfig` has refused the configuration already.
 const unlocated = (
   config: ResolvedConfig,
   holders: readonly InventoryHolder[],
+  recipients: readonly InventoryRecipient[],
 ): InventoryFinding[] => {
-  if (holders.length === 0) return [];
+  // Nothing personal, nothing to place: a disclosure alone still names its person in storage.
+  if (holders.length === 0 && recipients.length === 0) return [];
   const { storage, readModels } = config;
   const { tenantKeys, forgetLedger } = config.runtime.personalData;
   const stores: Placed[] = [
-    { path: "storage", declared: storage, define: "" },
+    { path: "storage", declared: storage, through: optionsOf(storage) },
     ...holders.flatMap((holder) => {
       const definition = holder.kind === "read-model" ? readModels[holder.name] : undefined;
-      return definition === undefined
+      return definition === undefined || definition === storage
         ? []
-        : [{ path: `readModels.${holder.name}`, declared: definition, define: "" }];
+        : [
+            {
+              path: `readModels.${holder.name}`,
+              declared: definition,
+              through: optionsOf(definition),
+            },
+          ];
     }),
     ...(tenantKeys === null
       ? []
@@ -531,7 +544,7 @@ const unlocated = (
           {
             path: "runtime.personalData.tenantKeys",
             declared: tenantKeys,
-            define: "defineTenantKeyStore",
+            through: declaredThrough(tenantKeys, "defineTenantKeyStore"),
           },
         ]),
     ...(forgetLedger === null
@@ -540,17 +553,17 @@ const unlocated = (
           {
             path: "runtime.personalData.forgetLedger.store",
             declared: forgetLedger.store,
-            define: "defineForgetLedger",
+            through: declaredThrough(forgetLedger.store, "defineForgetLedger"),
           },
         ]),
   ];
   return stores
     .filter(({ declared }) => Reflect.get(declared, "location") === undefined)
-    .map(({ path, declared, define }) => ({
+    .map(({ path, through }) => ({
       kind: "no-location",
       holder: null,
       field: null,
-      message: `${path} declares no location, so the record cannot say where it keeps personal data, nor whether that is a transfer out of the European Economic Area (article 30(1)(e)); declare one through ${Reflect.get(declared, "kind") === "bounda-adapter" ? `the options of its ${String(Reflect.get(declared, "name"))}()` : `${define}(create, { location })`}`,
+      message: `${path} declares no location, so the record cannot say where it keeps personal data, nor whether that is a transfer out of the European Economic Area (article 30(1)(e)); declare one through ${through}`,
     }));
 };
 
@@ -606,8 +619,8 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
         'runtime.telemetry.errorText is "include": logs and spans carry the text of errors, which may quote personal data no forgetting reaches',
     });
   }
-  findings.push(...unlocated(resolved, collected.holders));
   const recipients = recipientsOf(registry);
+  findings.push(...unlocated(resolved, collected.holders, recipients));
   const returning = portsByCategory(buildPortReturns({ registry, categories }));
   return {
     categories: categories.all.map((category) => ({
