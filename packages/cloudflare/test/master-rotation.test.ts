@@ -154,7 +154,7 @@ describe("a rotation of the master key on Cloudflare", () => {
                   namespace: (bound as Cloudflare.Env).TENANT_KEYS,
                   prefix: KV_TENANT_KEYS_ROOT,
                 }),
-              { location: "jurisdiction eu" },
+              { location: "eu" },
             ),
           },
         },

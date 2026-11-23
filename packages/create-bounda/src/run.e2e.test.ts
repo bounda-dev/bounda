@@ -476,12 +476,12 @@ describe("a project created by create-bounda", () => {
     );
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
-        { name: "persons", where: "cloudflare", location: "jurisdiction eu", keptFor: null },
+        { name: "persons", where: "cloudflare", location: "eu", keptFor: null },
         // In the keeper, in the same jurisdiction as the objects.
         {
           name: "forget-ledger",
           where: "forget-ledger",
-          location: "jurisdiction eu",
+          location: "eu",
           keptFor: null,
         },
       ]),

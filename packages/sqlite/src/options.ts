@@ -1,3 +1,4 @@
+import type { DataLocationOptions } from "@bounda-dev/core/adapter";
 import { DEFAULT_TABLE_PREFIX } from "@bounda-dev/core/adapter/sql";
 
 export type SqliteLocation =
@@ -14,20 +15,22 @@ export type SqliteLocation =
   | { readonly memory: true };
 
 /**
- * Options of `sqlite(...)`: where the database is, and the prefix of Bounda's tables.
+ * Options of `sqlite(...)`: where the database is, the jurisdiction it keeps its data in, and the
+ * prefix of Bounda's tables.
  */
-export type SqliteOptions = SqliteLocation & {
-  /**
-   * Put in front of every table Bounda creates. Defaults to `bounda_`.
-   */
-  readonly tablePrefix?: string;
-};
+export type SqliteOptions = SqliteLocation &
+  DataLocationOptions & {
+    /**
+     * Put in front of every table Bounda creates. Defaults to `bounda_`.
+     */
+    readonly tablePrefix?: string;
+  };
 
 export interface ResolvedSqliteOptions {
   readonly url: string;
   readonly authToken?: string;
   readonly tablePrefix: string;
-  readonly location: "file" | "memory" | "remote";
+  readonly medium: "file" | "memory" | "remote";
 }
 
 export interface ResolveSqliteOptionsFunction {
@@ -37,19 +40,19 @@ export interface ResolveSqliteOptionsFunction {
 // libSQL keeps these in the process's memory, with a single connection.
 const IN_MEMORY = /^(?:file:)?:memory:(?:\?|$)/;
 
-const locationOf = (url: string): ResolvedSqliteOptions["location"] => {
+const mediumOf = (url: string): ResolvedSqliteOptions["medium"] => {
   if (IN_MEMORY.test(url)) return "memory";
   return url.startsWith("file:") ? "file" : "remote";
 };
 
 export const resolveSqliteOptions: ResolveSqliteOptionsFunction = (options) => {
   const tablePrefix = options.tablePrefix ?? DEFAULT_TABLE_PREFIX;
-  if ("memory" in options) return { url: ":memory:", tablePrefix, location: "memory" };
-  if ("path" in options) return { url: `file:${options.path}`, tablePrefix, location: "file" };
+  if ("memory" in options) return { url: ":memory:", tablePrefix, medium: "memory" };
+  if ("path" in options) return { url: `file:${options.path}`, tablePrefix, medium: "file" };
   return {
     url: options.url,
     ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
     tablePrefix,
-    location: locationOf(options.url),
+    medium: mediumOf(options.url),
   };
 };

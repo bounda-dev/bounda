@@ -35,6 +35,7 @@ import {
   DEFAULT_SNAPSHOT_VERSION,
   DEFAULT_SUBSCRIBER_FAILURE_RETENTION_MS,
 } from "./defaults.ts";
+import { checkLocations } from "./locations.ts";
 import type {
   Config,
   ResolvedAggregateRuntime,
@@ -271,6 +272,12 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
   for (const definition of [parsed.storage, ...Object.values(parsed.readModels ?? {})]) {
     definition.check?.(config);
   }
+  checkLocations({
+    storage: parsed.storage,
+    readModels: parsed.readModels ?? {},
+    tenantKeys: parsed.runtime?.personalData?.tenantKeys,
+    forgetLedger: parsed.runtime?.personalData?.forgetLedger?.store,
+  });
   const baseCommands = resolveCommands(parsed.runtime?.commands, DEFAULT_COMMANDS);
   const basePolicies = resolvePolicies(parsed.runtime?.policies, DEFAULT_POLICIES);
   const baseProcesses = resolveProcesses(parsed.runtime?.processes, DEFAULT_PROCESSES);

@@ -6,6 +6,7 @@ import type {
   ReadModelStorage,
   Storage,
 } from "../adapter/adapter.ts";
+import type { DataLocationOptions } from "../adapter/adapter-definition.ts";
 import { rebuildFencing } from "../adapter/rebuild-fencing.ts";
 import { DEFAULT_TABLE_PREFIX, tableNameFor } from "../adapter/sql/identifiers.ts";
 import { rebuildTablesFor } from "../adapter/sql/read-model-schema.ts";
@@ -49,9 +50,9 @@ import {
 } from "./transaction.ts";
 
 /**
- * The in-memory adapter has no options; the object exists so the factory reads like the others.
+ * Options of `memory()`: where the process that holds the data runs.
  */
-export type MemoryOptions = Record<never, never>;
+export type MemoryOptions = DataLocationOptions;
 
 /**
  * The adapter `memory()` returns: what `bounda.config.ts` holds under `storage` or `readModels`.
@@ -184,6 +185,7 @@ export const memory: MemoryFunction = (options = {}) => {
     kind: "bounda-adapter",
     name: "memory",
     options,
+    ...(options.location === undefined ? {} : { location: options.location }),
     // Nothing to version: the stores live in this process alone.
     schemaVersions: async () => [],
     migrate: async () => [],

@@ -22,7 +22,7 @@ describe("cloudflare", () => {
       kind: "bounda-adapter",
       name: "cloudflare",
       options: { binding: "STORE", jurisdiction: "eu" },
-      location: "jurisdiction eu",
+      location: "eu",
       check: expect.any(Function),
     });
   });

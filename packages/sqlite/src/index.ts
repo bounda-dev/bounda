@@ -50,8 +50,8 @@ const libsqlAdapter = (
 ): SqliteAdapter => {
   let encryptionKey = opening;
   let handed: Client | null = keyed?.client ?? null;
-  const { url, authToken, tablePrefix, location } = resolveSqliteOptions(options);
-  if (location !== "remote") closeConnectionsOnce();
+  const { url, authToken, tablePrefix, medium } = resolveSqliteOptions(options);
+  if (medium !== "remote") closeConnectionsOnce();
   let connection: Connection | null = null;
 
   const open = (): Connection => {
@@ -62,13 +62,13 @@ const libsqlAdapter = (
         createClient({
           url,
           ...(authToken === undefined ? {} : { authToken }),
-          ...(location === "file" ? { timeout: SQLITE_BUSY_TIMEOUT_MS } : {}),
+          ...(medium === "file" ? { timeout: SQLITE_BUSY_TIMEOUT_MS } : {}),
           ...(encryptionKey === undefined ? {} : { encryptionKey }),
         });
       handed = null;
       const opened = createSqliteDatabase(client, {
-        local: location !== "remote",
-        wal: location === "file",
+        local: medium !== "remote",
+        wal: medium === "file",
       });
       connection = { ...opened, client, uses: 0 };
     }
@@ -91,18 +91,19 @@ const libsqlAdapter = (
   return createSqliteAdapter({
     name: "sqlite",
     options,
+    ...(options.location === undefined ? {} : { location: options.location }),
     tablePrefix,
     acquire: () => {
       const { db, raw } = open();
       return { db, raw };
     },
     release,
-    ephemeral: location === "memory",
+    ephemeral: medium === "memory",
     ...("path" in options && options.encrypt !== false && keyed === null
       ? { encryptedFile: encryptedFileAt(options) }
       : {}),
     // A copy of a file the tenant's keys encrypt is under the key in force when it was taken.
-    ...(location === "file"
+    ...(medium === "file"
       ? {
           openCopy: async (copy: string) =>
             openLibsqlCopy({

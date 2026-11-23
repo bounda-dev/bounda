@@ -10,9 +10,10 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
   readonly name: Name;
   readonly options: Options;
   /**
-   * Where the database keeps its data, when the definition pins it, such as `"jurisdiction eu"`
-   * for Durable Objects held in the EU. The record of processing (`personalDataInventory`) states
-   * it next to every holder and record kept there.
+   * Where the database keeps its data, as its `location` option, or `cloudflare({ jurisdiction })`,
+   * declares it, such as `"eu"`. The record of processing (`personalDataInventory`) states it next
+   * to every holder and record kept there, and under a storage that declares one, every other
+   * store must declare the same.
    */
   readonly location?: string;
   /**
@@ -22,6 +23,20 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
    * the record of processing (`personalDataInventory`).
    */
   readonly check?: (config: Config) => void;
+}
+
+/**
+ * The `location` option every adapter takes: where its database keeps the data.
+ */
+export interface DataLocationOptions {
+  /**
+   * The jurisdiction the database keeps its data in, such as `"eu"`, written the same way for
+   * every store of the app; you answer for it, as Bounda cannot see where a database runs. The
+   * record of processing states it next to everything kept there, and lists each store that
+   * declares none as a finding. Declared on `storage`, it is the app's: the app refuses to start
+   * on a read model, tenant key store or forget ledger that declares another, or none.
+   */
+  readonly location?: string;
 }
 
 export interface IsAdapterDefinitionFunction {

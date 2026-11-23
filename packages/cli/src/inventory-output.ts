@@ -72,6 +72,11 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
     holds: "which categories of whose data went to each recipient, and when",
     kept: "for as long as the database",
   },
+  "tenant-keys": {
+    holds:
+      "the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database",
+    kept: "until the tenant is forgotten",
+  },
   "forget-ledger": {
     holds: "each forgetting's person, categories and reason, outside the database",
     kept: "for good",
@@ -123,9 +128,9 @@ const sourcesOf = ({ sources }: InventoryCategory): string =>
 const decisionOf = (decision: InventoryAutomatedDecision): string =>
   `${decision.profiling ? "profiling, " : ""}on ${decision.ground}, from ${decision.categories.join(", ")}`;
 
-// The database, and where it keeps its data when its definition pins it.
+// The database, and the jurisdiction it keeps its data in when it declares one.
 const placed = (database: string, location: string | null): string =>
-  location === null ? database : `${database}, ${location}`;
+  location === null ? database : `${database}, in ${location}`;
 
 // A condition with its point of article 9(2), from (a) to (j) in the order the article gives them.
 const conditionOf = ({ condition }: SpecialCategoryData): string =>

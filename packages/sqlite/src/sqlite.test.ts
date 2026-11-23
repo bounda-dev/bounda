@@ -625,28 +625,36 @@ describe("sqlite adapter connection sharing", () => {
   });
 });
 
+describe("sqlite's location", () => {
+  it("declares where the database keeps its data when told, and nothing otherwise", () => {
+    expect(sqlite({ url: "libsql://db.turso.io", location: "eu" }).location).toBe("eu");
+    expect(sqlite({ memory: true, location: "eu" }).location).toBe("eu");
+    expect(sqlite({ url: "libsql://db.turso.io" })).not.toHaveProperty("location");
+  });
+});
+
 describe("resolveSqliteOptions", () => {
-  it("maps every location to a libSQL url and applies the default prefix", () => {
+  it("maps every medium to a libSQL url and applies the default prefix", () => {
     expect(resolveSqliteOptions({ memory: true })).toEqual({
       url: ":memory:",
       tablePrefix: "bounda_",
-      location: "memory",
+      medium: "memory",
     });
     expect(resolveSqliteOptions({ path: "./data/app.db", tablePrefix: "x_" })).toEqual({
       url: "file:./data/app.db",
       tablePrefix: "x_",
-      location: "file",
+      medium: "file",
     });
     expect(resolveSqliteOptions({ url: "libsql://db.turso.io", authToken: "t" })).toEqual({
       url: "libsql://db.turso.io",
       authToken: "t",
       tablePrefix: "bounda_",
-      location: "remote",
+      medium: "remote",
     });
-    expect(resolveSqliteOptions({ url: "file:./app.db" })).toMatchObject({ location: "file" });
-    expect(resolveSqliteOptions({ url: ":memory:" })).toMatchObject({ location: "memory" });
+    expect(resolveSqliteOptions({ url: "file:./app.db" })).toMatchObject({ medium: "file" });
+    expect(resolveSqliteOptions({ url: ":memory:" })).toMatchObject({ medium: "memory" });
     expect(resolveSqliteOptions({ url: "file::memory:?cache=shared" })).toMatchObject({
-      location: "memory",
+      medium: "memory",
     });
     expect(resolveSqliteOptions({ url: "libsql://db.turso.io" })).not.toHaveProperty("authToken");
   });
