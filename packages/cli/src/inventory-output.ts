@@ -94,10 +94,8 @@ const keptFor = (record: InventoryRecord): string => {
   if (record.name === "remembered-answers") {
     return `${record.keptFor}, or until erased by a forgetting`;
   }
-  if (record.name === "forget-ledger") {
-    return `${record.keptFor}, or until the tenant is forgotten and every recipient of its data told`;
-  }
-  return record.keptFor;
+  // The forget ledger's, the last record a setting bounds.
+  return `${record.keptFor}, or until the tenant is forgotten and every recipient of its data told`;
 };
 
 const whose = (holder: InventoryHolder): string => {

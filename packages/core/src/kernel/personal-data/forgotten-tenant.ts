@@ -57,7 +57,7 @@ export interface TenantForgottenResult {
 export interface AddressedTenantFunction {
   (
     transaction: Pick<StorageTransaction, "recipients">,
-    presumedAll?: readonly RecipientPort[],
+    presumedAll: readonly RecipientPort[],
   ): Promise<readonly NotifiedRecipient[]>;
 }
 
@@ -66,7 +66,7 @@ export interface AddressedTenantFunction {
  * every port declared after data already existed, with what its declaration names, presumed, as
  * every port of `presumedAll` is, for a database that may have lost disclosures no one can tell.
  */
-export const addressedTenant: AddressedTenantFunction = async (transaction, presumedAll = []) => {
+export const addressedTenant: AddressedTenantFunction = async (transaction, presumedAll) => {
   const received = await transaction.recipients.received();
   const presumed = new Map(
     [

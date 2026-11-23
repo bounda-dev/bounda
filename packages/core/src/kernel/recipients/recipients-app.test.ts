@@ -2,7 +2,7 @@ import { copyFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Adapter } from "../../adapter/adapter.ts";
+import type { Adapter, Storage } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { Table } from "../../adapter/storage/table.ts";
@@ -1588,20 +1588,50 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
       },
       logger: {
         ...silentLogger,
-        error: (message) => {
-          errors.push(message);
+        error: (message, fields) => {
+          errors.push([message, fields]);
         },
       },
     });
     expect(told).toEqual(presumedAll);
-    expect(errors).toContain(
+    expect(errors).toContainEqual([
       "the forget ledger could not be read for the disclosures the database lost: every declared recipient is presumed to hold the tenant's data",
-    );
+      expect.objectContaining({ tenant: "default" }),
+    ]);
     expect(await ledger.read({ limit: 10 })).toEqual([]);
   });
 
   it("presumes every declared recipient holds the tenant's data in a copy without a ledger", async () => {
     const { told } = await restoredAfterForgetting({ ledger: () => null });
+    expect(told).toEqual(presumedAll);
+  });
+
+  it("presumes every declared recipient on a forgetting settled again after it was cut short", async () => {
+    const told: Notice[] = [];
+    const inner = memory();
+    let failing = false;
+    const flaky: Adapter = {
+      ...inner,
+      createStorage: async () => {
+        const storage = await inner.createStorage();
+        const transact: Storage["transact"] = (work) => {
+          if (!failing) return storage.transact(work);
+          failing = false;
+          return Promise.reject(new Error("the database went away"));
+        };
+        return { ...storage, transact };
+      },
+    };
+    const { app, register } = await start({ told, adapter: flaky });
+    await register("c-0");
+    told.length = 0;
+    failing = true;
+    await expect(app.forgetTenant("default", { despiteLegalObligations: true })).rejects.toThrow(
+      "the database went away",
+    );
+    // Without a ledger, the database settled again may be a copy that lost disclosures.
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await app.runUntilIdle();
     expect(told).toEqual(presumedAll);
   });
 

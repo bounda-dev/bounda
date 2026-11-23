@@ -122,7 +122,7 @@ import {
 } from "./personal-data/tenant-export.ts";
 import { recordedTenantExport, streamTenantExport } from "./personal-data/tenant-export-stream.ts";
 import { guardClient } from "./personal-data/tenant-guard.ts";
-import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
+import { DEFAULT_TENANT, type TenantKeys } from "./personal-data/tenant-keys.ts";
 import { checkPersonId, isPersonId } from "./personal-data/transact.ts";
 import { witnessedWrapping } from "./personal-data/witness.ts";
 import { keylessWrapping, UNWRAPPED_KEY_TTL_MS } from "./personal-data/wrapped-keys.ts";
@@ -866,8 +866,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       logger,
     });
-    // Whether this instance knows its tenant forgotten, once the key hierarchy is open.
-    let tenantForgotten = (): boolean => false;
+    // The tenant's keys, once the key hierarchy is open: what says this instance knows it forgotten.
+    let tenantKeysOpened: Pick<TenantKeys, "forgotten"> | null = null;
+    const tenantForgotten = (): boolean => tenantKeysOpened?.forgotten() != null;
     const ledgerStore = forgetLedger?.store;
     const restores = createRestoreWatch({
       checkpoints: adapted.checkpointStore,
@@ -921,7 +922,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     // Closed last, after the storage, as `stop` closes them.
     if (hierarchy !== null) opened.push(hierarchy.close);
-    tenantForgotten = () => hierarchy?.tenantKeys.forgotten() != null;
+    tenantKeysOpened = hierarchy?.tenantKeys ?? null;
     const keyed = hierarchy?.wrapping ?? keylessWrapping();
     const wrapping = watching === undefined ? keyed : witnessedWrapping(keyed, watching);
     // Opened at once, never inside a transaction: none of a forgotten tenant, whose key is gone.

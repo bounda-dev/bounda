@@ -116,14 +116,16 @@ describe("the forget ledger of a forgotten tenant", () => {
     });
     await kept.retain(AT);
     expect(pruned).toEqual([]);
+    const recording = createRecordingLogger();
     const expiring = createForgottenLedger({
       ledger: { clear: async () => undefined },
       keepForMs: MINUTE,
       reconcileEveryMs: MINUTE,
       tenant: "acme",
-      logger: createRecordingLogger().logger,
+      logger: recording.logger,
     });
     await expect(expiring.retain(AT)).resolves.toBeUndefined();
+    expect(recording.entries).toEqual([]);
   });
 
   it("logs a prune that failed, and prunes again only once reconcileEvery has passed", async () => {

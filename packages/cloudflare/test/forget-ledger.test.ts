@@ -88,6 +88,7 @@ describe("the forget ledger in Workers KV", () => {
 const countingNamespace = () => {
   const keys = new Map<string, unknown>();
   const expirations = new Map<string, number | undefined>();
+  const deleted: string[] = [];
   let pages = 0;
   const namespace = {
     put: async (name: string, _value: string, options?: KVNamespacePutOptions) => {
@@ -96,6 +97,7 @@ const countingNamespace = () => {
     },
     get: async () => null,
     delete: async (name: string) => {
+      deleted.push(name);
       keys.delete(name);
       expirations.delete(name);
     },
@@ -113,7 +115,7 @@ const countingNamespace = () => {
       };
     },
   } as unknown as KVNamespace;
-  return { namespace, keys, expirations, pages: () => pages };
+  return { namespace, keys, expirations, deleted, pages: () => pages };
 };
 
 const minute = (index: number): string =>
@@ -121,7 +123,7 @@ const minute = (index: number): string =>
 
 describe("the KV forget ledger's listing", () => {
   it("clears every entry and mark of its object over every page, listed before the first delete", async () => {
-    const { namespace, keys } = countingNamespace();
+    const { namespace, keys, deleted } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     const other = createKvForgetLedger({ namespace, prefix: "q/" });
     const entries = Array.from({ length: 2_005 }, (_, index) => ({
@@ -136,6 +138,7 @@ describe("the KV forget ledger's listing", () => {
     await ledger.raiseMark("restore:generation", 4);
     await other.raiseMark("restore:generation", 2);
     await ledger.clear();
+    expect(deleted).toHaveLength(entries.length + 1);
     // A cursor that counts keys would skip a page if listing went on past deletes.
     expect([...keys.keys()].sort()).toEqual([
       "bounda/forget-ledger-marks/q/restore:generation",
