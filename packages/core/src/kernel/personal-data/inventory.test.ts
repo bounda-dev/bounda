@@ -845,6 +845,15 @@ describe("personalDataInventory", () => {
         config: { storage: shared, readModels: { members: shared } },
       }).findings.map(({ message }) => message.slice(0, message.indexOf(" declares"))),
     ).toEqual(["storage"]);
+    // Only a read model is kept on a database of readModels, whatever else shares its name.
+    expect(
+      personalDataInventory({
+        registry,
+        config: { ...config, readModels: { "customer.CustomerRegistered": memory() } },
+      })
+        .findings.filter(({ kind }) => kind === "no-location")
+        .map(({ message }) => message.slice(0, message.indexOf(" declares"))),
+    ).toEqual(["storage"]);
     // A disclosure names its person in storage, though no field of the app is personal.
     expect(
       personalDataInventory({
