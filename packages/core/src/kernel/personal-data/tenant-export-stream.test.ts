@@ -144,7 +144,7 @@ const ledgerOf = (entries: readonly ForgetLedgerEntry[]): ForgetLedger => ({
       .slice(0, limit),
   readMark: async () => 0,
   raiseMark: async () => undefined,
-  clear: async () => undefined,
+  clear: async () => true,
 });
 
 const setup = async () => {

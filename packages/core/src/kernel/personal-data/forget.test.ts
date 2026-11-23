@@ -549,7 +549,7 @@ describe("forgetIntended", () => {
           ledger: {
             readMark: async () => 0,
             raiseMark: async () => undefined,
-            clear: async () => undefined,
+            clear: async () => true,
             append: async (entries) => {
               recorded.push(...entries);
             },

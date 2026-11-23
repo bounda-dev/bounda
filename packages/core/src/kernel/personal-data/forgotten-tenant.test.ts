@@ -112,6 +112,18 @@ describe("settling a tenant's forgetting with a forget ledger", () => {
     expect(reads).toStrictEqual([{ limit: FORGET_LEDGER_PAGE }]);
   });
 
+  it("rejects, presuming nothing, when the database fails to record a lost disclosure again", async () => {
+    const storage = await opened(0);
+    const failing = {
+      ...storage,
+      transact: () => Promise.reject(new Error("the database went away")),
+    } as typeof storage;
+    await expect(settle(failing, async () => [disclosed])).rejects.toThrow(
+      "the database went away",
+    );
+    expect(await storage.eventStore.readAll({ afterPosition: 0, limit: 10 })).toEqual([]);
+  });
+
   it("reads nothing of the ledger for a database that holds the forgetting already", async () => {
     const storage = await opened(0);
     let reads = 0;

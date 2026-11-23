@@ -14,9 +14,9 @@ export interface ForgottenLedger {
    */
   retain(now: Date): Promise<void>;
   /**
-   * Clears the ledger, and resolves `null` once it did, or to when to try again: after a failure,
-   * or until every entry written before the forgetting shows in a ledger whose reads lag its
-   * writes. Never rejects.
+   * Clears the ledger, and resolves `null` once it did, or to when to try again: at once after a
+   * clear that removed part only, after a hold after a failure, or once every entry written before
+   * the forgetting shows in a ledger whose reads lag its writes. Never rejects.
    */
   clear(forgetting: TenantForgetting, now: Date): Promise<Date | null>;
 }
@@ -65,7 +65,7 @@ export const createForgottenLedger: CreateForgottenLedgerFunction = ({
       const shownAt = Date.parse(forgetting.at) + (ledger.visibilityDelayMs ?? 0);
       if (now.getTime() < shownAt) return new Date(shownAt);
       try {
-        await ledger.clear();
+        if (!(await ledger.clear())) return now;
       } catch (error) {
         logger.error("the forgotten tenant's forget ledger could not be cleared", {
           tenant,

@@ -2192,7 +2192,7 @@ describe("operations", () => {
   });
 
   it("clears a forgotten tenant's ledger, which every ledger can", () => {
-    expectTypeOf<ForgetLedger["clear"]>().toEqualTypeOf<() => Promise<void>>();
+    expectTypeOf<ForgetLedger["clear"]>().toEqualTypeOf<() => Promise<boolean>>();
     // @ts-expect-error a ledger of your own clears its store's entries and marks too
     const _cannotClear: ForgetLedger = {
       append: async () => undefined,

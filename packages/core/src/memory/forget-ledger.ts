@@ -58,6 +58,7 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
           for (const mark of marks.keys()) {
             if (mark.startsWith(`${key}\u0000`)) marks.delete(mark);
           }
+          return true;
         },
       };
     },

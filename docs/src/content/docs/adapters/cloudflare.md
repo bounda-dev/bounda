@@ -265,8 +265,8 @@ thirty, go to the key's value, which a read fetches for the entries it hands out
 `bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile. A
 forgotten tenant's object deletes its keys once its recipients are told and a minute has passed
 since the forgetting, waking for it, so every key written before is listed; KV deletes one key a
-call, so a ledger larger than the operations one invocation may make is cleared over several
-wakes, each going on from what the last one left.
+call, so each wake deletes a batch within the operations one invocation may make, and a larger
+ledger is cleared over several wakes, each going on from what the last one left.
 
 ## Rotating the master key
 

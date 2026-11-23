@@ -18,6 +18,7 @@ describe("the forget ledger of a forgotten tenant", () => {
       ledger: {
         clear: async () => {
           cleared += 1;
+          return true;
         },
       },
       keepForMs: null,
@@ -43,6 +44,7 @@ describe("the forget ledger of a forgotten tenant", () => {
         visibilityDelayMs: MINUTE,
         clear: async () => {
           cleared += 1;
+          return true;
         },
       },
       keepForMs: null,
@@ -54,6 +56,19 @@ describe("the forget ledger of a forgotten tenant", () => {
     expect(cleared).toBe(0);
     expect(await ledger.clear(FORGETTING, later(MINUTE))).toBeNull();
     expect(cleared).toBe(1);
+  });
+
+  it("asks to be run again at once after a clear that removed part only, and says nothing yet", async () => {
+    const recording = createRecordingLogger();
+    const ledger = createForgottenLedger({
+      ledger: { clear: async () => false },
+      keepForMs: null,
+      reconcileEveryMs: MINUTE,
+      tenant: "acme",
+      logger: recording.logger,
+    });
+    expect(await ledger.clear(FORGETTING, later(5))).toEqual(later(5));
+    expect(recording.entries).toEqual([]);
   });
 
   it("logs a clear that failed, and asks to be run again after a hold", async () => {
@@ -81,7 +96,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     const pruned: PruneForgetLedgerArgs[] = [];
     const ledger = createForgottenLedger({
       ledger: {
-        clear: async () => undefined,
+        clear: async () => true,
         prune: async (args) => {
           pruned.push(args);
         },
@@ -104,7 +119,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     const pruned: PruneForgetLedgerArgs[] = [];
     const kept = createForgottenLedger({
       ledger: {
-        clear: async () => undefined,
+        clear: async () => true,
         prune: async (args) => {
           pruned.push(args);
         },
@@ -118,7 +133,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     expect(pruned).toEqual([]);
     const recording = createRecordingLogger();
     const expiring = createForgottenLedger({
-      ledger: { clear: async () => undefined },
+      ledger: { clear: async () => true },
       keepForMs: MINUTE,
       reconcileEveryMs: MINUTE,
       tenant: "acme",
@@ -133,7 +148,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     let calls = 0;
     const ledger = createForgottenLedger({
       ledger: {
-        clear: async () => undefined,
+        clear: async () => true,
         prune: () => {
           calls += 1;
           return Promise.reject(new Error("ledger down"));

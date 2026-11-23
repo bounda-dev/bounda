@@ -289,6 +289,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
       await prepared();
       await db.run(`DELETE FROM ${table} WHERE "tenant" = ${p(1)}`, [tenant]);
       await db.run(`DELETE FROM ${marks} WHERE "tenant" = ${p(1)}`, [tenant]);
+      return true;
     },
     close,
   };

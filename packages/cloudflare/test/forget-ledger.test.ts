@@ -137,7 +137,13 @@ describe("the KV forget ledger's listing", () => {
     await other.append(entries.slice(0, 1));
     await ledger.raiseMark("restore:generation", 4);
     await other.raiseMark("restore:generation", 2);
-    await ledger.clear();
+    // KV deletes one key a call: a clear deletes a batch within what an invocation may make.
+    const rounds: boolean[] = [];
+    for (let done = false; !done; ) {
+      done = await ledger.clear();
+      rounds.push(done);
+    }
+    expect(rounds).toEqual([false, false, false, false, true]);
     expect(deleted).toHaveLength(entries.length + 1);
     // A cursor that counts keys would skip a page if listing went on past deletes.
     expect([...keys.keys()].sort()).toEqual([
@@ -357,6 +363,36 @@ describe("the KV forget ledger's listing", () => {
       },
     ]);
     expect(read[0]).not.toHaveProperty("disclosure");
+  });
+
+  it("fills a page past an entry whose value is gone, so a short page means the ledger ends", async () => {
+    const { namespace, keys } = countingNamespace();
+    const values = new Map([
+      ["p/1:e-1", JSON.stringify({ categories: ["a"] })],
+      ["p/3:e-3", JSON.stringify({ categories: ["c"] })],
+      ["p/4:e-4", JSON.stringify({ categories: ["d"] })],
+    ]);
+    const reading = {
+      ...namespace,
+      get: async (name: string) => values.get(name) ?? null,
+    } as unknown as KVNamespace;
+    const ledger = createKvForgetLedger({ namespace: reading, prefix: "p/" });
+    for (const [at, index] of [
+      ["1:e-1", 4],
+      ["2:e-2", 3],
+      ["3:e-3", 2],
+      ["4:e-4", 1],
+    ] as const) {
+      keys.set(`p/${at}`, { personId: "c-1", forgottenAt: minute(index), inValue: true });
+    }
+    // e-2, whose value is gone, makes way for e-1.
+    const page = await ledger.read({ limit: 3 });
+    expect(page.map(({ eventId }) => eventId)).toEqual(["e-4", "e-3", "e-1"]);
+    const [first] = page;
+    if (first === undefined) throw new Error("nothing read");
+    expect((await ledger.read({ limit: 1, after: first })).map(({ eventId }) => eventId)).toEqual([
+      "e-3",
+    ]);
   });
 
   it("reads a key written before entries kept their reason and keys as a request naming none", async () => {

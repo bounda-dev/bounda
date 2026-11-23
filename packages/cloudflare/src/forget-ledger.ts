@@ -21,6 +21,8 @@ export const KV_LIST_DELAY_MS = 60_000;
 // entry lists first. Any time from 1970 on leaves sixteen digits, which sort as numbers do.
 const LATEST_MS = 8_640_000_000_000_000;
 const LIST_LIMIT = 1_000;
+// Below the thousand operations a Worker's invocation may make, with its lists.
+const KV_CLEAR_BATCH = 500;
 const MARKS_PREFIX = "bounda/forget-ledger-marks/";
 // The soonest KV lets a key expire, in seconds from now.
 const KV_MIN_TTL_S = 60;
@@ -269,19 +271,25 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
         if (past || page.list_complete) break;
         cursor = page.cursor;
       }
-      const read = found
+      const candidates = found
         .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
-        .sort(byForgetLedgerOrder)
-        .slice(0, limit);
-      // Only the values of the entries handed out, at once.
-      const entries = await Promise.all(
-        read.map(async ({ name, metadata, eventId }) => {
-          if (metadata.inValue !== true) return entryOf(metadata, eventId);
-          const spilled = spilledIn(await namespace.get(name));
-          return spilled === null ? null : entryOf(metadata, eventId, spilled);
-        }),
-      );
-      return entries.filter((entry) => entry !== null);
+        .sort(byForgetLedgerOrder);
+      // Only the values of the entries handed out, a page's worth at once; one whose value is
+      // gone is left out and the next takes its place, so a short page means the ledger ends.
+      const entries: ForgetLedgerEntry[] = [];
+      for (let start = 0; entries.length < limit && start < candidates.length; ) {
+        const batch = candidates.slice(start, start + limit - entries.length);
+        start += batch.length;
+        const values = await Promise.all(
+          batch.map(async ({ name, metadata, eventId }) => {
+            if (metadata.inValue !== true) return entryOf(metadata, eventId);
+            const spilled = spilledIn(await namespace.get(name));
+            return spilled === null ? null : entryOf(metadata, eventId, spilled);
+          }),
+        );
+        for (const entry of values) if (entry !== null) entries.push(entry);
+      }
+      return entries;
     },
     readMark: async (name) => Number((await namespace.get(markKey(name))) ?? 0),
     // KV has no compare: of two instances raising at once the lower may win, which the next raise,
@@ -292,8 +300,8 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
       await namespace.put(markKey(name), String(value));
     },
     // Listed whole before the first delete, so no page is listed past keys a delete moved. KV
-    // deletes one key a call: a clear cut short by the operations an invocation may make has
-    // removed what it reached, and the next removes the rest.
+    // deletes one key a call, so each clear deletes at most `KV_CLEAR_BATCH`, within the
+    // operations one invocation may make and the ledger's timeout.
     clear: async () => {
       const names: string[] = [];
       for (const listed of [prefix, markKey("")]) {
@@ -308,7 +316,8 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
           cursor = page.cursor;
         }
       }
-      await Promise.all(names.map((name) => namespace.delete(name)));
+      await Promise.all(names.slice(0, KV_CLEAR_BATCH).map((name) => namespace.delete(name)));
+      return names.length <= KV_CLEAR_BATCH;
     },
   };
 };

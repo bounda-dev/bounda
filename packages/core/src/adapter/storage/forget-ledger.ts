@@ -167,13 +167,14 @@ export interface ForgetLedger {
    */
   raiseMark(name: string, value: number): Promise<void>;
   /**
-   * Removes every entry and every mark of this ledger's store, other stores' left as they were:
-   * what the runtime calls once its tenant is forgotten and every recipient of the tenant's data
-   * told, when nothing can need them any longer. Appending afterwards keeps entries again. A call
-   * that fails, or that leaves entries a store whose reads are eventually consistent did not show
-   * yet, is made again.
+   * Removes the entries and marks of this ledger's store, other stores' left as they were, and
+   * resolves `true` once it removed every one it found, `false` when it removed part only, to be
+   * called again, as a store that deletes one key a call does within what one call may do: what
+   * the runtime calls once its tenant is forgotten and every recipient of the tenant's data told,
+   * when nothing can need them any longer. Appending afterwards keeps entries again. A call that
+   * fails is made again.
    */
-  clear(): Promise<void>;
+  clear(): Promise<boolean>;
   /**
    * Releases what the ledger holds open; called when the app stops.
    */

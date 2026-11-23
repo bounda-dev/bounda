@@ -85,17 +85,18 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
 
 const keptFor = (record: InventoryRecord): string => {
   if (record.keptFor === null) return RECORDS[record.name].kept;
-  if (record.name === "dead-letters") {
-    return `retried or discarded letters for ${record.keptFor}, longer while a person they hold data of is restricted and that data still opens, failed ones until resolved; unreadable once their person is forgotten`;
+  switch (record.name) {
+    case "dead-letters":
+      return `retried or discarded letters for ${record.keptFor}, longer while a person they hold data of is restricted and that data still opens, failed ones until resolved; unreadable once their person is forgotten`;
+    case "subscriber-failures":
+      return `until the subscriber's next failure replaces it, or for ${record.keptFor} once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten`;
+    case "remembered-answers":
+      return `${record.keptFor}, or until erased by a forgetting`;
+    case "forget-ledger":
+      return `${record.keptFor}, or until the tenant is forgotten and every recipient of its data told`;
+    default:
+      return record.keptFor;
   }
-  if (record.name === "subscriber-failures") {
-    return `until the subscriber's next failure replaces it, or for ${record.keptFor} once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten`;
-  }
-  if (record.name === "remembered-answers") {
-    return `${record.keptFor}, or until erased by a forgetting`;
-  }
-  // The forget ledger's, the last record a setting bounds.
-  return `${record.keptFor}, or until the tenant is forgotten and every recipient of its data told`;
 };
 
 const whose = (holder: InventoryHolder): string => {

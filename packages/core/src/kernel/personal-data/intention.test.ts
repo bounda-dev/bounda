@@ -40,7 +40,7 @@ const recordingLedger = (append: (entries: readonly ForgetLedgerEntry[]) => Prom
       read: async () => [],
       readMark: async () => 0,
       raiseMark: async () => undefined,
-      clear: async () => undefined,
+      clear: async () => true,
     },
     timeoutMs: 1_000,
     clock: createFixedClock(NOW),
@@ -214,7 +214,7 @@ describe("the intentions of forgetting", () => {
     const ledger: BoundedForgetLedger = {
       readMark: async () => 0,
       raiseMark: async () => undefined,
-      clear: async () => undefined,
+      clear: async () => true,
       append: async () => {
         appends += 1;
       },

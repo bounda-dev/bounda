@@ -41,7 +41,7 @@ describe("the forget ledger's outbox", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
       },
       keepForMs: null,
       clock: createFixedClock(new Date("2030-01-01T00:00:00.000Z")),
@@ -177,7 +177,7 @@ describe("the forget ledger's outbox", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
       },
       keepForMs: 60_000,
       clock: createFixedClock(new Date("2026-01-01T00:02:00.000Z")),
@@ -255,7 +255,7 @@ describe("a forget ledger's source", () => {
       read: async () => [],
       readMark: async () => 0,
       raiseMark: async () => undefined,
-      clear: async () => undefined,
+      clear: async () => true,
     }));
     expect(isForgetLedgerSource(memory())).toBe(true);
     expect(isForgetLedgerSource(definition)).toBe(true);
@@ -279,7 +279,7 @@ describe("a forget ledger's source", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
       };
     });
     const env = { REGION: "eu" };
@@ -381,6 +381,7 @@ describe("the forget ledger bound by its timeout", () => {
         },
         clear: async () => {
           calls.push("clear");
+          return true;
         },
         append: async (entries) => {
           calls.push(`append ${entries.length}`);
@@ -424,7 +425,7 @@ describe("the forget ledger bound by its timeout", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
       },
       timeoutMs: 500,
       clock,

@@ -469,7 +469,7 @@ describe("the forget ledger", () => {
       },
       readMark: async () => 0,
       raiseMark: async () => undefined,
-      clear: async () => undefined,
+      clear: async () => true,
     }));
     const { app: first } = await start({ storage, forgetLedger: broken });
     // A fresh store's first pass finds nothing written before the marks.
@@ -579,7 +579,7 @@ describe("the forget ledger", () => {
       return {
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
         append: (entries) => inner.append(entries),
         read: (args) => {
           reconciling = true;
@@ -634,7 +634,7 @@ describe("the forget ledger", () => {
         read: (args) => inner.read(args),
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
         append: async (entries) => {
           if (refusals > 0) {
             refusals -= 1;
@@ -744,7 +744,7 @@ describe("the forget ledger", () => {
         read: (args) => inner.read(args),
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
         append: async (entries) => {
           appends.push(...entries.map(({ personId }) => personId));
           await inner.append(entries);
@@ -787,7 +787,7 @@ describe("the forget ledger", () => {
         read: (args) => inner.read(args),
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
         append: () => new Promise<void>(() => undefined),
       };
     });
@@ -974,7 +974,7 @@ describe("the forget ledger", () => {
     const broken = defineForgetLedger(async () => ({
       readMark: async () => 0,
       raiseMark: async () => undefined,
-      clear: async () => undefined,
+      clear: async () => true,
       append: async () => {},
       read: async () => {
         throw down;
@@ -1218,7 +1218,7 @@ describe("the intention a forgetting records first", () => {
         read: (args) => inner.read(args),
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
         append: async (entries) => {
           if (down) throw new Error("ledger is down");
           await inner.append(entries);
@@ -1258,7 +1258,7 @@ describe("the intention a forgetting records first", () => {
         read: (args) => inner.read(args),
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
         append: () => new Promise<void>(() => undefined),
       };
     });
@@ -1296,7 +1296,7 @@ describe("the intention a forgetting records first", () => {
         read: (args) => inner.read(args),
         readMark: async () => 0,
         raiseMark: async () => undefined,
-        clear: async () => undefined,
+        clear: async () => true,
         append: async (entries) => {
           if (down) throw new Error("ledger is down");
           await inner.append(entries);

@@ -271,7 +271,7 @@ const setUp = async (batchSize?: number, adapter: Adapter = memory()) => {
     read: async ({ limit }) => [...entries.values()].slice(0, limit),
     readMark: async () => 0,
     raiseMark: async () => undefined,
-    clear: async () => undefined,
+    clear: async () => true,
   }));
   const { app, clock } = await createTestApp({
     registry,

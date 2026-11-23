@@ -318,13 +318,14 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       await ledger.raiseMark("restore:generation", 7);
       await ledger.raiseMark("another", 3);
       await other.raiseMark("restore:generation", 5);
-      await ledger.clear();
+      // Called again while it removed part only, as the runtime does.
+      while (!(await ledger.clear()));
       expect(await ledger.read({ limit: 10 })).toEqual([]);
       expect(await ledger.readMark("restore:generation")).toBe(0);
       expect(await ledger.readMark("another")).toBe(0);
       expect(await other.read({ limit: 10 })).toEqual(entries);
       expect(await other.readMark("restore:generation")).toBe(5);
-      await ledger.clear();
+      expect(await ledger.clear()).toBe(true);
       expect(await ledger.read({ limit: 10 })).toEqual([]);
       await ledger.append([entries[0] as ForgetLedgerEntry]);
       await ledger.raiseMark("restore:generation", 2);

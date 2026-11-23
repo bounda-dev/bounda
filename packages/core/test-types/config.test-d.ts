@@ -448,7 +448,7 @@ describe("defineConfig", () => {
           expectTypeOf(name).toEqualTypeOf<string>();
           expectTypeOf(value).toEqualTypeOf<number>();
         },
-        clear: async () => undefined,
+        clear: async () => true,
       };
     });
     expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();

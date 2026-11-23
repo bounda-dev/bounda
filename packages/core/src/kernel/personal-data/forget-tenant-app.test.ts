@@ -251,7 +251,7 @@ describe("forgetTenant", () => {
         clear: async () => {
           clears += 1;
           if (clears === 1) throw new Error("ledger down");
-          await kept.clear();
+          return kept.clear();
         },
       };
     });

@@ -201,6 +201,7 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
       clear: async () => {
         await retain();
         await unwrap(own.clearLedger(tenant));
+        return true;
       },
     };
   }, locationOf(storage));
