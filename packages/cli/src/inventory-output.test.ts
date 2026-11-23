@@ -251,7 +251,7 @@ describe("formatInventory", () => {
         "  remembered-answers  the answer of each command dispatched with an idempotency key, sealed under its persons; an export holds one back from each when it names several (article 15(4)); 1d, or until erased by a forgetting (cloudflare, jurisdiction eu)",
         "  dead-letters  the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4)); retried or discarded letters for 30d, longer while a person they hold data of is restricted and that data still opens, failed ones until resolved; unreadable once their person is forgotten (cloudflare, jurisdiction eu)",
         "  subscriber-failures  the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)); until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten (cloudflare, jurisdiction eu)",
-        "  forget-ledger  each forgetting's person, categories and reason, outside the database; 400d (forget-ledger)",
+        "  forget-ledger  each forgetting's person, categories and reason, and each change of restrictions, redaction and disclosure with its ids and names, the recipient's included, outside the database; 400d, or until the tenant is forgotten and every recipient of its data told (forget-ledger)",
         "  access-log  every access to personal data, by ids, handed to app/audit.ts; as the app keeps it (app/audit.ts)",
         "",
         "Keys",
@@ -308,6 +308,15 @@ describe("formatInventory", () => {
     ).toContain(
       "until the subscriber's next failure replaces it, unreadable once their person is forgotten (memory)",
     );
+    // A ledger without keepFor: kept until its tenant is forgotten and told.
+    expect(
+      formatInventory({
+        ...empty,
+        records: [{ name: "forget-ledger", where: "forget-ledger", location: null, keptFor: null }],
+      }),
+    ).toContain(
+      "outside the database; until the tenant is forgotten and every recipient of its data told (forget-ledger)",
+    );
   });
 });
 
@@ -360,7 +369,7 @@ describe("formatInventoryMarkdown", () => {
         "| remembered-answers | the answer of each command dispatched with an idempotency key, sealed under its persons; an export holds one back from each when it names several (article 15(4)) | 1d, or until erased by a forgetting | cloudflare, jurisdiction eu |",
         "| dead-letters | the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4)) | retried or discarded letters for 30d, longer while a person they hold data of is restricted and that data still opens, failed ones until resolved; unreadable once their person is forgotten | cloudflare, jurisdiction eu |",
         "| subscriber-failures | the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)) | until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten | cloudflare, jurisdiction eu |",
-        "| forget-ledger | each forgetting's person, categories and reason, outside the database | 400d | forget-ledger |",
+        "| forget-ledger | each forgetting's person, categories and reason, and each change of restrictions, redaction and disclosure with its ids and names, the recipient's included, outside the database | 400d, or until the tenant is forgotten and every recipient of its data told | forget-ledger |",
         "| access-log | every access to personal data, by ids, handed to app/audit.ts | as the app keeps it | app/audit.ts |",
         "",
         "## Keys",

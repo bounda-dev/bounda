@@ -177,7 +177,9 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   - **`keepFor`**, none by default. How long an entry is kept after the forgetting; set it longer
     than the oldest backup you can restore. The instance that runs a periodic round prunes the
     older entries after it; KV expires each key on its own, and `bounda forget-ledger expire` gives
-    the keys written before `keepFor` was set theirs. Without it entries are kept for good.
+    the keys written before `keepFor` was set theirs. Without it entries are kept until their
+    tenant is [forgotten](/guides/personal-data/#forgetting-a-tenant) and every recipient of its
+    data told, which clears a tenant's entries whatever `keepFor` says.
   - **`timeout`**, `10s` by default (`DEFAULT_FORGET_LEDGER_TIMEOUT_MS` in
     `@bounda-dev/core/config`). How long each call to the ledger may take before it is given up
     with [`FORGET_LEDGER_TIMEOUT`](/reference/errors/#codes), and how long a start that is not

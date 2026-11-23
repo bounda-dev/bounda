@@ -81,6 +81,7 @@ import {
   openForgetLedger,
   waitForLedger,
 } from "./personal-data/forget-ledger.ts";
+import { createForgottenLedger } from "./personal-data/forgotten-ledger.ts";
 import {
   type ForgetTenantOptions,
   settleTenantForgetting,
@@ -865,10 +866,23 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
       logger,
     });
+    // Whether this instance knows its tenant forgotten, once the key hierarchy is open.
+    let tenantForgotten = (): boolean => false;
+    const ledgerStore = forgetLedger?.store;
     const restores = createRestoreWatch({
       checkpoints: adapted.checkpointStore,
       events: adapted.eventStore,
-      marks: forgetLedger?.store ?? null,
+      // A forgotten tenant's start settles its database whatever copy it is, so its ledger keeps no
+      // mark: one raised after the ledger was cleared would outlive it.
+      marks:
+        ledgerStore === undefined
+          ? null
+          : {
+              readMark: async (name) => (tenantForgotten() ? 0 : ledgerStore.readMark(name)),
+              raiseMark: async (name, value) => {
+                if (!tenantForgotten()) await ledgerStore.raiseMark(name, value);
+              },
+            },
       logger,
     });
     // Every event this instance commits is the newest the watch knows of until it reads another.
@@ -907,6 +921,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     // Closed last, after the storage, as `stop` closes them.
     if (hierarchy !== null) opened.push(hierarchy.close);
+    tenantForgotten = () => hierarchy?.tenantKeys.forgotten() != null;
     const keyed = hierarchy?.wrapping ?? keylessWrapping();
     const wrapping = watching === undefined ? keyed : witnessedWrapping(keyed, watching);
     // Opened at once, never inside a transaction: none of a forgotten tenant, whose key is gone.
@@ -984,18 +999,35 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     );
     const settleForgotten = (
       forgetting: NonNullable<ReturnType<NonNullable<typeof hierarchy>["tenantKeys"]["forgotten"]>>,
-      actor?: string,
+      {
+        actor,
+        mayBeCopy = true,
+      }: { readonly actor?: string | undefined; readonly mayBeCopy?: boolean } = {},
     ): Promise<void> =>
       settleTenantForgetting({
         storage: written,
         readModels: personalReadModels,
         tenant: tenantId,
         forgetting,
+        ledger: forgetLedger?.store ?? null,
+        mayBeCopy,
+        ports: recipients.all.map(({ port, categories }) => ({ port, categories })),
         ids,
         clock,
+        logger,
         concurrencyRetries,
         context: startedBy(ids.next(), actor),
       });
+    const forgottenLedger =
+      forgetLedger === null
+        ? null
+        : createForgottenLedger({
+            ledger: forgetLedger.store,
+            keepForMs,
+            reconcileEveryMs: forgetLedger.config.reconcileEveryMs,
+            tenant: tenantId,
+            logger,
+          });
     const forgottenRunnerOf = (keys: NonNullable<typeof hierarchy>): ForgottenRunner =>
       createForgottenRunner({
         tracer: appTracer,
@@ -1020,10 +1052,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               { tenant: tenantId },
             );
           }
+          const forgetting = keys.tenantKeys.forgotten();
+          // Before the storage is emptied, which a later discharge would find gone.
+          if (forgottenLedger !== null && forgetting !== null) {
+            const again = await forgottenLedger.clear(forgetting, clock.now());
+            if (again !== null) return again;
+          }
           // Only a database that holds more than the forgetting's own event: one emptied already
           // holds that alone, appended again when it opened.
-          if (adapted.discard === undefined) return;
-          const forgetting = keys.tenantKeys.forgotten();
+          if (adapted.discard === undefined) return null;
           const held = await adapted.eventStore.readAll({ afterPosition: 0, limit: 2 });
           if (held.some(({ id }) => id !== forgetting?.eventId)) {
             await adapted.discard();
@@ -1031,6 +1068,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               tenant: tenantId,
             });
           }
+          return null;
+        },
+        retain: async (now) => {
+          await forgottenLedger?.retain(now);
         },
         pendingRetries,
         ids,
@@ -1832,7 +1873,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       const forgetting =
         earlier ??
         (await keys.tenantKeys.forget({ at: clock.now().toISOString(), eventId: ids.next() }));
-      await settleForgotten(forgetting, actor);
+      await settleForgotten(forgetting, { actor, mayBeCopy: earlier !== null });
       if (earlier === null) {
         logger.warn("tenant forgotten", { tenant: tenantId, eventId: forgetting.eventId });
       }

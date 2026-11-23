@@ -140,6 +140,9 @@ describe("the keeper", () => {
     expectTypeOf<ReturnType<BoundaKeeperMethods["getTenantKeys"]>>().toEqualTypeOf<
       Promise<RpcOutcome<VersionedTenantKeyRecord | null>>
     >();
+    expectTypeOf<BoundaKeeperMethods["clearLedger"]>().toEqualTypeOf<
+      (tenant: string) => Promise<RpcOutcome<null>>
+    >();
     expectTypeOf<typeof DEFAULT_KEEPER_BINDING>().toEqualTypeOf<"KEEPER">();
   });
 });

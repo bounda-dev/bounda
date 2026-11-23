@@ -309,5 +309,29 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await other.readMark("restore:generation")).toBe(0);
       expect(await ledger.read({ limit: 10 })).toEqual([]);
     });
+
+    it("clears every entry and mark of its store, other stores' left as they were, and keeps again after", async () => {
+      const other = await ledgerFor("tenant-b");
+      const entries = [1, 2, 3].map((minute) => entry(`c-${minute}`, `e-${minute}`, minute));
+      await ledger.append(entries);
+      await other.append(entries);
+      await ledger.raiseMark("restore:generation", 7);
+      await ledger.raiseMark("another", 3);
+      await other.raiseMark("restore:generation", 5);
+      await ledger.clear();
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
+      expect(await ledger.readMark("restore:generation")).toBe(0);
+      expect(await ledger.readMark("another")).toBe(0);
+      expect(await other.read({ limit: 10 })).toEqual(entries);
+      expect(await other.readMark("restore:generation")).toBe(5);
+      await ledger.clear();
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
+      await ledger.append([entries[0] as ForgetLedgerEntry]);
+      await ledger.raiseMark("restore:generation", 2);
+      expect(await ledger.read({ limit: 10 })).toEqual(entries.slice(0, 1));
+      expect(await ledger.readMark("restore:generation")).toBe(2);
+      // Reopened, as a restart opens it again.
+      expect(await (await ledgerFor()).read({ limit: 10 })).toEqual(entries.slice(0, 1));
+    });
   });
 };

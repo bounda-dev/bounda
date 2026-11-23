@@ -53,6 +53,12 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
           const mark = `${key}\u0000${name}`;
           marks.set(mark, Math.max(marks.get(mark) ?? 0, value));
         },
+        clear: async () => {
+          entries.clear();
+          for (const mark of marks.keys()) {
+            if (mark.startsWith(`${key}\u0000`)) marks.delete(mark);
+          }
+        },
       };
     },
   };

@@ -1993,7 +1993,9 @@ database. The record lists:
   [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) has passed
   since the subscriber got past it or the app stopped running it, each with the error
   text encrypted under everyone whose data the work read and [held back](#someone-elses-data) from
-  an export when that is more than one person, what went to each recipient, the [forget ledger](#the-forget-ledger) for its `keepFor`, and
+  an export when that is more than one person, what went to each recipient, the [forget ledger](#the-forget-ledger) for its `keepFor`
+  and no longer than until its tenant is [forgotten](#forgetting-a-tenant) and every recipient
+  told, and
   the [access log](#who-opened-what) when `app/audit.ts` exists;
 - whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
   ledger are configured;
@@ -2559,7 +2561,9 @@ It runs in this order, every step safe to run again:
    one needed: from here on nothing personal of the tenant opens anywhere.
 2. The database marks the tenant forgotten, and `TenantForgotten` is appended to the stream
    `bounda:<tenant>`, with the categories the tenant's persons held keys of and the
-   [recipients](#recipients) to tell.
+   [recipients](#recipients) to tell. With a [forget ledger](#the-forget-ledger), the disclosures
+   it holds past what the database applied are recorded again first, as a reconciliation would, so
+   a recipient the database lost is told too.
 3. Every person's key, the database's key, every snapshot, every remembered answer, every
    subscriber's last failure and every dead letter but those of the notices of the forgetting are
    deleted, failed letters too, since no work of the tenant's is retried again, and every read
@@ -2571,8 +2575,23 @@ Once every recipient is told, its notice delivered or its dead letter resolved, 
 notices are deleted, and what the engine keeps beyond the tenant's key goes too: an [encrypted file](#encrypted-database-files)'s keys,
 which the record kept under the master key so the notices could still read the file, are
 destroyed, and the file and its copies open no more, the app running on an empty database in
-memory; a Durable Object empties its storage. A PostgreSQL database stays, every read model's rows
-deleted.
+memory; the [forget ledger](#the-forget-ledger)'s entries of the tenant and its marks are removed,
+the ids of the persons forgotten, restricted, redacted and disclosed to; and a Durable Object
+empties its storage. A PostgreSQL database stays, every read model's rows deleted. The ledger's
+entries are kept until then because a copy of the database restored before every recipient was
+told appends `TenantForgotten` again, and only the ledger says to whom the copy's data went after
+it was taken; once everyone was told, no copy needs them: the tenant key store's record of the
+forgetting is what refuses every copy, and a person in one opens nothing without the tenant's key.
+Until then the instance that tells the recipients prunes the ledger past [`keepFor`](#keeping-the-ledger-short)
+as a running tenant's reconciliation does, and a ledger whose reads lag its writes, KV's, is
+cleared only once a minute has passed since the forgetting, so every entry written before it is
+listed. The app logs each step:
+
+```
+tenant forgotten: its recipients are told, and its forget ledger cleared
+```
+
+A ledger that fails to clear logs an error and is cleared again 30 seconds later.
 
 From then on the app serves nothing: every command, query, export and other call rejects with
 `TenantForgottenError` (`TENANT_FORGOTTEN`), and a Worker from `createWorker` answers `410`. Another
@@ -2581,7 +2600,17 @@ does the same. The worker only tells the recipients: each port that was disclose
 tenant's persons, or may have been, gets its `onTenantForgotten`. An app that starts for a forgotten
 tenant runs steps 2 and 3 again, so a forgetting cut short by a crash finishes, and a database
 restored from a copy taken before it is forgotten again, `TenantForgotten` included, with the id
-and time the record keeps.
+and time the record keeps. Its recipients are read from the copy, with the disclosures the ledger
+holds past what the copy applied; an app without a ledger, or whose ledger cannot be read then,
+cannot tell what the copy lost, so every recipient the app declares is told, `presumed`, and the
+error is logged:
+
+```
+the forget ledger could not be read for the disclosures the database lost: every declared recipient is presumed to hold the tenant's data
+```
+
+A restore found under the running app does the same, and the ledger, if already cleared, adds no
+one: every recipient was told by then.
 
 What stays is what was never personal: the events' types, ids, streams and times, the ids of the
 persons, and every field the registry does not mark `personal()`, as it is, since Bounda does not
@@ -2591,8 +2620,11 @@ model's rows go with the forgetting, but a backup of a read model's database tak
 fields not marked `.personal()` in the clear until it is restored and an app starts on it (see
 [Limitations](/reference/limitations/)). What your app does next is yours: delete the database once
 nothing needs its skeleton, the tenant's Durable Object with `deleteAll()`, its PostgreSQL schema,
-its SQLite file; the tenant key store keeps the record of the forgetting, which is what tells a
-restored copy to forget again, so keep it at least as long as any backup of the tenant.
+its SQLite file, once the log above says its recipients are told and its ledger cleared: nothing
+else clears the ledger of a tenant whose app never starts again. The tenant key store keeps the
+record of the forgetting, which is what tells a restored copy to forget again, so keep it at least
+as long as any backup of the tenant, and never restore it to before the forgetting, which would
+bring the tenant's key back.
 
 ### Telling the recipients
 
@@ -2693,8 +2725,10 @@ reason and the fingerprints included, which the reconciliation decides by; its `
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
 time; its `readMark` and `raiseMark` keep numbers that only go up, which the runtime uses to tell
-a copy [restored while the app was stopped](#restores); `forgetLedgerContract` from
-`@bounda-dev/core/adapter/testing` is the test it has to pass.
+a copy [restored while the app was stopped](#restores); its `clear` removes every entry and mark of
+its tenant, which the runtime calls once the tenant is [forgotten](#forgetting-a-tenant) and every
+recipient told; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has
+to pass.
 
 ### What the runtime does with it
 
@@ -2809,8 +2843,8 @@ The instance that takes a periodic round prunes after it, through the ledger's `
 forgetting older than `keepFor` is not appended at all. KV expires each key on its own instead,
 `keepFor` after its forgetting, since it cannot list its oldest keys first. A backup older than
 `keepFor` brings back whom the removed entries named, so when you keep backups longer, raise it
-first. Without `keepFor` entries are kept for good: ids, times and fingerprints only, but still the
-ids of people who asked to be forgotten.
+first. Without `keepFor` entries are kept until their tenant is [forgotten](#forgetting-a-tenant):
+ids, times and fingerprints only, but still the ids of people who asked to be forgotten.
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or
 while it was longer, keep theirs. Give them the one `keepFor` sets now, from the project's root,

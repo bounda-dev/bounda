@@ -73,8 +73,9 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
     kept: "for as long as the database",
   },
   "forget-ledger": {
-    holds: "each forgetting's person, categories and reason, outside the database",
-    kept: "for good",
+    holds:
+      "each forgetting's person, categories and reason, and each change of restrictions, redaction and disclosure with its ids and names, the recipient's included, outside the database",
+    kept: "until the tenant is forgotten and every recipient of its data told",
   },
   "access-log": {
     holds: "every access to personal data, by ids, handed to app/audit.ts",
@@ -92,6 +93,9 @@ const keptFor = (record: InventoryRecord): string => {
   }
   if (record.name === "remembered-answers") {
     return `${record.keptFor}, or until erased by a forgetting`;
+  }
+  if (record.name === "forget-ledger") {
+    return `${record.keptFor}, or until the tenant is forgotten and every recipient of its data told`;
   }
   return record.keptFor;
 };

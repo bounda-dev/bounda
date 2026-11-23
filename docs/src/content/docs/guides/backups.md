@@ -19,6 +19,9 @@ operator does, and what the runtime then guarantees.
 - Keep the [tenant key store](/guides/personal-data/#the-tenant-key-store) apart from the
   database, and back it up apart: a restore of the database never touches it, which is what lets a
   [forgotten tenant](/guides/personal-data/#forgetting-a-tenant) stay forgotten in every copy.
+  Never restore a backup of it taken before a tenant's forgetting: the tenant's key comes back
+  with it, and the forget ledger no longer holds the tenant's entries once its recipients were
+  told.
 - Keep every version of the tenant's key a backup's keys are wrapped under, and every [master
   key](/guides/personal-data/#rotating-the-master-key) a backup of the tenant key store was taken
   under, as long as the backup: retire an older version of the tenant's key only once the backups

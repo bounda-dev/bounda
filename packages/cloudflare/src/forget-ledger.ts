@@ -201,7 +201,7 @@ export interface CreateKvForgetLedgerArgs {
    */
   readonly prefix: string;
   /**
-   * Expire each entry this long after its `forgottenAt`, which KV does by itself; kept for good
+   * Expire each entry this long after its `forgottenAt`, which KV does by itself; kept until `clear`
    * when omitted.
    */
   readonly keepForMs?: number | undefined;
@@ -290,6 +290,25 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
       const current = Number((await namespace.get(markKey(name))) ?? 0);
       if (current >= value) return;
       await namespace.put(markKey(name), String(value));
+    },
+    // Listed whole before the first delete, so no page is listed past keys a delete moved. KV
+    // deletes one key a call: a clear cut short by the operations an invocation may make has
+    // removed what it reached, and the next removes the rest.
+    clear: async () => {
+      const names: string[] = [];
+      for (const listed of [prefix, markKey("")]) {
+        for (let cursor: string | undefined; ; ) {
+          const page = await namespace.list({
+            prefix: listed,
+            limit: LIST_LIMIT,
+            ...(cursor === undefined ? {} : { cursor }),
+          });
+          names.push(...page.keys.map(({ name }) => name));
+          if (page.list_complete) break;
+          cursor = page.cursor;
+        }
+      }
+      await Promise.all(names.map((name) => namespace.delete(name)));
     },
   };
 };

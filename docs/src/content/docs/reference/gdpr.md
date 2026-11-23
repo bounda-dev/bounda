@@ -53,7 +53,10 @@ else, in a port's own store, a log, a file, another service, is the app's to ans
   30 days by default, kept longer only while a person whose data they hold is restricted; a
   `failed` letter stays until an operator settles it, since only they know whether the work it
   dropped is still owed, and `bounda status` counts those whose handler the app no longer runs, so
-  none is kept unseen.
+  none is kept unseen. The [forget ledger](/guides/personal-data/#the-forget-ledger), the one record
+  of a forgotten person meant to outlive their data, is kept for its `keepFor`, and a [forgotten
+  tenant's](/guides/personal-data/#forgetting-a-tenant) goes once every recipient of the tenant's
+  data is told, when no copy of its database can need it any longer.
 - **Integrity and confidentiality, 5(1)(f).** Bounda: personal fields are encrypted at rest under
   a key per person and category, in events, process states, stored commands, dead letters and read
   models, and snapshots under the database's key, all under a [hierarchy of
@@ -287,7 +290,11 @@ serves [nothing it should not](/guides/backups/#read-models-in-another-database)
 tenant's key, so nothing sealed of it opens again in the database or any copy of it, and deletes
 what an instance could still open with a key it keeps in memory, or that is kept in the clear and
 nothing would end: snapshots, remembered answers, subscribers' last failures, dead letters but
-those of the notices of the forgetting, and read models' rows.
+those of the notices of the forgetting, and read models' rows. Once every recipient of the
+tenant's data is told, the forget ledger's entries of the tenant go too, the ids of the persons it
+forgot, restricted, redacted or disclosed: the tenant's key record refuses every copy of its
+database from then on, and the only thing a copy restored before then still needed of the ledger
+was whom to tell.
 What a copy kept in the clear is in the [limitations](/reference/limitations/).
 
 **Left to the app.** Deciding that a ground of 17(1) applies; what the app writes outside the
@@ -333,7 +340,11 @@ its name, its kind, its country and the categories it receives. Bounda records w
 discloses to it, and tells it of every forgetting, restriction, announced lift, lift and
 redaction that touches data it received, through handlers the port module must export, once at
 least and in order, with a [dead letter](/guides/dead-letters/) when it keeps failing. A port
-declared late is presumed to hold what existed before, and told of the past.
+declared late is presumed to hold what existed before, and told of the past. A tenant's forgetting
+tells every recipient of any of its persons' data, those of disclosures a restored copy of the
+database lost included, which the forget ledger keeps until then; without a ledger to say which, a
+copy restored before the forgetting tells every recipient the app declares, presumed to hold the
+tenant's data.
 [`recipientsOf(person)`](/guides/personal-data/#telling-the-person) and `bounda recipients <person>`
 list a person's recipients, as 19 lets them ask.
 

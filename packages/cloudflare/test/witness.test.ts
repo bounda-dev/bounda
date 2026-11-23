@@ -10,10 +10,16 @@ import {
 import { describe, expect, it } from "vitest";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
+import {
+  createKvForgetLedger,
+  KV_FORGET_LEDGER_ROOT,
+  KV_LIST_DELAY_MS,
+} from "../src/forget-ledger.ts";
 import { witnessObjects } from "../src/testing.ts";
 import { witnessOf } from "../src/witnesses.ts";
 import { createWorker } from "../src/worker.ts";
 import type { quietRegistry } from "./app.ts";
+import { clock } from "./clock.ts";
 import { WitnessedStore } from "./test-worker.ts";
 
 witnessObjects(WitnessedStore);
@@ -141,8 +147,18 @@ describe("a Durable Object of a class witnessObjects watches", () => {
       field: "payload.remark",
     });
     await store.forgetTenant("witnessed-tenant", { despiteLegalObligations: true });
-    // Once its recipients are told, the object empties its storage and opens anew over it.
+    const ledger = createKvForgetLedger({
+      namespace: env.FORGET_LEDGER,
+      prefix: `${KV_FORGET_LEDGER_ROOT}witnessed-tenant/`,
+    });
+    expect(await ledger.read({ limit: 10 })).not.toEqual([]);
+    // Its recipients are told, but KV may not list yet an entry written in the last minute.
     await runInDurableObject(stub, (object) => object.alarm());
+    expect(await ledger.read({ limit: 10 })).not.toEqual([]);
+    // Once it does, the ledger is cleared, and the object empties its storage and opens anew.
+    clock.advance(KV_LIST_DELAY_MS);
+    await runInDurableObject(stub, (object) => object.alarm());
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
     await runInDurableObject(stub, (object) => expectTenantForgotten(object));
   });
 

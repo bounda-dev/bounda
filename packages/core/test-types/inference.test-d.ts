@@ -2191,6 +2191,17 @@ describe("operations", () => {
     >();
   });
 
+  it("clears a forgotten tenant's ledger, which every ledger can", () => {
+    expectTypeOf<ForgetLedger["clear"]>().toEqualTypeOf<() => Promise<void>>();
+    // @ts-expect-error a ledger of your own clears its store's entries and marks too
+    const _cannotClear: ForgetLedger = {
+      append: async () => undefined,
+      read: async () => [],
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
+    };
+  });
+
   it("names a process given up as abandoned", () => {
     expectTypeOf<ProcessStatus>().toEqualTypeOf<
       "started" | "completed" | "failed" | "timed_out" | "abandoned"

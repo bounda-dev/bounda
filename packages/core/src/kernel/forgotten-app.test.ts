@@ -305,7 +305,8 @@ describe("the runner of a forgotten tenant", () => {
       } as never,
       tenantKeys: { status: async () => null as never },
       forgotten: () => new TenantForgottenError("default", "2026-01-01T00:00:00.000Z"),
-      discharge: async () => undefined,
+      discharge: async () => null,
+      retain: async () => undefined,
       resettle: async () => {
         resettled += 1;
       },
@@ -349,7 +350,9 @@ describe("the runner of a forgotten tenant", () => {
       forgotten: () => new TenantForgottenError("default", "2026-01-01T00:00:00.000Z"),
       discharge: async () => {
         discharged += 1;
+        return null;
       },
+      retain: async () => undefined,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -404,7 +407,9 @@ describe("the runner of a forgotten tenant", () => {
       forgotten: () => new TenantForgottenError("default", "2026-01-01T00:00:00.000Z"),
       discharge: async () => {
         discharged += 1;
+        return null;
       },
+      retain: async () => undefined,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -417,6 +422,111 @@ describe("the runner of a forgotten tenant", () => {
     expect(discharged).toBe(0);
     expect(await runner.runUntilIdle(5)).toBe(true);
     expect(discharged).toBe(1);
+    await storage.close();
+  });
+  it("runs again, once due, a discharge that did not go through, and retains until one does", async () => {
+    const adapter = memory();
+    const storage = await adapter.createStorage();
+    const clock = createFixedClock(new Date("2026-01-01T00:00:00.000Z"));
+    const due = new Date("2026-01-01T00:01:00.000Z");
+    const outcomes: (Date | null)[] = [due, null];
+    let discharges = 0;
+    const retained: string[] = [];
+    const runner = createForgottenRunner({
+      tracer,
+      storage: storage as never,
+      config: resolveConfig({ storage: adapter }),
+      notices: {} as never,
+      delivery: { deliver: async () => "told" } as never,
+      recordAccess: async () => undefined,
+      restores: { check: async () => null } as never,
+      tenantKeys: { status: async () => null as never },
+      forgotten: () => new TenantForgottenError("default", "2026-01-01T00:00:00.000Z"),
+      discharge: async () => {
+        discharges += 1;
+        return outcomes.shift() ?? null;
+      },
+      retain: async (now) => {
+        retained.push(now.toISOString());
+      },
+      resettle: async () => undefined,
+      pendingRetries: ignoredRetries,
+      ids: createSequentialIdGenerator(),
+      clock,
+      logger: silentLogger,
+      errorText: "omit",
+    });
+    expect(await runner.nextDueAt()).toBeNull();
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    expect(discharges).toBe(1);
+    expect(await runner.nextDueAt()).toEqual(due);
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    expect(discharges).toBe(1);
+    clock.set(due);
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    expect(discharges).toBe(2);
+    expect(await runner.nextDueAt()).toBeNull();
+    expect(retained).toEqual([
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:01:00.000Z",
+    ]);
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    expect(discharges).toBe(2);
+    expect(retained).toHaveLength(3);
+    await storage.close();
+  });
+
+  it("discharges again after a pass that finds the database restored under it", async () => {
+    const adapter = memory();
+    const storage = await adapter.createStorage();
+    let restored: object | null = null;
+    let discharges = 0;
+    let retains = 0;
+    const runner = createForgottenRunner({
+      tracer,
+      storage: storage as never,
+      config: resolveConfig({ storage: adapter }),
+      notices: {} as never,
+      delivery: { deliver: async () => "told" } as never,
+      recordAccess: async () => undefined,
+      restores: {
+        check: async () => {
+          const found = restored;
+          restored = null;
+          return found;
+        },
+      } as never,
+      tenantKeys: { status: async () => null as never },
+      forgotten: () => new TenantForgottenError("default", "2026-01-01T00:00:00.000Z"),
+      discharge: async () => {
+        discharges += 1;
+        return discharges === 2 ? new Date("2026-01-01T00:01:00.000Z") : null;
+      },
+      retain: async () => {
+        retains += 1;
+      },
+      resettle: async () => undefined,
+      pendingRetries: ignoredRetries,
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(new Date("2026-01-01T00:00:00.000Z")),
+      logger: silentLogger,
+      errorText: "omit",
+    });
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    expect(discharges).toBe(1);
+    expect(retains).toBe(1);
+    restored = { first: true };
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    // The copy brought back what the discharge removed: it runs again, and retains meanwhile.
+    expect(discharges).toBe(2);
+    expect(retains).toBe(2);
+    expect(await runner.nextDueAt()).toEqual(new Date("2026-01-01T00:01:00.000Z"));
+    // Another restore found: due at once again, whatever the discharge asked.
+    restored = { first: false };
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    expect(discharges).toBe(3);
+    expect(await runner.nextDueAt()).toBeNull();
     await storage.close();
   });
 });

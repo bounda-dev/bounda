@@ -33,6 +33,7 @@ const forgetLedger = defineForgetLedger(() => ({
   read: async () => [],
   readMark: async () => 0,
   raiseMark: async () => undefined,
+  clear: async () => undefined,
 }));
 
 const message = (config: unknown): string => {

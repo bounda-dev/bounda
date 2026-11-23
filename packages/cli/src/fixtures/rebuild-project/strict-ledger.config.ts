@@ -17,6 +17,7 @@ export default defineConfig({
           read: down,
           readMark: down,
           raiseMark: down,
+          clear: down,
         })),
         strict: true,
       },

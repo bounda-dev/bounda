@@ -18,7 +18,7 @@ export interface CreateForgetLedgerFromEnvArgs {
   readonly tenant?: string | undefined;
   /**
    * How long the app keeps each entry after its `forgottenAt`, from `keepFor`; `undefined` keeps
-   * entries for good. Only a ledger without `prune` uses it, to expire its entries itself.
+   * entries until `clear`. Only a ledger without `prune` uses it, to expire its entries itself.
    */
   readonly keepForMs?: number | undefined;
 }
@@ -165,6 +165,7 @@ export const boundForgetLedger: BoundForgetLedgerFunction = ({ ledger, timeoutMs
     read: (args) => bound("read", () => ledger.read(args)),
     readMark: (name) => bound("readMark", () => ledger.readMark(name)),
     raiseMark: (name, value) => bound("raiseMark", () => ledger.raiseMark(name, value)),
+    clear: () => bound("clear", () => ledger.clear()),
     ...(ledger.visibilityDelayMs === undefined
       ? {}
       : { visibilityDelayMs: ledger.visibilityDelayMs }),

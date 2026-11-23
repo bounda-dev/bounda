@@ -56,9 +56,14 @@ export interface CreateForgottenRunnerArgs {
   readonly resettle: () => Promise<void>;
   /**
    * Runs once every recipient was told of the forgetting, its notices delivered or their dead
-   * letters resolved: what the database still held for them can go.
+   * letters resolved: what the database and the forget ledger still held for them can go. Resolves
+   * `null` once all of it went, or to when to run again; runs again after a restore found.
    */
-  readonly discharge: () => Promise<void>;
+  readonly discharge: () => Promise<Date | null>;
+  /**
+   * Runs before each pass until the discharge went through.
+   */
+  readonly retain: (now: Date) => Promise<void>;
   readonly pendingRetries: PendingRetries;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -82,6 +87,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   forgotten,
   resettle,
   discharge,
+  retain,
   pendingRetries,
   ids,
   clock,
@@ -90,14 +96,17 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   tracer,
 }) => {
   let discharged = false;
+  // When the discharge that did not go through all the way is due again.
+  let dischargeAt: Date | null = null;
   const dischargeOnceTold = async (): Promise<void> => {
     if (discharged) return;
+    if (dischargeAt !== null && clock.now() < dischargeAt) return;
     if ((await dispatcher.getLag()).maxLag > 0) return;
     if ((await storage.deadLetterStore.count({ kind: "recipient", status: "failed" })) > 0) return;
     // Every notice of the forgetting delivered or settled: its letters serve nobody any longer.
     await storage.deadLetterStore.clear();
-    await discharge();
-    discharged = true;
+    dischargeAt = await discharge();
+    discharged = dischargeAt === null;
   };
   const dispatcher = createDispatcher({
     eventStore: storage.eventStore,
@@ -111,7 +120,13 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
     ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
     // A copy restored under the app lacks what the forgetting removed: it is settled again first.
     beforePass: async () => {
-      if ((await restores.check(clock.now())) !== null) await resettle();
+      if ((await restores.check(clock.now())) !== null) {
+        await resettle();
+        // The copy brought back what the discharge removed from the database.
+        discharged = false;
+        dischargeAt = null;
+      }
+      if (!discharged) await retain(clock.now());
       await dischargeOnceTold();
     },
     clock,
@@ -147,7 +162,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
       }
       return false;
     },
-    nextDueAt: async () => null,
+    nextDueAt: async () => (discharged ? null : dischargeAt),
     getLag,
     status: () =>
       readAppStatus({

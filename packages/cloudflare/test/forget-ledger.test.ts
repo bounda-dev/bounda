@@ -94,6 +94,11 @@ const countingNamespace = () => {
       keys.set(name, options?.metadata ?? null);
       expirations.set(name, options?.expiration);
     },
+    get: async () => null,
+    delete: async (name: string) => {
+      keys.delete(name);
+      expirations.delete(name);
+    },
     list: async ({ prefix, limit = 1_000, cursor }: KVNamespaceListOptions = {}) => {
       pages += 1;
       const names = [...keys.keys()].filter((name) => name.startsWith(prefix ?? "")).sort();
@@ -115,6 +120,29 @@ const minute = (index: number): string =>
   new Date(Date.UTC(2026, 10, 7) + index * 60_000).toISOString();
 
 describe("the KV forget ledger's listing", () => {
+  it("clears every entry and mark of its object over every page, listed before the first delete", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const other = createKvForgetLedger({ namespace, prefix: "q/" });
+    const entries = Array.from({ length: 2_005 }, (_, index) => ({
+      personId: `c-${index}`,
+      eventId: `e-${String(index).padStart(4, "0")}`,
+      forgottenAt: minute(index),
+      categories: null,
+      reason: "requested" as const,
+    }));
+    await ledger.append(entries);
+    await other.append(entries.slice(0, 1));
+    await ledger.raiseMark("restore:generation", 4);
+    await other.raiseMark("restore:generation", 2);
+    await ledger.clear();
+    // A cursor that counts keys would skip a page if listing went on past deletes.
+    expect([...keys.keys()].sort()).toEqual([
+      "bounda/forget-ledger-marks/q/restore:generation",
+      `q/${String(8_640_000_000_000_000 - Date.parse(minute(0)))}:e-0000`,
+    ]);
+  });
+
   it("lists every page when it reads from the first entry", async () => {
     const { namespace, pages } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
