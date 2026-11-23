@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
+import { defineKeyWrapper } from "../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
 import { defineTenantKeyStore } from "../kernel/personal-data/tenant-key-source.ts";
 import { createMemoryForgetLedgers } from "../memory/forget-ledger.ts";
@@ -8,7 +9,7 @@ import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import { resolveConfig } from "./schema.ts";
 import type { Config } from "./types.ts";
 
-const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
+const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" });
 const ledger = () => createMemoryForgetLedgers().ledgerOf(undefined);
 
 const kept = (
@@ -24,7 +25,7 @@ describe("checkLocations", () => {
         readModels: { search: memory({ location: "us" }), totals: memory() },
         runtime: {
           personalData: {
-            keyWrapper,
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
             tenantKeys: memory({ location: "ch" }),
             forgetLedger: { store: defineForgetLedger(ledger) },
           },
@@ -88,6 +89,26 @@ describe("checkLocations", () => {
     );
   });
 
+  it("refuses a key wrapper kept elsewhere, since the master key opens every tenant's key", () => {
+    const wrapper = (location?: string) =>
+      defineKeyWrapper(
+        () => {
+          throw new Error("never built");
+        },
+        location === undefined ? {} : { location },
+      );
+    expect(() => resolveConfig(kept({ keyWrapper: wrapper("eu") }))).not.toThrow();
+    expect(() =>
+      resolveConfig(kept({ keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }) })),
+    ).toThrow(
+      'runtime.personalData.keyWrapper declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, so declare it through masterKey({ from, location: "eu" }) or defineKeyWrapper(create, { location: "eu" })',
+    );
+    expect(() => resolveConfig(kept({ keyWrapper: wrapper("us") }))).toThrow(
+      'runtime.personalData.keyWrapper keeps its data in "us", and storage keeps the app\'s in "eu"',
+    );
+    expect(() => resolveConfig(kept({ keyWrapper: wrapper() }, memory()))).not.toThrow();
+  });
+
   it("refuses a location that names no jurisdiction, wherever it is declared", () => {
     for (const location of ["", "  ", 42, null]) {
       const declared = { ...memory(), location } as unknown as ReturnType<typeof memory>;
@@ -96,6 +117,16 @@ describe("checkLocations", () => {
       );
       expect(() => resolveConfig({ storage: memory(), readModels: { search: declared } })).toThrow(
         `readModels.search declares where it keeps its data with a jurisdiction such as "eu", not ${JSON.stringify(location)}`,
+      );
+      expect(() =>
+        resolveConfig(
+          kept(
+            { keyWrapper: { ...masterKey({ from: "BOUNDA_MASTER_KEY" }), location } as never },
+            memory(),
+          ),
+        ),
+      ).toThrow(
+        `runtime.personalData.keyWrapper declares where it keeps its data with a jurisdiction such as "eu", not ${JSON.stringify(location)}`,
       );
       expect(() => resolveConfig(kept({ tenantKeys: declared }, memory()))).toThrow(
         `runtime.personalData.tenantKeys declares where it keeps its data with a jurisdiction such as "eu", not ${JSON.stringify(location)}`,

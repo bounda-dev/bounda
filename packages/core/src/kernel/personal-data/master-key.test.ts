@@ -52,6 +52,11 @@ describe("masterKey", () => {
     expect(masterKey({ from: "BOUNDA_MASTER_KEY" }).kind).toBe("bounda-key-wrapper");
   });
 
+  it("declares where the host whose environment holds it runs, when told", () => {
+    expect(masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }).location).toBe("eu");
+    expect(masterKey({ from: "BOUNDA_MASTER_KEY" })).not.toHaveProperty("location");
+  });
+
   it("wraps a key into bytes that are not the key, and unwraps them back as the same key", async () => {
     const wrapper = await create({ BOUNDA_MASTER_KEY: randomKey() });
     const { wrapped, key, original } = await wrapNew(wrapper);

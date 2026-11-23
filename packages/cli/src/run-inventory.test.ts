@@ -60,7 +60,7 @@ describe("bounda personal-data inventory", () => {
     ]);
     expect(code).toBe(EXIT_CONVENTION);
     expect(stdout).toContain(
-      "  storage declares no location, so the record cannot say where it keeps personal data, nor whether that is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()",
+      "  storage declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()",
     );
   });
 

@@ -1,3 +1,4 @@
+import type { DataLocationOptions } from "../../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
@@ -20,7 +21,10 @@ const KID_BYTES = 12;
 
 const WRAP_ALGORITHM = "AES-KW";
 
-export interface MasterKeyOptions {
+/**
+ * Options of `masterKey`; `location` declares where the host whose environment holds the key runs.
+ */
+export interface MasterKeyOptions extends DataLocationOptions {
   /**
    * The name of the environment variable that holds the master key, never the key itself.
    */
@@ -139,16 +143,21 @@ const wrapperOver = (current: MasterKey, older: readonly MasterKey[]): CryptoKey
  * missing or holds anything else fails the start with `ConfigurationError`, naming the variable,
  * never its value. Each key's id is derived from the key, so a wrong master key is told apart
  * from the right one, and rotating takes only moving the old variable to `previous`. WebCrypto
- * wraps and unwraps the keys itself: a tenant's raw key never reaches JavaScript memory.
+ * wraps and unwraps the keys itself: a tenant's raw key never reaches JavaScript memory. Under a
+ * storage that declares a `location`, the app refuses to start on a master key that declares
+ * another, or none.
  */
-export const masterKey: MasterKeyFunction = ({ from, previous = [] }) =>
-  defineCryptoKeyWrapper(async ({ env }): Promise<CryptoKeyWrapper> => {
-    const current = await importMasterKey(read(env, from));
-    const older = (
-      await Promise.all(previous.map((name) => importMasterKey(read(env, name))))
-    ).filter(({ kid }) => kid !== current.kid);
-    return wrapperOver(current, older);
-  });
+export const masterKey: MasterKeyFunction = ({ from, previous = [], location }) =>
+  defineCryptoKeyWrapper(
+    async ({ env }): Promise<CryptoKeyWrapper> => {
+      const current = await importMasterKey(read(env, from));
+      const older = (
+        await Promise.all(previous.map((name) => importMasterKey(read(env, name))))
+      ).filter(({ kid }) => kid !== current.kid);
+      return wrapperOver(current, older);
+    },
+    location === undefined ? {} : { location },
+  );
 
 export interface EphemeralMasterKeyFunction {
   (): KeyWrapperDefinition;

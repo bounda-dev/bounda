@@ -180,7 +180,7 @@ export default defineConfig({
   storage,
   runtime: {
     personalData: {
-      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
       tenantKeys: durableObjectTenantKeys({ storage }),
       forgetLedger: { store: durableObjectForgetLedger({ storage }) },
     },
@@ -312,7 +312,11 @@ configuration names none, refuses to start with a `ConfigurationError`.
   app refuses to start on one that names another, and so does `bounda personal-data inventory`.
 - The jurisdiction is the app's [location](/reference/configuration/#data-location): a read model
   on another adapter, such as a PostgreSQL server or a Turso database, declares the same with
-  `location: "eu"`, or the app refuses to start on it, and so does the record of processing.
+  `location: "eu"`, and so does the key wrapper, `masterKey({ from, location: "eu" })` or a KMS
+  through `defineKeyWrapper`, or the app refuses to start on it, and so does the record of
+  processing. Cloudflare holds the objects to the jurisdiction, not the Worker's secrets: where
+  the master key in `BOUNDA_MASTER_KEY` is kept is yours to answer for, as with any declared
+  location.
 - `workerd` has no jurisdictions where it runs locally, under `wrangler dev`, `vite dev` and the
   tests: there every object stays on your machine and the setting is ignored.
 - The jurisdiction holds the objects, not the Worker in front of them, which runs near each

@@ -304,6 +304,7 @@ describe("a project created by create-bounda", () => {
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
         { name: "persons", where: "sqlite", location: "eu", keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
         { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
       ]),
       findings: [],
@@ -495,6 +496,7 @@ describe("a project created by create-bounda", () => {
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
         { name: "persons", where: "cloudflare", location: "eu", keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
         // In the keeper, in the same jurisdiction as the objects.
         {
           name: "forget-ledger",

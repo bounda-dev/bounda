@@ -1995,7 +1995,7 @@ database. The record lists:
   since the subscriber got past it or the app stopped running it, each with the error
   text encrypted under everyone whose data the work read and [held back](#someone-elses-data) from
   an export when that is more than one person, what went to each recipient, the
-  [tenant key store](#the-tenant-key-store), the [forget ledger](#the-forget-ledger) for its
+  [master key](#a-master-key), the [tenant key store](#the-tenant-key-store), the [forget ledger](#the-forget-ledger) for its
   `keepFor`, and the [access log](#who-opened-what) when `app/audit.ts` exists, each with where it
   is kept;
 - whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
@@ -2024,8 +2024,9 @@ so a CI step fails on it:
 - [`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text), which puts the
   text of errors, personal data included, in logs no forgetting reaches;
 - a store of personal data, the storage, a read model in `readModels`, the tenant key store or the
-  forget ledger, that declares no [location](/reference/configuration/#data-location), so the
-  record cannot say whether keeping it there is a transfer out of the European Economic Area.
+  forget ledger, or the key wrapper, that declares no
+  [location](/reference/configuration/#data-location), so the record cannot say whether keeping it
+  there is a transfer out of the European Economic Area.
 
 A name says personal data when one of its words, or two of them joined, is one the GDPR's
 definitions point at: an identifier of article 4(1), such as a name (`name`, `firstName`,
@@ -2130,7 +2131,10 @@ openssl rand -base64 32
 A variable that is missing, or holds anything else, fails the start with a `ConfigurationError`
 that names the variable, never its value. The keys are wrapped with AES-KW; each master key's id is
 derived from it, so a wrong master key is told apart from the right one: reading a key it did not
-wrap fails with a `ConfigurationError` saying under which id that key is.
+wrap fails with a `ConfigurationError` saying under which id that key is. `location` declares where
+the host whose environment holds the master key runs, `masterKey({ from, location: "eu" })`, and a
+storage that declares a [location](/reference/configuration/#data-location) refuses a master key
+declared anywhere else, or nowhere: whoever holds the key can open what it protects.
 
 An app whose registry marks a field `personal` needs both `keyWrapper` and `tenantKeys`: without
 either it does not start, and the `ConfigurationError` says what to set. The one exception is
@@ -2433,15 +2437,22 @@ const kms = defineKeyWrapper(({ env }) => {
       return Plaintext;
     },
   };
-});
+}, { location: "eu" });
 
 export default defineConfig({
-  storage: sqlite({ path: "./data/app.db" }),
+  storage: sqlite({ path: "./data/app.db", location: "eu" }),
   runtime: {
-    personalData: { keyWrapper: kms, tenantKeys: sqlite({ path: "./keys/tenant-keys.db" }) },
+    personalData: {
+      keyWrapper: kms,
+      tenantKeys: sqlite({ path: "./keys/tenant-keys.db", location: "eu" }),
+    },
   },
 });
 ```
+
+`location` declares where the KMS keeps the key, the region of its ARN: one outside the storage's
+location is refused, since encryption protects the data from a transfer only while the key stays
+where the data is.
 
 `kid` is stored next to every version of the tenant's key the wrapper wraps; `unwrap` receives it
 back, with what `wrap` returned. A KMS needs the key's raw bytes, so the tenant's key exists as bytes
@@ -2679,7 +2690,7 @@ export default defineConfig({
   storage,
   runtime: {
     personalData: {
-      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
       tenantKeys: durableObjectTenantKeys({ storage }),
       forgetLedger: { store: durableObjectForgetLedger({ storage }) },
     },

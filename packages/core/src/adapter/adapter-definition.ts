@@ -26,15 +26,16 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
 }
 
 /**
- * The `location` option every adapter takes: where its database keeps the data.
+ * The `location` option every adapter, `masterKey` and `defineKeyWrapper` take: where the data, or
+ * the master key, is kept.
  */
 export interface DataLocationOptions {
   /**
-   * The jurisdiction the database keeps its data in, such as `"eu"`, written the same way for
-   * every store of the app; you answer for it, as Bounda cannot see where a database runs. The
-   * record of processing states it next to everything kept there, and lists each store that
-   * declares none as a finding. Declared on `storage`, it is the app's: the app refuses to start
-   * on a read model, tenant key store or forget ledger that declares another, or none.
+   * The jurisdiction it is kept in, such as `"eu"`, written the same way across the app; you answer
+   * for it, as Bounda cannot see where a database or a host runs. The record of processing states
+   * it next to everything kept there, and lists each store that declares none as a finding.
+   * Declared on `storage`, it is the app's: the app refuses to start on a read model, tenant key
+   * store, forget ledger or key wrapper that declares another, or none.
    */
   readonly location?: string;
 }

@@ -424,7 +424,7 @@ describe("a keeper object", () => {
 });
 
 describe("cloudflare() with a jurisdiction", () => {
-  const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
+  const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" });
   const refusal = (config: Config): string => {
     try {
       cloudflareStorageOf(config);

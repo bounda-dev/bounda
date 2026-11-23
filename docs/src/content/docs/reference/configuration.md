@@ -49,7 +49,8 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
 Every adapter takes **`location`**, none by default: the jurisdiction its database keeps the data
 in, such as `"eu"`, written the same way for every store of the app. `cloudflare()` takes its
 [`jurisdiction`](/adapters/cloudflare/#data-location) instead, and `defineTenantKeyStore` and
-`defineForgetLedger` take a `location` as their second argument.
+`defineForgetLedger` take a `location` as their second argument, and so does `defineKeyWrapper`;
+`masterKey` takes it beside `from`.
 
 ```ts
 const location = "eu";
@@ -59,7 +60,7 @@ export default defineConfig({
   readModels: { search: sqlite({ url: process.env.SEARCH_URL!, location }) },
   runtime: {
     personalData: {
-      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location }),
       tenantKeys: postgresql({ url: process.env.TENANT_KEYS_URL!, location }),
     },
   },
@@ -68,16 +69,18 @@ export default defineConfig({
 
 - The location `storage` declares is the app's. The app refuses to start, with `ConfigurationError`,
   and [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) to draw the
-  record, on a read model in `readModels`, `personalData.tenantKeys` or
+  record, on a read model in `readModels`, `personalData.keyWrapper`, `personalData.tenantKeys` or
   `personalData.forgetLedger.store` that declares another location, or none: each carries the
-  persons' data, or the key that opens it, wherever it is kept.
+  persons' data, or the key that opens it, wherever it is kept, and encryption protects data from
+  a transfer only while its keys stay behind.
 - A `storage` that declares none holds nothing else to one, and each store says its own.
-- The record of processing states each one's location next to everything kept there, and lists
-  every store of personal data that declares none as a finding, which makes the command exit `1`.
+- The record of processing states each one's location next to everything kept there, the master
+  key's included, and lists every store of personal data, and the key wrapper, that declares none
+  as a finding, which makes the command exit `1`.
 - A location is a non-empty name, compared as written: `"eu"` and `"EU"` are two. Bounda cannot see
   where a server, a file or a process is, so it is taken at its word; on Cloudflare the platform
-  holds each object to its jurisdiction. A local file or `memory()` declares where the host runs,
-  and the app's processes run where its storage is.
+  holds each object to its jurisdiction, not a Worker's secrets. A local file, `memory()` and
+  `masterKey` declare where the host runs, and the app's processes run where its storage is.
 - `create-bounda` writes `"eu"`. See [transfers out of the
   EEA](/reference/gdpr/#transfers-out-of-the-eea-articles-44-to-49).
 
@@ -166,7 +169,9 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   previous: [...] })` names the environment variables that hold the current master key and the
   ones used before, 32 random bytes in base64 each (`openssl rand -base64 32`), read from the
   host's environment when the app starts; a variable missing or malformed fails the start with
-  `ConfigurationError`. A KMS or a vault is given through `defineKeyWrapper`. Versions of the
+  `ConfigurationError`. A KMS or a vault is given through `defineKeyWrapper`. Both take a
+  [`location`](#data-location), where the host or the KMS keeps the master key, which a `storage`
+  that declares one requires to be the same. Versions of the
   tenant's key wrapped under a previous master key are rewrapped by the worker in the background.
   `memory()` brings a master key of its own, gone with the process. See
   [where the keys live](/guides/personal-data/#where-the-keys-live).

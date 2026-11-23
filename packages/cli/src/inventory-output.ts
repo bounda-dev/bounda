@@ -72,6 +72,10 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
     holds: "which categories of whose data went to each recipient, and when",
     kept: "for as long as the database",
   },
+  "master-key": {
+    holds: "the master key, which every tenant's key is wrapped under, outside the database",
+    kept: "until rotated out, and for as long as a backup of the tenant keys needs it",
+  },
   "tenant-keys": {
     holds:
       "the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database",

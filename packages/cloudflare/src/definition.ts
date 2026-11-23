@@ -23,10 +23,10 @@ export interface CloudflareOptions {
    * start. Choose it before the first object exists: an object never moves, and a tenant reached
    * in a new jurisdiction is a new, empty object. Left out, each object is placed near the request
    * that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
-   * which has no jurisdictions. It is the app's `location`: every read model, the tenant key store
-   * and the forget ledger must be kept in it too, as `durableObjectTenantKeys` and
-   * `durableObjectForgetLedger` are, and a read model on another adapter must declare it as its
-   * `location`.
+   * which has no jurisdictions. It is the app's `location`: every read model, the tenant key
+   * store, the forget ledger and the key wrapper must be kept in it too, as
+   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are; a read model on another adapter,
+   * and `masterKey` or `defineKeyWrapper`, declare it as their `location`.
    */
   readonly jurisdiction?: DurableObjectJurisdiction;
 }
@@ -50,8 +50,9 @@ export interface CloudflareFunction {
  * all in one object, whose `location` is the `jurisdiction`. Throws `ConfigurationError` for a
  * `jurisdiction` that is not a name; a configuration that puts it beside another storage, a read
  * model on it in another jurisdiction than `storage`, or, with a `jurisdiction`, a read model,
- * tenant key store or forget ledger whose `location` is not that jurisdiction, as a Workers KV
- * one's never is, is refused wherever it is resolved, the record of processing included.
+ * tenant key store, forget ledger or key wrapper whose `location` is not that jurisdiction, as a
+ * Workers KV one's never is, is refused wherever it is resolved, the record of processing
+ * included.
  */
 export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options } = {}) => {
   // A Worker's code is not always type-checked.

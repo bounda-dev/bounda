@@ -152,8 +152,9 @@ export interface InventoryRecipient {
  * (`personal-keys`), their activity and restriction (`persons`), the runtime's events about them
  * (`forgettings`), the answers remembered for idempotent commands (`remembered-answers`), the error
  * text of failed work (`dead-letters`) and of each subscriber's last failure
- * (`subscriber-failures`), what went to each recipient (`disclosures`), the tenant's key that
- * every personal key is wrapped under, kept apart (`tenant-keys`), the forgettings recorded
+ * (`subscriber-failures`), what went to each recipient (`disclosures`), the master key that
+ * wraps every tenant's key (`master-key`), the tenant's key that every personal key is wrapped
+ * under, kept apart (`tenant-keys`), the forgettings recorded
  * outside the database (`forget-ledger`) and the accesses handed to `app/audit.ts` (`access-log`).
  */
 export type InventoryRecordName =
@@ -164,6 +165,7 @@ export type InventoryRecordName =
   | "dead-letters"
   | "subscriber-failures"
   | "disclosures"
+  | "master-key"
   | "tenant-keys"
   | "forget-ledger"
   | "access-log";
@@ -171,8 +173,9 @@ export type InventoryRecordName =
 export interface InventoryRecord {
   readonly name: InventoryRecordName;
   /**
-   * The name of the adapter of the database that keeps it, `"tenant-keys"` for the tenant key
-   * store, `"forget-ledger"` for the ledger and `"app/audit.ts"` for the access log.
+   * The name of the adapter of the database that keeps it, `"key-wrapper"` for the master key,
+   * `"tenant-keys"` for the tenant key store, `"forget-ledger"` for the ledger and
+   * `"app/audit.ts"` for the access log.
    */
   readonly where: string;
   /**
@@ -201,8 +204,8 @@ export interface InventoryNotPersonal {
  * cannot reach (a payload that is not an object, or an object that keeps keys it does not
  * declare); `no-basis`, personal fields in the default category, which declares no legal basis;
  * `error-text`, logs that carry the text of errors, which may quote personal data; `no-location`,
- * a store of personal data that declares no `location`, so the record cannot say whether it is a
- * transfer out of the European Economic Area (article 30(1)(e)).
+ * a store of personal data, or the key wrapper, that declares no `location`, so the record cannot
+ * say whether it is a transfer out of the European Economic Area (article 30(1)(e)).
  */
 export type InventoryFindingKind =
   | "unclassified"
@@ -450,7 +453,7 @@ const recordsOf = (
   recipients: readonly InventoryRecipient[],
 ): InventoryRecord[] => {
   const { database: storage, location } = keptIn(config.storage);
-  const { tenantKeys, forgetLedger: ledger } = config.runtime.personalData;
+  const { keyWrapper, tenantKeys, forgetLedger: ledger } = config.runtime.personalData;
   return [
     { name: "personal-keys", where: storage, location, keptFor: null },
     { name: "persons", where: storage, location, keptFor: null },
@@ -476,6 +479,16 @@ const recordsOf = (
     ...(recipients.length === 0
       ? []
       : [{ name: "disclosures" as const, where: storage, location, keptFor: null }]),
+    ...(keyWrapper === null
+      ? []
+      : [
+          {
+            name: "master-key" as const,
+            where: "key-wrapper",
+            location: keyWrapper.location ?? null,
+            keptFor: null,
+          },
+        ]),
     ...(tenantKeys === null
       ? []
       : [
@@ -523,7 +536,7 @@ const unlocated = (
   // Nothing personal, nothing to place: a disclosure alone still names its person in storage.
   if (holders.length === 0 && recipients.length === 0) return [];
   const { storage, readModels } = config;
-  const { tenantKeys, forgetLedger } = config.runtime.personalData;
+  const { keyWrapper, tenantKeys, forgetLedger } = config.runtime.personalData;
   const stores: Placed[] = [
     { path: "storage", declared: storage, through: optionsOf(storage) },
     ...holders.flatMap((holder) => {
@@ -538,6 +551,15 @@ const unlocated = (
             },
           ];
     }),
+    ...(keyWrapper === null
+      ? []
+      : [
+          {
+            path: "runtime.personalData.keyWrapper",
+            declared: keyWrapper,
+            through: "masterKey({ from, location }) or defineKeyWrapper(create, { location })",
+          },
+        ]),
     ...(tenantKeys === null
       ? []
       : [
@@ -563,7 +585,7 @@ const unlocated = (
       kind: "no-location",
       holder: null,
       field: null,
-      message: `${path} declares no location, so the record cannot say where it keeps personal data, nor whether that is a transfer out of the European Economic Area (article 30(1)(e)); declare one through ${through}`,
+      message: `${path} declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through ${through}`,
     }));
 };
 

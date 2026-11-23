@@ -455,7 +455,7 @@ read model that holds personal data, whose, how it is kept and where its copies 
 with their country and safeguard; what the runtime keeps about persons and for how long, the dead
 letters, the subscribers' last failures and the remembered answers among it, with what an export
 holds back of them under 15(4); the keys,
-the tenant key store and the forget ledger; where each database and store keeps them, as its
+the master key, the tenant key store and the forget ledger; where each database and store keeps them, as its
 `location` declares it, so the record tells whether any is a transfer to a third country, 30(1)(e);
 and the fields marked `notPersonal`. `--markdown` writes it as a document and
 `--json` as data; it exits `1` while anything keeps it from being complete, a store of personal data that
@@ -542,11 +542,14 @@ processing lists every transfer.
 
 Every database and store declares the jurisdiction it keeps its data in: `location: "eu"` on
 `sqlite()`, `postgresql()` and `memory()`, the `jurisdiction` on `cloudflare()`, and the `location`
-of `defineTenantKeyStore` and `defineForgetLedger` for stores of your own. The location `storage`
-declares is the app's: the app refuses to start, and the record of processing to be drawn, on a read
-model, tenant key store or forget ledger that declares another, or none, since each carries the
-persons' data, or the key that opens it, wherever it is kept. The record of processing states each
-one's location, and lists every store of personal data that declares none as a finding, 30(1)(e).
+of `defineTenantKeyStore` and `defineForgetLedger` for stores of your own; `masterKey` and
+`defineKeyWrapper` declare where the master key is. The location `storage` declares is the app's:
+the app refuses to start, and the record of processing to be drawn, on a read model, tenant key
+store, forget ledger or key wrapper that declares another, or none, since each carries the persons'
+data, or the key that opens it, wherever it is kept, and encryption protects data from a transfer
+only while its keys stay where the data is (EDPB recommendations 01/2020). The record of processing
+states each one's location, and lists every store of personal data, and the key wrapper, that
+declares none as a finding, 30(1)(e).
 `create-bounda` writes `"eu"` in every project. See [Data
 location](/reference/configuration/#data-location).
 
@@ -560,9 +563,10 @@ and is refused under one. See [Data location](/adapters/cloudflare/#data-locatio
 Left to the controller: the safeguard itself, the clauses signed and the transfer impact
 assessment, and the truth of every `location` but the one Cloudflare holds an object to. Bounda
 cannot see where a PostgreSQL server, a SQLite file or a process runs, so a declared location is
-taken at its word, and the processes of a Node app must run where its storage is. Backups, logs, the
-access log `app/audit.ts` and the master key, whether in the environment or in a key management
-service behind `defineKeyWrapper`, are where the app puts them. One app keeps its stores in one
+taken at its word, and the processes of a Node app must run where its storage is. Backups, logs and
+the access log `app/audit.ts` are where the app puts them; on Cloudflare, the platform holds the
+objects to their jurisdiction, not the Worker's secrets, so the master key's location is the
+controller's to keep true. One app keeps its stores in one
 jurisdiction: stores in two, even between which a transfer needs no safeguard, as from the EU to an
 adequate country, are declared by giving `storage` no location and each store its own, and the
 record then lists `storage` as a finding. On Cloudflare, the jurisdiction holds the objects, not the

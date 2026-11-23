@@ -146,7 +146,7 @@ describe("a rotation of the master key on Cloudflare", () => {
         storage: cloudflare({ binding: "SPY", jurisdiction: "eu" }),
         runtime: {
           personalData: {
-            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
             // The records `STORE` keeps in KV, which a store of the EU would hold.
             tenantKeys: defineTenantKeyStore(
               ({ env: bound }) =>

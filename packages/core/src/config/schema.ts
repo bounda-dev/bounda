@@ -277,6 +277,7 @@ export const resolveConfig: ResolveConfigFunction = (config) => {
     readModels: parsed.readModels ?? {},
     tenantKeys: parsed.runtime?.personalData?.tenantKeys,
     forgetLedger: parsed.runtime?.personalData?.forgetLedger?.store,
+    keyWrapper: parsed.runtime?.personalData?.keyWrapper,
   });
   const baseCommands = resolveCommands(parsed.runtime?.commands, DEFAULT_COMMANDS);
   const basePolicies = resolvePolicies(parsed.runtime?.policies, DEFAULT_POLICIES);

@@ -1,3 +1,4 @@
+import type { DataLocationOptions } from "../../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
@@ -60,6 +61,11 @@ export interface CreateKeyWrapperArgs {
  */
 export interface KeyWrapperDefinition {
   readonly kind: "bounda-key-wrapper";
+  /**
+   * Where the master key is kept, as `masterKey` or `defineKeyWrapper` declares it, such as
+   * `"eu"`.
+   */
+  readonly location?: string;
 }
 
 export interface CryptoUnwrapArgs extends UnwrapArgs {
@@ -101,11 +107,21 @@ export interface BuildableKeyWrapperDefinition extends KeyWrapperDefinition {
 }
 
 export interface DefineCryptoKeyWrapperFunction {
-  (create: BuildableKeyWrapperDefinition["create"]): KeyWrapperDefinition;
+  (
+    create: BuildableKeyWrapperDefinition["create"],
+    options?: DataLocationOptions,
+  ): KeyWrapperDefinition;
 }
 
-export const defineCryptoKeyWrapper: DefineCryptoKeyWrapperFunction = (create) => {
-  const definition: BuildableKeyWrapperDefinition = { kind: "bounda-key-wrapper", create };
+export const defineCryptoKeyWrapper: DefineCryptoKeyWrapperFunction = (
+  create,
+  { location } = {},
+) => {
+  const definition: BuildableKeyWrapperDefinition = {
+    kind: "bounda-key-wrapper",
+    create,
+    ...(location === undefined ? {} : { location }),
+  };
   return definition;
 };
 
@@ -136,15 +152,20 @@ export const cryptoKeyWrapperOver: CryptoKeyWrapperOverFunction = (wrapper) => (
 });
 
 export interface DefineKeyWrapperFunction {
-  (create: (args: CreateKeyWrapperArgs) => KeyWrapper | Promise<KeyWrapper>): KeyWrapperDefinition;
+  (
+    create: (args: CreateKeyWrapperArgs) => KeyWrapper | Promise<KeyWrapper>,
+    options?: DataLocationOptions,
+  ): KeyWrapperDefinition;
 }
 
 /**
  * A key wrapper of your own, such as one that asks a KMS, built from the host's environment when
- * the app starts. A `create` that throws fails the start.
+ * the app starts. A `create` that throws fails the start. `location` declares where the KMS keeps
+ * the master key: under a storage that declares one, the app refuses to start on a wrapper that
+ * declares another, or none.
  */
-export const defineKeyWrapper: DefineKeyWrapperFunction = (create) =>
-  defineCryptoKeyWrapper(async (args) => cryptoKeyWrapperOver(await create(args)));
+export const defineKeyWrapper: DefineKeyWrapperFunction = (create, options) =>
+  defineCryptoKeyWrapper(async (args) => cryptoKeyWrapperOver(await create(args)), options);
 
 export interface IsKeyWrapperDefinitionFunction {
   (value: unknown): value is BuildableKeyWrapperDefinition;

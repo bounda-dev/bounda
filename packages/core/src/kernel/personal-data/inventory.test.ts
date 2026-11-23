@@ -10,6 +10,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
 import { personalDataInventory } from "./inventory.ts";
+import type { KeyWrapperDefinition } from "./key-wrapper.ts";
 import { masterKey } from "./master-key.ts";
 import { defineTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
 
@@ -401,7 +402,7 @@ describe("personalDataInventory", () => {
       { kind: "no-location", holder: null, field: null },
     ]);
     expect(inventory.findings[5]?.message).toBe(
-      "storage declares no location, so the record cannot say where it keeps personal data, nor whether that is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()",
+      "storage declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()",
     );
     expect(inventory.findings[0]?.message).toBe(
       'customer.CustomerNoted: field "summary" can hold text and is not marked; mark it personal or notPersonal',
@@ -718,6 +719,12 @@ describe("personalDataInventory", () => {
       keptFor: "30d",
     });
     expect(records).toContainEqual({
+      name: "master-key",
+      where: "key-wrapper",
+      location: null,
+      keptFor: null,
+    });
+    expect(records).toContainEqual({
       name: "tenant-keys",
       where: "tenant-keys",
       location: null,
@@ -725,13 +732,35 @@ describe("personalDataInventory", () => {
     });
     expect(security).toEqual({ masterKey: true, tenantKeys: true, forgetLedger: true });
     const unplaced = (path: string) =>
-      `${path} declares no location, so the record cannot say where it keeps personal data, nor whether that is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()`;
+      `${path} declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()`;
     expect(findings.map(({ message }) => message)).toEqual([
       "3 personal fields are in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one",
       unplaced("storage"),
+      `${unplaced("runtime.personalData.keyWrapper").slice(0, -"the options of its memory()".length)}masterKey({ from, location }) or defineKeyWrapper(create, { location })`,
       unplaced("runtime.personalData.tenantKeys"),
       unplaced("runtime.personalData.forgetLedger.store"),
     ]);
+  });
+
+  it("states where the master key is kept, as its key wrapper declares it", () => {
+    const recordOf = (keyWrapper: KeyWrapperDefinition) =>
+      personalDataInventory({
+        registry: { aggregates: {}, readModels: {} },
+        config: { storage: memory(), runtime: { personalData: { keyWrapper } } },
+      }).records.find(({ name }) => name === "master-key");
+    expect(recordOf(masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }))).toEqual({
+      name: "master-key",
+      where: "key-wrapper",
+      location: "eu",
+      keptFor: null,
+    });
+    expect(recordOf(masterKey({ from: "BOUNDA_MASTER_KEY" }))?.location).toBeNull();
+    expect(
+      personalDataInventory({
+        registry: { aggregates: {}, readModels: {} },
+        config: { storage: memory() },
+      }).records.find(({ name }) => name === "master-key"),
+    ).toBeUndefined();
   });
 
   it("states where the tenant key store keeps the keys, as it declares it", () => {
@@ -779,7 +808,7 @@ describe("personalDataInventory", () => {
         readModels: { members: memory({ location: "us" }), visits: memory({ location: "us" }) },
         runtime: {
           personalData: {
-            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "us" }),
             tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore, { location: "us" }),
             forgetLedger: {
               store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(undefined), {
@@ -816,6 +845,7 @@ describe("personalDataInventory", () => {
     ).toEqual([
       "storage",
       "readModels.members",
+      "runtime.personalData.keyWrapper",
       "runtime.personalData.tenantKeys",
       "runtime.personalData.forgetLedger.store",
     ]);
@@ -834,6 +864,7 @@ describe("personalDataInventory", () => {
       }),
     ).toEqual([
       "declare one through the options of its memory()",
+      "declare one through masterKey({ from, location }) or defineKeyWrapper(create, { location })",
       "declare one through defineTenantKeyStore(create, { location })",
       "declare one through defineForgetLedger(create, { location })",
     ]);

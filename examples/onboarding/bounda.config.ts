@@ -18,7 +18,7 @@ export default defineConfig({
   },
   runtime: {
     personalData: {
-      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location }),
       tenantKeys:
         keys === undefined
           ? sqlite({ path: "./keys/tenant-keys.db", location })

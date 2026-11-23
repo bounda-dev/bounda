@@ -396,7 +396,16 @@ describe("defineConfig", () => {
     expectTypeOf(masterKey).parameter(0).toEqualTypeOf<{
       readonly from: string;
       readonly previous?: readonly string[];
+      readonly location?: string;
     }>();
+    expectTypeOf(masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }).location).toEqualTypeOf<
+      string | undefined
+    >();
+    expectTypeOf<Parameters<typeof defineKeyWrapper>[1]>().toEqualTypeOf<
+      DataLocationOptions | undefined
+    >();
+    // @ts-expect-error a location is a jurisdiction's name, such as "eu"
+    masterKey({ from: "BOUNDA_MASTER_KEY", location: 7 });
     expectTypeOf(masterKey({ from: "BOUNDA_MASTER_KEY" })).toEqualTypeOf<KeyWrapperDefinition>();
     const kms = defineKeyWrapper(({ env: received }) => {
       expectTypeOf(received).toEqualTypeOf(env);
@@ -578,6 +587,7 @@ describe("location", () => {
       },
     });
     expectTypeOf<"tenant-keys">().toExtend<InventoryRecordName>();
+    expectTypeOf<"master-key">().toExtend<InventoryRecordName>();
     expectTypeOf<"no-location">().toExtend<InventoryFindingKind>();
   });
 });

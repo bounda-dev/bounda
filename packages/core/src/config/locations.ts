@@ -1,6 +1,7 @@
 import { type AdapterDefinition, isAdapterDefinition } from "../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import type { ForgetLedgerSource } from "../kernel/personal-data/forget-ledger.ts";
+import type { KeyWrapperDefinition } from "../kernel/personal-data/key-wrapper.ts";
 import type { TenantKeySource } from "../kernel/personal-data/tenant-key-source.ts";
 
 export interface CheckLocationsArgs {
@@ -8,6 +9,7 @@ export interface CheckLocationsArgs {
   readonly readModels: Readonly<Record<string, AdapterDefinition>>;
   readonly tenantKeys: TenantKeySource | undefined;
   readonly forgetLedger: ForgetLedgerSource | undefined;
+  readonly keyWrapper: KeyWrapperDefinition | undefined;
 }
 
 export interface CheckLocationsFunction {
@@ -44,13 +46,15 @@ const definitionFix = (holder: object, define: string): Kept["fix"] =>
         `declare it through ${define}(create, { location: ${JSON.stringify(location)} })`;
 
 // The storage holds the events, the source of every copy of a person's data: a read model, the
-// tenant's key or a record of whom the app forgot, kept anywhere else, would carry that data, or
-// the means to open it, out of the jurisdiction the storage declares.
+// tenant's key, the master key that opens it or a record of whom the app forgot, kept anywhere
+// else, would carry that data, or the means to open it, out of the jurisdiction the storage
+// declares (keys abroad defeat the encryption that protects data at home, EDPB 01/2020).
 export const checkLocations: CheckLocationsFunction = ({
   storage,
   readModels,
   tenantKeys,
   forgetLedger,
+  keyWrapper,
 }) => {
   const where = locationOf("storage", storage);
   const kept: Kept[] = [
@@ -75,6 +79,16 @@ export const checkLocations: CheckLocationsFunction = ({
             path: "runtime.personalData.forgetLedger.store",
             holder: forgetLedger,
             fix: definitionFix(forgetLedger, "defineForgetLedger"),
+          },
+        ]),
+    ...(keyWrapper === undefined
+      ? []
+      : [
+          {
+            path: "runtime.personalData.keyWrapper",
+            holder: keyWrapper,
+            fix: (location: string) =>
+              `declare it through masterKey({ from, location: ${JSON.stringify(location)} }) or defineKeyWrapper(create, { location: ${JSON.stringify(location)} })`,
           },
         ]),
   ];
