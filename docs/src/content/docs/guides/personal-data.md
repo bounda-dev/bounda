@@ -2728,7 +2728,7 @@ time; its `readMark` and `raiseMark` keep numbers that only go up, which the run
 a copy [restored while the app was stopped](#restores); its `clear` removes every entry and mark of
 its tenant, which the runtime calls once the tenant is [forgotten](#forgetting-a-tenant) and every
 recipient told, and resolves `false` when it removed part only, so the runtime calls it again at
-once; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has
+its next pass; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has
 to pass.
 
 ### What the runtime does with it

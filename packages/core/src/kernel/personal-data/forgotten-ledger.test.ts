@@ -58,7 +58,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     expect(cleared).toBe(1);
   });
 
-  it("asks to be run again at once after a clear that removed part only, and says nothing yet", async () => {
+  it("asks to be run again at the next pass after a clear that removed part only, and says nothing yet", async () => {
     const recording = createRecordingLogger();
     const ledger = createForgottenLedger({
       ledger: { clear: async () => false },
@@ -67,7 +67,7 @@ describe("the forget ledger of a forgotten tenant", () => {
       tenant: "acme",
       logger: recording.logger,
     });
-    expect(await ledger.clear(FORGETTING, later(5))).toEqual(later(5));
+    expect(await ledger.clear(FORGETTING, later(5))).toEqual(later(6));
     expect(recording.entries).toEqual([]);
   });
 

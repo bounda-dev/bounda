@@ -278,6 +278,38 @@ describe("forgetTenant", () => {
     expect(await app.nextDueAt()).toBeNull();
   });
 
+  it("clears what is left of a ledger cleared in part at the next pass, never in the same one", async () => {
+    const ledgers = memory();
+    const results = [false, true];
+    let clears = 0;
+    const ledger = defineForgetLedger(async ({ tenant }) => {
+      const kept = await ledgers.createForgetLedger({ tenant });
+      return {
+        ...kept,
+        clear: async () => {
+          clears += 1;
+          await kept.clear();
+          return results.shift() ?? true;
+        },
+      };
+    });
+    const clock = createFixedClock();
+    const app = await createApp({
+      registry,
+      config: { storage: memory(), runtime: { personalData: { forgetLedger: { store: ledger } } } },
+      clock,
+    });
+    stops.push(() => app.stop());
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await app.runUntilIdle();
+    expect(clears).toBe(1);
+    expect(await app.nextDueAt()).toEqual(new Date(clock.now().getTime() + 1));
+    clock.advance(1);
+    await app.runUntilIdle();
+    expect(clears).toBe(2);
+    expect(await app.nextDueAt()).toBeNull();
+  });
+
   it("raises the ledger's mark for an app without keys, which no forgetting of a tenant can reach", async () => {
     const keyless = {
       aggregates: {
