@@ -8,26 +8,26 @@ catalogMode: strict
 catalog:
   "@arethetypeswrong/cli": 0.18.5
   "@astrojs/starlight": 0.42.11
-  "@biomejs/biome": 2.6.7
-  "@cloudflare/vite-plugin": 1.69.1
-  "@cloudflare/vitest-plugin": 1.8.2
-  "@cloudflare/workers-types": 5.20261114.1
+  "@biomejs/biome": 2.6.8
+  "@cloudflare/vite-plugin": 1.70.1
+  "@cloudflare/vitest-plugin": 1.8.5
+  "@cloudflare/workers-types": 5.20261120.1
   "@opentelemetry/api": 1.10.0
   "@changesets/cli": 3.0.3
   "@clack/prompts": 1.9.0
   "@libsql/client": 0.18.0
   "@playwright/test": 1.65.1
-  "@react-router/dev": 8.5.1
-  "@react-router/node": 8.5.1
-  "@react-router/serve": 8.5.1
+  "@react-router/dev": 8.5.2
+  "@react-router/node": 8.5.2
+  "@react-router/serve": 8.5.2
   "@stryker-mutator/core": 10.1.1
   "@stryker-mutator/vitest-runner": 10.1.1
-  "@testcontainers/postgresql": 12.2.1
+  "@testcontainers/postgresql": 12.2.2
   "@types/node": 26.6.6
   "@types/react": 19.3.0
   "@types/react-dom": 19.3.0
-  "@vitest/coverage-v8": 5.1.0
-  astro: 7.4.12
+  "@vitest/coverage-v8": 5.1.1
+  astro: 7.4.13
   commander: 15.1.0
   devalue: 6.0.3
   isbot: 5.2.3
@@ -36,16 +36,16 @@ catalog:
   publint: 0.3.25
   react: 19.3.1
   react-dom: 19.3.1
-  react-router: 8.5.1
+  react-router: 8.5.2
   starlight-llms-txt: 0.12.0
   starlight-page-actions: 0.7.1
-  testcontainers: 12.2.1
+  testcontainers: 12.2.2
   tsdown: 0.23.7
   typescript: 7.0.2
   uuid: 14.0.3
   vite: 8.3.8
-  vitest: 5.1.0
-  wrangler: 4.162.0
+  vitest: 5.1.1
+  wrangler: 4.165.0
   zod: 4.6.7
 
 catalogs:
