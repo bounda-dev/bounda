@@ -156,7 +156,7 @@ export const masterKey: MasterKeyFunction = ({ from, previous = [], location }) 
       ).filter(({ kid }) => kid !== current.kid);
       return wrapperOver(current, older);
     },
-    location === undefined ? {} : { location },
+    { location },
   );
 
 export interface EphemeralMasterKeyFunction {

@@ -109,7 +109,7 @@ export interface BuildableKeyWrapperDefinition extends KeyWrapperDefinition {
 export interface DefineCryptoKeyWrapperFunction {
   (
     create: BuildableKeyWrapperDefinition["create"],
-    options?: DataLocationOptions,
+    options?: { readonly location?: string | undefined },
   ): KeyWrapperDefinition;
 }
 
