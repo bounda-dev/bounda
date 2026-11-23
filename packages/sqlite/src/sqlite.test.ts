@@ -630,6 +630,9 @@ describe("sqlite's location", () => {
     expect(sqlite({ url: "libsql://db.turso.io", location: "eu" }).location).toBe("eu");
     expect(sqlite({ memory: true, location: "eu" }).location).toBe("eu");
     expect(sqlite({ url: "libsql://db.turso.io" })).not.toHaveProperty("location");
+    // @ts-expect-error a location is a jurisdiction's name, such as "eu"
+    const refused = () => sqlite({ path: "./app.db", location: ["eu"] });
+    expect(refused).toBeTypeOf("function");
   });
 });
 

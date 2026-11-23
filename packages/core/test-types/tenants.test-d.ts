@@ -200,7 +200,7 @@ describe("the tenant in the configuration", () => {
     expectTypeOf(own).toEqualTypeOf<TenantKeyStoreDefinition>();
     expectTypeOf(own).toExtend<TenantKeySource>();
     const located = defineTenantKeyStore(() => ({}) as TenantKeyStore, {
-      location: "jurisdiction eu",
+      location: "eu",
     });
     expectTypeOf(located).toEqualTypeOf<TenantKeyStoreDefinition>();
     expectTypeOf(located.location).toEqualTypeOf<string | undefined>();
@@ -208,7 +208,7 @@ describe("the tenant in the configuration", () => {
       StoreDefinitionOptions | undefined
     >();
     expectTypeOf<StoreDefinitionOptions>().toEqualTypeOf<{ readonly location?: string }>();
-    // @ts-expect-error a location is a name, such as "jurisdiction eu"
+    // @ts-expect-error a location is a jurisdiction's name, such as "eu"
     defineTenantKeyStore(() => ({}) as TenantKeyStore, { location: 7 });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { tenantKeys: own } } });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { tenantKeys: keys } } });

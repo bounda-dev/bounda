@@ -12,6 +12,8 @@ import {
   ERROR_TEXT_VARIABLE,
   type ErrorFields,
   errorFields,
+  type InventoryFindingKind,
+  type InventoryRecordName,
   resolveErrorText,
   type SubscriberFailing,
   withErrorText,
@@ -19,6 +21,7 @@ import {
 import type {
   Adapter,
   AdapterDefinition,
+  DataLocationOptions,
   ForgetLedger,
   ForgetLedgerEntry,
   LedgerDisclosure,
@@ -44,6 +47,7 @@ import {
   masterKey,
   type ResolvedConfig,
 } from "@bounda-dev/core/config";
+import { type MemoryOptions, memory } from "@bounda-dev/core/memory";
 import { describe, expectTypeOf, it } from "vitest";
 
 declare const sqlite: AdapterDefinition<"sqlite", { path: string }>;
@@ -452,9 +456,9 @@ describe("defineConfig", () => {
     });
     expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();
     expectTypeOf(
-      defineForgetLedger(() => ({}) as ForgetLedger, { location: "jurisdiction eu" }).location,
+      defineForgetLedger(() => ({}) as ForgetLedger, { location: "eu" }).location,
     ).toEqualTypeOf<string | undefined>();
-    // @ts-expect-error a location is a name, such as "jurisdiction eu"
+    // @ts-expect-error a location is a jurisdiction's name, such as "eu"
     defineForgetLedger(() => ({}) as ForgetLedger, { location: ["eu"] });
     defineConfig({
       storage: sqlite,
@@ -551,5 +555,29 @@ describe("runtimeText", () => {
     expectTypeOf(runtimeText).toEqualTypeOf<RuntimeTextFunction>();
     // @ts-expect-error only an error is vouched for
     runtimeText("The Worker has no binding KEEPER");
+  });
+});
+
+describe("location", () => {
+  it("lets every adapter declare the jurisdiction it keeps its data in, which the record states", () => {
+    expectTypeOf<DataLocationOptions>().toEqualTypeOf<{ readonly location?: string }>();
+    expectTypeOf<AdapterDefinition["location"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<MemoryOptions>().toEqualTypeOf<DataLocationOptions>();
+    expectTypeOf(memory({ location: "eu" }).location).toEqualTypeOf<string | undefined>();
+    // @ts-expect-error a location is a jurisdiction's name, such as "eu"
+    memory({ location: ["eu"] });
+    defineConfig({
+      storage: memory({ location: "eu" }),
+      ports,
+      readModels: { search: memory({ location: "eu" }) },
+      runtime: {
+        personalData: {
+          keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+          tenantKeys: memory({ location: "eu" }),
+        },
+      },
+    });
+    expectTypeOf<"tenant-keys">().toExtend<InventoryRecordName>();
+    expectTypeOf<"no-location">().toExtend<InventoryFindingKind>();
   });
 });

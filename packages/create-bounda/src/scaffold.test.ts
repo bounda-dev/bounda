@@ -91,6 +91,9 @@ describe("scaffoldProject", () => {
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       "@bounda-dev/sqlite",
     );
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      'const location = "eu";',
+    );
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm install");
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".bounda/");
     expect(await readFile(join(target, "AGENTS.md"), "utf8")).toContain(
@@ -125,6 +128,9 @@ describe("scaffoldProject", () => {
     );
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       "@bounda-dev/postgresql",
+    );
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      'const location = "eu";',
     );
     expect(JSON.parse(await readFile(join(target, "package.json"), "utf8")).dependencies).toEqual({
       "@bounda-dev/core": "^0.1.0-alpha.0",

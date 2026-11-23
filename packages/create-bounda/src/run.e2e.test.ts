@@ -290,6 +290,24 @@ describe("a project created by create-bounda", () => {
       { cwd: project },
     );
     expect(generated.stdout).toMatch(/1 aggregate, 1 read model, \d+ files/);
+    // The record of processing is complete, and says where every database keeps the data.
+    const inventory = await run(
+      process.execPath,
+      [
+        join(project, "node_modules/@bounda-dev/cli/dist/cli.js"),
+        "personal-data",
+        "inventory",
+        "--json",
+      ],
+      { cwd: project },
+    );
+    expect(JSON.parse(inventory.stdout)).toMatchObject({
+      records: expect.arrayContaining([
+        { name: "persons", where: "sqlite", location: "eu", keptFor: null },
+        { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
+      ]),
+      findings: [],
+    });
 
     await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
       cwd: project,

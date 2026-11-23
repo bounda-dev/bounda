@@ -1980,7 +1980,8 @@ database. The record lists:
   [blind index](#sealed-at-rest), or [in the clear](#in-the-clear)), and where its copies go: the
   event store, the aggregate's [snapshots](/concepts/long-streams/#snapshots) when it takes them,
   scheduled commands and dead letters for a command, the read model's table, each in the database
-  its adapter names, and where that database keeps it when its configuration pins it, such as
+  its adapter names, and the jurisdiction that database keeps it in, as its
+  [`location`](/reference/configuration/#data-location) declares it, or
   [a Durable Object jurisdiction](/adapters/cloudflare/#data-location);
 - each [recipient](#recipients): its port, name, kind, country, the safeguard of a transfer out
   of the European Economic Area, and the categories it receives;
@@ -1993,8 +1994,10 @@ database. The record lists:
   [`runtime.subscriberFailures.retention`](/reference/configuration/#subscriber-failures) has passed
   since the subscriber got past it or the app stopped running it, each with the error
   text encrypted under everyone whose data the work read and [held back](#someone-elses-data) from
-  an export when that is more than one person, what went to each recipient, the [forget ledger](#the-forget-ledger) for its `keepFor`, and
-  the [access log](#who-opened-what) when `app/audit.ts` exists;
+  an export when that is more than one person, what went to each recipient, the
+  [tenant key store](#the-tenant-key-store), the [forget ledger](#the-forget-ledger) for its
+  `keepFor`, and the [access log](#who-opened-what) when `app/audit.ts` exists, each with where it
+  is kept;
 - whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
   ledger are configured;
 - the fields marked `notPersonal`.
@@ -2019,7 +2022,10 @@ so a CI step fails on it:
 - personal fields in the default category, which declares no legal basis, purpose or source, so
   a person's export cannot tell them: declare [categories](#categories) and give each field one;
 - [`runtime.telemetry.errorText: "include"`](/reference/observability/#error-text), which puts the
-  text of errors, personal data included, in logs no forgetting reaches.
+  text of errors, personal data included, in logs no forgetting reaches;
+- a store of personal data, the storage, a read model in `readModels`, the tenant key store or the
+  forget ledger, that declares no [location](/reference/configuration/#data-location), so the
+  record cannot say whether keeping it there is a transfer out of the European Economic Area.
 
 A name says personal data when one of its words, or two of them joined, is one the GDPR's
 definitions point at: an identifier of article 4(1), such as a name (`name`, `firstName`,

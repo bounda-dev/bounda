@@ -32,6 +32,13 @@ get today. Each item says why, so nobody discovers it the hard way:
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each
   its own database, schema or Durable Object. See [Tenants](/guides/personal-data/#tenants).
+- **Stores in two jurisdictions.** The location `storage` declares holds every read model, the
+  tenant key store and the forget ledger to it, even where a transfer between two would rest on an
+  adequacy decision. Declare none on `storage` and each store's own, and the record of processing
+  lists `storage` as a finding. See [data location](/reference/configuration/#data-location).
+- **Where the master key is.** A key wrapper, `masterKey` or a key management service behind
+  `defineKeyWrapper`, declares no location, so neither the record nor the refusal of a store kept
+  elsewhere covers it. Keep it where the storage is.
 - **A forgotten tenant's clear columns in old copies.** Forgetting a tenant deletes its read models'
   rows. A SQLite file is encrypted under the tenant's key, so no copy of it opens; a copy of a
   PostgreSQL database keeps a column marked `.personal({ clear: true })`, and every field not

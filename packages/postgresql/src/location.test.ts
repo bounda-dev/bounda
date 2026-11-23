@@ -8,5 +8,8 @@ describe("postgresql's location", () => {
       postgresql({ host: "db.example", database: "app", user: "app", location: "eu" }).location,
     ).toBe("eu");
     expect(postgresql({ url: "postgres://db.example/app" })).not.toHaveProperty("location");
+    // @ts-expect-error a location is a jurisdiction's name, such as "eu"
+    const refused = () => postgresql({ url: "postgres://db.example/app", location: 7 });
+    expect(refused).toBeTypeOf("function");
   });
 });
