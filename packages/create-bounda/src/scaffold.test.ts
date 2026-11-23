@@ -447,7 +447,7 @@ describe("scaffoldProject", () => {
     expect(await keyOf(first)).toMatch(/^[A-Za-z0-9+/]{43}=$/);
     expect(await keyOf(first)).not.toBe(await keyOf(second));
     expect(await readFile(join(first, "bounda.config.ts"), "utf8")).toContain(
-      'masterKey({ from: "BOUNDA_MASTER_KEY" })',
+      'masterKey({ from: "BOUNDA_MASTER_KEY", location })',
     );
     expect(await readFile(join(first, ".gitignore"), "utf8")).toMatch(/^\.env$/m);
 
@@ -469,7 +469,7 @@ describe("scaffoldProject", () => {
     );
     expect(await readFile(join(given, ".gitignore"), "utf8")).toMatch(/^\.dev\.vars\*$/m);
     expect(await readFile(join(given, "bounda.config.ts"), "utf8")).toContain(
-      'masterKey({ from: "BOUNDA_MASTER_KEY" })',
+      'masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" })',
     );
   });
 });

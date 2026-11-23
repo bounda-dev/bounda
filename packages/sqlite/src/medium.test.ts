@@ -2,18 +2,23 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { closeConnectionsLeftOpen } from "./close-once.ts";
 
 const opened = vi.hoisted(() => ({
   settings: [] as { local: boolean; wal: boolean }[],
   closeOnce: 0,
 }));
 
-vi.mock("./close-once.ts", async (actual) => ({
-  ...(await actual<typeof import("./close-once.ts")>()),
-  closeConnectionsOnce: () => {
-    opened.closeOnce += 1;
-  },
-}));
+vi.mock("./close-once.ts", async (actual) => {
+  const module = await actual<typeof import("./close-once.ts")>();
+  return {
+    ...module,
+    closeConnectionsOnce: () => {
+      opened.closeOnce += 1;
+      module.closeConnectionsOnce();
+    },
+  };
+});
 
 vi.mock("./database.ts", async (actual) => {
   const module = await actual<typeof import("./database.ts")>();
@@ -32,7 +37,12 @@ const { sqlite } = await import("./index.ts");
 
 const root = await mkdtemp(join(tmpdir(), "bounda-medium-"));
 
-afterAll(() => rm(root, { recursive: true, force: true }));
+afterAll(async () => {
+  closeConnectionsLeftOpen();
+  await rm(root, { recursive: true, force: true }).catch((error: NodeJS.ErrnoException) => {
+    if (process.platform !== "win32" || error.code !== "EBUSY") throw error;
+  });
+});
 
 beforeEach(() => {
   opened.settings.length = 0;
