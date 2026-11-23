@@ -33,13 +33,13 @@ interface Kept {
 }
 
 const adapterFix =
-  (name: unknown) =>
+  (name: string) =>
   (location: string): string =>
-    `give its ${String(name)}() location: ${JSON.stringify(location)}`;
+    `give its ${name}() location: ${JSON.stringify(location)}`;
 
 const definitionFix = (holder: object, define: string): Kept["fix"] =>
-  Reflect.get(holder, "kind") === "bounda-adapter"
-    ? adapterFix(Reflect.get(holder, "name"))
+  isAdapterDefinition(holder)
+    ? adapterFix(holder.name)
     : (location) =>
         `declare it through ${define}(create, { location: ${JSON.stringify(location)} })`;
 
