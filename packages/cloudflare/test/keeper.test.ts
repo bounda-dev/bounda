@@ -519,6 +519,28 @@ describe("cloudflare() with a jurisdiction", () => {
     ).toThrow(ConfigurationError);
   });
 
+  it("holds no store to a jurisdiction when cloudflare() names none", () => {
+    const keptIn = { location: "eu" };
+    expect(
+      refusal({
+        storage: cloudflare(),
+        runtime: {
+          personalData: {
+            keyWrapper,
+            tenantKeys: defineTenantKeyStore(() => {
+              throw new Error("never opened");
+            }, keptIn),
+            forgetLedger: {
+              store: defineForgetLedger(() => {
+                throw new Error("never opened");
+              }, keptIn),
+            },
+          },
+        },
+      }),
+    ).toBe("resolved");
+  });
+
   it("reads past personal data or a forget ledger that is null, as a Worker's code may hold", () => {
     for (const runtime of [
       { personalData: null },

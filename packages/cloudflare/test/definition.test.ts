@@ -17,6 +17,10 @@ describe("cloudflare", () => {
     });
   });
 
+  it("declares no location without a jurisdiction", () => {
+    expect(cloudflare()).not.toHaveProperty("location");
+  });
+
   it("keeps the jurisdiction it names, and tells the record of processing where the data lives", () => {
     expect(cloudflare({ jurisdiction: "eu" })).toEqual({
       kind: "bounda-adapter",
