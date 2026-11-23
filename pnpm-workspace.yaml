@@ -10,7 +10,7 @@ catalog:
   "@astrojs/starlight": 0.42.11
   "@biomejs/biome": 2.6.8
   "@cloudflare/vite-plugin": 1.70.1
-  "@cloudflare/vitest-plugin": 1.8.5
+  "@cloudflare/vitest-plugin": 1.9.0
   "@cloudflare/workers-types": 5.20261120.1
   "@opentelemetry/api": 1.10.0
   "@changesets/cli": 3.0.3
@@ -45,7 +45,7 @@ catalog:
   uuid: 14.0.3
   vite: 8.3.8
   vitest: 5.1.1
-  wrangler: 4.165.0
+  wrangler: 4.166.0
   zod: 4.6.7
 
 catalogs:
