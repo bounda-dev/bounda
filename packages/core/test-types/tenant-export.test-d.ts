@@ -14,6 +14,7 @@ import {
   type ProcessingRestriction,
   type ReadTenantExportFunction,
   readTenantExport,
+  type StoredEvent,
   TENANT_EXPORT_FORMAT,
   TENANT_EXPORT_VERSION,
   type TenantExportAccess,
@@ -35,7 +36,9 @@ import {
 import type {
   DeadLetterStore,
   DispatchOutcome,
+  EventStore,
   ForgetLedgerEntry,
+  LoadManyArgs,
   PersonalKeyStore,
   PersonStore,
   ScanArgs,
@@ -255,6 +258,19 @@ describe("the tenant export", () => {
     >();
     expectTypeOf<PersonalKeyStore["persons"]>().toEqualTypeOf<
       (args: ScanArgs) => Promise<readonly string[]>
+    >();
+  });
+
+  it("reads what a page of persons' recipients are presumed to hold from the event store at once", () => {
+    expectTypeOf<EventStore["firstPositions"]>().toEqualTypeOf<
+      (persons: readonly string[]) => Promise<ReadonlyMap<string, number>>
+    >();
+    expectTypeOf<LoadManyArgs>().toEqualTypeOf<{
+      readonly aggregateType: string;
+      readonly aggregateIds: readonly string[];
+    }>();
+    expectTypeOf<EventStore["loadMany"]>().toEqualTypeOf<
+      (args: LoadManyArgs) => Promise<ReadonlyMap<string, readonly StoredEvent[]>>
     >();
   });
 });

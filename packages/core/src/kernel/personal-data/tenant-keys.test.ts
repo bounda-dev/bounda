@@ -267,6 +267,64 @@ describe("openTenantKeys", () => {
     expect(await at.store.get("acme")).toMatchObject({ forgotten: forgetting });
   });
 
+  it("holds the declarations of recipients a frozen start adds, each once, through a thaw and a forgetting, until removed", async () => {
+    const at = world();
+    const keys = await open(at);
+    const other = await open(at);
+    const declaring = (
+      id: string,
+      categories: readonly string[],
+      at = "2026-01-02T00:00:00.000Z",
+    ) => ({
+      id,
+      renames: [{ from: "customer.mailer", to: "customer.newsletter" }],
+      ports: [{ port: "customer.crm", categories }],
+      position: 3,
+      at,
+    });
+    expect(keys.pendingRecipients()).toEqual([]);
+    await keys.freeze("2026-01-02T00:00:00.000Z");
+    // Nothing to remove writes nothing.
+    const before = (await at.store.get("acme"))?.revision;
+    await keys.removePendingRecipients(["d-1"]);
+    expect((await at.store.get("acme"))?.revision).toBe(before);
+    await keys.addPendingRecipients(declaring("d-1", ["contact"]));
+    // The only one again: nothing written.
+    await keys.addPendingRecipients(declaring("d-0", ["contact"], "2026-01-06T00:00:00.000Z"));
+    expect((await at.store.get("acme"))?.revision).toBe((before ?? 0) + 1);
+    await other.addPendingRecipients(declaring("d-2", ["invoices"]));
+    // The last again, from a start that came back: nothing written.
+    const { revision } = (await at.store.get("acme")) ?? { revision: 0 };
+    await keys.addPendingRecipients(declaring("d-3", ["invoices"], "2026-01-05T00:00:00.000Z"));
+    expect((await at.store.get("acme"))?.revision).toBe(revision);
+    // An earlier one again goes after the others, as the latest.
+    await keys.addPendingRecipients(declaring("d-4", ["contact"]));
+    expect(keys.pendingRecipients().map(({ id }) => id)).toEqual(["d-2", "d-4"]);
+    // As it read them last, when it added its own.
+    expect(other.pendingRecipients().map(({ id }) => id)).toEqual(["d-1", "d-2"]);
+    await other.refresh();
+    expect(other.pendingRecipients()).toEqual(keys.pendingRecipients());
+    await other.unfreeze();
+    const thawed = (await at.store.get("acme"))?.revision;
+    await keys.removePendingRecipients(["d-9"]);
+    expect((await at.store.get("acme"))?.revision).toBe(thawed);
+    expect((await at.store.get("acme"))?.pendingRecipients?.map(({ id }) => id)).toEqual([
+      "d-2",
+      "d-4",
+    ]);
+    const forgetting = { at: "2026-01-03T00:00:00.000Z", eventId: "e-1" };
+    await keys.forget(forgetting);
+    expect(keys.pendingRecipients().map(({ id }) => id)).toEqual(["d-2", "d-4"]);
+    await expect(keys.addPendingRecipients(declaring("d-5", ["profile"]))).rejects.toThrow(
+      new TenantForgottenError("acme", forgetting.at),
+    );
+    await keys.removePendingRecipients(["d-2"]);
+    expect(keys.pendingRecipients().map(({ id }) => id)).toEqual(["d-4"]);
+    await keys.removePendingRecipients(["d-4"]);
+    expect(await at.store.get("acme")).not.toHaveProperty("pendingRecipients");
+    expect(keys.pendingRecipients()).toEqual([]);
+  });
+
   it("sees a version rotated or a forgetting made elsewhere once its read expires, or on refresh", async () => {
     const at = world();
     const here = await open(at);

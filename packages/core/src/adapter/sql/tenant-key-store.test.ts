@@ -87,6 +87,38 @@ describe("parseTenantKeyRecord", () => {
     );
   });
 
+  it("reads back the declarations of recipients a frozen start left, and only what they hold", () => {
+    const pending = {
+      ...record,
+      pendingRecipients: [
+        {
+          id: "d-1",
+          renames: [{ from: "customer.mailer", to: "customer.newsletter" }],
+          ports: [{ port: "customer.newsletter", categories: ["contact"] }],
+          position: 3,
+          at: "2026-03-01T00:00:00.000Z",
+        },
+      ],
+    };
+    expect(parseTenantKeyRecord(tenantKeyRecordText(pending), 2)).toEqual({
+      ...pending,
+      revision: 2,
+    });
+    expect(tenantKeyRecordText(record)).not.toContain("pendingRecipients");
+    const extra = {
+      ...record,
+      pendingRecipients: [
+        {
+          ...pending.pendingRecipients[0],
+          extra: 1,
+          renames: [{ from: "a", to: "b", extra: 1 }],
+          ports: [{ port: "p", categories: [], extra: 1 }],
+        } as never,
+      ],
+    };
+    expect(tenantKeyRecordText(extra)).not.toContain("extra");
+  });
+
   it("reads back the keys of the tenant's files, in force or kept for its recipients", () => {
     const withFiles = { ...record, files: [file, { ...file, id: "f-2", appliedAt: "2026-01-02" }] };
     expect(parseTenantKeyRecord(tenantKeyRecordText(withFiles), 2)).toEqual({
@@ -127,6 +159,41 @@ describe("parseTenantKeyRecord", () => {
       "A tenant key record holds no text in eventId",
     ],
     [{ ...record, files: "none" }, "A tenant key record holds no list in files"],
+    [
+      { ...record, pendingRecipients: "none" },
+      "A tenant key record holds no list in pendingRecipients",
+    ],
+    ...(
+      [
+        [{ id: 1 }, "A tenant key record holds no text in id"],
+        [{ renames: "none" }, "A tenant key record holds no list in renames"],
+        [{ renames: [{ from: 1, to: "b" }] }, "A tenant key record holds no text in from"],
+        [{ renames: [{ from: "a", to: 1 }] }, "A tenant key record holds no text in to"],
+        [{ ports: "none" }, "A tenant key record holds no list in ports"],
+        [{ ports: [{ port: 1, categories: [] }] }, "A tenant key record holds no text in port"],
+        [
+          { ports: [{ port: "p", categories: "none" }] },
+          "A tenant key record holds no list in categories",
+        ],
+        [
+          { ports: [{ port: "p", categories: [1] }] },
+          "A tenant key record holds no text in categories",
+        ],
+        [{ position: "3" }, "A tenant key record holds no number in position"],
+        [{ at: 1 }, "A tenant key record holds no text in at"],
+      ] as const
+    ).map(
+      ([change, message]) =>
+        [
+          {
+            ...record,
+            pendingRecipients: [
+              { id: "d-1", renames: [], ports: [], position: 3, at: "2026-03-01", ...change },
+            ],
+          },
+          message,
+        ] as const,
+    ),
     ...(["database", "id", "key", "wrappedBy", "createdAt", "appliedAt"] as const).map(
       (field) =>
         [

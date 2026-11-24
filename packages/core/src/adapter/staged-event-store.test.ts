@@ -30,7 +30,7 @@ const setUp = async () => {
 };
 
 describe("createStagedEventStore", () => {
-  it("reads a person's events from the base store alone, as it reads the global stream", async () => {
+  it("reads a person's events, their first position and many streams from the base store alone, as it reads the global stream", async () => {
     const { base, staged } = await setUp();
     await base.append({
       ...customer,
@@ -44,6 +44,12 @@ describe("createStagedEventStore", () => {
     });
     const read = await staged.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
     expect(read.map((event) => [event.version, event.position])).toEqual([[2, 3]]);
+    expect(await staged.firstPositions(["c-1"])).toEqual(new Map([["c-1", 3]]));
+    expect(
+      (await staged.loadMany({ aggregateType: "customer", aggregateIds: ["1"] }))
+        .get("1")
+        ?.map((event) => event.version),
+    ).toEqual([1, 2]);
   });
 
   it("reports the keys the base store's load opened, and none it was not given", async () => {

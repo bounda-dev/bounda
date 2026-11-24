@@ -1,5 +1,6 @@
 import type { StorageTransaction } from "../../adapter/adapter.ts";
 import type { DeclaredRecipient } from "../../adapter/storage/recipient-store.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import {
   BOUNDA_AGGREGATE,
   PERSONAL_DATA_FORGOTTEN_EVENT,
@@ -96,49 +97,76 @@ export interface PresumedOfFunction {
  * port declared, or presumed again after a restore, once the person's data already existed, but
  * those a forgetting told it to erase since.
  */
-export const presumedOf: PresumedOfFunction = async (transaction, personId) =>
-  presumedAmong(transaction, personId, await transaction.recipients.declared());
-
-export interface PresumedAmongFunction {
-  (
-    transaction: Pick<StorageTransaction, "eventStore">,
-    personId: string,
-    recipients: readonly DeclaredRecipient[],
-  ): Promise<Map<string, Set<string>>>;
-}
-
-// `presumedOf` with the declared recipients read already, as for a page of persons at once.
-export const presumedAmong: PresumedAmongFunction = async (transaction, personId, recipients) => {
+export const presumedOf: PresumedOfFunction = async (transaction, personId) => {
   const presumed = new Map<string, Set<string>>();
-  const declared = recipients.filter(({ presumedThrough }) => presumedThrough > 0);
-  if (declared.length > 0) {
-    const [first] = await transaction.eventStore.readByPerson({
-      person: personId,
-      afterPosition: 0,
-      limit: 1,
+  const declared = (await transaction.recipients.declared()).filter(
+    ({ presumedThrough }) => presumedThrough > 0,
+  );
+  if (declared.length === 0) return presumed;
+  const [first] = await transaction.eventStore.readByPerson({
+    person: personId,
+    afterPosition: 0,
+    limit: 1,
+  });
+  if (first === undefined) return presumed;
+  for (const { port, categories, presumedThrough } of declared) {
+    if (first.position <= presumedThrough) presumed.set(port, new Set(categories));
+  }
+  if (presumed.size > 0) {
+    const { events } = await transaction.eventStore.load({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: personId,
     });
-    for (const { port, categories, presumedThrough } of declared) {
-      if (first !== undefined && first.position <= presumedThrough) {
-        presumed.set(port, new Set(categories));
-      }
-    }
-    // What a recipient was told to forget of the person it holds no longer: it is presumed to hold
-    // only what came before.
-    if (presumed.size > 0) {
-      const { events } = await transaction.eventStore.load({
-        aggregateType: BOUNDA_AGGREGATE,
-        aggregateId: personId,
-      });
-      for (const told of events) {
-        if (told.type !== PERSONAL_DATA_FORGOTTEN_EVENT) continue;
-        const { recipients = [] } = told.payload as PersonalDataForgottenPayload;
-        for (const { port, categories } of recipients) {
-          for (const category of categories) presumed.get(port)?.delete(category);
-        }
-      }
-    }
+    forgetTold(presumed, events);
   }
   return presumed;
+};
+
+export interface PresumedOfManyFunction {
+  (
+    transaction: Pick<StorageTransaction, "eventStore">,
+    persons: readonly string[],
+    recipients: readonly DeclaredRecipient[],
+  ): Promise<ReadonlyMap<string, Map<string, Set<string>>>>;
+}
+
+// `presumedOf` of each of `persons`, in two reads of the event store however many they are, with
+// the declared recipients read already.
+export const presumedOfMany: PresumedOfManyFunction = async (transaction, persons, recipients) => {
+  const presumed = new Map<string, Map<string, Set<string>>>();
+  for (const person of persons) presumed.set(person, new Map());
+  const declared = recipients.filter(({ presumedThrough }) => presumedThrough > 0);
+  if (declared.length === 0) return presumed;
+  // The persons some recipient is presumed to hold data of, with what.
+  const held = new Map<string, Map<string, Set<string>>>();
+  for (const [person, position] of await transaction.eventStore.firstPositions(persons)) {
+    const ports = presumed.get(person) as Map<string, Set<string>>;
+    for (const { port, categories, presumedThrough } of declared) {
+      if (position <= presumedThrough) ports.set(port, new Set(categories));
+    }
+    if (ports.size > 0) held.set(person, ports);
+  }
+  if (held.size === 0) return presumed;
+  const streams = await transaction.eventStore.loadMany({
+    aggregateType: BOUNDA_AGGREGATE,
+    aggregateIds: [...held.keys()],
+  });
+  for (const [person, events] of streams) {
+    forgetTold(held.get(person) as Map<string, Set<string>>, events);
+  }
+  return presumed;
+};
+
+// What a recipient was told to forget of the person it holds no longer: it is presumed to hold
+// only what came before.
+const forgetTold = (presumed: Map<string, Set<string>>, events: readonly StoredEvent[]): void => {
+  for (const told of events) {
+    if (told.type !== PERSONAL_DATA_FORGOTTEN_EVENT) continue;
+    const { recipients = [] } = told.payload as PersonalDataForgottenPayload;
+    for (const { port, categories } of recipients) {
+      for (const category of categories) presumed.get(port)?.delete(category);
+    }
+  }
 };
 
 export interface AddressedFunction {

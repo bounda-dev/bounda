@@ -796,11 +796,43 @@ describe("withPersonalData", () => {
       [1, { email: "ana@example.com", plan: "pro" }],
       [2, { customerId: "c-1", address: { street: "x" }, total: 1 }],
     ]);
+    expect(await store.firstPositions(["c-1", "c-2", "c-9"])).toEqual(
+      new Map([
+        ["c-1", 1],
+        ["c-2", 3],
+      ]),
+    );
+    // Many streams at once, opened as a load opens one.
+    const loaded = async () =>
+      new Map(
+        await Promise.all(
+          ["o-1", "o-2"].map(
+            async (aggregateId) =>
+              [
+                aggregateId,
+                (await store.load({ aggregateType: "order", aggregateId })).events,
+              ] as const,
+          ),
+        ),
+      );
+    const opened = await store.loadMany({
+      aggregateType: "order",
+      aggregateIds: ["o-1", "o-2", "o-9"],
+    });
+    expect(opened).toEqual(await loaded());
+    expect(opened.get("o-1")?.map((event) => event.payload)).toEqual([
+      { customerId: "c-1", address: { street: "x" }, total: 1 },
+    ]);
     await removeKeys(storage.personalKeys, "c-1");
     const after = await store.readByPerson({ person: "c-1", afterPosition: 1, limit: 10 });
     expect(after.map((event) => event.payload)).toEqual([
       { customerId: "c-1", address: null, total: 1 },
     ]);
+    expect(
+      (await store.loadMany({ aggregateType: "order", aggregateIds: ["o-1"] }))
+        .get("o-1")
+        ?.map((event) => event.payload),
+    ).toEqual([{ customerId: "c-1", address: null, total: 1 }]);
   });
 
   it("refuses an event whose person field is empty", async () => {

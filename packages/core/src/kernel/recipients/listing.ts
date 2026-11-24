@@ -13,7 +13,7 @@ import type {
 } from "../../modules/recipient.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { RecipientStatus } from "../status.ts";
-import { presumedAmong, presumedOf } from "./addressing.ts";
+import { presumedOf, presumedOfMany } from "./addressing.ts";
 import type { RecipientsRuntime } from "./build.ts";
 
 export interface RecipientsOfArgs {
@@ -85,8 +85,8 @@ export interface RecipientsOfPageFunction {
 }
 
 /**
- * `recipientsOf` of each of a page of persons, their disclosures and the declared recipients each
- * read once for the page.
+ * `recipientsOf` of each of a page of persons, their disclosures, the declared recipients and what
+ * each is presumed to hold read once for the page.
  */
 export const recipientsOfPage: RecipientsOfPageFunction = async ({
   storage,
@@ -99,6 +99,7 @@ export const recipientsOfPage: RecipientsOfPageFunction = async ({
     storage.recipients.disclosuresOfMany(persons),
     storage.recipients.declared(),
   ]);
+  const presumed = await presumedOfMany(storage, persons, declared);
   const listed = new Map<string, readonly PersonRecipient[]>();
   for (const personId of persons) {
     listed.set(
@@ -108,7 +109,7 @@ export const recipientsOfPage: RecipientsOfPageFunction = async ({
         categories,
         disclosures: disclosures.get(personId) ?? [],
         held: new Set((keys.get(personId) ?? []).map(({ category }) => category)),
-        presumed: await presumedAmong(storage, personId, declared),
+        presumed: presumed.get(personId) ?? new Map(),
       }),
     );
   }

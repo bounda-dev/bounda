@@ -424,6 +424,20 @@ export const withPersonalData: WithPersonalDataFunction = ({
         position,
       );
     },
+    firstPositions: (persons) => eventStore.firstPositions(persons),
+    loadMany: async (args) => {
+      const position = await fence();
+      const key = opening();
+      const ignored = new Map<string, KeyedPerson>();
+      const loaded = new Map<string, readonly StoredEvent[]>();
+      for (const [id, events] of await eventStore.loadMany(args)) {
+        loaded.set(
+          id,
+          fencing(await settled(events.map((e) => unsealed(e, key, ignored))), position),
+        );
+      }
+      return loaded;
+    },
     lastPosition: () => eventStore.lastPosition(),
     // Written as given: whoever reseals an event has sealed its payload already.
     reseal: (events) => eventStore.reseal(events),
