@@ -182,6 +182,6 @@ describe("the SQLite schema scopes", () => {
           `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
         )
         .get(),
-    ).toEqual({ version: 8 });
+    ).toEqual({ version: 9 });
   });
 });

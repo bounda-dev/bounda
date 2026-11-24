@@ -24,6 +24,7 @@ export type {
 export {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
+  forgetLedgerDefaultTenantStatements,
   forgetLedgerDisclosureStatement,
   forgetLedgerFenceStatement,
   forgetLedgerFenceTableFor,

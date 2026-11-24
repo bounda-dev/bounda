@@ -571,19 +571,6 @@ describe("the KV forget ledger's listing", () => {
     expect(read[0]).not.toHaveProperty("disclosure");
   });
 
-  it("refuses an object without a name, whose entries it could not keep apart", async () => {
-    const { namespace } = countingNamespace();
-    expect(() =>
-      kvForgetLedger({ binding: "LEDGER" }).create({
-        env: { ...env, LEDGER: namespace } as typeof env,
-      }),
-    ).toThrow(
-      new ConfigurationError(
-        "A KV forget ledger keeps each object's entries under its name, and this object has none: reach it through idFromName",
-      ),
-    );
-  });
-
   it("keeps an object's entries under its name", async () => {
     const { namespace, keys } = countingNamespace();
     const ledger = await kvForgetLedger({ binding: "LEDGER" }).create({

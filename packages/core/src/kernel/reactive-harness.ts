@@ -24,6 +24,7 @@ import {
   createRestrictedPersonsSubscriber,
   restrictedPersonsHosts,
 } from "./personal-data/restricted-persons.ts";
+import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
 import { buildPolicies, type PoliciesRuntime } from "./policy/build-policies.ts";
 import { createDelayedPolicies } from "./policy/delayed.ts";
 import { createPolicyExecutor, type PolicyExecutor } from "./policy/executor.ts";
@@ -108,6 +109,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     registry,
     config: config.ports,
     env: {},
+    tenant: DEFAULT_TENANT,
     logger,
     clock,
   });
@@ -131,7 +133,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   const recordAccess = createAccessLog({
     hook: undefined,
     env: {},
-    tenant: undefined,
+    tenant: DEFAULT_TENANT,
     logger,
     clock,
   });

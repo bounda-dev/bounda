@@ -3,6 +3,7 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import { TenantFrozenError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { createApp } from "../../kernel/app.ts";
+import { defineForgetLedger } from "../../kernel/personal-data/forget-ledger.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
 import type { TenantExportPart } from "../../kernel/personal-data/tenant-export.ts";
 import {
@@ -219,7 +220,8 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
   describe("tenant export contract", () => {
     const stops: (() => Promise<void>)[] = [];
     afterEach(async () => {
-      for (const stop of stops.splice(0)) await stop();
+      // Last opened, first stopped.
+      for (const stop of stops.splice(0).reverse()) await stop();
     });
 
     const open = async () => {
@@ -611,6 +613,75 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
           errorName: "ValidationError",
         }),
       ]);
+    });
+
+    it("serves an app that names no tenant and one that names DEFAULT_TENANT as one tenant, its forget ledger in a database of this kind", async () => {
+      const storage = await create();
+      // Another database of this kind, opened for whatever tenant the app names: an in-memory one
+      // would otherwise read as the storage's own.
+      const ledger = await create();
+      const tenantKeys = createMemoryTenantKeyStore();
+      const boot = async (tenant?: string) => {
+        const app = await createApp({
+          registry,
+          config: {
+            storage,
+            runtime: {
+              policies: { retry: { strategy: "none" } },
+              personalData: {
+                keyWrapper: masterKey({ from: "EXPORT_KEY" }),
+                tenantKeys: defineTenantKeyStore(() => tenantKeys),
+                forgetLedger: {
+                  store: defineForgetLedger(({ tenant }) => ledger.createForgetLedger({ tenant })),
+                },
+              },
+            },
+          },
+          clock: createFixedClock(new Date("2026-03-01T00:00:00.000Z")),
+          env: { EXPORT_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) },
+          ...(tenant === undefined ? {} : { tenant }),
+        });
+        stops.push(() => app.stop());
+        return app;
+      };
+      // Held open until every app stopped, so a database in memory outlives each app over it.
+      const heldStorage = await storage.createStorage();
+      const heldLedger = await ledger.createForgetLedger({ tenant: DEFAULT_TENANT });
+      stops.push(async () => {
+        await heldLedger.close?.();
+        await heldStorage.close();
+      });
+      const ledgerEntries = async () =>
+        (await heldLedger.read({ limit: 10 })).map(({ personId }) => personId);
+      // What the app run without a tenant writes to the ledger, as `boot()` runs it.
+      const unnamed = await boot();
+      const commands = unnamed.commands as unknown as Readonly<Record<string, Dispatch>>;
+      await commands.noteMember?.({ memberId: "ana", note: "ana's own" });
+      await unnamed.runUntilIdle();
+      await unnamed.forget("ana");
+      await unnamed.stop();
+      expect(await ledgerEntries()).toEqual(["ana"]);
+      // What `bounda freeze-tenant default` and `bounda export-tenant default` start.
+      const named = await boot(DEFAULT_TENANT);
+      await named.freezeTenant(DEFAULT_TENANT);
+      const parts = await collect(await named.exportTenant(DEFAULT_TENANT));
+      expect(of(parts, "forgetLedgerEntry").map(({ entry }) => entry.personId)).toEqual(["ana"]);
+      await named.stop();
+      // The freeze holds the ledger of the app that names no tenant, so it hands back the same cut.
+      const again = await boot();
+      const exported = await collect(await again.exportTenant(DEFAULT_TENANT));
+      expect(of(exported, "forgetLedgerEntry").map(({ entry }) => entry.personId)).toEqual(["ana"]);
+      await again.unfreezeTenant(DEFAULT_TENANT);
+      await again.stop();
+      // What `bounda forget-tenant default` starts clears the ledger the app wrote.
+      const forgetting = await boot(DEFAULT_TENANT);
+      await forgetting.forgetTenant(DEFAULT_TENANT);
+      await forgetting.runUntilIdle();
+      expect((await forgetting.status()).forgottenTenant).toMatchObject({
+        recipientsTold: true,
+        forgetLedgerCleared: true,
+      });
+      expect(await ledgerEntries()).toEqual([]);
     });
 
     it("hands back a tenant that holds nothing as a header and an end", async () => {

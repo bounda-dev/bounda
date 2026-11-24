@@ -402,7 +402,7 @@ describe("ports", () => {
     expectTypeOf<InventoryHttp["create"]>().toEqualTypeOf<CreateImplementation<Inventory>>();
     expectTypeOf<Parameters<InventoryHttp["create"]>[0]>().toEqualTypeOf<CreateArgs>();
     expectTypeOf<CreateArgs["env"]>().toEqualTypeOf<Readonly<Record<string, string | undefined>>>();
-    expectTypeOf<Pick<CreateArgs, "tenant">>().toEqualTypeOf<{ readonly tenant?: string }>();
+    expectTypeOf<Pick<CreateArgs, "tenant">>().toEqualTypeOf<{ readonly tenant: string }>();
     expectTypeOf<CreateArgs["logger"]>().toEqualTypeOf<Logger>();
     expectTypeOf<CreateArgs["clock"]>().toEqualTypeOf<Clock>();
     expectTypeOf<ReturnType<InventoryHttp["create"]>>().toEqualTypeOf<
@@ -465,7 +465,7 @@ describe("ports", () => {
       },
     } satisfies ImplementationModule<Inventory>;
     const byTenant = {
-      create: ({ env, tenant = "default" }: CreateArgs) => {
+      create: ({ env, tenant }: CreateArgs) => {
         const key = env[`INVENTORY_KEY_${tenant.toUpperCase()}`];
         return { reserve: async () => void key };
       },
@@ -796,7 +796,7 @@ describe("personal data", () => {
     expectTypeOf<Registry["audit"]>().toEqualTypeOf<typeof audit>();
     expectTypeOf<typeof audit.onPersonalDataAccess>().toEqualTypeOf<OnPersonalDataAccess>();
     expectTypeOf<OnPersonalDataAccessArgs["access"]>().toEqualTypeOf<PersonalDataAccess>();
-    expectTypeOf<OnPersonalDataAccessArgs["tenant"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<OnPersonalDataAccessArgs["tenant"]>().toEqualTypeOf<string>();
     expectTypeOf<OnPersonalDataAccessArgs["logger"]>().toEqualTypeOf<Logger>();
     expectTypeOf<PersonalDataAccess["operation"]>().toEqualTypeOf<
       | "query"

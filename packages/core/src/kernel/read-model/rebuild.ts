@@ -21,7 +21,6 @@ import { openEncryptedFiles } from "../personal-data/encrypted-files.ts";
 import { keySourcesOf, openKeyHierarchy } from "../personal-data/key-hierarchy.ts";
 import { buildKeyWrapper } from "../personal-data/key-wrapper.ts";
 import { marksPersonalFields } from "../personal-data/marks.ts";
-import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { keylessWrapping, type PersonalKeyWrapping } from "../personal-data/wrapped-keys.ts";
 import { buildProcesses } from "../process/build-processes.ts";
 import { projectBatch, projectionSubscriberName, withKeys } from "../projection/runner.ts";
@@ -29,6 +28,7 @@ import { actedBy } from "../shared/causation.ts";
 import { guardedLogger } from "../shared/guarded-logger.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { type TracerFunction, tracer } from "../telemetry.ts";
+import { tenantIdOf } from "../tenant.ts";
 import {
   adapterForReadModel,
   compileProjections,
@@ -210,9 +210,10 @@ export const resetReadModel: ResetReadModelFunction = async ({ readModel, adapte
  */
 export const rebuildReadModel: RebuildReadModelFunction = async ({
   env = {},
-  tenant = DEFAULT_TENANT,
+  tenant: named,
   ...args
 }) => {
+  const tenant = tenantIdOf(named);
   const config = resolveConfig(args.config);
   const adapter = config.storage;
   if (!isAdapter(adapter)) {

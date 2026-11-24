@@ -33,9 +33,9 @@ export interface TenantOfRequestFunction {
 
 export const tenantOfRequest: TenantOfRequestFunction = async (tenant, args) => {
   const name: unknown = await tenant(args);
-  if (typeof name !== "string") {
+  if (typeof name !== "string" || name === "") {
     throw new ConfigurationError(
-      `tenant must name the store of a request with a string, got ${JSON.stringify(name)}`,
+      `tenant must name the store of a request with a non-empty string, got ${JSON.stringify(name)}`,
     );
   }
   return name;

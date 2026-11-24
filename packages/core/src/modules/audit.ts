@@ -273,7 +273,7 @@ export type PersonalDataAccess =
 export interface OnPersonalDataAccessArgs {
   readonly access: PersonalDataAccess;
   readonly env: AppEnv;
-  readonly tenant?: string;
+  readonly tenant: string;
   readonly logger: Logger;
 }
 

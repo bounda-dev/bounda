@@ -125,7 +125,7 @@ import {
 } from "./personal-data/tenant-export.ts";
 import { recordedTenantExport, streamTenantExport } from "./personal-data/tenant-export-stream.ts";
 import { guardClient } from "./personal-data/tenant-guard.ts";
-import { DEFAULT_TENANT, type TenantKeys } from "./personal-data/tenant-keys.ts";
+import type { TenantKeys } from "./personal-data/tenant-keys.ts";
 import { checkPersonId, isPersonId } from "./personal-data/transact.ts";
 import { witnessedWrapping } from "./personal-data/witness.ts";
 import { keylessWrapping, UNWRAPPED_KEY_TTL_MS } from "./personal-data/wrapped-keys.ts";
@@ -190,6 +190,7 @@ import {
   tracedOperation,
   tracer,
 } from "./telemetry.ts";
+import { tenantIdOf } from "./tenant.ts";
 import {
   createFenceWatch,
   createFreezeKeeper,
@@ -693,9 +694,11 @@ export type CreateAppArgs<R extends Registry> = {
    */
   readonly clock?: Clock;
   /**
-   * The name of the store this app serves, which every port implementation's `create` receives
-   * as `tenant`. `createBoundaObject` passes the Durable Object's name; leave it out for an app
-   * with one store.
+   * The name of the store this app serves, which every store keeps the tenant's data under and
+   * every port implementation's `create` receives as `tenant`. `createBoundaObject` passes the
+   * Durable Object's name; leave it out for an app with one store, which then serves
+   * `DEFAULT_TENANT`, the same tenant as one that names it. An empty name fails the start with
+   * `ConfigurationError`.
    */
   readonly tenant?: string | undefined;
   /**
@@ -803,11 +806,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   witness,
   searchErrorText = true,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
+  const tenantId = tenantIdOf(tenant);
   // Attached first, so every store call, log entry and span of the app reaches it.
   const watching =
     witness === undefined
       ? undefined
-      : witnessHooksOf(witness).attach({ searchErrorText, tenant: tenant ?? DEFAULT_TENANT });
+      : witnessHooksOf(witness).attach({ searchErrorText, tenant: tenantId });
   const rawConfig = watching === undefined ? givenConfig : witnessedConfig(givenConfig, watching);
   const rawLogger = watching === undefined ? givenLogger : watching.logger(givenLogger);
   const appTracer: TracerFunction =
@@ -835,13 +839,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     keySources.keyWrapper === null
       ? null
       : await buildKeyWrapper({ definition: keySources.keyWrapper, env });
-  const tenantId = tenant ?? DEFAULT_TENANT;
   // Built before the storage opens and closed after it, so a `create` that fails leaves nothing
   // open; a failure further on closes them again.
   const ports = await createPorts({
     registry,
     env,
-    tenant,
+    tenant: tenantId,
     logger: guardedLogger(rawLogger, errorText, { thrownAsError: false }),
     clock,
     ...(test === undefined ? { config: unkeyed.ports } : { test }),
@@ -893,7 +896,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         source: ledgerConfig.store,
         storage: config.storage,
         env,
-        tenant,
+        tenant: tenantId,
         keepForMs: keepForMs ?? undefined,
       });
       watching?.onForgetLedger(ledger);
@@ -1067,7 +1070,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const recordAccess = createAccessLog({
       hook: test === undefined ? registry.audit?.onPersonalDataAccess : onPersonalDataAccess,
       env,
-      tenant,
+      tenant: tenantId,
       logger,
       clock,
     });

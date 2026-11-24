@@ -233,16 +233,6 @@ describe("the forget ledger in keeper objects", () => {
     expect(await ledger.read({ limit: 1 })).toEqual([]);
     expect(calls).toBe(2);
   });
-
-  it("refuses an app that names no tenant, whose entries no keeper would hold", async () => {
-    await expect(
-      Promise.resolve().then(() => durableObjectForgetLedger({ storage }).create({ env })),
-    ).rejects.toThrow(
-      new ConfigurationError(
-        "A keeper forget ledger keeps each tenant's entries in the tenant's own keeper, and this app names no tenant: run it in a Bounda Durable Object, or give createApp a tenant",
-      ),
-    );
-  });
 });
 
 describe("the keeper stores' configuration", () => {

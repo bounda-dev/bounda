@@ -15,6 +15,7 @@ import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
+import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
 import { PROCESS_EVENTS } from "./process/lifecycle.ts";
 import { readYourWrites } from "./read-your-writes.ts";
 import { unreadableParts } from "./status.ts";
@@ -630,6 +631,7 @@ describe("implementations built by create", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledWith({
       env: { FROM: "shop" },
+      tenant: DEFAULT_TENANT,
       logger: expect.any(Object),
       clock,
     });
@@ -645,7 +647,7 @@ describe("implementations built by create", () => {
     ]);
   });
 
-  it("gives create the tenant the app serves, and none without one", async () => {
+  it("gives create the tenant the app serves, DEFAULT_TENANT for one that names none", async () => {
     const { create, app: lifecycleRegistry } = lifecycle([]);
     const named = await createApp({
       registry: lifecycleRegistry,
@@ -653,12 +655,32 @@ describe("implementations built by create", () => {
       tenant: "acme",
     });
     const unnamed = await createApp({ registry: lifecycleRegistry, config: { storage: memory() } });
+    const defaulted = await createApp({
+      registry: lifecycleRegistry,
+      config: { storage: memory() },
+      tenant: DEFAULT_TENANT,
+    });
     expect(create.mock.calls[0]?.[0]).toMatchObject({ tenant: "acme" });
-    expect(create.mock.calls[1]?.[0]).not.toHaveProperty("tenant");
+    expect(create.mock.calls[1]?.[0]).toMatchObject({ tenant: DEFAULT_TENANT });
+    expect(create.mock.calls[2]?.[0]).toMatchObject({ tenant: DEFAULT_TENANT });
     expect(await named.status()).toMatchObject({ tenant: { tenant: "acme" } });
-    expect(await unnamed.status()).toMatchObject({ tenant: { tenant: "default" } });
+    expect(await unnamed.status()).toMatchObject({ tenant: { tenant: DEFAULT_TENANT } });
+    expect(await defaulted.status()).toMatchObject({ tenant: { tenant: DEFAULT_TENANT } });
     await named.stop();
     await unnamed.stop();
+    await defaulted.stop();
+  });
+
+  it("refuses a tenant named with an empty string before it opens anything", async () => {
+    const { create, app: lifecycleRegistry } = lifecycle([]);
+    await expect(
+      createApp({ registry: lifecycleRegistry, config: { storage: memory() }, tenant: "" }),
+    ).rejects.toThrow(
+      new ConfigurationError(
+        "The tenant is named with an empty string, which names none: give it a name, or name none to serve default",
+      ),
+    );
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("refuses a database bound to another tenant, and a tenant whose key belongs to another database", async () => {

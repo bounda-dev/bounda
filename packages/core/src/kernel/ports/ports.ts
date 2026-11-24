@@ -33,7 +33,7 @@ export interface TestChoice {
 export type CreatePortsArgs = {
   readonly registry: Registry;
   readonly env: AppEnv;
-  readonly tenant?: string | undefined;
+  readonly tenant: string;
   readonly logger: Logger;
   readonly clock: Clock;
 } & ({ readonly config: PortsConfig } | { readonly test: TestChoice });
@@ -78,12 +78,7 @@ const disposerOf = (port: unknown): (() => Promise<void>) | undefined => {
  */
 export const createPorts: CreatePortsFunction = async (args) => {
   const { registry, env, tenant, logger, clock } = args;
-  const createArgs: CreateArgs = {
-    env,
-    ...(tenant === undefined ? {} : { tenant }),
-    logger,
-    clock,
-  };
+  const createArgs: CreateArgs = { env, tenant, logger, clock };
   const test = "test" in args ? args.test : undefined;
   const config = "config" in args ? args.config : {};
   const owners: readonly (readonly [PortOwner, PortModules])[] = [

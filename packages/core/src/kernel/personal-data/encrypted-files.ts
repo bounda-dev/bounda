@@ -7,11 +7,11 @@ import type { Config } from "../../config/types.ts";
 import { type Clock, systemClock } from "../../contracts/clock.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import type { AppEnv } from "../../register/index.ts";
+import { tenantIdOf } from "../tenant.ts";
 import { openFileKeys } from "./file-keys.ts";
 import { keySourcesOf } from "./key-hierarchy.ts";
 import { buildKeyWrapper, type CryptoKeyWrapper } from "./key-wrapper.ts";
 import { openTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
-import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 export interface OpenEncryptedFilesArgs {
   readonly config: Config;
@@ -149,10 +149,11 @@ export interface WithEncryptedFilesFunction {
 export const withEncryptedFiles: WithEncryptedFilesFunction = async ({
   config,
   env,
-  tenant = DEFAULT_TENANT,
+  tenant: named,
   logger = silentLogger,
   work,
 }) => {
+  const tenant = tenantIdOf(named);
   const resolved = resolveConfig(config);
   if (!isAdapter(resolved.storage)) return work(config);
   const sources = keySourcesOf({

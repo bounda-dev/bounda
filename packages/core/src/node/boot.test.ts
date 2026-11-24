@@ -132,6 +132,19 @@ describe("the tenant", () => {
       expect(unnamed.tenant).toBeUndefined();
     }
     expect(named.tenants).toEqual(["acme", "globex", "default", "default"]);
+    await expect(
+      loadProject({
+        root,
+        loadEnv: false,
+        registry,
+        config: named.config,
+        tenant: "",
+        logger: silentLogger,
+      }),
+    ).rejects.toThrow(
+      "The tenant is named with an empty string, which names none: give it a name, or name none to serve default",
+    );
+    expect(named.tenants).toHaveLength(4);
   });
 
   it("reads BOUNDA_TENANT once .env is loaded, and boots the app for the tenant", async () => {

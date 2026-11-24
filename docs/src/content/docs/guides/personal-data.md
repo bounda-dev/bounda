@@ -2235,8 +2235,12 @@ another tenant's. Which tenant an app serves depends on the host:
 - In a **Durable Object**, the object is the tenant: its name, as `idFromName` gave it, or its id
   when it has none. Every tenant's key lives in one store, under that name.
 - In **Node**, `boot({ tenant })`, `BOUNDA_TENANT`, or `--tenant` on the CLI names it; without any,
-  the app serves `default`, and its ports receive no tenant. A project that serves several from one
-  deployment exports its configuration as a function of the tenant, so each gets its own database:
+  the app serves `default` (`DEFAULT_TENANT`), the same tenant as one that names `default`: every
+  store, the forget ledger and the tenant key store included, keeps it under that name, so
+  `bounda export-tenant default` or `bounda forget-tenant default` reaches what the app wrote
+  without a name, and its ports and the access log receive `default` as its tenant either way. An
+  empty name is refused. A project that serves several from one deployment exports its configuration as a
+  function of the tenant, so each gets its own database:
 
   ```ts
   export default defineConfig(({ tenant }) => ({
@@ -2828,11 +2832,12 @@ export default defineConfig({
 The Worker exports the keeper's class, `createBoundaKeeper({ config })`, bound as `KEEPER` (see
 [Cloudflare](/adapters/cloudflare/#tenant-keys)). An app whose `cloudflare()` names no jurisdiction
 may keep the ledger in a KV namespace instead, `kvForgetLedger({ binding })`: every object keeps
-its entries under its own name, so an object reached through an id without a name fails to start,
+its entries under its tenant, its name or, for one reached through an id without a name, the id,
 and since KV may take up to a minute to list a key it just wrote, an object that starts reads the
 ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
-environment, the tenant and `keepForMs` when the app starts: it keeps every field of an entry, the
+environment, the tenant (`default` for an app that names none) and `keepForMs` when the app
+starts, and keeps its tenant's entries apart from every other's: it keeps every field of an entry, the
 reason and the fingerprints included, which the reconciliation decides by; its `read` returns
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a

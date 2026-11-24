@@ -13,6 +13,7 @@ import { personalDataInventory } from "./inventory.ts";
 import type { KeyWrapperDefinition } from "./key-wrapper.ts";
 import { masterKey } from "./master-key.ts";
 import { defineTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 const handlers = {
   onPersonalDataForgotten: () => {},
@@ -811,9 +812,12 @@ describe("personalDataInventory", () => {
             keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "us" }),
             tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore, { location: "us" }),
             forgetLedger: {
-              store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(undefined), {
-                location: "us",
-              }),
+              store: defineForgetLedger(
+                () => createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT),
+                {
+                  location: "us",
+                },
+              ),
             },
           },
         },
@@ -836,7 +840,9 @@ describe("personalDataInventory", () => {
               keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
               tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore),
               forgetLedger: {
-                store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(undefined)),
+                store: defineForgetLedger(() =>
+                  createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT),
+                ),
               },
             },
           },
@@ -857,7 +863,7 @@ describe("personalDataInventory", () => {
             keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
             tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore),
             forgetLedger: {
-              store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(undefined)),
+              store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT)),
             },
           },
         },
@@ -923,7 +929,7 @@ describe("personalDataInventory", () => {
         registry: { aggregates: {}, readModels: {} },
         config: { storage: memory(), runtime: { personalData: { forgetLedger: { store } } } },
       }).records.find(({ name }) => name === "forget-ledger");
-    const ledger = () => createMemoryForgetLedgers().ledgerOf(undefined);
+    const ledger = () => createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT);
     expect(recordOf(defineForgetLedger(ledger, { location: "eu" }))).toEqual({
       name: "forget-ledger",
       where: "forget-ledger",

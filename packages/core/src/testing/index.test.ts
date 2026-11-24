@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConfigurationError } from "../contracts/errors.ts";
+import { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 import type { OrderProcessConfigArgs } from "../kernel/test-support.ts";
 import type { CommandPayloadArgs } from "../modules/payload.ts";
 import type { CreateArgs, PortModules } from "../modules/port.ts";
@@ -186,7 +187,7 @@ describe("createTestApp ports", () => {
       clock: first.clock,
     });
     expect(received[1]?.clock).toBe(second.clock);
-    expect(received[1]).not.toHaveProperty("tenant");
+    expect(received[1]?.tenant).toBe(DEFAULT_TENANT);
     await first.app.stop();
     expect(closed).toEqual(["memory"]);
     await second.app.stop();

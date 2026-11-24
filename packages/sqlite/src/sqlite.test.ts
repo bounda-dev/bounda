@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   type CommandPayloadArgs,
   ConfigurationError,
+  DEFAULT_TENANT,
   type FieldsArgs,
   fieldBuilder as f,
   type PayloadArgs,
@@ -260,7 +261,7 @@ describe("sqlite adapter on a file", () => {
     const path = freshPath();
     const adapter = sqlite({ path });
     const storage = await adapter.createStorage();
-    const ledger = await adapter.createForgetLedger({});
+    const ledger = await adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
     // Its table made, so its read below is one statement, queued behind the transaction.
     await ledger.read({ limit: 1 });
     let release: () => void = () => undefined;

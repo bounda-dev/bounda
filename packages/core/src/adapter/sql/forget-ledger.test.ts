@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
 import type { ForgetLedgerEntry } from "../storage/forget-ledger.ts";
 import type { SqlDatabase, SqlTransaction } from "./database.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
@@ -79,7 +80,7 @@ describe("the SQL forget ledger", () => {
       db,
       table: `"t"`,
       dialect: postgresqlDialect,
-      tenant: undefined,
+      tenant: DEFAULT_TENANT,
       ensureSchema: async () => {},
       close: async () => {},
     });
@@ -125,7 +126,7 @@ describe("the SQL forget ledger", () => {
     expect(first?.[0]).toContain("($91, $92, $93, $94, $95, $96, $97, $98, $99, $100) ON CONFLICT");
     expect(first?.[1]).toHaveLength(100);
     expect(first?.[1].slice(0, 20)).toEqual([
-      "",
+      DEFAULT_TENANT,
       "e-0",
       "c-0",
       "2026-01-01T00:00:00.000Z",
@@ -135,7 +136,7 @@ describe("the SQL forget ledger", () => {
       null,
       null,
       null,
-      "",
+      DEFAULT_TENANT,
       "e-1",
       "c-1",
       "2026-01-01T00:00:00.000Z",
@@ -150,7 +151,7 @@ describe("the SQL forget ledger", () => {
       `VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10), ($11, $12, $13, $14, $15, $16, $17, $18, $19, $20), ($21, $22, $23, $24, $25, $26, $27, $28, $29, $30) ON CONFLICT`,
     );
     expect(second?.[1]).toEqual([
-      "",
+      DEFAULT_TENANT,
       "e-10",
       "c-10",
       "2026-01-01T00:00:00.000Z",
@@ -168,7 +169,7 @@ describe("the SQL forget ledger", () => {
       }),
       null,
       null,
-      "",
+      DEFAULT_TENANT,
       "e-11",
       "c-11",
       "2026-01-01T00:00:00.000Z",
@@ -178,7 +179,7 @@ describe("the SQL forget ledger", () => {
       null,
       JSON.stringify(redaction),
       null,
-      "",
+      DEFAULT_TENANT,
       "e-12",
       "c-12",
       "2026-01-01T00:00:00.000Z",
@@ -223,7 +224,7 @@ describe("the SQL forget ledger", () => {
       db,
       table: `"t"`,
       dialect: sqliteDialect,
-      tenant: undefined,
+      tenant: DEFAULT_TENANT,
       ensureSchema: async () => {},
       close: async () => {},
     });

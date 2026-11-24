@@ -74,7 +74,9 @@ stream holds in the clear and records nothing, and `bounda generate` loads no ap
 `--tenant <name>`, on every command that loads the project, names the [tenant](/guides/personal-data/#tenants)
 the app serves: a configuration that is a function of the tenant is called with it, and the app
 opens that tenant's key. `BOUNDA_TENANT`, in the environment or in `.env`, does the same without it;
-without either, the app serves `default`.
+without either, the app serves `default`. Naming `default` is naming that same tenant: `bounda
+export-tenant default` hands back, and `bounda forget-tenant default` forgets, what an app that
+names no tenant wrote, its forget ledger included. An empty `--tenant` is refused.
 
 ```bash
 bounda status --tenant acme

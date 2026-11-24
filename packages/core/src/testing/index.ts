@@ -47,7 +47,8 @@ export type CreateTestAppArgs<R extends Registry> = {
   readonly now?: Date;
   /**
    * The name of the store, which an implementation `ports` names receives in `create` as
-   * `tenant`, as it would in that tenant's Durable Object. Left out, it receives none.
+   * `tenant`, as it would in that tenant's Durable Object. Left out, it receives
+   * `DEFAULT_TENANT`.
    */
   readonly tenant?: string;
   /**

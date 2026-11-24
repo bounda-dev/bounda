@@ -13,6 +13,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { promisify, stripVTControlCharacters } from "node:util";
 import { startContainer } from "@bounda-dev/test-containers";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
@@ -332,6 +333,64 @@ await app.stop();`,
   expect((await bounda("forgotten", "--since", "0")).stdout).toContain('"personId":"grace"');
 };
 
+interface HandsBackAndForgetsTenantArgs {
+  readonly project: string;
+  readonly env: NodeJS.ProcessEnv;
+  // How many rows the forget ledger's table holds, of every tenant.
+  readonly ledgerRows: () => Promise<number>;
+}
+
+/**
+ * The app run without a tenant, as the script and `boot()` run it, and the CLI given `default`
+ * serve one tenant: the export of `default` hands back the forget ledger the app wrote, and its
+ * forgetting clears it, once the next start tells its recipients.
+ */
+const handsBackAndForgetsTenant = async ({
+  project,
+  env,
+  ledgerRows,
+}: HandsBackAndForgetsTenantArgs): Promise<void> => {
+  const cli = join(project, "node_modules/@bounda-dev/cli/dist/cli.js");
+  const bounda = (...args: readonly string[]) =>
+    run(process.execPath, [cli, ...args], { cwd: project, env });
+  expect(await ledgerRows()).toBeGreaterThan(0);
+  expect((await bounda("freeze-tenant", "default")).stdout).toContain("froze tenant default");
+  const file = join(project, "default.jsonl");
+  const exported = await bounda("export-tenant", "default", "--output", file);
+  expect(exported.stderr).toMatch(/exported tenant default to .*, [1-9]\d* forget ledger entries;/);
+  const entries = (await readFile(file, "utf8"))
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as { kind: string; entry?: { personId: string } })
+    .filter(({ kind }) => kind === "forgetLedgerEntry");
+  expect(entries.map(({ entry }) => entry?.personId)).toContain("grace");
+  expect((await bounda("check-tenant-export", file)).stdout).toContain(
+    "is a whole export of tenant default",
+  );
+  expect((await bounda("forget-tenant", "default", "--yes")).stdout).toContain(
+    "forgot tenant default",
+  );
+  await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `import { boot } from "@bounda-dev/core/node";
+const app = await boot({ signals: false });
+await app.runUntilIdle();
+console.log(JSON.stringify((await app.status()).forgottenTenant));
+await app.stop();`,
+    ],
+    { cwd: project, env },
+  ).then(({ stdout }) =>
+    expect(JSON.parse(stdout.trim().split("\n").at(-1) as string)).toMatchObject({
+      recipientsTold: true,
+      forgetLedgerCleared: true,
+    }),
+  );
+  expect(await ledgerRows()).toBe(0);
+};
+
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -401,6 +460,20 @@ describe("a project created by create-bounda", () => {
       env,
       backUp: () => copyFile(database, backup),
       restore: () => copyFile(backup, database),
+    });
+    await handsBackAndForgetsTenant({
+      project,
+      env,
+      ledgerRows: async () => {
+        const ledger = new DatabaseSync(join(project, "ledger/forget-ledger.db"));
+        try {
+          return Number(
+            ledger.prepare('SELECT count(*) AS "rows" FROM "bounda_forget_ledger"').get()?.rows,
+          );
+        } finally {
+          ledger.close();
+        }
+      },
     });
 
     // Without the master key in `.env`, the script refuses to boot.
@@ -506,6 +579,23 @@ describe("a project created by create-bounda", () => {
           await psql(`DROP DATABASE ${storage} WITH (FORCE)`);
           await psql(`CREATE DATABASE ${storage}`);
           await inServer(["pg_restore", "-U", user, "-d", storage, dump]);
+        },
+      });
+      await handsBackAndForgetsTenant({
+        project,
+        env,
+        ledgerRows: async () => {
+          const { exitCode, output } = await server.exec([
+            "psql",
+            "-U",
+            user,
+            "-d",
+            `${storage}_ledger`,
+            "-tAc",
+            'SELECT count(*) FROM "bounda_forget_ledger"',
+          ]);
+          expect(exitCode, output).toBe(0);
+          return Number(output.trim());
         },
       });
     } finally {

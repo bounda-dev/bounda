@@ -7,6 +7,7 @@ import {
   type Clock,
   type CommandPayloadArgs,
   createApp,
+  DEFAULT_TENANT,
   type EventPayloadArgs,
   type PersonalDataForgottenPayload,
   type Registry,
@@ -303,7 +304,9 @@ describe("restoring a backup with a forget ledger", () => {
     crashing = false;
     await stopping.stop();
 
-    const ledger = await sqlite({ path: paths.ledger }).createForgetLedger({});
+    const ledger = await sqlite({ path: paths.ledger }).createForgetLedger({
+      tenant: DEFAULT_TENANT,
+    });
     opened.push(ledger);
     const intentions = await ledger.read({ limit: 10 });
     expect(intentions.map(({ personId, reason }) => [personId, reason])).toEqual([

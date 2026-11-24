@@ -3,6 +3,7 @@ import {
   ConfigurationError,
   createApp,
   DEFAULT_PERSONAL_CATEGORY,
+  DEFAULT_TENANT,
   type EventPayloadArgs,
   type FieldsArgs,
   fieldBuilder as f,
@@ -493,7 +494,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   it("creates the forget ledger's table in its schema once, and takes no lock once it is there", async () => {
     const schema = `ledger_${run}`;
     const adapter = fresh({ schema });
-    const first = await adapter.createForgetLedger({});
+    const first = await adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
     closers.push(async () => first.close?.());
     await first.read({ limit: 1 });
     const holder = postgres(url, { max: 1, onnotice: () => undefined });
@@ -506,7 +507,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         `t${run}_${prefixes}_migrations`,
       ]);
       await holder`SELECT pg_advisory_lock(hashtext(${`bounda:${schema}:schema`}))`;
-      const second = await adapter.createForgetLedger({});
+      const second = await adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
       closers.push(async () => second.close?.());
       expect(await second.read({ limit: 1 })).toEqual([]);
       await holder`SELECT pg_advisory_unlock(hashtext(${`bounda:${schema}:schema`}))`;

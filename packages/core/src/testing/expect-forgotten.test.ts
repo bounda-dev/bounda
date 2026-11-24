@@ -12,6 +12,7 @@ import { createApp } from "../kernel/app.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { HOLD_MS } from "../kernel/personal-data/hold.ts";
+import { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 import { RESTORE_MARK } from "../kernel/shared/restores.ts";
 import { installFakeTelemetry } from "../kernel/telemetry-fake.ts";
 import type { Witness } from "../kernel/witness.ts";
@@ -812,7 +813,7 @@ describe("expectForgotten", () => {
   });
 
   it("reads a forget ledger past its first page", async () => {
-    const kept = await memory().createForgetLedger({ tenant: undefined });
+    const kept = await memory().createForgetLedger({ tenant: DEFAULT_TENANT });
     await kept.append(
       Array.from({ length: 1_200 }, (_, index) => ({
         personId: `p-${index}`,
@@ -1087,7 +1088,7 @@ describe("expectForgotten given an app built with a witness", () => {
     ).registerCustomer?.(ana);
     await app.runUntilIdle();
     await app.forget(ana.customerId);
-    const kept = await ledgers.createForgetLedger({});
+    const kept = await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT });
     await kept.raiseMark(RESTORE_MARK, 3);
     await app.forgetTenant("default", { despiteLegalObligations: true });
     // Its recipients not told yet, the ledger keeps what a restored copy would need.

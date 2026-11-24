@@ -3,6 +3,7 @@ import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts"
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
+import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import {
   createRestoreWatch,
@@ -23,7 +24,7 @@ const setUp = async (
   } = {},
 ) => {
   const { checkpointStore } = await memory().createStorage();
-  const ledger = await memory().createForgetLedger({});
+  const ledger = await memory().createForgetLedger({ tenant: DEFAULT_TENANT });
   const { logger, entries } = createRecordingLogger("omit");
   const stream = { head: 0 };
   const watchOver = () =>
@@ -294,7 +295,7 @@ describe("createRestoreWatch", () => {
   it("moves nothing on a stop without a write since the last move, and logs a stream it cannot read", async () => {
     let down = false;
     const { checkpointStore } = await memory().createStorage();
-    const ledger = await memory().createForgetLedger({});
+    const ledger = await memory().createForgetLedger({ tenant: DEFAULT_TENANT });
     const { logger, entries } = createRecordingLogger("omit");
     const watch = createRestoreWatch({
       checkpoints: checkpointStore,

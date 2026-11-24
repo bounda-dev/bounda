@@ -3,6 +3,7 @@ import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { defineKeyWrapper } from "../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
 import { defineTenantKeyStore } from "../kernel/personal-data/tenant-key-source.ts";
+import { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 import { createMemoryForgetLedgers } from "../memory/forget-ledger.ts";
 import { memory } from "../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
@@ -10,7 +11,7 @@ import { resolveConfig } from "./schema.ts";
 import type { Config } from "./types.ts";
 
 const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" });
-const ledger = () => createMemoryForgetLedgers().ledgerOf(undefined);
+const ledger = () => createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT);
 
 const kept = (
   personalData: NonNullable<NonNullable<Config["runtime"]>["personalData"]>,

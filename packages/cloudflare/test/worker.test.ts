@@ -362,6 +362,48 @@ describe("createWorker", () => {
     ]);
   });
 
+  it("answers a 500 and logs it when tenantOf names no tenant, reaching no object", async () => {
+    const errors: unknown[][] = [];
+    const logger: Logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: (...entry) => void errors.push(entry),
+    };
+    const { stub, queries } = recordingStub();
+    const addressed: string[] = [];
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => "",
+      logger,
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/queries/getOrder", {
+        method: "POST",
+        body: JSON.stringify({ orderId: "o-1" }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      {
+        SPY: {
+          idFromName: (name: string) => {
+            addressed.push(name);
+            return "id";
+          },
+          get: () => stub,
+        },
+      } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(500);
+    expect(await response?.json()).toEqual({
+      error: { code: "INTERNAL", message: "Internal error" },
+    });
+    expect(errors).toEqual([
+      ["bounda worker tenantOf named no tenant", { path: "/queries/getOrder" }],
+    ]);
+    expect(addressed).toEqual([]);
+    expect(queries).toEqual([]);
+  });
+
   it("answers a 500 and logs it, without the value, when actorOf names no valid actor", async () => {
     const errors: unknown[][] = [];
     const logger: Logger = {

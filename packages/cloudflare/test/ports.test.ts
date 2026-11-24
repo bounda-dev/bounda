@@ -52,6 +52,6 @@ describe("an implementation built by create inside a Durable Object", () => {
       await app.commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" });
       await app.stop();
     });
-    expect(regionLog).toEqual(["eu-test:unnamed:o-1", "closed"]);
+    expect(regionLog).toEqual(["eu-test:default:o-1", "closed"]);
   });
 });
