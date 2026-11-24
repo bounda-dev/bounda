@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { PruneForgetLedgerArgs } from "../../adapter/storage/forget-ledger.ts";
+import type {
+  ForgetLedgerEntry,
+  PruneForgetLedgerArgs,
+} from "../../adapter/storage/forget-ledger.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { createForgottenLedger } from "./forgotten-ledger.ts";
 import { HOLD_MS } from "./hold.ts";
@@ -178,5 +181,40 @@ describe("the forget ledger of a forgotten tenant", () => {
         fields: expect.objectContaining({ tenant: "acme", errorName: "Error" }),
       },
     ]);
+  });
+
+  it("says the ledger is cleared only once it holds no entry and no mark, reading one entry at most", async () => {
+    const limits: number[] = [];
+    let entries: readonly ForgetLedgerEntry[] = [];
+    let mark = 0;
+    const ledger = createForgottenLedger({
+      ledger: {
+        clear: async () => true,
+        read: async ({ limit }) => {
+          limits.push(limit);
+          return entries;
+        },
+        readMark: async () => mark,
+      },
+      keepForMs: null,
+      reconcileEveryMs: MINUTE,
+      tenant: "acme",
+      logger: createRecordingLogger().logger,
+    });
+    expect(await ledger.cleared()).toBe(true);
+    mark = 3;
+    expect(await ledger.cleared()).toBe(false);
+    mark = 0;
+    entries = [
+      {
+        personId: "c-1",
+        categories: null,
+        eventId: "e-1",
+        forgottenAt: FORGETTING.at,
+        reason: "requested",
+      },
+    ];
+    expect(await ledger.cleared()).toBe(false);
+    expect(limits).toEqual([1, 1, 1]);
   });
 });

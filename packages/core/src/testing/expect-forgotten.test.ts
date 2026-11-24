@@ -1059,10 +1059,15 @@ describe("expectForgotten given an app built with a witness", () => {
     const witness = createWitness();
     const ledgers = memory();
     let clearing = false;
+    const limits: (number | undefined)[] = [];
     const ledger = defineForgetLedger(async ({ tenant }) => {
       const kept = await ledgers.createForgetLedger({ tenant });
       return {
         ...kept,
+        read: (args) => {
+          limits.push(args.limit);
+          return kept.read(args);
+        },
         clear: async () => (clearing ? kept.clear() : Promise.reject(new Error("ledger down"))),
       };
     });
@@ -1088,9 +1093,20 @@ describe("expectForgotten given an app built with a witness", () => {
     // Its recipients not told yet, the ledger keeps what a restored copy would need.
     await expectTenantForgotten(witness);
     await app.runUntilIdle();
+    limits.length = 0;
     const error = (await rejection(expectTenantForgotten(witness))) as TenantNotForgottenError;
+    // One entry is enough to tell, for the status and the check alike; the search reads them all.
+    expect(limits.slice(0, 2)).toEqual([1, 1]);
     expect(error.problems).toEqual([
       "the forget ledger still holds entries of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears them",
+      "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
+    ]);
+    // A mark alone is found too.
+    await kept.clear();
+    await kept.raiseMark(RESTORE_MARK, 3);
+    expect(
+      ((await rejection(expectTenantForgotten(witness))) as TenantNotForgottenError).problems,
+    ).toEqual([
       "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
     ]);
     clearing = true;

@@ -377,26 +377,26 @@ const ofForgetting = (row: Readonly<Record<string, unknown>>): boolean =>
 
 // Once every recipient is told, nothing needs the ledger's entries or marks of the tenant: what
 // the forgotten app clears then, and leaves while a copy restored before could still need them.
-const ledgerProblems = async (scope: Scope): Promise<string[]> => {
-  const [client] = scope.running;
-  if (client === undefined || scope.ledgers.length === 0) return [];
-  const { forgottenTenant } = await client.client.status();
-  if (forgottenTenant === null || isUnreadable(forgottenTenant)) return [];
-  if (!forgottenTenant.recipientsTold) return [];
-  const problems: string[] = [];
-  for (const ledger of scope.ledgers) {
-    if ((await ledger.read({ limit: 1 })).length > 0) {
-      problems.push(
-        "the forget ledger still holds entries of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears them",
-      );
-    }
-    if ((await ledger.readMark(RESTORE_MARK)) > 0) {
-      problems.push(
-        "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
-      );
+const ledgerProblems = async ({ running }: Scope): Promise<string[]> => {
+  const problems = new Set<string>();
+  for (const { client, ledgers } of running) {
+    const { forgottenTenant } = await client.status();
+    if (forgottenTenant === null || isUnreadable(forgottenTenant)) continue;
+    if (!forgottenTenant.recipientsTold) continue;
+    for (const ledger of ledgers) {
+      if ((await ledger.read({ limit: 1 })).length > 0) {
+        problems.add(
+          "the forget ledger still holds entries of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears them",
+        );
+      }
+      if ((await ledger.readMark(RESTORE_MARK)) > 0) {
+        problems.add(
+          "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
+        );
+      }
     }
   }
-  return problems;
+  return [...problems];
 };
 
 const tenantProblems = (tables: readonly InspectedTable[]): string[] => {
