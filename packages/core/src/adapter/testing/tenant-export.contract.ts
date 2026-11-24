@@ -220,7 +220,8 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
   describe("tenant export contract", () => {
     const stops: (() => Promise<void>)[] = [];
     afterEach(async () => {
-      for (const stop of stops.splice(0)) await stop();
+      // Last opened, first stopped.
+      for (const stop of stops.splice(0).reverse()) await stop();
     });
 
     const open = async () => {
@@ -643,14 +644,15 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
         stops.push(() => app.stop());
         return app;
       };
-      const ledgerEntries = async () => {
-        const opened = await ledger.createForgetLedger({ tenant: DEFAULT_TENANT });
-        try {
-          return (await opened.read({ limit: 10 })).map(({ personId }) => personId);
-        } finally {
-          await opened.close?.();
-        }
-      };
+      // Held open until every app stopped, so a database in memory outlives each app over it.
+      const heldStorage = await storage.createStorage();
+      const heldLedger = await ledger.createForgetLedger({ tenant: DEFAULT_TENANT });
+      stops.push(async () => {
+        await heldLedger.close?.();
+        await heldStorage.close();
+      });
+      const ledgerEntries = async () =>
+        (await heldLedger.read({ limit: 10 })).map(({ personId }) => personId);
       // What the app run without a tenant writes to the ledger, as `boot()` runs it.
       const unnamed = await boot();
       const commands = unnamed.commands as unknown as Readonly<Record<string, Dispatch>>;

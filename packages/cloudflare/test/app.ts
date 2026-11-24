@@ -399,7 +399,7 @@ export const regionRegistry = {
       ports: {
         region: {
           binding: {
-            create: ({ env, tenant = "unnamed" }: CreateArgs) => ({
+            create: ({ env, tenant }: CreateArgs) => ({
               record: (orderId: string) =>
                 regionLog.push(`${env.STORE_REGION}:${tenant}:${orderId}`),
               [Symbol.asyncDispose]: async () => void regionLog.push("closed"),
