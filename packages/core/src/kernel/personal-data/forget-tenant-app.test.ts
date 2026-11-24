@@ -23,6 +23,7 @@ import { TENANT_CHECK_INTERVAL_MS } from "./forgotten-tenant.ts";
 import { HOLD_MS } from "./hold.ts";
 import { masterKey } from "./master-key.ts";
 import { defineTenantKeyStore } from "./tenant-key-source.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 interface CustomerRow {
   readonly customerId: string;
@@ -264,7 +265,7 @@ describe("forgetTenant", () => {
     stops.push(() => app.stop());
     await register(app, "c-1");
     await app.forget("c-1");
-    const kept = await ledgers.createForgetLedger({});
+    const kept = await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT });
     expect(await kept.read({ limit: 10 })).toHaveLength(1);
     await app.forgetTenant("default", { despiteLegalObligations: true });
     await app.runUntilIdle();
@@ -360,7 +361,9 @@ describe("forgetTenant", () => {
       app.commands as unknown as Record<string, (payload: object) => Promise<unknown>>
     ).count?.({ counterId: "k-1" });
     await app.stop();
-    expect(await (await ledgers.createForgetLedger({})).readMark(RESTORE_MARK)).toBeGreaterThan(0);
+    expect(
+      await (await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT })).readMark(RESTORE_MARK),
+    ).toBeGreaterThan(0);
   });
 
   it("leaves the skeleton: the event of the forgetting, ids, types and the fields no schema marks", async () => {
@@ -736,7 +739,7 @@ describe("a forgotten tenant's writes from an instance that has not heard of it"
     const { forgottenAt } = await one.app.forgetTenant("default", {
       despiteLegalObligations: true,
     });
-    const ledger = await ledgers.createForgetLedger({});
+    const ledger = await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT });
     expect(await ledger.fence.read()).toEqual({
       state: "forgotten",
       tenant: "default",
@@ -1027,7 +1030,9 @@ describe("freezeTenant", () => {
     expect(
       recording.entries.filter(({ level }) => level === "warn").map(({ message }) => message),
     ).toEqual(["tenant frozen: it takes no write until unfrozen"]);
-    await (await ledgers.createForgetLedger({})).fence.set({ state: "open" });
+    await (await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT })).fence.set({
+      state: "open",
+    });
     expect((await app.status()).frozenTenant).toEqual({ frozenAt, whole: false });
     await expect(app.exportTenant("default")).rejects.toMatchObject({
       name: "ValidationError",

@@ -55,6 +55,7 @@ interface OrderState {
  * and want typed facades.
  */
 import type { SubscriberLag, UnreadableSubscriberLag } from "./dispatch/dispatcher.ts";
+import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
 import type { UnreadableStatus } from "./shared/retention-status.ts";
 import { isUnreadable } from "./status.ts";
 export const orderAggregate = {
@@ -352,6 +353,7 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     registry,
     config: config.ports,
     env: {},
+    tenant: DEFAULT_TENANT,
     logger: silentLogger,
     clock,
   });
@@ -371,7 +373,13 @@ export const createKernelHarness: CreateKernelHarnessFunction = async ({
     ids: createSequentialIdGenerator(),
     clock,
     logger,
-    recordAccess: createAccessLog({ hook: undefined, env: {}, tenant: undefined, logger, clock }),
+    recordAccess: createAccessLog({
+      hook: undefined,
+      env: {},
+      tenant: DEFAULT_TENANT,
+      logger,
+      clock,
+    }),
     onRejection: (rejection) => rejections.push(rejection),
     marks: marksFingerprint({ aggregates, processes: { all: [] } }),
   });

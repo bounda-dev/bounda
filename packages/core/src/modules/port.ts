@@ -15,11 +15,10 @@ export interface CreateArgs {
   /**
    * The name of the store the app serves, for an implementation that differs by tenant (an
    * account or a key per customer): what `createApp` or `createTestApp` received as `tenant`,
-   * which on Cloudflare is the name the Durable Object was addressed by with `idFromName`.
-   * `undefined` for an app with one store, as under `boot()`, and for an object reached through an
-   * id without a name.
+   * which on Cloudflare is the name the Durable Object was addressed by with `idFromName`, or its
+   * id when it has none; `DEFAULT_TENANT` for an app that names none, as under `boot()`.
    */
-  readonly tenant?: string;
+  readonly tenant: string;
   readonly logger: Logger;
   readonly clock: Clock;
 }

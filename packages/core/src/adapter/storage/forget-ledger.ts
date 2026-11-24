@@ -192,10 +192,10 @@ export interface ForgetLedger {
 
 export interface CreateForgetLedgerArgs {
   /**
-   * The name of the store the app serves, as `createApp` received it, whose entries the ledger
-   * keeps apart from other stores'.
+   * The tenant the app serves, whose entries the ledger keeps apart from other tenants':
+   * `DEFAULT_TENANT` for an app that names none.
    */
-  readonly tenant?: string | undefined;
+  readonly tenant: string;
   /**
    * How long the app keeps each entry after its `forgottenAt`, from `keepFor`; `undefined` keeps
    * entries until `clear`. Only a ledger without `prune` uses it, to expire its entries itself.

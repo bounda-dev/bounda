@@ -1,3 +1,4 @@
+import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
 import {
   type ForgetLedger,
   type ForgetLedgerEntry,
@@ -95,6 +96,34 @@ export interface ForgetLedgerFenceStatementFunction {
 export const forgetLedgerFenceStatement: ForgetLedgerFenceStatementFunction = (table) =>
   tenantFenceTableStatement(forgetLedgerFenceTableFor(table));
 
+export interface ForgetLedgerDefaultTenantStatementsFunction {
+  (table: string): readonly string[];
+}
+
+/**
+ * The ninth version: what an app that names no tenant wrote under the empty name moves to
+ * `DEFAULT_TENANT`, the id every other store keys it by. Where both hold a row, the entry and the
+ * higher mark are kept once, and of two fences the forgotten one, or of the same state the earlier.
+ */
+export const forgetLedgerDefaultTenantStatements: ForgetLedgerDefaultTenantStatementsFunction = (
+  table,
+) => {
+  const marks = forgetLedgerMarksTableFor(table);
+  const fence = forgetLedgerFenceTableFor(table);
+  const named = `'${DEFAULT_TENANT}'`;
+  const legacyMark = `(SELECT "l"."value" FROM ${marks} AS "l" WHERE "l"."tenant" = '' AND "l"."name" = ${marks}."name")`;
+  return [
+    `DELETE FROM ${table} WHERE "tenant" = '' AND "event_id" IN (SELECT "event_id" FROM ${table} WHERE "tenant" = ${named})`,
+    `UPDATE ${table} SET "tenant" = ${named} WHERE "tenant" = ''`,
+    `UPDATE ${marks} SET "value" = ${legacyMark} WHERE "tenant" = ${named} AND "value" < ${legacyMark}`,
+    `DELETE FROM ${marks} WHERE "tenant" = '' AND "name" IN (SELECT "name" FROM ${marks} WHERE "tenant" = ${named})`,
+    `UPDATE ${marks} SET "tenant" = ${named} WHERE "tenant" = ''`,
+    `DELETE FROM ${fence} WHERE "scope" = '' AND EXISTS (SELECT 1 FROM ${fence} AS "d" WHERE "d"."scope" = ${named} AND (CASE WHEN "d"."state" = ${fence}."state" THEN "d"."since" <= ${fence}."since" ELSE "d"."state" = 'forgotten' END))`,
+    `DELETE FROM ${fence} WHERE "scope" = ${named} AND EXISTS (SELECT 1 FROM ${fence} AS "l" WHERE "l"."scope" = '')`,
+    `UPDATE ${fence} SET "scope" = ${named}, "tenant" = ${named} WHERE "scope" = ''`,
+  ];
+};
+
 export interface ForgetLedgerReasonStatementsFunction {
   (table: string): readonly string[];
 }
@@ -115,7 +144,7 @@ export interface CreateSqlForgetLedgerArgs {
    */
   readonly table: string;
   readonly dialect: Pick<SqlDialect, "placeholder">;
-  readonly tenant: string | undefined;
+  readonly tenant: string;
   /**
    * The text hashed with the tenant into the advisory lock that puts the ledger's writes behind
    * its fence, for an engine whose transactions run side by side, as PostgreSQL's do.
@@ -218,13 +247,13 @@ const SELECTED = `"event_id", "person", "forgotten_at", "reason", "fingerprints"
 
 /**
  * The forget ledger of SQLite and PostgreSQL alike, in a table of its own that holds every
- * tenant's entries, an app without a tenant's under the empty name.
+ * tenant's entries.
  */
 export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
   db,
   table,
   dialect,
-  tenant = "",
+  tenant,
   lockKey,
   ensureSchema,
   close,

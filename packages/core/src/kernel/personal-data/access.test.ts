@@ -4,9 +4,10 @@ import { NotFoundError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import type { OnPersonalDataAccessArgs } from "../../modules/audit.ts";
 import { checked, createAccessLog, recorded } from "./access.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 describe("createAccessLog", () => {
-  it("hands the hook the record, the environment and the logger, without a tenant for an app with one store, and waits for it", async () => {
+  it("hands the hook the record, the environment, the tenant and the logger, and waits for it", async () => {
     const received: OnPersonalDataAccessArgs[] = [];
     const record = createAccessLog({
       hook: async (args) => {
@@ -14,7 +15,7 @@ describe("createAccessLog", () => {
         received.push(args);
       },
       env: { KEY: "value" },
-      tenant: undefined,
+      tenant: DEFAULT_TENANT,
       logger: silentLogger,
       clock: createFixedClock(new Date("2026-03-01T10:00:00.000Z")),
     });
@@ -59,6 +60,7 @@ describe("createAccessLog", () => {
           detail: { letter: "dl-1" },
         },
         env: { KEY: "value" },
+        tenant: DEFAULT_TENANT,
         logger: silentLogger,
       },
       {
@@ -76,6 +78,7 @@ describe("createAccessLog", () => {
           detail: { query: "getCustomer", readModel: "customers" },
         },
         env: { KEY: "value" },
+        tenant: DEFAULT_TENANT,
         logger: silentLogger,
       },
       // What is thrown is named by its type, never quoted.
@@ -93,6 +96,7 @@ describe("createAccessLog", () => {
           detail: { failures: 0 },
         },
         env: { KEY: "value" },
+        tenant: DEFAULT_TENANT,
         logger: silentLogger,
       },
     ]);

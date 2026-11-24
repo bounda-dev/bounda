@@ -27,12 +27,17 @@ describe("tenantOfModule", () => {
 });
 
 describe("tenantOfRequest", () => {
-  it("names the request's tenant, awaited, and refuses anything but a string", async () => {
+  it("names the request's tenant, awaited, and refuses anything but a non-empty string", async () => {
     expect(await tenantOfRequest(() => "acme", args)).toBe("acme");
     expect(await tenantOfRequest(async () => "globex", args)).toBe("globex");
     await expect(tenantOfRequest(() => undefined as unknown as string, args)).rejects.toThrow(
       new ConfigurationError(
-        "tenant must name the store of a request with a string, got undefined",
+        "tenant must name the store of a request with a non-empty string, got undefined",
+      ),
+    );
+    await expect(tenantOfRequest(() => "", args)).rejects.toThrow(
+      new ConfigurationError(
+        'tenant must name the store of a request with a non-empty string, got ""',
       ),
     );
   });

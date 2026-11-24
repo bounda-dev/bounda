@@ -29,6 +29,7 @@ import {
   forgetAgain,
   NEVER_DUE,
 } from "./reconciliation.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 // Each error line as its message, marked when it carries no error.
 const loggingErrors = (errors: unknown[]): Logger => ({
@@ -66,7 +67,7 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
     append: async () => {},
     read: async (args) => {
       reads.push(args);
-      const opened = await inner.createForgetLedger({});
+      const opened = await inner.createForgetLedger({ tenant: DEFAULT_TENANT });
       await opened.append(entries);
       return opened.read(args);
     },
@@ -234,7 +235,7 @@ describe("the forget ledger's reconciliation", () => {
     let failures = 1;
     const storage = await memory().createStorage();
     await keyed(storage, ["c-1"]);
-    const inner = await memory().createForgetLedger({});
+    const inner = await memory().createForgetLedger({ tenant: DEFAULT_TENANT });
     await inner.append([entry("c-1", "e-1", at(0))]);
     const reconciliation = createForgetLedgerReconciliation({
       intentions: withoutLedger({

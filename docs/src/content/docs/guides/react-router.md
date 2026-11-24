@@ -447,8 +447,8 @@ export const tenant: TenantFunction = () => "default";
 `app/tenant.ts` names the store each request reaches. It receives what a middleware does, the
 `request`, the route's `params` and the `context`, so the tenant can come from the URL, such as
 `({ params }) => params.workspace ?? "default"`, or from what an earlier middleware put in the
-context, such as the signed-in user. It runs the first time a request uses `bounda`, once per
-request. Every tenant is its own object with its own events and read models; a single tenant is a
+context, such as the signed-in user, a non-empty string. It runs the first time a request uses
+`bounda`, once per request. Every tenant is its own object with its own events and read models; a single tenant is a
 choice, so there is no default, and without the file the first request fails saying what to
 create.
 

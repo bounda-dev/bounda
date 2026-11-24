@@ -36,6 +36,7 @@ import { masterKey } from "../personal-data/master-key.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
 import type { TenantExportPart } from "../personal-data/tenant-export.ts";
 import { defineTenantKeyStore } from "../personal-data/tenant-key-source.ts";
+import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { RESTORE_MARK } from "../shared/restores.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { readPart } from "../test-support.ts";
@@ -1605,7 +1606,7 @@ describe("recipients and the forget ledger", () => {
   it("has a disclosure in the ledger before the port is called", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
-    const ledger = await ledgerAdapter.createForgetLedger({});
+    const ledger = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
     const seen: (readonly ForgetLedgerEntry[])[] = [];
     const registry = registryWithDoubles(
       registryWith({ told: [] }),
@@ -1654,7 +1655,7 @@ describe("recipients and the forget ledger", () => {
     const ledgerAdapter = memory();
     const told: Notice[] = [];
     const lost = new Date(START.getTime() - FORGET_LEDGER_GRACE_MS - 60_000).toISOString();
-    const ledger = await ledgerAdapter.createForgetLedger({});
+    const ledger = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
     const entry: ForgetLedgerEntry = {
       personId: "c-9",
       categories: null,
@@ -1815,7 +1816,11 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
       ...(logger === undefined ? {} : { logger }),
     });
     await after.runUntilIdle();
-    return { after, told, ledger: await ledgerAdapter.createForgetLedger({}) };
+    return {
+      after,
+      told,
+      ledger: await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT }),
+    };
   };
 
   const presumedAll = [
@@ -1952,7 +1957,7 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
     stops.push(() => app.stop());
     await registerOn(app, "c-1");
     failing.add("customer.mailer");
-    const ledger = await ledgerAdapter.createForgetLedger({});
+    const ledger = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
     const old: ForgetLedgerEntry = {
       personId: "c-old",
       categories: null,

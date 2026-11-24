@@ -3,11 +3,12 @@ import { createMemoryForgetLedgers } from "../../memory/forget-ledger.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import { defineForgetLedger } from "./forget-ledger.ts";
 import { defineTenantKeyStore } from "./tenant-key-source.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 describe("defineTenantKeyStore and defineForgetLedger", () => {
   it("keep where the store says it keeps what it holds, and nothing when it says nothing", () => {
     const keys = () => createMemoryTenantKeyStore();
-    const ledger = () => createMemoryForgetLedgers().ledgerOf(undefined);
+    const ledger = () => createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT);
     expect(defineTenantKeyStore(keys, { location: "eu" })).toEqual({
       kind: "bounda-tenant-key-store",
       create: keys,

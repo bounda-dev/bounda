@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { ConfigurationError, StorageSchemaTooNewError } from "../../contracts/errors.ts";
+import { createFixedClock } from "../../contracts/clock.ts";
+import {
+  ConfigurationError,
+  StorageSchemaTooNewError,
+  TenantFrozenError,
+} from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
+import { createApp } from "../../kernel/app.ts";
+import type { TenantExportPart } from "../../kernel/personal-data/tenant-export.ts";
+import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
+import { memory } from "../../memory/index.ts";
+import type { Registry } from "../../modules/registry.ts";
 import type { Adapter, Storage } from "../adapter.ts";
-import { storageTableNameFor } from "../sql/identifiers.ts";
+import { forgetLedgerFenceTableFor, forgetLedgerMarksTableFor } from "../sql/forget-ledger.ts";
+import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { schemaMigrationsTableFor, schemaMigrationsTableStatement } from "../sql/migrations.ts";
 import { earlierRowsFor, expectEarlierRowsTakenIn } from "./earlier-rows.ts";
 import { EARLIER_SCHEMAS, type EarlierVersion, earlierTablesFor } from "./earlier-schemas.ts";
@@ -58,6 +69,14 @@ const STORAGE_LATEST: Readonly<Record<StorageSchemaContractArgs["dialect"], numb
 
 const latestOf = (dialect: StorageSchemaContractArgs["dialect"]) =>
   dialect === "sqlite" ? LATEST : [...LATEST, { scope: "storage", version: 12 }];
+
+// A fence raised under the forget ledger's empty name or DEFAULT_TENANT, `day` its since in 2026-01.
+interface LegacyFence {
+  readonly state: "frozen" | "forgotten";
+  readonly day: number;
+}
+
+const sinceOn = (day: number): string => `2026-01-0${day}T00:00:00.000Z`;
 
 const versionsOf = async ({ execute, prefix }: StorageSchemaTarget) =>
   (
@@ -171,20 +190,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 0, latest: 4 },
-        { scope: "forget-ledger", version: 0, latest: 8 },
+        { scope: "forget-ledger", version: 0, latest: 9 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 4, latest: 4 },
-        { scope: "forget-ledger", version: 0, latest: 8 },
+        { scope: "forget-ledger", version: 0, latest: 9 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
         { scope: "storage", version: STORAGE_LATEST[dialect], latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 4, latest: 4 },
-        { scope: "forget-ledger", version: 8, latest: 8 },
+        { scope: "forget-ledger", version: 9, latest: 9 },
         { scope: "tenant-keys", version: 1, latest: 1 },
       ]);
       const shape = await shapeOf(target, dialect);
@@ -522,7 +541,216 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 6 },
         { scope: "forget-ledger", version: 7 },
         { scope: "forget-ledger", version: 8 },
+        { scope: "forget-ledger", version: 9 },
       ]);
+    });
+
+    it("moves what an app that names no tenant kept under the empty name to DEFAULT_TENANT, one of each", async () => {
+      const target = await create();
+      const table = quoteIdentifier(
+        storageTableNameFor({ prefix: target.prefix, table: "forgetLedger" }),
+      );
+      const marks = forgetLedgerMarksTableFor(table);
+      const fence = forgetLedgerFenceTableFor(table);
+      const migrated = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        await migrated.read({ limit: 1 });
+      } finally {
+        await migrated.close?.();
+      }
+      // As a release before the ninth version left them: the app that names no tenant under "",
+      // and `bounda export-tenant default` under DEFAULT_TENANT, both of the same tenant.
+      const entryRow = (tenant: string, eventId: string) =>
+        `('${tenant}', '${eventId}', 'p-${eventId}', '2026-01-01T00:00:0${eventId.slice(-1)}.000Z')`;
+      await target.execute(
+        `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at") VALUES ${[
+          entryRow("", "e-1"),
+          entryRow("", "e-2"),
+          entryRow(DEFAULT_TENANT, "e-2"),
+          entryRow(DEFAULT_TENANT, "e-3"),
+          entryRow("t-1", "e-4"),
+        ].join(", ")}`,
+      );
+      await target.execute(
+        `INSERT INTO ${marks} ("tenant", "name", "value") VALUES ('', 'restore', 5), ('', 'reconciled', 3), ('${DEFAULT_TENANT}', 'restore', 2), ('${DEFAULT_TENANT}', 'flushed', 7)`,
+      );
+      await target.execute(
+        `INSERT INTO ${fence} ("scope", "tenant", "state", "since") VALUES ('', '${DEFAULT_TENANT}', 'frozen', '2026-01-01T00:00:00.000Z'), ('${DEFAULT_TENANT}', '${DEFAULT_TENANT}', 'frozen', '2026-01-02T00:00:00.000Z')`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 9`,
+      );
+      const ledger = await target.adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+      try {
+        expect((await ledger.read({ limit: 10 })).map(({ eventId }) => eventId)).toEqual([
+          "e-1",
+          "e-2",
+          "e-3",
+        ]);
+        expect([
+          await ledger.readMark("restore"),
+          await ledger.readMark("reconciled"),
+          await ledger.readMark("flushed"),
+        ]).toEqual([5, 3, 7]);
+        expect(await ledger.fence.read()).toEqual({
+          state: "frozen",
+          tenant: DEFAULT_TENANT,
+          since: "2026-01-01T00:00:00.000Z",
+        });
+      } finally {
+        await ledger.close?.();
+      }
+      const left = await target.execute(
+        `SELECT "tenant" FROM ${table} WHERE "tenant" = '' UNION ALL SELECT "tenant" FROM ${marks} WHERE "tenant" = '' UNION ALL SELECT "scope" FROM ${fence} WHERE "scope" = ''`,
+      );
+      expect(left).toEqual([]);
+      expect(
+        (await target.execute(`SELECT "event_id" FROM ${table} WHERE "tenant" = 't-1'`)).map(
+          ({ event_id }) => event_id,
+        ),
+      ).toEqual(["e-4"]);
+    });
+
+    // An open fence is no row; of two raised, the ninth version keeps the forgotten one, or of the
+    // same state the earlier, under DEFAULT_TENANT.
+    const frozenOn = (day: number): LegacyFence => ({ state: "frozen", day });
+    const forgottenOn = (day: number): LegacyFence => ({ state: "forgotten", day });
+    const fencePairs: readonly (readonly [
+      string,
+      LegacyFence | null,
+      LegacyFence | null,
+      LegacyFence | null,
+    ])[] = [
+      ["both open", null, null, null],
+      ["frozen under the empty name, open under DEFAULT_TENANT", frozenOn(1), null, frozenOn(1)],
+      [
+        "forgotten under the empty name, open under DEFAULT_TENANT",
+        forgottenOn(1),
+        null,
+        forgottenOn(1),
+      ],
+      ["open under the empty name, frozen under DEFAULT_TENANT", null, frozenOn(1), frozenOn(1)],
+      [
+        "open under the empty name, forgotten under DEFAULT_TENANT",
+        null,
+        forgottenOn(1),
+        forgottenOn(1),
+      ],
+      ["both frozen, the empty name's earlier", frozenOn(1), frozenOn(2), frozenOn(1)],
+      ["both frozen, DEFAULT_TENANT's earlier", frozenOn(2), frozenOn(1), frozenOn(1)],
+      ["both frozen at once", frozenOn(1), frozenOn(1), frozenOn(1)],
+      [
+        "frozen under the empty name, forgotten under DEFAULT_TENANT",
+        frozenOn(1),
+        forgottenOn(2),
+        forgottenOn(2),
+      ],
+      [
+        "forgotten under the empty name, frozen under DEFAULT_TENANT",
+        forgottenOn(2),
+        frozenOn(1),
+        forgottenOn(2),
+      ],
+      ["both forgotten, the empty name's earlier", forgottenOn(1), forgottenOn(2), forgottenOn(1)],
+      ["both forgotten, DEFAULT_TENANT's earlier", forgottenOn(2), forgottenOn(1), forgottenOn(1)],
+    ];
+    it.each(fencePairs)(
+      "keeps one fence of the tenant through the ninth version: %s",
+      async (_, legacy, named, kept) => {
+        const target = await create();
+        const table = quoteIdentifier(
+          storageTableNameFor({ prefix: target.prefix, table: "forgetLedger" }),
+        );
+        const fence = forgetLedgerFenceTableFor(table);
+        const migrated = await target.adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+        try {
+          await migrated.read({ limit: 1 });
+        } finally {
+          await migrated.close?.();
+        }
+        for (const [scope, raised] of [
+          ["", legacy],
+          [DEFAULT_TENANT, named],
+        ] as const) {
+          if (raised === null) continue;
+          await target.execute(
+            `INSERT INTO ${fence} ("scope", "tenant", "state", "since") VALUES ('${scope}', '${scope}', '${raised.state}', '${sinceOn(raised.day)}')`,
+          );
+        }
+        await target.execute(
+          `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 9`,
+        );
+        const ledger = await target.adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+        try {
+          expect(await ledger.fence.read()).toEqual(
+            kept === null
+              ? { state: "open" }
+              : { state: kept.state, tenant: DEFAULT_TENANT, since: sinceOn(kept.day) },
+          );
+        } finally {
+          await ledger.close?.();
+        }
+        expect(await target.execute(`SELECT "scope" FROM ${fence}`)).toEqual(
+          kept === null ? [] : [{ scope: DEFAULT_TENANT }],
+        );
+      },
+    );
+
+    it("keeps a tenant frozen through the ninth version when only DEFAULT_TENANT's fence was raised", async () => {
+      const target = await create();
+      const table = quoteIdentifier(
+        storageTableNameFor({ prefix: target.prefix, table: "forgetLedger" }),
+      );
+      // The database's fence and the tenant's keys in memory, the ledger in this database.
+      const storage = memory();
+      const boot = (tenant?: string) =>
+        createApp({
+          registry: { aggregates: {}, readModels: {} } as unknown as Registry,
+          config: {
+            storage,
+            runtime: { personalData: { forgetLedger: { store: target.adapter } } },
+          },
+          clock: createFixedClock(new Date("2026-03-01T00:00:00.000Z")),
+          ...(tenant === undefined ? {} : { tenant }),
+        });
+      // What `bounda freeze-tenant default` raised over a release that kept the app that names no
+      // tenant, and its entry, under the empty name.
+      const named = await boot(DEFAULT_TENANT);
+      await named.freezeTenant(DEFAULT_TENANT);
+      await named.stop();
+      await target.execute(
+        `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at") VALUES ('', 'e-1', 'ana', '2026-01-01T00:00:00.000Z')`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 9`,
+      );
+      const unnamed = await boot();
+      try {
+        const parts: TenantExportPart[] = [];
+        for await (const part of await unnamed.exportTenant(DEFAULT_TENANT)) parts.push(part);
+        expect(
+          parts.flatMap((part) => (part.kind === "forgetLedgerEntry" ? [part.entry.eventId] : [])),
+        ).toEqual(["e-1"]);
+        const ledger = await target.adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+        try {
+          await expect(
+            ledger.append([
+              {
+                personId: "bo",
+                eventId: "e-2",
+                forgottenAt: "2026-03-01T00:00:00.000Z",
+                categories: null,
+                reason: "requested",
+              },
+            ]),
+          ).rejects.toBeInstanceOf(TenantFrozenError);
+          expect((await ledger.read({ limit: 10 })).map(({ eventId }) => eventId)).toEqual(["e-1"]);
+        } finally {
+          await ledger.close?.();
+        }
+      } finally {
+        await unnamed.stop();
+      }
     });
 
     it("versions a tenant key store's table in a database of its own, once it is first used", async () => {

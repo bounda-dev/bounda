@@ -920,7 +920,9 @@ describe("createBounda with a tenant per request", () => {
       boot: async () => fakeApp("never").app,
     });
     await expect(boundaMiddleware(middlewareArgs().args, async () => undefined)).rejects.toThrow(
-      new ConfigurationError("tenant must name the store of a request with a string, got 42"),
+      new ConfigurationError(
+        "tenant must name the store of a request with a non-empty string, got 42",
+      ),
     );
   });
 });

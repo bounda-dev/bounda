@@ -6,7 +6,7 @@ export interface ForgetLedgerContractArgs {
   /**
    * An empty backing store, as what opens a ledger for each tenant over it.
    */
-  readonly create: () => Promise<(tenant?: string) => Promise<ForgetLedger>>;
+  readonly create: () => Promise<(tenant: string) => Promise<ForgetLedger>>;
 }
 
 export interface ForgetLedgerContractFunction {
@@ -51,12 +51,12 @@ const readAll = async (ledger: ForgetLedger, limit = 2): Promise<ForgetLedgerEnt
  */
 export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) => {
   describe("forget ledger contract", () => {
-    let ledgerFor: (tenant?: string) => Promise<ForgetLedger>;
+    let ledgerFor: (tenant: string) => Promise<ForgetLedger>;
     let ledger: ForgetLedger;
 
     beforeEach(async () => {
       ledgerFor = await create();
-      ledger = await ledgerFor();
+      ledger = await ledgerFor("tenant-a");
     });
 
     it("keeps the categories each forgetting asked for, none for a person forgotten as a whole", async () => {
@@ -341,7 +341,7 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.read({ limit: 10 })).toEqual(entries.slice(0, 1));
       expect(await ledger.readMark("restore:generation")).toBe(2);
       // Reopened, as a restart opens it again.
-      expect(await (await ledgerFor()).read({ limit: 10 })).toEqual(entries.slice(0, 1));
+      expect(await (await ledgerFor("tenant-a")).read({ limit: 10 })).toEqual(entries.slice(0, 1));
     });
 
     it("refuses appends and raised marks behind its fence, keeping nothing of them, and lets the rest through", async () => {
@@ -352,7 +352,7 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.fence.read()).toEqual({ state: "open" });
       expect(await ledger.fence.set(FROZEN)).toEqual(FROZEN);
       // Reopened, as another instance opens it.
-      const again = await ledgerFor();
+      const again = await ledgerFor("tenant-a");
       for (const fenced of [ledger, again]) {
         expect(await fenced.fence.read()).toEqual(FROZEN);
         await expect(fenced.append([entry("c-2", "e-2", 2)])).rejects.toMatchObject({
@@ -390,7 +390,7 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.readMark("restore:generation")).toBe(0);
       expect(await ledger.fence.set({ state: "open" })).toEqual(FORGOTTEN);
       expect(await ledger.fence.set(FROZEN)).toEqual(FORGOTTEN);
-      const again = await ledgerFor();
+      const again = await ledgerFor("tenant-a");
       expect(await again.fence.read()).toEqual(FORGOTTEN);
       await expect(again.append([entry("c-2", "e-2", 2)])).rejects.toMatchObject({
         code: "TENANT_FORGOTTEN",

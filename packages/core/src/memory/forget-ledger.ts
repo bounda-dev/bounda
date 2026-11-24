@@ -6,9 +6,9 @@ import {
 import { createMemoryTenantFence, type MemoryTenantFence } from "./tenant-fence.ts";
 
 export interface MemoryForgetLedgers {
-  ledgerOf(tenant: string | undefined): ForgetLedger;
+  ledgerOf(tenant: string): ForgetLedger;
   /**
-   * Every tenant's entries, each with its tenant, `""` for none.
+   * Every tenant's entries, each with its tenant.
    */
   rows(): readonly Readonly<Record<string, unknown>>[];
 }
@@ -30,11 +30,10 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
         [...entries.values()].map((entry) => ({ tenant, ...entry })),
       ),
     ledgerOf: (tenant) => {
-      const key = tenant ?? "";
-      const entries = byTenant.get(key) ?? new Map<string, ForgetLedgerEntry>();
-      byTenant.set(key, entries);
-      const fence = fences.get(key) ?? createMemoryTenantFence();
-      fences.set(key, fence);
+      const entries = byTenant.get(tenant) ?? new Map<string, ForgetLedgerEntry>();
+      byTenant.set(tenant, entries);
+      const fence = fences.get(tenant) ?? createMemoryTenantFence();
+      fences.set(tenant, fence);
       return {
         append: (appended) =>
           fence.write(async () => {
@@ -53,16 +52,16 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
             if (entry.forgottenAt < before) entries.delete(eventId);
           }
         },
-        readMark: async (name) => marks.get(`${key}\u0000${name}`) ?? 0,
+        readMark: async (name) => marks.get(`${tenant}\u0000${name}`) ?? 0,
         raiseMark: (name, value) =>
           fence.write(async () => {
-            const mark = `${key}\u0000${name}`;
+            const mark = `${tenant}\u0000${name}`;
             marks.set(mark, Math.max(marks.get(mark) ?? 0, value));
           }),
         clear: async () => {
           entries.clear();
           for (const mark of marks.keys()) {
-            if (mark.startsWith(`${key}\u0000`)) marks.delete(mark);
+            if (mark.startsWith(`${tenant}\u0000`)) marks.delete(mark);
           }
           return true;
         },

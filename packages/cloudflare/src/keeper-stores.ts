@@ -159,13 +159,6 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
       "runtime.personalData.forgetLedger.store",
       LEDGER_IN_OBJECT,
     );
-    if (tenant === undefined) {
-      throw runtimeText(
-        new ConfigurationError(
-          "A keeper forget ledger keeps each tenant's entries in the tenant's own keeper, and this app names no tenant: run it in a Bounda Durable Object, or give createApp a tenant",
-        ),
-      );
-    }
     const own = keeper(keeperNameOf(tenant));
     // The keeper is told how long to keep the entries before the first call, and again after a
     // call that failed before it was.
