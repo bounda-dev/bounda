@@ -14,6 +14,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify, stripVTControlCharacters } from "node:util";
+import { startContainer } from "@bounda-dev/test-containers";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, describe, expect, it } from "vitest";
 import type { Database, Framework, Runtime } from "./options.ts";
@@ -409,7 +410,7 @@ describe("a project created by create-bounda", () => {
     );
   }, 180_000);
 
-  it("scaffolds a PostgreSQL project that generates, type-checks, tests and forgets again after a restore", async () => {
+  it("scaffolds a PostgreSQL project that generates, type-checks, tests and forgets again after a restore", async (context) => {
     const project = await scaffold(
       ["depot", "--database", "postgresql", "--yes", "--no-git", "--no-install"],
       { runtime: "node", framework: "none", database: "postgresql" },
@@ -461,12 +462,14 @@ describe("a project created by create-bounda", () => {
       /Tests\s+2 passed/,
     );
 
-    // On a server, as the adapter's own suite runs: skipped when Docker is not running, and one
-    // server for every run under BOUNDA_PG_REUSE=1, each run on databases of its own.
+    // On a server, as the adapter's own suite runs: skipped when Docker is not running outside
+    // CI, and one server for every run under BOUNDA_PG_REUSE=1, each run on databases of its own.
     const definition = new PostgreSqlContainer("postgres:17");
     const reuse = process.env.BOUNDA_PG_REUSE === "1";
-    const server = await (reuse ? definition.withReuse() : definition).start().catch(() => null);
-    if (server === null) return;
+    const server = await startContainer(() =>
+      (reuse ? definition.withReuse() : definition).start(),
+    );
+    if (server === null) return context.skip("Docker is not running");
     const storage = `shop_${randomUUID().replaceAll("-", "")}`;
     const databases = [storage, `${storage}_keys`, `${storage}_ledger`] as const;
     const dump = `/tmp/${storage}.dump`;

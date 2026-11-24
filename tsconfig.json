@@ -20,6 +20,9 @@
       "path": "packages/create-bounda"
     },
     {
+      "path": "packages/test-containers"
+    },
+    {
       "path": "examples/storefront"
     },
     {
