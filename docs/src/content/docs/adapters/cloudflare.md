@@ -123,8 +123,8 @@ export const create: CreateImplementation<Notifier> = ({ env }) => (message) =>
 implementation can serve each tenant with its own account or key
 ([an account per tenant](/guides/calling-the-outside-world/#an-account-per-tenant)). An object
 reached through an id without a name, from `newUniqueId` or `idFromString`, receives the id as
-its `tenant`, and an object named `default` none, as an app that names no tenant; the Worker of
-`createWorker`, the React Router host and `tenantStub` always address it by name.
+its `tenant`; the Worker of `createWorker`, the React Router host and `tenantStub` always address
+it by name.
 
 `bounda.config.ts` can choose an implementation from the same variables, since `env` from
 `cloudflare:workers` is readable when the Worker imports it:
@@ -300,7 +300,8 @@ key`.
 ## One object per tenant
 
 `createWorker` addresses the object by the tenant `tenantOf` names for each request: in the
-project above, the `x-bounda-tenant` header, `default` without it. Each tenant is its own object,
+project above, the `x-bounda-tenant` header, `default` without it; an empty name reaches no
+object and answers a 500, logged. Each tenant is its own object,
 with its own events, read models and key, and nothing is shared between them. That is also how a
 Cloudflare app scales: one object handles in the order of a thousand requests a second, and
 [How Bounda runs](/concepts/how-it-runs/) explains why the way out is more stores, not a split

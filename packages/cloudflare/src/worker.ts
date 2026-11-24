@@ -36,7 +36,8 @@ export interface CreateWorkerArgs {
   readonly config: Config;
   /**
    * Which store a request belongs to: the name the object is addressed by. Every tenant is its
-   * own object, with its own events and read models.
+   * own object, with its own events and read models. An empty name answers a 500, logged, and
+   * reaches no object.
    */
   readonly tenantOf: TenantOfFunction;
   /**
@@ -283,9 +284,13 @@ export const createWorker: CreateWorkerFunction = ({
         return failure("INTERNAL", "Internal error", 500);
       }
       try {
-        const stub = namespace.get(
-          namespace.idFromName(await tenantOf(request)),
-        ) as unknown as BoundaStub;
+        const tenant = await tenantOf(request);
+        // An empty name names no tenant: the object would refuse every start.
+        if (tenant === "") {
+          log().error("bounda worker tenantOf named no tenant", { path: url.pathname });
+          return failure("INTERNAL", "Internal error", 500);
+        }
+        const stub = namespace.get(namespace.idFromName(tenant)) as unknown as BoundaStub;
         const actor = await actorOf?.(request);
         if (actor !== undefined && !isActor(actor)) {
           // Not the caller's mistake, and the value may be what must not be logged, such as an email.

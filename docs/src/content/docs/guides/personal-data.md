@@ -2238,8 +2238,8 @@ another tenant's. Which tenant an app serves depends on the host:
   the app serves `default` (`DEFAULT_TENANT`), the same tenant as one that names `default`: every
   store, the forget ledger and the tenant key store included, keeps it under that name, so
   `bounda export-tenant default` or `bounda forget-tenant default` reaches what the app wrote
-  without a name, and its ports and the access log receive no tenant either way. An empty name is
-  refused. A project that serves several from one deployment exports its configuration as a
+  without a name, and its ports and the access log receive `default` as its tenant either way. An
+  empty name is refused. A project that serves several from one deployment exports its configuration as a
   function of the tenant, so each gets its own database:
 
   ```ts

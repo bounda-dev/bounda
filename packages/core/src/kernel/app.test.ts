@@ -631,6 +631,7 @@ describe("implementations built by create", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledWith({
       env: { FROM: "shop" },
+      tenant: DEFAULT_TENANT,
       logger: expect.any(Object),
       clock,
     });
@@ -646,7 +647,7 @@ describe("implementations built by create", () => {
     ]);
   });
 
-  it("gives create the tenant the app serves, and none for DEFAULT_TENANT, named or not", async () => {
+  it("gives create the tenant the app serves, DEFAULT_TENANT for one that names none", async () => {
     const { create, app: lifecycleRegistry } = lifecycle([]);
     const named = await createApp({
       registry: lifecycleRegistry,
@@ -660,8 +661,8 @@ describe("implementations built by create", () => {
       tenant: DEFAULT_TENANT,
     });
     expect(create.mock.calls[0]?.[0]).toMatchObject({ tenant: "acme" });
-    expect(create.mock.calls[1]?.[0]).not.toHaveProperty("tenant");
-    expect(create.mock.calls[2]?.[0]).not.toHaveProperty("tenant");
+    expect(create.mock.calls[1]?.[0]).toMatchObject({ tenant: DEFAULT_TENANT });
+    expect(create.mock.calls[2]?.[0]).toMatchObject({ tenant: DEFAULT_TENANT });
     expect(await named.status()).toMatchObject({ tenant: { tenant: "acme" } });
     expect(await unnamed.status()).toMatchObject({ tenant: { tenant: DEFAULT_TENANT } });
     expect(await defaulted.status()).toMatchObject({ tenant: { tenant: DEFAULT_TENANT } });
@@ -676,7 +677,7 @@ describe("implementations built by create", () => {
       createApp({ registry: lifecycleRegistry, config: { storage: memory() }, tenant: "" }),
     ).rejects.toThrow(
       new ConfigurationError(
-        "The tenant is named with an empty string: name it, or leave it out to serve default",
+        "The tenant is named with an empty string, which names none: give it a name, or name none to serve default",
       ),
     );
     expect(create).not.toHaveBeenCalled();

@@ -1021,8 +1021,8 @@ describe("the access log", () => {
     await app.stop();
   });
 
-  it("hands app/audit.ts the tenant the app serves, none for DEFAULT_TENANT whether named or not", async () => {
-    const tenants: (string | undefined)[] = [];
+  it("hands app/audit.ts the tenant the app serves, DEFAULT_TENANT for one that names none", async () => {
+    const tenants: string[] = [];
     for (const tenant of [undefined, DEFAULT_TENANT, "acme"]) {
       const app = await createApp({
         registry: registryWith({
@@ -1036,7 +1036,14 @@ describe("the access log", () => {
       await app.exportPersonalData("ana");
       await app.stop();
     }
-    expect(tenants).toEqual([undefined, undefined, undefined, undefined, "acme", "acme"]);
+    expect(tenants).toEqual([
+      DEFAULT_TENANT,
+      DEFAULT_TENANT,
+      DEFAULT_TENANT,
+      DEFAULT_TENANT,
+      "acme",
+      "acme",
+    ]);
   });
 
   it("goes to the app's logger at info without app/audit.ts, and in a test app without a hook of the test's", async () => {

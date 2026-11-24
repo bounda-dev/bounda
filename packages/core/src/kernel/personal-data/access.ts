@@ -59,7 +59,7 @@ export interface RecordAccess {
 export interface CreateAccessLogArgs {
   readonly hook: OnPersonalDataAccess | undefined;
   readonly env: AppEnv;
-  readonly tenant: string | undefined;
+  readonly tenant: string;
   readonly logger: Logger;
   readonly clock: Clock;
 }
@@ -107,7 +107,7 @@ export const createAccessLog: CreateAccessLogFunction = ({ hook, env, tenant, lo
       logger.info(PERSONAL_DATA_ACCESSED, { ...access });
       return;
     }
-    await hook({ access, env, ...(tenant === undefined ? {} : { tenant }), logger });
+    await hook({ access, env, tenant, logger });
   };
   return recordAccess;
 };

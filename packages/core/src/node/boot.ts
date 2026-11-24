@@ -84,8 +84,8 @@ export interface BootArgs<R extends Registry = AppRegistry> {
   /**
    * The tenant the app serves, which a configuration that is a function of the tenant is called
    * with and the app's keys belong to. Defaults to `BOUNDA_TENANT` once `.env` is loaded; without
-   * either the app serves `DEFAULT_TENANT`, as it does when this names it, and its ports receive no
-   * tenant. An empty name fails with `ConfigurationError`.
+   * either the app serves `DEFAULT_TENANT`, as it does when this names it. An empty name fails
+   * with `ConfigurationError`.
    */
   readonly tenant?: string;
 }
@@ -119,7 +119,7 @@ export interface LoadedProject<R extends Registry = AppRegistry> {
   readonly registry: R;
   /**
    * The tenant `tenant` or `BOUNDA_TENANT` names, `undefined` when neither does: the app then
-   * serves `DEFAULT_TENANT`, and its ports receive no tenant.
+   * serves `DEFAULT_TENANT`.
    */
   readonly tenant: string | undefined;
 }

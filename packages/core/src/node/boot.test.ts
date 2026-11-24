@@ -142,7 +142,7 @@ describe("the tenant", () => {
         logger: silentLogger,
       }),
     ).rejects.toThrow(
-      "The tenant is named with an empty string: name it, or leave it out to serve default",
+      "The tenant is named with an empty string, which names none: give it a name, or name none to serve default",
     );
     expect(named.tenants).toHaveLength(4);
   });

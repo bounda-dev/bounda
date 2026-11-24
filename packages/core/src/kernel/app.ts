@@ -190,7 +190,7 @@ import {
   tracedOperation,
   tracer,
 } from "./telemetry.ts";
-import { portTenantOf, tenantIdOf } from "./tenant.ts";
+import { tenantIdOf } from "./tenant.ts";
 import {
   createFenceWatch,
   createFreezeKeeper,
@@ -697,8 +697,8 @@ export type CreateAppArgs<R extends Registry> = {
    * The name of the store this app serves, which every store keeps the tenant's data under and
    * every port implementation's `create` receives as `tenant`. `createBoundaObject` passes the
    * Durable Object's name; leave it out for an app with one store, which then serves
-   * `DEFAULT_TENANT`, the same tenant as one that names it, and whose ports receive no tenant
-   * either way. An empty name fails the start with `ConfigurationError`.
+   * `DEFAULT_TENANT`, the same tenant as one that names it. An empty name fails the start with
+   * `ConfigurationError`.
    */
   readonly tenant?: string | undefined;
   /**
@@ -807,7 +807,6 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   searchErrorText = true,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   const tenantId = tenantIdOf(tenant);
-  const portTenant = portTenantOf(tenantId);
   // Attached first, so every store call, log entry and span of the app reaches it.
   const watching =
     witness === undefined
@@ -845,7 +844,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   const ports = await createPorts({
     registry,
     env,
-    tenant: portTenant,
+    tenant: tenantId,
     logger: guardedLogger(rawLogger, errorText, { thrownAsError: false }),
     clock,
     ...(test === undefined ? { config: unkeyed.ports } : { test }),
@@ -1071,7 +1070,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const recordAccess = createAccessLog({
       hook: test === undefined ? registry.audit?.onPersonalDataAccess : onPersonalDataAccess,
       env,
-      tenant: portTenant,
+      tenant: tenantId,
       logger,
       clock,
     });

@@ -201,9 +201,8 @@ Some providers differ by tenant: each venue charges through its own Stripe accou
 has its own API key. `create` receives the name of the store the app serves as `tenant`, so the
 implementation picks the tenant's credentials once, when it is built, and the port and the
 handlers stay the same for every tenant. On Cloudflare every tenant is its own Durable Object and
-`tenant` is its name; an app with one store, as under `boot()`, has none, and neither has one that
-names `default`, the same tenant. Here the accounts are in
-a KV namespace of the Worker:
+`tenant` is its name; an app with one store, as under `boot()`, receives `default`. Here the
+accounts are in a KV namespace of the Worker:
 
 ```ts
 // app/domain/order/infrastructure/refunds/stripe.ts
@@ -212,7 +211,6 @@ import Stripe from "stripe";
 import type { Refunds } from "../../refunds.ts";
 
 export const create: CreateImplementation<Refunds> = async ({ env, tenant }) => {
-  if (tenant === undefined) throw new Error("refunds need the tenant of the store");
   const stripeAccount = await env.MERCHANT_ACCOUNTS.get(tenant);
   if (stripeAccount === null) throw new Error(`no merchant account for ${tenant}`);
   const stripe = new Stripe(env.STRIPE_SECRET_KEY, { stripeAccount });

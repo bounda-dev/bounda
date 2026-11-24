@@ -4,6 +4,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import type { CreateArgs, PortModules } from "../../modules/port.ts";
 import type { Registry } from "../../modules/registry.ts";
+import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { createPorts } from "./ports.ts";
 
@@ -27,6 +28,7 @@ const build = (registry: Registry, config: Readonly<Record<string, Record<string
     registry,
     config,
     env: { MAILER_FROM: "shop" },
+    tenant: DEFAULT_TENANT,
     logger: silentLogger,
     clock,
   });
@@ -71,8 +73,12 @@ describe("createPorts", () => {
       customer: {},
     });
     expect(byAggregate.order?.inventory).toBe(fake);
-    expect(received).toEqual({ env: { MAILER_FROM: "shop" }, logger: silentLogger, clock });
-    expect(received).not.toHaveProperty("tenant");
+    expect(received).toEqual({
+      env: { MAILER_FROM: "shop" },
+      tenant: DEFAULT_TENANT,
+      logger: silentLogger,
+      clock,
+    });
   });
 
   it("gives create the name of the store as tenant when the app serves one", async () => {
@@ -153,6 +159,7 @@ describe("createPorts", () => {
       }),
       config: {},
       env: {},
+      tenant: DEFAULT_TENANT,
       logger,
       clock,
     });
@@ -173,6 +180,7 @@ describe("createPorts", () => {
       }),
       config: {},
       env: {},
+      tenant: DEFAULT_TENANT,
       logger,
       clock,
     });
