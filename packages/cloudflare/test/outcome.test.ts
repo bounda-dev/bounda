@@ -1,6 +1,6 @@
 import { DomainError, NotFoundError, type Rejection, ValidationError } from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
-import { settle, unwrap } from "../src/outcome.ts";
+import { refused, settle, unwrap } from "../src/outcome.ts";
 
 const issues = [{ path: ["total"], message: "Expected number" }];
 
@@ -87,5 +87,41 @@ describe("unwrap", () => {
       issues,
       rejected: "AlreadyPlaced",
     });
+  });
+});
+
+describe("refused", () => {
+  const since = "2026-01-01T00:00:00.000Z";
+
+  it("throws a fence's refusal again as the error it was, and nothing else as one", () => {
+    expect(
+      refused({
+        name: "TenantFrozenError",
+        code: "TENANT_FROZEN",
+        message: "frozen",
+        fenced: { tenant: "acme", since },
+      }),
+    ).toMatchObject({ name: "TenantFrozenError", tenant: "acme", frozenAt: since });
+    expect(
+      refused({
+        name: "TenantForgottenError",
+        code: "TENANT_FORGOTTEN",
+        message: "forgotten",
+        fenced: { tenant: "acme", since },
+      }),
+    ).toMatchObject({ name: "TenantForgottenError", tenant: "acme", forgottenAt: since });
+    for (const code of ["TENANT_FROZEN", "TENANT_FORGOTTEN"]) {
+      const plain = refused({ name: "Error", code, message: "no fence" });
+      expect(plain.constructor).toBe(Error);
+      expect(plain).toMatchObject({ code, message: "no fence" });
+    }
+    const other = refused({
+      name: "NotFoundError",
+      code: "NOT_FOUND",
+      message: "Gone",
+      fenced: { tenant: "acme", since },
+    });
+    expect(other.constructor).toBe(Error);
+    expect(other).toMatchObject({ name: "NotFoundError", code: "NOT_FOUND" });
   });
 });

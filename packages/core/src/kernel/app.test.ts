@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Adapter, CreateReadModelArgs } from "../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../adapter/sqlite/node-sqlite.ts";
@@ -6,7 +9,7 @@ import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError, DomainError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { memory } from "../memory/index.ts";
-import type { PayloadArgs } from "../modules/payload.ts";
+import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../modules/payload.ts";
 import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
@@ -757,7 +760,8 @@ describe("implementations built by create", () => {
       logger,
     });
     const read = await app.status();
-    const { personalDataBackfill: _backfill, ...lag } = await app.getLag();
+    const { personalDataBackfill: _backfill, frozen, ...lag } = await app.getLag();
+    expect(frozen).toBe(false);
     expect(read.lag).toEqual(lag);
     down = true;
     const status = await app.status();
@@ -796,7 +800,11 @@ describe("implementations built by create", () => {
       ["subscriber failures past the retention could not be read", undefined],
     ]);
     // The lag as `getLag()` reports it is the status' lag, with the backfill the status reads apart.
-    expect(await app.getLag()).toEqual({ ...status.lag, personalDataBackfill: null });
+    expect(await app.getLag()).toEqual({
+      ...status.lag,
+      personalDataBackfill: null,
+      frozen: false,
+    });
     await app.stop();
   });
 
@@ -1014,6 +1022,78 @@ describe("policies and processes follow the stream from when they are deployed",
 
     expect(await archived(storage)).toEqual(["o-2"]);
     expect(await after.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "paid" });
+    await after.stop();
+  });
+
+  it("keeps no freeze for an app without a tenant key record, and logs nothing of it", async () => {
+    const recording = createRecordingLogger();
+    // Nothing personal and no keys: no record of the tenant's key to read.
+    const plain = {
+      aggregates: {
+        counter: {
+          state: { initialState: {} },
+          events: {
+            counted: {
+              payload: ({ z, notPersonal }: EventPayloadArgs) =>
+                z.object({ by: notPersonal(z.number()) }),
+              evolve: () => ({}),
+            },
+          },
+          commands: {
+            count: {
+              module: {
+                payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                  z.object({ counterId: notPersonal(z.string()) }),
+                handler: ({
+                  events,
+                }: {
+                  events: Record<string, (payload?: unknown) => unknown>;
+                }) => [events.counted?.({ by: 1 })],
+              },
+            },
+          },
+          policies: {},
+          processes: {},
+        },
+      },
+      readModels: {},
+    } as unknown as Registry;
+    const app = await createApp({
+      registry: plain,
+      // On a file: no keys a database in memory would bring for the test.
+      config: {
+        storage: createNodeSqliteAdapter(
+          join(mkdtempSync(join(tmpdir(), "bounda-plain-")), "app.db"),
+        ).adapter,
+      },
+      clock: createFixedClock(),
+      logger: recording.logger,
+    });
+    await (
+      app.commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>
+    ).count?.({ counterId: "c-1" });
+    await app.runUntilIdle();
+    expect(recording.entries.filter(({ level }) => level === "error")).toEqual([]);
+    await app.stop();
+  });
+
+  it("starts a first policy and process on a frozen tenant at the head it started on, so what the thaw let in is delivered", async () => {
+    const storage = memory();
+    const before = await open(quiet, storage);
+    await before.commands.placeOrder({ orderId: "o-1", total: 42 });
+    await before.commands.payOrder({ orderId: "o-1", method: "card" });
+    await before.freezeTenant("default");
+    await before.stop();
+
+    const after = await open(registry, storage);
+    const { checkpointStore } = await storage.createStorage();
+    expect(await checkpointStore.get("policies")).toBe(0);
+    await after.unfreezeTenant("default");
+    await after.commands.placeOrder({ orderId: "o-2", total: 7 });
+    await after.commands.payOrder({ orderId: "o-2", method: "card" });
+    await after.runUntilIdle();
+
+    expect(await archived(storage)).toEqual(["o-2"]);
     await after.stop();
   });
 

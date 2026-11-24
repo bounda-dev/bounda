@@ -816,6 +816,7 @@ describe("the access log", () => {
         records.push(args);
       },
     });
+    await app.freezeTenant("default");
     isDown = true;
     await expect(app.as("ops-1").exportTenant("default")).rejects.toBe(down);
     expect(records.map(({ access }) => access)).toEqual([

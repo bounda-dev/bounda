@@ -35,7 +35,7 @@ import {
   type ForgetIntention,
   type ForgetIntentions,
 } from "./intention.ts";
-import { checkPersonId, transactRetrying } from "./transact.ts";
+import { checkPersonId, throughFreeze, transactRetrying } from "./transact.ts";
 
 /**
  * What a forgetting covers: the person as a whole, some of their categories, or, for a category's
@@ -277,7 +277,7 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
 };
 
 export interface ForgetIntendedArgs {
-  readonly storage: Pick<Storage, "transact" | "personalKeys">;
+  readonly storage: Pick<Storage, "transact" | "personalKeys" | "eventStore">;
   readonly intentions: ForgetIntentions;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -320,21 +320,32 @@ export const forgetIntended: ForgetIntendedFunction = async ({
       ends: endsKeptOf(categories, reason),
       keys: storage.personalKeys,
     });
-    const outcome = await transactRetrying({
-      storage,
-      concurrencyRetries,
-      work: (transaction) =>
-        forgetWithin({
-          transaction,
-          ids,
-          clock,
-          personId,
-          intention,
-          context,
-          categories,
-          scope,
-          batchSize,
+    const outcome = await throughFreeze<ForgetOutcome>({
+      work: () =>
+        transactRetrying({
+          storage,
+          concurrencyRetries,
+          work: (transaction) =>
+            forgetWithin({
+              transaction,
+              ids,
+              clock,
+              personId,
+              intention,
+              context,
+              categories,
+              scope,
+              batchSize,
+            }),
         }),
+      committed: async () => {
+        const held = await storage.eventStore.readOne({
+          aggregateType: BOUNDA_AGGREGATE,
+          aggregateId: personId,
+          eventId: intention.eventId,
+        });
+        return held === null ? null : { held };
+      },
     });
     if (outcome !== STALE_INTENTION) return outcome;
   }

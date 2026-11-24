@@ -62,6 +62,8 @@ export const storeNamespace = (): FakeStoreNamespace => {
         calls.push([tenant, "exportTenant", ...args]);
         return { ok: true, value: new Blob([]).stream() };
       },
+      freezeTenant: record("freezeTenant"),
+      unfreezeTenant: record("unfreezeTenant"),
       rotateTenantKey: record("rotateTenantKey"),
       retireTenantKeys: record("retireTenantKeys"),
     };

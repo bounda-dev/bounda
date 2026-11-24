@@ -36,7 +36,7 @@ import {
   pendsObjection,
 } from "./categories.ts";
 import type { ForgetIntentions } from "./intention.ts";
-import { checkPersonId, transactRetrying } from "./transact.ts";
+import { checkPersonId, throughFreeze, transactRetrying } from "./transact.ts";
 
 const LIFT_RESTRICTION_PREFIX = "lift-restriction:";
 
@@ -420,33 +420,45 @@ const change = async ({
         restriction: planned.restriction,
       });
     }
-    const changed = await transactRetrying({
-      storage,
-      concurrencyRetries,
-      work: async (transaction): Promise<Changed | null> => {
-        const [held, pending] = await stateOf(transaction, personId);
-        const now = plan(held, at, pending);
-        if (now === null && planned === null) {
-          return { event: null, version: await versionOf(transaction, personId) };
-        }
-        if (now === null || planned === null || !sameAs(now.restriction, planned.restriction)) {
-          return null;
-        }
-        const event = await appendSystemEvent({
-          eventStore: transaction.eventStore,
-          ids,
-          clock,
+    const changed = await throughFreeze<Changed | null>({
+      // What a freeze committed of the intention, as `restrictAgain` does.
+      committed: async () => {
+        const event = await storage.eventStore.readOne({
           aggregateType: BOUNDA_AGGREGATE,
           aggregateId: personId,
-          type: planned.restriction.type,
-          payload: await addressed(transaction, planned.restriction),
-          person: personId,
-          context,
-          identity: { id, timestamp: at },
+          eventId: id,
         });
-        await planned.apply(transaction, event);
-        return { event, version: event.version };
+        return event === null ? null : { event, version: event.version };
       },
+      work: () =>
+        transactRetrying({
+          storage,
+          concurrencyRetries,
+          work: async (transaction): Promise<Changed | null> => {
+            const [held, pending] = await stateOf(transaction, personId);
+            const now = plan(held, at, pending);
+            if (now === null && planned === null) {
+              return { event: null, version: await versionOf(transaction, personId) };
+            }
+            if (now === null || planned === null || !sameAs(now.restriction, planned.restriction)) {
+              return null;
+            }
+            const event = await appendSystemEvent({
+              eventStore: transaction.eventStore,
+              ids,
+              clock,
+              aggregateType: BOUNDA_AGGREGATE,
+              aggregateId: personId,
+              type: planned.restriction.type,
+              payload: await addressed(transaction, planned.restriction),
+              person: personId,
+              context,
+              identity: { id, timestamp: at },
+            });
+            await planned.apply(transaction, event);
+            return { event, version: event.version };
+          },
+        }),
     });
     if (changed !== null) return changed;
   }

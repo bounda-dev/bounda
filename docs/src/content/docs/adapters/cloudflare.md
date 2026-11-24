@@ -223,10 +223,11 @@ namespace when the binding has no id. KV has no compare-and-set; each tenant's r
 its own object alone, one at a time, so none is needed. `prefix` keeps the records under another
 root, for two apps on one namespace.
 
-The object answers `exportTenant`, which [hands the tenant
-back](/guides/personal-data/#handing-a-tenant-back) before it is forgotten, `forgetTenant`,
-`rotateTenantKey`, its `reseal` included, and `retireTenantKeys` through its stub, and
-`connect(stub)` types them; once forgotten, every call
+The object answers `freezeTenant` and `unfreezeTenant`, which
+[freeze](/guides/personal-data/#freezing-a-tenant) it, its alarm unarmed until the freeze is
+lifted, `exportTenant`, which [hands the tenant back](/guides/personal-data/#handing-a-tenant-back)
+before it is forgotten, `forgetTenant`, `rotateTenantKey`, its `reseal` included, and
+`retireTenantKeys` through its stub, and `connect(stub)` types them; once forgotten, every call
 rejects with `TenantForgottenError`, which `createWorker` answers with `410`. Once its recipients
 are told, the object empties its storage with `deleteAll()` and holds nothing but the forgetting;
 Cloudflare keeps the storage's point-in-time history for
@@ -251,8 +252,10 @@ not get to commit, because it was evicted or its transaction failed, is committe
 with `strict`, a forgetting the keeper does not take fails and forgets nobody. Once a [forgotten
 tenant](/guides/personal-data/#forgetting-a-tenant)'s recipients are all told, its object has the
 keeper remove every entry and mark of its ledger, and the alarm with them, before it empties its
-own storage; the keeper keeps the tenant's key record, which records the forgetting. See
-[backups](/guides/personal-data/#backups).
+own storage; the keeper keeps the tenant's key record, which records the forgetting. The ledger's
+[fence](/guides/personal-data/#freezing-a-tenant) is a row in the keeper, which checks it in the
+same transaction as every append and raised mark, so a freeze or a forgetting refuses them from
+any object at once. See [backups](/guides/personal-data/#backups).
 
 `kvForgetLedger({ binding })` keeps it in a KV namespace instead, for an app whose `cloudflare()`
 names no jurisdiction. An object whose `env` lacks the binding, or that was reached through an id
@@ -266,7 +269,13 @@ thirty, go to the key's value, which a read fetches for the entries it hands out
 forgotten tenant's object deletes its keys once its recipients are told and a minute has passed
 since the forgetting, waking for it, so every key written before is listed; KV deletes one key a
 call, so each wake deletes a batch within the operations one invocation may make, and a larger
-ledger is cleared over several wakes, each going on from what the last one left.
+ledger is cleared over several wakes, each going on from what the last one left. KV cannot check
+one key in the same step as it writes another, so its
+[fence](/guides/personal-data/#freezing-a-tenant), a key of its own a clear leaves, is kept by the
+tenant's object, the one writer of its ledger: it refuses an append or a raised mark under the fence
+it set or the one KV holds, and waits for the ones under way before a fence it sets is in force.
+`freezeTenant` waits the minute KV may take to list a key before it commits what the ledger holds,
+so a freeze takes that long on KV.
 
 ## Rotating the master key
 
@@ -388,7 +397,7 @@ export default {
 of an app wherever it runs: the same `commands` and `queries` as `app.commands` and
 `app.queries`, typed from your modules, plus `getLag()`, `status()`, `events`, `deadLetters`,
 `subscriberFailures`, `rebuildReadModel`, `forget`, `exportPersonalData`, `streamPersonalData`,
-`restrict`, `unrestrict` and `exportTenant`. `streamPersonalData` and `exportTenant` cross RPC as a
+`restrict`, `unrestrict`, `freezeTenant`, `unfreezeTenant` and `exportTenant`. `streamPersonalData` and `exportTenant` cross RPC as a
 stream of the export's parts, one JSON per line, read on the object a page at a time as the Worker
 reads them, and stopped when the Worker stops reading, so a person's long history, or a whole
 tenant, never has to fit in one RPC answer. `bounda status` runs where Node can open the store, so a Durable Object's is read

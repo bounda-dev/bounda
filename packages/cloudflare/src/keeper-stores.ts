@@ -203,6 +203,16 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
         await unwrap(own.clearLedger(tenant));
         return true;
       },
+      fence: {
+        read: async () => {
+          await retain();
+          return unwrap(own.readLedgerFence(tenant));
+        },
+        set: async (fence) => {
+          await retain();
+          return unwrap(own.fenceLedger(tenant, fence));
+        },
+      },
     };
   }, locationOf(storage));
 };

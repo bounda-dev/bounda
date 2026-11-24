@@ -3,6 +3,7 @@ import type { SchemaVersion } from "@bounda-dev/core/adapter";
 import {
   forgetLedgerCategoriesStatement,
   forgetLedgerDisclosureStatement,
+  forgetLedgerFenceStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
@@ -22,6 +23,7 @@ import {
   schemaMigrationsTableFor,
   supersededKeysTableStatements,
   tenancyTableStatement,
+  tenantFenceTableStatement,
   tenantKeysTableStatement,
 } from "@bounda-dev/core/adapter/sql";
 import type { PostgresqlDatabase } from "./database.ts";
@@ -320,7 +322,10 @@ export const postgresqlTenantKeysScope: PostgresqlTenantKeysScopeFunction = (tab
 
 export interface PostgresqlCheckpointsScopeFunction {
   (
-    tables: Pick<StorageTables, "checkpoints" | "restrictedPersons" | "restrictedPositions">,
+    tables: Pick<
+      StorageTables,
+      "checkpoints" | "restrictedPersons" | "restrictedPositions" | "tenantFence"
+    >,
   ): SchemaScope;
 }
 
@@ -341,6 +346,8 @@ export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (t
       migrate: (tx) =>
         tx.run(`DELETE FROM ${tables.restrictedPersons} WHERE "source" = 'retained'`, []),
     },
+    // Every database that holds the tenant's writes holds their fence.
+    { version: 4, migrate: (tx) => tx.run(tenantFenceTableStatement(tables.tenantFence), []) },
   ],
 });
 
@@ -382,6 +389,7 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
       version: 7,
       migrate: (tx) => tx.run(forgetLedgerDisclosureStatement(table, postgresqlDialect), []),
     },
+    { version: 8, migrate: (tx) => tx.run(forgetLedgerFenceStatement(table), []) },
   ],
 });
 

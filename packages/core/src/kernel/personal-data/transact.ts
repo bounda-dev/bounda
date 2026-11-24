@@ -1,5 +1,5 @@
 import type { Storage, StorageTransaction } from "../../adapter/adapter.ts";
-import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
+import { ConcurrencyError, TenantFrozenError, ValidationError } from "../../contracts/errors.ts";
 
 export interface TransactRetryingArgs<Result> {
   readonly storage: Pick<Storage, "transact">;
@@ -26,6 +26,30 @@ export const transactRetrying: TransactRetryingFunction = async ({
     } catch (error) {
       if (!(error instanceof ConcurrencyError) || attempt >= concurrencyRetries) throw error;
     }
+  }
+};
+
+export interface ThroughFreezeArgs<Result> {
+  // Commits what an intention recorded in the forget ledger.
+  readonly work: () => Promise<Result>;
+  // What the intention's event committed already makes of it, `null` while none is.
+  readonly committed: () => Promise<Result | null>;
+}
+
+export interface ThroughFreezeFunction {
+  <Result>(args: ThroughFreezeArgs<Result>): Promise<Result>;
+}
+
+// A freeze raised after the intention commits it before it takes effect, as every intention the
+// ledger holds: the request landed then, though its own commit is refused.
+export const throughFreeze: ThroughFreezeFunction = async ({ work, committed }) => {
+  try {
+    return await work();
+  } catch (error) {
+    if (!(error instanceof TenantFrozenError)) throw error;
+    const landed = await committed();
+    if (landed === null) throw error;
+    return landed;
   }
 };
 

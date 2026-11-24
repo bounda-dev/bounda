@@ -64,6 +64,8 @@ export const recordingStub = (): {
         return answer();
       },
       rebuildReadModel: answer,
+      freezeTenant: answer,
+      unfreezeTenant: answer,
       exportPersonalData: async (...args) => {
         exports.push(args);
         return answer();

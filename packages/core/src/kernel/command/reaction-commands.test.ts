@@ -82,6 +82,7 @@ const withLedger = async (categories = personalCategories) => {
             readMark: async () => 0,
             raiseMark: async () => undefined,
             clear: async () => true,
+            fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
             append: async (appended) => {
               recorded.push(...appended);
               keysAtRecord.push(await harness.storage.personalKeys.get("c-1", "default"));

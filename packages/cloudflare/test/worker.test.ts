@@ -465,6 +465,22 @@ describe("createWorker", () => {
       },
     });
 
+    const object = connect(env.STORE.get(env.STORE.idFromName("errors")));
+    const { frozenAt } = await object.freezeTenant("errors");
+    const frozen = await post(
+      "/commands/placeOrder",
+      { orderId: "o-6", total: 1, customer: "ana" },
+      "errors",
+    );
+    expect(frozen.status).toBe(423);
+    expect(await frozen.json()).toEqual({
+      error: {
+        code: "TENANT_FROZEN",
+        message: `Tenant errors is frozen since ${frozenAt}: it takes no write`,
+      },
+    });
+    await object.unfreezeTenant("errors");
+
     const invalid = await post("/commands/placeOrder", { orderId: "o-4", total: "lots" }, "errors");
     expect(invalid.status).toBe(400);
     const body = (await invalid.json()) as { error: { code: string; issues: unknown[] } };

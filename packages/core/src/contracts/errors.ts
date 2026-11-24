@@ -468,3 +468,22 @@ export class TenantForgottenError extends BoundaError {
     this.forgottenAt = forgottenAt;
   }
 }
+
+/**
+ * Thrown by every write to a tenant frozen with `freezeTenant`, on any instance, however long ago
+ * it last read the tenant: the database refuses it, and nothing of it is kept. Reads go on. Retry
+ * once `unfreezeTenant` lifted the freeze.
+ */
+export class TenantFrozenError extends BoundaError {
+  readonly tenant: string;
+  /**
+   * When the tenant was frozen, as an ISO timestamp.
+   */
+  readonly frozenAt: string;
+
+  constructor(tenant: string, frozenAt: string) {
+    super("TENANT_FROZEN", `Tenant ${tenant} is frozen since ${frozenAt}: it takes no write`);
+    this.tenant = tenant;
+    this.frozenAt = frozenAt;
+  }
+}

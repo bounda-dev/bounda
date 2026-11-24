@@ -54,6 +54,11 @@ export interface TenantKeyRecord {
    * The keys of its encrypted database files, the one in force of each database first.
    */
   readonly files?: readonly StoredFileKey[];
+  /**
+   * When `freezeTenant` froze the tenant, as an ISO timestamp, absent while it is not frozen: no
+   * version is put in force or retired, and no file is given a key, until `unfreezeTenant`.
+   */
+  readonly frozenAt?: string;
 }
 
 export interface VersionedTenantKeyRecord extends TenantKeyRecord {

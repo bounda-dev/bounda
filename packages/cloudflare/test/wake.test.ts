@@ -59,13 +59,35 @@ describe("wakeLagOf", () => {
           { subscriber: "c", position: 1, lag: 5 },
         ],
         maxLag: null,
+        frozen: false,
       }),
     ).toEqual({ lag: 5, unread: true });
     expect(
-      wakeLagOf({ subscribers: [{ subscriber: "b", unreadable: true }], maxLag: null }),
+      wakeLagOf({
+        subscribers: [{ subscriber: "b", unreadable: true }],
+        maxLag: null,
+        frozen: false,
+      }),
     ).toEqual({ lag: 0, unread: true });
     expect(
-      wakeLagOf({ subscribers: [{ subscriber: "a", position: 4, lag: 0 }], maxLag: 0 }),
+      wakeLagOf({
+        subscribers: [{ subscriber: "a", position: 4, lag: 0 }],
+        maxLag: 0,
+        frozen: false,
+      }),
+    ).toEqual({ lag: 0, unread: false });
+  });
+
+  it("finds nothing to wake for in a frozen tenant's lag, which waits for the freeze to lift", () => {
+    expect(
+      wakeLagOf({
+        subscribers: [
+          { subscriber: "a", position: 4, lag: 2 },
+          { subscriber: "b", unreadable: true },
+        ],
+        maxLag: null,
+        frozen: true,
+      }),
     ).toEqual({ lag: 0, unread: false });
   });
 });

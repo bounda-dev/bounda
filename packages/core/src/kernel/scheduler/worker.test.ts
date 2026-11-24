@@ -107,6 +107,7 @@ describe("scheduled command worker", () => {
       },
       reconciliation: {
         reconcile: async () => 0,
+        drain: async () => 0,
         sweep: async () => {
           steps.push("sweep");
           return 1;
@@ -137,6 +138,40 @@ describe("scheduled command worker", () => {
     expect(steps.filter((step) => step.startsWith("restored"))).toEqual(["restored true"]);
     expect(await harness.worker.restored({ first: false })).toBe(true);
     expect(steps.at(-1)).toBe("restored false");
+  });
+
+  it("does nothing in a run that finds it paused, not even the restore check", async () => {
+    let paused = true;
+    let checks = 0;
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      paused: () => paused,
+      restores: {
+        start: async () => null,
+        started: async () => undefined,
+        check: async () => {
+          checks += 1;
+          return null;
+        },
+        declare: async () => ({ first: true }),
+        flush: async () => undefined,
+        found: async () => 0,
+        saw: () => undefined,
+      },
+    });
+    await harness.storage.scheduler.schedule({
+      dedupeKey: "k-1",
+      command: { type: "order.placeOrder", aggregateId: "o-1", payload: {} } as never,
+      executeAt: harness.clock.now(),
+      scheduledAt: harness.clock.now(),
+      context: { correlationId: "c", causationId: "c" } as never,
+    });
+    expect(await harness.worker.runOnce()).toBe(0);
+    expect(checks).toBe(0);
+    expect(await harness.storage.scheduler.list()).toHaveLength(1);
+    paused = false;
+    await harness.worker.runOnce();
+    expect(checks).toBe(1);
   });
 
   it("purges the expired idempotency keys once per interval, and goes on when it cannot", async () => {

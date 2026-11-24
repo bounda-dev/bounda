@@ -39,6 +39,7 @@ import {
   tableContract,
   tenancyContract,
   tenantExportContract,
+  tenantFenceContract,
   tenantKeyStoreContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -66,6 +67,7 @@ describe("sqlite adapter in memory", () => {
   personalKeyStoreContract({ create: async () => openStorage() });
   personStoreContract({ create: async () => (await openStorage()).persons });
   tenancyContract({ create: () => openStorage() });
+  tenantFenceContract({ create: async () => sqlite({ memory: true }) });
   tenantKeyStoreContract({ create: () => sqlite({ memory: true }).createTenantKeyStore() });
   subscriberFailureStoreContract({ create: openStorage });
   tableContract({
@@ -248,6 +250,7 @@ describe("sqlite adapter on a file", () => {
     dialect: "sqlite",
   });
   readModelRebuildContract({ create: async () => sqlite({ path: freshPath() }) });
+  tenantFenceContract({ create: async () => sqlite({ path: freshPath() }) });
   readModelTransactionContract({
     create: async () => sqlite({ path: freshPath() }),
     locking: "single-writer",
@@ -394,6 +397,7 @@ describe("sqlite adapter on a file", () => {
       ["checkpoints", 1],
       ["checkpoints", 2],
       ["checkpoints", 3],
+      ["checkpoints", 4],
       ["storage", 1],
       ["storage", 2],
       ["storage", 3],
@@ -458,6 +462,7 @@ describe("sqlite adapter on a file", () => {
       "app_subscriber_failures",
       "app_superseded_keys",
       "app_tenancy",
+      "app_tenant_fence",
     ]);
     await readModel.close();
     await second.close();

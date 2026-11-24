@@ -56,6 +56,11 @@ dead letter with `errorType: "retriable_exhausted"`.
   call of its app rejects with it, here or on any instance once it has seen the forgetting, and the
   app runs no reaction any more, but the notices to the tenant's recipients. `tenant`,
   `forgottenAt`.
+- **`TENANT_FROZEN`** (`TenantFrozenError`). The app's tenant is
+  [frozen](/guides/personal-data/#freezing-a-tenant): every write of it, on any instance, however
+  long ago it last read the tenant, is refused and keeps nothing of it, until `unfreezeTenant`;
+  reads go on. The same write goes through once the freeze is lifted; the background work waits
+  meanwhile rather than failing, and delivers its own then. `tenant`, `frozenAt`.
 - **`HANDLER_TIMEOUT`** (no exported class; retried). A command, policy or process handler ran out
   of time (`runtime.commands.timeout`, `runtime.policies.timeout`,
   `runtime.processes.handlerTimeout`).
@@ -166,6 +171,7 @@ The hosts map the codes a client can cause to a status:
 | `DOMAIN_ERROR` | 409, with `rejected` | 409, with `rejected` |
 | `PROCESSING_RESTRICTED` | 409 | 409 |
 | `TENANT_FORGOTTEN` | 410 | 410 |
+| `TENANT_FROZEN` | 423 | 423 |
 | `READ_MODEL_RESTORING` | 503 | rethrown |
 | `RESTORE_UNRECONCILED` | 503 | rethrown |
 | `IDEMPOTENCY_KEY_CONFLICT` | 500, code `INTERNAL`, logged | 422 |

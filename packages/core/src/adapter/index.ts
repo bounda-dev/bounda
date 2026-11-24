@@ -190,6 +190,15 @@ export type {
 } from "./storage/table.ts";
 export type { Tenancy, TenancyStore } from "./storage/tenancy-store.ts";
 export type {
+  FenceErrorFunction,
+  IsFenceErrorFunction,
+  NextFenceFunction,
+  TenantFence,
+  TenantFenceState,
+  TenantFenceStore,
+} from "./storage/tenant-fence.ts";
+export { fenceError, isFenceError, nextFence } from "./storage/tenant-fence.ts";
+export type {
   ListTenantKeysArgs,
   StoredFileKey,
   StoredTenantKey,

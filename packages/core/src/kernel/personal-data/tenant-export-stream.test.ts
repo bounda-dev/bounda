@@ -145,6 +145,7 @@ const ledgerOf = (entries: readonly ForgetLedgerEntry[]): ForgetLedger => ({
   readMark: async () => 0,
   raiseMark: async () => undefined,
   clear: async () => true,
+  fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
 });
 
 const setup = async () => {
@@ -215,6 +216,7 @@ const setup = async () => {
       tenant: "acme",
       exportId: "x-1",
       ledger,
+      frozenAt: "2026-01-01T00:00:00.000Z",
       onPage,
     });
   const exported = async (args?: Parameters<typeof stream>[0]): Promise<TenantExportPart[]> => {
@@ -317,11 +319,13 @@ describe("streamTenantExport", () => {
       kind: "header",
       header: {
         format: "bounda.tenant-export",
-        version: 1,
+        version: 2,
         tenant: "acme",
         exportId: "x-1",
         exportedAt: "2026-01-01T00:00:00.000Z",
         position: 5,
+        frozenAt: "2026-01-01T00:00:00.000Z",
+        reached: { readModels: { orderNotes: 0, orderTotals: 0 }, forgetLedger: null },
         categories: {
           default: {
             basis: null,
@@ -1110,11 +1114,13 @@ describe("recordedTenantExport", () => {
   ): StreamedTenantExport => ({
     header: {
       format: "bounda.tenant-export",
-      version: 1,
+      version: 2,
       tenant: "acme",
       exportId: "x-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
       position: 1,
+      frozenAt: "2026-01-01T00:00:00.000Z",
+      reached: { readModels: {}, forgetLedger: null },
       categories: {},
       readModels: [],
     },

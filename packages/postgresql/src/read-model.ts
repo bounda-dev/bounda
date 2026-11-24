@@ -11,6 +11,7 @@ import {
   createSqlRestrictedPersonsStore,
   createSqlRestrictedReads,
   createSqlTable,
+  createSqlTenantFence,
   createTableStatements,
   dropShadowTableStatements,
   type ExistingColumn,
@@ -87,6 +88,9 @@ export interface OpenPostgresqlReadModelArgs {
    * The first key of the advisory locks taken on the checkpoints table, qualified by its schema.
    */
   readonly checkpointsLockKey: string;
+  // The quoted name of the fence's table, beside the checkpoints.
+  readonly tenantFence: string;
+  readonly fenceLock: readonly [string, string];
   readonly name: string;
   readonly fields: FieldsRecord;
   readonly logger: Logger;
@@ -112,12 +116,20 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
   tablePrefix,
   checkpoints,
   checkpointsLockKey,
+  tenantFence,
+  fenceLock,
   name,
   fields,
   logger,
   close,
 }: OpenPostgresqlReadModelArgs): Promise<ReadModelStorage<Row, Sql>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
+  const fence = createSqlTenantFence({
+    table: tenantFence,
+    dialect: postgresqlDialect,
+    lock: fenceLock,
+  });
+  const guarded = fence.guard(db);
   const restrictedPersons = restrictedPersonsTableOf(tablePrefix);
   const restrictedPositions = restrictedPositionsTableOf(tablePrefix);
   const columns = columnsOf({ readModel: name, fields, dialect: postgresqlDialect });
@@ -135,7 +147,14 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
     db,
     schema,
     prefix: tablePrefix,
-    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
+    scopes: [
+      postgresqlCheckpointsScope({
+        checkpoints,
+        restrictedPersons,
+        restrictedPositions,
+        tenantFence,
+      }),
+    ],
   });
   if ((await plan(db)).statements.length > 0) {
     await inSchema({
@@ -160,8 +179,9 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
       table,
       fields,
       dialect: postgresqlDialect,
-      executor: db,
+      executor: guarded,
     }),
+    // Reads alone, as a query's raw SQL is: no fence to check, whatever the statement starts with.
     client: createSqlReadClient<Row, Sql>({
       readModel: name,
       fields,
@@ -174,16 +194,17 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
       table,
       fields,
       dialect: postgresqlDialect,
-      executor: db,
+      executor: guarded,
       restrictedPersons,
     }),
     checkpointStore: createSqlCheckpointStore({
       dialect: postgresqlDialect,
-      db,
+      db: guarded,
       table: checkpoints,
     }),
-    transact: ({ subscriber, wait, work }) =>
-      db.write(async (tx) => {
+    fence: fence.store(db),
+    transact: ({ subscriber, wait, work, forgotten = false }) =>
+      (forgotten ? fence.guard(db, "forgotten") : guarded).write(async (tx) => {
         const keys = [checkpointsLockKey, subscriber];
         if (wait) {
           await tx.run("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", keys);
@@ -267,18 +288,26 @@ const tableExists = async (db: SqlExecutor, schema: string, table: string): Prom
 export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = async <
   Row extends object,
 >({
-  db,
+  db: unguarded,
   sql,
   schema,
   tablePrefix,
   checkpoints,
   checkpointsLockKey,
+  tenantFence,
+  fenceLock,
   progress,
   name,
   fields,
   logger,
   close,
 }: RebuildPostgresqlReadModelArgs): Promise<ReadModelRebuild<Row, Sql>> => {
+  // Every step of a rebuild writes the read model's rows, the shadow's included.
+  const db = createSqlTenantFence({
+    table: tenantFence,
+    dialect: postgresqlDialect,
+    lock: fenceLock,
+  }).guard(unguarded);
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
   const restrictedPersons = restrictedPersonsTableOf(tablePrefix);
   const restrictedPositions = restrictedPositionsTableOf(tablePrefix);
@@ -293,10 +322,17 @@ export const rebuildPostgresqlReadModel: RebuildPostgresqlReadModelFunction = as
       key,
     ]);
   await migratePostgresql({
-    db,
+    db: unguarded,
     schema,
     prefix: tablePrefix,
-    scopes: [postgresqlCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
+    scopes: [
+      postgresqlCheckpointsScope({
+        checkpoints,
+        restrictedPersons,
+        restrictedPositions,
+        tenantFence,
+      }),
+    ],
   });
   const opened = await db.write(async (tx) => {
     await lock(tx, fencing.lock);

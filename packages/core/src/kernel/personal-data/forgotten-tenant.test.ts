@@ -3,12 +3,14 @@ import type {
   ForgetLedgerEntry,
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
+import type { TenantFence } from "../../adapter/storage/tenant-fence.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { TenantForgottenPayload } from "../../modules/bounda-events.ts";
 import { startedBy } from "../shared/causation.ts";
+import { createRecordingLogger } from "../test-support.ts";
 import { settleTenantForgetting } from "./forgotten-tenant.ts";
 import {
   FORGET_LEDGER_CURSOR,
@@ -56,11 +58,11 @@ const settle = async (
   read: (args: ReadForgetLedgerArgs) => Promise<readonly ForgetLedgerEntry[]>,
 ) => {
   await settleTenantForgetting({
-    storage,
+    storage: storage.forgotten(),
     readModels: [],
     tenant: "acme",
     forgetting: FORGETTING,
-    ledger: { read },
+    ledger: { read, fence: { read: async () => ({ state: "open" }), set: async (fence) => fence } },
     mayBeCopy: true,
     ports: [{ port: "customer.crm", categories: ["contact"] }],
     ids: createSequentialIdGenerator(),
@@ -116,7 +118,10 @@ describe("settling a tenant's forgetting with a forget ledger", () => {
     const storage = await opened(0);
     const failing = {
       ...storage,
-      transact: () => Promise.reject(new Error("the database went away")),
+      forgotten: () => ({
+        ...storage.forgotten(),
+        transact: () => Promise.reject(new Error("the database went away")),
+      }),
     } as typeof storage;
     await expect(settle(failing, async () => [disclosed])).rejects.toThrow(
       "the database went away",
@@ -134,5 +139,119 @@ describe("settling a tenant's forgetting with a forget ledger", () => {
     await settle(storage, read);
     await settle(storage, read);
     expect(reads).toBe(1);
+  });
+});
+
+describe("settling a tenant's forgetting behind its fences", () => {
+  it("raises the ledger's fence, then the database's, before it reads anything, and every read model's", async () => {
+    const storage = await opened(0);
+    const steps: string[] = [];
+    const fenceOf = (name: string) => ({
+      read: async () => ({ state: "open" }) as const,
+      set: async (fence: TenantFence) => {
+        steps.push(`${name} ${fence.state}`);
+        return fence;
+      },
+    });
+    const forgotten = storage.forgotten();
+    const readModel = (name: string, personal: boolean) => ({
+      name,
+      personal,
+      storage: {
+        fence: fenceOf(name),
+        transact: async <T>(args: {
+          readonly forgotten?: boolean;
+          readonly subscriber: string;
+        }) => {
+          steps.push(`${name} rows deleted ${String(args.forgotten)} ${args.subscriber}`);
+          return { acquired: true, value: undefined as T } as const;
+        },
+      },
+    });
+    await settleTenantForgetting({
+      storage: {
+        ...forgotten,
+        fence: {
+          ...forgotten.fence,
+          set: async (fence) => {
+            steps.push(`storage ${fence.state}`);
+            return forgotten.fence.set(fence);
+          },
+        },
+        tenancy: {
+          ...forgotten.tenancy,
+          forget: async (at) => {
+            steps.push("binding");
+            await forgotten.tenancy.forget(at);
+          },
+        },
+      },
+      readModels: [readModel("customers", true), readModel("totals", false)] as never,
+      tenant: "acme",
+      forgetting: FORGETTING,
+      ledger: {
+        read: async () => {
+          steps.push("ledger read");
+          return [];
+        },
+        fence: fenceOf("ledger"),
+      },
+      mayBeCopy: false,
+      ports: [],
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(new Date(AT)),
+      logger: silentLogger,
+      concurrencyRetries: 3,
+      context: startedBy("c", undefined),
+    });
+    expect(steps).toEqual([
+      "ledger forgotten",
+      "storage forgotten",
+      "binding",
+      "ledger read",
+      "customers forgotten",
+      "customers rows deleted true projection:customers",
+      "totals forgotten",
+    ]);
+    expect(await storage.fence.read()).toEqual({
+      state: "forgotten",
+      tenant: "acme",
+      since: FORGETTING.at,
+    });
+  });
+
+  it("logs a ledger that does not take its fence, and settles the rest", async () => {
+    const storage = await opened(0);
+    const { logger, entries } = createRecordingLogger();
+    await settleTenantForgetting({
+      storage: storage.forgotten(),
+      readModels: [],
+      tenant: "acme",
+      forgetting: FORGETTING,
+      ledger: {
+        read: async () => [],
+        fence: {
+          read: async () => ({ state: "open" }),
+          set: async () => {
+            throw new Error("ledger down");
+          },
+        },
+      },
+      mayBeCopy: false,
+      ports: [],
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(new Date(AT)),
+      logger,
+      concurrencyRetries: 3,
+      context: startedBy("c", undefined),
+    });
+    expect(entries.map(({ level, message, fields }) => [level, message, fields?.tenant])).toEqual([
+      [
+        "error",
+        "the forget ledger's fence could not be raised for the tenant's forgetting",
+        "acme",
+      ],
+    ]);
+    expect(await storage.eventStore.lastPosition()).toBe(1);
   });
 });

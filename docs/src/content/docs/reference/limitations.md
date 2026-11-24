@@ -23,12 +23,15 @@ get today. Each item says why, so nobody discovers it the hard way:
   [Tuning](/guides/deployment/#tuning).
 - **Every read of a field kept in the clear in the access log.** See [The access log](#the-access-log).
 - **Restricted rows out of every read.** See [Restricted rows](#restricted-rows).
-- **A tenant's export while it is written to.** [Handing a tenant
-  back](/guides/personal-data/#handing-a-tenant-back) is a cut of the stream at its head, and of
-  the rest as it reads it: a write that appends an event fails the export, but what the worker
-  writes beside the stream, a dead letter or a subscriber's failure, is in it or not depending on
-  when it lands. Take it once the tenant receives no more work and the worker is idle; there is no
-  call that holds a tenant read-only meanwhile.
+- **The moments after a restore made by hand under a frozen or forgotten tenant.** `bounda restore`
+  refuses a frozen tenant and keeps the fence the database holds. A copy put back with the
+  engine's own tools, `pg_restore` or a file copied over SQLite's, brings back the fence the copy
+  held, and the app raises it again from the tenant key store's record, which the restore left
+  alone (see [Freezing a tenant](/guides/personal-data/#freezing-a-tenant)): at its next start, the
+  next pass of an instance that runs a worker, or the next look of one that does not. A write that
+  lands before then lands. An app without `runtime.personalData.tenantKeys` and without personal
+  data keeps no such record, so a copy taken before a freeze takes writes again until the next
+  `freezeTenant`. Restore with `bounda restore`.
 - **Pruning a SQL forget ledger with no app running.** A forget ledger in a SQLite or PostgreSQL
   database is pruned past `keepFor` by an app of the tenant that runs: the periodic reconciliation,
   or a forgotten tenant's worker until its recipients are told. A tenant whose app does not run

@@ -550,6 +550,7 @@ describe("forgetIntended", () => {
             readMark: async () => 0,
             raiseMark: async () => undefined,
             clear: async () => true,
+            fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
             append: async (entries) => {
               recorded.push(...entries);
             },

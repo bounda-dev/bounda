@@ -40,8 +40,9 @@ describe("appStorage", () => {
     const { written, storage } = await setUp();
     expect(storage.atRest).toBeNull();
     expect(storage.snapshotStore).toBe(written.snapshotStore);
+    const own = await written.transact(async (transaction) => transaction.snapshotStore);
     await storage.transact(async (transaction) => {
-      expect(transaction.snapshotStore).toBe(written.snapshotStore);
+      expect(transaction.snapshotStore).toBe(own);
     });
   });
 

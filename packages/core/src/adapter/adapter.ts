@@ -23,6 +23,7 @@ import type { SnapshotStore } from "./storage/snapshot-store.ts";
 import type { SubscriberFailureStore } from "./storage/subscriber-failure-store.ts";
 import type { StoredReadClient, Table } from "./storage/table.ts";
 import type { TenancyStore } from "./storage/tenancy-store.ts";
+import type { TenantFenceStore } from "./storage/tenant-fence.ts";
 import type { TenantKeyStore } from "./storage/tenant-key-store.ts";
 
 /**
@@ -88,6 +89,17 @@ export interface Storage {
    */
   readonly tenancy: TenancyStore;
   /**
+   * The database's fence, which every write through this storage checks in its own transaction,
+   * those outside `transact` included.
+   */
+  readonly fence: TenantFenceStore;
+  /**
+   * The same storage, whose writes go through the fence while it says the tenant is forgotten, as
+   * while it is open, and are refused while it is frozen: what settles a forgetting and tells its
+   * recipients. Nothing that serves a live tenant uses it.
+   */
+  forgotten(): Storage;
+  /**
    * Only for a backend that can push new events; without it the dispatcher only polls.
    */
   readonly notifier?: EventNotifier;
@@ -125,6 +137,11 @@ export interface ReadModelStorage<Row extends object = Record<string, unknown>, 
    */
   readonly checkpointStore: CheckpointStore;
   /**
+   * The fence of the read model's database, which every write to its rows and checkpoints checks
+   * in its own transaction, as `Storage.fence` does.
+   */
+  readonly fence: TenantFenceStore;
+  /**
    * Runs `work` in one transaction holding the lock named `subscriber`. What it writes through the
    * transaction's `table`, `client` and `checkpointStore` commits when it resolves and rolls back
    * when it throws, all together, so a batch and the checkpoint past it are never apart. When
@@ -159,6 +176,10 @@ export interface ReadModelTransaction<Row extends object = Record<string, unknow
 export interface ReadModelTransactArgs<Row extends object, T> {
   readonly subscriber: string;
   readonly wait: boolean;
+  /**
+   * Goes through the fence while it says the tenant is forgotten, as `Storage.forgotten` does.
+   */
+  readonly forgotten?: boolean;
   readonly work: (transaction: ReadModelTransaction<Row>) => Promise<T>;
 }
 

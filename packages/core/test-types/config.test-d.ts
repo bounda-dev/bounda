@@ -30,6 +30,7 @@ import type {
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
   RuntimeTextFunction,
+  TenantFence,
 } from "@bounda-dev/core/adapter";
 import { runtimeText } from "@bounda-dev/core/adapter";
 import {
@@ -462,6 +463,13 @@ describe("defineConfig", () => {
           expectTypeOf(value).toEqualTypeOf<number>();
         },
         clear: async () => true,
+        fence: {
+          read: async () => ({ state: "open" }),
+          set: async (fence) => {
+            expectTypeOf(fence).toEqualTypeOf<TenantFence>();
+            return fence;
+          },
+        },
       };
     });
     expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();

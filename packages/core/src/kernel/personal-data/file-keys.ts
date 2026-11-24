@@ -5,7 +5,7 @@ import type {
   TenantKeyStore,
 } from "../../adapter/storage/tenant-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, TenantFrozenError } from "../../contracts/errors.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { fromBase64, withRawKey } from "./crypto.ts";
 import { newFileKey, unwrapFileKey, wrapFileKey } from "./file-key-crypto.ts";
@@ -101,6 +101,7 @@ export const openFileKeys: OpenFileKeysFunction = async ({
       // A forgotten tenant holds no version: its files are given no key.
       const held = databases.filter((database) => !missing.includes(database));
       if (missing.length === 0 || version === undefined) return { record: read, owned: held };
+      if (read.frozenAt !== undefined) throw new TenantFrozenError(tenant, read.frozenAt);
       const under = await openStoredTenantKey({ stored: version, master, tenant });
       const { revision, ...current } = read;
       const added = await keysFor(missing, { kid: version.kid, key: under }, at);
@@ -171,6 +172,8 @@ export const openFileKeys: OpenFileKeysFunction = async ({
           const files = record.files ?? [];
           const moved = files.find((file) => file.database === database && file.id === id);
           if (moved === undefined || moved.appliedAt !== undefined) return;
+          // Left to the next open: until then, retiring keeps the file's earlier keys.
+          if (record.frozenAt !== undefined) return;
           const applied = { ...moved, appliedAt: clock.now().toISOString() };
           const { revision, ...current } = record;
           const next = {

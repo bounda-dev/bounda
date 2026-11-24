@@ -30,7 +30,7 @@ import {
   scrubStores,
 } from "./redaction.ts";
 import { checkRedactionTargets, redactionMarks } from "./redaction-targets.ts";
-import { checkPersonId, transactRetrying } from "./transact.ts";
+import { checkPersonId, throughFreeze, transactRetrying } from "./transact.ts";
 import type { PersonalKeys, PersonalKeyWrapping } from "./wrapped-keys.ts";
 
 // What a redaction needs of the app, beside what it is asked.
@@ -94,23 +94,35 @@ export const redactIntended: RedactIntendedFunction = async ({
   // The keys are read and unwrapped ahead, as a reseal does, so the transaction never waits on a
   // remote key service.
   await wrapping.over(storage.personalKeys).heldAll(personId);
-  const outcome = await transactRetrying({
-    storage,
-    concurrencyRetries: redactions.concurrencyRetries,
-    work: (transaction) =>
-      redactWithin({
-        transaction,
-        keys: wrapping.over(transaction.personalKeys),
-        aggregates,
-        processes,
-        ids,
-        clock,
-        personId,
-        targets,
-        identity,
-        context,
-        strict,
+  const outcome = await throughFreeze<RedactOutcome>({
+    work: () =>
+      transactRetrying({
+        storage,
+        concurrencyRetries: redactions.concurrencyRetries,
+        work: (transaction) =>
+          redactWithin({
+            transaction,
+            keys: wrapping.over(transaction.personalKeys),
+            aggregates,
+            processes,
+            ids,
+            clock,
+            personId,
+            targets,
+            identity,
+            context,
+            strict,
+          }),
       }),
+    // What a freeze committed of the intention, as the reconciliation does.
+    committed: async () => {
+      const held = await storage.eventStore.readOne({
+        aggregateType: BOUNDA_AGGREGATE,
+        aggregateId: personId,
+        eventId: identity.id,
+      });
+      return held === null ? null : { held };
+    },
   });
   if (outcome !== null && "values" in outcome) {
     logRedacted(redactions.logger, outcome);

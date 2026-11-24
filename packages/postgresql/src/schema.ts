@@ -17,6 +17,7 @@ export interface StorageTables {
   readonly indexKeys: string;
   readonly supersededKeys: string;
   readonly tenancy: string;
+  readonly tenantFence: string;
   readonly persons: string;
   readonly restrictions: string;
   readonly restrictedPersons: string;
@@ -27,6 +28,8 @@ export interface StorageTables {
   readonly recipients: string;
   // In a database of its own, apart from the other storage tables.
   readonly forgetLedger: string;
+  // The first key of the advisory lock that puts a tenant's ledger writes behind its fence.
+  readonly forgetLedgerLockKey: string;
   readonly tenantKeys: string;
   readonly appendLockKey: string;
   // The first key of the advisory locks read models take on the checkpoints table.
@@ -34,6 +37,17 @@ export interface StorageTables {
   // The `NOTIFY` channel appends publish on.
   readonly channel: string;
 }
+
+export interface FenceLockOfFunction {
+  (checkpointsLockKey: string): readonly [string, string];
+}
+
+// The advisory lock every write holds shared, and a change of the fence exclusive: beside the read
+// models' locks on the checkpoints table, under a name no subscriber takes.
+export const fenceLockOf: FenceLockOfFunction = (checkpointsLockKey) => [
+  checkpointsLockKey,
+  "bounda:tenant-fence",
+];
 
 export interface StorageTablesForArgs {
   readonly prefix: string;
@@ -72,6 +86,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     indexKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "indexKeys" })),
     supersededKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "supersededKeys" })),
     tenancy: quoteIdentifier(storageTableNameFor({ prefix, table: "tenancy" })),
+    tenantFence: quoteIdentifier(storageTableNameFor({ prefix, table: "tenantFence" })),
     tenantKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "tenantKeys" })),
     persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
     restrictions: quoteIdentifier(storageTableNameFor({ prefix, table: "restrictions" })),
@@ -86,6 +101,7 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     disclosures: quoteIdentifier(storageTableNameFor({ prefix, table: "disclosures" })),
     recipients: quoteIdentifier(storageTableNameFor({ prefix, table: "recipients" })),
     forgetLedger: quoteIdentifier(forgetLedger),
+    forgetLedgerLockKey: `bounda:${schema}.${forgetLedger}`,
     appendLockKey: `bounda:${schema}.${events}`,
     checkpointsLockKey: `bounda:${schema}.${checkpoints}`,
     channel,

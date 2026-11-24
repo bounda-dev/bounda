@@ -18,6 +18,7 @@ export default defineConfig({
           readMark: down,
           raiseMark: down,
           clear: down,
+          fence: { read: down, set: down },
         })),
         strict: true,
       },

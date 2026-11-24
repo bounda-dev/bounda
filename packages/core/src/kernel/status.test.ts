@@ -200,6 +200,7 @@ describe("readAppStatus", () => {
       rotation: { status: down("the keys") },
       tenant: down("the tenant keys"),
       forgottenTenant: down("the forgotten tenant's ledger"),
+      frozenTenant: down("the fence"),
       retention: { status: down("the persons") },
       recipients: down("the recipients"),
     });
@@ -218,6 +219,7 @@ describe("readAppStatus", () => {
       forgetLedger: { unreadable: true },
       tenant: { unreadable: true },
       forgottenTenant: { unreadable: true },
+      frozenTenant: { unreadable: true },
       keyRotation: { unreadable: true },
       retention: { unreadable: true },
       deadLetterRetention: null,
@@ -302,6 +304,13 @@ describe("readAppStatus", () => {
         [
           "error",
           "a part of the status could not be read",
+          "frozenTenant",
+          undefined,
+          "the fence is down",
+        ],
+        [
+          "error",
+          "a part of the status could not be read",
           "retention",
           undefined,
           "the persons is down",
@@ -315,7 +324,7 @@ describe("readAppStatus", () => {
         ],
       ]),
     );
-    expect(entries).toHaveLength(11);
+    expect(entries).toHaveLength(12);
     expect(unreadableParts(status)).toEqual([
       "schema (readModels.reports)",
       "restoresFound",
@@ -325,6 +334,7 @@ describe("readAppStatus", () => {
       "forgetLedger",
       "tenant",
       "forgottenTenant",
+      "frozenTenant",
       "keyRotation",
       "retention",
       "recipients",
@@ -373,6 +383,7 @@ describe("unreadableParts", () => {
       forgetLedger: null,
       tenant: null,
       forgottenTenant: null,
+      frozenTenant: null,
       keyRotation: null,
       retention: null,
       deadLetterRetention: null,

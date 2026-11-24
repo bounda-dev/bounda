@@ -69,6 +69,7 @@ describe("migrateSqlite", () => {
       { scope: "checkpoints", version: 1 },
       { scope: "checkpoints", version: 2 },
       { scope: "checkpoints", version: 3 },
+      { scope: "checkpoints", version: 4 },
     ]);
   });
 
@@ -124,6 +125,7 @@ describe("migrateSqlite", () => {
         .map((row) => row.name),
     ).toEqual([
       "app_forget_ledger",
+      "app_forget_ledger_fence",
       "app_forget_ledger_marks",
       "app_forget_ledger_order_idx",
       "app_migrations",
@@ -180,6 +182,6 @@ describe("the SQLite schema scopes", () => {
           `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
         )
         .get(),
-    ).toEqual({ version: 7 });
+    ).toEqual({ version: 8 });
   });
 });

@@ -16,7 +16,7 @@ import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import type { AppStorage } from "../events/app-event-store.ts";
 import type { ProcessesRuntime } from "../process/build-processes.ts";
 import { processOfStream } from "../process/lifecycle.ts";
-import type { SealingSource } from "../projection/runner.ts";
+import { projectionSubscriberName, type SealingSource } from "../projection/runner.ts";
 import type { ReadModelsRuntime } from "../read-model/build-read-models.ts";
 import { openRow } from "../read-model/sealed-rows.ts";
 import { createSealingKeyRing } from "../read-model/sealing-keys.ts";
@@ -30,6 +30,7 @@ import { openTextWith, textPersons } from "./errors.ts";
 import { openedUnder, redactedIn } from "./event-store.ts";
 import type { ExportedCategories, ExportedRestricted } from "./export.ts";
 import { personalDataInformation } from "./information.ts";
+import { FORGET_LEDGER_SUBSCRIBER } from "./ledger-outbox.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
 import { lifecycleStateOf } from "./process-state.ts";
 import { processingRestrictionsOf } from "./restriction.ts";
@@ -91,6 +92,8 @@ export interface StreamTenantExportArgs {
    * `runtime.personalData.forgetLedger`'s store, `null` without one.
    */
   readonly ledger: ForgetLedger | null;
+  // Since when the tenant is frozen.
+  readonly frozenAt: string;
   /**
    * Runs once the header is read and once each page of records is, every value of the page opened,
    * before anything read for it is handed out; what it throws is the export's failure.
@@ -221,10 +224,20 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
   tenant,
   exportId,
   ledger,
+  frozenAt,
   onPage,
 }) => {
   const exportedAt = clock.now().toISOString();
   const position = await storage.eventStore.lastPosition();
+  const projected: Record<string, number> = {};
+  for (const { name, storage: own } of Object.values(readModels.byName)) {
+    projected[name] = await own.checkpointStore.get(projectionSubscriberName(name));
+  }
+  const reached = {
+    readModels: projected,
+    forgetLedger:
+      ledger === null ? null : await storage.checkpointStore.get(FORGET_LEDGER_SUBSCRIBER),
+  };
   const appCategories: Record<string, TenantExportCategory> = {};
   for (const [name, category] of Object.entries(
     personalDataInformation({ categories, keys: [], person: null }).categories,
@@ -244,6 +257,8 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
     exportId,
     exportedAt,
     position,
+    frozenAt,
+    reached,
     categories: appCategories,
     readModels: Object.keys(readModels.byName),
   };

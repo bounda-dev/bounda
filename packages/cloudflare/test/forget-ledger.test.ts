@@ -155,6 +155,121 @@ describe("the KV forget ledger's listing", () => {
     ]);
   });
 
+  it("raises its fence once the appends under way landed, refuses those after, and keeps it apart", async () => {
+    const { namespace, keys } = countingNamespace();
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = {
+      ...namespace,
+      put: async (...args: Parameters<KVNamespace["put"]>) => {
+        if (String(args[0]).startsWith("p/")) await held;
+        return namespace.put(...args);
+      },
+    } as KVNamespace;
+    const ledger = createKvForgetLedger({ namespace: slow, prefix: "p/" });
+    const entry = {
+      personId: "c-1",
+      eventId: "e-1",
+      forgottenAt: minute(1),
+      categories: null,
+      reason: "requested" as const,
+    };
+    const appending = ledger.append([entry]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const frozen = { state: "frozen", tenant: "acme", since: minute(2) } as const;
+    let raised = false;
+    const raising = ledger.fence.set(frozen).then((fence) => {
+      raised = true;
+      return fence;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(raised).toBe(false);
+    await expect(ledger.append([{ ...entry, eventId: "e-2" }])).rejects.toMatchObject({
+      code: "TENANT_FROZEN",
+    });
+    release();
+    await appending;
+    expect(await raising).toEqual(frozen);
+    expect(keys.get("bounda/forget-ledger-fences/p/")).toBeNull();
+    expect([...keys.keys()].filter((name) => name.startsWith("p/"))).toHaveLength(1);
+    await expect(ledger.raiseMark("restore:generation", 3)).rejects.toMatchObject({
+      code: "TENANT_FROZEN",
+    });
+    // A clear leaves the fence, under its own prefix.
+    expect(await ledger.clear()).toBe(true);
+    expect(keys.has("bounda/forget-ledger-fences/p/")).toBe(true);
+    expect(await ledger.fence.set({ state: "open" })).toEqual({ state: "open" });
+    expect(keys.has("bounda/forget-ledger-fences/p/")).toBe(false);
+    await ledger.append([{ ...entry, eventId: "e-3" }]);
+  });
+
+  it("waits for every append under way, refuses after another object's forgetting, and writes its fence again", async () => {
+    const namespace = env.FORGET_LEDGER;
+    const prefix = `fence-${crypto.randomUUID()}/`;
+    const fenceKey = `bounda/forget-ledger-fences/${prefix}`;
+    const gates = new Map<string, () => void>();
+    const slow = {
+      ...namespace,
+      get: namespace.get.bind(namespace),
+      delete: namespace.delete.bind(namespace),
+      list: namespace.list.bind(namespace),
+      put: async (...args: Parameters<KVNamespace["put"]>) => {
+        const name = String(args[0]);
+        if (name.startsWith(prefix)) {
+          await new Promise<void>((resolve) => gates.set(name.split(":").at(-1) ?? name, resolve));
+        }
+        return namespace.put(...args);
+      },
+    } as KVNamespace;
+    const ledger = createKvForgetLedger({ namespace: slow, prefix });
+    const entry = (eventId: string) => ({
+      personId: "c-1",
+      eventId,
+      forgottenAt: minute(1),
+      categories: null,
+      reason: "requested" as const,
+    });
+    const until = async (done: () => Promise<boolean> | boolean) => {
+      while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 1));
+    };
+    const first = ledger.append([entry("e-1")]);
+    const second = ledger.append([entry("e-2")]);
+    await until(() => gates.size === 2);
+    const frozen = { state: "frozen", tenant: "acme", since: minute(2) } as const;
+    let raised = false;
+    const raising = ledger.fence.set(frozen).then((fence) => {
+      raised = true;
+      return fence;
+    });
+    // Written, and waiting for the two appends under way.
+    await until(async () => (await namespace.get(fenceKey)) !== null);
+    gates.get("e-1")?.();
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(raised).toBe(false);
+    gates.get("e-2")?.();
+    await second;
+    expect(await raising).toEqual(frozen);
+    // What it raised itself holds though KV does not show it yet.
+    await namespace.delete(fenceKey);
+    expect(await ledger.fence.read()).toEqual(frozen);
+    // Another object forgets the tenant: its fence wins over the freeze this one raised.
+    const forgotten = { state: "forgotten", tenant: "acme", since: minute(3) } as const;
+    expect(await createKvForgetLedger({ namespace, prefix }).fence.set(forgotten)).toEqual(
+      forgotten,
+    );
+    expect(await ledger.fence.read()).toEqual(forgotten);
+    await expect(ledger.append([entry("e-3")])).rejects.toMatchObject({
+      code: "TENANT_FORGOTTEN",
+    });
+    // What KV holds is written again, though this object held the fence already.
+    await namespace.delete(fenceKey);
+    expect(await ledger.fence.set(forgotten)).toEqual(forgotten);
+    expect(JSON.parse((await namespace.get(fenceKey)) ?? "null")).toEqual(forgotten);
+  });
+
   it("lists every page when it reads from the first entry", async () => {
     const { namespace, pages } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });

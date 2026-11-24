@@ -1525,6 +1525,27 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     expect(besidesLogs(other.stderr)).toBe(
       "error: exportTenant names tenant someone-else, and the app serves another\n",
     );
+    const open = await cli(["export-tenant", tenant, ...config], fixture);
+    expect(open.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(open.stderr)).toBe(
+      `error: Tenant ${tenant} is not frozen in every store: freeze it with freezeTenant, then export it\n`,
+    );
+    const frozen = await cli(
+      ["freeze-tenant", tenant, ...config, "--actor", "operator-1"],
+      fixture,
+    );
+    expect(frozen.code).toBe(EXIT_OK);
+    expect(frozen.stdout).toMatch(
+      new RegExp(
+        `^froze tenant ${tenant} at \\S+: no write of it lands until bounda unfreeze-tenant ${tenant}; bounda export-tenant hands it back as one cut\n$`,
+      ),
+    );
+    const status = await cli(["status", ...config, "--tenant", tenant], fixture);
+    expect(status.stdout).toMatch(
+      /^frozen tenant: since \S+, every store; no write lands until bounda unfreeze-tenant$/m,
+    );
+    const refusedWrite = await joinMember(tenant, "m-3").catch((error: unknown) => error);
+    expect(refusedWrite).toMatchObject({ code: "TENANT_FROZEN", tenant });
 
     const printed = await cli(
       ["export-tenant", tenant, ...config, "--actor", "operator-1"],
@@ -1580,6 +1601,12 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     const missing = await cli(["check-tenant-export", `${into}.missing`], fixture);
     expect(missing.code).toBe(EXIT_FAILURE);
 
+    const unfrozen = await cli(["unfreeze-tenant", tenant, ...config], fixture);
+    expect(unfrozen).toMatchObject({
+      code: EXIT_OK,
+      stdout: `unfroze tenant ${tenant}: it takes writes again\n`,
+    });
+    await joinMember(tenant, "m-3");
     expect((await cli(["forget-tenant", tenant, ...config, "--yes"], fixture)).code).toBe(EXIT_OK);
     const gone = await cli(["export-tenant", tenant, ...config], fixture);
     expect(gone.code).toBe(EXIT_FAILURE);
@@ -1865,13 +1892,30 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     }
     const exporting = await cli(["export-tenant", "--help"], fixture);
     for (const text of [
-      "hand a tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log",
+      "hand a frozen tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log. Freeze it first with bounda freeze-tenant",
       "<tenant>",
       "the tenant to export, the one the app serves",
       "--output <file>",
       "write it to this file, readable by its owner alone, and only once whole, instead of printing it",
     ]) {
       expect(exporting.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
+    const freezing = await cli(["freeze-tenant", "--help"], fixture);
+    for (const text of [
+      "freeze a tenant: no write of it lands, from this or any running instance, until it is unfrozen; reads go on, and bounda export-tenant hands it back as one cut",
+      "<tenant>",
+      "the tenant to freeze, the one the app serves",
+      "--actor <id>",
+    ]) {
+      expect(freezing.stdout.replace(/\s+/g, " ")).toContain(text);
+    }
+    const unfreezing = await cli(["unfreeze-tenant", "--help"], fixture);
+    for (const text of [
+      "lift a tenant's freeze: it takes writes again, and the background work goes on",
+      "<tenant>",
+      "the tenant to unfreeze, the one the app serves",
+    ]) {
+      expect(unfreezing.stdout.replace(/\s+/g, " ")).toContain(text);
     }
     const checking = await cli(["check-tenant-export", "--help"], fixture);
     for (const text of [

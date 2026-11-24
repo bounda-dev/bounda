@@ -166,6 +166,10 @@ export const boundForgetLedger: BoundForgetLedgerFunction = ({ ledger, timeoutMs
     readMark: (name) => bound("readMark", () => ledger.readMark(name)),
     raiseMark: (name, value) => bound("raiseMark", () => ledger.raiseMark(name, value)),
     clear: () => bound("clear", () => ledger.clear()),
+    fence: {
+      read: () => bound("fence.read", () => ledger.fence.read()),
+      set: (fence) => bound("fence.set", () => ledger.fence.set(fence)),
+    },
     ...(ledger.visibilityDelayMs === undefined
       ? {}
       : { visibilityDelayMs: ledger.visibilityDelayMs }),

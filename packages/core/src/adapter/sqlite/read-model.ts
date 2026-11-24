@@ -26,6 +26,7 @@ import {
   createSqlRestrictedReads,
 } from "../sql/restricted-persons.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
+import { createSqlTenantFence } from "../sql/tenant-fence.ts";
 import { selectUnsettled } from "../sql/unsettled.ts";
 import { migrateSqlite, sqliteCheckpointsScope } from "./migrations.ts";
 import { storageTablesFor } from "./schema.ts";
@@ -98,8 +99,10 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   close,
 }: OpenSqliteReadModelArgs<Raw>): Promise<ReadModelStorage<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
-  const { restrictedPersons, restrictedPositions } = storageTablesFor(tablePrefix);
+  const { restrictedPersons, restrictedPositions, tenantFence } = storageTablesFor(tablePrefix);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
+  const fence = createSqlTenantFence({ table: tenantFence, dialect: sqliteDialect });
+  const guarded = fence.guard(db);
   const plan = async (executor: SqlExecutor) => {
     const existing = await existingColumns(executor, table);
     return {
@@ -129,7 +132,9 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
     db,
     isBusy,
     prefix: tablePrefix,
-    scopes: [sqliteCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
+    scopes: [
+      sqliteCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions, tenantFence }),
+    ],
   });
   return {
     table: createSqlTable<Row>({
@@ -137,8 +142,9 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
       table,
       fields,
       dialect: sqliteDialect,
-      executor: db,
+      executor: guarded,
     }),
+    // Reads alone, as a query's raw SQL is: no fence to check, whatever the statement starts with.
     client: createSqlReadClient<Row, Raw>({
       readModel: name,
       fields,
@@ -151,14 +157,19 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
       table,
       fields,
       dialect: sqliteDialect,
-      executor: db,
+      executor: guarded,
       restrictedPersons,
     }),
-    checkpointStore: createSqlCheckpointStore({ dialect: sqliteDialect, db, table: checkpoints }),
+    checkpointStore: createSqlCheckpointStore({
+      dialect: sqliteDialect,
+      db: guarded,
+      table: checkpoints,
+    }),
+    fence: fence.store(db),
     // SQLite has a single writer, so holding the write transaction is the lock and `wait` changes
     // nothing.
-    transact: ({ work }) =>
-      db.write(async (tx) => ({
+    transact: ({ work, forgotten = false }) =>
+      (forgotten ? fence.guard(db, "forgotten") : guarded).write(async (tx) => ({
         acquired: true,
         value: await work({
           table: createSqlTable<Row>({
@@ -222,7 +233,7 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   Row extends object,
   Raw = unknown,
 >({
-  db,
+  db: unguarded,
   raw,
   isBusy,
   tablePrefix,
@@ -234,17 +245,21 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
   close,
 }: RebuildSqliteReadModelArgs<Raw>): Promise<ReadModelRebuild<Row, Raw>> => {
   const table = tableNameFor({ prefix: tablePrefix, readModel: name });
-  const { restrictedPersons, restrictedPositions } = storageTablesFor(tablePrefix);
+  const { restrictedPersons, restrictedPositions, tenantFence } = storageTablesFor(tablePrefix);
+  // Every step of a rebuild writes the read model's rows, the shadow's included.
+  const db = createSqlTenantFence({ table: tenantFence, dialect: sqliteDialect }).guard(unguarded);
   const { shadow } = rebuildTablesFor(table);
   const columns = columnsOf({ readModel: name, fields, dialect: sqliteDialect });
   const fencing = rebuildFencing(name);
   const checkpointsIn = (executor: SqlExecutor) =>
     createSqlCheckpointStore({ dialect: sqliteDialect, db: executor, table: checkpoints });
   await migrateSqlite({
-    db,
+    db: unguarded,
     isBusy,
     prefix: tablePrefix,
-    scopes: [sqliteCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions })],
+    scopes: [
+      sqliteCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions, tenantFence }),
+    ],
   });
   const opened = await db.write(async (tx) => {
     const store = checkpointsIn(tx);

@@ -44,6 +44,7 @@ import {
   tableContract,
   tenancyContract,
   tenantExportContract,
+  tenantFenceContract,
   tenantKeyStoreContract,
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
@@ -141,6 +142,12 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   personStoreContract({ create: async () => (await openStorage()).persons });
   recipientStoreContract({ create: openStorage });
   tenancyContract({ create: openStorage });
+  tenantFenceContract({
+    create: async () => {
+      await closeOpened();
+      return fresh();
+    },
+  });
   tenantKeyStoreContract({
     create: async () => {
       const store = await fresh().createTenantKeyStore();
@@ -184,7 +191,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     },
   });
 
-  it("takes the append lock as a transaction starts, before anything it writes, and lets go of it with the transaction", async () => {
+  it("takes the fence's lock and the append lock as a transaction starts, before anything it writes, and lets go of both with the transaction", async () => {
     const storage = await openStorage();
     const advisoryLocks = async (executor: { all: SqlExecutor["all"] }) =>
       Number(
@@ -204,7 +211,8 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       expect(await advisoryLocks(outside)).toBe(0);
       await expect(
         storage.transact(async (tx) => {
-          expect(await advisoryLocks(outside)).toBe(1);
+          // The fence's lock, held shared, and the append lock.
+          expect(await advisoryLocks(outside)).toBe(2);
           await tx.eventStore.append({
             aggregateType: "order",
             aggregateId: "1",
@@ -427,6 +435,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
           checkpoints: `"${prefix}checkpoints"`,
           restrictedPersons: `"${prefix}restricted_persons"`,
           restrictedPositions: `"${prefix}restricted_positions"`,
+          tenantFence: `"${prefix}tenant_fence"`,
         }),
       ],
     });
@@ -436,6 +445,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       { scope: "checkpoints", version: 1 },
       { scope: "checkpoints", version: 2 },
       { scope: "checkpoints", version: 3 },
+      { scope: "checkpoints", version: 4 },
     ]);
   });
 
@@ -491,6 +501,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       const tables = await holder`SELECT tablename FROM pg_tables WHERE schemaname = ${schema}`;
       expect(tables.map(({ tablename }) => tablename).sort()).toEqual([
         `t${run}_${prefixes}_forget_ledger`,
+        `t${run}_${prefixes}_forget_ledger_fence`,
         `t${run}_${prefixes}_forget_ledger_marks`,
         `t${run}_${prefixes}_migrations`,
       ]);
@@ -738,6 +749,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       "subscriber_failures",
       "superseded_keys",
       "tenancy",
+      "tenant_fence",
     ]);
   });
 
@@ -1055,6 +1067,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
         "CREATE UNIQUE INDEX superseded_keys_pkey ON public.superseded_keys USING btree (person, fingerprint)",
         "CREATE INDEX superseded_keys_successor_idx ON public.superseded_keys USING btree (person, successor)",
         "CREATE UNIQUE INDEX tenancy_pkey ON public.tenancy USING btree (scope)",
+        "CREATE UNIQUE INDEX tenant_fence_pkey ON public.tenant_fence USING btree (scope)",
       ]);
     } finally {
       await sql.end();

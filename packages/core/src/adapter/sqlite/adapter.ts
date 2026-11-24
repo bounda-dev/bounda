@@ -4,6 +4,7 @@ import type {
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
   SchemaScopeName,
+  Storage,
   StorageTransaction,
 } from "../adapter.ts";
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
@@ -23,6 +24,7 @@ import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqlRecipientStore } from "../sql/recipient-store.ts";
 import { createSqlSubscriberFailureStore } from "../sql/subscriber-failure-store.ts";
 import { createSqlTenancyStore } from "../sql/tenancy-store.ts";
+import { createSqlTenantFence } from "../sql/tenant-fence.ts";
 import { createSqlTenantKeyStore } from "../sql/tenant-key-store.ts";
 import type { EncryptedFile, FileEncryption } from "../storage/encrypted-file.ts";
 import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
@@ -280,29 +282,39 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           all: tx.all,
           write: (work) => work(tx),
         });
-        return {
-          ...storesOver(db),
+        const fence = createSqlTenantFence({ table: tables.tenantFence, dialect: sqliteDialect });
+        const tenancy = createSqlTenancyStore({
+          db,
+          table: tables.tenancy,
+          dialect: sqliteDialect,
+        });
+        const fenceStore = fence.store(db);
+        const storageBehind = (guarded: SqlDatabase): Storage => ({
+          ...storesOver(guarded),
           checkpointStore: createSqlCheckpointStore({
-            db,
+            db: guarded,
             table: tables.checkpoints,
             dialect: sqliteDialect,
           }),
           subscriberFailures: createSqlSubscriberFailureStore({
-            db,
+            db: guarded,
             table: tables.subscriberFailures,
             restrictions: tables.restrictions,
             dialect: sqliteDialect,
           }),
           indexKeys: createSqlIndexKeyStore({
-            db,
+            db: guarded,
             table: tables.indexKeys,
             dialect: sqliteDialect,
           }),
-          tenancy: createSqlTenancyStore({ db, table: tables.tenancy, dialect: sqliteDialect }),
+          tenancy,
+          fence: fenceStore,
+          forgotten: () => storageBehind(fence.guard(db, "forgotten")),
           ...(discard === undefined ? {} : { discard }),
-          transact: (work) => db.write((tx) => work(storesOver(boundTo(tx)))),
+          transact: (work) => guarded.write((tx) => work(storesOver(boundTo(tx)))),
           close: release,
-        };
+        });
+        return storageBehind(fence.guard(db));
       }),
     createReadModel: <Row extends object>({
       name: readModel,

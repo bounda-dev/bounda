@@ -6,9 +6,10 @@ import {
   type LedgerRedaction,
   type LedgerRestriction,
 } from "../storage/forget-ledger.ts";
+import type { SqlDatabase } from "./database.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier } from "./identifiers.ts";
-import type { SqlExecutor } from "./sql-table.ts";
+import { createSqlTenantFence, tenantFenceTableStatement } from "./tenant-fence.ts";
 
 const COLUMNS = [
   "tenant",
@@ -73,6 +74,27 @@ export const forgetLedgerMarksStatement: ForgetLedgerMarksStatementFunction = (t
     PRIMARY KEY ("tenant", "name")
   )`;
 
+export interface ForgetLedgerFenceTableForFunction {
+  (table: string): string;
+}
+
+/**
+ * The table of the ledger's fences, one row per tenant fenced, beside the ledger's own `table`,
+ * both quoted.
+ */
+export const forgetLedgerFenceTableFor: ForgetLedgerFenceTableForFunction = (table) =>
+  quoteIdentifier(`${table.slice(1, -1)}_fence`);
+
+export interface ForgetLedgerFenceStatementFunction {
+  (table: string): string;
+}
+
+/**
+ * The eighth version: the table of the ledger's fences, beside the ledger's own `table`, quoted.
+ */
+export const forgetLedgerFenceStatement: ForgetLedgerFenceStatementFunction = (table) =>
+  tenantFenceTableStatement(forgetLedgerFenceTableFor(table));
+
 export interface ForgetLedgerReasonStatementsFunction {
   (table: string): readonly string[];
 }
@@ -87,13 +109,18 @@ export const forgetLedgerReasonStatements: ForgetLedgerReasonStatementsFunction 
 ];
 
 export interface CreateSqlForgetLedgerArgs {
-  readonly db: SqlExecutor;
+  readonly db: SqlDatabase;
   /**
    * Already quoted.
    */
   readonly table: string;
   readonly dialect: Pick<SqlDialect, "placeholder">;
   readonly tenant: string | undefined;
+  /**
+   * The text hashed with the tenant into the advisory lock that puts the ledger's writes behind
+   * its fence, for an engine whose transactions run side by side, as PostgreSQL's do.
+   */
+  readonly lockKey?: string;
   /**
    * Creates the table when missing; run before the first statement, and again after it fails.
    */
@@ -198,11 +225,20 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
   table,
   dialect,
   tenant = "",
+  lockKey,
   ensureSchema,
   close,
 }) => {
   const p = dialect.placeholder;
   const marks = forgetLedgerMarksTableFor(table);
+  const fence = createSqlTenantFence({
+    table: forgetLedgerFenceTableFor(table),
+    dialect,
+    ...(lockKey === undefined ? {} : { lock: [lockKey, tenant] as const }),
+    scope: tenant,
+  });
+  const fenced = fence.guard(db);
+  const fenceStore = fence.store(db);
   let ready: Promise<void> | undefined;
   const prepared = (): Promise<void> => {
     ready ??= ensureSchema().catch((error: unknown) => {
@@ -214,40 +250,42 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
   return {
     append: async (entries) => {
       await prepared();
-      for (let start = 0; start < entries.length; start += ENTRIES_PER_INSERT) {
-        const chunk = entries.slice(start, start + ENTRIES_PER_INSERT);
-        const rows = chunk.map(
-          (_, row) =>
-            `(${COLUMNS.map((_, column) => p(row * COLUMNS.length + column + 1)).join(", ")})`,
-        );
-        await db.run(
-          `INSERT INTO ${table} (${COLUMNS.map((column) => `"${column}"`).join(", ")}) VALUES ${rows.join(", ")} ON CONFLICT ("tenant", "event_id") DO NOTHING`,
-          chunk.flatMap(
-            ({
-              eventId,
-              personId,
-              forgottenAt,
-              reason,
-              fingerprints,
-              categories,
-              restriction,
-              redaction,
-              disclosure,
-            }) => [
-              tenant,
-              eventId,
-              personId,
-              forgottenAt,
-              reason,
-              fingerprints === undefined ? null : JSON.stringify(fingerprints),
-              categories === null ? null : JSON.stringify(categories),
-              restriction === undefined ? null : JSON.stringify(restriction),
-              redaction === undefined ? null : JSON.stringify(redaction),
-              disclosure === undefined ? null : JSON.stringify(disclosure),
-            ],
-          ),
-        );
-      }
+      await fenced.write(async (tx) => {
+        for (let start = 0; start < entries.length; start += ENTRIES_PER_INSERT) {
+          const chunk = entries.slice(start, start + ENTRIES_PER_INSERT);
+          const rows = chunk.map(
+            (_, row) =>
+              `(${COLUMNS.map((_, column) => p(row * COLUMNS.length + column + 1)).join(", ")})`,
+          );
+          await tx.run(
+            `INSERT INTO ${table} (${COLUMNS.map((column) => `"${column}"`).join(", ")}) VALUES ${rows.join(", ")} ON CONFLICT ("tenant", "event_id") DO NOTHING`,
+            chunk.flatMap(
+              ({
+                eventId,
+                personId,
+                forgottenAt,
+                reason,
+                fingerprints,
+                categories,
+                restriction,
+                redaction,
+                disclosure,
+              }) => [
+                tenant,
+                eventId,
+                personId,
+                forgottenAt,
+                reason,
+                fingerprints === undefined ? null : JSON.stringify(fingerprints),
+                categories === null ? null : JSON.stringify(categories),
+                restriction === undefined ? null : JSON.stringify(restriction),
+                redaction === undefined ? null : JSON.stringify(redaction),
+                disclosure === undefined ? null : JSON.stringify(disclosure),
+              ],
+            ),
+          );
+        }
+      });
     },
     read: async ({ after, limit }) => {
       await prepared();
@@ -280,7 +318,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
     },
     raiseMark: async (name, value) => {
       await prepared();
-      await db.run(
+      await fenced.run(
         `INSERT INTO ${marks} ("tenant", "name", "value") VALUES (${p(1)}, ${p(2)}, ${p(3)}) ON CONFLICT ("tenant", "name") DO UPDATE SET "value" = EXCLUDED."value" WHERE ${marks}."value" < EXCLUDED."value"`,
         [tenant, name, value],
       );
@@ -290,6 +328,16 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
       await db.run(`DELETE FROM ${table} WHERE "tenant" = ${p(1)}`, [tenant]);
       await db.run(`DELETE FROM ${marks} WHERE "tenant" = ${p(1)}`, [tenant]);
       return true;
+    },
+    fence: {
+      read: async () => {
+        await prepared();
+        return fenceStore.read();
+      },
+      set: async (asked) => {
+        await prepared();
+        return fenceStore.set(asked);
+      },
     },
     close,
   };

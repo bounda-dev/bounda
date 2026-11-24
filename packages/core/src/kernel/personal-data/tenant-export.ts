@@ -21,7 +21,7 @@ export const TENANT_EXPORT_FORMAT: "bounda.tenant-export" = "bounda.tenant-expor
  * The version of the format a tenant export is written in. A version that changes what a part
  * holds, or adds a kind of part, is a new one.
  */
-export const TENANT_EXPORT_VERSION: 1 = 1;
+export const TENANT_EXPORT_VERSION: 2 = 2;
 
 /**
  * A category of the app as `app/personal-data.ts` declares it, as `ExportedCategory` tells a
@@ -34,6 +34,14 @@ export interface TenantExportCategory
    * `returnsPersonalData` says: where it comes from besides what the app is given.
    */
   readonly ports: readonly string[];
+}
+
+/**
+ * Up to where in the stream what a tenant export's header says is derived from it reached.
+ */
+export interface TenantExportReached {
+  readonly readModels: Readonly<Record<string, number>>;
+  readonly forgetLedger: number | null;
 }
 
 /**
@@ -58,6 +66,17 @@ export interface TenantExportHeader {
    * export fails if the stream moved past it before it ended.
    */
   readonly position: number;
+  /**
+   * Since when the tenant is frozen: the export is one cut of every store, which no write changed
+   * while it was read.
+   */
+  readonly frozenAt: string;
+  /**
+   * Up to where in the stream what is derived from it reached at the cut: the rows of each read
+   * model, by name, and the entries the forget ledger copied from the stream, `null` without one.
+   * A position short of `position` had not caught up when the tenant was frozen.
+   */
+  readonly reached: TenantExportReached;
   readonly categories: Readonly<Record<string, TenantExportCategory>>;
   readonly readModels: readonly string[];
 }

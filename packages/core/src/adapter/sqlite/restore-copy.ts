@@ -1,4 +1,4 @@
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, TenantFrozenError } from "../../contracts/errors.ts";
 import {
   RESTORE_GENERATION,
   RESTORE_UNCLAIMED,
@@ -12,6 +12,7 @@ import { quoteName } from "../sql/inspection.ts";
 import type { SchemaScope } from "../sql/migrations.ts";
 import { readSchemaVersions, schemaMigrationsTableFor } from "../sql/migrations.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
+import { createSqlTenantFence } from "../sql/tenant-fence.ts";
 import { isMissingSqliteTable, migrateSqlite } from "./migrations.ts";
 import { storageTablesFor } from "./schema.ts";
 
@@ -131,6 +132,16 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
         `The copy is of tenant ${copyTenant}'s database, and this one is tenant ${liveTenant}'s: restore a copy of this database`,
       );
     }
+    // The fence says what the tenant is now, whatever the copy says: a frozen tenant takes no
+    // restore, and a forgotten one stays forgotten.
+    const fence = createSqlTenantFence({
+      table: storageTablesFor(prefix).tenantFence,
+      dialect: sqliteDialect,
+    }).store(boundTo(tx));
+    const fenced = (await hasTable(tx, storageTableNameFor({ prefix, table: "tenantFence" })))
+      ? await fence.read()
+      : ({ state: "open" } as const);
+    if (fenced.state === "frozen") throw new TenantFrozenError(fenced.tenant, fenced.since);
     const held = (
       await readSchemaVersions({
         db: tx,
@@ -177,6 +188,10 @@ export const restoreSqliteCopy: RestoreSqliteCopyFunction = ({ copy, live, prefi
       prefix,
       scopes: scopes.filter(({ scope }) => held.some((version) => version.scope === scope)),
     });
+    if (held.some(({ scope }) => scope === "checkpoints")) {
+      await fence.set({ state: "open" });
+      await fence.set(fenced);
+    }
     // Counted here, past what the copy and the database held, for the first instance that finds it
     // to take: a running one by the count it read, a stopped one when it starts, ledger or not.
     if (before !== undefined) {

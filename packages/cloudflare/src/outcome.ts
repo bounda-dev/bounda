@@ -1,4 +1,4 @@
-import { BoundaError } from "@bounda-dev/core";
+import { BoundaError, TenantForgottenError, TenantFrozenError } from "@bounda-dev/core";
 
 /**
  * A refusal as it crosses RPC: what a `BoundaError` carries, as plain data. Workers before the
@@ -14,6 +14,11 @@ export interface RpcRefusal {
    * The code of a command's rejection, set on a `DomainError`.
    */
   readonly rejected?: string;
+  /**
+   * The tenant a fence refused the call of, and since when, set on a `TenantFrozenError` or a
+   * `TenantForgottenError`, which come back as themselves.
+   */
+  readonly fenced?: { readonly tenant: string; readonly since: string };
 }
 
 /**
@@ -35,12 +40,19 @@ export const refusalOf: RefusalOfFunction = (error) => {
   if (!(error instanceof BoundaError)) return null;
   const issues = Reflect.get(error, "issues");
   const rejected = Reflect.get(error, "rejected");
+  const fenced =
+    error instanceof TenantFrozenError
+      ? { tenant: error.tenant, since: error.frozenAt }
+      : error instanceof TenantForgottenError
+        ? { tenant: error.tenant, since: error.forgottenAt }
+        : undefined;
   return {
     name: error.name,
     code: error.code,
     message: error.message,
     ...(issues === undefined ? {} : { issues }),
     ...(typeof rejected === "string" ? { rejected } : {}),
+    ...(fenced === undefined ? {} : { fenced }),
   };
 };
 
@@ -65,13 +77,20 @@ export interface RefusedFunction {
   (refusal: RpcRefusal): Error;
 }
 
-export const refused: RefusedFunction = ({ name, code, message, issues, rejected }) =>
-  Object.assign(new Error(message), {
+export const refused: RefusedFunction = ({ name, code, message, issues, rejected, fenced }) => {
+  if (fenced !== undefined && code === "TENANT_FROZEN") {
+    return new TenantFrozenError(fenced.tenant, fenced.since);
+  }
+  if (fenced !== undefined && code === "TENANT_FORGOTTEN") {
+    return new TenantForgottenError(fenced.tenant, fenced.since);
+  }
+  return Object.assign(new Error(message), {
     name,
     code,
     ...(issues === undefined ? {} : { issues }),
     ...(rejected === undefined ? {} : { rejected }),
   });
+};
 
 export const unwrap: UnwrapFunction = async <T>(pending: PromiseLike<unknown>): Promise<T> => {
   const outcome = (await pending) as RpcOutcome<T>;

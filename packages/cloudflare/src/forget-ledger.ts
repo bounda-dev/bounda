@@ -3,11 +3,14 @@ import {
   byForgetLedgerOrder,
   type ForgetLedger,
   type ForgetLedgerEntry,
+  fenceError,
   forgottenReasonOf,
   type LedgerDisclosure,
   type LedgerRedaction,
   type LedgerRestriction,
+  nextFence,
   runtimeText,
+  type TenantFence,
 } from "@bounda-dev/core/adapter";
 import { defineForgetLedger, type ForgetLedgerDefinition } from "@bounda-dev/core/config";
 import { inWorkerRuntime, LEDGER_IN_OBJECT } from "./worker-runtime.ts";
@@ -24,6 +27,7 @@ const LIST_LIMIT = 1_000;
 // Below the thousand operations a Worker's invocation may make, with its lists.
 const KV_CLEAR_BATCH = 500;
 const MARKS_PREFIX = "bounda/forget-ledger-marks/";
+const FENCES_PREFIX = "bounda/forget-ledger-fences/";
 // The soonest KV lets a key expire, in seconds from now.
 const KV_MIN_TTL_S = 60;
 // The most KV takes as a key's metadata, in bytes of its JSON.
@@ -227,21 +231,58 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
 }) => {
   // Apart from the entries' keys, so no list of entries meets one.
   const markKey = (name: string): string => `${MARKS_PREFIX}${prefix}${name}`;
+  // KV cannot check a key in the same step as it writes another: the tenant's own object, the one
+  // writer of its ledger, checks the fence it set itself as well as the one KV holds, and waits for
+  // its writes under way before a fence it sets is in force, so they land before it.
+  const fenceKey = `${FENCES_PREFIX}${prefix}`;
+  let own: TenantFence | null = null;
+  let running = 0;
+  let drained: (() => void)[] = [];
+  const storedFence = async (): Promise<TenantFence> => {
+    const stored = await namespace.get(fenceKey);
+    return stored === null ? { state: "open" } : (JSON.parse(stored) as TenantFence);
+  };
+  const currentFence = async (): Promise<TenantFence> => {
+    const stored = await storedFence();
+    if (own === null || stored.state === "forgotten") return stored;
+    return own;
+  };
+  const behindFence = async (write: () => Promise<void>): Promise<void> => {
+    const fences = [own, await storedFence()].filter(
+      (fence): fence is Exclude<TenantFence, { state: "open" }> =>
+        fence !== null && fence.state !== "open",
+    );
+    // A forgetting wins over a freeze, whichever of the two says it.
+    const refusing = fences.find(({ state }) => state === "forgotten") ?? fences[0];
+    if (refusing !== undefined) throw fenceError(refusing);
+    running += 1;
+    try {
+      await write();
+    } finally {
+      running -= 1;
+      if (running === 0) {
+        const waiting = drained;
+        drained = [];
+        for (const resume of waiting) resume();
+      }
+    }
+  };
   return {
     visibilityDelayMs: KV_LIST_DELAY_MS,
-    append: async (entries) => {
-      const now = Date.now();
-      await Promise.all(
-        entries.flatMap((entry) => {
-          const { eventId, forgottenAt } = entry;
-          const { metadata, value } = storedOf(entry);
-          const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
-          if (keepForMs === undefined) return [namespace.put(key, value, { metadata })];
-          const expiration = expirationOf(forgottenAt, keepForMs, now);
-          return expiration === null ? [] : [namespace.put(key, value, { metadata, expiration })];
-        }),
-      );
-    },
+    append: (entries) =>
+      behindFence(async () => {
+        const now = Date.now();
+        await Promise.all(
+          entries.flatMap((entry) => {
+            const { eventId, forgottenAt } = entry;
+            const { metadata, value } = storedOf(entry);
+            const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
+            if (keepForMs === undefined) return [namespace.put(key, value, { metadata })];
+            const expiration = expirationOf(forgottenAt, keepForMs, now);
+            return expiration === null ? [] : [namespace.put(key, value, { metadata, expiration })];
+          }),
+        );
+      }),
     read: async ({ after, limit }) => {
       const oldest = after === undefined ? null : timeKey(after.forgottenAt);
       const found: ListedEntry[] = [];
@@ -294,11 +335,12 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
     readMark: async (name) => Number((await namespace.get(markKey(name))) ?? 0),
     // KV has no compare: of two instances raising at once the lower may win, which the next raise,
     // of a mark that only grows, puts right.
-    raiseMark: async (name, value) => {
-      const current = Number((await namespace.get(markKey(name))) ?? 0);
-      if (current >= value) return;
-      await namespace.put(markKey(name), String(value));
-    },
+    raiseMark: (name, value) =>
+      behindFence(async () => {
+        const current = Number((await namespace.get(markKey(name))) ?? 0);
+        if (current >= value) return;
+        await namespace.put(markKey(name), String(value));
+      }),
     // Listed whole before the first delete, so no page is listed past keys a delete moved. KV
     // deletes one key a call, so each clear deletes at most `KV_CLEAR_BATCH`, within the
     // operations one invocation may make and the ledger's timeout.
@@ -318,6 +360,18 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
       }
       await Promise.all(names.slice(0, KV_CLEAR_BATCH).map((name) => namespace.delete(name)));
       return names.length <= KV_CLEAR_BATCH;
+    },
+    fence: {
+      read: currentFence,
+      set: async (asked) => {
+        const next = nextFence(await currentFence(), asked);
+        // Written even when this object already held it: what KV holds may say otherwise.
+        if (next.state === "open") await namespace.delete(fenceKey);
+        else await namespace.put(fenceKey, JSON.stringify(next));
+        own = next;
+        if (running > 0) await new Promise<void>((resume) => drained.push(resume));
+        return next;
+      },
     },
   };
 };

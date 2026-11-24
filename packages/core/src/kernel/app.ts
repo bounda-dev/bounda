@@ -1,6 +1,8 @@
 import type { ObservableResult } from "@opentelemetry/api";
-import { type Adapter, isAdapter } from "../adapter/adapter.ts";
+import { type Adapter, isAdapter, type Storage } from "../adapter/adapter.ts";
+import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
+import { fenceError } from "../adapter/storage/tenant-fence.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type {
@@ -19,6 +21,7 @@ import {
   TenantForgottenError,
   ValidationError,
 } from "../contracts/errors.ts";
+import type { StoredEvent } from "../contracts/event.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
@@ -163,6 +166,11 @@ import {
   createRecipientNotices,
   createRecipientSubscriber,
 } from "./recipients/notices.ts";
+import {
+  type PendingDeclaration,
+  withPendingDeclaration,
+  writeDeclaration,
+} from "./recipients/pending.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { startedBy } from "./shared/causation.ts";
 import { withCommittedEvents } from "./shared/committed-events.ts";
@@ -182,6 +190,16 @@ import {
   tracedOperation,
   tracer,
 } from "./telemetry.ts";
+import {
+  createFenceWatch,
+  createFreezeKeeper,
+  type FencedStores,
+  fenceAwareLogger,
+  freezeStores,
+  type TenantFrozenResult,
+  unfreezeStores,
+  whollyFrozen,
+} from "./tenant-fences.ts";
 import { type AppWitness, type Witness, witnessedConfig, witnessHooksOf } from "./witness.ts";
 
 /**
@@ -384,10 +402,29 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * the access log as `started`; recorded again when the reading ends, `ok`, `failed` or
    * `cancelled`, with how many parts of each kind it handed out. Rejects the reading with
    * `ConcurrencyError`, without its `end` part, when the stream moved past the header's
-   * `position` while it read: take it once the tenant receives no more work and the worker is
-   * idle. Rejects with `ValidationError`, recording it `refused`, when `tenant` is not the app's.
+   * `position` while it read. Rejects with `ValidationError`, recording it `refused`, when
+   * `tenant` is not the app's, or while the tenant is not frozen with `freezeTenant` in every
+   * store: the export is then one cut of all of them, which nothing changes while it reads.
    */
   exportTenant(tenant: string): Promise<AsyncIterable<TenantExportPart>>;
+  /**
+   * Freezes the tenant the app serves, `tenant` naming it as a check, so `exportTenant` hands it
+   * back as one cut: from then on no write of the tenant lands, from this instance or any other,
+   * however long ago it last read the tenant. The database, every read model's, the forget ledger
+   * and the tenant key store each refuse it with `TenantFrozenError` and keep nothing of it, and
+   * the background work waits. Reads go on. What the forget ledger recorded and the database did
+   * not hold yet is committed first, so the stores agree. Resolves once every store is frozen, to
+   * since when; calling it again resolves to the same freeze, finishing one cut short. Rejects
+   * with `TenantForgottenError` for a forgotten tenant, and with `ValidationError` when `tenant`
+   * is not the app's.
+   */
+  freezeTenant(tenant: string): Promise<TenantFrozenResult>;
+  /**
+   * Lifts `freezeTenant`: every store takes the tenant's writes again, and the background work
+   * goes on, here at once and on another instance within `TENANT_CHECK_INTERVAL_MS`. Resolves at
+   * once for a tenant not frozen. Rejects as `freezeTenant` does.
+   */
+  unfreezeTenant(tenant: string): Promise<void>;
   /**
    * Puts a new version of the tenant's key in force: new keys are wrapped under it, and the worker
    * rewraps every person's key and the database's key under it in the background. The older
@@ -568,6 +605,11 @@ export interface AppLag extends Omit<DispatcherLag, "subscribers" | "maxLag"> {
    * walk stands could not be read.
    */
   readonly personalDataBackfill: PersonalDataBackfillLag | null | UnreadableStatus;
+  /**
+   * Whether this instance knows its tenant frozen with `freezeTenant`: the background work waits,
+   * and the lag stays where it is, until the freeze is lifted.
+   */
+  readonly frozen: boolean;
 }
 
 export interface ForgetLedgerLag {
@@ -774,7 +816,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   const unkeyed = resolveConfig(rawConfig);
   checkConfigNames({ registry, config: unkeyed });
   const { errorText } = unkeyed.runtime.telemetry;
-  const logger = guardedLogger(rawLogger, errorText);
+  // Told of every write a freeze refused, once the app knows of its tenant's fence.
+  let fenceRefused: (error: unknown) => void = () => undefined;
+  const logger = fenceAwareLogger(guardedLogger(rawLogger, errorText), (error) =>
+    fenceRefused(error),
+  );
   if (!isAdapter(unkeyed.storage)) {
     throw new ConfigurationError(
       `storage "${unkeyed.storage.name}" is a definition without factories. Import the adapter package's factory.`,
@@ -870,8 +916,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     let tenantKeysOpened: Pick<TenantKeys, "forgotten"> | null = null;
     const tenantForgotten = (): boolean => tenantKeysOpened?.forgotten() != null;
     const ledgerStore = forgetLedger?.store;
+    // Once this instance knows the tenant forgotten, the watch writes as what settles it does.
+    const forgottenCheckpoints = adapted.forgotten().checkpointStore;
+    const watchedCheckpoints = (): CheckpointStore =>
+      tenantForgotten() ? forgottenCheckpoints : adapted.checkpointStore;
     const restores = createRestoreWatch({
-      checkpoints: adapted.checkpointStore,
+      checkpoints: {
+        get: (name) => watchedCheckpoints().get(name),
+        compareAndSet: (name, expected, position) =>
+          watchedCheckpoints().compareAndSet(name, expected, position),
+      },
       events: adapted.eventStore,
       // A forgotten tenant's start settles its database whatever copy it is, so its ledger keeps no
       // mark: one raised after the ledger was cleared would outlive it.
@@ -887,12 +941,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
     });
     // Every event this instance commits is the newest the watch knows of until it reads another.
-    const written = withCommittedEvents({
-      storage: adapted,
-      committed: (events) => {
-        for (const event of events) restores.saw(event);
-      },
-    });
+    const committed = (events: readonly StoredEvent[]): void => {
+      for (const event of events) restores.saw(event);
+    };
+    // The recipients a start on a frozen tenant declares once it thaws, as every read sees them.
+    let pendingDeclaration: PendingDeclaration | null = null;
+    const written = withPendingDeclaration(
+      withCommittedEvents({ storage: adapted, committed }),
+      () => pendingDeclaration,
+    );
+    // What settles the tenant's forgetting, and tells its recipients after it, writes through the
+    // fence of a forgotten tenant.
+    const writtenForgotten = withPendingDeclaration(
+      withCommittedEvents({ storage: adapted.forgotten(), committed }),
+      () => pendingDeclaration,
+    );
     // An app whose ports tell recipients reads the head of the stream before each read that opens
     // personal data, so a disclosure can tell whether the person's stream moved since.
     const fenced = [
@@ -923,6 +986,45 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // Closed last, after the storage, as `stop` closes them.
     if (hierarchy !== null) opened.push(hierarchy.close);
     tenantKeysOpened = hierarchy?.tenantKeys ?? null;
+    // The fence each database of the tenant holds, the read models' once they are built.
+    const fencedDatabases: Pick<Storage, "fence">[] = [adapted];
+    const freezeKeeper = createFreezeKeeper({
+      tenant: tenantId,
+      stores: () => fencedDatabases,
+      record: async () => {
+        if (hierarchy === null) return null;
+        await hierarchy.tenantKeys.refresh();
+        return hierarchy.tenantKeys.frozenAt();
+      },
+      clock,
+      logger,
+    });
+    await freezeKeeper.keep();
+    // A tenant frozen when the app starts: what the start writes waits for the freeze to lift, and
+    // the background work with it.
+    const frozenAtStart = (await adapted.fence.read()).state === "frozen";
+    const fences = createFenceWatch({ storage: adapted, clock, logger, frozen: frozenAtStart });
+    fenceRefused = fences.refused;
+    const deferred: (() => Promise<void>)[] = [];
+    const unlessFrozen = async (step: () => Promise<void>): Promise<void> => {
+      if (frozenAtStart) deferred.push(step);
+      else await step();
+    };
+    // Each in turn, kept until it went through: one that fails is logged and tried again on the
+    // next pass, which goes on meanwhile.
+    const settleDeferred = async (): Promise<void> => {
+      for (let step = deferred[0]; step !== undefined; step = deferred[0]) {
+        try {
+          await step();
+        } catch (error) {
+          logger.error("what the start left for the tenant to thaw could not be done yet", {
+            error,
+          });
+          return;
+        }
+        deferred.shift();
+      }
+    };
     const keyed = hierarchy?.wrapping ?? keylessWrapping();
     const wrapping = watching === undefined ? keyed : witnessedWrapping(keyed, watching);
     // Opened at once, never inside a transaction: none of a forgotten tenant, whose key is gone.
@@ -946,6 +1048,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     });
     const readModels = await buildReadModels({ registry, config, logger });
     opened.unshift(() => readModels.close());
+    fencedDatabases.push(...Object.values(readModels.byName).map(({ storage: own }) => own));
+    await freezeKeeper.keep();
     logClearFields({ readModels: readModels.byName, config, encrypted: files.encrypted, logger });
     const fileEncryptions = createFileEncryptions({ config, clock, logger });
     const personalCategories = buildPersonalCategories({
@@ -994,10 +1098,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         tenantId,
         hierarchy?.tenantKeys.forgotten()?.at ?? clock.now().toISOString(),
       );
-    // Every read model but those whose view says they keep nothing derived from personal data.
-    const personalReadModels = Object.values(readModels.byName).filter(
-      ({ name }) => registry.readModels[name]?.view.holdsPersonalData !== false,
-    );
+    // Each with whether its rows may keep something derived from personal data, as its view says.
+    const everyReadModel = Object.values(readModels.byName).map(({ name, storage: own }) => ({
+      name,
+      storage: own,
+      personal: registry.readModels[name]?.view.holdsPersonalData !== false,
+    }));
+    // A frozen tenant's recipients its start had not declared yet are declared with its forgetting,
+    // whose fence lets them through, so every instance tells them.
+    const settleTenantForgettingWith: typeof settleTenantForgetting = async (args) => {
+      await settleTenantForgetting(args);
+      const pending = pendingDeclaration;
+      if (pending === null) return;
+      await writeDeclaration(writtenForgotten.recipients, pending);
+      pendingDeclaration = null;
+    };
     const settleForgotten = (
       forgetting: NonNullable<ReturnType<NonNullable<typeof hierarchy>["tenantKeys"]["forgotten"]>>,
       {
@@ -1005,9 +1120,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         mayBeCopy = true,
       }: { readonly actor?: string | undefined; readonly mayBeCopy?: boolean } = {},
     ): Promise<void> =>
-      settleTenantForgetting({
-        storage: written,
-        readModels: personalReadModels,
+      settleTenantForgettingWith({
+        storage: writtenForgotten,
+        readModels: everyReadModel,
         tenant: tenantId,
         forgetting,
         ledger: forgetLedger?.store ?? null,
@@ -1029,15 +1144,43 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             tenant: tenantId,
             logger,
           });
-    const forgottenRunnerOf = (keys: NonNullable<typeof hierarchy>): ForgottenRunner =>
-      createForgottenRunner({
-        tracer: appTracer,
+    const forgottenRunnerOf = (keys: NonNullable<typeof hierarchy>): ForgottenRunner => {
+      const told = {
+        ...appStorage({
+          storage: writtenForgotten,
+          aggregates,
+          processes: processDefinitions,
+          wrapping,
+          fenced,
+          atRest: null,
+        }),
         // Its events as stored: the notices read no personal field, and a copy restored under the
         // app holds keys whose tenant's key is gone, which opening would refuse.
-        storage: { ...storage, eventStore: written.eventStore },
+        eventStore: writtenForgotten.eventStore,
+      };
+      const toldNotices = createRecipientNotices({
+        tracer: appTracer,
+        recipients,
+        storage: told,
         config,
-        notices,
-        delivery,
+        clock,
+        recordAccess,
+        returns,
+      });
+      return createForgottenRunner({
+        tracer: appTracer,
+        storage: told,
+        config,
+        notices: toldNotices,
+        delivery: createRecipientDelivery({
+          recipients,
+          notices: toldNotices,
+          storage: told,
+          config,
+          clock,
+          pendingRetries,
+          logger,
+        }),
         recordAccess,
         restores,
         tenantKeys: keys.tenantKeys,
@@ -1045,6 +1188,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         resettle: async () => {
           const forgetting = keys.tenantKeys.forgotten();
           if (forgetting !== null) await settleForgotten(forgetting);
+        },
+        lowered: async () => {
+          for (const store of fencedDatabases) {
+            if ((await store.fence.read()).state !== "forgotten") return true;
+          }
+          return false;
         },
         discharge: async () => {
           if (await keys.tenantKeys.releaseFiles()) {
@@ -1083,6 +1232,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         logger,
         errorText,
       });
+    };
     const forgottenAtStart = hierarchy?.tenantKeys.forgotten() ?? null;
     if (hierarchy !== null && forgottenAtStart !== null) {
       await settleForgotten(forgottenAtStart);
@@ -1115,16 +1265,29 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       databaseKey,
       scheduler: written.scheduler,
     });
-    await settleReadModels({ readModels: Object.values(readModels.byName), sealing, logger });
-    // What was disclosed under a port's former key is the renamed port's, presumption included.
-    for (const { port, formerly } of recipients.all) {
-      for (const former of formerly) await written.recipients.rename(former, port);
-    }
-    const declaredRecipients = await written.recipients.declare(
-      recipients.all.map(({ port, categories }) => ({ port, categories })),
-      await written.eventStore.lastPosition(),
-      clock.now().toISOString(),
+    await unlessFrozen(() =>
+      settleReadModels({ readModels: Object.values(readModels.byName), sealing, logger }),
     );
+    // What was disclosed under a port's former key is the renamed port's, presumption included.
+    const declaration: PendingDeclaration = {
+      renames: recipients.all.flatMap(({ port, formerly }) =>
+        formerly.map((from) => ({ from, to: port })),
+      ),
+      ports: recipients.all.map(({ port, categories }) => ({ port, categories })),
+      position: await written.eventStore.lastPosition(),
+      at: clock.now().toISOString(),
+    };
+    // A frozen tenant's are written once it thaws, and read as written until then.
+    if (frozenAtStart) {
+      pendingDeclaration = declaration;
+      deferred.push(async () => {
+        await writeDeclaration(written.recipients, declaration);
+        pendingDeclaration = null;
+      });
+    }
+    const declaredRecipients = frozenAtStart
+      ? await written.recipients.declared()
+      : await writeDeclaration(written.recipients, declaration);
     for (const { port, persons } of await written.recipients.summary()) {
       if (recipients.byPort[port] === undefined) {
         logger.warn(
@@ -1243,11 +1406,15 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ids,
       clock,
     });
-    await alignReactiveCheckpoints({
-      eventStore: storage.eventStore,
-      checkpointStore: storage.checkpointStore,
-      following: following.map((subscriber) => subscriber.name),
-    });
+    // Read now: a frozen tenant's head stays where it is until the thaw, whose writes come after.
+    const head = await storage.eventStore.lastPosition();
+    await unlessFrozen(() =>
+      alignReactiveCheckpoints({
+        head,
+        checkpointStore: storage.checkpointStore,
+        following: following.map((subscriber) => subscriber.name),
+      }),
+    );
     // Without a retention the sweep still ends what a forgetting kept that no erasure exemption
     // keeps any more, which only an app that marks personal fields can hold.
     const recordsActivity = retains(personalCategories);
@@ -1516,12 +1683,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       // the pass then delivers that forgetting to the read models.
       beforePass: async () => {
         await tenantCheck();
+        await freezeKeeper.keep();
+        await fences.check();
+        if (fences.frozen()) return;
+        await settleDeferred();
         await fileEncryptions.settle();
         const found = await restores.check(clock.now());
         if (found !== null) await restartFound(found);
         // A read model's database restored apart from the stream is projected back before it serves.
         await readModelDatabases.check();
       },
+      paused: fences.frozen,
+      refused: fences.refused,
       clock,
       logger,
       errorText,
@@ -1529,6 +1702,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const worker = createScheduledCommandWorker({
       tracer: appTracer,
       storage,
+      paused: fences.frozen,
       aggregates,
       pipeline,
       processes,
@@ -1688,7 +1862,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         dispatcher.standings(),
         backfilled(),
       ]);
-      return { ...standings, ...known(), personalDataBackfill };
+      return { ...standings, ...known(), personalDataBackfill, frozen: fences.frozen() };
     };
     const status = (): Promise<AppStatus> =>
       readAppStatus({
@@ -1705,35 +1879,79 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         letterRetention,
         failureRetention,
         recipients: () => recipientStatuses({ storage: written, recipients }),
+        frozenTenant: async () => {
+          const fence = await adapted.fence.read();
+          if (fence.state !== "frozen") return null;
+          return { frozenAt: fence.since, whole: (await whollyFrozen(fencedStores)) !== null };
+        },
       });
     // A copy restored while the app was stopped holds less than the forget ledger's mark: the
     // holds it brought back are cleared before anything runs, and the reconciliation below forgets
     // again whom it brought back.
-    const cold = await restores.start();
-    if (cold !== null) await worker.restored(cold);
+    const startRestores = async (): Promise<Restored | null> => {
+      const found = await restores.start();
+      if (found !== null) await worker.restored(found);
+      return found;
+    };
+    // A frozen tenant compares its database with the ledger once it thaws, as a start does.
+    const cold = frozenAtStart ? null : await startRestores();
+    if (frozenAtStart) {
+      // Run before a pass of the dispatcher, which then projects what it committed again.
+      deferred.push(async () => {
+        const found = await startRestores();
+        const forgotten = await reconciliation?.reconcile(clock.now());
+        // The ledger held a forgetting the database does not: a restore, whatever the mark said.
+        // A step of its own, right after this one, since a reconciliation run again forgets
+        // nobody and would no longer tell.
+        if (found === null && typeof forgotten === "number" && forgotten > 0) {
+          deferred.splice(1, 0, async () => {
+            await worker.restored(await restores.declare(), { reconciled: true });
+          });
+        }
+        await restores.started();
+      });
+    }
     // An instance that runs no worker still watches for a restore, and reconciles the ledger at
     // once when it finds one, since no pass of its own would.
     const watchForRestores = (): (() => void) => {
-      let cancel: (() => void) | undefined;
+      let cancel: () => void = () => undefined;
+      // A look under way when the watch stops arms no other.
+      let stopped = false;
       const next = (): void => {
+        if (stopped) return;
         cancel = clock.after(GENERATION_INTERVAL_MS, async () => {
-          const found = await restores.check(clock.now());
-          if (found !== null && (await restartFound(found)) > 0) {
-            await dispatcher.catchUp("projection");
+          try {
+            // It waits while the tenant is frozen, as a worker does, and once it thaws does first
+            // what the start left for then.
+            await freezeKeeper.keep();
+            await fences.check();
+            if (!fences.frozen()) {
+              await settleDeferred();
+              const found = await restores.check(clock.now());
+              if (found !== null && (await restartFound(found)) > 0) {
+                await dispatcher.catchUp("projection");
+              }
+              await readModelDatabases.check();
+            }
+          } catch (error) {
+            logger.error("the watch for a restore failed; it looks again later", { error });
+          } finally {
+            next();
           }
-          await readModelDatabases.check();
-          next();
         });
       };
       next();
-      return () => cancel?.();
+      return () => {
+        stopped = true;
+        cancel();
+      };
     };
     let unwatch: (() => void) | undefined;
     // Before the app serves anything: a backup restored brings back persons forgotten since, and
     // the read models that show them hear of it by the time the start resolves. A ledger that
     // does not answer in time is left to finish behind the start, as one that fails is retried,
     // unless the ledger is strict, whose start waits and fails with it.
-    if (reconciling !== null) {
+    if (reconciling !== null && !frozenAtStart) {
       const { strict, timeoutMs } = reconciling.config;
       const started = reconciling.reconciliation.reconcile(clock.now());
       const forgotten = strict ? await started : await waitForLedger(clock, timeoutMs, started);
@@ -1756,11 +1974,16 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     }
     // Nor before a read model whose database of its own was restored apart from the stream is back
     // where it stood, or projected again from the start when it holds what another stream wrote.
-    if (!(await readModelDatabases.check())) {
-      await dispatcher.catchUp("projection");
-      await readModelDatabases.check();
+    // A frozen tenant's are compared all the same, and one not back serves nothing until the
+    // tenant thaws and the passes, which check before each, catch it up.
+    const served = await readModelDatabases.check();
+    if (!frozenAtStart) {
+      if (!served) {
+        await dispatcher.catchUp("projection");
+        await readModelDatabases.check();
+      }
+      await restores.started();
     }
-    await restores.started();
     const rebuild = (
       name: string,
       options: RebuildReadModelOptions & { readonly actor?: string } = {},
@@ -1883,6 +2106,52 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       }
       await enterForgotten(keys, { settled: true });
       return { tenant: tenantId, forgottenAt: forgetting.at, eventId: forgetting.eventId };
+    };
+    const fencedStores: FencedStores = {
+      tenant: tenantId,
+      storage: adapted,
+      readModels: Object.values(readModels.byName),
+      ledger: forgetLedger?.store ?? null,
+      tenantKeys: hierarchy?.tenantKeys ?? null,
+    };
+    const named = (operation: string, name: string): void => {
+      if (name === tenantId) return;
+      throw runtimeText(
+        new ValidationError(`${operation} names tenant ${name}, and the app serves another`, [
+          { path: ["tenant"], message: "Expected the tenant the app serves" },
+        ]),
+      );
+    };
+    const freezeThisTenant = async (name: string): Promise<TenantFrozenResult> => {
+      named("freezeTenant", name);
+      // A copy restored under the app is settled while the tenant still takes what settles it.
+      const found = await restores.check(clock.now());
+      if (found !== null) {
+        await restartFound(found);
+        if (strict) await settleRestore();
+      }
+      const frozen = await freezeStores({
+        ...fencedStores,
+        clock,
+        drain: async () => {
+          const forgotten = (await reconciliation?.drain(clock.now())) ?? 0;
+          if (forgotten > 0)
+            logger.warn("committed before the freeze what the forget ledger held", { forgotten });
+        },
+      });
+      freezeKeeper.recorded(frozen.frozenAt);
+      await fences.check({ now: true });
+      logger.warn("tenant frozen: it takes no write until unfrozen", {
+        tenant: tenantId,
+        frozenAt: frozen.frozenAt,
+      });
+      return frozen;
+    };
+    const unfreezeThisTenant = async (name: string): Promise<void> => {
+      named("unfreezeTenant", name);
+      await unfreezeStores(fencedStores);
+      freezeKeeper.recorded(null);
+      await fences.check({ now: true });
     };
     const rotateTenantKey = async ({
       reseal: resealing = false,
@@ -2030,16 +2299,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             outcome,
             error,
           });
-        // Another tenant, or a read model not served, refuses the export before it reads.
-        await checked(record, async () => {
-          if (name !== tenantId) {
+        // Another tenant, one not frozen, or a read model not served, refuses the export before it
+        // reads.
+        const frozenAt = await checked(record, async () => {
+          named("exportTenant", name);
+          const since = await whollyFrozen(fencedStores);
+          if (since === null) {
             throw runtimeText(
-              new ValidationError(`exportTenant names tenant ${name}, and the app serves another`, [
-                { path: ["tenant"], message: "Expected the tenant the app serves" },
-              ]),
+              new ValidationError(
+                `Tenant ${tenantId} is not frozen in every store: freeze it with freezeTenant, then export it`,
+                [{ path: ["tenant"], message: "Expected a frozen tenant" }],
+              ),
             );
           }
           await vouchBefore(...readModelNames);
+          return since;
         });
         const streamed = await recorded(
           // Only a failure is recorded here: what resolves is recorded as it starts and ends.
@@ -2061,8 +2335,27 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               tenant: tenantId,
               exportId,
               ledger: forgetLedger?.store ?? null,
-              // The header and each page, vouched for before they are handed out.
-              onPage: () => vouchAfter(...readModelNames),
+              frozenAt,
+              // The header and each page, vouched for before they are handed out, and read under
+              // the same freeze: one lifted meanwhile may have let writes into what was read.
+              onPage: async () => {
+                await vouchAfter(...readModelNames);
+                const fence = await adapted.fence.read();
+                if (fence.state === "forgotten") throw fenceError(fence);
+                if (fence.state !== "frozen" || fence.since !== frozenAt) {
+                  throw runtimeText(
+                    new ValidationError(
+                      `Tenant ${tenantId}'s freeze of ${frozenAt} was lifted while it was exported: freeze it again, then export it`,
+                      [
+                        {
+                          path: ["tenant"],
+                          message: "Expected the tenant frozen until the export ends",
+                        },
+                      ],
+                    ),
+                  );
+                }
+              },
             }),
         );
         return recordedTenantExport({
@@ -2269,6 +2562,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             actor,
             run: () => exportTenantAs(name),
           }),
+        freezeTenant: (name) =>
+          tracedOperation({
+            tracer: appTracer,
+            errorText,
+            operation: "freezeTenant",
+            actor,
+            run: () => freezeThisTenant(name),
+          }),
+        unfreezeTenant: (name) =>
+          tracedOperation({
+            tracer: appTracer,
+            errorText,
+            operation: "unfreezeTenant",
+            actor,
+            run: () => unfreezeThisTenant(name),
+          }),
         rotateTenantKey: (options) =>
           tracedOperation({
             tracer: appTracer,
@@ -2324,6 +2633,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         redact: (personId, options) => gate.redact(personId, options),
         forgetTenant: (name, options) => live.forgetTenant(name, options),
         exportTenant: (name) => gate.exportTenant(name),
+        freezeTenant: (name) => gate.freezeTenant(name),
+        unfreezeTenant: (name) => gate.unfreezeTenant(name),
         rotateTenantKey: (options) => gate.rotateTenantKey(options),
         retireTenantKeys: () => gate.retireTenantKeys(),
         as: (next) => {
@@ -2431,7 +2742,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           observers.delete(rejections);
         }
       },
-      nextDueAt: async () => (entering === null ? nextDueAt() : (await entering).nextDueAt()),
+      // Nothing is due while the tenant is frozen: lifting the freeze is what wakes a host again.
+      nextDueAt: async () => {
+        if (entering !== null) return (await entering).nextDueAt();
+        return fences.frozen() ? null : nextDueAt();
+      },
       catchUpReadModels: async ({ through } = {}) => {
         if (entering !== null) return;
         if (through === undefined) return dispatcher.catchUp("projection");

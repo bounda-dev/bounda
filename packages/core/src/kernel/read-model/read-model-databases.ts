@@ -1,7 +1,7 @@
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
-import { ReadModelRestoringError } from "../../contracts/errors.ts";
+import { ReadModelRestoringError, TenantFrozenError } from "../../contracts/errors.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { restrictedPersonsSubscriberName } from "../personal-data/restricted-persons.ts";
 import { projectionSubscriberName } from "../projection/runner.ts";
@@ -149,7 +149,10 @@ export const createReadModelDatabases: CreateReadModelDatabasesFunction = ({
         serves = false;
         continue;
       }
-      await raise(subscriber.name, position);
+      // A frozen tenant takes no write: it still serves, and records how far once it thaws.
+      await raise(subscriber.name, position).catch((error: unknown) => {
+        if (!(error instanceof TenantFrozenError)) throw error;
+      });
     }
     if (serves) unserved.delete(database);
     else unserved.add(database);

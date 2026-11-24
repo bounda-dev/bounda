@@ -35,6 +35,7 @@ import {
   type SubscriberFailure,
   systemClock,
   type TenantForgottenResult,
+  type TenantFrozenResult,
   type TenantKeyVersions,
   type UnrestrictOptions,
   type Witness,
@@ -216,6 +217,15 @@ export interface BoundaObjectMethods {
    * the parts, one JSON per line, read only as the stream is; cancelling it stops the export.
    */
   exportTenant(tenant: string, actor?: string): Promise<RpcOutcome<ReadableStream<Uint8Array>>>;
+  /**
+   * Freezes the object's tenant, as `BoundaClient.freezeTenant` does: its alarm stays unarmed
+   * until the freeze is lifted.
+   */
+  freezeTenant(tenant: string, actor?: string): Promise<RpcOutcome<TenantFrozenResult>>;
+  /**
+   * Lifts the freeze, as `BoundaClient.unfreezeTenant` does, and arms the alarm for what waited.
+   */
+  unfreezeTenant(tenant: string, actor?: string): Promise<RpcOutcome<undefined>>;
   /**
    * Puts a new version of the tenant's key in force, as `BoundaClient.rotateTenantKey` does; the
    * alarm rewraps every key under it, or with `reseal` replaces every key and seals the object's
@@ -619,6 +629,22 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     exportTenant(tenant: string, actor?: string): Promise<RpcOutcome<ReadableStream<Uint8Array>>> {
       return settle(async () => partLines(await this.#as(actor).exportTenant(tenant)));
+    }
+
+    freezeTenant(tenant: string, actor?: string): Promise<RpcOutcome<TenantFrozenResult>> {
+      return settle(async () => {
+        const frozen = await this.#as(actor).freezeTenant(tenant);
+        await this.#rearm(false, true);
+        return frozen;
+      });
+    }
+
+    unfreezeTenant(tenant: string, actor?: string): Promise<RpcOutcome<undefined>> {
+      return settle(async () => {
+        await this.#as(actor).unfreezeTenant(tenant);
+        await this.#rearm(false, true);
+        return undefined;
+      });
     }
 
     rotateTenantKey(

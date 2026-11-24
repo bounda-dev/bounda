@@ -3,6 +3,7 @@ import type {
   ForgetLedgerEntry,
   PruneForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
+import type { TenantFence } from "../../adapter/storage/tenant-fence.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { createForgottenLedger } from "./forgotten-ledger.ts";
 import { HOLD_MS } from "./hold.ts";
@@ -14,7 +15,14 @@ const MINUTE = 60_000;
 const later = (ms: number): Date => new Date(AT.getTime() + ms);
 
 // A ledger that holds nothing, for what these cases do not read.
-const unread = { read: async () => [], readMark: async () => 0 };
+const unread = {
+  read: async () => [],
+  readMark: async () => 0,
+  fence: {
+    read: async (): Promise<TenantFence> => ({ state: "open" }),
+    set: async (fence: TenantFence) => fence,
+  },
+};
 
 describe("the forget ledger of a forgotten tenant", () => {
   it("clears the ledger at once when its reads show every write, and says so", async () => {
@@ -41,6 +49,46 @@ describe("the forget ledger of a forgotten tenant", () => {
         message: "tenant forgotten: its recipients are told, and its forget ledger cleared",
         fields: { tenant: "acme" },
       },
+    ]);
+  });
+
+  it("raises the tenant's fence before it clears, so nothing lands after, and holds when it cannot", async () => {
+    const steps: string[] = [];
+    let failing = true;
+    const recording = createRecordingLogger();
+    const ledger = createForgottenLedger({
+      ledger: {
+        ...unread,
+        fence: {
+          read: unread.fence.read,
+          set: async (fence) => {
+            steps.push(`fence ${fence.state} ${fence.state === "open" ? "" : fence.since}`);
+            if (failing) throw new Error("ledger down");
+            return fence;
+          },
+        },
+        clear: async () => {
+          steps.push("clear");
+          return true;
+        },
+      },
+      keepForMs: null,
+      reconcileEveryMs: MINUTE,
+      tenant: "acme",
+      logger: recording.logger,
+    });
+    expect(await ledger.clear(FORGETTING, AT)).toEqual(later(HOLD_MS));
+    expect(steps).toEqual([`fence forgotten ${FORGETTING.at}`]);
+    expect(recording.entries[0]).toMatchObject({
+      level: "error",
+      message: "the forgotten tenant's forget ledger could not be cleared",
+    });
+    failing = false;
+    expect(await ledger.clear(FORGETTING, later(HOLD_MS))).toBeNull();
+    expect(steps).toEqual([
+      `fence forgotten ${FORGETTING.at}`,
+      `fence forgotten ${FORGETTING.at}`,
+      "clear",
     ]);
   });
 
@@ -195,6 +243,7 @@ describe("the forget ledger of a forgotten tenant", () => {
           return entries;
         },
         readMark: async () => mark,
+        fence: unread.fence,
       },
       keepForMs: null,
       reconcileEveryMs: MINUTE,

@@ -54,6 +54,9 @@ export interface CreateForgottenRunnerArgs {
    * Settles the forgetting again in a database restored under the app.
    */
   readonly resettle: () => Promise<void>;
+  // Whether a database of the tenant shows its fence below forgotten, as a copy restored by hand
+  // leaves it.
+  readonly lowered: () => Promise<boolean>;
   /**
    * Runs once every recipient was told of the forgetting, its notices delivered or their dead
    * letters resolved: what the database and the forget ledger still held for them can go. Resolves
@@ -94,6 +97,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   tenantKeys,
   forgotten,
   resettle,
+  lowered,
   discharge,
   retain,
   ledgerCleared,
@@ -133,7 +137,13 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
     ...(storage.notifier === undefined ? {} : { notifier: storage.notifier }),
     // A copy restored under the app lacks what the forgetting removed: it is settled again first.
     beforePass: async () => {
-      if ((await restores.check(clock.now())) !== null) {
+      const restored = (await restores.check(clock.now())) !== null;
+      if (restored || (await lowered())) {
+        if (!restored) {
+          logger.warn(
+            "a database of the forgotten tenant showed its fence lowered, as a copy restored by hand leaves it: settled again",
+          );
+        }
         await resettle();
         // The copy brought back what the discharge removed from the database.
         discharged = false;
@@ -153,6 +163,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
     waitingDeadlines: 0,
     forgetLedger: null,
     personalDataBackfill: null,
+    frozen: false,
   });
   return {
     start: () => {
@@ -279,6 +290,8 @@ export const forgottenApp = <R extends Registry>({
       return { tenant, forgottenAt: forgetting.at, eventId: forgetting.eventId };
     },
     exportTenant: reject,
+    freezeTenant: reject,
+    unfreezeTenant: reject,
     rotateTenantKey: reject,
     retireTenantKeys: reject,
     as: (next) => {

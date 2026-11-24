@@ -294,7 +294,10 @@ those of the notices of the forgetting, and read models' rows. Once every recipi
 tenant's data is told, the forget ledger's entries of the tenant go too, the ids of the persons it
 forgot, restricted, redacted or disclosed: the tenant's key record refuses every copy of its
 database from then on, and the only thing a copy restored before then still needed of the ledger
-was whom to tell.
+was whom to tell. The forgetting raises a fence in the database, every read model's database and
+the ledger that no write of the tenant passes, from any instance, however long ago it last read
+the tenant: nothing lands after the forgetting, nor after the ledger's clear, and a disclosure that
+raced it either landed first, and its recipient is told, or never reached its port.
 What a copy kept in the clear is in the [limitations](/reference/limitations/).
 
 **Left to the app.** Deciding that a ground of 17(1) applies; what the app writes outside the
@@ -447,7 +450,8 @@ each, deletes or returns a customer's data at the end of the service, as 28(3)(g
 customer chooses: [`exportTenant`](/guides/personal-data/#handing-a-tenant-back) returns it, every
 person, event, scheduled command, dead letter, subscriber failure, remembered answer, read-model
 row and forget ledger entry, every value opened and nothing held back, as JSON Lines that
-`readTenantExport` checks are whole; [`forgetTenant`](/guides/personal-data/#forgetting-a-tenant)
+`readTenantExport` checks are whole, of a tenant [frozen](/guides/personal-data/#freezing-a-tenant)
+in every store, so what it returns is one consistent cut that no write changed while it was read; [`forgetTenant`](/guides/personal-data/#forgetting-a-tenant)
 then deletes it, in every copy of what was sealed. The export is recorded in the access log. The
 per-person calls are how it assists its controller with their requests, 28(3)(e).
 

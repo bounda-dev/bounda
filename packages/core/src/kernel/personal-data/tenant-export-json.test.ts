@@ -16,6 +16,8 @@ const header: TenantExportPart = {
     exportId: "x-1",
     exportedAt: "2026-01-01T00:00:00.000Z",
     position: 1,
+    frozenAt: "2026-01-01T00:00:00.000Z",
+    reached: { readModels: { a: 1, b: 1 }, forgetLedger: null },
     categories: {},
     readModels: ["a", "b"],
   },
@@ -249,12 +251,13 @@ describe("readTenantExport", () => {
   });
 
   it("refuses a header of another format or version, naming both", async () => {
-    const other = { kind: "header", header: { ...header.header, version: 2 } };
-    await expect(read(bytes(linesOf(other, end())))).rejects.toThrow(
-      "The tenant export is in format bounda.tenant-export version 2, not bounda.tenant-export version 1",
+    // One written before a freeze cut it, which its header does not say.
+    const earlier = { kind: "header", header: { ...header.header, version: 1 } };
+    await expect(read(bytes(linesOf(earlier, end())))).rejects.toThrow(
+      "The tenant export is in format bounda.tenant-export version 1, not bounda.tenant-export version 2",
     );
     const foreign = { kind: "header", header: { ...header.header, format: "other" } };
-    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 1");
+    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 2");
   });
 
   it("hands each part out as it reads it, before it knows the rest", async () => {

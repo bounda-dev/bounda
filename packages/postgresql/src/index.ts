@@ -3,6 +3,7 @@ import type {
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
   SchemaScopeName,
+  Storage,
   StorageTransaction,
 } from "@bounda-dev/core/adapter";
 import {
@@ -14,6 +15,7 @@ import {
   createSqlRecipientStore,
   createSqlSubscriberFailureStore,
   createSqlTenancyStore,
+  createSqlTenantFence,
   createSqlTenantKeyStore,
   inspectSqlTable,
   postgresqlDialect,
@@ -39,7 +41,7 @@ import {
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
 import { openPostgresqlReadModel, rebuildPostgresqlReadModel } from "./read-model.ts";
 import { createPostgresqlScheduler } from "./scheduler.ts";
-import { storageTablesFor } from "./schema.ts";
+import { fenceLockOf, storageTablesFor } from "./schema.ts";
 import { createPostgresqlSnapshotStore } from "./snapshot-store.ts";
 
 /**
@@ -202,39 +204,50 @@ export const postgresql: PostgresqlFunction = (options) => {
           all: tx.all,
           write: (work) => work(tx),
         });
-        return {
-          ...storesOver(db),
-          notifier: createPostgresqlEventNotifier({ sql, channel: tables.channel }),
+        const fence = createSqlTenantFence({
+          table: tables.tenantFence,
+          dialect: postgresqlDialect,
+          lock: fenceLockOf(tables.checkpointsLockKey),
+        });
+        const tenancy = createSqlTenancyStore({
+          db,
+          table: tables.tenancy,
+          dialect: postgresqlDialect,
+        });
+        const fenceStore = fence.store(db);
+        const notifier = createPostgresqlEventNotifier({ sql, channel: tables.channel });
+        const storageBehind = (guarded: PostgresqlDatabase): Storage => ({
+          ...storesOver(guarded),
+          notifier,
           checkpointStore: createSqlCheckpointStore({
-            db,
+            db: guarded,
             table: tables.checkpoints,
             dialect: postgresqlDialect,
           }),
           subscriberFailures: createSqlSubscriberFailureStore({
-            db,
+            db: guarded,
             table: tables.subscriberFailures,
             restrictions: tables.restrictions,
             dialect: postgresqlDialect,
           }),
           indexKeys: createSqlIndexKeyStore({
-            db,
+            db: guarded,
             table: tables.indexKeys,
             dialect: postgresqlDialect,
           }),
-          tenancy: createSqlTenancyStore({
-            db,
-            table: tables.tenancy,
-            dialect: postgresqlDialect,
-          }),
-          // The append lock comes first, before any row the work may lock: two transactions that
-          // took the lock and a row in opposite orders would deadlock.
+          tenancy,
+          fence: fenceStore,
+          forgotten: () => storageBehind(fence.guard(db, "forgotten")),
+          // The fence's lock comes first, then the append lock, before any row the work may lock:
+          // two transactions that took two of them in opposite orders would deadlock.
           transact: (work) =>
-            db.write(async (tx) => {
+            guarded.write(async (tx) => {
               await tx.run("SELECT pg_advisory_xact_lock(hashtext($1))", [tables.appendLockKey]);
               return work(storesOver(boundTo(tx)));
             }),
           close: release,
-        };
+        });
+        return storageBehind(fence.guard(db));
       }),
     createReadModel: <Row extends object>({ name, fields, logger }: CreateReadModelArgs) =>
       using(async ({ db, sql }) => {
@@ -245,6 +258,8 @@ export const postgresql: PostgresqlFunction = (options) => {
           tablePrefix,
           checkpoints: tables.checkpoints,
           checkpointsLockKey: tables.checkpointsLockKey,
+          tenantFence: tables.tenantFence,
+          fenceLock: fenceLockOf(tables.checkpointsLockKey),
           name,
           fields,
           logger,
@@ -265,6 +280,8 @@ export const postgresql: PostgresqlFunction = (options) => {
           tablePrefix,
           checkpoints: tables.checkpoints,
           checkpointsLockKey: tables.checkpointsLockKey,
+          tenantFence: tables.tenantFence,
+          fenceLock: fenceLockOf(tables.checkpointsLockKey),
           name,
           fields,
           logger,
@@ -322,6 +339,7 @@ export const postgresql: PostgresqlFunction = (options) => {
         table: tables.forgetLedger,
         dialect: postgresqlDialect,
         tenant,
+        lockKey: tables.forgetLedgerLockKey,
         ensureSchema: () =>
           migratePostgresql({
             db,

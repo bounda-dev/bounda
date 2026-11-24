@@ -25,6 +25,8 @@ export {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
   forgetLedgerDisclosureStatement,
+  forgetLedgerFenceStatement,
+  forgetLedgerFenceTableFor,
   forgetLedgerMarksStatement,
   forgetLedgerMarksTableFor,
   forgetLedgerReasonStatements,
@@ -107,6 +109,13 @@ export { createSqlReadClient, createSqlTable } from "./sql-table.ts";
 export { createSqlSubscriberFailureStore } from "./subscriber-failure-store.ts";
 export type { CreateSqlTenancyStoreArgs, CreateSqlTenancyStoreFunction } from "./tenancy-store.ts";
 export { createSqlTenancyStore, tenancyTableStatement } from "./tenancy-store.ts";
+export type {
+  CreateSqlTenantFenceArgs,
+  CreateSqlTenantFenceFunction,
+  SqlTenantFence,
+  TenantFenceTableStatementFunction,
+} from "./tenant-fence.ts";
+export { createSqlTenantFence, tenantFenceTableStatement } from "./tenant-fence.ts";
 export type {
   CreateSqlTenantKeyStoreArgs,
   CreateSqlTenantKeyStoreFunction,

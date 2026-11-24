@@ -15,9 +15,10 @@ export interface ForgottenLedger {
    */
   retain(now: Date): Promise<void>;
   /**
-   * Clears the ledger, and resolves `null` once it did, or to when to try again: at the next pass
-   * after a clear that removed part only, after a hold after a failure, or once every entry written
-   * before the forgetting shows in a ledger whose reads lag its writes. Never rejects.
+   * Raises the ledger's fence and clears the ledger, and resolves `null` once it did, or to when to
+   * try again: at the next pass after a clear that removed part only, after a hold after a failure,
+   * or once every entry written before the forgetting shows in a ledger whose reads lag its writes.
+   * Never rejects.
    */
   clear(forgetting: TenantForgetting, now: Date): Promise<Date | null>;
   /**
@@ -29,7 +30,7 @@ export interface ForgottenLedger {
 export interface CreateForgottenLedgerArgs {
   readonly ledger: Pick<
     ForgetLedger,
-    "clear" | "prune" | "visibilityDelayMs" | "read" | "readMark"
+    "clear" | "prune" | "visibilityDelayMs" | "read" | "readMark" | "fence"
   >;
   /**
    * `null` keeps every entry until the ledger is cleared.
@@ -73,6 +74,9 @@ export const createForgottenLedger: CreateForgottenLedgerFunction = ({
       const shownAt = Date.parse(forgetting.at) + (ledger.visibilityDelayMs ?? 0);
       if (now.getTime() < shownAt) return new Date(shownAt);
       try {
+        // Raised by the forgetting already, unless the ledger did not answer then: no instance
+        // that has not heard of the forgetting appends after the clear.
+        await ledger.fence.set({ state: "forgotten", tenant, since: forgetting.at });
         // Past now, so the rest waits for the next pass: this one spent its operations on a batch.
         if (!(await ledger.clear())) return new Date(now.getTime() + 1);
       } catch (error) {

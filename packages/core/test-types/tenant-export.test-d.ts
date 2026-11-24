@@ -29,6 +29,7 @@ import {
   type TenantExportHeader,
   type TenantExportJsonLinesFunction,
   type TenantExportPart,
+  type TenantExportReached,
   tenantExportJsonLines,
 } from "@bounda-dev/core";
 import type {
@@ -55,16 +56,22 @@ describe("the tenant export", () => {
 
   it("names its format and version as literals a reader checks", () => {
     expectTypeOf(TENANT_EXPORT_FORMAT).toEqualTypeOf<"bounda.tenant-export">();
-    expectTypeOf(TENANT_EXPORT_VERSION).toEqualTypeOf<1>();
+    expectTypeOf(TENANT_EXPORT_VERSION).toEqualTypeOf<2>();
     expectTypeOf<TenantExportHeader>().toEqualTypeOf<{
       readonly format: "bounda.tenant-export";
-      readonly version: 1;
+      readonly version: 2;
       readonly tenant: string;
       readonly exportId: string;
       readonly exportedAt: string;
       readonly position: number;
+      readonly frozenAt: string;
+      readonly reached: TenantExportReached;
       readonly categories: Readonly<Record<string, TenantExportCategory>>;
       readonly readModels: readonly string[];
+    }>();
+    expectTypeOf<TenantExportReached>().toEqualTypeOf<{
+      readonly readModels: Readonly<Record<string, number>>;
+      readonly forgetLedger: number | null;
     }>();
     expectTypeOf<Omit<TenantExportCategory, "ports">>().toEqualTypeOf<
       Omit<ExportedCategory, "held" | "keptUntil" | "restrictedUntil">

@@ -42,6 +42,7 @@ import { createMemorySnapshotStore } from "./snapshot-store.ts";
 import { createMemorySubscriberFailureStore } from "./subscriber-failure-store.ts";
 import { createMemoryReadClient, createMemoryTable, type MemoryTable, runsNoSql } from "./table.ts";
 import { createMemoryTenancyStore } from "./tenancy-store.ts";
+import { createMemoryTenantFence, FENCED_WRITES } from "./tenant-fence.ts";
 import { createMemoryTenantKeyStore } from "./tenant-key-store.ts";
 import {
   createCheckpointJournal,
@@ -104,7 +105,10 @@ const through = <Row extends object>(live: LiveTable): Table<Row> => {
  */
 export const memory: MemoryFunction = (options = {}) => {
   let storage: Storage | null = null;
-  const checkpointStore = createMemoryCheckpointStore();
+  // One database: the storage and every read model behind one fence.
+  const fence = createMemoryTenantFence();
+  const checkpoints = createMemoryCheckpointStore();
+  const checkpointStore = fence.guard(checkpoints, FENCED_WRITES.checkpointStore);
   const locks = createMemoryLocks();
   const tables = new Map<string, LiveTable>();
   const shadows = new Map<string, MemoryTable<Record<string, unknown>>>();
@@ -121,7 +125,7 @@ export const memory: MemoryFunction = (options = {}) => {
   ): Promise<T> => {
     const restore = target.snapshot();
     const restoreRestricted = restrictedPersons.snapshot();
-    const journal = createCheckpointJournal(checkpointStore);
+    const journal = createCheckpointJournal(checkpoints);
     try {
       return await work(journal.store);
     } catch (error) {
@@ -157,7 +161,7 @@ export const memory: MemoryFunction = (options = {}) => {
             (!leftOut(row[restricted.person], view) && (view !== "unrestricted" || !retained(row))),
         ) as unknown as Table<Row>;
       return {
-        ...through<Row>(target),
+        ...fence.guard(through<Row>(target), FENCED_WRITES.table),
         findOne: (where) => current().findOne(where),
         findMany: (args) => current().findMany(args),
         count: (where) => current().count(where),
@@ -291,28 +295,51 @@ export const memory: MemoryFunction = (options = {}) => {
           }),
         ];
       }
-      storage ??= {
+      const raw = {
         ...stores,
         notifier,
-        checkpointStore,
+        checkpointStore: checkpoints,
         snapshotStore,
         subscriberFailures,
         indexKeys,
-        tenancy,
-        transact: createMemoryStorageTransaction({
-          ...stores,
-          recipients,
-          entries: {
-            inboxLedger: inboxLedger.entries,
-            deadLetterStore: deadLetterStore.entries,
-            scheduler: scheduler.entries,
-            idempotencyStore: idempotencyStore.entries,
-            personalKeys: personalKeys.entries,
-            persons: persons.entries,
-          },
-        }),
-        close: async () => {},
       };
+      const transact = createMemoryStorageTransaction({
+        ...stores,
+        recipients,
+        entries: {
+          inboxLedger: inboxLedger.entries,
+          deadLetterStore: deadLetterStore.entries,
+          scheduler: scheduler.entries,
+          idempotencyStore: idempotencyStore.entries,
+          personalKeys: personalKeys.entries,
+          persons: persons.entries,
+        },
+      });
+      const behind = (pass?: "forgotten"): Storage => ({
+        eventStore: fence.guard(raw.eventStore, FENCED_WRITES.eventStore, pass),
+        inboxLedger: fence.guard(raw.inboxLedger, FENCED_WRITES.inboxLedger, pass),
+        deadLetterStore: fence.guard(raw.deadLetterStore, FENCED_WRITES.deadLetterStore, pass),
+        scheduler: fence.guard(raw.scheduler, FENCED_WRITES.scheduler, pass),
+        idempotencyStore: fence.guard(raw.idempotencyStore, FENCED_WRITES.idempotencyStore, pass),
+        personalKeys: fence.guard(raw.personalKeys, FENCED_WRITES.personalKeys, pass),
+        persons: fence.guard(raw.persons, FENCED_WRITES.persons, pass),
+        recipients: fence.guard(raw.recipients, FENCED_WRITES.recipients, pass),
+        snapshotStore: fence.guard(raw.snapshotStore, FENCED_WRITES.snapshotStore, pass),
+        subscriberFailures: fence.guard(
+          raw.subscriberFailures,
+          FENCED_WRITES.subscriberFailures,
+          pass,
+        ),
+        indexKeys: fence.guard(raw.indexKeys, FENCED_WRITES.indexKeys, pass),
+        checkpointStore: fence.guard(raw.checkpointStore, FENCED_WRITES.checkpointStore, pass),
+        notifier,
+        tenancy,
+        fence: fence.store,
+        forgotten: () => behind("forgotten"),
+        transact: (work) => fence.write(() => transact(work), pass),
+        close: async () => {},
+      });
+      storage ??= behind();
       return storage;
     },
     createReadModel: async <Row extends object>({
@@ -322,25 +349,32 @@ export const memory: MemoryFunction = (options = {}) => {
       const target = live(name, fields);
       const table = through<Row>(target);
       const client = createMemoryReadClient({ name, table });
+      const guarded = fence.guard(table, FENCED_WRITES.table);
       return {
-        table,
-        client,
+        table: guarded,
+        client: createMemoryReadClient({ name, table: guarded }),
         restricted: restrictedReads<Row>(name, target, fields),
         checkpointStore,
-        transact: async ({ subscriber, wait, work }) => {
+        fence: fence.store,
+        transact: async ({ subscriber, wait, work, forgotten = false }) => {
           const release = await locks.acquire(subscriber, wait);
           if (release === undefined) return { acquired: false };
           try {
             return {
               acquired: true,
-              value: await inTransaction(target.current, (store) =>
-                work({
-                  table,
-                  client,
-                  checkpointStore: store,
-                  restrictedPersons: restrictedPersons.store,
-                  unsettled: (args) => target.current.unsettled(args) as Promise<readonly Row[]>,
-                }),
+              value: await fence.write(
+                () =>
+                  inTransaction(target.current, (store) =>
+                    work({
+                      table,
+                      client,
+                      checkpointStore: store,
+                      restrictedPersons: restrictedPersons.store,
+                      unsettled: (args) =>
+                        target.current.unsettled(args) as Promise<readonly Row[]>,
+                    }),
+                  ),
+                forgotten ? "forgotten" : undefined,
               ),
             };
           } finally {
@@ -378,15 +412,18 @@ export const memory: MemoryFunction = (options = {}) => {
       const { generation, shadow } = opened;
       const current = async (): Promise<boolean> =>
         (await checkpointStore.get(fencing.generation)) === generation;
+      // Every step writes the read model's rows, the shadow's included.
       const fenced = <T>(work: () => Promise<T>): Promise<T> =>
-        holding(fencing.lock, async () => {
-          if (!(await current())) throw new RebuildSupersededError(name);
-          return work();
-        });
+        holding(fencing.lock, () =>
+          fence.write(async () => {
+            if (!(await current())) throw new RebuildSupersededError(name);
+            return work();
+          }),
+        );
       const table = shadow as unknown as MemoryTable<Row>;
       const client = createMemoryReadClient({ name, table });
       return {
-        table,
+        table: fence.guard(table, FENCED_WRITES.table),
         client,
         resumed: opened.resumed,
         position: opened.position,
@@ -410,19 +447,21 @@ export const memory: MemoryFunction = (options = {}) => {
               const target = tables.get(name);
               if (target === undefined) tables.set(name, { current: shadow });
               else target.current = shadow;
-              await checkpointStore.set(subscriber, position);
+              await checkpoints.set(subscriber, position);
               for (const [mark, value] of Object.entries(marks)) {
-                await checkpointStore.set(mark, value);
+                await checkpoints.set(mark, value);
               }
-              await checkpointStore.remove(progress);
+              await checkpoints.remove(progress);
             }),
           ),
         abort: () =>
-          holding(fencing.lock, async () => {
-            if (!(await current())) return;
-            shadows.delete(name);
-            await checkpointStore.remove(progress);
-          }),
+          holding(fencing.lock, () =>
+            fence.write(async () => {
+              if (!(await current())) return;
+              shadows.delete(name);
+              await checkpoints.remove(progress);
+            }),
+          ),
         pause: async () => {},
       };
     },
@@ -431,7 +470,8 @@ export const memory: MemoryFunction = (options = {}) => {
     ephemeralKeys: ephemeral,
     inspect: async () => [
       ...storageTables(),
-      storageTable({ table: "checkpoints", key: ["subscriber"], rows: checkpointStore.rows() }),
+      storageTable({ table: "checkpoints", key: ["subscriber"], rows: checkpoints.rows() }),
+      storageTable({ table: "tenantFence", key: ["scope"], rows: fence.rows() }),
       storageTable({
         table: "restrictedPersons",
         key: ["person", "source", "category"],
