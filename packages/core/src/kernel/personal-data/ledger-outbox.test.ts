@@ -41,6 +41,7 @@ describe("the forget ledger's outbox", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
+        clear: async () => true,
       },
       keepForMs: null,
       clock: createFixedClock(new Date("2030-01-01T00:00:00.000Z")),
@@ -176,6 +177,7 @@ describe("the forget ledger's outbox", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
+        clear: async () => true,
       },
       keepForMs: 60_000,
       clock: createFixedClock(new Date("2026-01-01T00:02:00.000Z")),
@@ -253,6 +255,7 @@ describe("a forget ledger's source", () => {
       read: async () => [],
       readMark: async () => 0,
       raiseMark: async () => undefined,
+      clear: async () => true,
     }));
     expect(isForgetLedgerSource(memory())).toBe(true);
     expect(isForgetLedgerSource(definition)).toBe(true);
@@ -276,6 +279,7 @@ describe("a forget ledger's source", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
+        clear: async () => true,
       };
     });
     const env = { REGION: "eu" };
@@ -368,8 +372,17 @@ describe("the forget ledger bound by its timeout", () => {
     const ledger = boundForgetLedger({
       ledger: {
         visibilityDelayMs: 60_000,
-        readMark: async () => 0,
-        raiseMark: async () => undefined,
+        readMark: async (name) => {
+          calls.push(`readMark ${name}`);
+          return 7;
+        },
+        raiseMark: async (name, value) => {
+          calls.push(`raiseMark ${name} ${value}`);
+        },
+        clear: async () => {
+          calls.push("clear");
+          return true;
+        },
         append: async (entries) => {
           calls.push(`append ${entries.length}`);
         },
@@ -390,8 +403,19 @@ describe("the forget ledger bound by its timeout", () => {
     await ledger.append([entry]);
     expect(await ledger.read({ limit: 3 })).toEqual([entry]);
     await ledger.prune?.({ before: "t" });
+    expect(await ledger.readMark("m")).toBe(7);
+    await ledger.raiseMark("m", 8);
+    await ledger.clear();
     await ledger.close?.();
-    expect(calls).toEqual(["append 1", "read 3", "prune t", "close"]);
+    expect(calls).toEqual([
+      "append 1",
+      "read 3",
+      "prune t",
+      "readMark m",
+      "raiseMark m 8",
+      "clear",
+      "close",
+    ]);
     expect(ledger.visibilityDelayMs).toBe(60_000);
     expect(ledger.late()).toBe(false);
     expect(clock.pending()).toBe(0);
@@ -401,6 +425,7 @@ describe("the forget ledger bound by its timeout", () => {
         read: async () => [],
         readMark: async () => 0,
         raiseMark: async () => undefined,
+        clear: async () => true,
       },
       timeoutMs: 500,
       clock,
@@ -413,10 +438,12 @@ describe("the forget ledger bound by its timeout", () => {
   it("gives a call up at its timeout, and says it is late until that call settles", async () => {
     const clock = createFixedClock(new Date("2026-01-01T00:00:00.000Z"));
     let answer: () => void = () => undefined;
+    const never = () => new Promise<never>(() => undefined);
     const ledger = boundForgetLedger({
       ledger: {
-        readMark: async () => 0,
-        raiseMark: async () => undefined,
+        readMark: never,
+        raiseMark: never,
+        clear: never,
         append: () =>
           new Promise<void>((resolve) => {
             answer = resolve;
@@ -440,5 +467,10 @@ describe("the forget ledger bound by its timeout", () => {
     const pruning = ledger.prune?.({ before: "t" });
     clock.advance(500);
     await expect(pruning).rejects.toMatchObject({ operation: "prune", timeoutMs: 500 });
+    const marking = [ledger.readMark("m"), ledger.raiseMark("m", 1), ledger.clear()];
+    clock.advance(500);
+    for (const [index, operation] of ["readMark", "raiseMark", "clear"].entries()) {
+      await expect(marking[index]).rejects.toEqual(new ForgetLedgerTimeoutError(operation, 500));
+    }
   });
 });

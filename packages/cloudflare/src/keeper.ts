@@ -57,8 +57,13 @@ export interface BoundaKeeperMethods {
   readLedgerMark(tenant: string, name: string): Promise<RpcOutcome<number>>;
   raiseLedgerMark(tenant: string, name: string, value: number): Promise<RpcOutcome<null>>;
   /**
-   * Keeps each of the tenant's entries `keepForMs` after its `forgottenAt`, `null` for good: the
-   * keeper's alarm removes it then, whether the tenant's object is awake or not.
+   * Removes every entry and mark of the tenant's ledger, its alarm with them; how long it keeps an
+   * entry stays as `retainLedger` set it.
+   */
+  clearLedger(tenant: string): Promise<RpcOutcome<null>>;
+  /**
+   * Keeps each of the tenant's entries `keepForMs` after its `forgottenAt`, `null` until the ledger
+   * is cleared: the keeper's alarm removes it then, whether the tenant's object is awake or not.
    */
   retainLedger(tenant: string, keepForMs: number | null): Promise<RpcOutcome<null>>;
   /**
@@ -261,6 +266,15 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
     raiseLedgerMark(tenant: string, name: string, value: number): Promise<RpcOutcome<null>> {
       return settle(async () => {
         await (await this.#forgetLedger(tenant)).raiseMark(name, value);
+        return null;
+      });
+    }
+
+    clearLedger(tenant: string): Promise<RpcOutcome<null>> {
+      return settle(async () => {
+        const ledger = await this.#forgetLedger(tenant);
+        await ledger.clear();
+        await this.#armExpiry(ledger);
         return null;
       });
     }

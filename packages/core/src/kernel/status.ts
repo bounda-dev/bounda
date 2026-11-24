@@ -96,6 +96,11 @@ export interface AppStatus {
    */
   readonly tenant: TenantKeyStatus | null | UnreadableStatus;
   /**
+   * Once the tenant is forgotten, whether what its forgetting still needed is gone. `null` while
+   * it is not forgotten.
+   */
+  readonly forgottenTenant: ForgottenTenantStatus | null | UnreadableStatus;
+  /**
    * Where the keys under the tenant's key stand as it rotates. `null` for an app without keys,
    * and once the tenant is forgotten.
    */
@@ -126,6 +131,31 @@ export interface AppStatus {
    * open. Empty without such a file.
    */
   readonly files: readonly EncryptedFileStatus[];
+}
+
+/**
+ * Where a forgotten tenant's last work stands. Once every recipient is told, the forget ledger
+ * holds nothing of the tenant, `null` meaning the app has no ledger, and the keys of its encrypted
+ * database files are destroyed, nothing Bounda keeps needs the tenant's database any more: it may
+ * be deleted.
+ */
+export interface ForgottenTenantStatus {
+  /**
+   * Whether every recipient of the tenant's data was told of the forgetting: each notice
+   * delivered, or its dead letter retried or discarded.
+   */
+  readonly recipientsTold: boolean;
+  /**
+   * Whether the forget ledger holds no entry and no mark of the tenant, which it does once the
+   * recipients are told; `null` without `runtime.personalData.forgetLedger`.
+   */
+  readonly forgetLedgerCleared: boolean | null;
+  /**
+   * Whether the tenant key store's record holds no key of the tenant's encrypted database files,
+   * which it keeps under the master key until the recipients are told, so the notices can read the
+   * files; `true` for a tenant without such files.
+   */
+  readonly fileKeysDestroyed: boolean;
 }
 
 /**
@@ -168,6 +198,7 @@ export interface ReadAppStatusArgs {
   readonly reconciliation?: Pick<ForgetLedgerReconciliation, "status"> | undefined;
   readonly rotation?: Pick<KeyRotation, "status"> | undefined;
   readonly tenant?: (() => Promise<TenantKeyStatus>) | undefined;
+  readonly forgottenTenant?: (() => Promise<ForgottenTenantStatus>) | undefined;
   readonly retention?: Pick<RetentionSweep, "status"> | undefined;
   readonly letterRetention?: Pick<DeadLetterRetention, "status"> | undefined;
   readonly failureRetention?: Pick<SubscriberFailureRetention, "status"> | undefined;
@@ -260,6 +291,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
   reconciliation,
   rotation,
   tenant,
+  forgottenTenant,
   retention,
   letterRetention,
   failureRetention,
@@ -283,6 +315,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     forgetLedger,
     keyRotation,
     tenantKey,
+    forgotten,
     retained,
     purged,
     expired,
@@ -309,6 +342,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     readable("forgetLedger", async () => (await reconciliation?.status()) ?? null),
     readable("keyRotation", async () => (await rotation?.status()) ?? null),
     readable("tenant", async () => (await tenant?.()) ?? null),
+    readable("forgottenTenant", async () => (await forgottenTenant?.()) ?? null),
     readable("retention", async () => (await retention?.status()) ?? null),
     letterRetention?.status() ?? null,
     failureRetention?.status() ?? null,
@@ -348,6 +382,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     personalDataBackfill,
     forgetLedger,
     tenant: tenantKey,
+    forgottenTenant: forgotten,
     keyRotation,
     retention: retained,
     deadLetterRetention: purged,
@@ -379,6 +414,7 @@ const PARTS = [
   "personalDataBackfill",
   "forgetLedger",
   "tenant",
+  "forgottenTenant",
   "keyRotation",
   "retention",
   "deadLetterRetention",

@@ -4,12 +4,15 @@ import { createNodeSqliteAdapter } from "../adapter/sqlite/node-sqlite.ts";
 import type { InspectedStore, InspectedTable } from "../adapter/storage/inspection.ts";
 import type { Table } from "../adapter/storage/table.ts";
 import type { Config } from "../config/types.ts";
+import { createFixedClock } from "../contracts/clock.ts";
 import type { StoredEvent } from "../contracts/event.ts";
 import type { LogFields } from "../contracts/logger.ts";
 import { silentLogger } from "../contracts/logger.ts";
 import { createApp } from "../kernel/app.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
+import { HOLD_MS } from "../kernel/personal-data/hold.ts";
+import { RESTORE_MARK } from "../kernel/shared/restores.ts";
 import { installFakeTelemetry } from "../kernel/telemetry-fake.ts";
 import type { Witness } from "../kernel/witness.ts";
 import { witnessHooksOf } from "../kernel/witness.ts";
@@ -19,7 +22,12 @@ import type { CommandPayloadArgs, EventPayloadArgs } from "../modules/payload.ts
 import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
-import { expectForgotten, expectTenantForgotten, NotForgottenError } from "./expect-forgotten.ts";
+import {
+  expectForgotten,
+  expectTenantForgotten,
+  NotForgottenError,
+  type TenantNotForgottenError,
+} from "./expect-forgotten.ts";
 import { expectRedacted, type NotRedactedError } from "./expect-redacted.ts";
 import { createTestApp } from "./index.ts";
 import { createWitness, testWitnessOf } from "./witness.ts";
@@ -904,7 +912,11 @@ describe("expectForgotten", () => {
       scheduledAt: new Date("2026-01-01T00:00:00.000Z"),
       context: { correlationId: "c", causationId: "c" } as never,
     });
-    const app = { forget: async () => ({}), exportPersonalData: async () => ({}) as never };
+    const app = {
+      forget: async () => ({}),
+      exportPersonalData: async () => ({}) as never,
+      status: async () => ({}) as never,
+    };
     witness.onApp(app, [adapter]);
     expect(((await rejection(expectForgotten(app, "c-1"))) as Error).message).toBe(
       'expectForgotten saw a value of "c-1" sealed under a key the test app never held; report this as a bug in Bounda',
@@ -1039,6 +1051,67 @@ describe("expectForgotten given an app built with a witness", () => {
       "the app still serves calls: forget the tenant with forgetTenant first",
     );
     await app.forgetTenant("default", { despiteLegalObligations: true });
+    await expectTenantForgotten(witness);
+    await app.stop();
+  });
+
+  it("finds the forget ledger's entries and marks of a tenant whose recipients were all told", async () => {
+    const witness = createWitness();
+    const ledgers = memory();
+    let clearing = false;
+    const limits: (number | undefined)[] = [];
+    const ledger = defineForgetLedger(async ({ tenant }) => {
+      const kept = await ledgers.createForgetLedger({ tenant });
+      return {
+        ...kept,
+        read: (args) => {
+          limits.push(args.limit);
+          return kept.read(args);
+        },
+        clear: async () => (clearing ? kept.clear() : Promise.reject(new Error("ledger down"))),
+      };
+    });
+    const clock = createFixedClock();
+    const app = await createApp({
+      registry,
+      config: {
+        storage: memory(),
+        ports: {},
+        runtime: { personalData: { forgetLedger: { store: ledger } } },
+      } as never,
+      witness,
+      clock,
+    });
+    await (
+      app.commands as unknown as Record<string, (payload: object) => Promise<unknown>>
+    ).registerCustomer?.(ana);
+    await app.runUntilIdle();
+    await app.forget(ana.customerId);
+    const kept = await ledgers.createForgetLedger({});
+    await kept.raiseMark(RESTORE_MARK, 3);
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    // Its recipients not told yet, the ledger keeps what a restored copy would need.
+    await expectTenantForgotten(witness);
+    await app.runUntilIdle();
+    limits.length = 0;
+    const error = (await rejection(expectTenantForgotten(witness))) as TenantNotForgottenError;
+    // One entry is enough to tell, for the status and the check alike; the search reads them all.
+    expect(limits.slice(0, 2)).toEqual([1, 1]);
+    expect(error.problems).toEqual([
+      "the forget ledger still holds entries of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears them",
+      "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
+    ]);
+    // A mark alone is found too.
+    await kept.clear();
+    await kept.raiseMark(RESTORE_MARK, 3);
+    expect(
+      ((await rejection(expectTenantForgotten(witness))) as TenantNotForgottenError).problems,
+    ).toEqual([
+      "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
+    ]);
+    clearing = true;
+    clock.advance(HOLD_MS);
+    await app.runUntilIdle();
     await expectTenantForgotten(witness);
     await app.stop();
   });

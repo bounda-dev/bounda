@@ -16,8 +16,11 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten, expectTenantForgotten } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { RESTORE_MARK } from "../shared/restores.ts";
 import { createRecordingLogger } from "../test-support.ts";
+import { defineForgetLedger } from "./forget-ledger.ts";
 import { TENANT_CHECK_INTERVAL_MS } from "./forgotten-tenant.ts";
+import { HOLD_MS } from "./hold.ts";
 import { masterKey } from "./master-key.ts";
 import { defineTenantKeyStore } from "./tenant-key-source.ts";
 
@@ -225,6 +228,139 @@ describe("forgetTenant", () => {
     expect(recording.entries.map(({ message }) => message)).toContain(
       "tenant forgotten: its recipients are told, and its storage emptied",
     );
+  });
+
+  it("clears the forget ledger before it empties the storage, and tries both again after a clear that failed", async () => {
+    const inner = memory();
+    let discarded = 0;
+    const adapter: Adapter = {
+      ...inner,
+      createStorage: async () => ({
+        ...(await inner.createStorage()),
+        discard: async () => {
+          discarded += 1;
+        },
+      }),
+    };
+    const ledgers = memory();
+    let clears = 0;
+    const ledger = defineForgetLedger(async ({ tenant }) => {
+      const kept = await ledgers.createForgetLedger({ tenant });
+      return {
+        ...kept,
+        clear: async () => {
+          clears += 1;
+          if (clears === 1) throw new Error("ledger down");
+          return kept.clear();
+        },
+      };
+    });
+    const clock = createFixedClock();
+    const app = await createApp({
+      registry,
+      config: { storage: adapter, runtime: { personalData: { forgetLedger: { store: ledger } } } },
+      clock,
+    });
+    stops.push(() => app.stop());
+    await register(app, "c-1");
+    await app.forget("c-1");
+    const kept = await ledgers.createForgetLedger({});
+    expect(await kept.read({ limit: 10 })).toHaveLength(1);
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await app.runUntilIdle();
+    expect([clears, discarded]).toEqual([1, 0]);
+    expect(await app.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
+    expect(await kept.read({ limit: 10 })).toHaveLength(1);
+    // Told, but the database is still needed: a copy restored now would need the ledger.
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: true,
+      forgetLedgerCleared: false,
+      fileKeysDestroyed: true,
+    });
+    clock.advance(HOLD_MS);
+    await app.runUntilIdle();
+    expect([clears, discarded]).toEqual([2, 1]);
+    expect(await kept.read({ limit: 10 })).toEqual([]);
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: true,
+      forgetLedgerCleared: true,
+      fileKeysDestroyed: true,
+    });
+    expect(await app.nextDueAt()).toBeNull();
+  });
+
+  it("clears what is left of a ledger cleared in part at the next pass, never in the same one", async () => {
+    const ledgers = memory();
+    const results = [false, true];
+    let clears = 0;
+    const ledger = defineForgetLedger(async ({ tenant }) => {
+      const kept = await ledgers.createForgetLedger({ tenant });
+      return {
+        ...kept,
+        clear: async () => {
+          clears += 1;
+          await kept.clear();
+          return results.shift() ?? true;
+        },
+      };
+    });
+    const clock = createFixedClock();
+    const app = await createApp({
+      registry,
+      config: { storage: memory(), runtime: { personalData: { forgetLedger: { store: ledger } } } },
+      clock,
+    });
+    stops.push(() => app.stop());
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await app.runUntilIdle();
+    expect(clears).toBe(1);
+    expect(await app.nextDueAt()).toEqual(new Date(clock.now().getTime() + 1));
+    clock.advance(1);
+    await app.runUntilIdle();
+    expect(clears).toBe(2);
+    expect(await app.nextDueAt()).toBeNull();
+  });
+
+  it("raises the ledger's mark for an app without keys, which no forgetting of a tenant can reach", async () => {
+    const keyless = {
+      aggregates: {
+        counter: {
+          events: {
+            counted: {
+              payload: ({ z, notPersonal }: EventPayloadArgs) =>
+                z.object({ by: notPersonal(z.number()) }),
+              evolve: ({ state }: { state: object }) => state,
+            },
+          },
+          commands: {
+            count: {
+              module: {
+                payload: ({ z, notPersonal }: CommandPayloadArgs) =>
+                  z.object({ counterId: notPersonal(z.string()) }),
+                handler: ({ events }: { events: Builders }) => [events.counted?.({ by: 1 })],
+              },
+            },
+          },
+          policies: {},
+          processes: {},
+        },
+      },
+      readModels: {},
+    } as unknown as Registry;
+    const directory = mkdtempSync(join(tmpdir(), "bounda-keyless-ledger-"));
+    const ledgers = memory();
+    const app = await createApp({
+      registry: keyless,
+      config: {
+        storage: createNodeSqliteAdapter(join(directory, "store.db")).adapter,
+        runtime: { personalData: { forgetLedger: { store: ledgers } } },
+      },
+    });
+    await (
+      app.commands as unknown as Record<string, (payload: object) => Promise<unknown>>
+    ).count?.({ counterId: "k-1" });
+    await app.stop();
+    expect(await (await ledgers.createForgetLedger({})).readMark(RESTORE_MARK)).toBeGreaterThan(0);
   });
 
   it("leaves the skeleton: the event of the forgetting, ids, types and the fields no schema marks", async () => {

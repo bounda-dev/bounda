@@ -142,6 +142,23 @@ const tenantOf = ({ tenant }: AppStatus): string => {
   return `${tenant.tenant}, key ${tenant.kid}${tenant.previous.length === 0 ? "" : ` (older ${tenant.previous.join(", ")})`}, ${wrapped}`;
 };
 
+// Printed only once the tenant is forgotten: when its database may be deleted.
+const forgottenTenantOf = ({ forgottenTenant: forgotten }: AppStatus): string[] => {
+  if (forgotten === null) return [];
+  if (isUnreadable(forgotten)) return [`forgotten tenant: ${UNREADABLE}`];
+  const { recipientsTold, forgetLedgerCleared, fileKeysDestroyed } = forgotten;
+  const ledger =
+    forgetLedgerCleared === null
+      ? "no forget ledger"
+      : forgetLedgerCleared
+        ? "forget ledger cleared"
+        : "forget ledger not cleared yet";
+  const deletable = recipientsTold && forgetLedgerCleared !== false && fileKeysDestroyed;
+  return [
+    `forgotten tenant: ${recipientsTold ? "recipients told" : "recipients not all told yet"}, ${ledger}, ${fileKeysDestroyed ? "no file key kept" : "file keys still kept"}; ${deletable ? "the database may be deleted" : "keep the database"}`,
+  ];
+};
+
 const FILE_STATES: Readonly<Record<AppStatus["files"][number]["state"], string>> = {
   current: "encrypted under the tenant's key in force",
   earlier: "still under an earlier key of the tenant's: bounda rekey",
@@ -277,6 +294,7 @@ export const formatStatus: FormatStatusFunction = (args) => {
     `personal data backfill: ${backfillOf(status)}`,
     `forget ledger: ${ledgerOf(status)}`,
     `tenant: ${tenantOf(status)}`,
+    ...forgottenTenantOf(status),
     ...formatFiles(status.files),
     `key rotation: ${rotationOf(status)}`,
     ...resealOf(status),

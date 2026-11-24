@@ -255,7 +255,7 @@ describe("formatInventory", () => {
         "  subscriber-failures  the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)); until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten (cloudflare, in eu)",
         "  master-key  the master key, which every tenant's key is wrapped under, outside the database; until rotated out, and for as long as a backup of the tenant keys needs it (key-wrapper, in eu)",
         "  tenant-keys  the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database; until the tenant is forgotten (tenant-keys, in eu)",
-        "  forget-ledger  each forgetting's person, categories and reason, outside the database; 400d (forget-ledger)",
+        "  forget-ledger  each forgetting's person, categories and reason, and each change of restrictions, redaction and disclosure with its ids and names, the recipient's included, outside the database; 400d, or until the tenant is forgotten and every recipient of its data told (forget-ledger)",
         "  access-log  every access to personal data, by ids, handed to app/audit.ts; as the app keeps it (app/audit.ts)",
         "",
         "Keys",
@@ -312,6 +312,22 @@ describe("formatInventory", () => {
     ).toContain(
       "until the subscriber's next failure replaces it, unreadable once their person is forgotten (memory)",
     );
+    // A record bounded by a setting no wording of its own is written for.
+    expect(
+      formatInventory({
+        ...empty,
+        records: [{ name: "personal-keys", where: "memory", location: null, keptFor: "1d" }],
+      }),
+    ).toContain("; 1d (memory)");
+    // A ledger without keepFor: kept until its tenant is forgotten and told.
+    expect(
+      formatInventory({
+        ...empty,
+        records: [{ name: "forget-ledger", where: "forget-ledger", location: null, keptFor: null }],
+      }),
+    ).toContain(
+      "outside the database; until the tenant is forgotten and every recipient of its data told (forget-ledger)",
+    );
   });
 });
 
@@ -366,7 +382,7 @@ describe("formatInventoryMarkdown", () => {
         "| subscriber-failures | the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)) | until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten | cloudflare, in eu |",
         "| master-key | the master key, which every tenant's key is wrapped under, outside the database | until rotated out, and for as long as a backup of the tenant keys needs it | key-wrapper, in eu |",
         "| tenant-keys | the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database | until the tenant is forgotten | tenant-keys, in eu |",
-        "| forget-ledger | each forgetting's person, categories and reason, outside the database | 400d | forget-ledger |",
+        "| forget-ledger | each forgetting's person, categories and reason, and each change of restrictions, redaction and disclosure with its ids and names, the recipient's included, outside the database | 400d, or until the tenant is forgotten and every recipient of its data told | forget-ledger |",
         "| access-log | every access to personal data, by ids, handed to app/audit.ts | as the app keeps it | app/audit.ts |",
         "",
         "## Keys",

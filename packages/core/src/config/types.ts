@@ -219,7 +219,8 @@ export interface ForgetLedgerConfig {
   /**
    * How long the ledger keeps each entry after the forgetting: set it longer than the oldest backup
    * you can restore, since a backup older than that brings back whom the pruned entries named. No
-   * default: entries are kept for good.
+   * default: entries are kept until their tenant is forgotten and every recipient of its data told,
+   * which clears them whatever this says.
    */
   readonly keepFor?: DurationInput;
   /**
@@ -235,7 +236,7 @@ export interface ResolvedForgetLedgerConfig {
   readonly reconcileEveryMs: number;
   readonly strict: boolean;
   /**
-   * `null` when entries are kept for good.
+   * `null` when entries are kept until their tenant's forgetting clears them.
    */
   readonly keepForMs: number | null;
   readonly timeoutMs: number;

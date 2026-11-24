@@ -167,6 +167,15 @@ export interface ForgetLedger {
    */
   raiseMark(name: string, value: number): Promise<void>;
   /**
+   * Removes the entries and marks of this ledger's store, other stores' left as they were, and
+   * resolves `true` once it removed every one it found, `false` when it removed part only, to be
+   * called again, as a store that deletes one key a call does within what one call may do: what
+   * the runtime calls once its tenant is forgotten and every recipient of the tenant's data told,
+   * when nothing can need them any longer. Appending afterwards keeps entries again. A call that
+   * fails is made again.
+   */
+  clear(): Promise<boolean>;
+  /**
    * Releases what the ledger holds open; called when the app stops.
    */
   close?(): Promise<void>;
@@ -180,7 +189,7 @@ export interface CreateForgetLedgerArgs {
   readonly tenant?: string | undefined;
   /**
    * How long the app keeps each entry after its `forgottenAt`, from `keepFor`; `undefined` keeps
-   * entries for good. Only a ledger without `prune` uses it, to expire its entries itself.
+   * entries until `clear`. Only a ledger without `prune` uses it, to expire its entries itself.
    */
   readonly keepForMs?: number | undefined;
 }

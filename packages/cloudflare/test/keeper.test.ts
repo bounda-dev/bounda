@@ -402,6 +402,31 @@ describe("a keeper object", () => {
     expect(await own.readLedgerMark(tenant, "m")).toEqual({ ok: true, value: 3 });
   });
 
+  it("clears the tenant's ledger, its marks and its alarm, and keeps how long it keeps entries", async () => {
+    const tenant = `${fresh()}cleared`;
+    const own = keeper(`tenant:${tenant}`);
+    const alarm = () => runInDurableObject(own, (_object, state) => state.storage.getAlarm());
+    const entry = (eventId: string, forgottenAt: string) => ({
+      personId: "c-1",
+      categories: null,
+      eventId,
+      forgottenAt,
+      reason: "requested" as const,
+    });
+    const now = Date.now();
+    await own.retainLedger(tenant, 60_000);
+    await own.appendLedger(tenant, [entry("e-1", new Date(now).toISOString())]);
+    await own.raiseLedgerMark(tenant, "m", 3);
+    expect(await alarm()).toBe(now + 60_000);
+    expect(await own.clearLedger(tenant)).toEqual({ ok: true, value: null });
+    expect(await own.readLedger(tenant, { limit: 10 })).toEqual({ ok: true, value: [] });
+    expect(await own.readLedgerMark(tenant, "m")).toEqual({ ok: true, value: 0 });
+    expect(await alarm()).toBeNull();
+    // An entry appended after still expires on its own.
+    await own.appendLedger(tenant, [entry("e-2", new Date(now).toISOString())]);
+    expect(await alarm()).toBe(now + 60_000);
+  });
+
   it("starts where workerd has no jurisdictions, as the app's binding tells, and refuses every call without it", async () => {
     const tenant = `${fresh()}acme`;
     const inEu = env.EU_KEEPER.get(env.EU_KEEPER.idFromName(`tenant:${tenant}`));
@@ -628,6 +653,25 @@ describe("a Durable Object whose keys and ledger the keeper holds", () => {
     await expect(store.exportPersonalData("ada")).rejects.toMatchObject({
       code: "TENANT_FORGOTTEN",
     });
+  });
+
+  it("clears its ledger in the keeper once every recipient of its forgotten tenant is told", async () => {
+    const tenant = `${fresh()}cleared-ledger`;
+    const stub = env.KEPT_STORE.get(env.KEPT_STORE.idFromName(tenant));
+    const store = connect<typeof quietRegistry>(stub);
+    await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "bell" });
+    await store.forget("ada");
+    const ledger = await durableObjectForgetLedger({ storage, binding: "KEPT_KEEPER" }).create({
+      env,
+      tenant,
+    });
+    expect(await ledger.read({ limit: 10 })).toEqual([
+      expect.objectContaining({ personId: "ada" }),
+    ]);
+    await store.forgetTenant(tenant);
+    await runInDurableObject(stub, (instance) => instance.alarm());
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
+    expect(await ledger.readMark("restore:generation")).toBe(0);
   });
 
   it("forgets again at the next start whoever was forgotten after its storage was copied", async () => {

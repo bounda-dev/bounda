@@ -69,6 +69,7 @@ import type {
   ForgetLedgerReconciliationStatus,
   ForgetOptions,
   ForgetsPersonalData,
+  ForgottenTenantStatus,
   HasPersonalFields,
   ImplementationModule,
   IncludeRestrictedOptions,
@@ -2068,6 +2069,15 @@ describe("operations", () => {
       readonly unreadable: true;
     }>();
     expectTypeOf<AppStatus["lag"]>().toEqualTypeOf<StatusLag | UnreadableStatus>();
+    // Once the tenant is forgotten: whether its database may be deleted.
+    expectTypeOf<AppStatus["forgottenTenant"]>().toEqualTypeOf<
+      ForgottenTenantStatus | null | UnreadableStatus
+    >();
+    expectTypeOf<ForgottenTenantStatus>().toEqualTypeOf<{
+      readonly recipientsTold: boolean;
+      readonly forgetLedgerCleared: boolean | null;
+      readonly fileKeysDestroyed: boolean;
+    }>();
     // `getLag()` degrades the same way, a subscriber at a time; `maxLag` is `null` while one is
     // unread, so it never reads as caught up.
     expectTypeOf<AppLag>().toEqualTypeOf<{
@@ -2189,6 +2199,17 @@ describe("operations", () => {
     expectTypeOf<ForgetLedger["raiseMark"]>().toEqualTypeOf<
       (name: string, value: number) => Promise<void>
     >();
+  });
+
+  it("clears a forgotten tenant's ledger, which every ledger can", () => {
+    expectTypeOf<ForgetLedger["clear"]>().toEqualTypeOf<() => Promise<boolean>>();
+    // @ts-expect-error a ledger of your own clears its store's entries and marks too
+    const _cannotClear: ForgetLedger = {
+      append: async () => undefined,
+      read: async () => [],
+      readMark: async () => 0,
+      raiseMark: async () => undefined,
+    };
   });
 
   it("names a process given up as abandoned", () => {

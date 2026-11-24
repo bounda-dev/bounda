@@ -248,7 +248,10 @@ past it on its own alarm, whether the tenant's object is awake or not. The perio
 never wakes an object on its own. Every
 forgetting writes its intention to the keeper before the object commits it, so one the object did
 not get to commit, because it was evicted or its transaction failed, is committed at its next start;
-with `strict`, a forgetting the keeper does not take fails and forgets nobody. See
+with `strict`, a forgetting the keeper does not take fails and forgets nobody. Once a [forgotten
+tenant](/guides/personal-data/#forgetting-a-tenant)'s recipients are all told, its object has the
+keeper remove every entry and mark of its ledger, and the alarm with them, before it empties its
+own storage; the keeper keeps the tenant's key record, which records the forgetting. See
 [backups](/guides/personal-data/#backups).
 
 `kvForgetLedger({ binding })` keeps it in a KV namespace instead, for an app whose `cloudflare()`
@@ -259,7 +262,11 @@ list a key. With `keepFor` each key expires in KV by itself; `bounda forget-ledg
 the keys written before `keepFor` was set theirs. An entry lives in its key's metadata, which KV
 caps at 1024 bytes; the categories and keys of a forgetting with too many to fit there, some
 thirty, go to the key's value, which a read fetches for the entries it hands out alone, and
-`bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile.
+`bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile. A
+forgotten tenant's object deletes its keys once its recipients are told and a minute has passed
+since the forgetting, waking for it, so every key written before is listed; KV deletes one key a
+call, so each wake deletes a batch within the operations one invocation may make, and a larger
+ledger is cleared over several wakes, each going on from what the last one left.
 
 ## Rotating the master key
 

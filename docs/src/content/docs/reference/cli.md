@@ -308,7 +308,11 @@ recipients
 - the [tenant](/guides/personal-data/#tenants): the version of its key in force, the older ones
   its record still holds, and the master key they are wrapped under, or how many versions are left
   to [rewrap](/guides/personal-data/#rotating-the-master-key) under it; `forgotten at …` once it
-  is [forgotten](/guides/personal-data/#forgetting-a-tenant).
+  is [forgotten](/guides/personal-data/#forgetting-a-tenant), followed by a `forgotten tenant` line:
+  whether every recipient was told, whether the forget ledger holds nothing of the tenant any more,
+  whether the keys of its [encrypted files](/guides/personal-data/#encrypted-database-files) are
+  destroyed, and `the database may be deleted` once all are (with no ledger, the other two),
+  `keep the database` until then.
 - each database file [encrypted under the tenant's key](/guides/personal-data/#encrypted-database-files),
   and where it stands: `still in the clear` or `still under an earlier key` while another connection
   kept it from being encrypted, which [`bounda rekey`](#bounda-rekey) does once it can.

@@ -213,6 +213,7 @@ export type {
 export type {
   AppStatus,
   EncryptedFileStatus,
+  ForgottenTenantStatus,
   IsUnreadableFunction,
   RecipientStatus,
   SchemaStatus,

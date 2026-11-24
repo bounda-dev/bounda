@@ -1,8 +1,15 @@
 import type { ReadModelStorage, Storage, StorageTransaction } from "../../adapter/adapter.ts";
+import type {
+  ForgetLedger,
+  ForgetLedgerEntry,
+  ForgetLedgerPosition,
+} from "../../adapter/storage/forget-ledger.ts";
+import type { RecipientPort } from "../../adapter/storage/recipient-store.ts";
 import type { TenantForgetting } from "../../adapter/storage/tenant-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { TenantForgottenError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
+import type { Logger } from "../../contracts/logger.ts";
 import type { CausationContext } from "../../contracts/metadata.ts";
 import {
   BOUNDA_AGGREGATE,
@@ -13,8 +20,14 @@ import type { PersonalCategoryName } from "../../modules/personal-data.ts";
 import type { NotifiedRecipient } from "../../modules/recipient.ts";
 import type { Subscriber } from "../dispatch/dispatcher.ts";
 import { projectionSubscriberName } from "../projection/runner.ts";
+import { discloseAgain } from "../recipients/again.ts";
 import { RECIPIENTS_SUBSCRIBER, type RecipientDelivery } from "../recipients/notices.ts";
 import { appendSystemEvent } from "../system-events.ts";
+import {
+  FORGET_LEDGER_CURSOR,
+  FORGET_LEDGER_PAGE,
+  FORGET_LEDGER_REREAD_MS,
+} from "./reconciliation.ts";
 import { transactRetrying } from "./transact.ts";
 
 /**
@@ -46,19 +59,26 @@ export interface TenantForgottenResult {
 }
 
 export interface AddressedTenantFunction {
-  (transaction: Pick<StorageTransaction, "recipients">): Promise<readonly NotifiedRecipient[]>;
+  (
+    transaction: Pick<StorageTransaction, "recipients">,
+    presumedAll: readonly RecipientPort[],
+  ): Promise<readonly NotifiedRecipient[]>;
 }
 
 /**
  * Every port a disclosure of any person was recorded to, with every category it received, and
- * every port declared after data already existed, with what its declaration names, presumed.
+ * every port declared after data already existed, with what its declaration names, presumed, as
+ * every port of `presumedAll` is, for a database that may have lost disclosures no one can tell.
  */
-export const addressedTenant: AddressedTenantFunction = async (transaction) => {
+export const addressedTenant: AddressedTenantFunction = async (transaction, presumedAll) => {
   const received = await transaction.recipients.received();
   const presumed = new Map(
-    (await transaction.recipients.declared())
-      .filter(({ presumedThrough }) => presumedThrough > 0)
-      .map(({ port, categories }) => [port, categories]),
+    [
+      ...(await transaction.recipients.declared()).filter(
+        ({ presumedThrough }) => presumedThrough > 0,
+      ),
+      ...presumedAll,
+    ].map(({ port, categories }) => [port, categories]),
   );
   return [...new Set([...received.keys(), ...presumed.keys()])].sort().map((port) => {
     const known = received.get(port) ?? [];
@@ -83,10 +103,52 @@ export interface ForgottenReadModel {
   readonly storage: Pick<ReadModelStorage, "transact">;
 }
 
+interface DiscloseLostAgainArgs {
+  readonly storage: Pick<Storage, "transact" | "checkpointStore">;
+  readonly ledger: Pick<ForgetLedger, "read">;
+  readonly concurrencyRetries: number;
+}
+
+// The disclosures past the database's cursor, as a reconciliation reads them: what a copy of the
+// database lost of those made after it was taken. Resolves why the ledger could not be read; a
+// database that fails rejects, as any settling does.
+const discloseLostAgain = async ({
+  storage,
+  ledger,
+  concurrencyRetries,
+}: DiscloseLostAgainArgs): Promise<{ readonly failed: unknown } | null> => {
+  const cursor = await storage.checkpointStore.get(FORGET_LEDGER_CURSOR);
+  let after: ForgetLedgerPosition | undefined =
+    cursor === 0
+      ? undefined
+      : { forgottenAt: new Date(cursor - FORGET_LEDGER_REREAD_MS).toISOString(), eventId: "" };
+  for (;;) {
+    let page: readonly ForgetLedgerEntry[];
+    try {
+      page = await ledger.read({
+        ...(after === undefined ? {} : { after }),
+        limit: FORGET_LEDGER_PAGE,
+      });
+    } catch (failed) {
+      return { failed };
+    }
+    for (const entry of page) {
+      const { disclosure } = entry;
+      if (disclosure !== undefined) {
+        await discloseAgain({ storage, concurrencyRetries, entry: { ...entry, disclosure } });
+      }
+    }
+    if (page.length < FORGET_LEDGER_PAGE) return null;
+    after = page.at(-1);
+  }
+};
+
 export interface SettleTenantForgettingArgs {
   readonly storage: Pick<
     Storage,
     | "transact"
+    | "eventStore"
+    | "checkpointStore"
     | "tenancy"
     | "personalKeys"
     | "indexKeys"
@@ -98,8 +160,21 @@ export interface SettleTenantForgettingArgs {
   readonly readModels: readonly ForgottenReadModel[];
   readonly tenant: string;
   readonly forgetting: TenantForgetting;
+  /**
+   * The forget ledger, `null` without one: the disclosures it holds that the database lost are
+   * recorded again before the recipients to tell are read.
+   */
+  readonly ledger: Pick<ForgetLedger, "read"> | null;
+  /**
+   * Whether the database may be a copy taken before the forgetting, as for any settling but the
+   * forgetting's own: without a ledger to tell what the copy lost, every port of `ports` is
+   * presumed to hold the tenant's data.
+   */
+  readonly mayBeCopy: boolean;
+  readonly ports: readonly RecipientPort[];
   readonly ids: IdGenerator;
   readonly clock: Clock;
+  readonly logger: Logger;
   readonly concurrencyRetries: number;
   readonly context: CausationContext;
 }
@@ -123,12 +198,34 @@ export const settleTenantForgetting: SettleTenantForgettingFunction = async ({
   readModels,
   tenant,
   forgetting,
+  ledger,
+  mayBeCopy,
+  ports,
   ids,
   clock,
+  logger,
   concurrencyRetries,
   context,
 }) => {
   await storage.tenancy.forget(forgetting.at);
+  const unrecorded =
+    (await storage.eventStore.readOne({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: tenant,
+      eventId: forgetting.eventId,
+    })) === null;
+  // A recipient of a disclosure the database lost would hear nothing of the forgetting.
+  const lost =
+    unrecorded && ledger !== null
+      ? await discloseLostAgain({ storage, ledger, concurrencyRetries })
+      : null;
+  if (lost !== null) {
+    logger.error(
+      "the forget ledger could not be read for the disclosures the database lost: every declared recipient is presumed to hold the tenant's data",
+      { tenant, error: lost.failed },
+    );
+  }
+  const presumeAll = lost !== null || (unrecorded && ledger === null && mayBeCopy);
   await transactRetrying({
     storage,
     concurrencyRetries,
@@ -139,7 +236,7 @@ export const settleTenantForgetting: SettleTenantForgettingFunction = async ({
         eventId: forgetting.eventId,
       });
       if (recorded !== null) return;
-      const recipients = await addressedTenant(transaction);
+      const recipients = await addressedTenant(transaction, presumeAll ? ports : []);
       const payload: TenantForgottenPayload = {
         tenant,
         categories: (await transaction.personalKeys.categories()) as PersonalCategoryName[],

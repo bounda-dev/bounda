@@ -462,6 +462,7 @@ describe("a database restored while the app was stopped", () => {
         read: (args) => inner.read(args),
         readMark: async () => 0,
         raiseMark: (name, value) => inner.raiseMark(name, value),
+        clear: () => inner.clear(),
       };
     });
     const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };

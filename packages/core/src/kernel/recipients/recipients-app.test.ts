@@ -1,6 +1,10 @@
+import { copyFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Adapter } from "../../adapter/adapter.ts";
-import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
+import type { Adapter, Storage } from "../../adapter/adapter.ts";
+import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
+import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { Table } from "../../adapter/storage/table.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConfigurationError, PROCESSING_RESTRICTED } from "../../contracts/errors.ts";
@@ -8,14 +12,19 @@ import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { NotifiedRecipient, RecipientDeclaration } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
-import { createApp } from "../app.ts";
+import { type BoundaApp, createApp } from "../app.ts";
+import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
+import { masterKey } from "../personal-data/master-key.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
+import { defineTenantKeyStore } from "../personal-data/tenant-key-source.ts";
+import { RESTORE_MARK } from "../shared/restores.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { readPart } from "../test-support.ts";
 
@@ -1399,6 +1408,285 @@ describe("recipients and the forget ledger", () => {
     await app.runUntilIdle();
     await app.restored();
     expect((await app.recipientsOf("c-1")).map(({ status }) => status)).not.toContain("presumed");
+  });
+});
+
+describe("a forgotten tenant's recipients and its forget ledger", () => {
+  const stops: (() => Promise<void>)[] = [];
+  afterEach(async () => {
+    for (const stop of stops.splice(0).reverse()) await stop();
+  });
+
+  const env = {
+    BOUNDA_MASTER_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64"),
+  };
+
+  interface KeyedArgs {
+    readonly storage: Adapter;
+    readonly ledger: Adapter | ReturnType<typeof defineForgetLedger> | null;
+    readonly tenantKeys: ReturnType<typeof createMemoryTenantKeyStore>;
+    readonly told: Notice[];
+    readonly failing?: Set<string>;
+    readonly logger?: Logger;
+  }
+
+  // An app with keys of its own, as one that runs for good, whose ports are doubles.
+  const keyed = async ({
+    storage,
+    ledger,
+    tenantKeys,
+    told,
+    failing = new Set(),
+    logger = silentLogger,
+  }: KeyedArgs): Promise<BoundaApp> => {
+    const app = await createApp({
+      registry: registryWithDoubles(
+        registryWith({ told, failing }),
+        {
+          customer: { mailer: sender([]), crm: sender([]) },
+          customers: { audience: sender([]) },
+        },
+        () => undefined,
+      ),
+      config: {
+        storage,
+        ports: {},
+        runtime: {
+          personalData: {
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            tenantKeys: defineTenantKeyStore(() => tenantKeys),
+            ...(ledger === null ? {} : { forgetLedger: { store: ledger } }),
+          },
+        },
+      } as never,
+      env,
+      clock: createFixedClock(START),
+      ids: createSequentialIdGenerator({ prefix: `keyed-${stops.length}` }),
+      logger,
+    });
+    stops.push(() => app.stop());
+    return app;
+  };
+
+  const registerOn = async (app: BoundaApp, customerId: string): Promise<void> => {
+    await (
+      app.commands as unknown as Record<string, (payload: unknown) => Promise<unknown>>
+    ).registerCustomer?.({ customerId, email: `${customerId}@example.com` });
+    await app.runUntilIdle();
+  };
+
+  interface RestoredArgs {
+    readonly ledger: (ledger: Adapter) => KeyedArgs["ledger"];
+    readonly logger?: Logger;
+    /**
+     * Runs once the copy is back, before the app starts again on it.
+     */
+    readonly onRestored?: () => void;
+  }
+
+  // A tenant forgotten after a disclosure made since the copy its database is then restored from
+  // was taken, and the app started again on that copy.
+  const restoredAfterForgetting = async ({ ledger, logger, onRestored }: RestoredArgs) => {
+    const directory = mkdtempSync(join(tmpdir(), "bounda-forgotten-recipients-"));
+    const file = join(directory, "store.db");
+    const copy = join(directory, "copy.db");
+    const tenantKeys = createMemoryTenantKeyStore();
+    const ledgerAdapter = memory();
+    const told: Notice[] = [];
+    const first = createNodeSqliteAdapter(file);
+    const before = await keyed({
+      storage: first.adapter,
+      ledger: ledger(ledgerAdapter),
+      tenantKeys,
+      told,
+    });
+    await registerOn(before, "c-0");
+    first.db.exec(`VACUUM INTO '${copy}'`);
+    await registerOn(before, "c-1");
+    told.length = 0;
+    await before.forgetTenant("default", { despiteLegalObligations: true });
+    // Stopped before its notices went out.
+    await before.stop();
+    first.db.close();
+    copyFileSync(copy, file);
+    onRestored?.();
+    const after = await keyed({
+      storage: createNodeSqliteAdapter(file).adapter,
+      ledger: ledger(ledgerAdapter),
+      tenantKeys,
+      told,
+      ...(logger === undefined ? {} : { logger }),
+    });
+    await after.runUntilIdle();
+    return { after, told, ledger: await ledgerAdapter.createForgetLedger({}) };
+  };
+
+  const presumedAll = [
+    {
+      port: "customer.crm",
+      type: "TenantForgotten",
+      person: "default",
+      categories: ["contact", "invoices"],
+      presumed: true,
+      idempotencyKey: expect.any(String),
+      persons: [],
+    },
+    {
+      port: "customer.mailer",
+      type: "TenantForgotten",
+      person: "default",
+      categories: ["contact"],
+      presumed: true,
+      idempotencyKey: expect.any(String),
+      persons: ["c-0"],
+    },
+    {
+      port: "customers.audience",
+      type: "TenantForgotten",
+      person: "default",
+      categories: ["contact"],
+      presumed: true,
+      idempotencyKey: expect.any(String),
+      persons: [],
+    },
+  ];
+
+  it("tells the recipients a copy restored after the forgetting lost, from the ledger, then clears it", async () => {
+    const { after, told, ledger } = await restoredAfterForgetting({ ledger: (store) => store });
+    expect(told).toEqual([
+      {
+        port: "customer.mailer",
+        type: "TenantForgotten",
+        person: "default",
+        categories: ["contact"],
+        presumed: false,
+        idempotencyKey: expect.any(String),
+        persons: ["c-0", "c-1"],
+      },
+    ]);
+    // Every recipient told: no copy restored from now on needs the ledger's disclosures.
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(0);
+    // Nor does a forgotten tenant's start or stop raise a mark the clear would have to remove.
+    await after.stop();
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(0);
+  });
+
+  it("presumes every declared recipient holds the tenant's data when the ledger cannot be read", async () => {
+    const errors: unknown[] = [];
+    let down = false;
+    const { told, ledger } = await restoredAfterForgetting({
+      ledger: (store) =>
+        defineForgetLedger(async ({ tenant }) => {
+          const inner = await store.createForgetLedger({ tenant });
+          const read: ForgetLedger["read"] = (args) =>
+            down ? Promise.reject(new Error("ledger down")) : inner.read(args);
+          return { ...inner, read };
+        }),
+      onRestored: () => {
+        down = true;
+      },
+      logger: {
+        ...silentLogger,
+        error: (message, fields) => {
+          errors.push([message, fields]);
+        },
+      },
+    });
+    expect(told).toEqual(presumedAll);
+    expect(errors).toContainEqual([
+      "the forget ledger could not be read for the disclosures the database lost: every declared recipient is presumed to hold the tenant's data",
+      { tenant: "default", errorName: "Error" },
+    ]);
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
+  });
+
+  it("presumes every declared recipient holds the tenant's data in a copy without a ledger", async () => {
+    const { told } = await restoredAfterForgetting({ ledger: () => null });
+    expect(told).toEqual(presumedAll);
+  });
+
+  it("presumes every declared recipient on a forgetting settled again after it was cut short", async () => {
+    const told: Notice[] = [];
+    const inner = memory();
+    let failing = false;
+    const flaky: Adapter = {
+      ...inner,
+      createStorage: async () => {
+        const storage = await inner.createStorage();
+        const transact: Storage["transact"] = (work) => {
+          if (!failing) return storage.transact(work);
+          failing = false;
+          return Promise.reject(new Error("the database went away"));
+        };
+        return { ...storage, transact };
+      },
+    };
+    const { app, register } = await start({ told, adapter: flaky });
+    await register("c-0");
+    told.length = 0;
+    failing = true;
+    await expect(app.forgetTenant("default", { despiteLegalObligations: true })).rejects.toThrow(
+      "the database went away",
+    );
+    // Without a ledger, the database settled again may be a copy that lost disclosures.
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await app.runUntilIdle();
+    expect(told).toEqual(presumedAll);
+  });
+
+  it("keeps the ledger, pruned past keepFor, until every recipient is told, and clears it then", async () => {
+    const told: Notice[] = [];
+    const failing = new Set<string>();
+    const ledgerAdapter = memory();
+    const { app } = await createTestApp({
+      registry: registryWith({ told, failing }),
+      now: START,
+      config: {
+        runtime: { personalData: { forgetLedger: { store: ledgerAdapter, keepFor: "1d" } } },
+      },
+      ports: {
+        customer: { mailer: sender([]), crm: sender([]) },
+        customers: { audience: sender([]) },
+      } as never,
+    });
+    stops.push(() => app.stop());
+    await registerOn(app, "c-1");
+    failing.add("customer.mailer");
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    const ledger = await ledgerAdapter.createForgetLedger({});
+    const old: ForgetLedgerEntry = {
+      personId: "c-old",
+      categories: null,
+      eventId: "old-forgetting",
+      forgottenAt: new Date(START.getTime() - 2 * 86_400_000).toISOString(),
+      reason: "requested",
+    };
+    await ledger.append([old]);
+    await app.runUntilIdle();
+    const [letter] = await app.deadLetters.list({ kind: "recipient" });
+    expect(letter).toMatchObject({ handler: "customer.mailer", eventType: "TenantForgotten" });
+    // A copy restored now would still need the disclosure to tell the mailer; the old entry is
+    // past keepFor.
+    expect((await ledger.read({ limit: 10 })).map(({ personId }) => personId)).toEqual(["c-1"]);
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: false,
+      forgetLedgerCleared: false,
+      fileKeysDestroyed: true,
+    });
+    failing.clear();
+    await app.deadLetters.retry(letter?.id ?? "");
+    await app.runUntilIdle();
+    expect(told.map(({ port, type }) => [port, type])).toContainEqual([
+      "customer.mailer",
+      "TenantForgotten",
+    ]);
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: true,
+      forgetLedgerCleared: true,
+      fileKeysDestroyed: true,
+    });
   });
 });
 

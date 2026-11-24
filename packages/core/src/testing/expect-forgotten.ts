@@ -4,7 +4,9 @@ import { DEFAULT_PERSONAL_CATEGORY } from "../adapter/storage/personal-key-store
 import { TenantForgottenError } from "../contracts/errors.ts";
 import { categoryOf, unseal } from "../kernel/personal-data/crypto.ts";
 import type { PersonalDataExport } from "../kernel/personal-data/export.ts";
+import { RESTORE_MARK } from "../kernel/shared/restores.ts";
 import { needlesOf } from "../kernel/shared/value-search.ts";
+import { isUnreadable } from "../kernel/status.ts";
 import type { Witness } from "../kernel/witness.ts";
 import { TENANT_FORGOTTEN_EVENT } from "../modules/bounda-events.ts";
 import type { PersonalCategoryName } from "../modules/personal-data.ts";
@@ -373,6 +375,30 @@ const NOTICES_ONLY: readonly InspectedStore[] = ["deadLetters", "subscriberFailu
 const ofForgetting = (row: Readonly<Record<string, unknown>>): boolean =>
   (row.event_type ?? row.eventType) === TENANT_FORGOTTEN_EVENT;
 
+// Once every recipient is told, nothing needs the ledger's entries or marks of the tenant: what
+// the forgotten app clears then, and leaves while a copy restored before could still need them.
+const ledgerProblems = async ({ running }: Scope): Promise<string[]> => {
+  const problems = new Set<string>();
+  for (const { client, ledgers } of running) {
+    const { forgottenTenant } = await client.status();
+    if (forgottenTenant === null || isUnreadable(forgottenTenant)) continue;
+    if (!forgottenTenant.recipientsTold) continue;
+    for (const ledger of ledgers) {
+      if ((await ledger.read({ limit: 1 })).length > 0) {
+        problems.add(
+          "the forget ledger still holds entries of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears them",
+        );
+      }
+      if ((await ledger.readMark(RESTORE_MARK)) > 0) {
+        problems.add(
+          "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
+        );
+      }
+    }
+  }
+  return [...problems];
+};
+
 const tenantProblems = (tables: readonly InspectedTable[]): string[] => {
   const problems: string[] = [];
   for (const table of tables) {
@@ -409,7 +435,8 @@ const tenantProblems = (tables: readonly InspectedTable[]): string[] => {
  * Checks that nothing personal of a tenant is left readable once `forgetTenant` forgot it: the
  * app refuses every call, its database holds no key, no snapshot and no remembered answer, no
  * subscriber failure or dead letter but those of the notices of the forgetting, the tenant key
- * store holds no version of its key, and no value of any of its persons turns up in the
+ * store holds no version of its key, once every recipient was told the forget ledger holds no
+ * entry and no mark of the tenant, and no value of any of its persons turns up in the
  * clear anywhere `expectForgotten` searches. Rejects with a `TenantNotForgottenError` that lists
  * what is left, and resolves when nothing is.
  *
@@ -456,7 +483,7 @@ export const expectTenantForgotten: ExpectTenantForgottenFunction = async (
   const advice = new Set<string>();
   for (const scope of checked) {
     const tables = (await Promise.all(scope.adapters.map((adapter) => adapter.inspect()))).flat();
-    problems.push(...tenantProblems(tables));
+    problems.push(...tenantProblems(tables), ...(await ledgerProblems(scope)));
     const values: unknown[] = [...(options.values ?? [])];
     const { data } = scope;
     const persons = data?.persons() ?? [];

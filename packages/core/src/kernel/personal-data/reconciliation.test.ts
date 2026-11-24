@@ -61,6 +61,7 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
     ...(visibilityDelayMs === undefined ? {} : { visibilityDelayMs }),
     readMark: async () => 0,
     raiseMark: async () => undefined,
+    clear: async () => true,
     append: async () => {},
     read: async (args) => {
       reads.push(args);
@@ -243,6 +244,7 @@ describe("the forget ledger's reconciliation", () => {
       ledger: {
         readMark: async () => 0,
         raiseMark: async () => undefined,
+        clear: async () => true,
         append: async () => {},
         read: async (args) => {
           if (failures > 0) {
@@ -296,6 +298,7 @@ describe("the forget ledger's reconciliation", () => {
       ledger: {
         readMark: async () => 0,
         raiseMark: async () => undefined,
+        clear: async () => true,
         append: async () => {},
         read: async () => {
           reads += 1;
@@ -1051,6 +1054,7 @@ describe("forgetAgain", () => {
           ledger: {
             readMark: async () => 0,
             raiseMark: async () => undefined,
+            clear: async () => true,
             append: async (entries) => {
               if (down) throw new Error("ledger is down");
               recorded.push(...entries);
