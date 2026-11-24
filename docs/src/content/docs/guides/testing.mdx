@@ -351,7 +351,8 @@ from `createWitness()` instead, and every expectation searches it as it searches
 
 `expectTenantForgotten` checks, after `forgetTenant`, that the app serves nothing, that no key,
 snapshot or remembered answer of the tenant is left, that the tenant key store holds no version of
-its key, and that no value of any of its persons is left readable:
+its key, that the forget ledger holds no entry and no mark of the tenant once every recipient was
+told, and that no value of any of its persons is left readable:
 
 ```ts
 import { createTestApp, expectTenantForgotten } from "@bounda-dev/core/testing";
@@ -359,6 +360,9 @@ import { createTestApp, expectTenantForgotten } from "@bounda-dev/core/testing";
 const { app } = await createTestApp({ registry, tenant: "acme" });
 // ...
 await app.forgetTenant("acme");
+await expectTenantForgotten(app);
+// Once the worker has told every recipient, the ledger must hold nothing of the tenant either.
+await app.runUntilIdle();
 await expectTenantForgotten(app);
 ```
 

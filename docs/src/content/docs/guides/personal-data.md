@@ -2620,8 +2620,11 @@ model's rows go with the forgetting, but a backup of a read model's database tak
 fields not marked `.personal()` in the clear until it is restored and an app starts on it (see
 [Limitations](/reference/limitations/)). What your app does next is yours: delete the database once
 nothing needs its skeleton, the tenant's Durable Object with `deleteAll()`, its PostgreSQL schema,
-its SQLite file, once the log above says its recipients are told and its ledger cleared: nothing
-else clears the ledger of a tenant whose app never starts again. The tenant key store keeps the
+its SQLite file, once its recipients are told and its ledger cleared: nothing else clears the
+ledger of a tenant whose app never starts again. `app.status().forgottenTenant` says it, as
+`{ recipientsTold, forgetLedgerCleared }`, `forgetLedgerCleared` `null` without a ledger, and
+`bounda status` prints `forgotten tenant: recipients told, forget ledger cleared; the database
+may be deleted` once both are; `null` while the tenant is not forgotten. The tenant key store keeps the
 record of the forgetting, which is what tells a restored copy to forget again, so keep it at least
 as long as any backup of the tenant, and never restore it to before the forgetting, which would
 bring the tenant's key back.
@@ -2845,7 +2848,10 @@ forgetting older than `keepFor` is not appended at all. KV expires each key on i
 `keepFor` after its forgetting, since it cannot list its oldest keys first. A backup older than
 `keepFor` brings back whom the removed entries named, so when you keep backups longer, raise it
 first. Without `keepFor` entries are kept until their tenant is [forgotten](#forgetting-a-tenant):
-ids, times and fingerprints only, but still the ids of people who asked to be forgotten.
+ids, times and fingerprints only, but still the ids of people who asked to be forgotten. A ledger
+in a SQL database is pruned only by an app of its tenant that runs: a tenant whose app does not
+run for a while keeps its entries past `keepFor` until one does (see
+[Limitations](/reference/limitations/)); KV and the keeper expire theirs on their own.
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or
 while it was longer, keep theirs. Give them the one `keepFor` sets now, from the project's root,
@@ -3108,8 +3114,9 @@ covers, rejects with an `Error` saying so.
 `expectTenantForgotten` checks a [tenant's forgetting](#forgetting-a-tenant): that the app refuses
 every call, that its database holds no key, no snapshot and no remembered answer, no subscriber
 failure or dead letter but those of the notices of the forgetting, that the tenant key store holds
-no version of its key, and that no value of any of its persons turns up in the
-clear wherever `expectForgotten` searches:
+no version of its key, that the forget ledger holds no entry and no mark of the tenant once every
+recipient was told, which `app.runUntilIdle()` gets to, and that no value of any of its persons
+turns up in the clear wherever `expectForgotten` searches:
 
 ```ts
 import { createTestApp, expectTenantForgotten } from "@bounda-dev/core/testing";

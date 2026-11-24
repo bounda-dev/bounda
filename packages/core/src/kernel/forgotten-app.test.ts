@@ -144,6 +144,11 @@ describe("an app started for a forgotten tenant", () => {
       tenant: "default",
       forgottenAt: forgetting.forgottenAt,
     });
+    // The notice of the forgetting is not delivered yet; there is no ledger to clear.
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: false,
+      forgetLedgerCleared: null,
+    });
     expect(await app.nextDueAt()).toBeNull();
     expect(await app.pendingRebuilds()).toEqual([]);
     await expect(app.catchUpReadModels()).resolves.toBeUndefined();
@@ -152,6 +157,10 @@ describe("an app started for a forgotten tenant", () => {
     expect(await app.runUntilIdle({ maxPasses: 1 })).toEqual({ idle: false, rejections: [] });
     expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
     expect((await app.getLag()).maxLag).toBe(0);
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: true,
+      forgetLedgerCleared: null,
+    });
     // With no recipient to tell, the notices leave no letter.
     expect(await app.deadLetters.list()).toEqual([]);
     // Its facades are no promises: awaiting one gives it back.
@@ -179,7 +188,8 @@ describe("an app started for a forgotten tenant", () => {
     });
     down = true;
     const status = await app.status();
-    expect(unreadableParts(status)).toEqual(["lag"]);
+    // Whether the recipients are told reads the lag too.
+    expect(unreadableParts(status)).toEqual(["lag", "forgottenTenant"]);
     await expect(app.getLag()).rejects.toThrow("events unreadable");
     expect(status.tenant).toMatchObject({ forgottenAt: forgetting.forgottenAt });
     expect(status.subscriberFailures).toEqual([]);
@@ -307,6 +317,7 @@ describe("the runner of a forgotten tenant", () => {
       forgotten: () => new TenantForgottenError("default", "2026-01-01T00:00:00.000Z"),
       discharge: async () => null,
       retain: async () => undefined,
+      ledgerCleared: async () => null,
       resettle: async () => {
         resettled += 1;
       },
@@ -353,6 +364,7 @@ describe("the runner of a forgotten tenant", () => {
         return null;
       },
       retain: async () => undefined,
+      ledgerCleared: async () => null,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -410,6 +422,7 @@ describe("the runner of a forgotten tenant", () => {
         return null;
       },
       retain: async () => undefined,
+      ledgerCleared: async () => null,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -449,6 +462,7 @@ describe("the runner of a forgotten tenant", () => {
       retain: async (now) => {
         retained.push(now.toISOString());
       },
+      ledgerCleared: async () => null,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -506,6 +520,7 @@ describe("the runner of a forgotten tenant", () => {
       retain: async () => {
         retains += 1;
       },
+      ledgerCleared: async () => null,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),

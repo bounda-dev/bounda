@@ -1074,6 +1074,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         retain: async (now) => {
           await forgottenLedger?.retain(now);
         },
+        ledgerCleared: async () => (forgottenLedger === null ? null : forgottenLedger.cleared()),
         pendingRetries,
         ids,
         clock,

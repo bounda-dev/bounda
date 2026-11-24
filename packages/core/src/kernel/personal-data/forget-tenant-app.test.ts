@@ -271,10 +271,19 @@ describe("forgetTenant", () => {
     expect([clears, discarded]).toEqual([1, 0]);
     expect(await app.nextDueAt()).toEqual(new Date(clock.now().getTime() + HOLD_MS));
     expect(await kept.read({ limit: 10 })).toHaveLength(1);
+    // Told, but the database is still needed: a copy restored now would need the ledger.
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: true,
+      forgetLedgerCleared: false,
+    });
     clock.advance(HOLD_MS);
     await app.runUntilIdle();
     expect([clears, discarded]).toEqual([2, 1]);
     expect(await kept.read({ limit: 10 })).toEqual([]);
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: true,
+      forgetLedgerCleared: true,
+    });
     expect(await app.nextDueAt()).toBeNull();
   });
 

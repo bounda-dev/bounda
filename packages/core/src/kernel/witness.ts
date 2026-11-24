@@ -10,7 +10,7 @@ import type { PersonalKey } from "./personal-data/crypto.ts";
 /**
  * What the expectations call on an app the witness watched.
  */
-export type WatchedClient = Pick<BoundaClient, "exportPersonalData">;
+export type WatchedClient = Pick<BoundaClient, "exportPersonalData" | "status">;
 
 /**
  * What `createWitness()` from `@bounda-dev/core/testing` returns, for tests: given to `createApp`

@@ -64,6 +64,10 @@ export interface CreateForgottenRunnerArgs {
    * Runs before each pass until the discharge went through.
    */
   readonly retain: (now: Date) => Promise<void>;
+  /**
+   * Whether the forget ledger holds nothing of the tenant, `null` without one.
+   */
+  readonly ledgerCleared: () => Promise<boolean | null>;
   readonly pendingRetries: PendingRetries;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -88,6 +92,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   resettle,
   discharge,
   retain,
+  ledgerCleared,
   pendingRetries,
   ids,
   clock,
@@ -98,11 +103,14 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   let discharged = false;
   // When the discharge that did not go through all the way is due again.
   let dischargeAt: Date | null = null;
+  // Every notice of the forgetting delivered, or its letter retried or discarded.
+  const told = async (): Promise<boolean> =>
+    (await dispatcher.getLag()).maxLag === 0 &&
+    (await storage.deadLetterStore.count({ kind: "recipient", status: "failed" })) === 0;
   const dischargeOnceTold = async (): Promise<void> => {
     if (discharged) return;
     if (dischargeAt !== null && clock.now() < dischargeAt) return;
-    if ((await dispatcher.getLag()).maxLag > 0) return;
-    if ((await storage.deadLetterStore.count({ kind: "recipient", status: "failed" })) > 0) return;
+    if (!(await told())) return;
     // Every notice of the forgetting delivered or settled: its letters serve nobody any longer.
     await storage.deadLetterStore.clear();
     dischargeAt = await discharge();
@@ -176,6 +184,10 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
         failures: storage.subscriberFailures,
         restores,
         tenant: () => tenantKeys.status(),
+        forgottenTenant: async () => ({
+          recipientsTold: await told(),
+          forgetLedgerCleared: await ledgerCleared(),
+        }),
       }),
     deadLetters: (actor) =>
       createDeadLetters({

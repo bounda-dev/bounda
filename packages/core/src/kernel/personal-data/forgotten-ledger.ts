@@ -1,6 +1,7 @@
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
 import type { TenantForgetting } from "../../adapter/storage/tenant-key-store.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { RESTORE_MARK } from "../shared/restores.ts";
 import { HOLD_MS } from "./hold.ts";
 
 /**
@@ -19,10 +20,17 @@ export interface ForgottenLedger {
    * before the forgetting shows in a ledger whose reads lag its writes. Never rejects.
    */
   clear(forgetting: TenantForgetting, now: Date): Promise<Date | null>;
+  /**
+   * Whether the ledger holds no entry and no mark of the tenant.
+   */
+  cleared(): Promise<boolean>;
 }
 
 export interface CreateForgottenLedgerArgs {
-  readonly ledger: Pick<ForgetLedger, "clear" | "prune" | "visibilityDelayMs">;
+  readonly ledger: Pick<
+    ForgetLedger,
+    "clear" | "prune" | "visibilityDelayMs" | "read" | "readMark"
+  >;
   /**
    * `null` keeps every entry until the ledger is cleared.
    */
@@ -79,5 +87,7 @@ export const createForgottenLedger: CreateForgottenLedgerFunction = ({
       });
       return null;
     },
+    cleared: async () =>
+      (await ledger.read({ limit: 1 })).length === 0 && (await ledger.readMark(RESTORE_MARK)) === 0,
   };
 };

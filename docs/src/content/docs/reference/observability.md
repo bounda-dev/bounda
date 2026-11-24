@@ -73,8 +73,8 @@ give, so an `evolve` of that aggregate depends on something other than the event
 `app.status()` is meant for the moment something is wrong, so it never rejects because a store it
 reads is down: each part it cannot read comes back as `{ unreadable: true }` (`UnreadableStatus`),
 which `isUnreadable` narrows, while the others come back as usual. `restoresFound`, the lag, a
-database of `schema`, the failures, the backfill, the forget ledger, the tenant, the key rotation,
-the retention and the recipients are each logged once for the call as
+database of `schema`, the failures, the backfill, the forget ledger, the tenant, a forgotten
+tenant's last work, the key rotation, the retention and the recipients are each logged once for the call as
 `a part of the status could not be read`, with the `part` (and the `database`); a subscriber's
 checkpoint, as for `getLag()`, as `a subscriber's checkpoint could not be read`; the two purges
 under their own lines, `resolved dead letters could not be read` and

@@ -1669,6 +1669,10 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
     // A copy restored now would still need the disclosure to tell the mailer; the old entry is
     // past keepFor.
     expect((await ledger.read({ limit: 10 })).map(({ personId }) => personId)).toEqual(["c-1"]);
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: false,
+      forgetLedgerCleared: false,
+    });
     failing.clear();
     await app.deadLetters.retry(letter?.id ?? "");
     await app.runUntilIdle();
@@ -1677,6 +1681,10 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
       "TenantForgotten",
     ]);
     expect(await ledger.read({ limit: 10 })).toEqual([]);
+    expect((await app.status()).forgottenTenant).toEqual({
+      recipientsTold: true,
+      forgetLedgerCleared: true,
+    });
   });
 });
 

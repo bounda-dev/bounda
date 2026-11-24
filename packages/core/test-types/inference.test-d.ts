@@ -69,6 +69,7 @@ import type {
   ForgetLedgerReconciliationStatus,
   ForgetOptions,
   ForgetsPersonalData,
+  ForgottenTenantStatus,
   HasPersonalFields,
   ImplementationModule,
   IncludeRestrictedOptions,
@@ -2068,6 +2069,14 @@ describe("operations", () => {
       readonly unreadable: true;
     }>();
     expectTypeOf<AppStatus["lag"]>().toEqualTypeOf<StatusLag | UnreadableStatus>();
+    // Once the tenant is forgotten: whether its database may be deleted.
+    expectTypeOf<AppStatus["forgottenTenant"]>().toEqualTypeOf<
+      ForgottenTenantStatus | null | UnreadableStatus
+    >();
+    expectTypeOf<ForgottenTenantStatus>().toEqualTypeOf<{
+      readonly recipientsTold: boolean;
+      readonly forgetLedgerCleared: boolean | null;
+    }>();
     // `getLag()` degrades the same way, a subscriber at a time; `maxLag` is `null` while one is
     // unread, so it never reads as caught up.
     expectTypeOf<AppLag>().toEqualTypeOf<{

@@ -10,12 +10,16 @@ const MINUTE = 60_000;
 
 const later = (ms: number): Date => new Date(AT.getTime() + ms);
 
+// A ledger that holds nothing, for what these cases do not read.
+const unread = { read: async () => [], readMark: async () => 0 };
+
 describe("the forget ledger of a forgotten tenant", () => {
   it("clears the ledger at once when its reads show every write, and says so", async () => {
     let cleared = 0;
     const recording = createRecordingLogger();
     const ledger = createForgottenLedger({
       ledger: {
+        ...unread,
         clear: async () => {
           cleared += 1;
           return true;
@@ -41,6 +45,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     let cleared = 0;
     const ledger = createForgottenLedger({
       ledger: {
+        ...unread,
         visibilityDelayMs: MINUTE,
         clear: async () => {
           cleared += 1;
@@ -61,7 +66,7 @@ describe("the forget ledger of a forgotten tenant", () => {
   it("asks to be run again at the next pass after a clear that removed part only, and says nothing yet", async () => {
     const recording = createRecordingLogger();
     const ledger = createForgottenLedger({
-      ledger: { clear: async () => false },
+      ledger: { ...unread, clear: async () => false },
       keepForMs: null,
       reconcileEveryMs: MINUTE,
       tenant: "acme",
@@ -75,6 +80,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     const recording = createRecordingLogger();
     const ledger = createForgottenLedger({
       ledger: {
+        ...unread,
         clear: () => Promise.reject(new Error("ledger down")),
       },
       keepForMs: null,
@@ -96,6 +102,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     const pruned: PruneForgetLedgerArgs[] = [];
     const ledger = createForgottenLedger({
       ledger: {
+        ...unread,
         clear: async () => true,
         prune: async (args) => {
           pruned.push(args);
@@ -119,6 +126,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     const pruned: PruneForgetLedgerArgs[] = [];
     const kept = createForgottenLedger({
       ledger: {
+        ...unread,
         clear: async () => true,
         prune: async (args) => {
           pruned.push(args);
@@ -133,7 +141,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     expect(pruned).toEqual([]);
     const recording = createRecordingLogger();
     const expiring = createForgottenLedger({
-      ledger: { clear: async () => true },
+      ledger: { ...unread, clear: async () => true },
       keepForMs: MINUTE,
       reconcileEveryMs: MINUTE,
       tenant: "acme",
@@ -148,6 +156,7 @@ describe("the forget ledger of a forgotten tenant", () => {
     let calls = 0;
     const ledger = createForgottenLedger({
       ledger: {
+        ...unread,
         clear: async () => true,
         prune: () => {
           calls += 1;

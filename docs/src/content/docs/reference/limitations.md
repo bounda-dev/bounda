@@ -29,6 +29,12 @@ get today. Each item says why, so nobody discovers it the hard way:
   writes beside the stream, a dead letter or a subscriber's failure, is in it or not depending on
   when it lands. Take it once the tenant receives no more work and the worker is idle; there is no
   call that holds a tenant read-only meanwhile.
+- **Pruning a SQL forget ledger with no app running.** A forget ledger in a SQLite or PostgreSQL
+  database is pruned past `keepFor` by an app of the tenant that runs: the periodic reconciliation,
+  or a forgotten tenant's worker until its recipients are told. A tenant whose app does not run
+  keeps its entries past `keepFor` until one does; nothing prunes the table on its own. KV expires
+  its keys, and the keeper on its own alarm. See [Keeping the ledger
+  short](/guides/personal-data/#keeping-the-ledger-short).
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each
   its own database, schema or Durable Object. See [Tenants](/guides/personal-data/#tenants).

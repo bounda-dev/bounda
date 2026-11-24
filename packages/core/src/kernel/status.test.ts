@@ -199,6 +199,7 @@ describe("readAppStatus", () => {
       reconciliation: { status: down("the ledger") },
       rotation: { status: down("the keys") },
       tenant: down("the tenant keys"),
+      forgottenTenant: down("the forgotten tenant's ledger"),
       retention: { status: down("the persons") },
       recipients: down("the recipients"),
     });
@@ -216,6 +217,7 @@ describe("readAppStatus", () => {
       personalDataBackfill: { unreadable: true },
       forgetLedger: { unreadable: true },
       tenant: { unreadable: true },
+      forgottenTenant: { unreadable: true },
       keyRotation: { unreadable: true },
       retention: { unreadable: true },
       deadLetterRetention: null,
@@ -293,6 +295,13 @@ describe("readAppStatus", () => {
         [
           "error",
           "a part of the status could not be read",
+          "forgottenTenant",
+          undefined,
+          "the forgotten tenant's ledger is down",
+        ],
+        [
+          "error",
+          "a part of the status could not be read",
           "retention",
           undefined,
           "the persons is down",
@@ -306,7 +315,7 @@ describe("readAppStatus", () => {
         ],
       ]),
     );
-    expect(entries).toHaveLength(10);
+    expect(entries).toHaveLength(11);
     expect(unreadableParts(status)).toEqual([
       "schema (readModels.reports)",
       "restoresFound",
@@ -315,6 +324,7 @@ describe("readAppStatus", () => {
       "personalDataBackfill",
       "forgetLedger",
       "tenant",
+      "forgottenTenant",
       "keyRotation",
       "retention",
       "recipients",
@@ -334,6 +344,7 @@ describe("readAppStatus", () => {
       personalDataBackfill: null,
       forgetLedger: null,
       tenant: null,
+      forgottenTenant: null,
       keyRotation: null,
       retention: null,
       recipients: [],
@@ -361,6 +372,7 @@ describe("unreadableParts", () => {
       personalDataBackfill: null,
       forgetLedger: null,
       tenant: null,
+      forgottenTenant: null,
       keyRotation: null,
       retention: null,
       deadLetterRetention: null,

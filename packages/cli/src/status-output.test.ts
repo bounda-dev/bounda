@@ -60,6 +60,7 @@ const status: AppStatus = {
     previous: ["t-1"],
     master: { kid: "m-2", previous: ["m-1"], pending: 1 },
   },
+  forgottenTenant: null,
   keyRotation: { kid: "k-2", previous: ["k-1"], pending: 1, completeAt: null, reseal: null },
   retention: {
     categories: [
@@ -175,6 +176,7 @@ describe("formatStatus", () => {
         held: null,
       },
       tenant: null,
+      forgottenTenant: null,
       keyRotation: {
         kid: "k-1",
         previous: [],
@@ -297,6 +299,24 @@ describe("formatStatus", () => {
         status: { ...bare, tenant: { ...tenant, forgottenAt: "2026-05-02T00:00:00.000Z" } },
       }),
     ).toContain("tenant: acme, forgotten at 2026-05-02T00:00:00.000Z\n");
+    const forgotten = (forgottenTenant: AppStatus["forgottenTenant"]) =>
+      formatStatus({ status: { ...bare, forgottenTenant } }).split("\n");
+    expect(forgotten(null).some((line) => line.startsWith("forgotten tenant"))).toBe(false);
+    expect(forgotten({ recipientsTold: false, forgetLedgerCleared: false })).toContain(
+      "forgotten tenant: recipients not all told yet, forget ledger not cleared yet; keep the database",
+    );
+    expect(forgotten({ recipientsTold: true, forgetLedgerCleared: false })).toContain(
+      "forgotten tenant: recipients told, forget ledger not cleared yet; keep the database",
+    );
+    expect(forgotten({ recipientsTold: true, forgetLedgerCleared: true })).toContain(
+      "forgotten tenant: recipients told, forget ledger cleared; the database may be deleted",
+    );
+    expect(forgotten({ recipientsTold: true, forgetLedgerCleared: null })).toContain(
+      "forgotten tenant: recipients told, no forget ledger; the database may be deleted",
+    );
+    expect(forgotten({ recipientsTold: false, forgetLedgerCleared: null })).toContain(
+      "forgotten tenant: recipients not all told yet, no forget ledger; keep the database",
+    );
   });
 });
 
@@ -323,6 +343,7 @@ describe("formatStatus of a status with parts that could not be read", () => {
     personalDataBackfill: UNREADABLE,
     forgetLedger: UNREADABLE,
     tenant: UNREADABLE,
+    forgottenTenant: UNREADABLE,
     keyRotation: UNREADABLE,
     retention: UNREADABLE,
     deadLetterRetention: { retentionMs: 90_000, unreadable: true },
@@ -344,6 +365,7 @@ describe("formatStatus of a status with parts that could not be read", () => {
       "personal data backfill: its store could not be read, see the logs",
       "forget ledger: its store could not be read, see the logs",
       "tenant: its store could not be read, see the logs",
+      "forgotten tenant: its store could not be read, see the logs",
       "key rotation: its store could not be read, see the logs",
       "retention: its store could not be read, see the logs",
       "dead letter retention: 90s, its store could not be read, see the logs",

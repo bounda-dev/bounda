@@ -176,7 +176,7 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
     needs neither, since it reads the event store alone.
   - **`keepFor`**, none by default. How long an entry is kept after the forgetting; set it longer
     than the oldest backup you can restore. The instance that runs a periodic round prunes the
-    older entries after it; KV expires each key on its own, and `bounda forget-ledger expire` gives
+    older entries after it, so a SQL ledger is pruned only while an app of the tenant runs; KV expires each key on its own, and `bounda forget-ledger expire` gives
     the keys written before `keepFor` was set theirs. Without it entries are kept until their
     tenant is [forgotten](/guides/personal-data/#forgetting-a-tenant) and every recipient of its
     data told, which clears a tenant's entries whatever `keepFor` says.
