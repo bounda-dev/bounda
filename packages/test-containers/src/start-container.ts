@@ -4,7 +4,7 @@ export interface StartContainerFunction {
   <Started>(start: () => Promise<Started>): Promise<Started | null>;
 }
 
-// Vitest's own reading of CI (std-env): set to anything but "" or "false".
+// The CI variable as Vitest reads it: on unless unset, "" or "false".
 const inCi = (): boolean => {
   const ci = process.env.CI;
   return ci !== undefined && ci !== "" && ci !== "false";
