@@ -12,8 +12,9 @@ Thanks for taking the time. Bug reports, documentation fixes and pull requests a
 
 ## Setting up
 
-You need Node 22.18 or newer and pnpm 12. Docker is optional: the PostgreSQL tests start a
-container and skip themselves when Docker is not running.
+You need Node 22.18 or newer and pnpm 12. Docker is optional: the PostgreSQL and libSQL server
+tests start a container and skip themselves when Docker is not running. Any other failure to start
+one fails them, and in CI (`CI` set) so does Docker not running.
 
 ```bash
 pnpm install
