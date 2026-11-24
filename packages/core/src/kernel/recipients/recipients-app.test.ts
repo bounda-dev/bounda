@@ -6,6 +6,12 @@ import type { Adapter, Storage } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { Table } from "../../adapter/storage/table.ts";
+import type {
+  PendingRecipientDeclaration,
+  TenantKeyRecord,
+  TenantKeyStore,
+  VersionedTenantKeyRecord,
+} from "../../adapter/storage/tenant-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ConfigurationError, PROCESSING_RESTRICTED } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
@@ -25,12 +31,19 @@ import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
+import { TENANT_CHECK_INTERVAL_MS } from "../personal-data/forgotten-tenant.ts";
 import { masterKey } from "../personal-data/master-key.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
+import type { TenantExportPart } from "../personal-data/tenant-export.ts";
 import { defineTenantKeyStore } from "../personal-data/tenant-key-source.ts";
 import { RESTORE_MARK } from "../shared/restores.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { readPart } from "../test-support.ts";
+import {
+  DECLARATION_LEASE_MS,
+  DECLARATION_RETRY_MS,
+  RECIPIENT_DECLARATION_HANDLER,
+} from "./pending.ts";
 
 type Events = Record<string, (payload?: unknown) => unknown>;
 
@@ -366,6 +379,8 @@ interface StartArgs {
   readonly registry?: Registry;
   readonly adapter?: Adapter;
   readonly mailerPort?: string;
+  readonly clock?: ReturnType<typeof createFixedClock>;
+  readonly logger?: Logger;
 }
 
 const start = async ({
@@ -374,6 +389,8 @@ const start = async ({
   registry = registryWith({ told, failing }),
   adapter,
   mailerPort = "mailer",
+  clock: given,
+  logger = silentLogger,
 }: StartArgs = {}) => {
   const mailed: (string | null)[] = [];
   const synced: (string | null)[] = [];
@@ -394,7 +411,7 @@ const start = async ({
         })
       : await (async () => {
           starts += 1;
-          const clock = createFixedClock(START);
+          const clock = given ?? createFixedClock(START);
           const app = await createApp({
             registry: registryWithDoubles(
               registry,
@@ -404,7 +421,7 @@ const start = async ({
             config: { storage: adapter, ports: {} } as never,
             clock,
             ids: createSequentialIdGenerator({ prefix: `app-${starts}` }),
-            logger: silentLogger,
+            logger,
           });
           return { app, clock };
         })();
@@ -904,6 +921,195 @@ describe("recipients of personal data", () => {
       ["customer.crm", 0],
       ["customer.newsletter", 1],
       ["customers.audience", 0],
+    ]);
+  });
+
+  it("reads a frozen start's recipients as declared in every instance, and another instance that forgets the tenant before the thaw tells them", async () => {
+    // An instance of the earlier version, running while a later one starts and renames the mailer
+    // and declares the CRM: on a tenant frozen through that start, or thawed for it.
+    const instances = async (frozen: boolean) => {
+      const adapter = memory();
+      const told: Notice[] = [];
+      const earlier = await start({ told, adapter, registry: registryWith({ told, crm: null }) });
+      await earlier.register("c-1");
+      await earlier.app.runUntilIdle();
+      if (frozen) await earlier.app.freezeTenant("default");
+      const later = await start({
+        told,
+        adapter,
+        mailerPort: "newsletter",
+        registry: registryWith({
+          told,
+          mailerPort: "newsletter",
+          mailer: { ...MAILCHIMP, formerly: ["customer.mailer"] },
+        }),
+      });
+      if (!frozen) await earlier.app.freezeTenant("default");
+      const recipientsOf = (await earlier.app.recipientsOf("c-1")).map(({ port, status }) => [
+        port,
+        status,
+      ]);
+      const status = readPart((await earlier.app.status()).recipients).map(
+        ({ port, persons, catchingUp }) => [port, persons, catchingUp],
+      );
+      const exported = (await earlier.app.exportPersonalData("c-1")).recipients.map(
+        ({ port, status: held }) => [port, held],
+      );
+      const handedBack: unknown[] = [];
+      for await (const part of await earlier.app.exportTenant("default")) {
+        if (part.kind === "person") {
+          handedBack.push(part.person.recipients.map(({ port, status: held }) => [port, held]));
+        }
+      }
+      // The earlier instance forgets the tenant, the later one never thawed.
+      await earlier.app.forgetTenant("default", { despiteLegalObligations: true });
+      const storage = await adapter.createStorage();
+      const declaredStored = (await storage.recipients.declared()).map(({ port }) => port);
+      const payload = (await storage.eventStore.readAll({ afterPosition: 0, limit: 100 })).find(
+        ({ type }) => type === "TenantForgotten",
+      )?.payload as { readonly recipients: readonly NotifiedRecipient[] } | undefined;
+      const forgotten = (payload?.recipients ?? []).map(({ port, presumed }) => [port, presumed]);
+      const record = await (await adapter.createTenantKeyStore?.())?.get("default");
+      await later.app.stop();
+      return {
+        recipientsOf,
+        status,
+        exported,
+        handedBack,
+        forgotten,
+        declaredStored,
+        pending: record?.pendingRecipients,
+      };
+    };
+    const frozen = await instances(true);
+    expect(frozen).toEqual(await instances(false));
+    // The earlier version still declares the mailer under its former port, and not the CRM.
+    expect(frozen.recipientsOf).toEqual([
+      ["customer.mailer", "declared"],
+      ["customer.newsletter", "disclosed"],
+      ["customers.audience", "declared"],
+    ]);
+    expect(frozen.forgotten).toEqual([
+      ["customer.crm", true],
+      ["customer.newsletter", false],
+    ]);
+    expect(frozen.declaredStored).toEqual([
+      "customer.crm",
+      "customer.newsletter",
+      "customers.audience",
+    ]);
+    expect(frozen.pending).toBeUndefined();
+  });
+
+  it("writes at the thaw, from any instance, what a start the freeze held declared, once, and empties the record", async () => {
+    const adapter = memory();
+    const told: Notice[] = [];
+    const earlier = await start({ told, adapter, registry: registryWith({ told, crm: null }) });
+    await earlier.register("c-1");
+    await earlier.app.freezeTenant("default");
+    const later = await start({ told, adapter });
+    // Stopped before the thaw, as an instance that crashed.
+    await later.app.stop();
+    const keys = await adapter.createTenantKeyStore();
+    const [held] = (await keys.get("default"))?.pendingRecipients ?? [];
+    expect(held?.ports.map(({ port }) => port).sort()).toEqual([
+      "customer.crm",
+      "customer.mailer",
+      "customers.audience",
+    ]);
+    const storage = await adapter.createStorage();
+    expect((await storage.recipients.declared()).map(({ port }) => port)).toEqual([
+      "customer.mailer",
+      "customers.audience",
+    ]);
+    await earlier.app.unfreezeTenant("default");
+    expect((await storage.recipients.declared()).map(({ port }) => port)).toEqual([
+      "customer.crm",
+      "customer.mailer",
+      "customers.audience",
+    ]);
+    expect(await keys.get("default")).not.toHaveProperty("pendingRecipients");
+    expect(
+      await storage.inboxLedger.get({
+        handler: "bounda:recipient-declaration",
+        eventId: String(held?.id),
+      }),
+    ).toMatchObject({ status: "succeeded", attempts: 1 });
+  });
+
+  it("writes at a start what earlier starts left pending before its own declaration, which comes last", async () => {
+    const adapter = memory();
+    const told: Notice[] = [];
+    const first = await start({ told, adapter });
+    await first.register("c-1");
+    await first.app.stop();
+    const keys = await adapter.createTenantKeyStore();
+    const record = await keys.get("default");
+    const { revision, ...kept } = record ?? { revision: 0 };
+    await keys.put(
+      "default",
+      {
+        ...(kept as Omit<NonNullable<typeof record>, "revision">),
+        pendingRecipients: [
+          {
+            id: "earlier",
+            renames: [],
+            ports: [
+              { port: "customer.crm", categories: ["contact"] },
+              { port: "customer.sms", categories: ["contact"] },
+            ],
+            position: 1,
+            at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+      revision,
+    );
+    await start({ told, adapter });
+    const storage = await adapter.createStorage();
+    expect(
+      (await storage.recipients.declared()).map(({ port, categories }) => [port, categories]),
+    ).toEqual([
+      ["customer.crm", ["contact", "invoices"]],
+      ["customer.mailer", ["contact"]],
+      ["customer.sms", ["contact"]],
+      ["customers.audience", ["contact"]],
+    ]);
+    expect(await keys.get("default")).not.toHaveProperty("pendingRecipients");
+  });
+
+  it("hands a tenant back with the recipients declared as the freeze held them when the export began", async () => {
+    const adapter = memory();
+    const told: Notice[] = [];
+    const earlier = await start({ told, adapter, registry: registryWith({ told, crm: null }) });
+    await earlier.register("c-1", "1 Main Street");
+    await earlier.app.freezeTenant("default");
+    const later = await start({ told, adapter });
+    const crm = async (
+      parts: AsyncIterable<TenantExportPart> | AsyncIterator<TenantExportPart>,
+    ) => {
+      const held: unknown[] = [];
+      const iterator = Symbol.asyncIterator in parts ? parts[Symbol.asyncIterator]() : parts;
+      for (let part = await iterator.next(); part.done !== true; part = await iterator.next()) {
+        if (part.value.kind !== "person") continue;
+        for (const { port, status, categories } of part.value.person.recipients) {
+          if (port === "customer.crm") held.push([status, categories.map(({ name }) => name)]);
+        }
+      }
+      return held;
+    };
+    const parts = (await later.app.exportTenant("default"))[Symbol.asyncIterator]();
+    expect((await parts.next()).value).toMatchObject({ kind: "header" });
+    // A start declares the CRM for fewer categories while the export is under way.
+    await start({
+      told,
+      adapter,
+      registry: registryWith({ told, crm: { ...BREVO, categories: ["contact"] } }),
+    });
+    expect(await crm(parts)).toEqual([["presumed", ["contact", "invoices"]]]);
+    expect(await crm(await later.app.exportTenant("default"))).toEqual([
+      ["presumed", ["contact"]],
+      ["declared", ["invoices"]],
     ]);
   });
 
@@ -1907,5 +2113,243 @@ describe("recipient declarations", () => {
         { recipient: "customer.mailer", persons: 1 },
       ],
     ]);
+  });
+});
+
+describe("the recipients a start on a frozen tenant declares, across instances", () => {
+  // A memory adapter whose tenant key store puts through `put`, given the store beneath.
+  const intercepted = (
+    put: (args: {
+      readonly tenant: string;
+      readonly record: TenantKeyRecord;
+      readonly expected: number | null;
+      readonly store: TenantKeyStore;
+    }) => Promise<boolean>,
+  ) => {
+    const adapter = memory();
+    const store = createMemoryTenantKeyStore();
+    const keys: TenantKeyStore = {
+      ...store,
+      put: (tenant, record, expected) => put({ tenant, record, expected, store }),
+    };
+    return {
+      adapter: {
+        ...adapter,
+        ephemeralKeys: { ...adapter.ephemeralKeys, tenantKeys: defineTenantKeyStore(() => keys) },
+      } as Adapter,
+      store,
+    };
+  };
+  const passThrough = ({
+    tenant,
+    record,
+    expected,
+    store,
+  }: Parameters<Parameters<typeof intercepted>[0]>[0]) => store.put(tenant, record, expected);
+
+  const EARLIER: PendingRecipientDeclaration = {
+    id: "earlier",
+    renames: [],
+    ports: [{ port: "customer.crm", categories: ["contact"] }],
+    position: 1,
+    at: START.toISOString(),
+  };
+
+  const withPending = async (
+    store: TenantKeyStore,
+    held: readonly PendingRecipientDeclaration[],
+  ) => {
+    const { revision, ...record } = (await store.get("default")) as VersionedTenantKeyRecord;
+    await store.put("default", { ...record, pendingRecipients: held }, revision);
+  };
+
+  const holding = async (adapter: Adapter, id: string) =>
+    (await adapter.createStorage()).inboxLedger.tryClaim({
+      handler: RECIPIENT_DECLARATION_HANDLER,
+      eventId: id,
+      now: START,
+      leaseMs: DECLARATION_LEASE_MS,
+    });
+
+  // What `work` resolves to, `clock` moved on while it waits.
+  const waited = async <T>(clock: ReturnType<typeof createFixedClock>, work: Promise<T>) => {
+    let done = false;
+    const settled = work.finally(() => {
+      done = true;
+    });
+    while (!done) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      clock.advance(DECLARATION_RETRY_MS);
+    }
+    return settled;
+  };
+
+  const crmCategories = async (adapter: Adapter) =>
+    (await (await adapter.createStorage()).recipients.declared()).find(
+      ({ port }) => port === "customer.crm",
+    )?.categories;
+
+  it("declares nothing at a start that finds the tenant forgotten meanwhile, and fails one whose record it cannot write", async () => {
+    let mode: "forget" | "fail" | "pass" = "pass";
+    const { adapter, store } = intercepted(async (args) => {
+      if (args.record.pendingRecipients === undefined || mode === "pass") return passThrough(args);
+      if (mode === "fail") throw new Error("the key store is down");
+      const current = (await args.store.get(args.tenant)) as VersionedTenantKeyRecord;
+      const { revision, ...record } = current;
+      await args.store.put(
+        args.tenant,
+        { ...record, keys: [], forgotten: { at: START.toISOString(), eventId: "e-1" } },
+        revision,
+      );
+      return false;
+    });
+    const told: Notice[] = [];
+    const earlier = await start({ told, adapter, registry: registryWith({ told, crm: null }) });
+    await earlier.register("c-1");
+    await earlier.app.freezeTenant("default");
+    mode = "fail";
+    await expect(start({ told, adapter })).rejects.toThrow("the key store is down");
+    mode = "forget";
+    const later = await start({ told, adapter });
+    expect((await store.get("default"))?.pendingRecipients).toBeUndefined();
+    expect((await store.get("default"))?.forgotten).not.toBeNull();
+    await later.app.stop();
+  });
+
+  it("writes them, older ones first, at a frozen start that finds the tenant thawed meanwhile, waiting for one another instance holds", async () => {
+    let thawing = false;
+    const { adapter, store } = intercepted(async (args) => {
+      const put = await passThrough(args);
+      if (thawing && args.record.pendingRecipients !== undefined) {
+        thawing = false;
+        await (await adapter.createStorage()).fence.set({ state: "open" });
+        // Another instance claims the earlier declaration as the thaw lets it.
+        await holding(adapter, EARLIER.id);
+      }
+      return put;
+    });
+    const told: Notice[] = [];
+    const earlier = await start({ told, adapter, registry: registryWith({ told, crm: null }) });
+    await earlier.register("c-1");
+    await earlier.app.freezeTenant("default");
+    await withPending(store, [EARLIER]);
+    thawing = true;
+    const clock = createFixedClock(START);
+    const later = await waited(clock, start({ told, adapter, clock }));
+    expect((await store.get("default"))?.pendingRecipients).toBeUndefined();
+    expect(await crmCategories(adapter)).toEqual(["contact", "invoices"]);
+    await later.app.stop();
+  });
+
+  it("waits at a start on a thawed tenant for one another instance holds, then writes its own last", async () => {
+    const { adapter, store } = intercepted(passThrough);
+    const told: Notice[] = [];
+    const earlier = await start({ told, adapter, registry: registryWith({ told, crm: null }) });
+    await earlier.register("c-1");
+    await withPending(store, [EARLIER]);
+    await holding(adapter, EARLIER.id);
+    const clock = createFixedClock(START);
+    const later = await waited(clock, start({ told, adapter, clock }));
+    expect((await store.get("default"))?.pendingRecipients).toBeUndefined();
+    expect(await crmCategories(adapter)).toEqual(["contact", "invoices"]);
+    await later.app.stop();
+  });
+
+  it.each(["unfreezeTenant", "forgetTenant"] as const)(
+    "waits in %s for one another instance holds, and leaves none in the record",
+    async (operation) => {
+      const { adapter, store } = intercepted(passThrough);
+      const told: Notice[] = [];
+      const clock = createFixedClock(START);
+      const earlier = await start({
+        told,
+        adapter,
+        clock,
+        registry: registryWith({ told, crm: null }),
+      });
+      await earlier.register("c-1");
+      // Claimed by an instance that stopped before the freeze came.
+      await withPending(store, [EARLIER]);
+      await holding(adapter, EARLIER.id);
+      await earlier.app.freezeTenant("default");
+      await waited<unknown>(
+        clock,
+        operation === "unfreezeTenant"
+          ? earlier.app.unfreezeTenant("default")
+          : earlier.app.forgetTenant("default", { despiteLegalObligations: true }),
+      );
+      expect((await store.get("default"))?.pendingRecipients).toBeUndefined();
+      expect(await crmCategories(adapter)).toEqual(["contact"]);
+    },
+  );
+
+  it("reports the recipients in the status as the record held them last when it does not answer", async () => {
+    let down = false;
+    const { adapter, store } = intercepted(passThrough);
+    const told: Notice[] = [];
+    const earlier = await start({
+      told,
+      adapter,
+      registry: registryWith({ told, crm: null }),
+    });
+    await earlier.register("c-1");
+    await earlier.app.freezeTenant("default");
+    await start({ told, adapter });
+    const get = store.get;
+    store.get = async (tenant) => {
+      if (down) throw new Error("the key store is down");
+      return get(tenant);
+    };
+    const ports = async () =>
+      readPart((await earlier.app.status()).recipients).map(({ port }) => port);
+    const read = await ports();
+    expect(read).toContain("customer.crm");
+    down = true;
+    expect(await ports()).toEqual(read);
+  });
+
+  it("writes them on a pass of any instance once it reads them, leaves one another instance holds to a later pass, and logs one it cannot write", async () => {
+    let failing = false;
+    const { adapter, store } = intercepted(async (args) => {
+      if (failing) throw new Error("the key store is down");
+      return passThrough(args);
+    });
+    const told: Notice[] = [];
+    const errors: string[] = [];
+    const clock = createFixedClock(START);
+    const earlier = await start({
+      told,
+      adapter,
+      clock,
+      registry: registryWith({ told, crm: null }),
+      logger: {
+        ...silentLogger,
+        error: (message, fields) => {
+          errors.push(`${message}: ${JSON.stringify(fields)}`);
+        },
+      },
+    });
+    await earlier.register("c-1");
+    await withPending(store, [EARLIER]);
+    clock.advance(TENANT_CHECK_INTERVAL_MS);
+    await earlier.app.runUntilIdle();
+    expect((await store.get("default"))?.pendingRecipients).toBeUndefined();
+    expect(await crmCategories(adapter)).toEqual(["contact"]);
+
+    const LATER = { ...EARLIER, id: "later", ports: [{ port: "customer.crm", categories: [] }] };
+    await withPending(store, [LATER]);
+    await holding(adapter, LATER.id);
+    clock.advance(TENANT_CHECK_INTERVAL_MS);
+    await earlier.app.runUntilIdle();
+    expect((await store.get("default"))?.pendingRecipients).toEqual([LATER]);
+    expect(errors).toEqual([]);
+
+    clock.advance(DECLARATION_LEASE_MS + TENANT_CHECK_INTERVAL_MS);
+    failing = true;
+    await earlier.app.runUntilIdle();
+    expect(errors).toEqual([
+      'the declarations of recipients the freeze held could not be written yet: {"errorName":"Error"}',
+    ]);
+    expect(await crmCategories(adapter)).toEqual([]);
   });
 });

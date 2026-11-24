@@ -264,6 +264,36 @@ describe("presumedOf", () => {
     );
   });
 
+  it("reads no event while no port is declared late, and loads no stream of a person none is presumed to hold", async () => {
+    await append("customer", "CustomerRegistered");
+    await storage.recipients.declare([{ port: "customer.zero", categories: ["contact"] }], 0, AT);
+    const reads: string[] = [];
+    const counted = (transaction: Parameters<typeof presumedOf>[0]) => ({
+      ...transaction,
+      eventStore: {
+        ...transaction.eventStore,
+        readByPerson: (args: Parameters<typeof transaction.eventStore.readByPerson>[0]) => {
+          reads.push("readByPerson");
+          return transaction.eventStore.readByPerson(args);
+        },
+        load: (args: Parameters<typeof transaction.eventStore.load>[0]) => {
+          reads.push("load");
+          return transaction.eventStore.load(args);
+        },
+      },
+    });
+    expect(
+      await storage.transact((transaction) => presumedOf(counted(transaction), "c-1")),
+    ).toEqual(new Map());
+    expect(reads).toEqual([]);
+    await append("customer", "CustomerRegistered", {}, "c-2");
+    await storage.recipients.declare([{ port: "customer.mailer", categories: ["contact"] }], 1, AT);
+    expect(
+      await storage.transact((transaction) => presumedOf(counted(transaction), "c-2")),
+    ).toEqual(new Map());
+    expect(reads).toEqual(["readByPerson"]);
+  });
+
   it("drops what a forgetting told a port to erase, and nothing other events named", async () => {
     await append("customer", "CustomerRegistered");
     await storage.recipients.declare(

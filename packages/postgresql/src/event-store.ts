@@ -48,6 +48,20 @@ const toStoredEvent = (row: Record<string, unknown>): StoredEvent => ({
   person: row.person === null ? null : String(row.person),
 });
 
+const IDS_PER_STATEMENT = 90;
+
+const chunksOf = (ids: readonly string[]): string[][] => {
+  const chunks: string[][] = [];
+  for (let left = [...new Set(ids)]; left.length > 0; left = left.slice(IDS_PER_STATEMENT)) {
+    chunks.push(left.slice(0, IDS_PER_STATEMENT));
+  }
+  return chunks;
+};
+
+// One numbered parameter per id of `chunk`, from `from` on.
+const placeholders = (chunk: readonly string[], from: number): string =>
+  chunk.map((_, index) => `$${from + index}`).join(", ");
+
 /**
  * Every append takes the advisory lock first, so appends are serialised: the `BIGSERIAL` position
  * matches commit order, and `readAll` never sees a gap that a transaction still uncommitted would
@@ -160,6 +174,33 @@ export const createPostgresqlEventStore: CreatePostgresqlEventStoreFunction = ({
           [person, afterPosition, limit],
         )
       ).map(toStoredEvent),
+    firstPositions: async (persons) => {
+      const first = new Map<string, number>();
+      for (const chunk of chunksOf(persons)) {
+        const rows = await db.all(
+          `SELECT "person", MIN("position") AS "position" FROM ${table} WHERE "person" IN (${placeholders(chunk, 1)}) GROUP BY "person"`,
+          chunk,
+        );
+        for (const row of rows) first.set(String(row.person), Number(row.position));
+      }
+      return first;
+    },
+    loadMany: async ({ aggregateType, aggregateIds }) => {
+      const loaded = new Map<string, StoredEvent[]>();
+      for (const chunk of chunksOf(aggregateIds)) {
+        const rows = await db.all(
+          `SELECT ${COLUMNS} FROM ${table} WHERE "aggregate_type" = $1 AND "aggregate_id" IN (${placeholders(chunk, 2)}) ORDER BY "aggregate_id", "version"`,
+          [aggregateType, ...chunk],
+        );
+        for (const row of rows) {
+          const event = toStoredEvent(row);
+          const stream = loaded.get(event.aggregateId);
+          if (stream === undefined) loaded.set(event.aggregateId, [event]);
+          else stream.push(event);
+        }
+      }
+      return loaded;
+    },
     lastPosition: async () => {
       const [row] = await db.all(
         `SELECT COALESCE(MAX("position"), 0) AS "position" FROM ${table}`,

@@ -39,6 +39,7 @@ import type {
   FileKeyAccess,
   ListTenantKeysArgs,
   OpenEncryptedFileArgs,
+  PendingRecipientDeclaration,
   StoredFileKey,
   StoredTenantKey,
   Tenancy,
@@ -297,6 +298,14 @@ describe("the tenant key store", () => {
       readonly forgotten: TenantForgetting | null;
       readonly files?: readonly StoredFileKey[];
       readonly frozenAt?: string;
+      readonly pendingRecipients?: readonly PendingRecipientDeclaration[];
+    }>();
+    expectTypeOf<PendingRecipientDeclaration>().toEqualTypeOf<{
+      readonly id: string;
+      readonly renames: readonly { readonly from: string; readonly to: string }[];
+      readonly ports: readonly { readonly port: string; readonly categories: readonly string[] }[];
+      readonly position: number;
+      readonly at: string;
     }>();
     expectTypeOf<StoredFileKey>().toEqualTypeOf<{
       readonly database: string;

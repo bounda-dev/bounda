@@ -347,7 +347,9 @@ declared late is presumed to hold what existed before, and told of the past. A t
 tells every recipient of any of its persons' data, those of disclosures a restored copy of the
 database lost included, which the forget ledger keeps until then; without a ledger to say which, a
 copy restored before the forgetting tells every recipient the app declares, presumed to hold the
-tenant's data.
+tenant's data. A port a start declared on a tenant frozen for its hand-back is told too, whichever
+instance forgets it: the declaration waits in the tenant key store's record, which every instance
+reads, until the thaw writes it.
 [`recipientsOf(person)`](/guides/personal-data/#telling-the-person) and `bounda recipients <person>`
 list a person's recipients, as 19 lets them ask.
 

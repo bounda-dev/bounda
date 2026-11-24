@@ -617,6 +617,93 @@ export const eventStoreContract: EventStoreContractFunction = ({ create, concurr
       expect(await store.readByPerson({ person: "c-3", afterPosition: 0, limit: 10 })).toEqual([]);
     });
 
+    it("reads the first position of many persons at once, more than one statement carries, leaving out those with none", async () => {
+      const persons = Array.from(
+        { length: 205 },
+        (_, index) => `p-${String(index).padStart(3, "0")}`,
+      );
+      for (const [index, person] of persons.entries()) {
+        await store.append({
+          aggregateType: "customer",
+          aggregateId: person,
+          expectedVersion: 0,
+          events: [
+            pendingEvent({ aggregateType: "customer", aggregateId: person, version: 1, person }),
+            pendingEvent({
+              aggregateType: "customer",
+              aggregateId: person,
+              version: 2,
+              type: "CustomerMoved",
+              person: index % 2 === 0 ? person : (persons[0] ?? null),
+            }),
+          ],
+        });
+      }
+      const first = await store.firstPositions([...persons, "p-000", "nobody"]);
+      expect(first.size).toBe(persons.length);
+      expect(first.has("nobody")).toBe(false);
+      for (const [index, person] of persons.entries()) {
+        expect(first.get(person)).toBe(index * 2 + 1);
+      }
+      expect(await store.firstPositions([])).toEqual(new Map());
+      await store.reseal([{ position: 1, payload: {}, person: null }]);
+      expect(await store.firstPositions(["p-000", "p-001"])).toEqual(
+        new Map([
+          ["p-000", 2],
+          ["p-001", 3],
+        ]),
+      );
+      // Resealed to an earlier event than any it had: that one comes first.
+      await store.reseal([{ position: 1, payload: {}, person: "p-002" }]);
+      expect(await store.firstPositions(["p-002"])).toEqual(new Map([["p-002", 1]]));
+    });
+
+    it("loads many streams of one type at once, more than one statement carries, each as load reads it", async () => {
+      const ids = Array.from({ length: 205 }, (_, index) => `s-${String(index).padStart(3, "0")}`);
+      for (const id of ids) {
+        await store.append({
+          aggregateType: "customer",
+          aggregateId: id,
+          expectedVersion: 0,
+          events: [
+            pendingEvent({ aggregateType: "customer", aggregateId: id, version: 1 }),
+            pendingEvent({
+              aggregateType: "customer",
+              aggregateId: id,
+              version: 2,
+              type: "CustomerMoved",
+            }),
+          ],
+        });
+      }
+      await store.append({
+        aggregateType: "order",
+        aggregateId: "s-000",
+        expectedVersion: 0,
+        events: [pendingEvent({ aggregateId: "s-000", version: 1 })],
+      });
+      const loaded = await store.loadMany({
+        aggregateType: "customer",
+        aggregateIds: [...ids, "s-000", "unknown"],
+      });
+      expect([...loaded.keys()].sort()).toEqual(ids);
+      for (const id of ids) {
+        expect(loaded.get(id)).toEqual(
+          (await store.load({ aggregateType: "customer", aggregateId: id })).events,
+        );
+      }
+      expect(
+        await store.loadMany({ aggregateType: "order", aggregateIds: ["s-000", "s-001"] }),
+      ).toEqual(
+        new Map([
+          ["s-000", (await store.load({ aggregateType: "order", aggregateId: "s-000" })).events],
+        ]),
+      );
+      expect(await store.loadMany({ aggregateType: "customer", aggregateIds: [] })).toEqual(
+        new Map(),
+      );
+    });
+
     it("reseals events in place, their position and the rest kept, and finds them by their new person", async () => {
       await store.append({
         aggregateType: "customer",

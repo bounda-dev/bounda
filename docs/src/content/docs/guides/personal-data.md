@@ -2213,7 +2213,10 @@ then reaches its copies only through the master key, which is in every one of th
 
 A tenant's record holds every version of its key, each wrapped under the master key with the
 master key's id and the version's fingerprint, the random id of the database the key belongs to,
-and, once the tenant is forgotten, when and under which event. A store written by several
+and, once the tenant is forgotten, when and under which event. While the tenant is
+[frozen](#freezing-a-tenant) it also holds since when, and the declarations of recipients the
+starts meanwhile could not write to the database: a store of your own keeps the record whole, every
+field as it was put. A store written by several
 instances compares the record's revision and writes it in one step, so two instances never put two
 first versions in force; `defineTenantKeyStore` documents what a store of your own must do: get
 and put a tenant's record, and list its tenants in pages, from a cursor, which a rotation of the
@@ -2523,19 +2526,27 @@ no dead letter: it finds out at the first write a fence refuses, or within
 `TENANT_CHECK_INTERVAL_MS`, and goes on as soon as it reads the freeze lifted, within the same
 time. `getLag()` says it as `frozen`, and `nextDueAt()` is `null` meanwhile, so a Durable Object
 sleeps until `unfreezeTenant` wakes it. An app that starts on a frozen tenant serves its reads and
-its export, and does what a start writes, declaring its recipients or comparing its database with
-the ledger, once the tenant thaws. Every read sees the recipients it declares as declared already:
-`recipientsOf`, the status, the exports and a forgetting of the tenant meanwhile, which writes the
-declaration with it. A read model in a database of its own that a restore left behind the stream
-serves nothing until then, when it catches up. Bounda's own migrations still run on a frozen tenant: they
+its export, and does what a start writes, such as comparing its database with the ledger, once the
+tenant thaws. The declaration of its recipients, the ports it adds and renames, waits in the tenant
+key store's record, where every instance reads it: `recipientsOf`, the status, the exports and a
+forgetting of the tenant meanwhile, on any instance, an older version's included, see those
+recipients as declared already, and the forgetting writes the declaration with it. A start that
+comes back with the same declaration adds nothing more. A read model in a database of its own that
+a restore left behind the stream serves nothing until then, when it catches up. Bounda's own migrations still run on a frozen tenant: they
 change the tables' shape, never what a row means, so an export reads the same before and after.
 `bounda restore` refuses a frozen tenant, and keeps the fence the database holds whatever the copy's
 says. `forgetTenant` still forgets a frozen tenant, which then stays forgotten.
 
 `unfreezeTenant` lowers the fences the other way round: the tenant key store's record first, then
 the database's, each read model's, and the forget ledger's last, so an intention never lands in
-the ledger while the database would still refuse its commit. It resolves once every one is
-lowered; calling it on a tenant that is not frozen does nothing.
+the ledger while the database would still refuse its commit. Then it writes the declarations of
+recipients the record holds, oldest first, so none overwrites a later one, and removes them from
+the record. It resolves once every one is lowered and written; calling it on a tenant that is not
+frozen writes what a thaw cut short left and lowers nothing. Each declaration is written once,
+whichever instance writes it: in one transaction with its claim in the inbox, as a policy's
+handler runs once for an event. An instance that stopped before the thaw leaves nothing behind,
+and a thaw cut short leaves the rest to the next start, which writes them before its own
+declaration, or to the next pass of any instance.
 
 The record is the freeze's own account, kept apart from the database, so a copy restored by hand,
 which brings back the fence it held, does not lift it: while the record says the tenant is frozen,
@@ -2604,7 +2615,10 @@ out of place, so reaching its end without a throw means the file holds the whole
 
 The tenant is frozen, so the export is one cut of every store: the stream up to the header's
 `position`, and everything else as it stood when the freeze took effect, which no write of any
-instance changes while it reads. A read model or the ledger's copy of the stream that had not
+instance changes while it reads. The recipients a start on the frozen tenant declared are read as
+the record held them when the export began: one that starts meanwhile comes after the cut. Each
+page of persons reads the stream twice for the recipients presumed to hold their data, however
+many persons it holds. A read model or the ledger's copy of the stream that had not
 caught up then stays where it was: `reached` says where, and the rows of a read model are those of
 the events up to `reached.readModels[name]`. The export still fails at the end with
 `ConcurrencyError`, without its `end` part, should the stream move past that position or come back
@@ -2665,7 +2679,9 @@ It runs in this order, every step safe to run again:
    `bounda:<tenant>`, with the categories the tenant's persons held keys of and the
    [recipients](#recipients) to tell. With a [forget ledger](#the-forget-ledger), the disclosures
    it holds past what the database applied are recorded again first, as a reconciliation would, so
-   a recipient the database lost is told too.
+   a recipient the database lost is told too. The recipients a start on the tenant
+   [frozen](#freezing-a-tenant) declared, which the tenant key store's record holds until the thaw,
+   are among them, whichever instance forgets it, and their declaration is written then.
 4. Every person's key, the database's key, every snapshot, every remembered answer, every
    subscriber's last failure and every dead letter but those of the notices of the forgetting are
    deleted, failed letters too, since no work of the tenant's is retried again, and every read

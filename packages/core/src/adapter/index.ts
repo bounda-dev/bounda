@@ -59,6 +59,7 @@ export type {
   AppendResult,
   EventStore,
   LoadArgs,
+  LoadManyArgs,
   LoadResult,
   PendingEvent,
   ReadAllArgs,
@@ -200,6 +201,7 @@ export type {
 export { fenceError, isFenceError, nextFence } from "./storage/tenant-fence.ts";
 export type {
   ListTenantKeysArgs,
+  PendingRecipientDeclaration,
   StoredFileKey,
   StoredTenantKey,
   TenantForgetting,

@@ -7,7 +7,16 @@ import { createMemoryTenantFence, FENCED_WRITES } from "./tenant-fence.ts";
 
 // What each store answers without changing anything, which the fence lets through.
 const READS: Readonly<Record<string, readonly string[]>> = {
-  eventStore: ["lastPosition", "load", "readAll", "readByPerson", "readOne", "rows"],
+  eventStore: [
+    "firstPositions",
+    "lastPosition",
+    "load",
+    "loadMany",
+    "readAll",
+    "readByPerson",
+    "readOne",
+    "rows",
+  ],
   inboxLedger: ["get"],
   deadLetterStore: [
     "count",
