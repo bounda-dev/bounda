@@ -37,6 +37,8 @@ export const durableObjectAdapter: DurableObjectAdapterFunction = ({
   return createSqliteAdapter({
     name: "cloudflare",
     options,
+    // Where the object is, so the app it opens holds every other store to it as the Worker does.
+    ...(options.jurisdiction === undefined ? {} : { location: options.jurisdiction }),
     tablePrefix: options.tablePrefix ?? DEFAULT_TABLE_PREFIX,
     acquire: () => ({ db, raw: storage.sql }),
     // Nothing to close: the storage lives as long as the object.

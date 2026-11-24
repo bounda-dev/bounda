@@ -20,7 +20,7 @@ app/read/orders/            a read model
   view.ts                   its fields
   projections/order/order-placed.ts   projects the order's OrderPlaced
   queries/list-orders.ts
-bounda.config.ts            storage and ports
+bounda.config.ts            storage, where it keeps the data, and ports
 src/main.ts                 boots the app, places an order and lists it
 tests/orders.test.ts        the app on an in-memory adapter
 ```
@@ -29,3 +29,6 @@ Add a file, run `{{generateCommand}}`, import its `+types` and you have the argu
 [project layout guide](https://docs.bounda.dev/guides/project-layout/) covers every kind of module.
 
 `.bounda/` and `+types/` are generated; they stay out of git.
+
+`bounda.config.ts` keeps the data in `"eu"`: change `location` to the jurisdiction your databases
+run in before you deploy. See [data location](https://docs.bounda.dev/reference/configuration/#data-location).

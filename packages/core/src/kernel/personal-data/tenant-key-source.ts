@@ -21,8 +21,8 @@ export interface TenantKeyStoreDefinition {
   readonly kind: "bounda-tenant-key-store";
   create(args: CreateTenantKeyStoreArgs): TenantKeyStore | Promise<TenantKeyStore>;
   /**
-   * Where the store keeps the keys, when it pins it, as an adapter's `location` does, such as
-   * `"jurisdiction eu"`.
+   * Where the store keeps the keys, when it declares it, as an adapter's `location` does, such as
+   * `"eu"`.
    */
   readonly location?: string;
 }
@@ -32,9 +32,9 @@ export interface TenantKeyStoreDefinition {
  */
 export interface StoreDefinitionOptions {
   /**
-   * Where the store keeps what it holds, when it pins it, written as an adapter's `location` is,
-   * such as `"jurisdiction eu"`: the record of processing states it, and an app on Cloudflare
-   * whose `cloudflare({ jurisdiction })` names one refuses a store that does not name the same.
+   * The jurisdiction the store keeps what it holds in, written as an adapter's `location` is, such
+   * as `"eu"`, which you answer for: the record of processing states it, and an app whose storage
+   * declares a location refuses a store that does not declare the same.
    */
   readonly location?: string;
 }

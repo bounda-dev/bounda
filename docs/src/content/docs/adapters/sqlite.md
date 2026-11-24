@@ -26,6 +26,7 @@ sqlite({ url: "libsql://my-app-me.turso.io", authToken: process.env.TURSO_AUTH_T
 | `memory: true` | | An in-memory database that lives as long as the app |
 | `url`, `authToken` | | A libSQL URL (`libsql://`, `https://` or `file:`) and its token |
 | `tablePrefix` | `bounda_` | Put in front of every table Bounda creates |
+| `location` | | The jurisdiction the database keeps its data in, such as `"eu"`: where the host runs for a file or memory, where the server is for a URL. See [data location](/reference/configuration/#data-location) |
 
 ## How it stores things
 

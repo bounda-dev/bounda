@@ -1,3 +1,4 @@
+import type { DataLocationOptions } from "@bounda-dev/core/adapter";
 import { DEFAULT_TABLE_PREFIX } from "@bounda-dev/core/adapter/sql";
 
 export type PostgresqlLocation =
@@ -12,22 +13,24 @@ export type PostgresqlLocation =
     };
 
 /**
- * Options of `postgresql(...)`: where the server is, and where and how Bounda keeps its tables.
+ * Options of `postgresql(...)`: where the server is, the jurisdiction it keeps its data in, and
+ * where and how Bounda keeps its tables.
  */
-export type PostgresqlOptions = PostgresqlLocation & {
-  /**
-   * Holds every Bounda table, and is created when missing. Defaults to `public`.
-   */
-  readonly schema?: string;
-  /**
-   * Put in front of every table name. Defaults to `bounda_`.
-   */
-  readonly tablePrefix?: string;
-  /**
-   * The size of the pool. Defaults to 10.
-   */
-  readonly maxConnections?: number;
-};
+export type PostgresqlOptions = PostgresqlLocation &
+  DataLocationOptions & {
+    /**
+     * Holds every Bounda table, and is created when missing. Defaults to `public`.
+     */
+    readonly schema?: string;
+    /**
+     * Put in front of every table name. Defaults to `bounda_`.
+     */
+    readonly tablePrefix?: string;
+    /**
+     * The size of the pool. Defaults to 10.
+     */
+    readonly maxConnections?: number;
+  };
 
 export interface ResolvedPostgresqlOptions {
   readonly url?: string;

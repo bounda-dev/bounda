@@ -677,6 +677,13 @@ describe("memory adapter", () => {
   });
 });
 
+describe("memory()'s location", () => {
+  it("declares where the process keeps its data when told, and nothing otherwise", () => {
+    expect(memory({ location: "eu" }).location).toBe("eu");
+    expect(memory()).not.toHaveProperty("location");
+  });
+});
+
 describe("what memory() shows of its tenant", () => {
   it("names the tenancy row by its scope and each tenant's key by its tenant", async () => {
     const adapter = memory();

@@ -129,6 +129,7 @@ export const postgresql: PostgresqlFunction = (options) => {
     kind: "bounda-adapter",
     name: "postgresql",
     options,
+    ...(options.location === undefined ? {} : { location: options.location }),
     schemaVersions: () => briefly(({ db }) => versionsOn(db)),
     migrate: (names) =>
       briefly(async ({ db }) => {

@@ -16,6 +16,7 @@ import {
   defineTenantKeyStore,
   masterKey,
 } from "@bounda-dev/core/config";
+import { memory } from "@bounda-dev/core/memory";
 import { describe, expect, it, vi } from "vitest";
 import { configForObject } from "../src/bounda-object.ts";
 import { connect } from "../src/client.ts";
@@ -119,7 +120,7 @@ describe("the tenant key store in keeper objects", () => {
   });
 
   it("is kept where its storage says, and in the keeper it names", async () => {
-    expect(durableObjectTenantKeys({ storage: eu }).location).toBe("jurisdiction eu");
+    expect(durableObjectTenantKeys({ storage: eu }).location).toBe("eu");
     expect(durableObjectTenantKeys({ storage }).location).toBeUndefined();
     expect(DEFAULT_KEEPER_BINDING).toBe("KEEPER");
     const tenant = `${fresh()}eu`;
@@ -160,7 +161,7 @@ describe("the forget ledger in keeper objects", () => {
       state.storage.sql.exec(`SELECT "tenant", "person" FROM "bounda_forget_ledger"`).toArray(),
     );
     expect(kept).toEqual([{ tenant, person: "c-1" }]);
-    expect(durableObjectForgetLedger({ storage: eu }).location).toBe("jurisdiction eu");
+    expect(durableObjectForgetLedger({ storage: eu }).location).toBe("eu");
     expect(durableObjectForgetLedger({ storage }).location).toBeUndefined();
   });
 
@@ -448,7 +449,7 @@ describe("a keeper object", () => {
 });
 
 describe("cloudflare() with a jurisdiction", () => {
-  const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
+  const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" });
   const refusal = (config: Config): string => {
     try {
       cloudflareStorageOf(config);
@@ -468,7 +469,7 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       }),
     ).toBe(
-      'runtime.personalData.tenantKeys keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction eu: use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineTenantKeyStore(create, { location: "jurisdiction eu" })',
+      'runtime.personalData.tenantKeys keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineTenantKeyStore(create, { location: "eu" })',
     );
     expect(
       refusal({
@@ -482,7 +483,7 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       }),
     ).toBe(
-      'runtime.personalData.forgetLedger.store keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction eu: use durableObjectForgetLedger({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineForgetLedger(create, { location: "jurisdiction eu" })',
+      'runtime.personalData.forgetLedger.store keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectForgetLedger({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineForgetLedger(create, { location: "eu" })',
     );
     expect(
       refusal({
@@ -497,8 +498,36 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       }),
     ).toBe(
-      'runtime.personalData.tenantKeys keeps what it holds in jurisdiction fedramp, and cloudflare() keeps the tenants\' objects in jurisdiction eu: use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineTenantKeyStore(create, { location: "jurisdiction eu" })',
+      'runtime.personalData.tenantKeys keeps what it holds in "fedramp", and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineTenantKeyStore(create, { location: "eu" })',
     );
+  });
+
+  it("refuses a read model on another adapter that is not kept in the jurisdiction", () => {
+    const inventoryOf = (search: Config["storage"]) =>
+      personalDataInventory({
+        registry: quietRegistry,
+        config: {
+          storage: eu,
+          readModels: { search },
+          runtime: {
+            personalData: {
+              keyWrapper,
+              tenantKeys: durableObjectTenantKeys({ storage: eu }),
+              forgetLedger: { store: durableObjectForgetLedger({ storage: eu }) },
+            },
+          },
+        },
+      });
+    expect(() => inventoryOf(memory())).toThrow(
+      'readModels.search declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, so give its memory() location: "eu"',
+    );
+    expect(() => inventoryOf(memory({ location: "us" }))).toThrow(ConfigurationError);
+    expect(inventoryOf(memory({ location: "eu" })).records).toContainEqual({
+      name: "tenant-keys",
+      where: "tenant-keys",
+      location: "eu",
+      keptFor: null,
+    });
   });
 
   it("refuses it wherever the configuration is resolved, the record of processing included", () => {
@@ -515,6 +544,28 @@ describe("cloudflare() with a jurisdiction", () => {
     ).toThrow(ConfigurationError);
   });
 
+  it("holds no store to a jurisdiction when cloudflare() names none", () => {
+    const keptIn = { location: "eu" };
+    expect(
+      refusal({
+        storage: cloudflare(),
+        runtime: {
+          personalData: {
+            keyWrapper,
+            tenantKeys: defineTenantKeyStore(() => {
+              throw new Error("never opened");
+            }, keptIn),
+            forgetLedger: {
+              store: defineForgetLedger(() => {
+                throw new Error("never opened");
+              }, keptIn),
+            },
+          },
+        },
+      }),
+    ).toBe("resolved");
+  });
+
   it("reads past personal data or a forget ledger that is null, as a Worker's code may hold", () => {
     for (const runtime of [
       { personalData: null },
@@ -527,7 +578,7 @@ describe("cloudflare() with a jurisdiction", () => {
   });
 
   it("takes the keeper's stores, and stores of your own that name the jurisdiction", () => {
-    const own = { location: "jurisdiction eu" };
+    const own = { location: "eu" };
     for (const personalData of [
       {
         keyWrapper,

@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
+import { type AdapterDefinition, isAdapterDefinition } from "../../adapter/adapter-definition.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ResolvedConfig } from "../../config/types.ts";
 import { capitalize } from "../../modules/naming.ts";
@@ -79,8 +79,8 @@ export interface InventoryHolder {
    */
   readonly database: string;
   /**
-   * Where that database keeps them, as its adapter's definition pins it (`location`); `null`
-   * when it pins nothing.
+   * Where that database keeps them, as its adapter's `location` declares it; `null` when it
+   * declares none.
    */
   readonly location: string | null;
 }
@@ -152,7 +152,9 @@ export interface InventoryRecipient {
  * (`personal-keys`), their activity and restriction (`persons`), the runtime's events about them
  * (`forgettings`), the answers remembered for idempotent commands (`remembered-answers`), the error
  * text of failed work (`dead-letters`) and of each subscriber's last failure
- * (`subscriber-failures`), what went to each recipient (`disclosures`), the forgettings recorded
+ * (`subscriber-failures`), what went to each recipient (`disclosures`), the master key that
+ * wraps every tenant's key (`master-key`), the tenant's key that every personal key is wrapped
+ * under, kept apart (`tenant-keys`), the forgettings recorded
  * outside the database (`forget-ledger`) and the accesses handed to `app/audit.ts` (`access-log`).
  */
 export type InventoryRecordName =
@@ -163,19 +165,22 @@ export type InventoryRecordName =
   | "dead-letters"
   | "subscriber-failures"
   | "disclosures"
+  | "master-key"
+  | "tenant-keys"
   | "forget-ledger"
   | "access-log";
 
 export interface InventoryRecord {
   readonly name: InventoryRecordName;
   /**
-   * The name of the adapter of the database that keeps it, `"forget-ledger"` for the ledger and
+   * The name of the adapter of the database that keeps it, `"key-wrapper"` for the master key,
+   * `"tenant-keys"` for the tenant key store, `"forget-ledger"` for the ledger and
    * `"app/audit.ts"` for the access log.
    */
   readonly where: string;
   /**
-   * Where that database keeps it, as its adapter's definition pins it (`location`); `null` when
-   * it pins nothing, and for the ledger and the access log.
+   * Where it is kept, as the `location` of its adapter or store declares it; `null` when it
+   * declares none, and for the access log, which the app keeps where it chooses.
    */
   readonly location: string | null;
   /**
@@ -198,7 +203,9 @@ export interface InventoryNotPersonal {
  * criminal data (article 10), in a category that does not declare them; `unmarkable`, text a mark
  * cannot reach (a payload that is not an object, or an object that keeps keys it does not
  * declare); `no-basis`, personal fields in the default category, which declares no legal basis;
- * `error-text`, logs that carry the text of errors, which may quote personal data.
+ * `error-text`, logs that carry the text of errors, which may quote personal data; `no-location`,
+ * a store of personal data, or the key wrapper, that declares no `location`, so the record cannot
+ * say whether it is a transfer out of the European Economic Area (article 30(1)(e)).
  */
 export type InventoryFindingKind =
   | "unclassified"
@@ -206,7 +213,8 @@ export type InventoryFindingKind =
   | "looks-special"
   | "unmarkable"
   | "no-basis"
-  | "error-text";
+  | "error-text"
+  | "no-location";
 
 export interface InventoryFinding {
   readonly kind: InventoryFindingKind;
@@ -445,7 +453,7 @@ const recordsOf = (
   recipients: readonly InventoryRecipient[],
 ): InventoryRecord[] => {
   const { database: storage, location } = keptIn(config.storage);
-  const ledger = config.runtime.personalData.forgetLedger;
+  const { keyWrapper, tenantKeys, forgetLedger: ledger } = config.runtime.personalData;
   return [
     { name: "personal-keys", where: storage, location, keptFor: null },
     { name: "persons", where: storage, location, keptFor: null },
@@ -471,6 +479,26 @@ const recordsOf = (
     ...(recipients.length === 0
       ? []
       : [{ name: "disclosures" as const, where: storage, location, keptFor: null }]),
+    ...(keyWrapper === null
+      ? []
+      : [
+          {
+            name: "master-key" as const,
+            where: "key-wrapper",
+            location: keyWrapper.location ?? null,
+            keptFor: null,
+          },
+        ]),
+    ...(tenantKeys === null
+      ? []
+      : [
+          {
+            name: "tenant-keys" as const,
+            where: "tenant-keys",
+            location: tenantKeys.location ?? null,
+            keptFor: null,
+          },
+        ]),
     ...(ledger === null
       ? []
       : [
@@ -485,6 +513,80 @@ const recordsOf = (
       ? []
       : [{ name: "access-log" as const, where: "app/audit.ts", location: null, keptFor: null }]),
   ];
+};
+
+interface Placed {
+  readonly path: string;
+  readonly declared: object;
+  readonly through: string;
+}
+
+const optionsOf = (adapter: AdapterDefinition): string => `the options of its ${adapter.name}()`;
+
+const declaredThrough = (declared: object, define: string): string =>
+  isAdapterDefinition(declared) ? optionsOf(declared) : `${define}(create, { location })`;
+
+// Each store of personal data that declares no location; under a storage that declares one,
+// `resolveConfig` has refused the configuration already.
+const unlocated = (
+  config: ResolvedConfig,
+  holders: readonly InventoryHolder[],
+  recipients: readonly InventoryRecipient[],
+): InventoryFinding[] => {
+  // Nothing personal, nothing to place: a disclosure alone still names its person in storage.
+  if (holders.length === 0 && recipients.length === 0) return [];
+  const { storage, readModels } = config;
+  const { keyWrapper, tenantKeys, forgetLedger } = config.runtime.personalData;
+  const stores: Placed[] = [
+    { path: "storage", declared: storage, through: optionsOf(storage) },
+    ...holders.flatMap((holder) => {
+      const definition = holder.kind === "read-model" ? readModels[holder.name] : undefined;
+      return definition === undefined || definition === storage
+        ? []
+        : [
+            {
+              path: `readModels.${holder.name}`,
+              declared: definition,
+              through: optionsOf(definition),
+            },
+          ];
+    }),
+    ...(keyWrapper === null
+      ? []
+      : [
+          {
+            path: "runtime.personalData.keyWrapper",
+            declared: keyWrapper,
+            through: "masterKey({ from, location }) or defineKeyWrapper(create, { location })",
+          },
+        ]),
+    ...(tenantKeys === null
+      ? []
+      : [
+          {
+            path: "runtime.personalData.tenantKeys",
+            declared: tenantKeys,
+            through: declaredThrough(tenantKeys, "defineTenantKeyStore"),
+          },
+        ]),
+    ...(forgetLedger === null
+      ? []
+      : [
+          {
+            path: "runtime.personalData.forgetLedger.store",
+            declared: forgetLedger.store,
+            through: declaredThrough(forgetLedger.store, "defineForgetLedger"),
+          },
+        ]),
+  ];
+  return stores
+    .filter(({ declared }) => Reflect.get(declared, "location") === undefined)
+    .map(({ path, through }) => ({
+      kind: "no-location",
+      holder: null,
+      field: null,
+      message: `${path} declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through ${through}`,
+    }));
 };
 
 export const personalDataInventory: PersonalDataInventoryFunction = ({ registry, config }) => {
@@ -540,6 +642,7 @@ export const personalDataInventory: PersonalDataInventoryFunction = ({ registry,
     });
   }
   const recipients = recipientsOf(registry);
+  findings.push(...unlocated(resolved, collected.holders, recipients));
   const returning = portsByCategory(buildPortReturns({ registry, categories }));
   return {
     categories: categories.all.map((category) => ({

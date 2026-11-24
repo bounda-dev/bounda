@@ -37,11 +37,53 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
   `cloudflare()`, whose `binding` names the Durable Object binding the Worker reaches it through,
   `"STORE"` by default. See [adapters](/adapters/).
 - **`readModels`**, default `{}`. A different adapter for some read models, by read model name: `{
-  orderSummary: postgresql({ url: READ_URL }) }`. The rest stay in `storage`.
+  orderSummary: postgresql({ url: READ_URL }) }`. The rest stay in `storage`. Under a `storage` that
+  declares a [location](#data-location), each must declare the same.
 - **`ports`**, default `{}`. The implementation each port uses, by module and port: `{ order: {
   notifier: "smtp" } }`. A port with one implementation may be left out; one with several must be
   named. The names are typed from the project. See [ports](/guides/project-layout/#ports-portts).
 - **`runtime`**. How the app runs.
+
+## Data location
+
+Every adapter takes **`location`**, none by default: the jurisdiction its database keeps the data
+in, such as `"eu"`, written the same way for every store of the app. `cloudflare()` takes its
+[`jurisdiction`](/adapters/cloudflare/#data-location) instead, and `defineTenantKeyStore` and
+`defineForgetLedger` take a `location` as their second argument, and so does `defineKeyWrapper`;
+`masterKey` takes it beside `from`.
+
+```ts
+const location = "eu";
+
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL!, location }),
+  readModels: { search: sqlite({ url: process.env.SEARCH_URL!, location }) },
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location }),
+      tenantKeys: postgresql({ url: process.env.TENANT_KEYS_URL!, location }),
+    },
+  },
+});
+```
+
+- The location `storage` declares is the app's. The app refuses to start, with `ConfigurationError`,
+  and [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) to draw the
+  record, on a read model in `readModels`, `personalData.keyWrapper`, `personalData.tenantKeys` or
+  `personalData.forgetLedger.store` that declares another location, or none: each carries the
+  persons' data, or the key that opens it, wherever it is kept, and encryption protects data from
+  a transfer only while its keys stay behind.
+- A `storage` that declares none holds nothing else to one, and each store says its own.
+- The record of processing states each one's location next to everything kept there, the master
+  key's included, and lists every store of personal data, and the key wrapper, that declares none
+  as a finding, which makes the command exit `1`.
+- A location is a non-empty name, compared as written: `"eu"` and `"EU"` are two. Bounda cannot see
+  where a server, a file or a process is, so it is taken at its word; on Cloudflare an object
+  checks its own jurisdiction, but not where a Worker's secrets are kept. A local file,
+  `memory()` and `masterKey` declare where the host runs, and the app's processes run where its
+  storage is.
+- `create-bounda` writes `"eu"`. See [transfers out of the
+  EEA](/reference/gdpr/#transfers-out-of-the-eea-articles-44-to-49).
 
 ## `runtime`
 
@@ -128,7 +170,9 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   previous: [...] })` names the environment variables that hold the current master key and the
   ones used before, 32 random bytes in base64 each (`openssl rand -base64 32`), read from the
   host's environment when the app starts; a variable missing or malformed fails the start with
-  `ConfigurationError`. A KMS or a vault is given through `defineKeyWrapper`. Versions of the
+  `ConfigurationError`. A KMS or a vault is given through `defineKeyWrapper`. Both take a
+  [`location`](#data-location), where the host or the KMS keeps the master key, which a `storage`
+  that declares one requires to be the same. Versions of the
   tenant's key wrapped under a previous master key are rewrapped by the worker in the background.
   `memory()` brings a master key of its own, gone with the process. See
   [where the keys live](/guides/personal-data/#where-the-keys-live).
@@ -137,9 +181,10 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   such as `sqlite({ path: "./keys/tenant-keys.db" })` or `postgresql({ url: TENANT_KEYS_URL })`, a
   store from `defineTenantKeyStore`, or on Cloudflare `durableObjectTenantKeys({ storage })`, in the
   app's jurisdiction, or `kvTenantKeys({ binding })`, for an app that names none. An adapter that
-  points at the storage's own database fails the start, and so, under `cloudflare({ jurisdiction
-  })`, does a store whose `location` is not that jurisdiction: `defineTenantKeyStore(create, {
-  location })` names one's. `forgetTenant` destroys the key there. See
+  points at the storage's own database fails the start, and so, under a `storage` that declares a
+  [location](#data-location), does a store that declares another, or none:
+  `defineTenantKeyStore(create, { location })` declares one's. `forgetTenant` destroys the key
+  there. See
   [the tenant key store](/guides/personal-data/#the-tenant-key-store).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
   database, before it commits, by person's id, event id, time, reason and the fingerprints of the
@@ -152,8 +197,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
     that tells a [restore](/guides/personal-data/#restores) made while the app was stopped; `durableObjectForgetLedger({
     storage })` or, for an app that names no jurisdiction, `kvForgetLedger({ binding })` from
     `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`,
-    whose `location` option names where it keeps its entries, as the record of processing states it
-    and a jurisdiction requires.
+    whose `location` option declares where it keeps its entries, as the record of processing states
+    it and a `storage` that declares a [location](#data-location) requires.
     Every forgetting writes its intention to it before it commits, and the runtime copies every
     `PersonalDataForgotten` to it again from the stream in the background. An adapter pointing at
     the storage's own database fails the start.

@@ -91,6 +91,9 @@ describe("scaffoldProject", () => {
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       "@bounda-dev/sqlite",
     );
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      'const location = "eu";',
+    );
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm install");
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".bounda/");
     expect(await readFile(join(target, "AGENTS.md"), "utf8")).toContain(
@@ -125,6 +128,9 @@ describe("scaffoldProject", () => {
     );
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       "@bounda-dev/postgresql",
+    );
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      'const location = "eu";',
     );
     expect(JSON.parse(await readFile(join(target, "package.json"), "utf8")).dependencies).toEqual({
       "@bounda-dev/core": "^0.1.0-alpha.0",
@@ -441,7 +447,7 @@ describe("scaffoldProject", () => {
     expect(await keyOf(first)).toMatch(/^[A-Za-z0-9+/]{43}=$/);
     expect(await keyOf(first)).not.toBe(await keyOf(second));
     expect(await readFile(join(first, "bounda.config.ts"), "utf8")).toContain(
-      'masterKey({ from: "BOUNDA_MASTER_KEY" })',
+      'masterKey({ from: "BOUNDA_MASTER_KEY", location })',
     );
     expect(await readFile(join(first, ".gitignore"), "utf8")).toMatch(/^\.env$/m);
 
@@ -463,7 +469,7 @@ describe("scaffoldProject", () => {
     );
     expect(await readFile(join(given, ".gitignore"), "utf8")).toMatch(/^\.dev\.vars\*$/m);
     expect(await readFile(join(given, "bounda.config.ts"), "utf8")).toContain(
-      'masterKey({ from: "BOUNDA_MASTER_KEY" })',
+      'masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" })',
     );
   });
 });

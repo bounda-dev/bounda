@@ -46,9 +46,22 @@ describe("bounda personal-data inventory", () => {
     expect(code).toBe(EXIT_OK);
     expect(stdout).toMatch(/^# Record of processing activities\n/);
     expect(stdout).toContain(
-      "| event `customer.CustomerRegistered` | `email` | contact | the aggregate's id | sealed under the person's key | event store (memory) |",
+      "| event `customer.CustomerRegistered` | `email` | contact | the aggregate's id | sealed under the person's key | event store (memory, in eu) |",
     );
     expect(stdout).toContain("None: every field is classified.");
+  });
+
+  it("exits 1 while a store of personal data declares no location", async () => {
+    const { code, stdout } = await cli([
+      "personal-data",
+      "inventory",
+      "--config",
+      "bounda.unplaced.config.ts",
+    ]);
+    expect(code).toBe(EXIT_CONVENTION);
+    expect(stdout).toContain(
+      "  storage declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()",
+    );
   });
 
   it("exits 1 while a field is not classified or looks personal unmarked", async () => {

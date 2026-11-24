@@ -3,13 +3,16 @@ import type { Config } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { createMemoryForgetLedgers } from "../../memory/forget-ledger.ts";
 import { memory } from "../../memory/index.ts";
+import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
 import { personalDataInventory } from "./inventory.ts";
+import type { KeyWrapperDefinition } from "./key-wrapper.ts";
 import { masterKey } from "./master-key.ts";
+import { defineTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
 
 const handlers = {
   onPersonalDataForgotten: () => {},
@@ -311,35 +314,57 @@ describe("personalDataInventory", () => {
     });
   });
 
-  it("tells where a database keeps what it holds when its definition pins it", () => {
-    const pinned = { ...memory(), location: "jurisdiction eu" };
+  it("tells where a database keeps what it holds as its location declares it", () => {
+    const pinned = memory({ location: "eu" });
     const inventory = personalDataInventory({
       registry,
-      config: { ...config, storage: pinned, readModels: { customers: pinned, totals: memory() } },
+      config: {
+        ...config,
+        storage: pinned,
+        readModels: { customers: pinned, totals: memory({ location: "eu" }) },
+      },
     });
     expect(
       inventory.holders.map(({ name, database, location }) => [name, database, location]),
     ).toEqual([
-      ["customer.CustomerRegistered", "memory", "jurisdiction eu"],
-      ["customer.remindCustomer", "memory", "jurisdiction eu"],
-      ["customer.onboarding", "memory", "jurisdiction eu"],
-      ["customers", "memory", "jurisdiction eu"],
+      ["customer.CustomerRegistered", "memory", "eu"],
+      ["customer.remindCustomer", "memory", "eu"],
+      ["customer.onboarding", "memory", "eu"],
+      ["customers", "memory", "eu"],
     ]);
     expect(inventory.records.map(({ name, location }) => [name, location])).toEqual([
-      ["personal-keys", "jurisdiction eu"],
-      ["persons", "jurisdiction eu"],
-      ["forgettings", "jurisdiction eu"],
-      ["remembered-answers", "jurisdiction eu"],
-      ["dead-letters", "jurisdiction eu"],
-      ["subscriber-failures", "jurisdiction eu"],
-      ["disclosures", "jurisdiction eu"],
+      ["personal-keys", "eu"],
+      ["persons", "eu"],
+      ["forgettings", "eu"],
+      ["remembered-answers", "eu"],
+      ["dead-letters", "eu"],
+      ["subscriber-failures", "eu"],
+      ["disclosures", "eu"],
       ["access-log", null],
     ]);
+    expect(inventory.findings.filter(({ kind }) => kind === "no-location")).toEqual([]);
+    // Under a storage that declares none, each store says its own.
     const apart = personalDataInventory({
       registry,
-      config: { ...config, storage: pinned, readModels: { customers: memory() } },
+      config: { ...config, readModels: { customers: memory({ location: "us" }) } },
     });
-    expect(apart.holders.find(({ name }) => name === "customers")?.location).toBeNull();
+    expect(apart.holders.find(({ name }) => name === "customers")?.location).toBe("us");
+    expect(apart.holders.find(({ name }) => name === "customer.onboarding")?.location).toBeNull();
+  });
+
+  it("refuses a store kept elsewhere than a storage that declares a location, as the app does", () => {
+    expect(() =>
+      personalDataInventory({
+        registry,
+        config: {
+          ...config,
+          storage: memory({ location: "eu" }),
+          readModels: { customers: memory() },
+        },
+      }),
+    ).toThrow(
+      'readModels.customers declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, so give its memory() location: "eu"',
+    );
   });
 
   it("refuses a configuration its adapters refuse, as the app does at start", () => {
@@ -374,7 +399,11 @@ describe("personalDataInventory", () => {
       { kind: "unmarkable", holder: "customer.CustomerTagged", field: null },
       { kind: "unclassified", holder: "customers", field: "description" },
       { kind: "no-basis", holder: null, field: null },
+      { kind: "no-location", holder: null, field: null },
     ]);
+    expect(inventory.findings[5]?.message).toBe(
+      "storage declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()",
+    );
     expect(inventory.findings[0]?.message).toBe(
       'customer.CustomerNoted: field "summary" can hold text and is not marked; mark it personal or notPersonal',
     );
@@ -689,29 +718,220 @@ describe("personalDataInventory", () => {
       location: null,
       keptFor: "30d",
     });
+    expect(records).toContainEqual({
+      name: "master-key",
+      where: "key-wrapper",
+      location: null,
+      keptFor: null,
+    });
+    expect(records).toContainEqual({
+      name: "tenant-keys",
+      where: "tenant-keys",
+      location: null,
+      keptFor: null,
+    });
     expect(security).toEqual({ masterKey: true, tenantKeys: true, forgetLedger: true });
+    const unplaced = (path: string) =>
+      `${path} declares no location, so the record cannot say where it is kept, nor whether keeping it there is a transfer out of the European Economic Area (article 30(1)(e)); declare one through the options of its memory()`;
     expect(findings.map(({ message }) => message)).toEqual([
       "3 personal fields are in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one",
+      unplaced("storage"),
+      `${unplaced("runtime.personalData.keyWrapper").slice(0, -"the options of its memory()".length)}masterKey({ from, location }) or defineKeyWrapper(create, { location })`,
+      unplaced("runtime.personalData.tenantKeys"),
+      unplaced("runtime.personalData.forgetLedger.store"),
     ]);
   });
 
-  it("states where the forget ledger keeps its entries, as its store pins it", () => {
+  it("states where the master key is kept, as its key wrapper declares it", () => {
+    const recordOf = (keyWrapper: KeyWrapperDefinition) =>
+      personalDataInventory({
+        registry: { aggregates: {}, readModels: {} },
+        config: { storage: memory(), runtime: { personalData: { keyWrapper } } },
+      }).records.find(({ name }) => name === "master-key");
+    expect(recordOf(masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }))).toEqual({
+      name: "master-key",
+      where: "key-wrapper",
+      location: "eu",
+      keptFor: null,
+    });
+    expect(recordOf(masterKey({ from: "BOUNDA_MASTER_KEY" }))?.location).toBeNull();
+    expect(
+      personalDataInventory({
+        registry: { aggregates: {}, readModels: {} },
+        config: { storage: memory() },
+      }).records.find(({ name }) => name === "master-key"),
+    ).toBeUndefined();
+  });
+
+  it("states where the tenant key store keeps the keys, as it declares it", () => {
+    const recordOf = (tenantKeys: TenantKeySource) =>
+      personalDataInventory({
+        registry: { aggregates: {}, readModels: {} },
+        config: { storage: memory(), runtime: { personalData: { tenantKeys } } },
+      }).records.find(({ name }) => name === "tenant-keys");
+    const keys = () => createMemoryTenantKeyStore();
+    expect(recordOf(defineTenantKeyStore(keys, { location: "eu" }))).toEqual({
+      name: "tenant-keys",
+      where: "tenant-keys",
+      location: "eu",
+      keptFor: null,
+    });
+    expect(recordOf(defineTenantKeyStore(keys))?.location).toBeNull();
+    expect(recordOf(memory({ location: "us" }))?.location).toBe("us");
+  });
+
+  it("reports each store of personal data that declares no location, by what declares it", () => {
+    const members = {
+      aggregates: {},
+      readModels: {
+        members: {
+          view: {
+            fields: ({ f }: FieldsArgs) => ({ memberId: f.string().primaryKey().person() }),
+          },
+          projections: {},
+          queries: {},
+        },
+        visits: {
+          view: { fields: ({ f }: FieldsArgs) => ({ id: f.string().primaryKey().notPersonal() }) },
+          projections: {},
+          queries: {},
+        },
+      },
+    } as unknown as Registry;
+    const unplaced = (config: Config) =>
+      personalDataInventory({ registry: members, config })
+        .findings.filter(({ kind }) => kind === "no-location")
+        .map(({ message }) => message.slice(message.lastIndexOf("; ") + 2));
+    expect(
+      unplaced({
+        storage: memory({ location: "us" }),
+        readModels: { members: memory({ location: "us" }), visits: memory({ location: "us" }) },
+        runtime: {
+          personalData: {
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "us" }),
+            tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore, { location: "us" }),
+            forgetLedger: {
+              store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(undefined), {
+                location: "us",
+              }),
+            },
+          },
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      personalDataInventory({ registry: members, config: { storage: memory() } }).findings.map(
+        ({ message }) => message.slice(0, message.indexOf(" declares")),
+      ),
+    ).toEqual(["storage"]);
+    // A read model that holds no personal data says nothing about persons, wherever it is.
+    expect(
+      personalDataInventory({
+        registry: members,
+        config: {
+          storage: memory(),
+          readModels: { members: memory(), visits: memory() },
+          runtime: {
+            personalData: {
+              keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+              tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore),
+              forgetLedger: {
+                store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(undefined)),
+              },
+            },
+          },
+        },
+      }).findings.map(({ message }) => message.slice(0, message.indexOf(" declares"))),
+    ).toEqual([
+      "storage",
+      "readModels.members",
+      "runtime.personalData.keyWrapper",
+      "runtime.personalData.tenantKeys",
+      "runtime.personalData.forgetLedger.store",
+    ]);
+    expect(
+      unplaced({
+        storage: memory(),
+        runtime: {
+          personalData: {
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore),
+            forgetLedger: {
+              store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf(undefined)),
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      "declare one through the options of its memory()",
+      "declare one through masterKey({ from, location }) or defineKeyWrapper(create, { location })",
+      "declare one through defineTenantKeyStore(create, { location })",
+      "declare one through defineForgetLedger(create, { location })",
+    ]);
+    // One database under two names is one place to declare.
+    const shared = memory();
+    expect(
+      personalDataInventory({
+        registry: members,
+        config: { storage: shared, readModels: { members: shared } },
+      }).findings.map(({ message }) => message.slice(0, message.indexOf(" declares"))),
+    ).toEqual(["storage"]);
+    // Only a read model is kept on a database of readModels, whatever else shares its name.
+    expect(
+      personalDataInventory({
+        registry,
+        config: { ...config, readModels: { "customer.CustomerRegistered": memory() } },
+      })
+        .findings.filter(({ kind }) => kind === "no-location")
+        .map(({ message }) => message.slice(0, message.indexOf(" declares"))),
+    ).toEqual(["storage"]);
+    // A disclosure names its person in storage, though no field of the app is personal.
+    expect(
+      personalDataInventory({
+        registry: {
+          aggregates: {
+            customer: {
+              events: {},
+              commands: {},
+              policies: {},
+              processes: {},
+              recipients: {
+                mailer: {
+                  ...handlers,
+                  recipient: { name: "Mailer", kind: "processor", country: "DE", categories: [] },
+                },
+              },
+            },
+          },
+          readModels: {},
+        } as unknown as Registry,
+        config: { storage: memory() },
+      }).findings.map(({ message }) => message.slice(0, message.indexOf(" declares"))),
+    ).toEqual(["storage"]);
+    // Nothing personal, nothing to place.
+    expect(
+      personalDataInventory({
+        registry: { aggregates: {}, readModels: {} },
+        config: { storage: memory() },
+      }).findings,
+    ).toEqual([]);
+  });
+
+  it("states where the forget ledger keeps its entries, as its store declares it", () => {
     const recordOf = (store: ForgetLedgerSource) =>
       personalDataInventory({
         registry: { aggregates: {}, readModels: {} },
         config: { storage: memory(), runtime: { personalData: { forgetLedger: { store } } } },
       }).records.find(({ name }) => name === "forget-ledger");
     const ledger = () => createMemoryForgetLedgers().ledgerOf(undefined);
-    expect(recordOf(defineForgetLedger(ledger, { location: "jurisdiction eu" }))).toEqual({
+    expect(recordOf(defineForgetLedger(ledger, { location: "eu" }))).toEqual({
       name: "forget-ledger",
       where: "forget-ledger",
-      location: "jurisdiction eu",
+      location: "eu",
       keptFor: null,
     });
     expect(recordOf(defineForgetLedger(ledger))?.location).toBeNull();
-    expect(recordOf({ ...memory(), location: "jurisdiction us" })?.location).toBe(
-      "jurisdiction us",
-    );
+    expect(recordOf(memory({ location: "us" }))?.location).toBe("us");
   });
 
   it("counts one personal field without a basis as one", () => {
@@ -731,7 +951,7 @@ describe("personalDataInventory", () => {
           },
         },
       } as unknown as Registry,
-      config: { storage: memory() },
+      config: { storage: memory({ location: "eu" }) },
     });
     expect(findings.map(({ message }) => message)).toEqual([
       "1 personal field is in the default category, which declares no legal basis, purpose or source; declare categories in app/personal-data.ts and give each field one",
