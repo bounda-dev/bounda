@@ -290,6 +290,25 @@ describe("a project created by create-bounda", () => {
       { cwd: project },
     );
     expect(generated.stdout).toMatch(/1 aggregate, 1 read model, \d+ files/);
+    // The record of processing is complete, and says where every database keeps the data.
+    const inventory = await run(
+      process.execPath,
+      [
+        join(project, "node_modules/@bounda-dev/cli/dist/cli.js"),
+        "personal-data",
+        "inventory",
+        "--json",
+      ],
+      { cwd: project },
+    );
+    expect(JSON.parse(inventory.stdout)).toMatchObject({
+      records: expect.arrayContaining([
+        { name: "persons", where: "sqlite", location: "eu", keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
+        { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
+      ]),
+      findings: [],
+    });
 
     await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
       cwd: project,
@@ -476,12 +495,13 @@ describe("a project created by create-bounda", () => {
     );
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
-        { name: "persons", where: "cloudflare", location: "jurisdiction eu", keptFor: null },
+        { name: "persons", where: "cloudflare", location: "eu", keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
         // In the keeper, in the same jurisdiction as the objects.
         {
           name: "forget-ledger",
           where: "forget-ledger",
-          location: "jurisdiction eu",
+          location: "eu",
           keptFor: null,
         },
       ]),

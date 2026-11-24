@@ -521,9 +521,9 @@ event, command, process state and read model that holds personal data, whose and
 recipient, what the runtime keeps about persons and for how long, and the fields marked
 `notPersonal`. It loads the project as `bounda rebuild` does and opens no database; in a Cloudflare
 project it reads modules that import the Workers runtime, without running them. Where each holder
-and record is kept names the database's adapter, and where it keeps the data when its configuration
-pins it, such as `cloudflare, jurisdiction eu` for [Durable Objects in the
-EU](/adapters/cloudflare/#data-location). See [The record of processing
+and record is kept names the database's adapter, and the jurisdiction it keeps the data in when it
+declares one, such as `postgresql, in eu`, or `cloudflare, in eu` for [Durable Objects in the
+EU](/adapters/cloudflare/#data-location): see [data location](/reference/configuration/#data-location). See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
 
 ```bash
@@ -558,11 +558,11 @@ Personal data
   event user.UserRegistered, of the aggregate's id
     email  account  sealed under the person's key
     name  account  sealed under the person's key
-    kept in: event store (sqlite)
+    kept in: event store (sqlite, in eu)
   read model usersDirectory, of the person in userId
     email  account  sealed under the person's key, found by a blind index
     name  account  sealed under the person's key
-    kept in: read-model table (sqlite)
+    kept in: read-model table (sqlite, in eu)
 …
 Complete: every field is classified
 ```
@@ -571,7 +571,8 @@ The record ends with what keeps it from being complete, one finding a line: a fi
 text and is marked neither `personal`, `person` nor `notPersonal`, a field whose name says personal
 data and is not marked, a personal field whose name says special categories of data or criminal data
 in a category that does not declare them, text no mark reaches, personal fields in the default
-category, which declares no legal basis, and logs that carry the text of errors.
+category, which declares no legal basis, logs that carry the text of errors, and a store of
+personal data that declares no location, so the record cannot say whether it is a transfer.
 
 | Option | Meaning |
 | --- | --- |
@@ -585,7 +586,7 @@ category, which declares no legal basis, and logs that carry the text of errors.
 | --- | --- |
 | `0` | The record is complete |
 | `1` | It has findings, printed with it; or the command line is wrong |
-| `2` | The project failed to load, or its configuration is one the app refuses to start on, such as a read model on `cloudflare()` in another [jurisdiction](/adapters/cloudflare/#data-location) than `storage` |
+| `2` | The project failed to load, or its configuration is one the app refuses to start on, such as a read model kept in another [location](/reference/configuration/#data-location) than `storage` |
 
 ## `bounda recipients`
 

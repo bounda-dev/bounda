@@ -180,7 +180,7 @@ export default defineConfig({
   storage,
   runtime: {
     personalData: {
-      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
       tenantKeys: durableObjectTenantKeys({ storage }),
       forgetLedger: { store: durableObjectForgetLedger({ storage }) },
     },
@@ -310,6 +310,13 @@ configuration names none, refuses to start with a `ConfigurationError`.
 - A read model that `readModels` puts on `cloudflare()` lives in the tenant's object, so its
   `cloudflare()` names the same jurisdiction as `storage`, or none when `storage` names none. The
   app refuses to start on one that names another, and so does `bounda personal-data inventory`.
+- The jurisdiction is the app's [location](/reference/configuration/#data-location): a read model
+  on another adapter, such as a PostgreSQL server or a Turso database, declares the same with
+  `location: "eu"`, and so does the key wrapper, `masterKey({ from, location: "eu" })` or a KMS
+  through `defineKeyWrapper`, or the app refuses to start on it, and so does the record of
+  processing. The object checks its own jurisdiction, but Bounda cannot see where Cloudflare
+  keeps a Worker's secrets: where the master key in `BOUNDA_MASTER_KEY` is kept is yours to
+  answer for, as with any declared location.
 - `workerd` has no jurisdictions where it runs locally, under `wrangler dev`, `vite dev` and the
   tests: there every object stays on your machine and the setting is ignored.
 - The jurisdiction holds the objects, not the Worker in front of them, which runs near each
@@ -321,11 +328,12 @@ configuration names none, refuses to start with a `ConfigurationError`.
   [compatibility table](https://developers.cloudflare.com/data-localization/compatibility/) says
   jurisdictional restrictions for KV pairs are not supported today, and even a namespace created in
   a [jurisdiction](https://developers.cloudflare.com/kv/reference/data-location/) is cached
-  outside it, so `kvTenantKeys` and `kvForgetLedger` are refused. A store of your own names its
-  place through `defineTenantKeyStore(create, { location: "jurisdiction eu" })` or
+  outside it, so `kvTenantKeys` and `kvForgetLedger` declare no location and are refused. A store
+  of your own declares its place through `defineTenantKeyStore(create, { location: "eu" })` or
   `defineForgetLedger(create, { location })`, which you then answer for.
 - [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) says where
-  each holder is kept: `cloudflare, jurisdiction eu`.
+  each holder and store is kept: `cloudflare, in eu`. Without a jurisdiction it lists the storage,
+  and every store that declares no location, as findings.
 
 `create-bounda` writes `jurisdiction: "eu"`: Bounda's defaults favour personal data staying in
 the European Union, and an object placed elsewhere cannot be moved later. Take it out for an

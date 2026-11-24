@@ -171,7 +171,7 @@ export interface PersonalDataConfig {
    * adapter pointed at another database, such as `sqlite({ path: "./keys/tenant-keys.db" })`,
    * `kvTenantKeys({ binding })` from `@bounda-dev/cloudflare`, or a store of your own through
    * `defineTenantKeyStore`. Required with `keyWrapper`, unless the storage brings one, as
-   * `memory()` does.
+   * `memory()` does. Under a storage that declares a `location`, it must declare the same.
    */
   readonly tenantKeys?: TenantKeySource;
   /**
@@ -194,7 +194,7 @@ export interface ForgetLedgerConfig {
    * The ledger: an adapter pointed at another database, such as
    * `sqlite({ path: "./ledger/forget-ledger.db" })`, whose ledger table it creates there,
    * `kvForgetLedger({ binding })` from `@bounda-dev/cloudflare`, or a ledger of your own through
-   * `defineForgetLedger`.
+   * `defineForgetLedger`. Under a storage that declares a `location`, it must declare the same.
    */
   readonly store: ForgetLedgerSource;
   /**

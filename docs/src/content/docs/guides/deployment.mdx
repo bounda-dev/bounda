@@ -399,6 +399,15 @@ the ledger tells it at the next start, and without a ledger run `bounda restored
 ledger's `keepFor` longer than the oldest backup you keep. [Backups and restores](/guides/backups/)
 has the steps for each engine.
 
+## Data location
+
+Deploy every database, the tenant key store, the forget ledger, the backups of each, and the app's
+processes in the jurisdiction `bounda.config.ts` declares: `location: "eu"` on each adapter, or
+`jurisdiction` on `cloudflare()`. The app refuses to start on a store that declares another place
+than its storage, but it cannot see where a server or a host is: a declared location is yours to
+keep true, and the record of processing repeats it. Change it before you deploy if your databases
+run elsewhere than `create-bounda`'s `"eu"`. See [data location](/reference/configuration/#data-location).
+
 ## Observability
 
 The runtime reports OpenTelemetry spans and metrics with no adapter to write: register an SDK

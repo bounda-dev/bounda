@@ -25,7 +25,7 @@ app/routes/home.tsx         a loader that queries and an action that dispatches
 app/root.tsx                mounts boundaMiddleware
 app/entry.server.tsx        React Router's entry, with Bounda's handleError
 vite.config.ts              plugins: [bounda(), reactRouter()]
-bounda.config.ts            storage and ports
+bounda.config.ts            storage, where it keeps the data, and ports
 tests/orders.test.ts        the app on an in-memory adapter
 ```
 
@@ -39,3 +39,6 @@ message, which may quote personal data, except under the dev server. The
 module.
 
 `.bounda/`, `+types/` and `.react-router/` are generated; they stay out of git.
+
+`bounda.config.ts` keeps the data in `"eu"`: change `location` to the jurisdiction your databases
+run in before you deploy. See [data location](https://docs.bounda.dev/reference/configuration/#data-location).

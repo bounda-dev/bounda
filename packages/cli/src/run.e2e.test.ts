@@ -108,11 +108,11 @@ describe("bounda binary end to end", () => {
     );
     const { holders, records } = JSON.parse(stdout) as PersonalDataInventory;
     expect(new Set(holders.map(({ database, location }) => `${database}, ${location}`))).toEqual(
-      new Set(["cloudflare, jurisdiction eu"]),
+      new Set(["cloudflare, eu"]),
     );
     expect(records.find(({ name }) => name === "persons")).toMatchObject({
       where: "cloudflare",
-      location: "jurisdiction eu",
+      location: "eu",
     });
   }, 60_000);
 
@@ -167,7 +167,7 @@ describe("bounda binary end to end", () => {
     expect((JSON.parse(stdout) as PersonalDataInventory).records).toContainEqual({
       name: "forget-ledger",
       where: "forget-ledger",
-      location: "jurisdiction eu",
+      location: "eu",
       keptFor: null,
     });
   }, 60_000);

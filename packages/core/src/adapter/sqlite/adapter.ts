@@ -61,6 +61,10 @@ export interface SqliteConnection<Raw = unknown> {
 export interface CreateSqliteAdapterArgs<Name extends string, Options, Raw> {
   readonly name: Name;
   readonly options: Options;
+  /**
+   * As `AdapterDefinition.location`.
+   */
+  readonly location?: string;
   readonly tablePrefix: string;
   /**
    * Hands out the connection, opening it if needed. Called once for the storage and once for
@@ -116,6 +120,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
 >({
   name,
   options,
+  location,
   tablePrefix,
   acquire,
   release,
@@ -173,6 +178,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
     kind: "bounda-adapter",
     name,
     options,
+    ...(location === undefined ? {} : { location }),
     ...(ephemeralKeys === undefined ? {} : { ephemeralKeys }),
     ...(encryptedFile === undefined ? {} : { encryptedFile }),
     ...(fileEncryption === undefined ? {} : { fileEncryption }),

@@ -1073,6 +1073,18 @@ describe("configForObject", () => {
     });
   });
 
+  it("keeps the jurisdiction as the location of the object's storage and read models", async () => {
+    await runInDurableObject(fresh() as unknown as DurableObjectStub, async (_instance, state) => {
+      const eu = cloudflare({ jurisdiction: "eu" });
+      const resolved = configForObject({ storage: eu, readModels: { shared: eu } }, state.storage);
+      expect(resolved.storage.location).toBe("eu");
+      expect(resolved.readModels?.shared?.location).toBe("eu");
+      expect(configForObject({ storage: cloudflare() }, state.storage).storage).not.toHaveProperty(
+        "location",
+      );
+    });
+  });
+
   it("refuses a storage that is not cloudflare()", async () => {
     await runInDurableObject(fresh() as unknown as DurableObjectStub, async (_instance, state) => {
       expect(() =>

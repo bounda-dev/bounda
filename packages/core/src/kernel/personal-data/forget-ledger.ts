@@ -31,8 +31,8 @@ export interface ForgetLedgerDefinition {
   readonly kind: "bounda-forget-ledger";
   create(args: CreateForgetLedgerFromEnvArgs): ForgetLedger | Promise<ForgetLedger>;
   /**
-   * Where the ledger keeps its entries, when it pins it, as an adapter's `location` does, such as
-   * `"jurisdiction eu"`.
+   * Where the ledger keeps its entries, when it declares it, as an adapter's `location` does, such
+   * as `"eu"`.
    */
   readonly location?: string;
 }

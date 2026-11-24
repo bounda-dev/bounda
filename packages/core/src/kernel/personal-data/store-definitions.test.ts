@@ -8,15 +8,15 @@ describe("defineTenantKeyStore and defineForgetLedger", () => {
   it("keep where the store says it keeps what it holds, and nothing when it says nothing", () => {
     const keys = () => createMemoryTenantKeyStore();
     const ledger = () => createMemoryForgetLedgers().ledgerOf(undefined);
-    expect(defineTenantKeyStore(keys, { location: "jurisdiction eu" })).toEqual({
+    expect(defineTenantKeyStore(keys, { location: "eu" })).toEqual({
       kind: "bounda-tenant-key-store",
       create: keys,
-      location: "jurisdiction eu",
+      location: "eu",
     });
-    expect(defineForgetLedger(ledger, { location: "jurisdiction eu" })).toEqual({
+    expect(defineForgetLedger(ledger, { location: "eu" })).toEqual({
       kind: "bounda-forget-ledger",
       create: ledger,
-      location: "jurisdiction eu",
+      location: "eu",
     });
     for (const definition of [
       defineTenantKeyStore(keys),

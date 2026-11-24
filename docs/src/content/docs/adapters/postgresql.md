@@ -24,6 +24,7 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
 | `schema` | `public` | The schema that holds every Bounda table; created if missing |
 | `tablePrefix` | `bounda_` | Put in front of every table Bounda creates |
 | `maxConnections` | `10` | Size of the connection pool |
+| `location` | | The jurisdiction the server keeps its data in, such as `"eu"`. See [data location](/reference/configuration/#data-location) |
 
 ## How it stores things
 

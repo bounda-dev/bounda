@@ -23,8 +23,10 @@ export interface CloudflareOptions {
    * start. Choose it before the first object exists: an object never moves, and a tenant reached
    * in a new jurisdiction is a new, empty object. Left out, each object is placed near the request
    * that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
-   * which has no jurisdictions. The tenant key store and the forget ledger must be kept in it too:
-   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are.
+   * which has no jurisdictions. It is the app's `location`: every read model, the tenant key
+   * store, the forget ledger and the key wrapper must be kept in it too, as
+   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are; a read model on another adapter,
+   * and `masterKey` or `defineKeyWrapper`, declare it as their `location`.
    */
   readonly jurisdiction?: DurableObjectJurisdiction;
 }
@@ -45,11 +47,12 @@ export interface CloudflareFunction {
 
 /**
  * Storage in the SQLite of the Durable Object the app runs in: events, ledgers and read models,
- * all in one object. Throws `ConfigurationError` for a `jurisdiction` that is not a name; a
- * configuration that puts it beside another storage, a read model on it in another jurisdiction
- * than `storage`, or, with a `jurisdiction`, a tenant key store or forget ledger whose `location`
- * is not that jurisdiction, as a Workers KV one's never is, is refused wherever it is resolved,
- * the record of processing included.
+ * all in one object, whose `location` is the `jurisdiction`. Throws `ConfigurationError` for a
+ * `jurisdiction` that is not a name; a configuration that puts it beside another storage, a read
+ * model on it in another jurisdiction than `storage`, or, with a `jurisdiction`, a read model,
+ * tenant key store, forget ledger or key wrapper whose `location` is not that jurisdiction, as a
+ * Workers KV one's never is, is refused wherever it is resolved, the record of processing
+ * included.
  */
 export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options } = {}) => {
   // A Worker's code is not always type-checked.
@@ -63,7 +66,7 @@ export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options }
     kind: "bounda-adapter",
     name: "cloudflare",
     options: { ...options, binding },
-    ...(jurisdiction === undefined ? {} : { location: `jurisdiction ${jurisdiction}` }),
+    ...(jurisdiction === undefined ? {} : { location: jurisdiction }),
     check: (config) => void cloudflareStorageOf(config),
   };
 };
@@ -108,16 +111,15 @@ export const cloudflareStorageOf: CloudflareStorageOfFunction = (config) => {
   }
   if (jurisdiction !== undefined) {
     const personalData: unknown = (config as Partial<Config>).runtime?.personalData;
-    const where = `jurisdiction ${jurisdiction}`;
     checkKeptIn({
-      where,
+      where: jurisdiction,
       path: "runtime.personalData.tenantKeys",
       source: valueAt(personalData, "tenantKeys"),
       keeper: "durableObjectTenantKeys",
       define: "defineTenantKeyStore",
     });
     checkKeptIn({
-      where,
+      where: jurisdiction,
       path: "runtime.personalData.forgetLedger.store",
       source: valueAt(valueAt(personalData, "forgetLedger"), "store"),
       keeper: "durableObjectForgetLedger",
@@ -145,6 +147,6 @@ const checkKeptIn = ({ where, path, source, keeper, define }: CheckKeptInArgs): 
   const location = valueAt(source, "location");
   if (location === where) return;
   throw new ConfigurationError(
-    `${path} keeps what it holds ${typeof location === "string" ? `in ${location}` : "where it names no jurisdiction, as Workers KV does"}, and cloudflare() keeps the tenants' objects in ${where}: use ${keeper}({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through ${define}(create, { location: ${JSON.stringify(where)} })`,
+    `${path} keeps what it holds ${typeof location === "string" ? `in ${JSON.stringify(location)}` : "where it names no jurisdiction, as Workers KV does"}, and cloudflare() keeps the tenants' objects in jurisdiction ${JSON.stringify(where)}: use ${keeper}({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through ${define}(create, { location: ${JSON.stringify(where)} })`,
   );
 };

@@ -11,7 +11,7 @@ export default defineConfig({
   storage,
   runtime: {
     personalData: {
-      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
       tenantKeys: durableObjectTenantKeys({ storage }),
       forgetLedger: { store: durableObjectForgetLedger({ storage }) },
     },

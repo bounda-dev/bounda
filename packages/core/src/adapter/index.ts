@@ -19,7 +19,7 @@ export type {
   StorageTransaction,
 } from "./adapter.ts";
 export { isAdapter } from "./adapter.ts";
-export type { AdapterDefinition } from "./adapter-definition.ts";
+export type { AdapterDefinition, DataLocationOptions } from "./adapter-definition.ts";
 export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
 export { rebuildFencing } from "./rebuild-fencing.ts";
 export type {

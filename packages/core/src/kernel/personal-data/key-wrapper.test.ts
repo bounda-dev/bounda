@@ -36,6 +36,17 @@ const carelessWrapper = () => {
   return { wrapper, given, returned };
 };
 
+describe("defineKeyWrapper's location", () => {
+  it("declares where the wrapper keeps the master key, when told", () => {
+    const create = () => {
+      throw new Error("never built");
+    };
+    expect(defineKeyWrapper(create, { location: "eu" }).location).toBe("eu");
+    expect(defineKeyWrapper(create)).not.toHaveProperty("location");
+    expect(defineKeyWrapper(create, {})).not.toHaveProperty("location");
+  });
+});
+
 describe("cryptoKeyWrapperOver", () => {
   it("wraps a tenant key's raw bytes with the app's wrapper and answers the key as one that cannot be exported", async () => {
     const { wrapper, given } = carelessWrapper();

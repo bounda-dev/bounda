@@ -159,6 +159,8 @@ export const RegionStore = createBoundaObject({
 
 const eu = cloudflare({ binding: "EU_STORE", jurisdiction: "eu" });
 const unboundEu = cloudflare({ binding: "UNBOUND", jurisdiction: "eu" });
+// The master key, declared in the EU with every other store of the EU objects.
+const euKeyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" });
 
 /**
  * The app without policies or processes, kept in the EU, which workerd cannot do: its own binding
@@ -170,7 +172,7 @@ export const EuStore = createBoundaObject({
     storage: eu,
     runtime: {
       personalData: {
-        keyWrapper: keys.keyWrapper,
+        keyWrapper: euKeyWrapper,
         tenantKeys: durableObjectTenantKeys({ storage: eu, binding: "EU_KEEPER" }),
         forgetLedger: { store: durableObjectForgetLedger({ storage: eu, binding: "EU_KEEPER" }) },
       },
@@ -189,7 +191,7 @@ export const UnboundEuStore = createBoundaObject({
     storage: unboundEu,
     runtime: {
       personalData: {
-        keyWrapper: keys.keyWrapper,
+        keyWrapper: euKeyWrapper,
         tenantKeys: durableObjectTenantKeys({ storage: unboundEu, binding: "EU_KEEPER" }),
       },
     },

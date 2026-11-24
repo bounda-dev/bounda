@@ -13,7 +13,9 @@ export default defineConfig({
   storage,
   runtime: {
     personalData: {
-      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      // A secret of the Worker: Bounda cannot see where Cloudflare keeps it, so its location, the
+      // objects' jurisdiction, is yours to answer for.
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
       // Each tenant's key and the record of whom it forgot, in the keeper object, apart from the
       // tenant's own and in the same jurisdiction: a restore of the tenant's object carries
       // neither, and forgets again whoever it brings back.
