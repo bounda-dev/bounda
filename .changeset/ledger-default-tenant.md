@@ -1,8 +1,8 @@
 ---
 "@bounda-dev/core": minor
 "@bounda-dev/postgresql": patch
-"@bounda-dev/cloudflare": patch
-"@bounda-dev/react-router": patch
+"@bounda-dev/cloudflare": minor
+"@bounda-dev/react-router": minor
 ---
 
 An app that names no tenant and one that names `default` are one tenant everywhere. The forget ledger kept the first under the empty name, so `bounda export-tenant default` handed back none of its entries, and `bounda freeze-tenant default` and `bounda forget-tenant default` fenced and cleared another partition than the one the app wrote. Every store, the forget ledger included, now keys an app that names no tenant by `DEFAULT_TENANT`, and the ninth version of the SQL ledger's scope moves what an earlier release kept under the empty name there, one entry, the higher mark and the stronger fence of each.

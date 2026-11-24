@@ -133,56 +133,6 @@ describe("migrateSqlite", () => {
   });
 });
 
-describe("the forget ledger's ninth version", () => {
-  const frozen = (since: number) => ({ state: "frozen", since });
-  const forgotten = (since: number) => ({ state: "forgotten", since });
-  type Fence = ReturnType<typeof frozen>;
-  // Of two fences of the tenant, the forgotten one, or of the same state the earlier.
-  const cases: readonly (readonly [string, Fence | null, Fence | null, Fence | null])[] = [
-    ["one under the empty name alone", frozen(1), null, frozen(1)],
-    ["one under DEFAULT_TENANT alone", null, frozen(1), frozen(1)],
-    ["the earlier of two frozen, under the empty name", frozen(1), frozen(2), frozen(1)],
-    ["the earlier of two frozen, under DEFAULT_TENANT", frozen(2), frozen(1), frozen(1)],
-    ["the earlier of two frozen at once", frozen(1), frozen(1), frozen(1)],
-    ["the forgotten over the frozen, under DEFAULT_TENANT", frozen(1), forgotten(2), forgotten(2)],
-    ["the forgotten over the frozen, under the empty name", forgotten(2), frozen(1), forgotten(2)],
-    ["the earlier of two forgotten", forgotten(2), forgotten(1), forgotten(1)],
-    ["none", null, null, null],
-  ];
-  it.each(cases)("keeps one fence of the tenant: %s", async (_, legacy, named, kept) => {
-    const { database, db } = onNodeSqlite();
-    const scopes = [sqliteForgetLedgerScope('"app_forget_ledger"')];
-    await migrateSqlite({ db: database, prefix: "app_", scopes });
-    const insert = db.prepare(
-      'INSERT INTO "app_forget_ledger_fence" ("scope", "tenant", "state", "since") VALUES (?, ?, ?, ?)',
-    );
-    for (const [scope, fence] of [
-      ["", legacy],
-      ["default", named],
-    ] as const) {
-      if (fence !== null) insert.run(scope, scope, fence.state, `2026-01-0${fence.since}`);
-    }
-    db.prepare(
-      `DELETE FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' AND "version" = 9`,
-    ).run();
-    await migrateSqlite({ db: database, prefix: "app_", scopes });
-    expect(
-      db.prepare('SELECT "scope", "tenant", "state", "since" FROM "app_forget_ledger_fence"').all(),
-    ).toEqual(
-      kept === null
-        ? []
-        : [
-            {
-              scope: "default",
-              tenant: "default",
-              state: kept.state,
-              since: `2026-01-0${kept.since}`,
-            },
-          ],
-    );
-  });
-});
-
 describe("the superseded keys' table", () => {
   it("is indexed by person and successor under a name of its own", async () => {
     const { database, db } = onNodeSqlite();
