@@ -602,6 +602,9 @@ importers:
       '@stryker-mutator/vitest-runner':
         specifier: 'catalog:'
         version: 10.1.1(@stryker-mutator/core@10.1.1(@types/node@26.6.6))(vitest@5.1.1)
+      '@testcontainers/postgresql':
+        specifier: 'catalog:'
+        version: 12.2.2(bare-buffer@3.7.3)(supports-color@10.2.2)
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6

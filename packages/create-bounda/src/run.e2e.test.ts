@@ -1,11 +1,22 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify, stripVTControlCharacters } from "node:util";
+import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, describe, expect, it } from "vitest";
-import type { Framework, Runtime } from "./options.ts";
+import type { Database, Framework, Runtime } from "./options.ts";
 import { runCreate } from "./run.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
@@ -73,6 +84,7 @@ const install = async (project: string, names: readonly string[]): Promise<void>
 interface Stack {
   readonly runtime: Runtime;
   readonly framework: Framework;
+  readonly database?: Database;
 }
 
 const REACT_ROUTER_TOOLS = [
@@ -124,7 +136,7 @@ const scaffold = async (argv: readonly string[], stack: Stack): Promise<string> 
   await install(project, [
     "core",
     "cli",
-    stack.runtime === "cloudflare" ? "cloudflare" : "sqlite",
+    stack.runtime === "cloudflare" ? "cloudflare" : (stack.database ?? "sqlite"),
     ...(stack.framework === "react-router" ? ["react-router"] : []),
   ]);
   await linkTools(project, stack);
@@ -273,6 +285,52 @@ const freePort = (): Promise<number> =>
 const rendered = async (response: Response): Promise<string> =>
   (await response.text()).replaceAll(/<!--.*?-->/g, "");
 
+interface ForgetsAgainAfterRestoreArgs {
+  readonly project: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly backUp: () => Promise<unknown>;
+  readonly restore: () => Promise<unknown>;
+}
+
+/**
+ * A backup restored with the app stopped forgets again whoever was forgotten after it was taken:
+ * the forget ledger, apart from the database, tells the next start. Grace's delivery note is
+ * sealed under her key, which the backup holds and the forgetting destroys.
+ */
+const forgetsAgainAfterRestore = async ({
+  project,
+  env,
+  backUp,
+  restore,
+}: ForgetsAgainAfterRestoreArgs): Promise<void> => {
+  const cli = join(project, "node_modules/@bounda-dev/cli/dist/cli.js");
+  const bounda = (...args: readonly string[]) =>
+    run(process.execPath, [cli, ...args], { cwd: project, env });
+  const note = "Leave it with the porter";
+  await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `import { boot } from "@bounda-dev/core/node";
+const app = await boot({ signals: false });
+await app.commands.placeOrder({ orderId: crypto.randomUUID(), customerId: "grace", total: 7, deliveryNote: ${JSON.stringify(note)} });
+await app.runUntilIdle();
+await app.stop();`,
+    ],
+    { cwd: project, env },
+  );
+  expect((await bounda("personal-data", "export", "grace")).stdout).toContain(note);
+  await backUp();
+  expect((await bounda("forget", "grace")).stdout).toContain("forgot grace");
+  await restore();
+  expect((await bounda("forgotten", "--since", "0")).stdout).not.toContain('"grace"');
+  const exported = await bounda("personal-data", "export", "grace");
+  expect(exported.stderr).toContain("committed again forgettings the database did not hold");
+  expect(exported.stdout).not.toContain(note);
+  expect((await bounda("forgotten", "--since", "0")).stdout).toContain('"personId":"grace"');
+};
+
 afterAll(async () => {
   await Promise.all(temporary.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -306,6 +364,7 @@ describe("a project created by create-bounda", () => {
         { name: "persons", where: "sqlite", location: "eu", keptFor: null },
         { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
         { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
+        { name: "forget-ledger", where: "forget-ledger", location: "eu", keptFor: null },
       ]),
       findings: [],
     });
@@ -323,7 +382,7 @@ describe("a project created by create-bounda", () => {
       /Tests\s+2 passed/,
     );
 
-    // The script boots on the master key create-bounda wrote into `.env`, and refuses to without.
+    // The script boots on the master key create-bounda wrote into `.env`.
     expect(await readFile(join(project, ".env"), "utf8")).toMatch(
       /^BOUNDA_MASTER_KEY=[A-Za-z0-9+/]{43}=$/m,
     );
@@ -332,11 +391,130 @@ describe("a project created by create-bounda", () => {
     );
     const started = await run(process.execPath, ["src/main.ts"], { cwd: project, env });
     expect(started.stdout).toContain("1 order(s) for ada, 42 in total");
+
+    // The forget ledger, in a file of its own, outlives a copy of the database put back in place.
+    const database = join(project, "data/app.db");
+    const backup = join(project, "backup.db");
+    await forgetsAgainAfterRestore({
+      project,
+      env,
+      backUp: () => copyFile(database, backup),
+      restore: () => copyFile(backup, database),
+    });
+
+    // Without the master key in `.env`, the script refuses to boot.
     await rm(join(project, ".env"));
     await expect(run(process.execPath, ["src/main.ts"], { cwd: project, env })).rejects.toThrow(
       /The environment variable BOUNDA_MASTER_KEY, which runtime\.personalData\.keyWrapper names as a master key, is not set/,
     );
   }, 180_000);
+
+  it("scaffolds a PostgreSQL project that generates, type-checks, tests and forgets again after a restore", async () => {
+    const project = await scaffold(
+      ["depot", "--database", "postgresql", "--yes", "--no-git", "--no-install"],
+      { runtime: "node", framework: "none", database: "postgresql" },
+    );
+    const cli = join(project, "node_modules/@bounda-dev/cli/dist/cli.js");
+    await run(process.execPath, [cli, "generate"], { cwd: project });
+    // The record of processing reads the configuration without reaching a server: each store
+    // apart from the database, every one in the same place.
+    const nowhere = "postgres://bounda@127.0.0.1:1";
+    const inventory = await run(process.execPath, [cli, "personal-data", "inventory", "--json"], {
+      cwd: project,
+      env: {
+        ...process.env,
+        DATABASE_URL: `${nowhere}/depot`,
+        TENANT_KEYS_URL: `${nowhere}/depot_keys`,
+        FORGET_LEDGER_URL: `${nowhere}/depot_ledger`,
+      },
+    });
+    expect(JSON.parse(inventory.stdout)).toMatchObject({
+      records: expect.arrayContaining([
+        { name: "persons", where: "postgresql", location: "eu", keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
+        { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
+        { name: "forget-ledger", where: "forget-ledger", location: "eu", keptFor: null },
+      ]),
+      findings: [],
+    });
+    // Each database the configuration needs is named when it is missing.
+    await expect(
+      run(process.execPath, [cli, "personal-data", "inventory", "--json"], {
+        cwd: project,
+        env: {
+          ...process.env,
+          DATABASE_URL: `${nowhere}/depot`,
+          TENANT_KEYS_URL: `${nowhere}/depot_keys`,
+        },
+      }),
+    ).rejects.toThrow(/Set FORGET_LEDGER_URL, see \.env\.example/);
+
+    await run(join(repoRoot, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
+      cwd: project,
+    });
+    const tested = await run(
+      process.execPath,
+      [join(repoRoot, "node_modules/vitest/vitest.mjs"), "run", "--root", project],
+      { cwd: project, env: { ...process.env, CI: "1" } },
+    );
+    expect(stripVTControlCharacters(`${tested.stdout}${tested.stderr}`)).toMatch(
+      /Tests\s+2 passed/,
+    );
+
+    // On a server, as the adapter's own suite runs: skipped when Docker is not running, and one
+    // server for every run under BOUNDA_PG_REUSE=1, each run on databases of its own.
+    const definition = new PostgreSqlContainer("postgres:17");
+    const reuse = process.env.BOUNDA_PG_REUSE === "1";
+    const server = await (reuse ? definition.withReuse() : definition).start().catch(() => null);
+    if (server === null) return;
+    const storage = `shop_${randomUUID().replaceAll("-", "")}`;
+    const databases = [storage, `${storage}_keys`, `${storage}_ledger`] as const;
+    const dump = `/tmp/${storage}.dump`;
+    const inServer = async (command: readonly string[]): Promise<void> => {
+      const { exitCode, output } = await server.exec([...command]);
+      expect(exitCode, output).toBe(0);
+    };
+    const user = server.getUsername();
+    const psql = (statement: string) =>
+      inServer(["psql", "-U", user, "-d", server.getDatabase(), "-c", statement]);
+    try {
+      for (const database of databases) await psql(`CREATE DATABASE ${database}`);
+      const [storageUrl, keysUrl, ledgerUrl] = databases.map((database) => {
+        const url = new URL(server.getConnectionUri());
+        url.pathname = `/${database}`;
+        return url.toString();
+      });
+      const env = {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([name]) => name !== "BOUNDA_MASTER_KEY"),
+        ),
+        DATABASE_URL: storageUrl,
+        TENANT_KEYS_URL: keysUrl,
+        FORGET_LEDGER_URL: ledgerUrl,
+      };
+      const started = await run(process.execPath, ["src/main.ts"], { cwd: project, env });
+      expect(started.stdout).toContain("1 order(s) for ada, 42 in total");
+      // The forget ledger, in a database of its own, outlives a dump of the storage's restored.
+      await forgetsAgainAfterRestore({
+        project,
+        env,
+        backUp: () => inServer(["pg_dump", "-U", user, "--format", "custom", "-f", dump, storage]),
+        restore: async () => {
+          await psql(`DROP DATABASE ${storage} WITH (FORCE)`);
+          await psql(`CREATE DATABASE ${storage}`);
+          await inServer(["pg_restore", "-U", user, "-d", storage, dump]);
+        },
+      });
+    } finally {
+      if (reuse) {
+        await inServer(["rm", "-f", dump]);
+        for (const database of databases)
+          await psql(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+      } else {
+        await server.stop();
+      }
+    }
+  }, 300_000);
 
   it("scaffolds a React Router app that generates, type-checks, tests, builds and serves", async () => {
     const project = await scaffold(
@@ -407,14 +585,16 @@ describe("a project created by create-bounda", () => {
       );
 
       // An edited configuration reboots the app: here, on a database of its own, whose tenant's
-      // key is apart from the first one's, as a tenant's key belongs to one database.
+      // key and forget ledger are apart from the first one's, as both belong to one database.
       expect(original).toContain("./data/app.db");
       expect(original).toContain("./keys/tenant-keys.db");
+      expect(original).toContain("./ledger/forget-ledger.db");
       await writeFile(
         config,
         original
           .replace("./data/app.db", "./data/edited.db")
-          .replace("./keys/tenant-keys.db", "./keys/edited.db"),
+          .replace("./keys/tenant-keys.db", "./keys/edited.db")
+          .replace("./ledger/forget-ledger.db", "./ledger/edited.db"),
       );
       await until(
         async () =>

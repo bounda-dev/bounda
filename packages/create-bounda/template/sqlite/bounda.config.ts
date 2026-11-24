@@ -13,6 +13,14 @@ export default defineConfig({
       keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location }),
       // The tenant's key, apart from the database: a copy of ./data never carries it.
       tenantKeys: sqlite({ path: process.env.BOUNDA_KEYS_DB ?? "./keys/tenant-keys.db", location }),
+      // The record of whom the app forgot, apart from the database too: a restore of ./data
+      // forgets again whoever it brings back.
+      forgetLedger: {
+        store: sqlite({
+          path: process.env.BOUNDA_LEDGER_DB ?? "./ledger/forget-ledger.db",
+          location,
+        }),
+      },
     },
   },
 });
