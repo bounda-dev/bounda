@@ -39,6 +39,7 @@
     "commander": "catalog:"
   },
   "devDependencies": {
+    "@bounda-dev/test-containers": "workspace:*",
     "@cloudflare/vite-plugin": "catalog:",
     "@cloudflare/vitest-plugin": "catalog:",
     "@react-router/dev": "catalog:",
