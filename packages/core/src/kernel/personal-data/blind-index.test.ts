@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFixedClock } from "../../contracts/clock.ts";
+import { TenantFrozenError } from "../../contracts/errors.ts";
 import { createMemoryIndexKeyStore } from "../../memory/index-key-store.ts";
 import { createMemoryTenancyStore } from "../../memory/tenancy-store.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
@@ -68,6 +69,39 @@ describe("openDatabaseKey", () => {
     const after = await openDatabaseKey({ store, wrapping: wrappingUnder(tenantKeys), clock });
     expect(store.rows()[0]?.kid).toBe(rotated);
     expect(await after.indexer.index(args)).toBe(index);
+  });
+
+  it("keeps a key under the older version while the tenant is frozen, and opens it all the same", async () => {
+    const store = createMemoryIndexKeyStore();
+    const clock = createFixedClock();
+    const tenantKeys = await openTestTenantKeys();
+    const before = await openDatabaseKey({ store, wrapping: wrappingUnder(tenantKeys), clock });
+    const args = { readModel: "customers", field: "email", type: "string" as const, value: "a@x" };
+    const index = await before.indexer.index(args);
+    const kid = store.rows()[0]?.kid;
+    await tenantKeys.rotate();
+    const frozen = {
+      ...store,
+      rewrap: async () => {
+        throw new TenantFrozenError("acme", "2026-03-01T00:00:00.000Z");
+      },
+    };
+    const after = await openDatabaseKey({
+      store: frozen,
+      wrapping: wrappingUnder(tenantKeys),
+      clock,
+    });
+    expect(store.rows()[0]?.kid).toBe(kid);
+    expect(await after.indexer.index(args)).toBe(index);
+    const down = {
+      ...store,
+      rewrap: async () => {
+        throw new Error("database down");
+      },
+    };
+    await expect(
+      openDatabaseKey({ store: down, wrapping: wrappingUnder(tenantKeys), clock }),
+    ).rejects.toThrow("database down");
   });
 
   it("opens the key it rewrapped under the version in force, though the earlier one is retired at once", async () => {

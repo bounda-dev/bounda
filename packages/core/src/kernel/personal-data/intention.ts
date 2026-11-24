@@ -4,6 +4,7 @@ import type {
   PersonalKeyStore,
 } from "../../adapter/storage/personal-key-store.ts";
 import type { Disclosure } from "../../adapter/storage/recipient-store.ts";
+import { isFenceError } from "../../adapter/storage/tenant-fence.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ForgetLedgerUnavailableError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
@@ -48,7 +49,8 @@ export interface ForgetIntentions {
   intend(args: IntendArgs): Promise<ForgetIntention>;
   /**
    * Records an entry in the ledger. A strict ledger that does not take it rejects with
-   * `ForgetLedgerUnavailableError`; any other failure is logged, and the stream copies the
+   * `ForgetLedgerUnavailableError`, and a ledger whose fence refuses it with the fence's error,
+   * whether it is strict or not; any other failure is logged, and the stream copies the
    * forgetting once it commits.
    */
   record(entry: ForgetLedgerEntry): Promise<void>;
@@ -141,6 +143,8 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
     try {
       await store.append(entries);
     } catch (error) {
+      // The tenant takes no write: what the ledger refused, the database refuses too.
+      if (isFenceError(error)) throw error;
       if (strict) throw new ForgetLedgerUnavailableError(error);
       logger.warn(lost, { error });
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
-import { ReadModelRestoringError } from "../../contracts/errors.ts";
+import { ReadModelRestoringError, TenantFrozenError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { createMemoryCheckpointStore } from "../../memory/checkpoint-store.ts";
@@ -66,6 +66,47 @@ const standAt = async (checkpoints: CheckpointStore, subscriber: string, positio
 };
 
 describe("createReadModelDatabases", () => {
+  it("serves a database ahead of how far it was recorded while the tenant takes no write, recorded once it does", async () => {
+    const { database, checkpoints } = databaseOf();
+    const stored = createMemoryCheckpointStore();
+    let frozen = true;
+    const reached: CheckpointStore = {
+      ...stored,
+      compareAndSet: async (name, expected, position) => {
+        if (frozen) throw new TenantFrozenError("acme", "2026-03-01T00:00:00.000Z");
+        return stored.compareAndSet(name, expected, position);
+      },
+    };
+    const { events } = streamOf(5);
+    await standAt(checkpoints, PROJECTION, 4);
+    const watch = createReadModelDatabases({
+      databases: [database],
+      events,
+      reached,
+      logger: silentLogger,
+    });
+    expect(await watch.check()).toBe(true);
+    await watch.vouch("orders");
+    frozen = false;
+    watch.restored();
+    expect(await watch.check()).toBe(true);
+    expect(await stored.get(reachedOf(PROJECTION))).toBe(4);
+    // Any other failure to record it still keeps the database from serving.
+    const down = createReadModelDatabases({
+      databases: [database],
+      events,
+      reached: {
+        ...stored,
+        compareAndSet: async () => {
+          throw new Error("database down");
+        },
+      },
+      logger: silentLogger,
+    });
+    await standAt(checkpoints, PROJECTION, 5);
+    expect(await down.check()).toBe(false);
+  });
+
   it("serves while each checkpoint names the event the stream holds there, and records how far each reached", async () => {
     const { database, checkpoints, resets } = databaseOf();
     const reached = createMemoryCheckpointStore();

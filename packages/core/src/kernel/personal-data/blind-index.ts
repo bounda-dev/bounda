@@ -2,6 +2,7 @@ import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts"
 import type { IndexKeyStore } from "../../adapter/storage/index-key-store.ts";
 import type { StoredPersonalKey } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
+import { TenantFrozenError } from "../../contracts/errors.ts";
 import type { FieldType } from "../../modules/view.ts";
 import { canonicalJson } from "../shared/value-search.ts";
 import { type AtRestSealer, createAtRestSealer } from "./at-rest.ts";
@@ -190,6 +191,11 @@ const indexWith = async (
     ),
   );
 
+const unlessFrozen = (error: unknown): false => {
+  if (error instanceof TenantFrozenError) return false;
+  throw error;
+};
+
 // The database's key, created on first use and kept wrapped under the tenant's key as a person's
 // key is, so a copy of the database computes no index and opens nothing sealed at rest without
 // it; a key wrapped under an older version is rewrapped at once. One a version of Bounda before
@@ -214,7 +220,8 @@ export const openDatabaseKey: OpenDatabaseKeyFunction = async ({
     stored = (await store.replace(stored, replacement)) ? replacement : await store.get();
   }
   const rewrapped = await wrapping.wrapped(stored);
-  if (rewrapped.kid !== stored.kid && (await store.rewrap(stored, rewrapped))) {
+  // A frozen tenant keeps it under the version it was under, which still opens it, until it thaws.
+  if (rewrapped.kid !== stored.kid && (await store.rewrap(stored, rewrapped).catch(unlessFrozen))) {
     stored = { ...stored, ...rewrapped };
   }
   let current = await openedKey(stored, wrapping);

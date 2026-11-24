@@ -2,6 +2,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { describe, expect, it } from "vitest";
 import { pendingEvent } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
+import { TenantFrozenError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
@@ -298,6 +299,77 @@ describe("createDispatcher", () => {
     } finally {
       telemetry.restore();
     }
+  });
+
+  it("counts no failure of a delivery the tenant's fence refused, tells it, and backs off nothing", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 2);
+    const refusal = new TenantFrozenError("acme", "2026-03-01T00:00:00.000Z");
+    let refusing = true;
+    const subscriber: Subscriber = {
+      name: "fenced",
+      kind: "projection",
+      process: async (events) => {
+        if (refusing) throw refusal;
+        return events.length;
+      },
+    };
+    const refused: unknown[] = [];
+    const recorded: unknown[] = [];
+    const dispatcher = createDispatcher({
+      tracer,
+      clock: createFixedClock(),
+      eventStore,
+      checkpointStore,
+      subscribers: [subscriber],
+      batchSize: 10,
+      pollIntervalMs: 1_000,
+      refused: (error) => refused.push(error),
+      lastFailures: {
+        record: async (failure) => {
+          recorded.push(failure);
+        },
+        resolve: async () => undefined,
+      },
+      logger: silentLogger,
+      errorText: "include",
+    });
+    expect(await dispatcher.processOnce()).toBe(false);
+    expect(refused).toEqual([refusal]);
+    expect(recorded).toEqual([]);
+    const [lag] = (await dispatcher.getLag()).subscribers;
+    expect(lag).not.toHaveProperty("failing");
+    refusing = false;
+    expect(await dispatcher.processOnce()).toBe(true);
+    expect(await checkpointStore.get("fenced")).toBe(2);
+  });
+
+  it("delivers nothing in a pass that finds it paused once its beforePass ran", async () => {
+    const { eventStore, checkpointStore } = await storage();
+    await appendMany(eventStore, 1);
+    const steps: string[] = [];
+    let paused = true;
+    const dispatcher = createDispatcher({
+      tracer,
+      clock: createFixedClock(),
+      eventStore,
+      checkpointStore,
+      subscribers: [recorder("a")],
+      batchSize: 10,
+      pollIntervalMs: 1_000,
+      beforePass: async () => {
+        steps.push("before");
+        paused = steps.length === 1;
+      },
+      paused: () => paused,
+      logger: silentLogger,
+      errorText: "include",
+    });
+    expect(await dispatcher.processOnce()).toBe(false);
+    expect(await checkpointStore.get("a")).toBe(0);
+    expect(await dispatcher.processOnce()).toBe(true);
+    expect(steps).toEqual(["before", "before"]);
+    expect(await checkpointStore.get("a")).toBe(1);
   });
 
   it("advances the checkpoint past the leading events a subscriber reports done", async () => {

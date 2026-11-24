@@ -220,6 +220,7 @@ describe("a Bounda Durable Object", () => {
     const tenant = stub.id.toString();
     await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "no bell" });
     await store.commands.placeOrder({ orderId: "o-2", total: 9, customer: "bob", note: "ring" });
+    await store.freezeTenant(tenant);
     const parts: TenantExportPart[] = [];
     for await (const part of await store.as("dpo").exportTenant(tenant)) parts.push(part);
     expect(parts[0]).toMatchObject({ kind: "header", header: { tenant, position: 2 } });
@@ -246,6 +247,78 @@ describe("a Bounda Durable Object", () => {
       name: "ValidationError",
       code: "VALIDATION_FAILED",
     });
+  });
+
+  it("freezes its tenant, refusing every write and leaving its alarm unarmed until the freeze is lifted", async () => {
+    const { stub, store } = open();
+    const tenant = stub.id.toString();
+    await store.commands.placeOrder({ orderId: "o-1", total: 42, customer: "ada" });
+    const frozen = await store.freezeTenant(tenant);
+    expect(frozen).toEqual({ tenant, frozenAt: expect.any(String) });
+    expect(await settledAlarm(stub)).toBeNull();
+    expect(await rejection(store.commands.payOrder({ orderId: "o-1" }))).toMatchObject({
+      name: "TenantFrozenError",
+      code: "TENANT_FROZEN",
+      tenant,
+      frozenAt: frozen.frozenAt,
+    });
+    expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "placed" });
+    expect((await store.status()).frozenTenant).toEqual({
+      frozenAt: frozen.frozenAt,
+      whole: true,
+    });
+    expect((await store.getLag()).frozen).toBe(true);
+    await store.unfreezeTenant(tenant);
+    expect((await store.getLag()).frozen).toBe(false);
+    await store.commands.payOrder({ orderId: "o-1" });
+    await runAlarm(stub);
+    expect(await store.queries.getOrder({ orderId: "o-1" })).toMatchObject({ status: "archived" });
+  });
+
+  it("arms no alarm while frozen, wakes at once for the work behind when the freeze lifts, and not without", async () => {
+    const { stub } = open();
+    const tenant = stub.id.toString();
+    // In one event of the object each, so its alarm cannot run between the call and the look.
+    const frozen = await runInDurableObject(stub, async (instance, state) => {
+      await instance.command(
+        "placeOrder",
+        { orderId: "o-1", total: 42, customer: "ada" },
+        undefined,
+        "eventual",
+      );
+      const outcome = await instance.freezeTenant(tenant);
+      return { outcome, alarm: await state.storage.getAlarm() };
+    });
+    expect(frozen.outcome).toMatchObject({ ok: true });
+    expect(frozen.alarm).toBeNull();
+    const lifted = await runInDurableObject(stub, async (instance, state) => {
+      const outcome = await instance.unfreezeTenant(tenant);
+      return { outcome, alarm: await state.storage.getAlarm() };
+    });
+    expect(lifted.outcome).toEqual({ ok: true, value: undefined });
+    expect(lifted.alarm).toBeLessThanOrEqual(Date.now());
+    await runAlarm(stub);
+    expect(await alarmOf(stub)).toBeNull();
+    const again = await runInDurableObject(stub, async (instance, state) => {
+      await instance.freezeTenant(tenant);
+      const frozenAlarm = await state.storage.getAlarm();
+      await instance.unfreezeTenant(tenant);
+      return { frozenAlarm, alarm: await state.storage.getAlarm() };
+    });
+    expect(again).toEqual({ frozenAlarm: null, alarm: null });
+    // A projection behind is new work, woken for at once, not after a retry's wait.
+    const behind = await runInDurableObject(stub, async (instance, state) => {
+      await instance.command(
+        "placeOrder",
+        { orderId: "o-2", total: 7, customer: "bo" },
+        undefined,
+        "eventual",
+      );
+      await instance.freezeTenant(tenant);
+      await instance.unfreezeTenant(tenant);
+      return state.storage.getAlarm();
+    });
+    expect(behind).toBeLessThanOrEqual(Date.now());
   });
 
   it("redacts a marked field in its SQLite, so the old value reads nowhere and the export lists the redaction", async () => {
@@ -775,7 +848,7 @@ describe("a Bounda Durable Object", () => {
     const status = await store.status();
     expect(status.schema).toEqual([
       { database: "storage", scope: "storage", version: 11, latest: 11 },
-      { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
+      { database: "storage", scope: "checkpoints", version: 4, latest: 4 },
     ]);
     expect(status.subscriberFailures).toContainEqual(
       expect.objectContaining({

@@ -105,6 +105,7 @@ export const parseTenantKeyRecord: ParseTenantKeyRecordFunction = (text, revisio
     keys: parsed.keys.map(storedKeyOf),
     forgotten: forgettingOf(parsed.forgotten),
     ...filesOf(parsed.files),
+    ...(typeof parsed.frozenAt === "string" ? { frozenAt: parsed.frozenAt } : {}),
   };
 };
 
@@ -126,6 +127,7 @@ export const tenantKeyRecordText: TenantKeyRecordTextFunction = ({
   keys,
   forgotten,
   files,
+  frozenAt,
 }) =>
   JSON.stringify({
     store,
@@ -145,6 +147,7 @@ export const tenantKeyRecordText: TenantKeyRecordTextFunction = ({
             ...(forgotten.files === undefined ? {} : { files: forgotten.files.map(fileKeyText) }),
           },
     ...(files === undefined ? {} : { files: files.map(fileKeyText) }),
+    ...(frozenAt === undefined ? {} : { frozenAt }),
   });
 
 /**

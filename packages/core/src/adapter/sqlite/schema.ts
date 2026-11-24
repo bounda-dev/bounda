@@ -12,6 +12,7 @@ export interface StorageTables {
   readonly indexKeys: string;
   readonly supersededKeys: string;
   readonly tenancy: string;
+  readonly tenantFence: string;
   readonly persons: string;
   readonly snapshots: string;
   readonly personRows: string;
@@ -38,6 +39,7 @@ export const storageTablesFor: StorageTablesForFunction = (prefix) => ({
   indexKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "indexKeys" })),
   supersededKeys: quoteIdentifier(storageTableNameFor({ prefix, table: "supersededKeys" })),
   tenancy: quoteIdentifier(storageTableNameFor({ prefix, table: "tenancy" })),
+  tenantFence: quoteIdentifier(storageTableNameFor({ prefix, table: "tenantFence" })),
   persons: quoteIdentifier(storageTableNameFor({ prefix, table: "persons" })),
   snapshots: quoteIdentifier(storageTableNameFor({ prefix, table: "snapshots" })),
   personRows: quoteIdentifier(storageTableNameFor({ prefix, table: "personRows" })),

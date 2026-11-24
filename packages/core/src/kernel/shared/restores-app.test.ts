@@ -18,11 +18,13 @@ import { type BoundaApp, createApp } from "../app.ts";
 import { PERSONAL_DATA_ACCESSED } from "../personal-data/access.ts";
 import { createEphemeralKeys } from "../personal-data/ephemeral-keys.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
+import { TENANT_CHECK_INTERVAL_MS } from "../personal-data/forgotten-tenant.ts";
 import { HOLD_MAX_MS } from "../personal-data/hold.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
 import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
+import type { TenantExportPart } from "../personal-data/tenant-export.ts";
 import { advanceUntilWaiting } from "../test-support.ts";
-import { GENERATION_INTERVAL_MS } from "./restores.ts";
+import { GENERATION_INTERVAL_MS, RESTORES_FOUND } from "./restores.ts";
 
 const START = new Date("2026-04-01T00:00:00.000Z");
 
@@ -207,6 +209,20 @@ describe("a database restored while the app runs", () => {
     expect(await app.status()).toMatchObject({ restoresFound: 1 });
   });
 
+  it("is taken before a freeze, without a ledger to reconcile", async () => {
+    const { adapter, db } = createNodeSqliteAdapter();
+    const logger = recordingLogger();
+    const { app } = await start({ adapter, logger });
+    await register(app, "c-1");
+    await app.runUntilIdle();
+    const copy = copyOf(db);
+    await register(app, "c-2");
+    await app.runUntilIdle();
+    restore(db, copy);
+    await app.freezeTenant("default");
+    expect(await app.status()).toMatchObject({ restoresFound: 1, frozenTenant: { whole: true } });
+  });
+
   it("moves the generation after a pass that wrote no event, as a key rewrapped, and not while idle", async () => {
     const { adapter, db } = createNodeSqliteAdapter();
     const before = await start({ adapter });
@@ -356,15 +372,38 @@ describe("a strict app's export", () => {
     expect(accesses(logger)).toEqual([["exportPersonalData", "failed", "RESTORE_UNRECONCILED"]]);
   });
 
-  it("refuses a tenant export whose header it read from a copy restored under it, recorded as failed", async () => {
+  it("settles a copy restored under it before it freezes, so the export holds what the ledger says", async () => {
     const { app, db, copy, logger } = await copiedBefore();
     restore(db, copy);
-    await expect(app.exportTenant("default")).rejects.toBeInstanceOf(RestoreUnreconciledError);
-    expect(accesses(logger)).toEqual([["exportTenant", "failed", "RESTORE_UNRECONCILED"]]);
+    await app.freezeTenant("default");
+    // Found and taken while the tenant still took writes.
+    expect((await app.status()).restoresFound).toBe(1);
+    expect(logger.logged.map(({ message }) => message)).toContain(
+      "the database went back to an earlier copy; background jobs start over",
+    );
+    logger.logged.length = 0;
+    const parts: TenantExportPart[] = [];
+    for await (const part of await app.exportTenant("default")) parts.push(part);
+    expect(parts.at(-1)?.kind).toBe("end");
+    // The forgetting the copy lacked, committed again before the freeze.
+    expect(
+      parts.some(
+        (part) =>
+          part.kind === "event" &&
+          part.event.type === "PersonalDataForgotten" &&
+          part.event.aggregateId === "c-2",
+      ),
+    ).toBe(true);
+    expect(accesses(logger)).toEqual([
+      ["exportTenant", "started", null],
+      ["exportTenant", "ok", null],
+    ]);
   });
 
   it("refuses a page of a tenant export it read from a copy restored under it, recorded as failed", async () => {
     const { app, db, copy, logger } = await copiedBefore();
+    await app.freezeTenant("default");
+    logger.logged.length = 0;
     const parts = (await app.exportTenant("default"))[Symbol.asyncIterator]();
     expect((await parts.next()).value?.kind).toBe("header");
     restore(db, copy);
@@ -463,6 +502,7 @@ describe("a database restored while the app was stopped", () => {
         readMark: async () => 0,
         raiseMark: (name, value) => inner.raiseMark(name, value),
         clear: () => inner.clear(),
+        fence: inner.fence,
       };
     });
     const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
@@ -479,6 +519,146 @@ describe("a database restored while the app was stopped", () => {
     expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
     expect((await after.app.status()).restoresFound).toBe(1);
     expect((await after.app.getLag()).forgetLedger).toEqual({ reconciled: true });
+  });
+
+  it("is found once a tenant frozen at start thaws, from a forgetting the ledger holds and the copy does not", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
+    const stale = defineForgetLedger(async () => {
+      const inner = await ledgerAdapter.createForgetLedger({});
+      return { ...inner, readMark: async () => 0 };
+    });
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    const copy = copyOf(store.db);
+    await before.app.forget("c-1");
+    await before.app.stop();
+    restore(store.db, copy);
+    const storage = await store.adapter.createStorage();
+    await storage.fence.set({ state: "frozen", tenant: "default", since: START.toISOString() });
+    const logger = recordingLogger();
+    const now = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const after = await start({ adapter: store.adapter, runtime, logger, now });
+    await after.app.runUntilIdle();
+    expect(restarts(logger)).toEqual([]);
+    expect((await after.app.status()).restoresFound).toBe(0);
+    await storage.fence.set({ state: "open" });
+    after.clock.advance(TENANT_CHECK_INTERVAL_MS);
+    await after.app.runUntilIdle();
+    expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect((await after.app.status()).restoresFound).toBe(1);
+    const reasons = (await after.app.events.read({ limit: 100 }))
+      .filter((event) => event.type === "PersonalDataForgotten")
+      .map((event) => (event.payload as PersonalDataForgottenPayload).reason);
+    expect(reasons).toEqual(["requested"]);
+  });
+
+  it("is found once a tenant frozen at start thaws, from the forget ledger's mark, and counted once", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledger = createNodeSqliteAdapter(paths.ledger).adapter;
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: ledger } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    await before.app.runUntilIdle();
+    const copy = copyOf(store.db);
+    await before.app.forget("c-1");
+    before.clock.advance(GENERATION_INTERVAL_MS);
+    await before.app.runUntilIdle();
+    await before.app.stop();
+    restore(store.db, copy);
+    const storage = await store.adapter.createStorage();
+    await storage.fence.set({ state: "frozen", tenant: "default", since: START.toISOString() });
+    const logger = recordingLogger();
+    const after = await start({ adapter: store.adapter, runtime, logger });
+    await storage.fence.set({ state: "open" });
+    after.clock.advance(TENANT_CHECK_INTERVAL_MS);
+    await after.app.runUntilIdle();
+    expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect((await after.app.status()).restoresFound).toBe(1);
+  });
+
+  it("finds no restore once a tenant frozen at start thaws on the database it held", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledger = createNodeSqliteAdapter(paths.ledger).adapter;
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: ledger } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    await before.app.forget("c-1");
+    await before.app.runUntilIdle();
+    await before.app.freezeTenant("default");
+    await before.app.stop();
+    const logger = recordingLogger();
+    const after = await start({ adapter: store.adapter, runtime, logger });
+    await after.app.unfreezeTenant("default");
+    await after.app.runUntilIdle();
+    expect(restarts(logger)).toEqual([]);
+    expect((await after.app.status()).restoresFound).toBe(0);
+  });
+
+  it("leaves what a frozen start deferred for the next pass when it fails, and delivers meanwhile", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
+    const stale = defineForgetLedger(async () => {
+      const inner = await ledgerAdapter.createForgetLedger({});
+      return { ...inner, readMark: async () => 0 };
+    });
+    let failing = false;
+    // Counting the restore fails while `failing`, before it changes anything.
+    const adapter: typeof store.adapter = {
+      ...store.adapter,
+      createStorage: async (...args) => {
+        const storage = await store.adapter.createStorage(...args);
+        const { checkpointStore } = storage;
+        return {
+          ...storage,
+          checkpointStore: {
+            ...checkpointStore,
+            compareAndSet: (name, expected, next) => {
+              if (failing && name === RESTORES_FOUND) throw new Error("database down");
+              return checkpointStore.compareAndSet(name, expected, next);
+            },
+          },
+        };
+      },
+    };
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    const copy = copyOf(store.db);
+    await before.app.forget("c-1");
+    await before.app.stop();
+    restore(store.db, copy);
+    const storage = await store.adapter.createStorage();
+    await storage.fence.set({ state: "frozen", tenant: "default", since: START.toISOString() });
+    const logger = recordingLogger();
+    const now = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const after = await start({ adapter, runtime, logger, now });
+    await storage.fence.set({ state: "open" });
+    after.clock.advance(TENANT_CHECK_INTERVAL_MS);
+    failing = true;
+    await register(after.app, "c-2");
+    await after.app.runUntilIdle();
+    const failed = () =>
+      logger.logged.filter(
+        ({ message }) =>
+          message === "what the start left for the tenant to thaw could not be done yet",
+      );
+    expect(failed().length).toBeGreaterThan(0);
+    expect(failed()[0]?.fields).toEqual({ errorName: "Error" });
+    expect((await after.app.getLag()).maxLag).toBe(0);
+    expect(restarts(logger)).toEqual([]);
+    failing = false;
+    await after.app.runUntilIdle();
+    expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect((await after.app.status()).restoresFound).toBe(1);
+    const logged = failed().length;
+    await after.app.runUntilIdle();
+    expect(failed()).toHaveLength(logged);
   });
 
   it("is declared without a ledger by bounda restored, which every running instance learns", async () => {
@@ -547,5 +727,170 @@ describe("an instance in the web role", () => {
           message === "the database went back to an earlier copy; background jobs start over",
       ),
     ).toHaveLength(1);
+  });
+
+  it("waits while the tenant is frozen, and finds the restore once it thaws", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "bounda-web-"));
+    const store = createNodeSqliteAdapter(join(directory, "store.db"));
+    const runtime: RuntimeConfig = {
+      role: "web",
+      personalData: { forgetLedger: { store: memory() } },
+    };
+    const logger = recordingLogger();
+    const { app, clock } = await start({ adapter: store.adapter, runtime, logger });
+    app.start();
+    await register(app, "c-1");
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    const copy = copyOf(store.db);
+    await app.forget("c-1");
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    const { frozenAt } = await app.freezeTenant("default");
+    // Restored by hand: the copy brings its own fence, put back as the freeze left it.
+    restore(store.db, copy);
+    const storage = await store.adapter.createStorage();
+    await storage.fence.set({ state: "frozen", tenant: "default", since: frozenAt });
+    const keys = () =>
+      store.db.prepare(`SELECT count(*) AS "keys" FROM "bounda_personal_keys"`).get();
+    const restarts = () =>
+      logger.logged.filter(
+        ({ message }) =>
+          message === "the database went back to an earlier copy; background jobs start over",
+      );
+    const quiet = logger.logged.length;
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    expect(keys()).toEqual({ keys: 1 });
+    // Nothing tried while frozen, the restore included.
+    expect(logger.logged.slice(quiet)).toEqual([]);
+    await app.unfreezeTenant("default");
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    expect(keys()).toEqual({ keys: 0 });
+    expect(restarts()).toHaveLength(1);
+  });
+
+  it("logs a watch that failed, as on a freeze it could not read, and goes on watching", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "bounda-web-"));
+    const store = createNodeSqliteAdapter(join(directory, "store.db"));
+    let failing = false;
+    const adapter: typeof store.adapter = {
+      ...store.adapter,
+      createStorage: async (...args) => {
+        const storage = await store.adapter.createStorage(...args);
+        return {
+          ...storage,
+          fence: {
+            ...storage.fence,
+            read: () =>
+              failing ? Promise.reject(new Error("fence unreadable")) : storage.fence.read(),
+          },
+        };
+      },
+    };
+    const logger = recordingLogger();
+    const runtime: RuntimeConfig = {
+      role: "web",
+      personalData: { forgetLedger: { store: memory() } },
+    };
+    const { app, clock } = await start({ adapter, runtime, logger });
+    app.start();
+    await register(app, "c-1");
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    const copy = copyOf(store.db);
+    await app.forget("c-1");
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    failing = true;
+    const failed = () =>
+      logger.logged.filter(
+        ({ message }) => message === "the watch for a restore failed; it looks again later",
+      );
+    while (failed().length === 0) await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    expect(failed()[0]).toEqual({
+      level: "error",
+      message: "the watch for a restore failed; it looks again later",
+      fields: { errorName: "Error" },
+    });
+    restore(store.db, copy);
+    failing = false;
+    for (let tick = 0; tick < 3; tick += 1)
+      await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    expect(
+      logger.logged.filter(
+        ({ message }) =>
+          message === "the database went back to an earlier copy; background jobs start over",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("arms no look once stopped, though one was under way", async () => {
+    const { adapter } = createNodeSqliteAdapter();
+    const { app, clock } = await start({ adapter, runtime: { role: "web" } });
+    app.start();
+    const waiting = clock.pending();
+    clock.advance(GENERATION_INTERVAL_MS);
+    await app.stop();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(clock.pending()).toBeLessThan(waiting);
+  });
+});
+
+describe("a copy restored by hand under a frozen tenant", () => {
+  const raised = (logger: { readonly logged: Logged[] }) =>
+    logger.logged.filter(
+      ({ message }) =>
+        message ===
+        "the tenant is frozen and a database's fence was open, as a copy restored by hand leaves it: raised again",
+    );
+
+  it("has its fence raised again by the next pass, which the next commit then meets", async () => {
+    const { adapter, db } = createNodeSqliteAdapter();
+    const logger = recordingLogger();
+    const { app } = await start({ adapter, logger });
+    await register(app, "c-1");
+    await app.runUntilIdle();
+    const copy = copyOf(db);
+    const { frozenAt } = await app.freezeTenant("default");
+    restore(db, copy);
+    expect(db.prepare(`SELECT count(*) AS "rows" FROM "bounda_tenant_fence"`).get()).toEqual({
+      rows: 0,
+    });
+    await app.runUntilIdle();
+    expect(raised(logger).map(({ fields }) => fields)).toEqual([
+      { tenant: "default", frozenAt, databases: 1 },
+    ]);
+    await expect(register(app, "c-2")).rejects.toMatchObject({ code: "TENANT_FROZEN", frozenAt });
+  });
+
+  it("has its fence raised again by an instance that runs no worker, at its next look", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "bounda-web-"));
+    const store = createNodeSqliteAdapter(join(directory, "store.db"));
+    const logger = recordingLogger();
+    const { app, clock } = await start({
+      adapter: store.adapter,
+      runtime: { role: "web" },
+      logger,
+    });
+    app.start();
+    await register(app, "c-1");
+    const copy = copyOf(store.db);
+    const { frozenAt } = await app.freezeTenant("default");
+    restore(store.db, copy);
+    await advanceUntilWaiting(clock, GENERATION_INTERVAL_MS);
+    expect(raised(logger)).toHaveLength(1);
+    await expect(register(app, "c-2")).rejects.toMatchObject({ code: "TENANT_FROZEN", frozenAt });
+  });
+
+  it("has its fence raised again by a start on it, which then starts frozen", async () => {
+    const { adapter, db } = createNodeSqliteAdapter();
+    const before = await start({ adapter });
+    await register(before.app, "c-1");
+    await before.app.runUntilIdle();
+    const copy = copyOf(db);
+    const { frozenAt } = await before.app.freezeTenant("default");
+    await before.app.stop();
+    restore(db, copy);
+    const logger = recordingLogger();
+    const after = await start({ adapter, logger });
+    expect(raised(logger)).toHaveLength(1);
+    expect((await after.app.status()).frozenTenant).toMatchObject({ frozenAt });
+    await expect(register(after.app, "c-2")).rejects.toMatchObject({ code: "TENANT_FROZEN" });
   });
 });

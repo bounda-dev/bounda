@@ -2087,9 +2087,10 @@ describe("operations", () => {
       readonly waitingDeadlines: number;
       readonly forgetLedger: ForgetLedgerLag | null;
       readonly personalDataBackfill: PersonalDataBackfillLag | null | UnreadableStatus;
+      readonly frozen: boolean;
     }>();
     expectTypeOf<BoundaClient["getLag"]>().toEqualTypeOf<() => Promise<AppLag>>();
-    expectTypeOf<StatusLag>().toEqualTypeOf<Omit<AppLag, "personalDataBackfill">>();
+    expectTypeOf<StatusLag>().toEqualTypeOf<Omit<AppLag, "personalDataBackfill" | "frozen">>();
     expectTypeOf<UnreadableSubscriberLag>().toEqualTypeOf<{
       readonly subscriber: string;
       readonly failing?: SubscriberFailing;

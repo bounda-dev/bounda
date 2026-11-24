@@ -141,6 +141,11 @@ export type {
 } from "./tenant-export.contract.ts";
 export { tenantExportContract } from "./tenant-export.contract.ts";
 export type {
+  TenantFenceContractArgs,
+  TenantFenceContractFunction,
+} from "./tenant-fence.contract.ts";
+export { tenantFenceContract } from "./tenant-fence.contract.ts";
+export type {
   TenancyContractArgs,
   TenancyContractFunction,
   TenantKeyStoreContractArgs,

@@ -36,6 +36,7 @@ const LATEST = [
   { scope: "checkpoints", version: 1 },
   { scope: "checkpoints", version: 2 },
   { scope: "checkpoints", version: 3 },
+  { scope: "checkpoints", version: 4 },
   { scope: "storage", version: 1 },
   { scope: "storage", version: 2 },
   { scope: "storage", version: 3 },
@@ -169,21 +170,21 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
-        { scope: "checkpoints", version: 0, latest: 3 },
-        { scope: "forget-ledger", version: 0, latest: 7 },
+        { scope: "checkpoints", version: 0, latest: 4 },
+        { scope: "forget-ledger", version: 0, latest: 8 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
-        { scope: "checkpoints", version: 3, latest: 3 },
-        { scope: "forget-ledger", version: 0, latest: 7 },
+        { scope: "checkpoints", version: 4, latest: 4 },
+        { scope: "forget-ledger", version: 0, latest: 8 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
         { scope: "storage", version: STORAGE_LATEST[dialect], latest: STORAGE_LATEST[dialect] },
-        { scope: "checkpoints", version: 3, latest: 3 },
-        { scope: "forget-ledger", version: 7, latest: 7 },
+        { scope: "checkpoints", version: 4, latest: 4 },
+        { scope: "forget-ledger", version: 8, latest: 8 },
         { scope: "tenant-keys", version: 1, latest: 1 },
       ]);
       const shape = await shapeOf(target, dialect);
@@ -207,7 +208,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(await target.adapter.schemaVersions()).toContainEqual({
         scope: "checkpoints",
         version: 999,
-        latest: 3,
+        latest: 4,
       });
     });
 
@@ -520,6 +521,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 5 },
         { scope: "forget-ledger", version: 6 },
         { scope: "forget-ledger", version: 7 },
+        { scope: "forget-ledger", version: 8 },
       ]);
     });
 
@@ -549,6 +551,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "checkpoints", version: 1 },
         { scope: "checkpoints", version: 2 },
         { scope: "checkpoints", version: 3 },
+        { scope: "checkpoints", version: 4 },
       ]);
     });
   });

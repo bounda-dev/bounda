@@ -1,6 +1,7 @@
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { EventNotifier, Unsubscribe } from "../../adapter/storage/event-notifier.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
+import { isFenceError } from "../../adapter/storage/tenant-fence.ts";
 import {
   DEFAULT_BACKOFF_BASE_DELAY_MS,
   DEFAULT_BACKOFF_MAX_DELAY_MS,
@@ -172,6 +173,10 @@ export interface CreateDispatcherArgs {
    * store was restored under the app.
    */
   readonly beforePass?: () => Promise<unknown>;
+  // Whether the passes wait, read after `beforePass`: a pass that finds it so delivers nothing.
+  readonly paused?: () => boolean;
+  // Told of a delivery the tenant's fence refused, which counts as no failure.
+  readonly refused?: (error: unknown) => void;
   readonly clock: Clock;
   readonly logger: Logger;
   readonly errorText: ErrorText;
@@ -213,6 +218,8 @@ export const createDispatcher: CreateDispatcherFunction = ({
   notifier,
   lastFailures,
   beforePass,
+  paused,
+  refused = () => undefined,
   clock,
   logger,
   errorText,
@@ -244,6 +251,11 @@ export const createDispatcher: CreateDispatcherFunction = ({
 
   const record = async (subscriber: string, delivery: Delivery): Promise<void> => {
     const current = failing.get(subscriber);
+    // A write a fence refused: the subscriber waits for the fence, nothing failed.
+    if (delivery.outcome === "failed" && isFenceError(delivery.error)) {
+      refused(delivery.error);
+      return;
+    }
     if (delivery.outcome === "failed") {
       const attempts = (current?.attempts ?? 0) + 1;
       failing.set(subscriber, {
@@ -385,6 +397,7 @@ export const createDispatcher: CreateDispatcherFunction = ({
 
   const pass = async (wait: boolean, patient: boolean, only?: SubscriberKind): Promise<boolean> => {
     await beforePass?.();
+    if (paused?.() === true) return false;
     let advanced = false;
     for (const subscriber of delivering) {
       if (only !== undefined && subscriber.kind !== only) continue;

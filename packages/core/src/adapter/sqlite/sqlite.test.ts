@@ -45,6 +45,7 @@ import {
   tableContract,
   tenancyContract,
   tenantExportContract,
+  tenantFenceContract,
   tenantKeyStoreContract,
   viewContract,
 } from "../testing/index.ts";
@@ -158,6 +159,7 @@ describe("the SQLite stores on node:sqlite", () => {
       return (tenant) => adapter.createForgetLedger({ tenant });
     },
   });
+  tenantFenceContract({ create: async () => nodeSqlite().adapter });
   tableContract({
     create: async () =>
       (
@@ -342,8 +344,10 @@ describe("the person index of the SQLite stores", () => {
       await storage.deadLetterStore.firstResolvedAt();
       await storage.deadLetterStore.purge({ resolvedBy: new Date(), limit: 1 });
     });
-    expect(plans).toHaveLength(2);
-    for (const [, plan] of plans) {
+    // Beside the fence the purge reads first, in its own transaction.
+    expect(plans.filter(([sql]) => sql.includes("tenant_fence"))).toHaveLength(1);
+    expect(plans.filter(([sql]) => !sql.includes("tenant_fence"))).toHaveLength(2);
+    for (const [, plan] of plans.filter(([sql]) => !sql.includes("tenant_fence"))) {
       expect(plan).toContainEqual(expect.stringContaining("bounda_dead_letters_resolved_idx"));
       expect(scans(plan)).toEqual([]);
     }
@@ -569,6 +573,7 @@ describe("createSqliteAdapter", () => {
       "app_subscriber_failures",
       "app_superseded_keys",
       "app_tenancy",
+      "app_tenant_fence",
     ]);
   });
 
@@ -721,8 +726,31 @@ describe("the SQLite forget ledger", () => {
     await ledger.read({ limit: 1 });
     expect(tableNames(db, "app_")).toEqual([
       "app_forget_ledger",
+      "app_forget_ledger_fence",
       "app_forget_ledger_marks",
       "app_migrations",
     ]);
+  });
+});
+
+describe("the SQLite fence", () => {
+  it("lets a query's raw SQL read through a frozen read model, whatever it starts with, in no transaction", async () => {
+    const statements: string[] = [];
+    const { adapter } = nodeSqlite(undefined, "bounda_", statements);
+    const readModel = await adapter.createReadModel<ContractRow>({
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+    });
+    await readModel.fence.set({
+      state: "frozen",
+      tenant: "acme",
+      since: "2026-03-01T00:00:00.000Z",
+    });
+    statements.length = 0;
+    expect(await readModel.client.all('WITH "x" AS (SELECT 1 AS "n") SELECT "n" FROM "x"')).toEqual(
+      [{ n: 1 }],
+    );
+    expect(statements).toEqual(['WITH "x" AS (SELECT 1 AS "n") SELECT "n" FROM "x"']);
   });
 });

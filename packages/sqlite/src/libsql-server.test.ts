@@ -2,6 +2,7 @@ import {
   eventStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  tenantFenceContract,
 } from "@bounda-dev/core/adapter/testing";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import { afterAll, describe } from "vitest";
@@ -35,4 +36,5 @@ describe.skipIf(server === null)("sqlite adapter on a libSQL server", () => {
   eventStoreContract({ create: () => fresh().createStorage() });
   readModelTransactionContract({ create: async () => fresh(), locking: "single-writer" });
   readModelRebuildContract({ create: async () => fresh() });
+  tenantFenceContract({ create: async () => fresh() });
 });

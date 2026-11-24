@@ -155,6 +155,7 @@ export type {
   TenantExportedSubscriberFailure,
   TenantExportHeader,
   TenantExportPart,
+  TenantExportReached,
 } from "./kernel/personal-data/tenant-export.ts";
 export {
   TENANT_EXPORT_FORMAT,
@@ -214,6 +215,7 @@ export type {
   AppStatus,
   EncryptedFileStatus,
   ForgottenTenantStatus,
+  FrozenTenantStatus,
   IsUnreadableFunction,
   RecipientStatus,
   SchemaStatus,
@@ -223,6 +225,7 @@ export type {
   UnreadableSchemaStatus,
 } from "./kernel/status.ts";
 export { isUnreadable, unreadableParts } from "./kernel/status.ts";
+export type { TenantFrozenResult } from "./kernel/tenant-fences.ts";
 export type { Witness } from "./kernel/witness.ts";
 export * from "./modules/index.ts";
 export type { AppEnv, AppRegistry, EnvSection, Register } from "./register/index.ts";

@@ -371,6 +371,7 @@ describe("the forget ledger", () => {
         readMark: (name) => inner.readMark(name),
         raiseMark: (name, value) => inner.raiseMark(name, value),
         clear: () => inner.clear(),
+        fence: inner.fence,
         read: async (args) => {
           if (failures > 0) {
             failures -= 1;
@@ -419,6 +420,7 @@ describe("the forget ledger", () => {
         readMark: (name) => inner.readMark(name),
         raiseMark: (name, value) => inner.raiseMark(name, value),
         clear: () => inner.clear(),
+        fence: inner.fence,
         read: async (args) => {
           reads += 1;
           if (down) throw new Error("ledger is down");
@@ -470,6 +472,7 @@ describe("the forget ledger", () => {
       readMark: async () => 0,
       raiseMark: async () => undefined,
       clear: async () => true,
+      fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
     }));
     const { app: first } = await start({ storage, forgetLedger: broken });
     // A fresh store's first pass finds nothing written before the marks.
@@ -503,6 +506,7 @@ describe("the forget ledger", () => {
         readMark: (name) => inner.readMark(name),
         raiseMark: (name, value) => inner.raiseMark(name, value),
         clear: () => inner.clear(),
+        fence: inner.fence,
         read: async (args) => {
           await answered;
           return inner.read(args);
@@ -580,6 +584,7 @@ describe("the forget ledger", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: (entries) => inner.append(entries),
         read: (args) => {
           reconciling = true;
@@ -635,6 +640,7 @@ describe("the forget ledger", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: async (entries) => {
           if (refusals > 0) {
             refusals -= 1;
@@ -745,6 +751,7 @@ describe("the forget ledger", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: async (entries) => {
           appends.push(...entries.map(({ personId }) => personId));
           await inner.append(entries);
@@ -788,6 +795,7 @@ describe("the forget ledger", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: () => new Promise<void>(() => undefined),
       };
     });
@@ -829,6 +837,7 @@ describe("the forget ledger", () => {
         readMark: (name) => inner.readMark(name),
         raiseMark: (name, value) => inner.raiseMark(name, value),
         clear: () => inner.clear(),
+        fence: inner.fence,
         read: async (args) => {
           reads += 1;
           return inner.read(args);
@@ -875,6 +884,7 @@ describe("the forget ledger", () => {
         readMark: (name) => inner.readMark(name),
         raiseMark: (name, value) => inner.raiseMark(name, value),
         clear: () => inner.clear(),
+        fence: inner.fence,
         read: async (args) => {
           reads += 1;
           if (failures > 0) {
@@ -975,6 +985,7 @@ describe("the forget ledger", () => {
       readMark: async () => 0,
       raiseMark: async () => undefined,
       clear: async () => true,
+      fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
       append: async () => {},
       read: async () => {
         throw down;
@@ -1001,6 +1012,7 @@ describe("the forget ledger", () => {
         readMark: (name) => inner.readMark(name),
         raiseMark: (name, value) => inner.raiseMark(name, value),
         clear: () => inner.clear(),
+        fence: inner.fence,
         read: async (args) => {
           await answered;
           return inner.read(args);
@@ -1219,6 +1231,7 @@ describe("the intention a forgetting records first", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: async (entries) => {
           if (down) throw new Error("ledger is down");
           await inner.append(entries);
@@ -1259,6 +1272,7 @@ describe("the intention a forgetting records first", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: () => new Promise<void>(() => undefined),
       };
     });
@@ -1297,6 +1311,7 @@ describe("the intention a forgetting records first", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: async (entries) => {
           if (down) throw new Error("ledger is down");
           await inner.append(entries);

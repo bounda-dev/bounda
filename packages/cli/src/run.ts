@@ -822,6 +822,36 @@ const runForgetTenant = (
   });
 };
 
+// The write fence lives in the database, so freezing from here holds every running instance too.
+const runFreezeTenant = (
+  tenant: string,
+  options: ActingOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp({ ...options, tenant: options.tenant ?? tenant }, cwd, stderr, async (app) => {
+    const frozen = await actingAs(app, options).freezeTenant(tenant);
+    line(
+      stdout,
+      `froze tenant ${frozen.tenant} at ${frozen.frozenAt}: no write of it lands until bounda unfreeze-tenant ${frozen.tenant}; bounda export-tenant hands it back as one cut`,
+    );
+    return EXIT_OK;
+  });
+
+const runUnfreezeTenant = (
+  tenant: string,
+  options: ActingOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> =>
+  withApp({ ...options, tenant: options.tenant ?? tenant }, cwd, stderr, async (app) => {
+    await actingAs(app, options).unfreezeTenant(tenant);
+    line(stdout, `unfroze tenant ${tenant}: it takes writes again`);
+    return EXIT_OK;
+  });
+
 type HeaderPart = Extract<TenantExportPart, { readonly kind: "header" }>;
 
 type EndPart = Extract<TenantExportPart, { readonly kind: "end" }>;
@@ -1472,9 +1502,29 @@ export const runCli: RunCliFunction = async ({
 
   actingOptions(
     program
+      .command("freeze-tenant")
+      .description(
+        "freeze a tenant: no write of it lands, from this or any running instance, until it is unfrozen; reads go on, and bounda export-tenant hands it back as one cut",
+      )
+      .argument("<tenant>", "the tenant to freeze, the one the app serves"),
+  ).action(async (tenant: string, options: ActingOptions) => {
+    exitCode = await runFreezeTenant(tenant, options, cwd, stdout, stderr);
+  });
+
+  actingOptions(
+    program
+      .command("unfreeze-tenant")
+      .description("lift a tenant's freeze: it takes writes again, and the background work goes on")
+      .argument("<tenant>", "the tenant to unfreeze, the one the app serves"),
+  ).action(async (tenant: string, options: ActingOptions) => {
+    exitCode = await runUnfreezeTenant(tenant, options, cwd, stdout, stderr);
+  });
+
+  actingOptions(
+    program
       .command("export-tenant")
       .description(
-        "hand a tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log",
+        "hand a frozen tenant's data back to its controller, as JSON Lines: every person, event, scheduled command, dead letter, subscriber failure, remembered answer, read model row and forget ledger entry, every value opened, read and written a page at a time; recorded in the access log. Freeze it first with bounda freeze-tenant",
       )
       .argument("<tenant>", "the tenant to export, the one the app serves")
       .option(

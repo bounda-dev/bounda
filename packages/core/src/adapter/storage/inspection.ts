@@ -15,6 +15,7 @@ export type InspectedStore =
   | "indexKeys"
   | "supersededKeys"
   | "tenancy"
+  | "tenantFence"
   | "persons"
   | "restrictions"
   | "restrictedPersons"
@@ -26,6 +27,7 @@ export type InspectedStore =
   | "recipients"
   | "forgetLedger"
   | "forgetLedgerMarks"
+  | "forgetLedgerFence"
   | "tenantKeys"
   | "migrations"
   | "readModel";
@@ -44,6 +46,7 @@ export const STORAGE_STORES: readonly Exclude<InspectedStore, "readModel">[] = [
   "indexKeys",
   "supersededKeys",
   "tenancy",
+  "tenantFence",
   "persons",
   "restrictions",
   "restrictedPersons",
@@ -55,6 +58,7 @@ export const STORAGE_STORES: readonly Exclude<InspectedStore, "readModel">[] = [
   "recipients",
   "forgetLedger",
   "forgetLedgerMarks",
+  "forgetLedgerFence",
   "tenantKeys",
   "migrations",
 ];

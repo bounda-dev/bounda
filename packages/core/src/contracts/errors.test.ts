@@ -16,6 +16,7 @@ import {
   RestoreUnreconciledError,
   rejectionOf,
   ScheduledClaimLostError,
+  TenantFrozenError,
   ValidationError,
 } from "./errors.ts";
 
@@ -146,6 +147,12 @@ describe("errors", () => {
     expect(error.code).toBe("DEAD_LETTER_NOT_RETRIABLE");
     expect(error.name).toBe("DeadLetterNotRetriableError");
     expect(error.message).toBe('Policy "order.gone" is no longer in the registry');
+  });
+
+  it("say since when a tenant is frozen", () => {
+    expect(new TenantFrozenError("acme", "2026-03-01T00:00:00.000Z").message).toBe(
+      "Tenant acme is frozen since 2026-03-01T00:00:00.000Z: it takes no write",
+    );
   });
 
   it("mark missing resources", () => {

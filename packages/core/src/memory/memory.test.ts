@@ -30,6 +30,7 @@ import {
   tableContract,
   tenancyContract,
   tenantExportContract,
+  tenantFenceContract,
   tenantKeyStoreContract,
   viewContract,
 } from "../adapter/testing/index.ts";
@@ -67,6 +68,7 @@ describe("memory adapter", () => {
       return (tenant) => adapter.createForgetLedger({ tenant });
     },
   });
+  tenantFenceContract({ create: async () => memory() });
   tableContract({
     create: async () => {
       const model = await memory().createReadModel<ContractRow>({

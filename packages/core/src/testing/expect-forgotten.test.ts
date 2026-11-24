@@ -1101,9 +1101,8 @@ describe("expectForgotten given an app built with a witness", () => {
       "the forget ledger still holds entries of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears them",
       "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
     ]);
-    // A mark alone is found too.
-    await kept.clear();
-    await kept.raiseMark(RESTORE_MARK, 3);
+    // A mark alone is found too, as a clear cut short after the entries leaves it.
+    await kept.prune?.({ before: "9999-12-31T23:59:59.999Z" });
     expect(
       ((await rejection(expectTenantForgotten(witness))) as TenantNotForgottenError).problems,
     ).toEqual([

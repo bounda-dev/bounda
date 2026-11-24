@@ -5,6 +5,7 @@ import type {
   ForgetLedgerPosition,
 } from "../../adapter/storage/forget-ledger.ts";
 import type { RecipientPort } from "../../adapter/storage/recipient-store.ts";
+import type { TenantFence } from "../../adapter/storage/tenant-fence.ts";
 import type { TenantForgetting } from "../../adapter/storage/tenant-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import type { TenantForgottenError } from "../../contracts/errors.ts";
@@ -95,12 +96,13 @@ export const addressedTenant: AddressedTenantFunction = async (transaction, pres
 };
 
 /**
- * A read model whose rows a tenant's forgetting removes: every one but those whose view says they
- * keep nothing derived from personal data.
+ * A read model of a tenant forgotten: its fence is raised, and its rows removed unless its view
+ * says they keep nothing derived from personal data.
  */
 export interface ForgottenReadModel {
   readonly name: string;
-  readonly storage: Pick<ReadModelStorage, "transact">;
+  readonly storage: Pick<ReadModelStorage, "transact" | "fence">;
+  readonly personal: boolean;
 }
 
 interface DiscloseLostAgainArgs {
@@ -144,12 +146,15 @@ const discloseLostAgain = async ({
 };
 
 export interface SettleTenantForgettingArgs {
+  // The storage whose writes go through the fence of a forgotten tenant, as `Storage.forgotten`
+  // hands it out.
   readonly storage: Pick<
     Storage,
     | "transact"
     | "eventStore"
     | "checkpointStore"
     | "tenancy"
+    | "fence"
     | "personalKeys"
     | "indexKeys"
     | "snapshotStore"
@@ -164,7 +169,7 @@ export interface SettleTenantForgettingArgs {
    * The forget ledger, `null` without one: the disclosures it holds that the database lost are
    * recorded again before the recipients to tell are read.
    */
-  readonly ledger: Pick<ForgetLedger, "read"> | null;
+  readonly ledger: Pick<ForgetLedger, "read" | "fence"> | null;
   /**
    * Whether the database may be a copy taken before the forgetting, as for any settling but the
    * forgetting's own: without a ledger to tell what the copy lost, every port of `ports` is
@@ -184,7 +189,9 @@ export interface SettleTenantForgettingFunction {
 }
 
 /**
- * What a tenant's forgetting leaves in its database once its key is destroyed: the binding marked,
+ * What a tenant's forgetting leaves in its database once its key is destroyed: the fences of the
+ * ledger, the database and every read model raised, so no instance that has not heard of the
+ * forgetting writes after it, and what landed before is settled with the rest; the binding marked,
  * `TenantForgotten` appended unless the store holds it, every person's key and the database's key
  * removed, every snapshot, remembered answer, subscriber failure and dead letter with them but the
  * letters of the notices of the forgetting itself, and the rows of the read models that may hold
@@ -207,6 +214,16 @@ export const settleTenantForgetting: SettleTenantForgettingFunction = async ({
   concurrencyRetries,
   context,
 }) => {
+  const fence: TenantFence = { state: "forgotten", tenant, since: forgetting.at };
+  // First, so no intention lands that the database refuses; the discharge raises it again before
+  // it clears the ledger, should it not answer now.
+  await ledger?.fence.set(fence).catch((error: unknown) => {
+    logger.error("the forget ledger's fence could not be raised for the tenant's forgetting", {
+      tenant,
+      error,
+    });
+  });
+  await storage.fence.set(fence);
   await storage.tenancy.forget(forgetting.at);
   const unrecorded =
     (await storage.eventStore.readOne({
@@ -264,10 +281,13 @@ export const settleTenantForgetting: SettleTenantForgettingFunction = async ({
   // Nor does any letter retention, nor a retry of the work the tenant gave up on; the forgotten app
   // tells the recipients of the forgetting alone, through letters of its own.
   await storage.deadLetterStore.clear(forgetting.eventId);
-  for (const { name, storage: readModel } of readModels) {
+  for (const { name, storage: readModel, personal } of readModels) {
+    await readModel.fence.set(fence);
+    if (!personal) continue;
     await readModel.transact({
       subscriber: projectionSubscriberName(name),
       wait: true,
+      forgotten: true,
       work: ({ table }) => table.delete({}),
     });
   }

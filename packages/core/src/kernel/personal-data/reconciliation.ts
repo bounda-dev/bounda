@@ -310,6 +310,11 @@ export interface ForgetLedgerReconciliation {
    * be committing; when `first`, clears the hold the copy brought back. Never rejects.
    */
   restored(first: boolean): Promise<void>;
+  // Commits again at once whatever the ledger holds that the database does not, young entries
+  // included, and resolves to how many persons it forgot: what freezing the tenant runs once its
+  // ledger takes no entry more, so the database holds every intention it recorded. Rejects when
+  // the ledger cannot be read through.
+  drain(now: Date): Promise<number>;
 }
 
 export interface CreateForgetLedgerReconciliationArgs {
@@ -397,7 +402,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   // Resolves how many it forgot, and when the youngest entry it left comes of age; the cursor
   // moves past that entry, which the next read takes again, since the grace is shorter than the
   // stretch read again.
-  const run = async (at: number): Promise<{ forgotten: number; young: number | null }> => {
+  const run = async (
+    at: number,
+    graced = !restoredSince,
+  ): Promise<{ forgotten: number; young: number | null }> => {
     const cursor = await checkpointStore.get(FORGET_LEDGER_CURSOR);
     let after: ForgetLedgerPosition | undefined =
       cursor === 0
@@ -416,7 +424,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       });
       for (const entry of page) {
         const time = Date.parse(entry.forgottenAt);
-        if (!restoredSince && time + FORGET_LEDGER_GRACE_MS > at) {
+        if (graced && time + FORGET_LEDGER_GRACE_MS > at) {
           // Entries come in the order of their time: the last one left is the youngest.
           youngest = time;
           continue;
@@ -647,6 +655,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         held: held.attempts === 0 && Date.parse(held.until) === 0 ? null : held,
       };
     },
+    drain: async (now) => (await run(now.getTime(), false)).forgotten,
     restored: async (first) => {
       done = false;
       restoredSince = true;

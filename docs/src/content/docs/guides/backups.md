@@ -82,9 +82,14 @@ or as the copy has it, never half restored:
   or one a newer version of Bounda migrated, is refused and nothing changes. The restore is counted
   in the same transaction: every instance finds it, running or started after, with a forget ledger
   or without one, so no `bounda restored` is needed. A statement of the app that waits for the
-  transaction past the busy timeout fails, as one that met any other lock does.
+  transaction past the busy timeout fails, as one that met any other lock does. The database keeps
+  its own [fence](/guides/personal-data/#freezing-a-tenant), whatever the copy's: a forgotten
+  tenant stays forgotten, and a frozen one refuses the restore, with `TenantFrozenError`, until it
+  is unfrozen, since a restore is a write the export it is frozen for would not see.
   `adapter.restore({ copy })` is the same in code.
-- **PostgreSQL.** `pg_restore --clean --if-exists --single-transaction --schema <schema>`.
+- **PostgreSQL.** `pg_restore --clean --if-exists --single-transaction --schema <schema>`. It
+  brings back the copy's fence with the rest: restore a frozen tenant only once it is unfrozen, and
+  freeze it again after if you need it frozen (see [Limitations](/reference/limitations/)).
 
 The `sqlite3` shell's `.restore` writes the file from another process in one transaction too, and
 leaves it whole: in our tests, with libSQL writing to it all along, it passed `PRAGMA

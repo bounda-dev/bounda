@@ -31,6 +31,7 @@ import {
   type SubscriberFailure,
   type TenantExportPart,
   type TenantForgottenResult,
+  type TenantFrozenResult,
   type TenantKeyVersions,
   type UnrestrictOptions,
 } from "@bounda-dev/core";
@@ -110,6 +111,8 @@ export interface BoundaStub {
   ): PromiseLike<unknown>;
   forgetTenant(tenant: string, actor?: string, options?: ForgetTenantOptions): PromiseLike<unknown>;
   exportTenant(tenant: string, actor?: string): PromiseLike<unknown>;
+  freezeTenant(tenant: string, actor?: string): PromiseLike<unknown>;
+  unfreezeTenant(tenant: string, actor?: string): PromiseLike<unknown>;
   rotateTenantKey(actor?: string, options?: RotateTenantKeyOptions): PromiseLike<unknown>;
   retireTenantKeys(actor?: string): PromiseLike<unknown>;
 }
@@ -223,6 +226,8 @@ export const connect: ConnectFunction = <R extends Registry = AppRegistry>(
       partsOf<TenantExportPart>(
         await unwrap<ReadableStream<Uint8Array>>(stub.exportTenant(tenant, actor)),
       ),
+    freezeTenant: (tenant) => unwrap<TenantFrozenResult>(stub.freezeTenant(tenant, actor)),
+    unfreezeTenant: (tenant) => unwrap<undefined>(stub.unfreezeTenant(tenant, actor)),
     rotateTenantKey: (options) => unwrap<TenantKeyVersions>(stub.rotateTenantKey(actor, options)),
     retireTenantKeys: () => unwrap<readonly string[]>(stub.retireTenantKeys(actor)),
     as: (next) => {

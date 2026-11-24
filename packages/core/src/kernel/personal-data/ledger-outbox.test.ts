@@ -42,6 +42,7 @@ describe("the forget ledger's outbox", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
       },
       keepForMs: null,
       clock: createFixedClock(new Date("2030-01-01T00:00:00.000Z")),
@@ -178,6 +179,7 @@ describe("the forget ledger's outbox", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
       },
       keepForMs: 60_000,
       clock: createFixedClock(new Date("2026-01-01T00:02:00.000Z")),
@@ -256,6 +258,7 @@ describe("a forget ledger's source", () => {
       readMark: async () => 0,
       raiseMark: async () => undefined,
       clear: async () => true,
+      fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
     }));
     expect(isForgetLedgerSource(memory())).toBe(true);
     expect(isForgetLedgerSource(definition)).toBe(true);
@@ -280,6 +283,7 @@ describe("a forget ledger's source", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
       };
     });
     const env = { REGION: "eu" };
@@ -383,6 +387,16 @@ describe("the forget ledger bound by its timeout", () => {
           calls.push("clear");
           return true;
         },
+        fence: {
+          read: async () => {
+            calls.push("fence.read");
+            return { state: "open" };
+          },
+          set: async (fence) => {
+            calls.push(`fence.set ${fence.state}`);
+            return fence;
+          },
+        },
         append: async (entries) => {
           calls.push(`append ${entries.length}`);
         },
@@ -426,6 +440,7 @@ describe("the forget ledger bound by its timeout", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
       },
       timeoutMs: 500,
       clock,
@@ -444,6 +459,7 @@ describe("the forget ledger bound by its timeout", () => {
         readMark: never,
         raiseMark: never,
         clear: never,
+        fence: { read: never, set: never },
         append: () =>
           new Promise<void>((resolve) => {
             answer = resolve;

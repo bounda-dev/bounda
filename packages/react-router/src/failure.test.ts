@@ -8,6 +8,7 @@ import {
   type RejectFunction,
   type Rejection,
   TenantForgottenError,
+  TenantFrozenError,
   ValidationError,
 } from "@bounda-dev/core";
 import { createTestApp } from "@bounda-dev/core/testing";
@@ -111,6 +112,17 @@ describe("failure", () => {
     expect(answer.init).toEqual({ status: 410 });
     const plain = failure(Object.assign(new Error("gone"), { code: "TENANT_FORGOTTEN" }));
     expect(plain.init).toEqual({ status: 410 });
+  });
+
+  it("answers a frozen tenant with a 423, whether the error comes as a class or a code", () => {
+    const answer = failure(new TenantFrozenError("acme", "2026-01-01T00:00:00.000Z"));
+    expect(answer.data).toEqual({
+      error: "Tenant acme is frozen since 2026-01-01T00:00:00.000Z: it takes no write",
+      issues: [],
+    });
+    expect(answer.init).toEqual({ status: 423 });
+    const plain = failure(Object.assign(new Error("frozen"), { code: "TENANT_FROZEN" }));
+    expect(plain.init).toEqual({ status: 423 });
   });
 
   it("answers the refusals a Durable Object sends back, which arrive as plain errors with their code", () => {

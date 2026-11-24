@@ -163,6 +163,7 @@ export const createPersonData: CreatePersonDataFunction = () => {
     ) as unknown as Storage;
     return {
       ...stores,
+      forgotten: () => observedStorage(storage.forgotten()),
       transact: (work) => storage.transact((transaction) => work(observedTransaction(transaction))),
     };
   };

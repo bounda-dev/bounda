@@ -6,6 +6,7 @@ import type {
   ListTenantKeysArgs,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
+  TenantFence,
   TenantKeyRecord,
   TenantKeyStore,
   TenantKeysPage,
@@ -61,6 +62,11 @@ export interface BoundaKeeperMethods {
    * entry stays as `retainLedger` set it.
    */
   clearLedger(tenant: string): Promise<RpcOutcome<null>>;
+  /**
+   * The fence of the tenant's ledger, which its appends and raised marks check in the keeper.
+   */
+  readLedgerFence(tenant: string): Promise<RpcOutcome<TenantFence>>;
+  fenceLedger(tenant: string, fence: TenantFence): Promise<RpcOutcome<TenantFence>>;
   /**
    * Keeps each of the tenant's entries `keepForMs` after its `forgottenAt`, `null` until the ledger
    * is cleared: the keeper's alarm removes it then, whether the tenant's object is awake or not.
@@ -268,6 +274,14 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
         await (await this.#forgetLedger(tenant)).raiseMark(name, value);
         return null;
       });
+    }
+
+    readLedgerFence(tenant: string): Promise<RpcOutcome<TenantFence>> {
+      return settle(async () => (await this.#forgetLedger(tenant)).fence.read());
+    }
+
+    fenceLedger(tenant: string, fence: TenantFence): Promise<RpcOutcome<TenantFence>> {
+      return settle(async () => (await this.#forgetLedger(tenant)).fence.set(fence));
     }
 
     clearLedger(tenant: string): Promise<RpcOutcome<null>> {

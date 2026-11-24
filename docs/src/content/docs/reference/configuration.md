@@ -194,7 +194,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   - **`store`**, required. The ledger: an adapter pointed at another database than `storage`, such
     as `sqlite({ path: "./ledger/forget-ledger.db" })` or `postgresql({ url })`, which creates its
     `bounda_forget_ledger` table there on first use, with `bounda_forget_ledger_marks` for the mark
-    that tells a [restore](/guides/personal-data/#restores) made while the app was stopped; `durableObjectForgetLedger({
+    that tells a [restore](/guides/personal-data/#restores) made while the app was stopped and
+    `bounda_forget_ledger_fence` for each tenant's [fence](/guides/personal-data/#freezing-a-tenant); `durableObjectForgetLedger({
     storage })` or, for an app that names no jurisdiction, `kvForgetLedger({ binding })` from
     `@bounda-dev/cloudflare` on Cloudflare; or a ledger of your own through `defineForgetLedger`,
     whose `location` option declares where it keeps its entries, as the record of processing states
@@ -210,7 +211,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
     reconciles at once. A Durable Object only runs a round on the passes it wakes for anyway; it
     reconciles on every start.
   - **`strict`**, `false` by default. When `false`, a forgetting whose intention the ledger does
-    not take is logged and commits all the same, for the stream to copy later, and a ledger that
+    not take is logged and commits all the same, for the stream to copy later, but for one the
+    ledger's fence refuses, the tenant frozen or forgotten, which fails either way, and a ledger that
     cannot be read at start, or a reconciliation longer than `timeout`, does not fail it: the app
     logs an error and reconciles in the background, and `getLag()` reports
     `forgetLedger: { reconciled: false }` meanwhile. When `true`, nothing is forgotten that the

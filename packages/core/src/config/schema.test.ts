@@ -34,6 +34,7 @@ const forgetLedger = defineForgetLedger(() => ({
   readMark: async () => 0,
   raiseMark: async () => undefined,
   clear: async () => true,
+  fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
 }));
 
 const message = (config: unknown): string => {

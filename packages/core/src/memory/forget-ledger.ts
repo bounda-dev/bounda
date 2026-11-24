@@ -3,6 +3,7 @@ import {
   type ForgetLedger,
   type ForgetLedgerEntry,
 } from "../adapter/storage/forget-ledger.ts";
+import { createMemoryTenantFence, type MemoryTenantFence } from "./tenant-fence.ts";
 
 export interface MemoryForgetLedgers {
   ledgerOf(tenant: string | undefined): ForgetLedger;
@@ -22,6 +23,7 @@ export interface CreateMemoryForgetLedgersFunction {
 export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () => {
   const byTenant = new Map<string, Map<string, ForgetLedgerEntry>>();
   const marks = new Map<string, number>();
+  const fences = new Map<string, MemoryTenantFence>();
   return {
     rows: () =>
       [...byTenant.entries()].flatMap(([tenant, entries]) =>
@@ -31,12 +33,15 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
       const key = tenant ?? "";
       const entries = byTenant.get(key) ?? new Map<string, ForgetLedgerEntry>();
       byTenant.set(key, entries);
+      const fence = fences.get(key) ?? createMemoryTenantFence();
+      fences.set(key, fence);
       return {
-        append: async (appended) => {
-          for (const entry of appended) {
-            if (!entries.has(entry.eventId)) entries.set(entry.eventId, { ...entry });
-          }
-        },
+        append: (appended) =>
+          fence.write(async () => {
+            for (const entry of appended) {
+              if (!entries.has(entry.eventId)) entries.set(entry.eventId, { ...entry });
+            }
+          }),
         read: async ({ after, limit }) =>
           [...entries.values()]
             .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
@@ -49,10 +54,11 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
           }
         },
         readMark: async (name) => marks.get(`${key}\u0000${name}`) ?? 0,
-        raiseMark: async (name, value) => {
-          const mark = `${key}\u0000${name}`;
-          marks.set(mark, Math.max(marks.get(mark) ?? 0, value));
-        },
+        raiseMark: (name, value) =>
+          fence.write(async () => {
+            const mark = `${key}\u0000${name}`;
+            marks.set(mark, Math.max(marks.get(mark) ?? 0, value));
+          }),
         clear: async () => {
           entries.clear();
           for (const mark of marks.keys()) {
@@ -60,6 +66,7 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
           }
           return true;
         },
+        fence: fence.store,
       };
     },
   };

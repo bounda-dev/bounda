@@ -56,6 +56,7 @@ export {
   StorageSchemaTooNewError,
   type StorageSchemaTooNewErrorArgs,
   TenantForgottenError,
+  TenantFrozenError,
   ValidationError,
   type ValidationIssue,
 } from "./errors.ts";

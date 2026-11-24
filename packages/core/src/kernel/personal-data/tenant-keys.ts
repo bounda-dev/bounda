@@ -8,7 +8,11 @@ import type {
   VersionedTenantKeyRecord,
 } from "../../adapter/storage/tenant-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
-import { ConfigurationError, TenantForgottenError } from "../../contracts/errors.ts";
+import {
+  ConfigurationError,
+  TenantForgottenError,
+  TenantFrozenError,
+} from "../../contracts/errors.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { fromBase64, generateWrappableTenantKey, tenantFingerprintOf, toBase64 } from "./crypto.ts";
 import { newFileKey, unwrapFileKey, wrapFileKey } from "./file-key-crypto.ts";
@@ -120,6 +124,13 @@ export interface TenantKeys {
    * master key, until `releaseFiles`: the notices to its recipients are still to be sent.
    */
   forget(forgetting: TenantForgetting): Promise<TenantForgetting>;
+  // Since when the tenant is frozen, as the record read last says; `null` while it is not.
+  frozenAt(): string | null;
+  // Records the tenant frozen since `at`, unless it is already, and resolves to since when it is.
+  // Rejects with `TenantForgottenError` once the tenant is forgotten.
+  freeze(at: string): Promise<string>;
+  // Lifts what `freeze` recorded.
+  unfreeze(): Promise<void>;
   /**
    * Destroys the keys of a forgotten tenant's database files, and resolves to whether the record
    * held any: the files, and every copy of them, never open again.
@@ -416,6 +427,13 @@ export const openTenantKeys: OpenTenantKeysFunction = async (args) => {
     return current.keys;
   };
 
+  // What a version put in force or retired needs: neither while the tenant is frozen.
+  const writable = (current: VersionedTenantKeyRecord): readonly StoredTenantKey[] => {
+    const keys = live(current);
+    if (current.frozenAt !== undefined) throw new TenantFrozenError(tenant, current.frozenAt);
+    return keys;
+  };
+
   const inForce = (keys: readonly StoredTenantKey[]): StoredTenantKey => {
     const [first] = keys;
     if (first === undefined) {
@@ -485,6 +503,7 @@ export const openTenantKeys: OpenTenantKeysFunction = async (args) => {
       };
     },
     forgotten: () => record.forgotten,
+    frozenAt: () => record.frozenAt ?? null,
     refresh: async () => {
       const read = await reread();
       if (read.forgotten !== null) kept.clear();
@@ -494,7 +513,7 @@ export const openTenantKeys: OpenTenantKeysFunction = async (args) => {
       const at = clock.now();
       const generated = await generateTenantVersion(master, at);
       await update(async (current) => {
-        const keys = [generated.stored, ...live(current)];
+        const keys = [generated.stored, ...writable(current)];
         const to = { kid: generated.stored.kid, key: generated.key };
         const files = await filesUnder(current, to);
         const fresh = await Promise.all(
@@ -517,7 +536,7 @@ export const openTenantKeys: OpenTenantKeysFunction = async (args) => {
     retire: async () => {
       let retired: readonly string[] = [];
       await update(async (current) => {
-        const keys = live(current);
+        const keys = writable(current);
         retired = keys.slice(1).map(({ kid }) => kid);
         if (retired.length === 0) return null;
         const version = inForce(keys);
@@ -540,7 +559,8 @@ export const openTenantKeys: OpenTenantKeysFunction = async (args) => {
       const written = await update(async (current) => {
         if (current.forgotten !== null) return null;
         const files = await filesUnder(current, "master");
-        const { files: _, ...rest } = current;
+        // A forgetting ends a freeze: nothing is written again either way.
+        const { files: _, frozenAt: __, ...rest } = current;
         return {
           ...rest,
           keys: [],
@@ -549,6 +569,20 @@ export const openTenantKeys: OpenTenantKeysFunction = async (args) => {
       });
       kept.clear();
       return written.forgotten ?? forgetting;
+    },
+    freeze: async (at) => {
+      const written = await update((current) => {
+        live(current);
+        return current.frozenAt === undefined ? { ...current, frozenAt: at } : null;
+      });
+      return written.frozenAt ?? at;
+    },
+    unfreeze: async () => {
+      await update((current) => {
+        if (current.frozenAt === undefined) return null;
+        const { frozenAt: _, ...rest } = current;
+        return rest;
+      });
     },
     releaseFiles: async () => {
       let released = false;

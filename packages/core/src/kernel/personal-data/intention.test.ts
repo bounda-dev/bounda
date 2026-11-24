@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ForgetLedgerUnavailableError } from "../../contracts/errors.ts";
+import {
+  ForgetLedgerUnavailableError,
+  TenantForgottenError,
+  TenantFrozenError,
+} from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import { disclosureEntryId } from "../shared/idempotency-key.ts";
@@ -41,6 +45,7 @@ const recordingLedger = (append: (entries: readonly ForgetLedgerEntry[]) => Prom
       readMark: async () => 0,
       raiseMark: async () => undefined,
       clear: async () => true,
+      fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
     },
     timeoutMs: 1_000,
     clock: createFixedClock(NOW),
@@ -208,6 +213,47 @@ describe("the intentions of forgetting", () => {
     ]);
   });
 
+  it.each([true, false])(
+    "refuse, strict or not (%s), a forgetting or a disclosure the ledger's fence refuses, with the fence's error",
+    async (strict) => {
+      const frozen = new TenantFrozenError("acme", "2026-03-01T00:00:00.000Z");
+      const forgotten = new TenantForgottenError("acme", "2026-03-01T00:00:00.000Z");
+      for (const refusal of [frozen, forgotten]) {
+        const { storage, intentions, logs } = await setUp({
+          strict,
+          ledger: recordingLedger(async () => {
+            throw refusal;
+          }),
+        });
+        await expect(
+          intentions.intend({
+            personId: "c-1",
+            reason: "requested",
+            scope: WHOLE,
+            keys: storage.personalKeys,
+          }),
+        ).rejects.toBe(refusal);
+        await expect(
+          intentions.disclose(
+            [
+              {
+                person: "c-1",
+                port: "customer.mailer",
+                recipient: "Mailchimp",
+                kind: "processor",
+                country: "US",
+                safeguard: null,
+                category: "contact",
+              },
+            ],
+            "2026-03-01T00:00:00.000Z",
+          ),
+        ).rejects.toBe(refusal);
+        expect(logs).toEqual([]);
+      }
+    },
+  );
+
   it("skip, when not strict, a ledger whose call given up for its timeout is still pending", async () => {
     let late = true;
     let appends = 0;
@@ -215,6 +261,7 @@ describe("the intentions of forgetting", () => {
       readMark: async () => 0,
       raiseMark: async () => undefined,
       clear: async () => true,
+      fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
       append: async () => {
         appends += 1;
       },

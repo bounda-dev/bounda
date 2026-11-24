@@ -5,6 +5,7 @@ import { sqliteDialect } from "../sql/dialect.ts";
 import {
   forgetLedgerCategoriesStatement,
   forgetLedgerDisclosureStatement,
+  forgetLedgerFenceStatement,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
@@ -23,6 +24,7 @@ import { supersededKeysTableStatements } from "../sql/personal-key-store.ts";
 import { recipientTablesStatements } from "../sql/recipient-store.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { tenancyTableStatement } from "../sql/tenancy-store.ts";
+import { tenantFenceTableStatement } from "../sql/tenant-fence.ts";
 import { tenantKeysTableStatement } from "../sql/tenant-key-store.ts";
 import {
   checkpointTableStatement,
@@ -285,7 +287,10 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
 
 export interface SqliteCheckpointsScopeFunction {
   (
-    tables: Pick<StorageTables, "checkpoints" | "restrictedPersons" | "restrictedPositions">,
+    tables: Pick<
+      StorageTables,
+      "checkpoints" | "restrictedPersons" | "restrictedPositions" | "tenantFence"
+    >,
   ): SchemaScope;
 }
 
@@ -306,6 +311,8 @@ export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (tables) =
       migrate: (tx) =>
         tx.run(`DELETE FROM ${tables.restrictedPersons} WHERE "source" = 'retained'`, []),
     },
+    // Every database that holds the tenant's writes holds their fence.
+    { version: 4, migrate: (tx) => tx.run(tenantFenceTableStatement(tables.tenantFence), []) },
   ],
 });
 
@@ -359,6 +366,7 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
         await tx.run(forgetLedgerDisclosureStatement(table, sqliteDialect), []);
       },
     },
+    { version: 8, migrate: (tx) => tx.run(forgetLedgerFenceStatement(table), []) },
   ],
 });
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ForgetLedger, ForgetLedgerEntry } from "../storage/forget-ledger.ts";
+import type { TenantFence } from "../storage/tenant-fence.ts";
 
 export interface ForgetLedgerContractArgs {
   /**
@@ -25,6 +26,14 @@ const entry = (
   reason: "requested",
   fingerprints: [`k-${personId}`],
 });
+
+const FROZEN: TenantFence = {
+  state: "frozen",
+  tenant: "acme",
+  since: new Date(Date.UTC(2026, 10, 7, 13)).toISOString(),
+};
+const FORGOTTEN: TenantFence = { ...FROZEN, state: "forgotten" };
+const LATER = new Date(Date.UTC(2026, 10, 7, 14)).toISOString();
 
 const readAll = async (ledger: ForgetLedger, limit = 2): Promise<ForgetLedgerEntry[]> => {
   const all: ForgetLedgerEntry[] = [];
@@ -333,6 +342,66 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.readMark("restore:generation")).toBe(2);
       // Reopened, as a restart opens it again.
       expect(await (await ledgerFor()).read({ limit: 10 })).toEqual(entries.slice(0, 1));
+    });
+
+    it("refuses appends and raised marks behind its fence, keeping nothing of them, and lets the rest through", async () => {
+      const other = await ledgerFor("tenant-b");
+      const kept = entry("c-1", "e-1", 1);
+      await ledger.append([kept]);
+      await ledger.raiseMark("restore:generation", 2);
+      expect(await ledger.fence.read()).toEqual({ state: "open" });
+      expect(await ledger.fence.set(FROZEN)).toEqual(FROZEN);
+      // Reopened, as another instance opens it.
+      const again = await ledgerFor();
+      for (const fenced of [ledger, again]) {
+        expect(await fenced.fence.read()).toEqual(FROZEN);
+        await expect(fenced.append([entry("c-2", "e-2", 2)])).rejects.toMatchObject({
+          code: "TENANT_FROZEN",
+          tenant: "acme",
+          frozenAt: FROZEN.since,
+        });
+        await expect(fenced.raiseMark("restore:generation", 5)).rejects.toMatchObject({
+          code: "TENANT_FROZEN",
+        });
+      }
+      expect(await ledger.read({ limit: 10 })).toEqual([kept]);
+      expect(await ledger.readMark("restore:generation")).toBe(2);
+      // Frozen again, it keeps the first time.
+      expect(await ledger.fence.set({ ...FROZEN, since: LATER })).toEqual(FROZEN);
+      // Another store's fence is its own.
+      expect(await other.fence.read()).toEqual({ state: "open" });
+      await other.append([entry("c-3", "e-3", 3)]);
+      await ledger.prune?.({ before: entry("c-9", "e-9", 9).forgottenAt });
+      expect(await ledger.read({ limit: 10 })).toEqual(ledger.prune === undefined ? [kept] : []);
+      expect(await ledger.fence.set({ state: "open" })).toEqual({ state: "open" });
+      await again.append([entry("c-2", "e-2", 2)]);
+      await again.raiseMark("restore:generation", 5);
+      expect((await ledger.read({ limit: 10 })).map(({ eventId }) => eventId)).toContain("e-2");
+      expect(await ledger.readMark("restore:generation")).toBe(5);
+    });
+
+    it("keeps the fence of a forgotten tenant for good, past a clear", async () => {
+      await ledger.append([entry("c-1", "e-1", 1)]);
+      await ledger.raiseMark("restore:generation", 2);
+      await ledger.fence.set(FROZEN);
+      expect(await ledger.fence.set(FORGOTTEN)).toEqual(FORGOTTEN);
+      while (!(await ledger.clear()));
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
+      expect(await ledger.readMark("restore:generation")).toBe(0);
+      expect(await ledger.fence.set({ state: "open" })).toEqual(FORGOTTEN);
+      expect(await ledger.fence.set(FROZEN)).toEqual(FORGOTTEN);
+      const again = await ledgerFor();
+      expect(await again.fence.read()).toEqual(FORGOTTEN);
+      await expect(again.append([entry("c-2", "e-2", 2)])).rejects.toMatchObject({
+        code: "TENANT_FORGOTTEN",
+        tenant: "acme",
+        forgottenAt: FORGOTTEN.since,
+      });
+      await expect(again.raiseMark("restore:generation", 3)).rejects.toMatchObject({
+        code: "TENANT_FORGOTTEN",
+      });
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
+      expect(await ledger.readMark("restore:generation")).toBe(0);
     });
   });
 };

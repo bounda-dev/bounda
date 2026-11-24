@@ -625,6 +625,26 @@ describe("a Durable Object whose keys and ledger the keeper holds", () => {
     const store = connect<typeof quietRegistry>(stub);
     await store.commands.placeOrder({ orderId: "o-1", total: 7, customer: "ada", note: "bell" });
     await store.forget("ada");
+    const frozen = await store.freezeTenant(tenant);
+    expect(frozen).toEqual({ tenant, frozenAt: expect.any(String) });
+    // The keeper's ledger takes no entry while the tenant is frozen, from the object or any other.
+    const ledger = await durableObjectForgetLedger({ storage, binding: "KEPT_KEEPER" }).create({
+      env,
+      tenant,
+    });
+    expect(await ledger.fence.read()).toEqual({ state: "frozen", tenant, since: frozen.frozenAt });
+    await expect(
+      ledger.append([
+        {
+          personId: "bob",
+          categories: null,
+          eventId: "late",
+          forgottenAt: frozen.frozenAt,
+          reason: "requested",
+        },
+      ]),
+    ).rejects.toMatchObject({ code: "TENANT_FROZEN", tenant, frozenAt: frozen.frozenAt });
+    await expect(store.forget("bob")).rejects.toMatchObject({ code: "TENANT_FROZEN" });
     const parts: TenantExportPart[] = [];
     for await (const part of await store.exportTenant(tenant)) parts.push(part);
     const entries = parts.flatMap((part) =>
@@ -633,10 +653,9 @@ describe("a Durable Object whose keys and ledger the keeper holds", () => {
     expect(entries).toEqual([
       expect.objectContaining({ personId: "ada", categories: null, reason: "requested" }),
     ]);
-    const kept = await (
-      await durableObjectForgetLedger({ storage, binding: "KEPT_KEEPER" }).create({ env, tenant })
-    ).read({ limit: 10 });
-    expect(entries).toEqual(kept);
+    expect(entries).toEqual(await ledger.read({ limit: 10 }));
+    await store.unfreezeTenant(tenant);
+    expect(await ledger.fence.read()).toEqual({ state: "open" });
   });
 
   it("forgets its tenant: the keeper keeps the forgetting, and the object serves nothing more", async () => {

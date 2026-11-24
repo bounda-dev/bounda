@@ -88,6 +88,8 @@ export interface ScheduledCommandWorker {
 
 export interface CreateScheduledCommandWorkerArgs {
   readonly storage: AppStorage;
+  // Whether the runs wait: a run that finds it so does nothing.
+  readonly paused?: () => boolean;
   readonly aggregates: AggregatesRuntime;
   readonly pipeline: CommandPipeline;
   readonly processes: ProcessDeadlines;
@@ -228,6 +230,7 @@ interface DeadlineWait {
  */
 export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction = ({
   storage,
+  paused,
   aggregates,
   pipeline,
   processes,
@@ -711,6 +714,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
 
   const runOnce = (): Promise<number> =>
     mutex.run(async () => {
+      if (paused?.() === true) return 0;
       const restored = await restores?.check(clock.now(), { active: worked });
       let reconciledAtOnce = 0;
       if (restored !== undefined && restored !== null && restored !== handled) {

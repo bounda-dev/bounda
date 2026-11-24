@@ -133,6 +133,38 @@ describe("restoring a copy of a SQLite database in place", () => {
     expect(rowsOf(live.db, "SELECT count(*) AS n FROM notes")).toEqual([{ n: 2 }]);
   });
 
+  it("keeps the fence the database holds, whatever the copy's, and refuses a frozen database, changing nothing", async () => {
+    const fence = (db: DatabaseSync) =>
+      rowsOf(db, 'SELECT "tenant", "state", "since" FROM bounda_tenant_fence');
+    const since = "2026-03-01T00:00:00.000Z";
+    const frozenCopy = fresh("frozen-copy");
+    (await seeded(frozenCopy, 5)).db.exec(
+      `INSERT INTO bounda_tenant_fence VALUES ('app', 'acme', 'frozen', '${since}')`,
+    );
+    const live = await seeded(fresh("live"), 1);
+    await live.adapter.restore?.({ copy: frozenCopy });
+    expect(fence(live.db)).toEqual([]);
+    expect(rowsOf(live.db, "SELECT count(*) AS n FROM notes")).toEqual([{ n: 2 }]);
+    const forgotten = await seeded(fresh("forgotten"), 1);
+    forgotten.db.exec(
+      `INSERT INTO bounda_tenant_fence VALUES ('app', 'acme', 'forgotten', '${since}')`,
+    );
+    const open = fresh("open-copy");
+    await seeded(open, 6);
+    await forgotten.adapter.restore?.({ copy: open });
+    expect(fence(forgotten.db)).toEqual([{ tenant: "acme", state: "forgotten", since }]);
+    expect(rowsOf(forgotten.db, "SELECT count(*) AS n FROM notes")).toEqual([{ n: 3 }]);
+    const frozen = await seeded(fresh("frozen"), 4);
+    frozen.db.exec(`INSERT INTO bounda_tenant_fence VALUES ('app', 'acme', 'frozen', '${since}')`);
+    const before = schemaOf(frozen.db);
+    await expect(frozen.adapter.restore?.({ copy: open })).rejects.toMatchObject({
+      code: "TENANT_FROZEN",
+      frozenAt: since,
+    });
+    expect(schemaOf(frozen.db)).toEqual(before);
+    expect(rowsOf(frozen.db, "SELECT count(*) AS n FROM notes")).toEqual([{ n: 1 }]);
+  });
+
   it("counts the restore past what the copy and the database held, for the first instance that finds it to take", async () => {
     const counters = (db: DatabaseSync) =>
       rowsOf(

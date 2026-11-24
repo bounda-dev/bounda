@@ -109,6 +109,8 @@ describe("cloudflareClients", () => {
     for await (const part of await client.exportTenant("acme")) {
       throw new Error(`no part was sent, got ${part.kind}`);
     }
+    await client.freezeTenant("acme");
+    await client.unfreezeTenant("acme");
     await client.rotateTenantKey({ reseal: true });
     await client.retireTenantKeys();
     expect(store.calls).toEqual([
@@ -131,6 +133,8 @@ describe("cloudflareClients", () => {
       ["acme", "redact", "c-2", "read-your-writes", undefined, { events: [redacted] }],
       ["acme", "forgetTenant", "acme", undefined, { despiteLegalObligations: true }],
       ["acme", "exportTenant", "acme", undefined],
+      ["acme", "freezeTenant", "acme", undefined],
+      ["acme", "unfreezeTenant", "acme", undefined],
       ["acme", "rotateTenantKey", undefined, { reseal: true }],
       ["acme", "retireTenantKeys", undefined],
     ]);

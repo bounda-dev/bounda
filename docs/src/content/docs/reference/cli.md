@@ -312,7 +312,9 @@ recipients
   whether every recipient was told, whether the forget ledger holds nothing of the tenant any more,
   whether the keys of its [encrypted files](/guides/personal-data/#encrypted-database-files) are
   destroyed, and `the database may be deleted` once all are (with no ledger, the other two),
-  `keep the database` until then.
+  `keep the database` until then; while it is [frozen](/guides/personal-data/#freezing-a-tenant),
+  a `frozen tenant` line: since when, and whether every store is, or `run bounda freeze-tenant
+  again` for a freeze cut short.
 - each database file [encrypted under the tenant's key](/guides/personal-data/#encrypted-database-files),
   and where it stands: `still in the clear` or `still under an earlier key` while another connection
   kept it from being encrypted, which [`bounda rekey`](#bounda-rekey) does once it can.
@@ -733,6 +735,32 @@ Exit codes: `0` done, `1` bad arguments, or a person and `--from` both or neithe
 could not be loaded, the export or the forget failed, or the file could not be read or has a line
 that is neither a person's id nor an entry, in which case nobody is forgotten.
 
+## `bounda freeze-tenant` and `bounda unfreeze-tenant`
+
+[Freezes a tenant](/guides/personal-data/#freezing-a-tenant): from then on no write of it lands,
+from this or any running instance, however long ago it last read the tenant, until
+`bounda unfreeze-tenant` lifts it; reads go on. What `bounda export-tenant` needs. Each boots the
+project for that tenant, unless `--tenant` names another, which it refuses.
+
+```bash
+bounda freeze-tenant acme --actor ops-ana
+```
+
+```
+froze tenant acme at 2026-11-09T10:00:00.000Z: no write of it lands until bounda unfreeze-tenant acme; bounda export-tenant hands it back as one cut
+```
+
+`bounda unfreeze-tenant acme` prints `unfroze tenant acme: it takes writes again`. Run again on a
+frozen tenant, `freeze-tenant` prints the freeze it finds, and finishes one cut short; a forgotten
+tenant refuses both. `bounda status` prints `frozen tenant: since ...` while the tenant is frozen.
+
+| Option | Meaning |
+| --- | --- |
+| `--root`, `--config`, `--registry`, `--error-text`, `--actor`, `--tenant` | As for `bounda rebuild` |
+
+Exit codes: `0` frozen or unfrozen, `1` bad arguments, `2` the project could not be loaded or the
+call was refused or failed.
+
 ## `bounda export-tenant`
 
 [Hands a tenant back](/guides/personal-data/#handing-a-tenant-back) to its controller, as
@@ -740,7 +768,8 @@ article 28(3)(g) asks of a processor at the end of its service: every person, ev
 command, dead letter, subscriber failure, remembered answer, read-model row and forget ledger
 entry, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
 time whatever the tenant holds. It boots the project for that tenant, unless `--tenant` names
-another, which it refuses. Recorded in the access log, `started` and then how it ended.
+another, which it refuses, and refuses a tenant not [frozen](#bounda-freeze-tenant-and-bounda-unfreeze-tenant)
+in every store. Recorded in the access log, `started` and then how it ended.
 
 ```bash
 bounda export-tenant acme --output acme.jsonl --actor ops-ana
@@ -752,8 +781,9 @@ exported tenant acme to /srv/acme.jsonl: 1204 persons, 98112 events, 3 scheduled
 
 Without `--output` the lines go to standard output, written as fast as it takes them, and the
 summary to standard error. With `--output` the file is written beside its place and moved there
-only once whole, readable by its owner alone. When the stream moves while it reads, it fails
-without its `end` line and writes no file: take it once the tenant receives no more work.
+only once whole, readable by its owner alone. The tenant frozen, the export is one cut of every
+store; should the stream still move while it reads, as after a restore by hand, it fails without
+its `end` line and writes no file.
 
 | Option | Meaning |
 | --- | --- |
@@ -924,7 +954,9 @@ or `app.as(actor).deadLetters`, `bounda personal-data export` is
 `personalDataExportJson(await app.as(actor).streamPersonalData(person))`,
 `bounda forget <person>` is `app.as(actor).forget(person, { categories, objection })`,
 `bounda forget --from` is `app.forgetAgain(entries, { actor })`, `bounda export-tenant` is
-`tenantExportJsonLines(await app.as(actor).exportTenant(tenant))`, `bounda check-tenant-export`
+`tenantExportJsonLines(await app.as(actor).exportTenant(tenant))`, `bounda freeze-tenant` and
+`bounda unfreeze-tenant` are `app.as(actor).freezeTenant(tenant)` and
+`app.as(actor).unfreezeTenant(tenant)`, `bounda check-tenant-export`
 is `readTenantExport(createReadStream(file))`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and

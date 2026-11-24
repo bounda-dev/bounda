@@ -159,6 +159,17 @@ const forgottenTenantOf = ({ forgottenTenant: forgotten }: AppStatus): string[] 
   ];
 };
 
+// Printed only while the tenant is frozen: whether `bounda export-tenant` hands it back as one cut.
+const frozenTenantOf = ({ frozenTenant: frozen }: AppStatus): string[] => {
+  if (frozen === null) return [];
+  if (isUnreadable(frozen)) return [`frozen tenant: ${UNREADABLE}`];
+  return [
+    frozen.whole
+      ? `frozen tenant: since ${frozen.frozenAt}, every store; no write lands until bounda unfreeze-tenant`
+      : `frozen tenant: since ${frozen.frozenAt}, but not every store yet: run bounda freeze-tenant again`,
+  ];
+};
+
 const FILE_STATES: Readonly<Record<AppStatus["files"][number]["state"], string>> = {
   current: "encrypted under the tenant's key in force",
   earlier: "still under an earlier key of the tenant's: bounda rekey",
@@ -295,6 +306,7 @@ export const formatStatus: FormatStatusFunction = (args) => {
     `forget ledger: ${ledgerOf(status)}`,
     `tenant: ${tenantOf(status)}`,
     ...forgottenTenantOf(status),
+    ...frozenTenantOf(status),
     ...formatFiles(status.files),
     `key rotation: ${rotationOf(status)}`,
     ...resealOf(status),

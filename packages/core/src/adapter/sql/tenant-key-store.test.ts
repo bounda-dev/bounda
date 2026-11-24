@@ -76,6 +76,15 @@ describe("parseTenantKeyRecord", () => {
     });
     const { forgotten: _, ...without } = record;
     expect(parseTenantKeyRecord(JSON.stringify(without), 1).forgotten).toBeNull();
+    const frozen = { ...record, frozenAt: "2026-03-01T00:00:00.000Z" };
+    expect(parseTenantKeyRecord(tenantKeyRecordText(frozen), 5)).toEqual({
+      ...frozen,
+      revision: 5,
+    });
+    expect(tenantKeyRecordText(record)).not.toContain("frozenAt");
+    expect(parseTenantKeyRecord(JSON.stringify({ ...record, frozenAt: 1 }), 6)).not.toHaveProperty(
+      "frozenAt",
+    );
   });
 
   it("reads back the keys of the tenant's files, in force or kept for its recipients", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ForgetLedgerEntry } from "../storage/forget-ledger.ts";
+import type { SqlDatabase, SqlTransaction } from "./database.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
 import {
   createSqlForgetLedger,
@@ -12,7 +13,7 @@ import {
 
 const recording = (rows: readonly Record<string, unknown>[] = []) => {
   const statements: (readonly [string, readonly unknown[]])[] = [];
-  const db = {
+  const db: SqlDatabase = {
     run: async (sql: string, params: readonly unknown[]) => {
       statements.push([sql, params]);
     },
@@ -20,6 +21,8 @@ const recording = (rows: readonly Record<string, unknown>[] = []) => {
       statements.push([sql, params]);
       return rows;
     },
+    write: <T>(work: (tx: SqlTransaction) => Promise<T>): Promise<T> =>
+      work({ run: db.run, all: db.all, raw: null }),
   };
   return { db, statements };
 };
@@ -112,8 +115,10 @@ describe("the SQL forget ledger", () => {
       { ...entry(11), redaction },
       { ...entry(12), disclosure },
     ]);
-    expect(statements).toHaveLength(2);
-    const [first, second] = statements;
+    // The fence of the tenant first, in the same transaction.
+    expect(statements[0]?.[0]).toContain('FROM "t_fence" WHERE "scope" = $1');
+    expect(statements).toHaveLength(3);
+    const [, first, second] = statements;
     expect(first?.[0]).toContain(
       `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10), ($11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
     );
@@ -244,6 +249,25 @@ describe("the SQL forget ledger", () => {
     await ledger.read({ limit: 1 });
     await ledger.append([entry(1)]);
     expect(attempts).toBe(2);
-    expect(statements.map(([, params]) => params[0])).toEqual(["t-1", "t-1"]);
+    // The read, then the fence the append reads first and the append, all of the tenant.
+    expect(statements.map(([, params]) => params[0])).toEqual(["t-1", "t-1", "t-1"]);
+  });
+
+  it("puts its writes behind the tenant's advisory lock first, on an engine with one", async () => {
+    const { db, statements } = recording();
+    const locked = createSqlForgetLedger({
+      db,
+      table: `"t"`,
+      dialect: postgresqlDialect,
+      tenant: "acme",
+      lockKey: "bounda:s.t",
+      ensureSchema: async () => {},
+      close: async () => {},
+    });
+    await locked.raiseMark("restore:generation", 2);
+    expect(statements[0]).toEqual([
+      "SELECT pg_advisory_xact_lock_shared(hashtext($1), hashtext($2))",
+      ["bounda:s.t", "acme"],
+    ]);
   });
 });

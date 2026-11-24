@@ -2470,6 +2470,79 @@ version of its tenant's key, and once more every five minutes while it runs.
 A wrapper that fails, because KMS is unreachable, fails the command that needed the tenant's key,
 which the caller or the reaction's retry sees; the person's data is not touched.
 
+## Freezing a tenant
+
+`freezeTenant` holds a tenant read-only: from then on no write of the tenant lands, from the
+instance that froze it or any other, however long ago that instance last read the tenant, until
+`unfreezeTenant` lifts it. It is what [handing a tenant back](#handing-a-tenant-back) needs, so the
+export is one cut of every store, which nothing changes while it reads.
+
+```ts
+const { frozenAt } = await app.freezeTenant("acme");
+// ... export, check, hand over ...
+await app.unfreezeTenant("acme");
+```
+
+`bounda freeze-tenant acme` and `bounda unfreeze-tenant acme` do the same from a terminal. The name
+must be the tenant the app serves: a `ValidationError` otherwise. A forgotten tenant rejects both
+with `TenantForgottenError`.
+
+The freeze is a fence each store holds and checks itself, in the same transaction as every write:
+a row of the database's (`<prefix>tenant_fence`), and the same in the database of each read model
+that has one of its own; a row of the [forget ledger](#the-forget-ledger)'s, for the tenant; and
+`frozenAt` on the tenant's record in the tenant key store. A write the fence refuses rejects with
+`TenantFrozenError` (`TENANT_FROZEN`, with `tenant` and `frozenAt`) and keeps nothing of it: a
+command, a forgetting, a restriction, a redaction, a disclosure to a recipient, a rebuild, a
+rotation of the tenant's key, what the worker would write. A write under way when the freeze comes
+lands before it: on PostgreSQL every write holds a lock the freeze waits for, on SQLite and in a
+Durable Object writes take turns. Reads go on: queries, personal data exports, `recipientsOf`, the
+status.
+
+`freezeTenant` raises the fences in this order, and resolves once every one is raised, to
+`{ tenant, frozenAt }`:
+
+1. The forget ledger's, so no intention lands that the database would then refuse. A ledger whose
+   reads lag its writes, as KV's, is waited for, `visibilityDelayMs`, a minute, so it shows every
+   entry written before.
+2. What the ledger holds and the database does not, an intention whose commit had not happened yet,
+   is committed now, as a [reconciliation](#what-the-runtime-does-with-it) does, young entries
+   included: a `forget`, `restrict` or `redact` whose intention landed before the freeze and whose
+   own commit the freeze refuses resolves as committed.
+3. The database's, and the tenant key store's record.
+4. Each read model's. A projection that had not caught up stays where it was, and the export says
+   how far each one got.
+
+A copy of the database restored under the app is settled before any of it. Calling it again
+resolves to the same freeze, with the time it first took, and finishes one cut short.
+`app.status().frozenTenant` is `{ frozenAt, whole }`, `whole` `false` while a store is not frozen
+yet, and `bounda status` prints `frozen tenant: since ...`; `null` while the tenant is not frozen.
+
+Each instance waits with its background work while the tenant is frozen, recording no failure and
+no dead letter: it finds out at the first write a fence refuses, or within
+`TENANT_CHECK_INTERVAL_MS`, and goes on as soon as it reads the freeze lifted, within the same
+time. `getLag()` says it as `frozen`, and `nextDueAt()` is `null` meanwhile, so a Durable Object
+sleeps until `unfreezeTenant` wakes it. An app that starts on a frozen tenant serves its reads and
+its export, and does what a start writes, declaring its recipients or comparing its database with
+the ledger, once the tenant thaws. Every read sees the recipients it declares as declared already:
+`recipientsOf`, the status, the exports and a forgetting of the tenant meanwhile, which writes the
+declaration with it. A read model in a database of its own that a restore left behind the stream
+serves nothing until then, when it catches up. Bounda's own migrations still run on a frozen tenant: they
+change the tables' shape, never what a row means, so an export reads the same before and after.
+`bounda restore` refuses a frozen tenant, and keeps the fence the database holds whatever the copy's
+says. `forgetTenant` still forgets a frozen tenant, which then stays forgotten.
+
+`unfreezeTenant` lowers the fences the other way round: the tenant key store's record first, then
+the database's, each read model's, and the forget ledger's last, so an intention never lands in
+the ledger while the database would still refuse its commit. It resolves once every one is
+lowered; calling it on a tenant that is not frozen does nothing.
+
+The record is the freeze's own account, kept apart from the database, so a copy restored by hand,
+which brings back the fence it held, does not lift it: while the record says the tenant is frozen,
+a start, each pass of an instance that runs a worker and each look of one that does not raise
+again the fence of any database of the tenant that shows it open, and log it. A forgotten tenant's
+database is settled again the same way, from its fence. See
+[Limitations](/reference/limitations/) for the moments before.
+
 ## Handing a tenant back
 
 An app that keeps a customer's data on their behalf, one [tenant](#tenants) each, is their
@@ -2488,12 +2561,13 @@ const parts = await app.as("operator-7").exportTenant("acme");
 await pipeline(Readable.fromWeb(tenantExportJsonLines(parts)), createWriteStream("acme.jsonl"));
 ```
 
-The name must be the tenant the app serves: a `ValidationError` otherwise, before anything is read.
-It resolves once the header is read, then hands out, in this order:
+The name must be the tenant the app serves, and the tenant [frozen](#freezing-a-tenant) in every
+store: a `ValidationError` otherwise, before anything is read. It resolves once the header is read,
+then hands out, in this order:
 
 | Part | What it holds |
 | --- | --- |
-| `header` | `format` (`"bounda.tenant-export"`) and `version` (`1`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, and every read model, in the order their rows come |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`2`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, and every read model, in the order their rows come |
 | `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
 | `event` | every event of the stream up to the header's `position`, as the handlers read it today: upcast, its whole `payload` opened, with its `metadata` and the `person` it names; `categories` names the category of each field marked `personal`, `restricted` the fields the controller may only keep, and `redacted` the fields a [redaction](#correcting-a-persons-data) sealed for good |
 | `scheduledCommand` | every command waiting to run, its payload opened, with the `persons` it names |
@@ -2527,24 +2601,30 @@ back, a part at a time, and checks it is whole: a header of this format and vers
 part in its place, and last an `end` that counts what came before it. It throws at the first thing
 out of place, so reaching its end without a throw means the file holds the whole export.
 
-The export is of the stream up to the header's `position`; the rest of what it reads, it reads as
-it is when it gets there. When the stream moves past that position while it reads, the export fails
-at the end with `ConcurrencyError`, without its `end` part, since what was written meanwhile may be
-in one part and missing from another. When the stream comes back shorter than that position, as
-after a restore under the running app, it fails the same way. Take it at the end of the service,
-once the tenant receives no more work and the worker has nothing left to do, as `bounda status`
-shows, and, with a forget ledger whose reads lag behind its writes, such as `kvForgetLedger`, once
-its `visibilityDelayMs` has passed since the last forgetting, restriction or redaction, so the
-ledger shows every entry. Then:
+The tenant is frozen, so the export is one cut of every store: the stream up to the header's
+`position`, and everything else as it stood when the freeze took effect, which no write of any
+instance changes while it reads. A read model or the ledger's copy of the stream that had not
+caught up then stays where it was: `reached` says where, and the rows of a read model are those of
+the events up to `reached.readModels[name]`. The export still fails at the end with
+`ConcurrencyError`, without its `end` part, should the stream move past that position or come back
+shorter while it reads, as after a restore made by hand under the running app. It fails without its
+`end` too if the freeze it read under is lifted before it ends, with `ValidationError`, or the
+tenant is forgotten meanwhile, with `TenantForgottenError`: each part checks the fence again. Then:
 
-1. Export the tenant: `bounda export-tenant acme --output acme.jsonl`, or `exportTenant` from your
-   code.
-2. Check the file: `bounda check-tenant-export acme.jsonl`, or read it through `readTenantExport`,
+1. Freeze the tenant: `bounda freeze-tenant acme`, or `freezeTenant` from your code.
+2. Export it: `bounda export-tenant acme --output acme.jsonl`, or `exportTenant`.
+3. Check the file: `bounda check-tenant-export acme.jsonl`, or read it through `readTenantExport`,
    and hand it to the customer.
-3. Forget the tenant, if the customer asked for it or the agreement says so: `bounda forget-tenant
+4. Forget the tenant, if the customer asked for it or the agreement says so: `bounda forget-tenant
    acme --yes`. A legal obligation that keeps some of it (see [Categories](#categories)) is now the
    customer's to honour with the data you handed back, which is what
-   `{ despiteLegalObligations: true }` says.
+   `{ despiteLegalObligations: true }` says. Otherwise, lift the freeze: `bounda unfreeze-tenant
+   acme`.
+
+An export of a tenant that is not frozen is refused rather than taken as a weaker cut, or under a
+freeze of its own: what is handed back under article 28(3)(g) has to be whole and consistent, and
+a freeze left behind by an export that stopped half way would hold the tenant read-only with no
+one knowing why. Freezing is the operator's step, and the status shows it.
 
 A Durable Object hands its tenant back over RPC: `connect(stub).exportTenant(tenant)` streams the
 parts, one JSON per line, read only as they are, and `tenantExportResponse` from
@@ -2575,12 +2655,17 @@ It runs in this order, every step safe to run again:
 1. The tenant's record in the tenant key store loses every version of its key and records the
    forgetting, when and under which event id. This is the step that cannot be undone, and the only
    one needed: from here on nothing personal of the tenant opens anywhere.
-2. The database marks the tenant forgotten, and `TenantForgotten` is appended to the stream
+2. The fences of the [forget ledger](#the-forget-ledger), the database and every read model's
+   database are raised for good, as a [freeze](#freezing-a-tenant)'s are, but `forgotten`: from
+   here on no write of the tenant lands from any instance, however long ago it last read the
+   tenant, and none ever will. A write that landed before is settled with the rest: a disclosure
+   recorded then is among the recipients told, and one the fence refuses never reached its port.
+3. The database marks the tenant forgotten, and `TenantForgotten` is appended to the stream
    `bounda:<tenant>`, with the categories the tenant's persons held keys of and the
    [recipients](#recipients) to tell. With a [forget ledger](#the-forget-ledger), the disclosures
    it holds past what the database applied are recorded again first, as a reconciliation would, so
    a recipient the database lost is told too.
-3. Every person's key, the database's key, every snapshot, every remembered answer, every
+4. Every person's key, the database's key, every snapshot, every remembered answer, every
    subscriber's last failure and every dead letter but those of the notices of the forgetting are
    deleted, failed letters too, since no work of the tenant's is retried again, and every read
    model's rows, but those of a read model whose view says it holds no personal data
@@ -2601,7 +2686,8 @@ forgetting is what refuses every copy, and a person in one opens nothing without
 Until then the instance that tells the recipients prunes the ledger past [`keepFor`](#keeping-the-ledger-short)
 as a running tenant's reconciliation does, and a ledger whose reads lag its writes, KV's, is
 cleared only once a minute has passed since the forgetting, so every entry written before it is
-listed. The app logs each step:
+listed. The ledger's fence is raised again before the clear, should the ledger not have answered
+at the forgetting, and outlives the clear, so no entry lands after it. The app logs each step:
 
 ```
 tenant forgotten: its recipients are told, and its forget ledger cleared
@@ -2612,7 +2698,9 @@ A ledger that fails to clear logs an error and is cleared again 30 seconds later
 From then on the app serves nothing: every command, query, export and other call rejects with
 `TenantForgottenError` (`TENANT_FORGOTTEN`), and a Worker from `createWorker` answers `410`. Another
 instance sees it within `TENANT_CHECK_INTERVAL_MS` or at its first key it can no longer read, and
-does the same. The worker only tells the recipients: each port that was disclosed data of any of the
+does the same; until then its reads may still open what its cached keys open, but every write it
+makes is refused by the fences, the ledger's included, so nothing it does lands after the
+forgetting, nor after the ledger's clear. The worker only tells the recipients: each port that was disclosed data of any of the
 tenant's persons, or may have been, gets its `onTenantForgotten`. An app that starts for a forgotten
 tenant runs steps 2 and 3 again, so a forgetting cut short by a crash finishes, and a database
 restored from a copy taken before it is forgotten again, `TenantForgotten` included, with the id
@@ -2749,8 +2837,13 @@ time; its `readMark` and `raiseMark` keep numbers that only go up, which the run
 a copy [restored while the app was stopped](#restores); its `clear` removes every entry and mark of
 its tenant, which the runtime calls once the tenant is [forgotten](#forgetting-a-tenant) and every
 recipient told, and resolves `false` when it removed part only, so the runtime calls it again at
-its next pass; `forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has
-to pass.
+its next pass, and leaves its fence as it is; its `fence`, a `TenantFenceStore`, is the tenant's
+[freeze](#freezing-a-tenant) or forgetting there: once raised, `append` and `raiseMark` reject
+with its error, which `fenceError` makes, and write nothing, and `set` resolves once the writes
+under way ended, `nextFence` saying what it leaves (`forgotten` is final). A ledger several
+instances write checks the fence in the same atomic step as the write, a transaction or a compare;
+one only the tenant's own object writes, as KV is, may check it in that object.
+`forgetLedgerContract` from `@bounda-dev/core/adapter/testing` is the test it has to pass.
 
 ### What the runtime does with it
 
@@ -2760,8 +2853,10 @@ event's id and time are set before the transaction, and the transaction appends 
 them, so the ledger and the database name one forgetting by one id. A policy's or process's
 `forget` writes it just before its run's transaction opens, once the run has decided.
 
-What happens to an intention whose commit does not happen, because the process stopped in between
-or the database refused the transaction, is the same in every case: the next reconciliation
+An intention the ledger's fence refuses, the tenant [frozen](#freezing-a-tenant) or forgotten,
+fails the forgetting with the fence's error, strict ledger or not, and nothing is written. What
+happens to an intention whose commit does not happen, because the process stopped in between or
+the database refused the transaction, is the same in every case: the next reconciliation
 commits it, since forgetting is what was asked. A `forget` that rejects after its intention was
 written still forgets the person then; calling it again forgets them at once, and is never an
 error. The retention is the one exception, as it decides on the person's activity: a forgetting

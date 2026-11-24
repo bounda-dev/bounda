@@ -76,6 +76,7 @@ export interface CreateReactiveHarnessArgs {
   readonly adapter?: Adapter;
   readonly restores?: RestoreWatch;
   readonly reconciliation?: ForgetLedgerReconciliation;
+  readonly paused?: () => boolean;
 }
 
 export interface CreateReactiveHarnessFunction {
@@ -93,6 +94,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
   adapter = memory(),
   restores,
   reconciliation,
+  paused,
 }) => {
   const clock = createFixedClock();
   const storage = withPersonalKeys(await adapter.createStorage(), clock);
@@ -214,6 +216,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     restrictedRetries: createRestrictedRetries({ storage, retries, clock, logger }),
     restores,
     reconciliation,
+    ...(paused === undefined ? {} : { paused }),
     intentions,
     reactive: [POLICIES_SUBSCRIBER, PROCESSES_SUBSCRIBER],
     standing: (subscriber) => dispatcher.positionOf(subscriber),

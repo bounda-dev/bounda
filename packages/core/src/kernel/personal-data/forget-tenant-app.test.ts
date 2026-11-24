@@ -16,7 +16,7 @@ import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten, expectTenantForgotten } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
-import { RESTORE_MARK } from "../shared/restores.ts";
+import { GENERATION_INTERVAL_MS, RESTORE_MARK } from "../shared/restores.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { defineForgetLedger } from "./forget-ledger.ts";
 import { TENANT_CHECK_INTERVAL_MS } from "./forgotten-tenant.ts";
@@ -525,19 +525,20 @@ describe("forgetTenant", () => {
       () => other.app.stop(),
     );
     await register(one.app, "c-1");
+    await other.app.freezeTenant("default");
     const parts = (await other.app.exportTenant("default"))[Symbol.asyncIterator]();
     expect((await parts.next()).value?.kind).toBe("header");
     const { forgottenAt } = await one.app.forgetTenant("default", {
       despiteLegalObligations: true,
     });
-    const met = new TenantForgottenError("default", forgottenAt);
-    forgetting = met;
+    forgetting = new TenantForgottenError("default", forgottenAt);
     const rest = async () => {
       for (let next = await parts.next(); next.done !== true; next = await parts.next()) {
         // Every part read until then is handed out.
       }
     };
-    await expect(rest()).rejects.toBe(met);
+    // The fence the forgetting raised, or the key it destroyed, whichever the export meets first.
+    await expect(rest()).rejects.toMatchObject({ code: "TENANT_FORGOTTEN", forgottenAt });
     // Within TENANT_CHECK_INTERVAL_MS, and without reading the binding again.
     await expect(other.app.exportTenant("default")).rejects.toThrow(TenantForgottenError);
   });
@@ -564,18 +565,23 @@ describe("forgetTenant", () => {
       ...adapter,
       createStorage: async () => {
         const storage = await adapter.createStorage();
+        // What settles the forgetting writes through.
+        const forgotten = storage.forgotten();
         return {
           ...storage,
-          snapshotStore: {
-            ...storage.snapshotStore,
-            clear: async () => {
-              if (failing) {
-                failing = false;
-                throw new Error("the database is busy");
-              }
-              await storage.snapshotStore.clear();
+          forgotten: () => ({
+            ...forgotten,
+            snapshotStore: {
+              ...forgotten.snapshotStore,
+              clear: async () => {
+                if (failing) {
+                  failing = false;
+                  throw new Error("the database is busy");
+                }
+                await forgotten.snapshotStore.clear();
+              },
             },
-          },
+          }),
         };
       },
     };
@@ -711,5 +717,375 @@ describe("forgetTenant", () => {
       ]),
     );
     expect((error as { found: readonly unknown[] }).found.length).toBeGreaterThan(0);
+  });
+});
+
+describe("a forgotten tenant's writes from an instance that has not heard of it", () => {
+  it("are refused, the ledger's included, so nothing lands after the forgetting or its clear", async () => {
+    const adapter = memory();
+    const ledgers = memory();
+    const config = { runtime: { personalData: { forgetLedger: { store: ledgers } } } };
+    const one = await createTestApp({ registry, adapter, config });
+    const other = await createTestApp({ registry, adapter, config });
+    stops.push(
+      () => one.app.stop(),
+      () => other.app.stop(),
+    );
+    await register(one.app, "c-1");
+    await one.app.runUntilIdle();
+    const { forgottenAt } = await one.app.forgetTenant("default", {
+      despiteLegalObligations: true,
+    });
+    const ledger = await ledgers.createForgetLedger({});
+    expect(await ledger.fence.read()).toEqual({
+      state: "forgotten",
+      tenant: "default",
+      since: forgottenAt,
+    });
+    // Within TENANT_CHECK_INTERVAL_MS: the other instance has not read the forgetting.
+    await expect(register(other.app, "c-2")).rejects.toMatchObject({
+      code: "TENANT_FORGOTTEN",
+      forgottenAt,
+    });
+    await one.app.runUntilIdle();
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
+    await expect(other.app.forget("c-1")).rejects.toMatchObject({ code: "TENANT_FORGOTTEN" });
+    await expect(other.app.restrict("c-1", { ground: "accuracy-contested" })).rejects.toMatchObject(
+      { code: "TENANT_FORGOTTEN" },
+    );
+    const events = await adapter
+      .createStorage()
+      .then((storage) => storage.eventStore.readAll({ afterPosition: 0, limit: 100 }));
+    await other.app.runUntilIdle();
+    expect(await ledger.read({ limit: 10 })).toEqual([]);
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(0);
+    expect(
+      await adapter
+        .createStorage()
+        .then((storage) => storage.eventStore.readAll({ afterPosition: 0, limit: 100 })),
+    ).toEqual(events);
+    await expectTenantForgotten(one.app);
+  });
+});
+
+describe("freezeTenant", () => {
+  it("refuses every write of the tenant on every instance at once, serves its reads, and takes writes again once unfrozen", async () => {
+    const adapter = memory();
+    const one = await createTestApp({ registry, adapter });
+    const other = await createTestApp({ registry, adapter });
+    stops.push(
+      () => one.app.stop(),
+      () => other.app.stop(),
+    );
+    await register(one.app, "c-1");
+    await one.app.runUntilIdle();
+    const frozen = await one.app.freezeTenant("default");
+    expect(frozen).toEqual({ tenant: "default", frozenAt: one.clock.now().toISOString() });
+    // The instance that froze it knows at once.
+    expect((await one.app.getLag()).frozen).toBe(true);
+    // The other instance has not read the freeze: its database refuses the write all the same.
+    for (const app of [other.app, one.app]) {
+      await expect(register(app, "c-2")).rejects.toMatchObject({
+        code: "TENANT_FROZEN",
+        tenant: "default",
+        frozenAt: frozen.frozenAt,
+      });
+      await expect(app.forget("c-1")).rejects.toMatchObject({ code: "TENANT_FROZEN" });
+      await expect(app.restrict("c-1", { ground: "accuracy-contested" })).rejects.toMatchObject({
+        code: "TENANT_FROZEN",
+      });
+      await expect(app.rotateTenantKey()).rejects.toMatchObject({ code: "TENANT_FROZEN" });
+      await expect(app.rebuildReadModel("customers")).rejects.toMatchObject({
+        code: "TENANT_FROZEN",
+      });
+      expect((await app.exportPersonalData("c-1")).events[0]?.data).toMatchObject({
+        email: "c-1@example.com",
+      });
+      expect((await app.status()).frozenTenant).toEqual({
+        frozenAt: frozen.frozenAt,
+        whole: true,
+      });
+      expect(await app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
+    }
+    expect(await other.app.freezeTenant("default")).toEqual(frozen);
+    await other.app.unfreezeTenant("default");
+    expect((await other.app.getLag()).frozen).toBe(false);
+    expect((await one.app.status()).frozenTenant).toBeNull();
+    await register(one.app, "c-2");
+    await one.app.runUntilIdle();
+    expect((await one.app.exportPersonalData("c-2")).events).toHaveLength(1);
+    await one.app.unfreezeTenant("default");
+  });
+
+  it("waits with the background work, recording no failure, and goes on once the freeze is lifted", async () => {
+    const adapter = memory();
+    const one = await createTestApp({ registry, adapter });
+    const other = await createTestApp({ registry, adapter });
+    stops.push(
+      () => one.app.stop(),
+      () => other.app.stop(),
+    );
+    await register(one.app, "c-1");
+    await one.app.freezeTenant("default");
+    expect(await other.app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
+    const query = other.app.queries as unknown as Readonly<
+      Record<string, (args: object) => Promise<unknown>>
+    >;
+    expect(await query.byEmail?.({ email: "c-1@example.com" })).toBeNull();
+    expect((await other.app.status()).subscriberFailures).toEqual([]);
+    await one.app.unfreezeTenant("default");
+    other.clock.advance(TENANT_CHECK_INTERVAL_MS);
+    await other.app.runUntilIdle();
+    expect(await query.byEmail?.({ email: "c-1@example.com" })).toMatchObject({
+      customerId: "c-1",
+    });
+  });
+
+  it("knows the tenant frozen from a background write the freeze refused, before it reads the fence again", async () => {
+    const adapter = memory();
+    const one = await createTestApp({ registry, adapter });
+    stops.push(() => one.app.stop());
+    await register(one.app, "c-1");
+    await one.app.runUntilIdle();
+    const recording = createRecordingLogger();
+    const clock = createFixedClock(one.clock.now());
+    const other = await createApp({
+      registry,
+      config: { storage: adapter },
+      logger: recording.logger,
+      clock,
+    });
+    stops.push(() => other.stop());
+    // Due at once: the worker's claim of it is the write the freeze refuses.
+    const storage = await adapter.createStorage();
+    await storage.scheduler.schedule({
+      dedupeKey: "k-1",
+      command: { type: "customer.registerCustomer", aggregateId: "c-2", payload: {} } as never,
+      executeAt: clock.now(),
+      scheduledAt: clock.now(),
+      context: { correlationId: "c", causationId: "c" } as never,
+    });
+    await one.app.freezeTenant("default");
+    expect((await other.getLag()).frozen).toBe(false);
+    other.start();
+    for (let pass = 0; pass < 5; pass += 1) {
+      clock.advance(1_000);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect((await other.getLag()).frozen).toBe(true);
+    expect(recording.entries.filter(({ level }) => level === "error")).toEqual([]);
+  });
+
+  it("starts on a frozen tenant, serving its reads and its export, and does what a start writes once it thaws", async () => {
+    const adapter = memory();
+    const one = await createTestApp({ registry, adapter });
+    stops.push(() => one.app.stop());
+    await register(one.app, "c-1");
+    await one.app.runUntilIdle();
+    const { frozenAt } = await one.app.freezeTenant("default");
+    const started = await createTestApp({ registry, adapter });
+    stops.push(() => started.app.stop());
+    expect((await started.app.status()).frozenTenant).toEqual({ frozenAt, whole: true });
+    const parts = [];
+    for await (const part of await started.app.exportTenant("default")) parts.push(part.kind);
+    expect(parts.at(-1)).toBe("end");
+    expect(await started.app.runUntilIdle()).toEqual({ idle: true, rejections: [] });
+    await one.app.unfreezeTenant("default");
+    started.clock.advance(TENANT_CHECK_INTERVAL_MS);
+    await register(started.app, "c-2");
+    expect((await started.app.runUntilIdle()).idle).toBe(true);
+    expect((await started.app.exportPersonalData("c-2")).events).toHaveLength(1);
+  });
+
+  it("leaves an instance that runs no worker watching for restores only once the tenant thaws", async () => {
+    const adapter = memory();
+    const one = await createTestApp({ registry, adapter });
+    stops.push(() => one.app.stop());
+    await register(one.app, "c-1");
+    await one.app.runUntilIdle();
+    await one.app.freezeTenant("default");
+    const recording = createRecordingLogger();
+    const clock = createFixedClock(one.clock.now());
+    const web = await createApp({
+      registry,
+      config: { storage: adapter, runtime: { role: "web" } },
+      logger: recording.logger,
+      clock,
+    });
+    stops.push(() => web.stop());
+    web.start();
+    clock.advance(GENERATION_INTERVAL_MS);
+    await new Promise((resolve) => setImmediate(resolve));
+    await one.app.unfreezeTenant("default");
+    clock.advance(TENANT_CHECK_INTERVAL_MS);
+    await new Promise((resolve) => setImmediate(resolve));
+    clock.advance(GENERATION_INTERVAL_MS);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(recording.entries.filter(({ level }) => level === "error")).toEqual([]);
+    expect(recording.entries.map(({ message }) => message)).toContain(
+      "the tenant is no longer frozen: its background work goes on",
+    );
+  });
+
+  it("commits before it takes effect a forgetting whose intention the ledger took first, which then resolves", async () => {
+    const adapter = memory();
+    const ledgers = memory();
+    let freezing: (() => Promise<unknown>) | null = null;
+    // The freeze comes between the intention and its commit.
+    const ledger = defineForgetLedger(async ({ tenant }) => {
+      const kept = await ledgers.createForgetLedger({ tenant });
+      return {
+        ...kept,
+        append: async (entries) => {
+          await kept.append(entries);
+          const freeze = freezing;
+          freezing = null;
+          await freeze?.();
+        },
+      };
+    });
+    const config = { runtime: { personalData: { forgetLedger: { store: ledger } } } };
+    const one = await createTestApp({ registry, adapter, config });
+    const recording = createRecordingLogger();
+    const other = await createTestApp({ registry, adapter, config, logger: recording.logger });
+    stops.push(
+      () => one.app.stop(),
+      () => other.app.stop(),
+    );
+    await register(one.app, "c-1");
+    await one.app.runUntilIdle();
+    freezing = () => other.app.freezeTenant("default");
+    const forgotten = await one.app.forget("c-1");
+    expect(forgotten).toMatchObject({ aggregateType: "bounda", aggregateId: "c-1" });
+    expect((await one.app.exportPersonalData("c-1")).events[0]?.data).toMatchObject({
+      email: null,
+    });
+    expect((await one.app.status()).frozenTenant).toMatchObject({ whole: true });
+    expect(
+      recording.entries
+        .filter(({ level }) => level === "warn")
+        .map(({ message, fields }) => [message, fields]),
+    ).toEqual([
+      ["committed before the freeze what the forget ledger held", { forgotten: 1 }],
+      [
+        "tenant frozen: it takes no write until unfrozen",
+        { tenant: "default", frozenAt: other.clock.now().toISOString() },
+      ],
+    ]);
+  });
+
+  it("commits before it takes effect a restriction and a redaction whose intention the ledger took first", async () => {
+    const adapter = memory();
+    const ledgers = memory();
+    let freezing: (() => Promise<unknown>) | null = null;
+    const ledger = defineForgetLedger(async ({ tenant }) => {
+      const kept = await ledgers.createForgetLedger({ tenant });
+      return {
+        ...kept,
+        append: async (entries) => {
+          await kept.append(entries);
+          const freeze = freezing;
+          freezing = null;
+          await freeze?.();
+        },
+      };
+    });
+    const config = { runtime: { personalData: { forgetLedger: { store: ledger } } } };
+    const one = await createTestApp({ registry, adapter, config });
+    const other = await createTestApp({ registry, adapter, config });
+    stops.push(
+      () => one.app.stop(),
+      () => other.app.stop(),
+    );
+    await register(one.app, "c-1");
+    await one.app.runUntilIdle();
+    const event = (await one.app.exportPersonalData("c-1")).events[0];
+    freezing = () => other.app.freezeTenant("default");
+    const restricted = await one.app.restrict("c-1", { ground: "accuracy-contested" });
+    expect(restricted).toMatchObject({ aggregateType: "bounda", aggregateId: "c-1" });
+    expect((await one.app.exportPersonalData("c-1")).restrictions).toHaveLength(1);
+    await one.app.unfreezeTenant("default");
+    freezing = () => other.app.freezeTenant("default");
+    const redacted = await one.app.redact("c-1", {
+      events: [{ ...event, fields: ["email"] }],
+    } as never);
+    expect(redacted).toMatchObject({ aggregateType: "bounda", aggregateId: "c-1" });
+    expect((await one.app.exportPersonalData("c-1")).events[0]?.data).toMatchObject({
+      email: null,
+    });
+    expect((await one.app.status()).frozenTenant).toMatchObject({ whole: true });
+  });
+
+  it("says the tenant is frozen in part while a store is not, as one whose freeze was cut short", async () => {
+    const ledgers = memory();
+    const config = { runtime: { personalData: { forgetLedger: { store: ledgers } } } };
+    const recording = createRecordingLogger();
+    const { app } = await createTestApp({ registry, config, logger: recording.logger });
+    stops.push(() => app.stop());
+    const { frozenAt } = await app.freezeTenant("default");
+    // The ledger held nothing the database did not.
+    expect(
+      recording.entries.filter(({ level }) => level === "warn").map(({ message }) => message),
+    ).toEqual(["tenant frozen: it takes no write until unfrozen"]);
+    await (await ledgers.createForgetLedger({})).fence.set({ state: "open" });
+    expect((await app.status()).frozenTenant).toEqual({ frozenAt, whole: false });
+    await expect(app.exportTenant("default")).rejects.toMatchObject({
+      name: "ValidationError",
+      message:
+        "Tenant default is not frozen in every store: freeze it with freezeTenant, then export it",
+    });
+  });
+
+  it("settles a forgotten tenant again once a copy restored by hand lowered its fence", async () => {
+    const { adapter, db } = createNodeSqliteAdapter();
+    const recording = createRecordingLogger();
+    const { app } = await createTestApp({ registry, adapter, logger: recording.logger });
+    stops.push(() => app.stop());
+    await register(app, "c-1");
+    await app.runUntilIdle();
+    const { forgottenAt } = await app.forgetTenant("default", { despiteLegalObligations: true });
+    await app.runUntilIdle();
+    db.exec(`DELETE FROM "bounda_tenant_fence"`);
+    await app.runUntilIdle();
+    expect(db.prepare(`SELECT "state", "since" FROM "bounda_tenant_fence"`).all()).toEqual([
+      { state: "forgotten", since: forgottenAt },
+    ]);
+    expect(recording.entries.map(({ message }) => message)).toContain(
+      "a database of the forgotten tenant showed its fence lowered, as a copy restored by hand leaves it: settled again",
+    );
+  });
+
+  it("raises again the fence of a read model's database of its own that a copy restored by hand lowered", async () => {
+    const rows = createNodeSqliteAdapter();
+    const { app } = await createTestApp({
+      registry,
+      config: { readModels: { customers: rows.adapter } },
+    });
+    stops.push(() => app.stop());
+    const { frozenAt } = await app.freezeTenant("default");
+    rows.db.exec(`DELETE FROM "bounda_tenant_fence"`);
+    await app.runUntilIdle();
+    expect(rows.db.prepare(`SELECT "state", "since" FROM "bounda_tenant_fence"`).all()).toEqual([
+      { state: "frozen", since: frozenAt },
+    ]);
+  });
+
+  it("refuses another tenant's name and a forgotten tenant, and leaves a frozen one to forget for good", async () => {
+    const { app } = await createTestApp({ registry });
+    stops.push(() => app.stop());
+    await expect(app.freezeTenant("another")).rejects.toMatchObject({
+      name: "ValidationError",
+      message: "freezeTenant names tenant another, and the app serves another",
+    });
+    await expect(app.unfreezeTenant("another")).rejects.toMatchObject({
+      name: "ValidationError",
+      message: "unfreezeTenant names tenant another, and the app serves another",
+    });
+    await register(app, "c-1");
+    await app.freezeTenant("default");
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await expect(app.freezeTenant("default")).rejects.toThrow(TenantForgottenError);
+    await expect(app.unfreezeTenant("default")).rejects.toThrow(TenantForgottenError);
+    await expectTenantForgotten(app);
   });
 });

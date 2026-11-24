@@ -21,8 +21,9 @@ export interface FailureFunction {
  * with its code in `rejected`, a `ProcessingRestrictedError`, a command refused because the person
  * it touches is restricted, a 409 as well, an `IdempotencyKeyConflictError`, a key the request
  * reuses for another command, a 422, an `IdempotentAnswerErasedError`, a key whose command's answer
- * was erased with a person's data, a 410, and a `TenantForgottenError`, the request's tenant
- * forgotten, a 410 too. It goes by the error's `code`, so the same refusals that come back
+ * was erased with a person's data, a 410, a `TenantForgottenError`, the request's tenant
+ * forgotten, a 410 too, and a `TenantFrozenError`, the request's tenant frozen, a 423, which the
+ * same request gets past once the freeze is lifted. It goes by the error's `code`, so the same refusals that come back
  * from a Durable Object count too. Anything else is rethrown, for the route's `ErrorBoundary`.
  *
  * ```ts
@@ -52,6 +53,9 @@ export const failure: FailureFunction = (error) => {
   }
   if (code === "IDEMPOTENT_ANSWER_ERASED" || code === "TENANT_FORGOTTEN") {
     return data<Failure>({ error: (error as Error).message, issues: [] }, { status: 410 });
+  }
+  if (code === "TENANT_FROZEN") {
+    return data<Failure>({ error: (error as Error).message, issues: [] }, { status: 423 });
   }
   throw error;
 };

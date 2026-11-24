@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
+import { TenantFrozenError, ValidationError } from "../../contracts/errors.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { createApp } from "../../kernel/app.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
@@ -223,6 +223,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
     });
 
     const open = async () => {
+      const clock = createFixedClock(new Date("2026-03-01T00:00:00.000Z"));
       const reads: Reads = { read: 0, largest: 0 };
       const accesses: PersonalDataAccess[] = [];
       const app = await createApp({
@@ -247,14 +248,14 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
             },
           },
         },
-        clock: createFixedClock(new Date("2026-03-01T00:00:00.000Z")),
+        clock,
         env: { EXPORT_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) },
       });
       stops.push(() => app.stop());
       const commands = app.commands as unknown as Readonly<Record<string, Dispatch>>;
       const note = (memberId: string, text: string, options?: unknown) =>
         commands.noteMember?.({ memberId, note: text }, options);
-      return { app, reads, accesses, note };
+      return { app, reads, accesses, note, clock };
     };
 
     // A tenant's history: notes, one remembered under an idempotency key, one scheduled, one that
@@ -278,6 +279,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       // After the redaction, which erases the answers remembered of the person.
       await note("ana", "remembered", { idempotencyKey: "k-1" });
       await app.runUntilIdle();
+      await app.freezeTenant(DEFAULT_TENANT);
       return { redacted: redacted?.id };
     };
 
@@ -289,15 +291,19 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       const header = parts[0]?.kind === "header" ? parts[0].header : undefined;
       expect(header).toEqual({
         format: "bounda.tenant-export",
-        version: 1,
+        version: 2,
         tenant: DEFAULT_TENANT,
         exportId: expect.any(String),
         exportedAt: "2026-03-01T00:00:00.000Z",
         position: expect.any(Number),
+        frozenAt: "2026-03-01T00:00:00.000Z",
+        reached: { readModels: { notes: expect.any(Number) }, forgetLedger: expect.any(Number) },
         categories: { default: expect.objectContaining({ basis: null, purposes: [] }) },
         readModels: ["notes"],
       });
       const position = header?.position ?? -1;
+      // Caught up before the freeze, the read model and the ledger's copy reach the head.
+      expect(header?.reached).toEqual({ readModels: { notes: position }, forgetLedger: position });
       const members = Array.from({ length: MEMBERS }, (_, index) => `m-${index}`).sort();
       const persons = of(parts, "person").map(({ person }) => person);
       // Forgotten without a retention that keeps a record of them, Carl holds nothing but the
@@ -451,41 +457,86 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       expect(reads.largest).toBeLessThanOrEqual(BATCH_SIZE);
     });
 
-    it("fails without its end once the stream moves past its head while it reads, recorded failed", async () => {
+    it("refuses every write while it reads, from the app or any other, and ends whole", async () => {
       const opened = await open();
       await history(opened);
       const { app, reads, note, accesses } = opened;
       accesses.length = 0;
+      let refused: unknown;
       reads.meanwhile = async () => {
-        await note("bob", "meanwhile");
+        refused ??= await note("bob", "meanwhile")?.catch((error: unknown) => error);
+      };
+      const parts = await collect(await app.exportTenant(DEFAULT_TENANT));
+      expect(refused).toBeInstanceOf(TenantFrozenError);
+      expect(refused).toMatchObject({ code: "TENANT_FROZEN", tenant: DEFAULT_TENANT });
+      expect(parts.at(-1)?.kind).toBe("end");
+      expect(accesses.map(({ outcome }) => outcome)).toEqual(["started", "ok"]);
+      // Nothing of the refused write landed: a second export reads the same.
+      reads.meanwhile = undefined;
+      const again = await collect(await app.exportTenant(DEFAULT_TENANT));
+      expect(again.slice(1)).toEqual(parts.slice(1));
+    });
+
+    it("fails without its end once the freeze it read under is lifted, recorded failed", async () => {
+      const opened = await open();
+      await history(opened);
+      const { app, reads, accesses } = opened;
+      accesses.length = 0;
+      reads.meanwhile = async () => {
+        await app.unfreezeTenant(DEFAULT_TENANT);
       };
       const parts: TenantExportPart[] = [];
       const reading = async () => {
         for await (const part of await app.exportTenant(DEFAULT_TENANT)) parts.push(part);
       };
-      await expect(reading()).rejects.toBeInstanceOf(ConcurrencyError);
-      const position = parts[0]?.kind === "header" ? parts[0].header.position : -1;
-      expect(of(parts, "event").every(({ event }) => event.position <= position)).toBe(true);
+      await expect(reading()).rejects.toMatchObject({
+        name: "ValidationError",
+        message: `Tenant ${DEFAULT_TENANT}'s freeze of 2026-03-01T00:00:00.000Z was lifted while it was exported: freeze it again, then export it`,
+        issues: [{ path: ["tenant"], message: "Expected the tenant frozen until the export ends" }],
+      });
       expect(parts.some(({ kind }) => kind === "end")).toBe(false);
       expect(accesses.map(({ outcome }) => outcome)).toEqual(["started", "failed"]);
-      expect(accesses.at(-1)).toMatchObject({
-        operation: "exportTenant",
-        errorName: "TenantDataChangedError",
-        errorCode: "CONCURRENCY_CONFLICT",
+    });
+
+    it("fails without its end once the freeze it read under is lifted and another raised", async () => {
+      const opened = await open();
+      await history(opened);
+      const { app, reads, clock } = opened;
+      reads.meanwhile = async () => {
+        await app.unfreezeTenant(DEFAULT_TENANT);
+        clock.advance(1_000);
+        await app.freezeTenant(DEFAULT_TENANT);
+      };
+      const parts: TenantExportPart[] = [];
+      const reading = async () => {
+        for await (const part of await app.exportTenant(DEFAULT_TENANT)) parts.push(part);
+      };
+      await expect(reading()).rejects.toMatchObject({
+        name: "ValidationError",
+        issues: [{ path: ["tenant"], message: "Expected the tenant frozen until the export ends" }],
       });
-      await expect(
-        collect(
-          readTenantExport(
-            tenantExportJsonLines(
-              (async function* () {
-                yield* parts;
-              })(),
-            ),
-          ),
-        ),
-      ).rejects.toThrow("ends before its end part");
-      // The app still serves: the failure was no forgetting of the tenant.
-      expect((await collect(await app.exportTenant(DEFAULT_TENANT))).at(-1)?.kind).toBe("end");
+      expect(parts.some(({ kind }) => kind === "end")).toBe(false);
+    });
+
+    it("refuses a tenant not frozen before it reads anything, recorded refused", async () => {
+      const { app, accesses, reads, note } = await open();
+      await note("ana", "a note");
+      await app.runUntilIdle();
+      accesses.length = 0;
+      reads.read = 0;
+      await expect(app.exportTenant(DEFAULT_TENANT)).rejects.toMatchObject({
+        name: "ValidationError",
+        issues: [{ path: ["tenant"], message: "Expected a frozen tenant" }],
+      });
+      expect(reads.read).toBe(0);
+      expect(accesses).toEqual([
+        expect.objectContaining({ operation: "exportTenant", outcome: "refused" }),
+      ]);
+      await app.freezeTenant(DEFAULT_TENANT);
+      await app.unfreezeTenant(DEFAULT_TENANT);
+      await expect(app.exportTenant(DEFAULT_TENANT)).rejects.toMatchObject({
+        name: "ValidationError",
+      });
     });
 
     it("records the export as it starts and as it ends, naming the first persons and counting them all", async () => {
@@ -564,6 +615,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
 
     it("hands back a tenant that holds nothing as a header and an end", async () => {
       const { app } = await open();
+      await app.freezeTenant(DEFAULT_TENANT);
       const parts = await collect(await app.exportTenant(DEFAULT_TENANT));
       expect(parts.map(({ kind }) => kind)).toEqual(["header", "end"]);
       expect(parts[0]).toMatchObject({ header: { position: 0 } });

@@ -272,6 +272,7 @@ const setUp = async (batchSize?: number, adapter: Adapter = memory()) => {
     readMark: async () => 0,
     raiseMark: async () => undefined,
     clear: async () => true,
+    fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
   }));
   const { app, clock } = await createTestApp({
     registry,

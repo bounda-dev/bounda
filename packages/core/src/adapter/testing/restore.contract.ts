@@ -1711,6 +1711,38 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       RESTORE_CASE_TIMEOUT_MS,
     );
 
+    it(
+      "serves nothing of a read model in a database of its own restored from before a forgetting while the tenant is frozen, and catches it up once it thaws",
+      async () => {
+        const { storageTarget, rowsTarget, clock, first } = await behindTheStream(false);
+        const keyed = openedAs(first.app.config.storage);
+        await first.app.stop();
+        const rows = await rowsTarget.restore();
+        // Frozen once the copy is back, as a restore refuses a frozen tenant.
+        const storage = await keyed.createStorage();
+        await storage.fence.set({
+          state: "frozen",
+          tenant: DEFAULT_TENANT,
+          since: clock.now().toISOString(),
+        });
+        const restored = await openSplit(
+          storageTarget.storage,
+          rows,
+          storageTarget.forgetLedger,
+          clock,
+        );
+        await expect(contactOf(restored, "ana")).rejects.toBeInstanceOf(ReadModelRestoringError);
+        await restored.app.unfreezeTenant(DEFAULT_TENANT);
+        await restored.app.runUntilIdle();
+        expect(await contactOf(restored, "ana")).toBeNull();
+        expect(await contactOf(restored, "bob")).toEqual({
+          customerId: "bob",
+          email: valuesOf("bob").email,
+        });
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
     it.skipIf(!hot)(
       "refuses, in a strict app, a query of a read model whose database of its own was restored under it from before a forgetting, until it caught up",
       async () => {

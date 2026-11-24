@@ -15,7 +15,11 @@ import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataAccess } from "../../modules/audit.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
-import type { NotifiedRecipient, RecipientDeclaration } from "../../modules/recipient.ts";
+import type {
+  NotifiedRecipient,
+  PersonRecipient,
+  RecipientDeclaration,
+} from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
@@ -816,6 +820,93 @@ describe("recipients of personal data", () => {
     expect(await after.app.recipientsOf("c-1")).toEqual([]);
   });
 
+  it("reads the recipients a start on a frozen tenant declares once it thaws as declared already, in every reader", async () => {
+    // What each reader says after a start that renames the mailer and declares the CRM, on a
+    // tenant frozen through it or not.
+    const readers = async (frozen: boolean) => {
+      const adapter = memory();
+      const told: Notice[] = [];
+      const before = await start({
+        told,
+        adapter,
+        registry: registryWith({ told, crm: null }),
+      });
+      await before.register("c-1");
+      if (frozen) await before.app.freezeTenant("default");
+      await before.app.stop();
+      const after = await start({
+        told,
+        adapter,
+        mailerPort: "newsletter",
+        registry: registryWith({
+          told,
+          mailerPort: "newsletter",
+          mailer: { ...MAILCHIMP, formerly: ["customer.mailer"] },
+        }),
+      });
+      if (!frozen) await after.app.freezeTenant("default");
+      const statuses = ({ status, firstDisclosedAt, lastDisclosedAt }: PersonRecipient) => ({
+        status,
+        firstDisclosedAt,
+        lastDisclosedAt,
+      });
+      const recipientsOf = (await after.app.recipientsOf("c-1")).map((recipient) => ({
+        port: recipient.port,
+        ...statuses(recipient),
+      }));
+      const status = readPart((await after.app.status()).recipients).map(({ port, persons }) => [
+        port,
+        persons,
+      ]);
+      const exported = (await after.app.exportPersonalData("c-1")).recipients.map(
+        ({ port }) => port,
+      );
+      const handedBack: unknown[] = [];
+      for await (const part of await after.app.exportTenant("default")) {
+        if (part.kind === "person") {
+          handedBack.push(part.person.recipients.map(({ port, status: held }) => [port, held]));
+        }
+      }
+      await after.app.forgetTenant("default", { despiteLegalObligations: true });
+      // Written with the forgetting, for every instance, which reads the store alone.
+      const declaredStored = (await (await adapter.createStorage()).recipients.declared()).map(
+        ({ port }) => port,
+      );
+      const stored = await (await adapter.createStorage()).eventStore.readAll({
+        afterPosition: 0,
+        limit: 100,
+      });
+      const payload = stored.find(({ type }) => type === "TenantForgotten")?.payload as
+        | { readonly recipients: readonly NotifiedRecipient[] }
+        | undefined;
+      const forgotten = (payload?.recipients ?? []).map(({ port, presumed }) => [port, presumed]);
+      await after.app.runUntilIdle();
+      const notices = told.map(({ port, type, persons }) => [port, type, persons]);
+      return { recipientsOf, status, exported, handedBack, forgotten, notices, declaredStored };
+    };
+    const frozen = await readers(true);
+    expect(frozen).toEqual(await readers(false));
+    expect(frozen.recipientsOf.map(({ port, status }) => [port, status])).toEqual([
+      ["customer.crm", "presumed"],
+      ["customer.newsletter", "disclosed"],
+      ["customers.audience", "declared"],
+    ]);
+    expect(frozen.forgotten).toEqual([
+      ["customer.crm", true],
+      ["customer.newsletter", false],
+    ]);
+    expect(frozen.declaredStored).toEqual([
+      "customer.crm",
+      "customer.newsletter",
+      "customers.audience",
+    ]);
+    expect(frozen.status).toEqual([
+      ["customer.crm", 0],
+      ["customer.newsletter", 1],
+      ["customers.audience", 0],
+    ]);
+  });
+
   it("tells the recipients of a forgotten tenant each port it disclosed to or may have, presumed or not", async () => {
     const adapter = memory();
     const told: Notice[] = [];
@@ -1614,12 +1705,14 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
       ...inner,
       createStorage: async () => {
         const storage = await inner.createStorage();
+        // What settles the forgetting writes through.
+        const forgotten = storage.forgotten();
         const transact: Storage["transact"] = (work) => {
-          if (!failing) return storage.transact(work);
+          if (!failing) return forgotten.transact(work);
           failing = false;
           return Promise.reject(new Error("the database went away"));
         };
-        return { ...storage, transact };
+        return { ...storage, forgotten: () => ({ ...forgotten, transact }) };
       },
     };
     const { app, register } = await start({ told, adapter: flaky });
@@ -1653,7 +1746,6 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
     stops.push(() => app.stop());
     await registerOn(app, "c-1");
     failing.add("customer.mailer");
-    await app.forgetTenant("default", { despiteLegalObligations: true });
     const ledger = await ledgerAdapter.createForgetLedger({});
     const old: ForgetLedgerEntry = {
       personId: "c-old",
@@ -1662,7 +1754,9 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
       forgottenAt: new Date(START.getTime() - 2 * 86_400_000).toISOString(),
       reason: "requested",
     };
+    // Before the forgetting, whose fence refuses any entry after it.
     await ledger.append([old]);
+    await app.forgetTenant("default", { despiteLegalObligations: true });
     await app.runUntilIdle();
     const [letter] = await app.deadLetters.list({ kind: "recipient" });
     expect(letter).toMatchObject({ handler: "customer.mailer", eventType: "TenantForgotten" });

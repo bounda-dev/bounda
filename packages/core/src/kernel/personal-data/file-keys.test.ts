@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FileKeyAccess } from "../../adapter/storage/encrypted-file.ts";
 import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ConfigurationError } from "../../contracts/errors.ts";
+import { ConfigurationError, TenantFrozenError } from "../../contracts/errors.ts";
 import { createMemoryTenancyStore } from "../../memory/tenancy-store.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import { toBase64 } from "./crypto.ts";
@@ -98,6 +98,25 @@ describe("openFileKeys", () => {
     await confirmInForce(access);
     expect((await record()).files?.[0]?.appliedAt).toBe(at);
     expect((await record()).revision).toBe(2);
+  });
+
+  it("gives a frozen tenant's new database no key, and leaves the file's confirmation to an open after it thaws", async () => {
+    const { files, record, keys } = await world();
+    const access = (await files()).forDatabase("app.db");
+    const since = "2026-01-02T00:00:00.000Z";
+    await (await keys()).freeze(since);
+    await expect(files(["app.db", "rows.db"])).rejects.toThrow(
+      new TenantFrozenError("acme", since),
+    );
+    // A database that holds its key opens all the same.
+    expect((await files()).owned).toEqual(new Set(["app.db"]));
+    const revision = (await record()).revision;
+    await confirmInForce(access);
+    expect((await record()).files?.[0]?.appliedAt).toBeUndefined();
+    expect((await record()).revision).toBe(revision);
+    await (await keys()).unfreeze();
+    await confirmInForce(access);
+    expect((await record()).files?.[0]?.appliedAt).toBeDefined();
   });
 
   it("refuses a database the record of a tenant not forgotten holds no key for", async () => {

@@ -45,11 +45,15 @@ export const nextWake: NextWakeFunction = ({
 };
 
 export interface WakeLagOfFunction {
-  (lag: Pick<AppLag, "subscribers" | "maxLag">): Pick<NextWakeArgs, "lag" | "unread">;
+  (lag: Pick<AppLag, "subscribers" | "maxLag" | "frozen">): Pick<NextWakeArgs, "lag" | "unread">;
 }
 
-// The lag the subscribers read are behind, and whether one could not be read.
-export const wakeLagOf: WakeLagOfFunction = ({ subscribers, maxLag }) => ({
-  lag: Math.max(0, ...subscribers.map((each) => ("lag" in each ? each.lag : 0))),
-  unread: maxLag === null,
-});
+// The lag the subscribers read are behind, and whether one could not be read; none while the
+// tenant is frozen, whose lag stays until lifting the freeze wakes the object again.
+export const wakeLagOf: WakeLagOfFunction = ({ subscribers, maxLag, frozen }) =>
+  frozen
+    ? { lag: 0, unread: false }
+    : {
+        lag: Math.max(0, ...subscribers.map((each) => ("lag" in each ? each.lag : 0))),
+        unread: maxLag === null,
+      };

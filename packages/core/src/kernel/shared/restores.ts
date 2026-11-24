@@ -98,7 +98,7 @@ export interface CheckRestoreOptions {
 }
 
 export interface CreateRestoreWatchArgs {
-  readonly checkpoints: CheckpointStore;
+  readonly checkpoints: Pick<CheckpointStore, "get" | "compareAndSet">;
   readonly events: Pick<EventStore, "lastPosition" | "readAll">;
   /**
    * The forget ledger, outside the database; `null` without one, and a copy restored while the

@@ -520,6 +520,7 @@ describe("text built from what a port returned", () => {
     await expect(
       commands.vouchFor?.({ memberId: "ana", friendId: "zoe" }, { idempotencyKey: "vouch-1" }),
     ).rejects.toMatchObject({ rejected: "Stranger" });
+    await app.freezeTenant("default");
     const parts: TenantExportPart[] = [];
     for await (const part of await app.exportTenant("default")) parts.push(part);
     const header = parts[0]?.kind === "header" ? parts[0].header : undefined;

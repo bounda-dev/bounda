@@ -62,6 +62,7 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
     readMark: async () => 0,
     raiseMark: async () => undefined,
     clear: async () => true,
+    fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
     append: async () => {},
     read: async (args) => {
       reads.push(args);
@@ -245,6 +246,7 @@ describe("the forget ledger's reconciliation", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: async () => {},
         read: async (args) => {
           if (failures > 0) {
@@ -299,6 +301,7 @@ describe("the forget ledger's reconciliation", () => {
         readMark: async () => 0,
         raiseMark: async () => undefined,
         clear: async () => true,
+        fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
         append: async () => {},
         read: async () => {
           reads += 1;
@@ -762,6 +765,21 @@ describe("what the reconciliation commits again", () => {
     expect(await storage.personalKeys.get("c-2", "default")).not.toBeNull();
   });
 
+  it("drains every entry at once, young ones included, and rejects when the ledger cannot be read", async () => {
+    const young = new Date(NOW.getTime() - 1).toISOString();
+    const entries: ForgetLedgerEntry[] = [entry("c-1", "e-1", at(0)), entry("c-2", "e-2", young)];
+    const { reconciliation, storage } = await setUp({ entries, persons: ["c-1", "c-2", "c-3"] });
+    expect(await reconciliation.drain(NOW)).toBe(2);
+    expect(await storage.personalKeys.get("c-2", "default")).toBeNull();
+    expect(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR)).toBe(Date.parse(young));
+    expect(await reconciliation.drain(NOW)).toBe(0);
+    // The grace holds again for the reconciliations after it.
+    entries.push(entry("c-3", "e-3", young));
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    const failing = await setUp({ entries: [entry("", "e-x", at(0))] });
+    await expect(failing.reconciliation.drain(NOW)).rejects.toThrow("person");
+  });
+
   it("is due at the sooner of a ledger's delay and an entry's grace", async () => {
     const young = new Date(NOW.getTime() - 1).toISOString();
     const late = await setUp({ entries: [entry("c-1", "e-1", young)], visibilityDelayMs: 1_000 });
@@ -1055,6 +1073,7 @@ describe("forgetAgain", () => {
             readMark: async () => 0,
             raiseMark: async () => undefined,
             clear: async () => true,
+            fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
             append: async (entries) => {
               if (down) throw new Error("ledger is down");
               recorded.push(...entries);

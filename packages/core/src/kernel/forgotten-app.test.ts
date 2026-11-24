@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Adapter } from "../adapter/adapter.ts";
+import type { Adapter, Storage } from "../adapter/adapter.ts";
 import { testDeadLetter } from "../adapter/testing/fixtures.ts";
 import { resolveConfig } from "../config/schema.ts";
 import { createFixedClock, type FixedClock } from "../contracts/clock.ts";
@@ -18,6 +18,7 @@ import { createForgottenRunner } from "./forgotten-app.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
 import { unreadableParts } from "./status.ts";
 import { tracer } from "./telemetry.ts";
+import { createRecordingLogger } from "./test-support.ts";
 
 // One personal field, and a command that writes it.
 const registry = {
@@ -139,6 +140,7 @@ describe("an app started for a forgotten tenant", () => {
       waitingDeadlines: 0,
       forgetLedger: null,
       personalDataBackfill: null,
+      frozen: false,
     });
     expect((await app.status()).tenant).toMatchObject({
       tenant: "default",
@@ -176,16 +178,18 @@ describe("an app started for a forgotten tenant", () => {
       ...base,
       createStorage: async () => {
         const ports = await base.createStorage();
-        return {
-          ...ports,
+        // What the forgotten app reads through, as the live app's.
+        const failing = (storage: Storage): Storage => ({
+          ...storage,
           eventStore: {
-            ...ports.eventStore,
+            ...storage.eventStore,
             lastPosition: async () => {
               if (down) throw new Error("events unreadable");
-              return ports.eventStore.lastPosition();
+              return storage.eventStore.lastPosition();
             },
           },
-        };
+        });
+        return { ...failing(ports), forgotten: () => failing(ports.forgotten()) };
       },
     });
     down = true;
@@ -204,16 +208,17 @@ describe("an app started for a forgotten tenant", () => {
       ...base,
       createStorage: async () => {
         const ports = await base.createStorage();
-        return {
-          ...ports,
+        const failing = (storage: Storage): Storage => ({
+          ...storage,
           checkpointStore: {
-            ...ports.checkpointStore,
+            ...storage.checkpointStore,
             get: (name) =>
               down
                 ? Promise.reject(new Error("checkpoints unreadable"))
-                : ports.checkpointStore.get(name),
+                : storage.checkpointStore.get(name),
           },
-        };
+        });
+        return { ...failing(ports), forgotten: () => failing(ports.forgotten()) };
       },
     });
     down = true;
@@ -245,7 +250,8 @@ describe("an app started for a forgotten tenant", () => {
 
   it("refuses to abandon a process's dead letter, and still lists the letters", async () => {
     const { app, adapter } = await forgottenStart();
-    const storage = await adapter.createStorage();
+    // A letter left from before the forgetting, put back as what tells the recipients writes.
+    const storage = (await adapter.createStorage()).forgotten();
     await storage.deadLetterStore.add({
       id: "letter-1",
       kind: "process",
@@ -301,6 +307,8 @@ describe("the runner of a forgotten tenant", () => {
     const storage = await adapter.createStorage();
     let restored: object | null = { generation: 2 };
     let resettled = 0;
+    let lowered = false;
+    const recording = createRecordingLogger();
     const runner = createForgottenRunner({
       tracer,
       storage: storage as never,
@@ -323,17 +331,27 @@ describe("the runner of a forgotten tenant", () => {
       fileKeysDestroyed: async () => true,
       resettle: async () => {
         resettled += 1;
+        lowered = false;
       },
+      lowered: async () => lowered,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
       clock: createFixedClock(),
-      logger: silentLogger,
+      logger: recording.logger,
       errorText: "omit",
     });
     expect(await runner.runUntilIdle(5)).toBe(true);
     expect(resettled).toBe(1);
     expect(await runner.runUntilIdle(5)).toBe(true);
     expect(resettled).toBe(1);
+    const lowering =
+      "a database of the forgotten tenant showed its fence lowered, as a copy restored by hand leaves it: settled again";
+    expect(recording.entries.map(({ message }) => message)).not.toContain(lowering);
+    // A copy restored by hand that the watch does not tell apart: its fence is below forgotten.
+    lowered = true;
+    expect(await runner.runUntilIdle(5)).toBe(true);
+    expect(resettled).toBe(2);
+    expect(recording.entries.filter(({ message }) => message === lowering)).toHaveLength(1);
     await storage.close();
   });
 
@@ -370,6 +388,7 @@ describe("the runner of a forgotten tenant", () => {
       ledgerCleared: async () => null,
       fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
+      lowered: async () => false,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
       clock: createFixedClock(),
@@ -429,6 +448,7 @@ describe("the runner of a forgotten tenant", () => {
       ledgerCleared: async () => null,
       fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
+      lowered: async () => false,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
       clock: createFixedClock(),
@@ -470,6 +490,7 @@ describe("the runner of a forgotten tenant", () => {
       ledgerCleared: async () => null,
       fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
+      lowered: async () => false,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
       clock,
@@ -529,6 +550,7 @@ describe("the runner of a forgotten tenant", () => {
       ledgerCleared: async () => null,
       fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
+      lowered: async () => false,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
       clock: createFixedClock(new Date("2026-01-01T00:00:00.000Z")),

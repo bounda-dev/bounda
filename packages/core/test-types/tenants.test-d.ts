@@ -1,10 +1,12 @@
 import {
   type AppStatus,
   type BoundaClient,
+  type BoundaError,
   DEFAULT_TENANT,
   type EncryptedFileStatus,
   FILE_ENCRYPTION_RETRY_MS,
   type ForgetTenantOptions,
+  type FrozenTenantStatus,
   type Logger,
   listTenantsUnderPreviousMaster,
   migrateTables,
@@ -19,6 +21,8 @@ import {
   type TenantForgottenEvent,
   type TenantForgottenPayload,
   type TenantForgottenResult,
+  TenantFrozenError,
+  type TenantFrozenResult,
   type TenantKeyStatus,
   type TenantKeyVersions,
   type UnreadableStatus,
@@ -43,6 +47,19 @@ import type {
   TenantKeyRecord,
   TenantKeyStore,
   VersionedTenantKeyRecord,
+} from "@bounda-dev/core/adapter";
+import {
+  type FenceErrorFunction,
+  type ForgetLedger,
+  fenceError,
+  isFenceError,
+  nextFence,
+  type ReadModelStorage,
+  type ReadModelTransactArgs,
+  type Storage,
+  type TenantFence,
+  type TenantFenceState,
+  type TenantFenceStore,
 } from "@bounda-dev/core/adapter";
 import {
   type Config,
@@ -98,6 +115,52 @@ describe("the tenant's client calls", () => {
     >();
     expectTypeOf(DEFAULT_TENANT).toEqualTypeOf<string>();
     expectTypeOf(TENANT_CHECK_INTERVAL_MS).toEqualTypeOf<number>();
+  });
+
+  it("freeze and unfreeze the tenant on every client, every write refused meanwhile", () => {
+    expectTypeOf<BoundaClient["freezeTenant"]>().toEqualTypeOf<
+      (tenant: string) => Promise<TenantFrozenResult>
+    >();
+    expectTypeOf<BoundaClient["unfreezeTenant"]>().toEqualTypeOf<
+      (tenant: string) => Promise<void>
+    >();
+    expectTypeOf<TenantFrozenResult>().toEqualTypeOf<{
+      readonly tenant: string;
+      readonly frozenAt: string;
+    }>();
+    const error = new TenantFrozenError("acme", "2026-01-01T00:00:00.000Z");
+    expectTypeOf(error).toExtend<BoundaError>();
+    expectTypeOf(error.tenant).toEqualTypeOf<string>();
+    expectTypeOf(error.frozenAt).toEqualTypeOf<string>();
+    expectTypeOf<AppStatus["frozenTenant"]>().toEqualTypeOf<
+      FrozenTenantStatus | null | UnreadableStatus
+    >();
+    expectTypeOf<FrozenTenantStatus>().toEqualTypeOf<{
+      readonly frozenAt: string;
+      readonly whole: boolean;
+    }>();
+  });
+
+  it("put every store behind a fence its writes check in their own transaction", () => {
+    expectTypeOf<TenantFenceState>().toEqualTypeOf<"open" | "frozen" | "forgotten">();
+    expectTypeOf<TenantFence>().toEqualTypeOf<
+      | { readonly state: "open" }
+      | { readonly state: "frozen" | "forgotten"; readonly tenant: string; readonly since: string }
+    >();
+    expectTypeOf<TenantFenceStore>().toEqualTypeOf<{
+      read(): Promise<TenantFence>;
+      set(fence: TenantFence): Promise<TenantFence>;
+    }>();
+    expectTypeOf<Storage["fence"]>().toEqualTypeOf<TenantFenceStore>();
+    expectTypeOf<Storage["forgotten"]>().toEqualTypeOf<() => Storage>();
+    expectTypeOf<ReadModelStorage["fence"]>().toEqualTypeOf<TenantFenceStore>();
+    expectTypeOf<ReadModelTransactArgs<object, void>["forgotten"]>().toEqualTypeOf<
+      boolean | undefined
+    >();
+    expectTypeOf<ForgetLedger["fence"]>().toEqualTypeOf<TenantFenceStore>();
+    expectTypeOf(fenceError).toEqualTypeOf<FenceErrorFunction>();
+    expectTypeOf(nextFence).returns.toEqualTypeOf<TenantFence>();
+    expectTypeOf(isFenceError).guards.toEqualTypeOf<TenantFrozenError | TenantForgottenError>();
   });
 
   it("reject with TenantForgottenError once the tenant is forgotten", () => {
@@ -233,6 +296,7 @@ describe("the tenant key store", () => {
       readonly keys: readonly StoredTenantKey[];
       readonly forgotten: TenantForgetting | null;
       readonly files?: readonly StoredFileKey[];
+      readonly frozenAt?: string;
     }>();
     expectTypeOf<StoredFileKey>().toEqualTypeOf<{
       readonly database: string;

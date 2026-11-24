@@ -9,6 +9,7 @@ import {
   type ProcessingRestrictionLiftedPayload,
   type RedactedEvent,
 } from "../../modules/bounda-events.ts";
+import type { TenantFenceStore } from "./tenant-fence.ts";
 
 /**
  * A change of a person's restrictions as the ledger keeps it: the event that records it, with its
@@ -171,10 +172,18 @@ export interface ForgetLedger {
    * resolves `true` once it removed every one it found, `false` when it removed part only, to be
    * called again, as a store that deletes one key a call does within what one call may do: what
    * the runtime calls once its tenant is forgotten and every recipient of the tenant's data told,
-   * when nothing can need them any longer. Appending afterwards keeps entries again. A call that
-   * fails is made again.
+   * when nothing can need them any longer. It leaves the fence as it is, so nothing is appended
+   * afterwards. A call that fails is made again.
    */
   clear(): Promise<boolean>;
+  /**
+   * The fence of this ledger's store, as `TenantFenceStore` describes it: `append` and `raiseMark`
+   * reject with its error, writing nothing, once it is raised, whatever instance calls them, and
+   * one under way when it is raised ends before `set` resolves. `read`, `readMark`, `prune` and
+   * `clear` go on. A ledger several instances write must check it in the same atomic step as the
+   * write; one only the tenant's own object writes, as KV is, may check it in that object.
+   */
+  readonly fence: TenantFenceStore;
   /**
    * Releases what the ledger holds open; called when the app stops.
    */

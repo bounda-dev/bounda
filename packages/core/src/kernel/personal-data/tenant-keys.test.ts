@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { TenancyStore } from "../../adapter/storage/tenancy-store.ts";
 import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
-import { ConfigurationError, TenantForgottenError } from "../../contracts/errors.ts";
+import {
+  ConfigurationError,
+  TenantForgottenError,
+  TenantFrozenError,
+} from "../../contracts/errors.ts";
 import { createMemoryTenancyStore } from "../../memory/tenancy-store.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import { toBase64, unwrapUnderTenantKey, wrapUnderTenantKey } from "./crypto.ts";
@@ -222,6 +226,45 @@ describe("openTenantKeys", () => {
       previous: [],
       master: { kid: (await masterOf("FIRST")).kid, previous: [], pending: 0 },
     });
+  });
+
+  it("refuses to put a version in force or retire one while frozen, on any instance, and goes on once unfrozen", async () => {
+    const at = world();
+    const keys = await open(at);
+    const other = await open(at);
+    const since = "2026-01-02T00:00:00.000Z";
+    expect(await keys.freeze(since)).toBe(since);
+    expect(await keys.freeze("2026-01-03T00:00:00.000Z")).toBe(since);
+    expect(await at.store.get("acme")).toMatchObject({ frozenAt: since, forgotten: null });
+    const frozen = new TenantFrozenError("acme", since);
+    for (const instance of [keys, other]) {
+      await expect(instance.rotate()).rejects.toThrow(frozen);
+      await expect(instance.retire()).rejects.toThrow(frozen);
+      // What opens goes on.
+      expect((await instance.current()).kid).toBe((await keys.kids()).kid);
+    }
+    await other.unfreeze();
+    const thawed = await at.store.get("acme");
+    expect(thawed).not.toHaveProperty("frozenAt");
+    // Lifting a freeze already lifted writes nothing.
+    await other.unfreeze();
+    expect(await at.store.get("acme")).toEqual(thawed);
+    const rotated = await keys.rotate();
+    await other.refresh();
+    expect((await other.kids()).kid).toBe(rotated);
+  });
+
+  it("ends a freeze with the forgetting, which a freeze can no longer follow", async () => {
+    const at = world();
+    const keys = await open(at);
+    await keys.freeze("2026-01-02T00:00:00.000Z");
+    const forgetting = { at: "2026-01-03T00:00:00.000Z", eventId: "e-1" };
+    expect(await keys.forget(forgetting)).toEqual(forgetting);
+    expect(await at.store.get("acme")).not.toHaveProperty("frozenAt");
+    const gone = new TenantForgottenError("acme", forgetting.at);
+    await expect(keys.freeze("2026-01-04T00:00:00.000Z")).rejects.toThrow(gone);
+    await keys.unfreeze();
+    expect(await at.store.get("acme")).toMatchObject({ forgotten: forgetting });
   });
 
   it("sees a version rotated or a forgetting made elsewhere once its read expires, or on refresh", async () => {

@@ -61,6 +61,7 @@ const status: AppStatus = {
     master: { kid: "m-2", previous: ["m-1"], pending: 1 },
   },
   forgottenTenant: null,
+  frozenTenant: null,
   keyRotation: { kid: "k-2", previous: ["k-1"], pending: 1, completeAt: null, reseal: null },
   retention: {
     categories: [
@@ -323,6 +324,18 @@ describe("formatStatus", () => {
     ).toContain(
       "forgotten tenant: recipients told, forget ledger cleared, file keys still kept; keep the database",
     );
+    const frozen = (frozenTenant: AppStatus["frozenTenant"]) =>
+      formatStatus({ status: { ...bare, frozenTenant } }).split("\n");
+    expect(frozen(null).some((line) => line.startsWith("frozen tenant"))).toBe(false);
+    expect(frozen({ frozenAt: "2026-05-03T00:00:00.000Z", whole: true })).toContain(
+      "frozen tenant: since 2026-05-03T00:00:00.000Z, every store; no write lands until bounda unfreeze-tenant",
+    );
+    expect(frozen({ frozenAt: "2026-05-03T00:00:00.000Z", whole: false })).toContain(
+      "frozen tenant: since 2026-05-03T00:00:00.000Z, but not every store yet: run bounda freeze-tenant again",
+    );
+    expect(frozen({ unreadable: true })).toContain(
+      "frozen tenant: its store could not be read, see the logs",
+    );
   });
 });
 
@@ -350,6 +363,7 @@ describe("formatStatus of a status with parts that could not be read", () => {
     forgetLedger: UNREADABLE,
     tenant: UNREADABLE,
     forgottenTenant: UNREADABLE,
+    frozenTenant: UNREADABLE,
     keyRotation: UNREADABLE,
     retention: UNREADABLE,
     deadLetterRetention: { retentionMs: 90_000, unreadable: true },
@@ -372,6 +386,7 @@ describe("formatStatus of a status with parts that could not be read", () => {
       "forget ledger: its store could not be read, see the logs",
       "tenant: its store could not be read, see the logs",
       "forgotten tenant: its store could not be read, see the logs",
+      "frozen tenant: its store could not be read, see the logs",
       "key rotation: its store could not be read, see the logs",
       "retention: its store could not be read, see the logs",
       "dead letter retention: 90s, its store could not be read, see the logs",

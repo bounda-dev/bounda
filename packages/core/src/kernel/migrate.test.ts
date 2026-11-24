@@ -29,9 +29,9 @@ describe("migrateTables", () => {
     };
     expect(await migrateTables({ config })).toEqual([
       { database: "storage", scope: "storage", version: 11, latest: 11 },
-      { database: "storage", scope: "checkpoints", version: 3, latest: 3 },
-      { database: "readModels.customers", scope: "checkpoints", version: 3, latest: 3 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 7, latest: 7 },
+      { database: "storage", scope: "checkpoints", version: 4, latest: 4 },
+      { database: "readModels.customers", scope: "checkpoints", version: 4, latest: 4 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 8, latest: 8 },
       { database: "tenantKeys", scope: "tenant-keys", version: 1, latest: 1 },
     ]);
     expect(tablesIn(keys.db)).toEqual(["bounda_migrations", "bounda_tenant_keys"]);
@@ -40,9 +40,11 @@ describe("migrateTables", () => {
       "bounda_migrations",
       "bounda_restricted_persons",
       "bounda_restricted_positions",
+      "bounda_tenant_fence",
     ]);
     expect(tablesIn(ledger.db)).toEqual([
       "bounda_forget_ledger",
+      "bounda_forget_ledger_fence",
       "bounda_forget_ledger_marks",
       "bounda_migrations",
     ]);

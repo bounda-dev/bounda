@@ -44,7 +44,7 @@ export interface UnreadableSchemaStatus extends UnreadableStatus {
  * Every subscriber's lag, as `app.getLag()` reports it; the backfill of personal data is
  * `AppStatus`'s own part.
  */
-export interface StatusLag extends Omit<AppLag, "personalDataBackfill"> {}
+export interface StatusLag extends Omit<AppLag, "personalDataBackfill" | "frozen"> {}
 
 /**
  * A subscriber's last failure without its text, which `subscriberFailures` opens. `current` while
@@ -100,6 +100,11 @@ export interface AppStatus {
    * it is not forgotten.
    */
   readonly forgottenTenant: ForgottenTenantStatus | null | UnreadableStatus;
+  /**
+   * While the tenant is frozen with `freezeTenant`, since when, and whether every store is. `null`
+   * while it is not frozen, and once it is forgotten.
+   */
+  readonly frozenTenant: FrozenTenantStatus | null | UnreadableStatus;
   /**
    * Where the keys under the tenant's key stand as it rotates. `null` for an app without keys,
    * and once the tenant is forgotten.
@@ -159,6 +164,16 @@ export interface ForgottenTenantStatus {
 }
 
 /**
+ * A tenant frozen: since when its database takes no write, and whether the read models' databases
+ * and the forget ledger take none either, as `exportTenant` needs; `false` for a freeze cut short,
+ * which `freezeTenant` finishes.
+ */
+export interface FrozenTenantStatus {
+  readonly frozenAt: string;
+  readonly whole: boolean;
+}
+
+/**
  * A database file opened under the tenant's keys: the database of the configuration it holds, the
  * file, and where its encryption stands.
  */
@@ -199,6 +214,7 @@ export interface ReadAppStatusArgs {
   readonly rotation?: Pick<KeyRotation, "status"> | undefined;
   readonly tenant?: (() => Promise<TenantKeyStatus>) | undefined;
   readonly forgottenTenant?: (() => Promise<ForgottenTenantStatus>) | undefined;
+  readonly frozenTenant?: (() => Promise<FrozenTenantStatus | null>) | undefined;
   readonly retention?: Pick<RetentionSweep, "status"> | undefined;
   readonly letterRetention?: Pick<DeadLetterRetention, "status"> | undefined;
   readonly failureRetention?: Pick<SubscriberFailureRetention, "status"> | undefined;
@@ -292,6 +308,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
   rotation,
   tenant,
   forgottenTenant,
+  frozenTenant,
   retention,
   letterRetention,
   failureRetention,
@@ -316,6 +333,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     keyRotation,
     tenantKey,
     forgotten,
+    frozen,
     retained,
     purged,
     expired,
@@ -343,6 +361,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     readable("keyRotation", async () => (await rotation?.status()) ?? null),
     readable("tenant", async () => (await tenant?.()) ?? null),
     readable("forgottenTenant", async () => (await forgottenTenant?.()) ?? null),
+    readable("frozenTenant", async () => (await frozenTenant?.()) ?? null),
     readable("retention", async () => (await retention?.status()) ?? null),
     letterRetention?.status() ?? null,
     failureRetention?.status() ?? null,
@@ -383,6 +402,7 @@ export const readAppStatus: ReadAppStatusFunction = async ({
     forgetLedger,
     tenant: tenantKey,
     forgottenTenant: forgotten,
+    frozenTenant: frozen,
     keyRotation,
     retention: retained,
     deadLetterRetention: purged,
@@ -415,6 +435,7 @@ const PARTS = [
   "forgetLedger",
   "tenant",
   "forgottenTenant",
+  "frozenTenant",
   "keyRotation",
   "retention",
   "deadLetterRetention",
