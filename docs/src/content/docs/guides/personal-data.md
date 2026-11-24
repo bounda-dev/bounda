@@ -2620,11 +2620,13 @@ model's rows go with the forgetting, but a backup of a read model's database tak
 fields not marked `.personal()` in the clear until it is restored and an app starts on it (see
 [Limitations](/reference/limitations/)). What your app does next is yours: delete the database once
 nothing needs its skeleton, the tenant's Durable Object with `deleteAll()`, its PostgreSQL schema,
-its SQLite file, once its recipients are told and its ledger cleared: nothing else clears the
-ledger of a tenant whose app never starts again. `app.status().forgottenTenant` says it, as
-`{ recipientsTold, forgetLedgerCleared }`, `forgetLedgerCleared` `null` without a ledger, and
-`bounda status` prints `forgotten tenant: recipients told, forget ledger cleared; the database
-may be deleted` once both are; `null` while the tenant is not forgotten. The tenant key store keeps the
+its SQLite file, once its recipients are told, its ledger cleared and its files' keys destroyed:
+nothing else does that for a tenant whose app never starts again, and a file deleted while the
+record still keeps its keys leaves every copy of it open to the master key.
+`app.status().forgottenTenant` says it, as `{ recipientsTold, forgetLedgerCleared,
+fileKeysDestroyed }`, `forgetLedgerCleared` `null` without a ledger, and `bounda status` prints
+`forgotten tenant: recipients told, forget ledger cleared, no file key kept; the database may be
+deleted` once all are; `null` while the tenant is not forgotten. The tenant key store keeps the
 record of the forgetting, which is what tells a restored copy to forget again, so keep it at least
 as long as any backup of the tenant, and never restore it to before the forgetting, which would
 bring the tenant's key back.

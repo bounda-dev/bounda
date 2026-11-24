@@ -148,6 +148,7 @@ describe("an app started for a forgotten tenant", () => {
     expect((await app.status()).forgottenTenant).toEqual({
       recipientsTold: false,
       forgetLedgerCleared: null,
+      fileKeysDestroyed: true,
     });
     expect(await app.nextDueAt()).toBeNull();
     expect(await app.pendingRebuilds()).toEqual([]);
@@ -160,6 +161,7 @@ describe("an app started for a forgotten tenant", () => {
     expect((await app.status()).forgottenTenant).toEqual({
       recipientsTold: true,
       forgetLedgerCleared: null,
+      fileKeysDestroyed: true,
     });
     // With no recipient to tell, the notices leave no letter.
     expect(await app.deadLetters.list()).toEqual([]);
@@ -318,6 +320,7 @@ describe("the runner of a forgotten tenant", () => {
       discharge: async () => null,
       retain: async () => undefined,
       ledgerCleared: async () => null,
+      fileKeysDestroyed: async () => true,
       resettle: async () => {
         resettled += 1;
       },
@@ -365,6 +368,7 @@ describe("the runner of a forgotten tenant", () => {
       },
       retain: async () => undefined,
       ledgerCleared: async () => null,
+      fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -423,6 +427,7 @@ describe("the runner of a forgotten tenant", () => {
       },
       retain: async () => undefined,
       ledgerCleared: async () => null,
+      fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -463,6 +468,7 @@ describe("the runner of a forgotten tenant", () => {
         retained.push(now.toISOString());
       },
       ledgerCleared: async () => null,
+      fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),
@@ -521,6 +527,7 @@ describe("the runner of a forgotten tenant", () => {
         retains += 1;
       },
       ledgerCleared: async () => null,
+      fileKeysDestroyed: async () => true,
       resettle: async () => undefined,
       pendingRetries: ignoredRetries,
       ids: createSequentialIdGenerator(),

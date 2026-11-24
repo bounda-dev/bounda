@@ -275,6 +275,7 @@ describe("forgetTenant", () => {
     expect((await app.status()).forgottenTenant).toEqual({
       recipientsTold: true,
       forgetLedgerCleared: false,
+      fileKeysDestroyed: true,
     });
     clock.advance(HOLD_MS);
     await app.runUntilIdle();
@@ -283,6 +284,7 @@ describe("forgetTenant", () => {
     expect((await app.status()).forgottenTenant).toEqual({
       recipientsTold: true,
       forgetLedgerCleared: true,
+      fileKeysDestroyed: true,
     });
     expect(await app.nextDueAt()).toBeNull();
   });

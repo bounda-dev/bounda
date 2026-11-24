@@ -1075,6 +1075,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           await forgottenLedger?.retain(now);
         },
         ledgerCleared: async () => (forgottenLedger === null ? null : forgottenLedger.cleared()),
+        // Read again, as another instance may have destroyed them.
+        fileKeysDestroyed: async () => (await keys.tenantKeys.refresh())?.files === undefined,
         pendingRetries,
         ids,
         clock,

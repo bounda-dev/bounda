@@ -134,9 +134,10 @@ export interface AppStatus {
 }
 
 /**
- * Where a forgotten tenant's last work stands. Once every recipient is told and the forget ledger
- * holds nothing of the tenant, `null` meaning the app has no ledger, nothing Bounda keeps needs the
- * tenant's database any more: it may be deleted.
+ * Where a forgotten tenant's last work stands. Once every recipient is told, the forget ledger
+ * holds nothing of the tenant, `null` meaning the app has no ledger, and the keys of its encrypted
+ * database files are destroyed, nothing Bounda keeps needs the tenant's database any more: it may
+ * be deleted.
  */
 export interface ForgottenTenantStatus {
   /**
@@ -149,6 +150,12 @@ export interface ForgottenTenantStatus {
    * recipients are told; `null` without `runtime.personalData.forgetLedger`.
    */
   readonly forgetLedgerCleared: boolean | null;
+  /**
+   * Whether the tenant key store's record holds no key of the tenant's encrypted database files,
+   * which it keeps under the master key until the recipients are told, so the notices can read the
+   * files; `true` for a tenant without such files.
+   */
+  readonly fileKeysDestroyed: boolean;
 }
 
 /**

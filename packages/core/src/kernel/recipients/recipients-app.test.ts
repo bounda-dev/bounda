@@ -1672,6 +1672,7 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
     expect((await app.status()).forgottenTenant).toEqual({
       recipientsTold: false,
       forgetLedgerCleared: false,
+      fileKeysDestroyed: true,
     });
     failing.clear();
     await app.deadLetters.retry(letter?.id ?? "");
@@ -1684,6 +1685,7 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
     expect((await app.status()).forgottenTenant).toEqual({
       recipientsTold: true,
       forgetLedgerCleared: true,
+      fileKeysDestroyed: true,
     });
   });
 });

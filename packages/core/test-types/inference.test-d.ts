@@ -2076,6 +2076,7 @@ describe("operations", () => {
     expectTypeOf<ForgottenTenantStatus>().toEqualTypeOf<{
       readonly recipientsTold: boolean;
       readonly forgetLedgerCleared: boolean | null;
+      readonly fileKeysDestroyed: boolean;
     }>();
     // `getLag()` degrades the same way, a subscriber at a time; `maxLag` is `null` while one is
     // unread, so it never reads as caught up.

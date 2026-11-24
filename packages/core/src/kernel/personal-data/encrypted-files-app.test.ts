@@ -182,7 +182,10 @@ describe("an app over a file encrypted under the tenant's keys", () => {
     await register(app, "c-1");
     await app.forgetTenant("default");
     expect((await store.get("default"))?.forgotten?.files).toHaveLength(1);
+    // Kept until the recipients are told: the database must be kept as long.
+    expect((await app.status()).forgottenTenant).toMatchObject({ fileKeysDestroyed: false });
     await app.runUntilIdle();
+    expect((await app.status()).forgottenTenant).toMatchObject({ fileKeysDestroyed: true });
     await app.stop();
     expect((await store.get("default"))?.forgotten?.files).toBeUndefined();
     expect(recording.entries).toContainEqual({

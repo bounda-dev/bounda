@@ -68,6 +68,10 @@ export interface CreateForgottenRunnerArgs {
    * Whether the forget ledger holds nothing of the tenant, `null` without one.
    */
   readonly ledgerCleared: () => Promise<boolean | null>;
+  /**
+   * Whether the tenant key store's record holds no key of the tenant's database files.
+   */
+  readonly fileKeysDestroyed: () => Promise<boolean>;
   readonly pendingRetries: PendingRetries;
   readonly ids: IdGenerator;
   readonly clock: Clock;
@@ -93,6 +97,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
   discharge,
   retain,
   ledgerCleared,
+  fileKeysDestroyed,
   pendingRetries,
   ids,
   clock,
@@ -187,6 +192,7 @@ export const createForgottenRunner: CreateForgottenRunnerFunction = ({
         forgottenTenant: async () => ({
           recipientsTold: await told(),
           forgetLedgerCleared: await ledgerCleared(),
+          fileKeysDestroyed: await fileKeysDestroyed(),
         }),
       }),
     deadLetters: (actor) =>

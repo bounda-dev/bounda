@@ -146,16 +146,16 @@ const tenantOf = ({ tenant }: AppStatus): string => {
 const forgottenTenantOf = ({ forgottenTenant: forgotten }: AppStatus): string[] => {
   if (forgotten === null) return [];
   if (isUnreadable(forgotten)) return [`forgotten tenant: ${UNREADABLE}`];
-  const { recipientsTold, forgetLedgerCleared } = forgotten;
+  const { recipientsTold, forgetLedgerCleared, fileKeysDestroyed } = forgotten;
   const ledger =
     forgetLedgerCleared === null
       ? "no forget ledger"
       : forgetLedgerCleared
         ? "forget ledger cleared"
         : "forget ledger not cleared yet";
-  const deletable = recipientsTold && forgetLedgerCleared !== false;
+  const deletable = recipientsTold && forgetLedgerCleared !== false && fileKeysDestroyed;
   return [
-    `forgotten tenant: ${recipientsTold ? "recipients told" : "recipients not all told yet"}, ${ledger}; ${deletable ? "the database may be deleted" : "keep the database"}`,
+    `forgotten tenant: ${recipientsTold ? "recipients told" : "recipients not all told yet"}, ${ledger}, ${fileKeysDestroyed ? "no file key kept" : "file keys still kept"}; ${deletable ? "the database may be deleted" : "keep the database"}`,
   ];
 };
 

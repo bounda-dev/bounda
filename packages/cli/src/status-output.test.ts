@@ -302,20 +302,26 @@ describe("formatStatus", () => {
     const forgotten = (forgottenTenant: AppStatus["forgottenTenant"]) =>
       formatStatus({ status: { ...bare, forgottenTenant } }).split("\n");
     expect(forgotten(null).some((line) => line.startsWith("forgotten tenant"))).toBe(false);
-    expect(forgotten({ recipientsTold: false, forgetLedgerCleared: false })).toContain(
-      "forgotten tenant: recipients not all told yet, forget ledger not cleared yet; keep the database",
+    const kept = { fileKeysDestroyed: true };
+    expect(forgotten({ ...kept, recipientsTold: false, forgetLedgerCleared: false })).toContain(
+      "forgotten tenant: recipients not all told yet, forget ledger not cleared yet, no file key kept; keep the database",
     );
-    expect(forgotten({ recipientsTold: true, forgetLedgerCleared: false })).toContain(
-      "forgotten tenant: recipients told, forget ledger not cleared yet; keep the database",
+    expect(forgotten({ ...kept, recipientsTold: true, forgetLedgerCleared: false })).toContain(
+      "forgotten tenant: recipients told, forget ledger not cleared yet, no file key kept; keep the database",
     );
-    expect(forgotten({ recipientsTold: true, forgetLedgerCleared: true })).toContain(
-      "forgotten tenant: recipients told, forget ledger cleared; the database may be deleted",
+    expect(forgotten({ ...kept, recipientsTold: true, forgetLedgerCleared: true })).toContain(
+      "forgotten tenant: recipients told, forget ledger cleared, no file key kept; the database may be deleted",
     );
-    expect(forgotten({ recipientsTold: true, forgetLedgerCleared: null })).toContain(
-      "forgotten tenant: recipients told, no forget ledger; the database may be deleted",
+    expect(forgotten({ ...kept, recipientsTold: true, forgetLedgerCleared: null })).toContain(
+      "forgotten tenant: recipients told, no forget ledger, no file key kept; the database may be deleted",
     );
-    expect(forgotten({ recipientsTold: false, forgetLedgerCleared: null })).toContain(
-      "forgotten tenant: recipients not all told yet, no forget ledger; keep the database",
+    expect(forgotten({ ...kept, recipientsTold: false, forgetLedgerCleared: null })).toContain(
+      "forgotten tenant: recipients not all told yet, no forget ledger, no file key kept; keep the database",
+    );
+    expect(
+      forgotten({ recipientsTold: true, forgetLedgerCleared: true, fileKeysDestroyed: false }),
+    ).toContain(
+      "forgotten tenant: recipients told, forget ledger cleared, file keys still kept; keep the database",
     );
   });
 });

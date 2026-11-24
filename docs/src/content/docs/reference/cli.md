@@ -310,8 +310,9 @@ recipients
   to [rewrap](/guides/personal-data/#rotating-the-master-key) under it; `forgotten at …` once it
   is [forgotten](/guides/personal-data/#forgetting-a-tenant), followed by a `forgotten tenant` line:
   whether every recipient was told, whether the forget ledger holds nothing of the tenant any more,
-  and `the database may be deleted` once both are true (with no ledger, once the recipients are
-  told), `keep the database` until then.
+  whether the keys of its [encrypted files](/guides/personal-data/#encrypted-database-files) are
+  destroyed, and `the database may be deleted` once all are (with no ledger, the other two),
+  `keep the database` until then.
 - each database file [encrypted under the tenant's key](/guides/personal-data/#encrypted-database-files),
   and where it stands: `still in the clear` or `still under an earlier key` while another connection
   kept it from being encrypted, which [`bounda rekey`](#bounda-rekey) does once it can.
