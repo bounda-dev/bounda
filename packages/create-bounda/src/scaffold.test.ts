@@ -94,8 +94,16 @@ describe("scaffoldProject", () => {
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       'const location = "eu";',
     );
+    // The tenant's key and the forget ledger each in a file of their own, apart from the database
+    // and out of Git.
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      'forgetLedger: {\n        store: sqlite({\n          path: process.env.BOUNDA_LEDGER_DB ?? "./ledger/forget-ledger.db",\n          location,',
+    );
     expect(await readFile(join(target, "README.md"), "utf8")).toContain("pnpm install");
     expect(await readFile(join(target, ".gitignore"), "utf8")).toContain(".bounda/");
+    expect(await readFile(join(target, ".gitignore"), "utf8")).toMatch(
+      /^data\/\nkeys\/\nledger\/$/m,
+    );
     expect(await readFile(join(target, "AGENTS.md"), "utf8")).toContain(
       "node_modules/@bounda-dev/core/docs/",
     );
@@ -120,6 +128,12 @@ describe("scaffoldProject", () => {
     });
     expect(report.files).toContain(".env.example");
     expect(await readFile(join(target, ".env.example"), "utf8")).toContain("5432/shop");
+    expect(await readFile(join(target, ".env.example"), "utf8")).toMatch(
+      /^FORGET_LEDGER_URL=postgres:\/\/user:password@localhost:5432\/shop_ledger$/m,
+    );
+    expect(await readFile(join(target, ".env"), "utf8")).toMatch(
+      /^# FORGET_LEDGER_URL=postgres:\/\/user:password@localhost:5432\/shop_ledger$/m,
+    );
     expect(await readFile(join(target, ".env.example"), "utf8")).not.toMatch(
       /^BOUNDA_MASTER_KEY=/m,
     );
@@ -128,6 +142,9 @@ describe("scaffoldProject", () => {
     );
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       "@bounda-dev/postgresql",
+    );
+    expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
+      "forgetLedger: { store: postgresql({ url: ledger, location }) }",
     );
     expect(await readFile(join(target, "bounda.config.ts"), "utf8")).toContain(
       'const location = "eu";',

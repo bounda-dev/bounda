@@ -40,5 +40,11 @@ module.
 
 `.bounda/`, `+types/` and `.react-router/` are generated; they stay out of git.
 
+`bounda.config.ts` keeps the tenant's key and the [forget
+ledger](https://docs.bounda.dev/guides/personal-data/#the-forget-ledger), the record of whom the app
+forgot, apart from the database: a restored backup of the database forgets again whoever it
+brings back. Back each up apart, as [backups and restores](https://docs.bounda.dev/guides/backups/)
+says.
+
 `bounda.config.ts` keeps the data in `"eu"`: change `location` to the jurisdiction your databases
 run in before you deploy. See [data location](https://docs.bounda.dev/reference/configuration/#data-location).

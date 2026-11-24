@@ -2146,8 +2146,9 @@ over any adapter gets the same (see [In tests](#in-tests)).
 A project from `create-bounda` comes with both: a master key generated for it in `.env` on Node, or
 in `.dev.vars` on Cloudflare, both left out of Git, and a tenant key store where each runtime keeps
 one (`./keys/tenant-keys.db` with SQLite, a second PostgreSQL database in `TENANT_KEYS_URL`, the
-keeper Durable Object on Cloudflare, with the forget ledger beside it). In production, set the variable the way the host keeps
-secrets. On Cloudflare that is a secret of the Worker:
+keeper Durable Object on Cloudflare), and a [forget ledger](#the-forget-ledger) apart from the
+database too. In production, set the variable the way the host keeps secrets. On Cloudflare that is
+a secret of the Worker:
 
 ```sh
 npx wrangler secret put BOUNDA_MASTER_KEY
@@ -2710,7 +2711,9 @@ schema of the same server backed up apart. A plain file of the app's own making 
 thing with less: the SQLite file already is one, written atomically. An adapter that points at the
 storage's own database, which a restore would roll back with it, fails the start with a
 `ConfigurationError`. The table keeps each tenant's entries apart, so tenants can share one
-ledger.
+ledger. A project from `create-bounda` on Node comes with one: `./ledger/forget-ledger.db` with
+SQLite, left out of Git, or a third PostgreSQL database in `FORGET_LEDGER_URL`; on Cloudflare, the
+keeper below.
 
 On Cloudflare a restore of a Durable Object's storage goes back to a point in time, the ledger
 with it if it lived there, so the ledger lives in the tenant's keeper, another Durable Object in
