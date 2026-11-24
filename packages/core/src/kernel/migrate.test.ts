@@ -13,7 +13,11 @@ const tablesIn = (db: ReturnType<typeof createNodeSqliteAdapter>["db"]): string[
     }[]
   ).map(({ name }) => name);
 
-describe("migrateTables", () => {
+// Four database files migrated twice, each write synced to disk: on a Windows runner that takes
+// seconds, waiting on nothing but the disk, for what takes milliseconds elsewhere.
+const ON_DISK_TIMEOUT_MS = 30_000;
+
+describe("migrateTables", { timeout: ON_DISK_TIMEOUT_MS }, () => {
   it("migrates every database the configuration names to this release, each with its own scopes", async () => {
     const directory = mkdtempSync(join(tmpdir(), "bounda-migrate-"));
     const storage = createNodeSqliteAdapter(join(directory, "storage.db"));

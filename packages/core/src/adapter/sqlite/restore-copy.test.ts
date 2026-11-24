@@ -13,6 +13,10 @@ import {
 } from "./node-sqlite.ts";
 import { restoreSqliteCopy } from "./restore-copy.ts";
 
+// Every case writes several database files, each write synced to disk: on a Windows runner that
+// takes seconds, waiting on nothing but the disk, for what takes milliseconds elsewhere.
+const ON_DISK_TIMEOUT_MS = 30_000;
+
 let directory: string;
 let files = 0;
 const opened: NodeSqliteAdapter[] = [];
@@ -24,7 +28,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const { db } of opened.splice(0)) db.close();
   await rm(directory, { recursive: true, force: true });
-});
+}, ON_DISK_TIMEOUT_MS);
 
 const fresh = (name: string): string => {
   files += 1;
@@ -92,7 +96,7 @@ const seeded = async (path: string, rows: number): Promise<NodeSqliteAdapter> =>
   return sqlite;
 };
 
-describe("restoring a copy of a SQLite database in place", () => {
+describe("restoring a copy of a SQLite database in place", { timeout: ON_DISK_TIMEOUT_MS }, () => {
   it("puts back every table, row, counter, index and trigger the copy holds, and nothing else", async () => {
     const copy = fresh("copy");
     const source = await seeded(copy, 1_203);
