@@ -469,6 +469,7 @@ describe("a project created by create-bounda", () => {
     if (server === null) return;
     const storage = `shop_${randomUUID().replaceAll("-", "")}`;
     const databases = [storage, `${storage}_keys`, `${storage}_ledger`] as const;
+    const dump = `/tmp/${storage}.dump`;
     const inServer = async (command: readonly string[]): Promise<void> => {
       const { exitCode, output } = await server.exec([...command]);
       expect(exitCode, output).toBe(0);
@@ -494,7 +495,6 @@ describe("a project created by create-bounda", () => {
       const started = await run(process.execPath, ["src/main.ts"], { cwd: project, env });
       expect(started.stdout).toContain("1 order(s) for ada, 42 in total");
       // The forget ledger, in a database of its own, outlives a dump of the storage's restored.
-      const dump = `/tmp/${storage}.dump`;
       await forgetsAgainAfterRestore({
         project,
         env,
@@ -507,6 +507,7 @@ describe("a project created by create-bounda", () => {
       });
     } finally {
       if (reuse) {
+        await inServer(["rm", "-f", dump]);
         for (const database of databases)
           await psql(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
       } else {
