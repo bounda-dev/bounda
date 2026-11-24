@@ -3,4 +3,5 @@ node_modules/
 **/+types/
 data/
 keys/
+ledger/
 .env

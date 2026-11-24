@@ -7,3 +7,5 @@ BOUNDA_MASTER_KEY={{masterKey}}
 # DATABASE_URL=postgres://user:password@localhost:5432/{{name}}
 # Where the tenant's key is, as in .env.example.
 # TENANT_KEYS_URL=postgres://user:password@localhost:5432/{{name}}_keys
+# Where the record of whom the app forgot is, as in .env.example.
+# FORGET_LEDGER_URL=postgres://user:password@localhost:5432/{{name}}_ledger
