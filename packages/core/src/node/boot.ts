@@ -9,9 +9,9 @@ import { ConfigurationError } from "../contracts/errors.ts";
 import type { IdGenerator } from "../contracts/ids.ts";
 import type { Logger } from "../contracts/logger.ts";
 import { type BoundaApp, createApp } from "../kernel/app.ts";
-import { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 import { withErrorText } from "../kernel/shared/error-text.ts";
 import { guardedLogger } from "../kernel/shared/guarded-logger.ts";
+import { tenantIdOf } from "../kernel/tenant.ts";
 import type { Witness } from "../kernel/witness.ts";
 import type { Registry } from "../modules/registry.ts";
 import type { AppRegistry } from "../register/index.ts";
@@ -84,7 +84,8 @@ export interface BootArgs<R extends Registry = AppRegistry> {
   /**
    * The tenant the app serves, which a configuration that is a function of the tenant is called
    * with and the app's keys belong to. Defaults to `BOUNDA_TENANT` once `.env` is loaded; without
-   * either the app serves `DEFAULT_TENANT` and its ports receive no tenant.
+   * either the app serves `DEFAULT_TENANT`, as it does when this names it, and its ports receive no
+   * tenant. An empty name fails with `ConfigurationError`.
    */
   readonly tenant?: string;
 }
@@ -205,7 +206,7 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
       (module) => module.default as ProjectConfig | undefined,
     ));
   return {
-    config: configForTenant({ config: project, tenant: tenant ?? DEFAULT_TENANT }),
+    config: configForTenant({ config: project, tenant: tenantIdOf(tenant) }),
     tenant,
     registry:
       registry ??

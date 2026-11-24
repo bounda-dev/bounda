@@ -23,6 +23,7 @@ import { HOLD_MAX_MS } from "../personal-data/hold.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
 import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
 import type { TenantExportPart } from "../personal-data/tenant-export.ts";
+import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { advanceUntilWaiting } from "../test-support.ts";
 import { GENERATION_INTERVAL_MS, RESTORES_FOUND } from "./restores.ts";
 
@@ -495,7 +496,7 @@ describe("a database restored while the app was stopped", () => {
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     // A store whose reads may lag its writes, as Workers KV's: the mark always reads as never raised.
     const stale = defineForgetLedger(async () => {
-      const inner = await ledgerAdapter.createForgetLedger({});
+      const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
       return {
         append: (entries) => inner.append(entries),
         read: (args) => inner.read(args),
@@ -526,7 +527,7 @@ describe("a database restored while the app was stopped", () => {
     const store = createNodeSqliteAdapter(paths.storage);
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
-      const inner = await ledgerAdapter.createForgetLedger({});
+      const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
       return { ...inner, readMark: async () => 0 };
     });
     const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
@@ -604,7 +605,7 @@ describe("a database restored while the app was stopped", () => {
     const store = createNodeSqliteAdapter(paths.storage);
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
-      const inner = await ledgerAdapter.createForgetLedger({});
+      const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
       return { ...inner, readMark: async () => 0 };
     });
     let failing = false;

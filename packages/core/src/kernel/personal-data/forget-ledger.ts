@@ -13,9 +13,10 @@ export interface CreateForgetLedgerFromEnvArgs {
    */
   readonly env: AppEnv;
   /**
-   * The name of the store the app serves, whose entries the ledger keeps apart.
+   * The tenant the app serves, whose entries the ledger keeps apart: `DEFAULT_TENANT` for an app
+   * that names none.
    */
-  readonly tenant?: string | undefined;
+  readonly tenant: string;
   /**
    * How long the app keeps each entry after its `forgottenAt`, from `keepFor`; `undefined` keeps
    * entries until `clear`. Only a ledger without `prune` uses it, to expire its entries itself.

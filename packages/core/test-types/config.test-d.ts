@@ -441,7 +441,7 @@ describe("defineConfig", () => {
     });
     const own = defineForgetLedger(({ env: environment, tenant, keepForMs }) => {
       expectTypeOf(environment).toEqualTypeOf<typeof env>();
-      expectTypeOf(tenant).toEqualTypeOf<string | undefined>();
+      expectTypeOf(tenant).toEqualTypeOf<string>();
       expectTypeOf(keepForMs).toEqualTypeOf<number | undefined>();
       return {
         append: async (entries) => {

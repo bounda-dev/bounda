@@ -33,6 +33,7 @@ import {
   FORGET_LEDGER_HELD_UNTIL,
   FORGET_LEDGER_REREAD_MS,
 } from "./reconciliation.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 const START = new Date("2026-03-01T00:00:00.000Z");
 
@@ -204,7 +205,7 @@ const entry = (
 const LOST = new Date(START.getTime() - FORGET_LEDGER_GRACE_MS - 60_000);
 
 const opened = async (ledgerAdapter: Adapter): Promise<ForgetLedger> =>
-  ledgerAdapter.createForgetLedger({});
+  ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
 
 describe("the forget ledger", () => {
   it("receives every forgetting the store holds, those from before it was configured included", async () => {

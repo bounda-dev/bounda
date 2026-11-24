@@ -20,6 +20,7 @@ import type { Registry } from "../modules/registry.ts";
 import type { FieldsArgs } from "../modules/view.ts";
 import { createTestApp } from "../testing/index.ts";
 import { createApp } from "./app.ts";
+import { DEFAULT_TENANT } from "./personal-data/tenant-keys.ts";
 import { streamMarkOf } from "./read-model/stream-marks.ts";
 import { GENERATION_INTERVAL_MS } from "./shared/restores.ts";
 import { createRecordingLogger } from "./test-support.ts";
@@ -1018,6 +1019,24 @@ describe("the access log", () => {
       ["exportPersonalData", "ok"],
     ]);
     await app.stop();
+  });
+
+  it("hands app/audit.ts the tenant the app serves, none for DEFAULT_TENANT whether named or not", async () => {
+    const tenants: (string | undefined)[] = [];
+    for (const tenant of [undefined, DEFAULT_TENANT, "acme"]) {
+      const app = await createApp({
+        registry: registryWith({
+          onPersonalDataAccess: (args) => {
+            tenants.push(args.tenant);
+          },
+        }),
+        config: { storage: memory() },
+        ...(tenant === undefined ? {} : { tenant }),
+      });
+      await app.exportPersonalData("ana");
+      await app.stop();
+    }
+    expect(tenants).toEqual([undefined, undefined, undefined, undefined, "acme", "acme"]);
   });
 
   it("goes to the app's logger at info without app/audit.ts, and in a test app without a hook of the test's", async () => {

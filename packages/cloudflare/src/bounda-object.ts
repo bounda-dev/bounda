@@ -302,7 +302,8 @@ const ownFunction = <F extends (...args: never[]) => unknown>(
  * scheduled commands and retries run in the object's alarm, which it arms itself for whatever
  * comes next. One object is one store: give each tenant its own, reached with `tenantStub`. Port
  * implementations receive the object's `env` in `create`, once per object, and that name as
- * `tenant`, the id itself for an object reached through an id without a name; the tenant's key,
+ * `tenant`, the id itself for an object reached through an id without a name, and none for one
+ * named `DEFAULT_TENANT`, as an app that names no tenant; the tenant's key,
  * under `runtime.personalData.tenantKeys`, goes by the same. `BOUNDA_ERROR_TEXT`
  * in that `env`, such as `.dev.vars` sets in development, overrides `runtime.telemetry.errorText`;
  * any value but `"omit"` or `"include"` fails the object's start with `ConfigurationError`, as

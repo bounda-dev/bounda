@@ -14,6 +14,7 @@ import {
   waitForLedger,
 } from "./forget-ledger.ts";
 import { createLedgerOutbox, FORGET_LEDGER_SUBSCRIBER, forgettingEntry } from "./ledger-outbox.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 const span = trace.getTracer("test").startSpan("test");
 
@@ -308,7 +309,9 @@ describe("a forget ledger's source", () => {
     expect(
       await (await adapter.createForgetLedger({ tenant: "t-1" })).read({ limit: 1 }),
     ).toHaveLength(1);
-    expect(await (await adapter.createForgetLedger({})).read({ limit: 1 })).toEqual([]);
+    expect(
+      await (await adapter.createForgetLedger({ tenant: DEFAULT_TENANT })).read({ limit: 1 }),
+    ).toEqual([]);
   });
 
   it("refuses an adapter that points at the storage's own database", async () => {
@@ -317,7 +320,12 @@ describe("a forget ledger's source", () => {
     const app = sqliteAt("./data/app.db");
     for (const source of [storage, app, sqliteAt("./data/app.db")]) {
       await expect(
-        openForgetLedger({ source, storage: source === storage ? storage : app, env: {} }),
+        openForgetLedger({
+          source,
+          storage: source === storage ? storage : app,
+          env: {},
+          tenant: DEFAULT_TENANT,
+        }),
       ).rejects.toThrow(
         "runtime.personalData.forgetLedger.store points at the storage's own database, which a restore rolls back with it: give it another database",
       );
@@ -327,6 +335,7 @@ describe("a forget ledger's source", () => {
         source: sqliteAt("./ledger/forget-ledger.db"),
         storage: app,
         env: {},
+        tenant: DEFAULT_TENANT,
       }),
     ).not.toBeNull();
     expect(
@@ -334,9 +343,12 @@ describe("a forget ledger's source", () => {
         source: { ...memory(), name: "sqlite" },
         storage: { ...memory(), name: "postgresql" },
         env: {},
+        tenant: DEFAULT_TENANT,
       }),
     ).not.toBeNull();
-    expect(await openForgetLedger({ source: memory(), storage, env: {} })).not.toBeNull();
+    expect(
+      await openForgetLedger({ source: memory(), storage, env: {}, tenant: DEFAULT_TENANT }),
+    ).not.toBeNull();
   });
 });
 

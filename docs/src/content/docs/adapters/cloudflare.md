@@ -122,8 +122,9 @@ export const create: CreateImplementation<Notifier> = ({ env }) => (message) =>
 `create` also receives the object's name as `tenant`, the one `idFromName` addressed it by, so an
 implementation can serve each tenant with its own account or key
 ([an account per tenant](/guides/calling-the-outside-world/#an-account-per-tenant)). An object
-reached through an id without a name, from `newUniqueId` or `idFromString`, has no `tenant`; the
-Worker of `createWorker`, the React Router host and `tenantStub` always address it by name.
+reached through an id without a name, from `newUniqueId` or `idFromString`, receives the id as
+its `tenant`, and an object named `default` none, as an app that names no tenant; the Worker of
+`createWorker`, the React Router host and `tenantStub` always address it by name.
 
 `bounda.config.ts` can choose an implementation from the same variables, since `env` from
 `cloudflare:workers` is readable when the Worker imports it:
@@ -258,9 +259,9 @@ same transaction as every append and raised mark, so a freeze or a forgetting re
 any object at once. See [backups](/guides/personal-data/#backups).
 
 `kvForgetLedger({ binding })` keeps it in a KV namespace instead, for an app whose `cloudflare()`
-names no jurisdiction. An object whose `env` lacks the binding, or that was reached through an id
-without a name, fails to start with a `ConfigurationError`. Each object keeps its entries under its
-own name, and reads the ledger once more a minute after it starts, since KV may take that long to
+names no jurisdiction. An object whose `env` lacks the binding fails to start with a
+`ConfigurationError`. Each object keeps its entries under its tenant, its name or, for one reached
+through an id without a name, the id, and reads the ledger once more a minute after it starts, since KV may take that long to
 list a key. With `keepFor` each key expires in KV by itself; `bounda forget-ledger expire` gives
 the keys written before `keepFor` was set theirs. An entry lives in its key's metadata, which KV
 caps at 1024 bytes; the categories and keys of a forgetting with too many to fit there, some
