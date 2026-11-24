@@ -4,22 +4,17 @@ import {
   readModelTransactionContract,
   tenantFenceContract,
 } from "@bounda-dev/core/adapter/testing";
-import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
+import { startContainer } from "@bounda-dev/test-containers";
+import { GenericContainer, Wait } from "testcontainers";
 import { afterAll, describe } from "vitest";
 import { type SqliteAdapter, sqlite } from "./index.ts";
 
-const startServer = async (): Promise<StartedTestContainer | null> => {
-  try {
-    return await new GenericContainer("ghcr.io/tursodatabase/libsql-server:v0.24.33")
-      .withExposedPorts(8080)
-      .withWaitStrategy(Wait.forHttp("/health", 8080))
-      .start();
-  } catch {
-    return null;
-  }
-};
-
-const server = await startServer();
+const server = await startContainer(() =>
+  new GenericContainer("ghcr.io/tursodatabase/libsql-server:v0.24.33")
+    .withExposedPorts(8080)
+    .withWaitStrategy(Wait.forHttp("/health", 8080))
+    .start(),
+);
 const url = server === null ? "" : `http://${server.getHost()}:${server.getMappedPort(8080)}`;
 let prefixes = 0;
 
