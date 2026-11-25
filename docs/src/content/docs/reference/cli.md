@@ -301,7 +301,8 @@ recipients
   the database holds of the one this release migrates it to; one behind says
   `(migrations pending: bounda migrate)`. A store without tables, as `memory()`, has none.
 - `restores found while running`: how many times a running instance found the database gone back
-  to an earlier copy ([restores](/guides/personal-data/#restores)), or declared by `bounda restored`.
+  to an earlier copy ([restores](/guides/personal-data/#restores)), or declared by `bounda restored`;
+  with a forget ledger, every one found, those on a copy a later restore took back included.
 - each subscriber's checkpoint and lag, and its last failure, by any instance: `failing` while it is
   still stuck on it, `last failed, resolved …` once it got past. Its class and code, the event, how
   many deliveries in a row failed and since when; never its text. A subscriber the app no longer

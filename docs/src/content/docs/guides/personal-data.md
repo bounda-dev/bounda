@@ -3071,8 +3071,8 @@ and `bounda status` counts the restores found. How it is found depends on when t
 
 | The copy was restored | Found by | What is guaranteed |
 | --- | --- | --- |
-| under the running app | every instance, on its next pass, before it delivers an event or claims a scheduled command, or within five seconds in the `web` role; with a strict ledger, also after every query and export | Any copy taken before the last write the instances saw, or before the newest event an instance read or committed. A copy taken after both differs from the database in nothing but waits, which the jobs read again anyway. |
-| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, before a commit the ledger holds and the copy does not, or before the newest event an intention in the ledger saw. A copy goes unseen only when nothing reached the ledger after it was taken, no move of the counter, no commit and no intention written past it: that takes a crash within five seconds of the writes the copy lacks, or a ledger down from them until the app stopped. What the ledger holds of them as intentions is applied again all the same, and `bounda restored` counts the restore. |
+| under the running app | every instance, on its next pass, before it delivers an event or claims a scheduled command, or within five seconds in the `web` role; with a strict ledger, also after every query and export | Any copy taken before the last write the instances saw, before the newest event an instance read or committed, or, with a forget ledger, before the last mark the ledger holds, which an instance that stops after the copy came back raises past what it saw. A copy taken after all of them differs from the database in nothing but waits, which the jobs read again anyway. |
+| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, before a commit the ledger holds and the copy does not, however young, or before the newest event an intention in the ledger saw. A copy goes unseen only when nothing reached the ledger after it was taken, no move of the counter, no commit and no intention written past it: that takes a crash within five seconds of the writes the copy lacks, or a ledger down from them until the app stopped. What the ledger holds of them as intentions is applied again all the same, and `bounda restored` counts the restore. |
 | while the app was stopped, without a ledger | `bounda restored`, which you run after restoring, or the first instance to start after `bounda restore`, which counts the restore in the copy it puts back | What you declare, or what `bounda restore` counted: the database alone cannot tell a copy from itself. |
 
 Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
@@ -3085,9 +3085,19 @@ counter moved. A pass that finds a restore reconciles the ledger before the disp
 anything or the worker claims anything, so a scheduled command of someone the copy brought back
 never runs. [Backups and restores](/guides/backups/) has the steps for each engine. With a forget ledger the
 counter is also raised in the ledger, as a mark outside the database, which is how a start tells
-a copy restored while the app was stopped; and a committed forgetting, restriction or redaction the
-ledger holds that the database does not is a restore too, whatever the counter says, found by the
-reconciliation that applies it again, at a start, on a round or before a freeze. An intention whose
+a copy restored while the app was stopped, and every pass reads it, before the database, so a
+copy another instance told the ledger of is found by one that saw nothing of what it lost, and
+no move of the counter passes a mark nobody compared. An instance that stops after the copy came
+back, before it looked again, counts nothing but raises the mark past what it saw, for the next
+look to count. The count of restores goes to the ledger as well: a copy brings back the count it
+held, and the next restore still counts past every one found before. A committed forgetting,
+restriction or redaction the ledger holds that the database does not is a restore too, whatever
+the counter says, found by the reconciliation that applies it again, at a start, on a round or
+before a freeze, at once however young it is; so is one nothing is left to apply again, when the
+same reconciliation forgot that person by an earlier entry, or when it was written where the
+database still stands. A restore counted that no reconciliation has read the ledger through after,
+because the ledger could not be read then, is the restore its lost entries tell, whichever instance
+reconciles next. An intention whose
 commit never came is applied again and is no restore: a process that stopped, or a transaction
 that failed, between the intention and the commit leaves no count behind. An intention keeps where
 the database stood when it was written, its newest event and its restore generation, after
@@ -3100,10 +3110,12 @@ again on the next look, so a ledger down for a while tells a copy taken before a
 back. A forgetting never depends on the mark: what
 a restore that goes unseen leaves is waits, which end on their own within an hour.
 
-On Workers KV, `kvForgetLedger`, a read may lag a write by up to a minute in another location, so
-a start there may read an older mark and miss a copy of the last minute, unless a forgetting
-tells it; with only one object per tenant writing it, the mark itself never goes down. A ledger
-in a SQL database reads what was written. Without a ledger, run, after restoring:
+On Workers KV, `kvForgetLedger`, a read may lag a write by up to a minute in another location.
+Each raise of a mark is a key of its own, so a mark never goes down, but in that minute a mark
+raised before a count and one raised after read the same: a look there may miss a copy of the last
+minute, unless a forgetting tells it, or count a restore twice when an older mark shows after it
+counted. A ledger that reads what was written, in a SQL database or `durableObjectForgetLedger`,
+has neither. Without a ledger, run, after restoring:
 
 ```bash
 bounda restored
@@ -3123,6 +3135,15 @@ since cannot be told from the database it was copied from, and counting one too 
 side. A copy taken while it ran, restored later, is another restore too: the ledger's mark tells
 it, and it is counted. Two instances that handle restores at once leave where the database stood
 after the later of the two.
+
+Restore counting is tested against a model of the database, the ledger, backups taken and restored
+at any point, crashes and stops, two instances at once, a ledger down or late, and `bounda
+restored`: across thousands of interleavings, every restore that what the database, the ledger and
+the running instances hold proves is counted, once, and nothing else is. Where it counts nothing,
+the model shows a world without the restore that every look reads the same: a copy taken between an
+intention and its commit, the ledger down from the commit until the instance was gone, is a commit
+that failed; and an instance whose newest event a copy lost, while another instance counted a
+restore since it last read, cannot tell that count from one of this copy, and takes it as such.
 
 ### Old backups
 
