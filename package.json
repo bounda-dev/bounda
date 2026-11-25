@@ -43,6 +43,7 @@
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "lefthook": "catalog:",
+    "pkg-pr-new": "catalog:",
     "publint": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",

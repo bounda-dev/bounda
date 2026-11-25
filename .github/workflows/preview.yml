@@ -1,0 +1,34 @@
+name: Preview
+
+# Every pull request publishes its packages to pkg.pr.new, which comments how to install them, so
+# a change can be tried in a real project before it is released. It needs the pkg.pr.new GitHub
+# App installed on the repository, and PREVIEW_ENABLED set to true.
+
+on:
+  pull_request:
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish preview packages
+    # Code from a fork is not published under this repository's name.
+    if: vars.PREVIEW_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
+      - run: pnpm build
+      # Every package npm publishes, each depending on the others' previews (--peerDeps).
+      - shell: bash
+        run: |
+          mapfile -t packages < <(for manifest in packages/*/package.json; do
+            jq -e '.private != true' "$manifest" > /dev/null && dirname "./$manifest"
+          done)
+          pnpm exec pkg-pr-new publish --pnpm --peerDeps "${packages[@]}"
