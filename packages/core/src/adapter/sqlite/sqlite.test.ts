@@ -27,6 +27,7 @@ import {
   idempotencyStoreContract,
   inboxLedgerContract,
   inspectionContract,
+  latestSchemaContract,
   pendingEvent,
   personalDataExportContract,
   personalKeyStoreContract,
@@ -34,6 +35,7 @@ import {
   readModelRebuildContract,
   readModelTransactionContract,
   recipientStoreContract,
+  replaySqliteSchemas,
   restrictedReadsContract,
   restrictedSqlContract,
   schedulerContract,
@@ -109,7 +111,7 @@ const nodeSqlite = (
       uses -= 1;
     },
   });
-  return { adapter, db, uses: () => uses };
+  return { adapter, db, database, uses: () => uses };
 };
 
 const storage = () => nodeSqlite().adapter.createStorage();
@@ -184,6 +186,18 @@ describe("the SQLite stores on node:sqlite", () => {
       raw: async (driver, sql) =>
         (driver as DatabaseSync).prepare(sql).all() as Record<string, unknown>[],
     }),
+  });
+  latestSchemaContract({
+    create: async () => {
+      const { adapter, db, database } = nodeSqlite();
+      return {
+        adapter,
+        prefix: "bounda_",
+        execute: async (statement) => db.prepare(statement).all() as Record<string, unknown>[],
+        replay: () => replaySqliteSchemas({ db: database, prefix: "bounda_" }),
+      };
+    },
+    dialect: "sqlite",
   });
   storageSchemaContract({
     create: async () => {

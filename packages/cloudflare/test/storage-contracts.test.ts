@@ -12,11 +12,13 @@ import {
   idempotencyStoreContract,
   inboxLedgerContract,
   inspectionContract,
+  latestSchemaContract,
   personalKeyStoreContract,
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
   recipientStoreContract,
+  replaySqliteSchemas,
   restrictedReadsContract,
   schedulerContract,
   snapshotStoreContract,
@@ -30,6 +32,7 @@ import {
 } from "@bounda-dev/core/adapter/testing";
 import { describe, expect, it } from "vitest";
 import { durableObjectAdapter } from "../src/adapter.ts";
+import { createDurableSqlDatabase } from "../src/sql-database.ts";
 import { insideObject } from "./inside-object.ts";
 
 const freshAdapter = async (): Promise<Adapter> => {
@@ -48,6 +51,7 @@ const freshObject = async () => {
     durableObjectAdapter({ storage: state.storage, options: {} }),
   );
   return {
+    stub,
     adapter: insideObject(stub, adapter),
     prefix: "bounda_",
     execute: (statement: string) =>
@@ -100,6 +104,22 @@ describe("the Durable Object adapter", () => {
   });
   restrictedReadsContract({ create: freshAdapter, concurrent: false });
   storageSchemaContract({ create: freshObject, dialect: "sqlite", concurrent: false });
+  latestSchemaContract({
+    create: async () => {
+      const target = await freshObject();
+      return {
+        ...target,
+        replay: () =>
+          runInDurableObject(target.stub, (_instance, state) =>
+            replaySqliteSchemas({
+              db: createDurableSqlDatabase(state.storage),
+              prefix: target.prefix,
+            }),
+          ),
+      };
+    },
+    dialect: "sqlite",
+  });
 });
 
 describe("the Durable Object adapter's schema versions", () => {

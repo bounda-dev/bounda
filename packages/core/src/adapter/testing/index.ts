@@ -50,6 +50,14 @@ export type {
 } from "./inspection.contract.ts";
 export { inspectionContract } from "./inspection.contract.ts";
 export type {
+  LatestSchemaContractArgs,
+  LatestSchemaContractFunction,
+  LatestSchemaTarget,
+  ReplaySqliteSchemasArgs,
+  ReplaySqliteSchemasFunction,
+} from "./latest-schema.contract.ts";
+export { latestSchemaContract, replaySqliteSchemas } from "./latest-schema.contract.ts";
+export type {
   PersonStoreContractArgs,
   PersonStoreContractFunction,
 } from "./person-store.contract.ts";

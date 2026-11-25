@@ -58,6 +58,51 @@ describe("createSqliteDatabase on a file", () => {
   });
 });
 
+describe("a write transaction's batch", () => {
+  it("runs its statements in order, with their parameters, inside the transaction", async () => {
+    const client = createClient({ url: ":memory:" });
+    try {
+      const { db } = createSqliteDatabase(client, { local: true, wal: false });
+      await db.run('CREATE TABLE "t" ("n" INTEGER, "s" TEXT)', []);
+      await db.write(async (tx) => {
+        await tx.batch?.([
+          { sql: 'INSERT INTO "t" VALUES (?, ?)', params: [1, "a"] },
+          { sql: 'UPDATE "t" SET "s" = "s" || ?', params: ["b"] },
+          { sql: 'INSERT INTO "t" VALUES (?, ?)', params: [2, "c"] },
+        ]);
+        expect(await tx.all('SELECT "n", "s" FROM "t" ORDER BY "n"', [])).toEqual([
+          { n: 1, s: "ab" },
+          { n: 2, s: "c" },
+        ]);
+      });
+      expect(await db.all('SELECT count(*) AS "rows" FROM "t"', [])).toEqual([{ rows: 2 }]);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("fails with the first statement that fails, and leaves nothing of the transaction", async () => {
+    const client = createClient({ url: ":memory:" });
+    try {
+      const { db } = createSqliteDatabase(client, { local: true, wal: false });
+      await db.run('CREATE TABLE "t" ("n" INTEGER PRIMARY KEY)', []);
+      await expect(
+        db.write(async (tx) => {
+          await tx.run('INSERT INTO "t" VALUES (?)', [1]);
+          await tx.batch?.([
+            { sql: 'INSERT INTO "t" VALUES (?)', params: [2] },
+            { sql: 'INSERT INTO "t" VALUES (?)', params: [2] },
+            { sql: 'INSERT INTO "t" VALUES (?)', params: [3] },
+          ]);
+        }),
+      ).rejects.toThrow(/UNIQUE/);
+      expect(await db.all('SELECT "n" FROM "t"', [])).toEqual([]);
+    } finally {
+      client.close();
+    }
+  });
+});
+
 describe("createSqliteDatabase after a statement fails", () => {
   it("opens the client's connections afresh after a busy statement on a file, and only then", async () => {
     for (const wal of [true, false]) {

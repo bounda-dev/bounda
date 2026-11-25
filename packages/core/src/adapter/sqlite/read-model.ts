@@ -4,7 +4,7 @@ import type { FieldsRecord } from "../../modules/view.ts";
 import type { ReadModelRebuild, ReadModelStorage } from "../index.ts";
 import { rebuildFencing } from "../rebuild-fencing.ts";
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
-import type { SqlDatabase } from "../sql/database.ts";
+import { runInOrder, type SqlDatabase } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import {
   columnsOf,
@@ -118,7 +118,10 @@ export const openSqliteReadModel: OpenSqliteReadModelFunction = async <
   if ((await plan(db)).statements.length > 0) {
     await db.write(async (tx) => {
       const { existing, statements } = await plan(tx);
-      for (const statement of statements) await tx.run(statement, []);
+      await runInOrder(
+        tx,
+        statements.map((sql) => ({ sql, params: [] })),
+      );
       if (existing.length > 0 && statements.length > 0) {
         logger.info("read model table evolved", {
           readModel: name,

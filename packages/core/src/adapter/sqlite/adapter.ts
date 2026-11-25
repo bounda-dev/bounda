@@ -3,7 +3,6 @@ import type {
   Adapter,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
-  SchemaScopeName,
   Storage,
   StorageTransaction,
 } from "../adapter.ts";
@@ -14,11 +13,7 @@ import { createSqlForgetLedger } from "../sql/forget-ledger.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { createSqlIndexKeyStore } from "../sql/index-key-store.ts";
 import { inspectSqlTable, quoteName } from "../sql/inspection.ts";
-import {
-  readSchemaVersions,
-  type SchemaScope,
-  schemaMigrationsTableFor,
-} from "../sql/migrations.ts";
+import { readSchemaVersions, schemaMigrationsTableFor } from "../sql/migrations.ts";
 import { createSqlPersonStore } from "../sql/person-store.ts";
 import { createSqlPersonalKeyStore } from "../sql/personal-key-store.ts";
 import { createSqlRecipientStore } from "../sql/recipient-store.ts";
@@ -31,14 +26,7 @@ import { createSqliteDeadLetterStore } from "./dead-letter-store.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteIdempotencyStore } from "./idempotency-store.ts";
 import { createSqliteInboxLedger } from "./inbox-ledger.ts";
-import {
-  isMissingSqliteTable,
-  migrateSqlite,
-  sqliteCheckpointsScope,
-  sqliteForgetLedgerScope,
-  sqliteStorageScope,
-  sqliteTenantKeysScope,
-} from "./migrations.ts";
+import { isMissingSqliteTable, migrateSqlite, sqliteSchemaScopesFor } from "./migrations.ts";
 import { openSqliteReadModel, rebuildSqliteReadModel } from "./read-model.ts";
 import { restoreSqliteCopy, type SqliteCopy } from "./restore-copy.ts";
 import { createSqliteScheduler } from "./scheduler.ts";
@@ -145,18 +133,10 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
       throw error;
     }
   };
-  const ledgerTable = quoteIdentifier(
-    storageTableNameFor({ prefix: tablePrefix, table: "forgetLedger" }),
-  );
   const tenantKeysTable = quoteIdentifier(
     storageTableNameFor({ prefix: tablePrefix, table: "tenantKeys" }),
   );
-  const scopes: Readonly<Record<SchemaScopeName, SchemaScope>> = {
-    storage: sqliteStorageScope(storageTablesFor(tablePrefix)),
-    checkpoints: sqliteCheckpointsScope(storageTablesFor(tablePrefix)),
-    "forget-ledger": sqliteForgetLedgerScope(ledgerTable),
-    "tenant-keys": sqliteTenantKeysScope(tenantKeysTable),
-  };
+  const scopes = sqliteSchemaScopesFor(tablePrefix);
   const versionsOn = (db: SqlDatabase) =>
     readSchemaVersions({
       db,
@@ -221,7 +201,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
           db,
           isBusy,
           prefix: tablePrefix,
-          scopes: [sqliteStorageScope(tables), sqliteCheckpointsScope(tables)],
+          scopes: [scopes.storage, scopes.checkpoints],
         });
         const storesOver = (database: SqlDatabase): StorageTransaction => ({
           eventStore: createSqliteEventStore({
@@ -396,7 +376,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             db,
             isBusy,
             prefix: tablePrefix,
-            scopes: [sqliteTenantKeysScope(tenantKeysTable)],
+            scopes: [scopes["tenant-keys"]],
           }),
         close: release,
       });
@@ -416,7 +396,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             db,
             isBusy,
             prefix: tablePrefix,
-            scopes: [sqliteForgetLedgerScope(table)],
+            scopes: [scopes["forget-ledger"]],
           }),
         close: release,
       });

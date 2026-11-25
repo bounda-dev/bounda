@@ -23,12 +23,14 @@ import {
   eventStoreContract,
   inboxLedgerContract,
   inspectionContract,
+  latestSchemaContract,
   pendingEvent,
   personalDataExportContract,
   personalKeyStoreContract,
   personStoreContract,
   readModelRebuildContract,
   readModelTransactionContract,
+  replaySqliteSchemas,
   restrictedReadsContract,
   restrictedSqlContract,
   schedulerContract,
@@ -45,10 +47,16 @@ import {
   viewContract,
 } from "@bounda-dev/core/adapter/testing";
 import { createTestApp } from "@bounda-dev/core/testing";
-import { type Client, createClient } from "@libsql/client";
+import { type Client, createClient, type ResultSet } from "@libsql/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createSqliteDatabase } from "./database.ts";
 import { sqlite } from "./index.ts";
 import { resolveSqliteOptions } from "./options.ts";
+
+const rowsOf = (result: ResultSet): Record<string, unknown>[] =>
+  result.rows.map((row) =>
+    Object.fromEntries(result.columns.map((column, index) => [column, row[index] ?? null])),
+  );
 
 const openStorage = (adapter = sqlite({ memory: true })): Promise<Storage> =>
   adapter.createStorage();
@@ -153,7 +161,8 @@ const openTogether = async (path: string): Promise<readonly string[]> => {
       [
         "--input-type=module",
         "-e",
-        `import { sqlite } from "./index.ts";
+        `import { createSqliteDatabase } from "./database.ts";
+import { sqlite } from "./index.ts";
         process.stdout.write("loaded\\n");
         process.stdin.once("data", async () => {
           try {
@@ -246,6 +255,24 @@ describe("sqlite adapter on a file", () => {
             Object.fromEntries(result.columns.map((column, index) => [column, row[index] ?? null])),
           );
         },
+      };
+    },
+    dialect: "sqlite",
+  });
+  latestSchemaContract({
+    create: async () => {
+      const path = freshPath();
+      const client = createClient({ url: `file:${path}` });
+      afterAllClose.push(client);
+      return {
+        adapter: sqlite({ path }),
+        prefix: "bounda_",
+        execute: async (statement) => rowsOf(await client.execute(statement)),
+        replay: () =>
+          replaySqliteSchemas({
+            db: createSqliteDatabase(client, { local: true, wal: false }).db,
+            prefix: "bounda_",
+          }),
       };
     },
     dialect: "sqlite",
