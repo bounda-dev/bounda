@@ -25,7 +25,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "test:types": "vitest run --typecheck.only",
+    "test:types": "pnpm --filter @bounda-dev/core test:types",
     "check": "pnpm lint && pnpm build && pnpm generate && pnpm typecheck && pnpm test",
     "changeset": "changeset",
     "templates:sync": "node packages/create-bounda/src/distribution/cli.ts sync",

@@ -1,0 +1,22 @@
+name: Set up the workspace
+description: pnpm, Node with the pnpm store cached, and the workspace's dependencies. Runs after actions/checkout.
+
+inputs:
+  registry-url:
+    description: The npm registry setup-node writes an .npmrc for, when the job publishes.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      with:
+        version: 12.22.0
+    - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      with:
+        node-version: 24
+        cache: pnpm
+        registry-url: ${{ inputs.registry-url }}
+    - shell: bash
+      run: pnpm install --frozen-lockfile
