@@ -40,7 +40,7 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
             for (const entry of appended) {
               const kept = entries.get(entry.eventId);
               if (kept === undefined) entries.set(entry.eventId, { ...entry });
-              else if (kept.committed === false && entry.committed !== false) {
+              else if (entry.committed !== false) {
                 const { committed: _, ...committed } = kept;
                 entries.set(entry.eventId, committed);
               }

@@ -142,6 +142,33 @@ describe("scheduled command worker", () => {
     expect(steps.at(-1)).toBe("restored false");
   });
 
+  it("declares nothing a reconciliation found without a restore watch to count it", async () => {
+    const steps: string[] = [];
+    const { logger, entries } = createRecordingLogger("omit");
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      logger,
+      reconciliation: {
+        reconcile: async () => 0,
+        drain: async () => 0,
+        sweep: async () => 0,
+        nextDueAt: () => null,
+        reconciled: () => true,
+        status: async () => ({}) as never,
+        undone: () => 2,
+        declared: (count) => {
+          steps.push(`declared ${count}`);
+        },
+        restored: async (first) => {
+          steps.push(`restored ${first}`);
+        },
+      },
+    });
+    await harness.worker.runOnce();
+    expect(steps).toEqual([]);
+    expect(entries.filter(({ level }) => level === "error")).toEqual([]);
+  });
+
   it("declares, once, the restore a reconciliation found from committed entries the database lost, and logs a declaration that fails", async () => {
     const steps: string[] = [];
     let undone = 2;
@@ -187,6 +214,7 @@ describe("scheduled command worker", () => {
     expect(entries.map(({ level, message }) => [level, message])).toEqual([
       ["error", "the restore the forget ledger tells could not be declared; it is tried again"],
     ]);
+    expect(entries[0]?.fields).toEqual({ errorName: "Error" });
     failing = false;
     steps.length = 0;
     await harness.worker.runOnce();

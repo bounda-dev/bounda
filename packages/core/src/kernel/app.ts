@@ -1602,10 +1602,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // again while no restore was known: the database went back unseen, a restore counted once.
     // An intention whose commit never came is applied again as asked, and is no restore.
     const declareUndone = async (): Promise<void> => {
-      const undone = reconciliation?.undone() ?? 0;
+      if (reconciliation === undefined) return;
+      const undone = reconciliation.undone();
       if (undone === 0) return;
       await worker.restored(await restores.declare(), { reconciled: true });
-      reconciliation?.declared(undone);
+      reconciliation.declared(undone);
       await restores.settled();
     };
     // The databases that hold read models and not the stream, each restored apart from it.

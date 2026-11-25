@@ -6,6 +6,7 @@ import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
 import {
   createSqlForgetLedger,
   forgetLedgerCategoriesStatement,
+  forgetLedgerCommittedStatement,
   forgetLedgerDisclosureStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
@@ -44,6 +45,15 @@ describe("the SQL forget ledger", () => {
     );
     expect(forgetLedgerRedactionStatement(`"t"`, sqliteDialect)).toBe(
       `ALTER TABLE "t" ADD COLUMN "redaction" TEXT`,
+    );
+  });
+
+  it("adds the committed column, every row before reading as committed, if missing on PostgreSQL, which SQLite checks before", () => {
+    expect(forgetLedgerCommittedStatement(`"t"`, postgresqlDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN IF NOT EXISTS "committed" INTEGER NOT NULL DEFAULT 1`,
+    );
+    expect(forgetLedgerCommittedStatement(`"t"`, sqliteDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN "committed" INTEGER NOT NULL DEFAULT 1`,
     );
   });
 

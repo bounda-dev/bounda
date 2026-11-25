@@ -259,9 +259,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // generation past the mark.
   const finish = async (stored: Seen, target: number, raised?: number): Promise<Restored> => {
     const generation = raised ?? (await raiseFirst(stored));
-    if (stored.restores < target) {
-      await checkpoints.compareAndSet(RESTORES_FOUND, stored.restores, target);
-    }
+    await checkpoints.compareAndSet(RESTORES_FOUND, stored.restores, target);
     await advance(RESTORE_GENERATION, generation);
     seen = await read();
     movedAt = Number.NEGATIVE_INFINITY;
@@ -367,14 +365,17 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         await raise(stored.generation);
         return restored;
       } catch (error) {
-        return logged("the database could not be compared with the forget ledger's mark")(error);
+        logged("the database could not be compared with the forget ledger's mark")(error);
+        // A restore it found or counted before the failure is handled all the same; the mark is
+        // compared on a later check.
+        return handling ? { first: true } : null;
       }
     },
     settled: async () => {
       if (!handling) return;
       try {
-        if (foundAtStart > 0) await checkpoints.compareAndSet(RESTORE_UNCLAIMED, foundAtStart, 0);
-        if (declaring > 0) await checkpoints.compareAndSet(RESTORE_DECLARING, declaring, 0);
+        await checkpoints.compareAndSet(RESTORE_UNCLAIMED, foundAtStart, 0);
+        await checkpoints.compareAndSet(RESTORE_DECLARING, declaring, 0);
         // What handling the restore committed, as the forgettings it applied again, is past the
         // copy: one taken before it holds less.
         const last = await events.lastPosition();

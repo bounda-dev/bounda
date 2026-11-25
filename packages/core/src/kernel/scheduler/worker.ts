@@ -765,19 +765,19 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       const forgottenAgain = (await reconciliation?.sweep(claimedAt)) ?? 0;
       // A committed forgetting the ledger holds and the database does not: the database went
       // back, though the generation did not show it, as for a copy taken just before a forget.
-      const undone = reconciliation?.undone() ?? 0;
-      if (undone > 0 && restores !== undefined) {
-        try {
-          handled = await restores.declare();
-          reconciliation?.declared(undone);
-          await restart(handled.first, true);
-        } catch (error) {
-          logger.error(
-            "the restore the forget ledger tells could not be declared; it is tried again",
-            {
-              error,
-            },
-          );
+      if (reconciliation !== undefined && restores !== undefined) {
+        const undone = reconciliation.undone();
+        if (undone > 0) {
+          try {
+            handled = await restores.declare();
+            reconciliation.declared(undone);
+            await restart(handled.first, true);
+          } catch (error) {
+            logger.error(
+              "the restore the forget ledger tells could not be declared; it is tried again",
+              { error },
+            );
+          }
         }
       }
       await restores?.settled();
