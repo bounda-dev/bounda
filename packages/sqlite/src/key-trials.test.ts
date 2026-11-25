@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "@bounda-dev/core";
@@ -119,6 +119,12 @@ describe("the keys prepareFile tries on a file", () => {
       opened: [B.key],
       under: B.key,
     });
+  });
+
+  it("tries first, on the file itself, the key a cut-short encryption names, though its pages read under another", async () => {
+    const path = await fileUnder(B.key);
+    await writeFile(`${path}.bounda-encrypting`, JSON.stringify({ from: A.id }));
+    expect(await trials(path, keysOf(B, [A]))).toEqual({ opened: [A.key, B.key], under: B.key });
   });
 
   it("still tries on the file itself every key its pages rule out, before giving up", async () => {
