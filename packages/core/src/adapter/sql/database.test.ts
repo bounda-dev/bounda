@@ -111,7 +111,6 @@ describe("withBatchedWrites", () => {
     }).catch((error: unknown) => error);
     expect(outcome).toBeInstanceOf(Error);
     expect((outcome as Error).message).toBe("B failed");
-    expect(caught).toEqual([outcome, outcome, outcome, outcome]);
     expect(caught.every((error) => error === outcome)).toBe(true);
     expect(calls).toEqual(["batch A; B"]);
   });

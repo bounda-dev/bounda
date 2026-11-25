@@ -229,9 +229,10 @@ app starts, before it serves anything, or before the deploy with
   every migration it lacks and records their versions as it commits, under the database's lock:
   an advisory lock on the schema on PostgreSQL, the write transaction on SQLite and libSQL, the
   object itself in a Durable Object. Its statements go to the database together, up to each point
-  where a migration reads what is there, so a remote database takes a round trip per read a
-  migration makes rather than one per statement. Instances that start together migrate it once; the others
-  wait for the lock and find the work done. A migration that fails leaves its set of tables at the
+  where a migration reads what is there, so a remote database takes a round trip for each read a
+  migration makes, and PostgreSQL one more for each statement with parameters, rather than one per
+  statement. Instances that start together migrate it once; the others wait for the lock and find
+  the work done. A migration that fails leaves its set of tables at the
   version it was at, nothing of it half-applied, and the sets before it migrated; the next start
   tries again.
 - One that a newer version of Bounda migrated is refused, untouched, with
