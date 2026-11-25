@@ -112,6 +112,9 @@ export interface ListDueArgs {
   readonly limit: number;
 }
 
+/**
+ * Which retained keys `listRetained` lists.
+ */
 export interface ListRetainedArgs {
   /**
    * Leaves out the keys of these categories: those an erasure exemption still keeps.
@@ -124,6 +127,10 @@ export interface ListRetainedArgs {
   readonly limit: number;
 }
 
+/**
+ * Which holds of retained keys `nextRetainedHoldEnd` looks at: those of the keys `listRetained`
+ * lists with the same `except`.
+ */
 export interface NextRetainedHoldEndArgs {
   readonly except: readonly string[];
   /**

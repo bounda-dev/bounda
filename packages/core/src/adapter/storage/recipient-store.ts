@@ -102,6 +102,10 @@ export interface RecipientStore {
   personsOf(args: PersonsOfArgs): Promise<readonly string[]>;
 }
 
+/**
+ * Which persons `personsOf` lists: those disclosed to `port` whose id comes after `after`, from
+ * the first when `null`, at most `limit`.
+ */
 export interface PersonsOfArgs {
   readonly port: string;
   readonly after: string | null;

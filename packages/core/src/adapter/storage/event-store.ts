@@ -73,6 +73,10 @@ export interface ReadAllArgs {
   readonly limit: number;
 }
 
+/**
+ * What `readByPerson` reads: the events of `person` past `afterPosition`, at most `limit`, in
+ * position order.
+ */
 export interface ReadByPersonArgs extends ReadAllArgs {
   readonly person: string;
 }
