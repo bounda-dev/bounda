@@ -12,7 +12,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { discloseAgain } from "../recipients/again.ts";
 import { startedBy } from "../shared/causation.ts";
-import { RESTORE_GENERATION } from "../shared/restores.ts";
+import { RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
   endsKeptOf,
@@ -54,6 +54,13 @@ export const FORGET_LEDGER_ATTEMPTS = "forget-ledger:attempts";
  * reconciliation, or finished one at start: the others leave it until `reconcileEvery` after.
  */
 export const FORGET_LEDGER_LAST_RUN = "forget-ledger:last-run";
+
+/**
+ * The checkpoint row that keeps the count of restores the database held when a reconciliation
+ * last read the ledger through: below the count, a restore was counted that no reconciliation has
+ * applied the ledger to yet, and the committed entries the database lacks are that restore's.
+ */
+export const FORGET_LEDGER_RECONCILED = "forget-ledger:reconciled";
 
 // How many entries a reconciliation reads at once: a store that lists from its newest entry, as
 // KV does, lists again for every page.
@@ -412,6 +419,98 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     }
   };
 
+  // Commits the entry again when the database lacks it and it is due, as each kind says, and
+  // resolves whether it did.
+  const appliedAgain = async (entry: ForgetLedgerEntry): Promise<boolean> => {
+    if (entry.redaction !== undefined) {
+      if (redactions === undefined) return false;
+      const redacted = await redactIntended({
+        redactions,
+        personId: entry.personId,
+        targets: entry.redaction.events,
+        identity: { id: entry.eventId, timestamp: entry.forgottenAt },
+        context: startedBy(ids.next(), undefined),
+        strict: false,
+        record: false,
+      });
+      if (redacted === null || "held" in redacted) return false;
+      logger.info("redaction committed again from the forget ledger", {
+        personId: entry.personId,
+        eventId: entry.eventId,
+      });
+      return true;
+    }
+    if (entry.disclosure !== undefined) {
+      if (
+        await discloseAgain({
+          storage,
+          concurrencyRetries,
+          entry: { ...entry, disclosure: entry.disclosure },
+        })
+      ) {
+        logger.info("disclosure recorded again from the forget ledger", {
+          personId: entry.personId,
+          port: entry.disclosure.port,
+        });
+      }
+      return false;
+    }
+    if (entry.restriction !== undefined) {
+      const restricted = await restrictAgain({
+        storage,
+        ids,
+        clock,
+        concurrencyRetries,
+        entry: { ...entry, restriction: entry.restriction },
+      });
+      if (restricted === null) return false;
+      logger.info("restriction committed again from the forget ledger", {
+        personId: entry.personId,
+        eventId: entry.eventId,
+        eventType: restricted.type,
+      });
+      return true;
+    }
+    const again = await forgetAgain({
+      storage,
+      intentions,
+      ids,
+      clock,
+      concurrencyRetries,
+      categories,
+      batchSize,
+      entry,
+      retentionDue,
+      record: false,
+    });
+    if (again === null) return false;
+    logForgotten(logger, again);
+    onForgotten?.(entry.personId);
+    return true;
+  };
+
+  // A committed entry whose event the database lacks, though nothing is left to commit again: the
+  // database went back when this read committed an earlier entry of the person again, which may
+  // have left nothing for this one, or when the entry was written where the database still stands,
+  // which a restore counted since moves past.
+  const lost = async (
+    entry: ForgetLedgerEntry,
+    appliedHere: ReadonlySet<string>,
+  ): Promise<boolean> => {
+    const { reached } = entry;
+    if (entry.committed === false) return false;
+    if (!appliedHere.has(entry.personId)) {
+      if (reached === undefined) return false;
+      if ((await checkpointStore.get(RESTORE_GENERATION)) > reached.generation) return false;
+    }
+    const held = await storage.eventStore.readOne({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: entry.personId,
+      eventId: entry.eventId,
+    });
+    return held === null;
+  };
+
   // Resolves how many it forgot, and when the youngest entry it left comes of age; the cursor
   // moves past that entry, which the next read takes again, since the grace is shorter than the
   // stretch read again.
@@ -419,7 +518,14 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     at: number,
     graced = !restoredSince,
   ): Promise<{ forgotten: number; intended: number; young: number | null }> => {
-    const cursor = await checkpointStore.get(FORGET_LEDGER_CURSOR);
+    const [cursor, restores, reconciledThrough] = await Promise.all([
+      checkpointStore.get(FORGET_LEDGER_CURSOR),
+      checkpointStore.get(RESTORES_FOUND),
+      checkpointStore.get(FORGET_LEDGER_RECONCILED),
+    ]);
+    // A restore counted, here or by another instance or a start that stopped since, that no
+    // reconciliation read the ledger through after: what it lost tells no other.
+    const counted = restoredSince || reconciledThrough < restores;
     let after: ForgetLedgerPosition | undefined =
       cursor === 0
         ? undefined
@@ -432,13 +538,15 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     // highest generation of those.
     let wentBack = false;
     let reachedPast = 0;
+    // Whom this read committed an entry of again: the database lacked it when the read began.
+    const appliedHere = new Set<string>();
     const applied = (entry: ForgetLedgerEntry): void => {
       forgotten += 1;
       if (entry.committed === false) intended += 1;
-      else if (!restoredSince) undone += 1;
+      else if (!counted) undone += 1;
     };
     const ended = () => {
-      if (wentBack && !restoredSince) {
+      if (wentBack && !counted) {
         undone += 1;
         past = Math.max(past, reachedPast);
       }
@@ -460,84 +568,30 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       }
       for (const entry of page) {
         const time = Date.parse(entry.forgottenAt);
-        if (graced && time + FORGET_LEDGER_GRACE_MS > at) {
+        // A committed entry's event committed before the entry was written: only an intention may
+        // be of a forgetting still committing.
+        if (graced && entry.committed === false && time + FORGET_LEDGER_GRACE_MS > at) {
           // Entries come in the order of their time: the last one left is the youngest.
           youngest = time;
           continue;
         }
-        if (entry.redaction !== undefined) {
-          if (redactions === undefined) continue;
-          const redacted = await redactIntended({
-            redactions,
-            personId: entry.personId,
-            targets: entry.redaction.events,
-            identity: { id: entry.eventId, timestamp: entry.forgottenAt },
-            context: startedBy(ids.next(), undefined),
-            strict: false,
-            record: false,
-          });
-          if (redacted === null || "held" in redacted) continue;
-          logger.info("redaction committed again from the forget ledger", {
-            personId: entry.personId,
-            eventId: entry.eventId,
-          });
+        if (await appliedAgain(entry)) {
           applied(entry);
-          continue;
+          appliedHere.add(entry.personId);
+        } else if (await lost(entry, appliedHere)) {
+          wentBack = true;
+          reachedPast = Math.max(reachedPast, entry.reached?.generation ?? 0);
         }
-        if (entry.disclosure !== undefined) {
-          if (
-            await discloseAgain({
-              storage,
-              concurrencyRetries,
-              entry: { ...entry, disclosure: entry.disclosure },
-            })
-          ) {
-            logger.info("disclosure recorded again from the forget ledger", {
-              personId: entry.personId,
-              port: entry.disclosure.port,
-            });
-          }
-          continue;
-        }
-        if (entry.restriction !== undefined) {
-          const restricted = await restrictAgain({
-            storage,
-            ids,
-            clock,
-            concurrencyRetries,
-            entry: { ...entry, restriction: entry.restriction },
-          });
-          if (restricted === null) continue;
-          logger.info("restriction committed again from the forget ledger", {
-            personId: entry.personId,
-            eventId: entry.eventId,
-            eventType: restricted.type,
-          });
-          applied(entry);
-          continue;
-        }
-        const again = await forgetAgain({
-          storage,
-          intentions,
-          ids,
-          clock,
-          concurrencyRetries,
-          categories,
-          batchSize,
-          entry,
-          retentionDue,
-          record: false,
-        });
-        if (again === null) continue;
-        logForgotten(logger, again);
-        onForgotten?.(entry.personId);
-        applied(entry);
       }
       const last = page.at(-1);
-      if (last === undefined) return ended();
-      const time = Date.parse(last.forgottenAt);
-      if (Number.isFinite(time)) await advance(FORGET_LEDGER_CURSOR, time);
-      if (page.length < pageSize) return ended();
+      if (last !== undefined) {
+        const time = Date.parse(last.forgottenAt);
+        if (Number.isFinite(time)) await advance(FORGET_LEDGER_CURSOR, time);
+      }
+      if (page.length < pageSize) {
+        await advance(FORGET_LEDGER_RECONCILED, restores);
+        return ended();
+      }
       after = last;
     }
   };

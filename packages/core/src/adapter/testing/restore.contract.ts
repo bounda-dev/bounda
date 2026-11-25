@@ -25,7 +25,7 @@ import {
 } from "../../kernel/personal-data/tenant-key-source.ts";
 import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
 import { UNWRAPPED_KEY_TTL_MS } from "../../kernel/personal-data/wrapped-keys.ts";
-import { GENERATION_INTERVAL_MS } from "../../kernel/shared/restores.ts";
+import { GENERATION_INTERVAL_MS, RESTORE_GENERATION } from "../../kernel/shared/restores.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
@@ -528,8 +528,8 @@ interface Started {
  * A ledger whose reads fail while `failing` is set.
  */
 const faultyLedger = (source: ForgetLedgerSource) => {
-  // `marksFailing` fails the raised marks alone.
-  const state = { failing: false, marksFailing: false };
+  // `marksFailing` fails the raised marks alone, `entriesFailing` the reads of entries alone.
+  const state = { failing: false, marksFailing: false, entriesFailing: false };
   // Each ledger the apps opened, as it is, for what a test writes to it directly.
   const opened: ForgetLedger[] = [];
   const down = (): void => {
@@ -549,6 +549,7 @@ const faultyLedger = (source: ForgetLedgerSource) => {
       },
       read: async (readArgs) => {
         down();
+        if (state.entriesFailing) throw new Error("the ledger's entries are down");
         return inner.read(readArgs);
       },
       readMark: async (name) => {
@@ -1311,6 +1312,187 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         expect((await again.app.status()).restoresFound).toBe(2);
         expect(await again.app.restored()).toEqual({ counted: false });
         await expectReadable(again, "ana");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    // Where the database stands, as an intention keeps it.
+    const reachedOf = async (started: Started) => {
+      const written = await openedAs(started.app.config.storage).createStorage();
+      try {
+        return {
+          position: await written.eventStore.lastPosition(),
+          generation: await written.checkpointStore.get(RESTORE_GENERATION),
+        };
+      } finally {
+        await written.close();
+      }
+    };
+
+    it.skipIf(!hot)(
+      "counts once, at the next start, a restore under the running app whose only witness stopped before it looked again",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        // The copy lacks bob, whom only this instance saw, and nothing else.
+        await write(first, "bob");
+        await target.restore(openedAs(first.app.config.storage));
+        await first.app.stop();
+        const next = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        expect((await next.app.status()).restoresFound).toBe(1);
+        await next.app.stop();
+        const again = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        expect((await again.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it.skipIf(!hot)(
+      "counts, at a pass of an instance that saw nothing of what a restore under it lost, the restore another instance's stop left in the ledger",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        const second = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await second.app.runUntilIdle();
+        await target.backUp();
+        await write(first, "bob");
+        await target.restore(openedAs(first.app.config.storage));
+        await first.app.stop();
+        await second.app.runUntilIdle();
+        expect((await second.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts once a restore found while the ledger's entries could not be read, which a later start reconciles",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, state } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        const anaForgotten = (await first.app.forget("ana")).eventIds;
+        await first.app.runUntilIdle();
+        await first.app.stop();
+
+        const storage = await target.restore();
+        state.entriesFailing = true;
+        const found = await start(storage, definition, BEFORE_ROTATION, clock);
+        expect((await found.app.status()).restoresFound).toBe(1);
+        await found.app.stop();
+        state.entriesFailing = false;
+        const reconciled = await start(storage, definition, BEFORE_ROTATION, clock);
+        expect(await forgettings(reconciled.app, "ana")).toEqual(anaForgotten);
+        expect((await reconciled.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts at the start a restore that lost a forgetting committed a moment before, while the ledger's mark took nothing",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, state } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        state.marksFailing = true;
+        await first.app.forget("ana");
+        await first.app.stop();
+        state.marksFailing = false;
+
+        // A committed entry's commit came before it: no grace waits for it, so a forgetting made
+        // again before the grace ended cannot hide the restore.
+        const storage = await target.restore();
+        const restored = await start(storage, definition, BEFORE_ROTATION, clock);
+        expect((await restored.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts every restore found, past one counted on a copy a later restore took back",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        await write(first, "bob");
+        await first.app.stop();
+        const once = await start(
+          await target.restore(),
+          target.forgetLedger,
+          BEFORE_ROTATION,
+          clock,
+        );
+        expect((await once.app.status()).restoresFound).toBe(1);
+        await once.app.stop();
+        // The same copy again: it holds no count, and the ledger holds one.
+        const twice = await start(
+          await target.restore(),
+          target.forgetLedger,
+          BEFORE_ROTATION,
+          clock,
+        );
+        expect((await twice.app.status()).restoresFound).toBe(2);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts a restore that lost a committed forgetting whose person an earlier intention forgot again first",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, opened, state } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        // A forgetting of ana that never committed, before the one that did.
+        const earlier = await intentionOf(first, "ana", new Date(START.getTime() - 2 * 60_000));
+        await opened[0]?.append([earlier]);
+        state.marksFailing = true;
+        await first.app.forget("ana");
+        await first.app.stop();
+        state.marksFailing = false;
+
+        clock.advance(FORGET_LEDGER_GRACE_MS);
+        const restored = await start(await target.restore(), definition, BEFORE_ROTATION, clock);
+        expect(await forgettings(restored.app, "ana")).toEqual([earlier.eventId]);
+        expect((await restored.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts at the start a restore an intention written past the copy tells, though it forgets nobody again yet",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, opened, state } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await target.backUp();
+        await write(first, "bob");
+        // Left by a process that stopped between the intention and the commit, past the copy.
+        await opened[0]?.append([
+          { ...(await intentionOf(first, "bob", clock.now())), reached: await reachedOf(first) },
+        ]);
+        state.marksFailing = true;
+        await first.app.stop();
+        state.marksFailing = false;
+
+        const restored = await start(await target.restore(), definition, BEFORE_ROTATION, clock);
+        expect((await restored.app.status()).restoresFound).toBe(1);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

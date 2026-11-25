@@ -12,7 +12,7 @@ import { ForgetLedgerUnavailableError, ValidationError } from "../../contracts/e
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
-import { RESTORE_GENERATION } from "../shared/restores.ts";
+import { RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { boundForgetLedger } from "./forget-ledger.ts";
@@ -25,6 +25,7 @@ import {
   FORGET_LEDGER_GRACE_MS,
   FORGET_LEDGER_HELD_UNTIL,
   FORGET_LEDGER_LAST_RUN,
+  FORGET_LEDGER_RECONCILED,
   FORGET_LEDGER_REREAD_MS,
   type ForgetAgainEntry,
   forgetAgain,
@@ -128,6 +129,12 @@ const entry = (personId: string, eventId: string, forgottenAt: string): ForgetLe
   forgottenAt,
   categories: null,
   reason: "requested",
+});
+
+// An entry written before its commit, which a younger than the grace may still be committing.
+const intended = (personId: string, eventId: string, forgottenAt: string): ForgetLedgerEntry => ({
+  ...entry(personId, eventId, forgottenAt),
+  committed: false,
 });
 
 // Minutes into the hour before `NOW`: every entry is past the grace a reconciliation gives.
@@ -746,18 +753,21 @@ describe("what the reconciliation commits again", () => {
     ]);
   });
 
-  it("leaves an entry younger than its grace for a reconciliation due once the youngest comes of age", async () => {
+  it("leaves an intention younger than its grace for a reconciliation due once the youngest comes of age, and commits a young committed entry at once", async () => {
     const young = new Date(NOW.getTime() - FORGET_LEDGER_GRACE_MS + 1).toISOString();
     const younger = new Date(NOW.getTime() - FORGET_LEDGER_GRACE_MS + 2).toISOString();
     const { reconciliation, storage } = await setUp({
       entries: [
         entry("c-1", "e-1", at(0)),
-        entry("c-2", "e-2", young),
-        entry("c-3", "e-3", younger),
+        intended("c-2", "e-2", young),
+        entry("c-4", "e-4", young),
+        intended("c-3", "e-3", younger),
       ],
-      persons: ["c-1", "c-2", "c-3"],
+      persons: ["c-1", "c-2", "c-3", "c-4"],
     });
-    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    // A committed entry's commit came before the entry: none is still committing.
+    expect(await reconciliation.reconcile(NOW)).toBe(2);
+    expect(await storage.personalKeys.get("c-4", "default")).toBeNull();
     expect(await storage.personalKeys.get("c-2", "default")).not.toBeNull();
     expect(reconciliation.nextDueAt()).toEqual(
       new Date(Date.parse(younger) + FORGET_LEDGER_GRACE_MS),
@@ -770,25 +780,28 @@ describe("what the reconciliation commits again", () => {
 
   it("commits a young entry at once after a restore, and gives the grace again after that", async () => {
     const young = new Date(NOW.getTime() - 1).toISOString();
-    const entries: ForgetLedgerEntry[] = [entry("c-1", "e-1", young)];
+    const entries: ForgetLedgerEntry[] = [intended("c-1", "e-1", young)];
     const { reconciliation, storage } = await setUp({ entries, persons: ["c-1", "c-2"] });
     await reconciliation.restored(false);
     expect(await reconciliation.reconcile(NOW)).toBe(1);
-    entries.push(entry("c-2", "e-2", young));
+    entries.push(intended("c-2", "e-2", young));
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(await storage.personalKeys.get("c-2", "default")).not.toBeNull();
   });
 
   it("drains every entry at once, young ones included, and rejects when the ledger cannot be read", async () => {
     const young = new Date(NOW.getTime() - 1).toISOString();
-    const entries: ForgetLedgerEntry[] = [entry("c-1", "e-1", at(0)), entry("c-2", "e-2", young)];
+    const entries: ForgetLedgerEntry[] = [
+      entry("c-1", "e-1", at(0)),
+      intended("c-2", "e-2", young),
+    ];
     const { reconciliation, storage } = await setUp({ entries, persons: ["c-1", "c-2", "c-3"] });
     expect(await reconciliation.drain(NOW)).toBe(2);
     expect(await storage.personalKeys.get("c-2", "default")).toBeNull();
     expect(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR)).toBe(Date.parse(young));
     expect(await reconciliation.drain(NOW)).toBe(0);
     // The grace holds again for the reconciliations after it.
-    entries.push(entry("c-3", "e-3", young));
+    entries.push(intended("c-3", "e-3", young));
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     const failing = await setUp({ entries: [entry("", "e-x", at(0))] });
     await expect(failing.reconciliation.drain(NOW)).rejects.toThrow("person");
@@ -819,6 +832,57 @@ describe("what the reconciliation commits again", () => {
     reconciliation.declared(1);
     expect(reconciliation.undone()).toBe(1);
     reconciliation.declared(5);
+    expect(reconciliation.undone()).toBe(0);
+  });
+
+  it("tells a committed entry the database lacks, once an earlier entry forgot its person again, as undone, unless a restore counted since was not reconciled", async () => {
+    for (const [reconciled, undone] of [
+      [1, 1],
+      [0, 0],
+    ] as const) {
+      const entries: ForgetLedgerEntry[] = [
+        intended("c-1", "e-0", at(0)),
+        { ...entry("c-1", "e-1", at(1)), fingerprints: [] },
+      ];
+      const { reconciliation, storage } = await setUp({ entries, persons: ["c-1"] });
+      await storage.checkpointStore.set(RESTORES_FOUND, 1);
+      await storage.checkpointStore.set(FORGET_LEDGER_RECONCILED, reconciled);
+      expect(await reconciliation.reconcile(NOW)).toBe(1);
+      expect(reconciliation.undone()).toBe(undone);
+      expect(await storage.checkpointStore.get(FORGET_LEDGER_RECONCILED)).toBe(1);
+    }
+  });
+
+  it("tells a committed entry the database lacks and nobody it holds, written where the database stands, as undone, and none written before a generation since", async () => {
+    for (const [written, undone] of [
+      [3, 1],
+      [2, 0],
+    ] as const) {
+      const entries: ForgetLedgerEntry[] = [
+        { ...entry("c-1", "e-1", at(0)), reached: { position: 0, generation: written } },
+      ];
+      const { reconciliation, storage } = await setUp({ entries });
+      await storage.checkpointStore.set(RESTORE_GENERATION, 3);
+      expect(await reconciliation.reconcile(NOW)).toBe(0);
+      expect(reconciliation.undone()).toBe(undone);
+      expect(reconciliation.past()).toBe(undone === 1 ? 3 : 0);
+    }
+  });
+
+  it("records a disclosure again without counting anyone forgotten or undone", async () => {
+    const disclosure = {
+      port: "customer.mailer",
+      recipient: "Mailer",
+      kind: "processor",
+      country: "IE",
+      safeguard: null,
+      category: "default",
+    };
+    const { reconciliation } = await setUp({
+      entries: [{ ...entry("c-1", "d-1", at(0)), committed: false, disclosure }],
+      persons: ["c-1"],
+    });
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(reconciliation.undone()).toBe(0);
   });
 
@@ -929,11 +993,14 @@ describe("what the reconciliation commits again", () => {
 
   it("is due at the sooner of a ledger's delay and an entry's grace", async () => {
     const young = new Date(NOW.getTime() - 1).toISOString();
-    const late = await setUp({ entries: [entry("c-1", "e-1", young)], visibilityDelayMs: 1_000 });
+    const late = await setUp({
+      entries: [intended("c-1", "e-1", young)],
+      visibilityDelayMs: 1_000,
+    });
     await late.reconciliation.reconcile(NOW);
     expect(late.reconciliation.nextDueAt()).toEqual(new Date(NOW.getTime() + 1_000));
     const slow = await setUp({
-      entries: [entry("c-1", "e-1", young)],
+      entries: [intended("c-1", "e-1", young)],
       visibilityDelayMs: 10 * FORGET_LEDGER_GRACE_MS,
     });
     await slow.reconciliation.reconcile(NOW);

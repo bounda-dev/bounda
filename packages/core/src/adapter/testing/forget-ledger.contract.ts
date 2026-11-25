@@ -358,6 +358,28 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.read({ limit: 10 })).toEqual([]);
     });
 
+    it("keeps the highest of the marks the instances of one store raise at once, whatever each read before", async () => {
+      const elsewhere = await ledgerFor("tenant-a");
+      await ledger.raiseMark("restore:generation", 4);
+      await Promise.all([
+        ledger.raiseMark("restore:generation", 9),
+        elsewhere.raiseMark("restore:generation", 6),
+        ledger.raiseMark("restore:generation", 5),
+      ]);
+      expect(await ledger.readMark("restore:generation")).toBe(9);
+      await elsewhere.raiseMark("restore:generation", 7);
+      expect(await elsewhere.readMark("restore:generation")).toBe(9);
+      expect(await ledger.readMark("restore:count")).toBe(0);
+    });
+
+    it("reads committed, alone, an entry whose intention lands after its committed copy, as a call given up for its timeout may", async () => {
+      const committed = entry("c-1", "e-1", 1);
+      await ledger.append([committed]);
+      await ledger.append([{ ...committed, committed: false }]);
+      expect(await ledger.read({ limit: 10 })).toEqual([committed]);
+      expect(await ledger.read({ limit: 10 })).toEqual([committed]);
+    });
+
     it("clears every entry and mark of its store, other stores' left as they were, and keeps again after", async () => {
       const other = await ledgerFor("tenant-b");
       const entries = [1, 2, 3].map((minute) => entry(`c-${minute}`, `e-${minute}`, minute));

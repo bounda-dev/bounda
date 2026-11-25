@@ -152,7 +152,7 @@ describe("the KV forget ledger's listing", () => {
     expect(deleted).toHaveLength(entries.length + 1);
     // A cursor that counts keys would skip a page if listing went on past deletes.
     expect([...keys.keys()].sort()).toEqual([
-      "bounda/forget-ledger-marks/q/restore:generation",
+      `bounda/forget-ledger-marks/q/restore:generation/${Number.MAX_SAFE_INTEGER - 2}`,
       `q/${String(8_640_000_000_000_000 - Date.parse(minute(0)))}:e-0000`,
     ]);
   });
@@ -976,6 +976,109 @@ describe("the KV forget ledger's writes of one entry", () => {
     expect(await ledger.read({ limit: 10 })).toEqual([intention]);
     await ledger.append([committed]);
     expect(await ledger.read({ limit: 10 })).toEqual([committed]);
+  });
+
+  it("removes, behind the fence, an intention whose put landed after its committed copy removed it", async () => {
+    const { namespace, keys } = countingNamespace();
+    // A put given up for the ledger's timeout goes on, and lands late.
+    const held: (() => Promise<void>)[] = [];
+    const late = {
+      ...namespace,
+      put: (name: string, value: string, options?: KVNamespacePutOptions) => {
+        if (!name.includes("~")) return namespace.put(name, value, options);
+        held.push(() => namespace.put(name, value, options));
+        return Promise.resolve();
+      },
+    } as KVNamespace;
+    const ledger = createKvForgetLedger({ namespace: late, prefix: "p/" });
+    await ledger.append([intention]);
+    await ledger.append([committed]);
+    for (const land of held) await land();
+    const names = () => [...keys.keys()].filter((name) => name.startsWith("p/")).sort();
+    expect(names()).toEqual([expect.stringMatching(/:e-1$/), expect.stringMatching(/~e-1$/)]);
+    await ledger.fence.set({ state: "frozen", tenant: "acme", since: minute(2) });
+    expect(await ledger.read({ limit: 10 })).toEqual([committed]);
+    expect(names()).toHaveLength(2);
+    await ledger.fence.set({ state: "open" });
+    expect(await ledger.read({ limit: 10 })).toEqual([committed]);
+    expect(names()).toEqual([expect.stringMatching(/:e-1$/)]);
+  });
+
+  it("keeps an intention without a committed copy, and a disclosure, which has none", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    await ledger.append([intention]);
+    expect(await ledger.read({ limit: 10 })).toEqual([intention]);
+    expect([...keys.keys()]).toEqual([expect.stringMatching(/~e-1$/)]);
+  });
+
+  it("never lowers a mark, whatever a raise read, and keeps the highest alone", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const elsewhere = createKvForgetLedger({ namespace, prefix: "p/" });
+    for (let value = 1; value <= 30; value += 1)
+      await ledger.raiseMark("restore:generation", value);
+    // Raised from a reading that lags, as another location's may.
+    await elsewhere.raiseMark("restore:generation", 7);
+    expect(await ledger.readMark("restore:generation")).toBe(30);
+    expect(await elsewhere.readMark("restore:generation")).toBe(30);
+    expect(await ledger.readMark("restore:count")).toBe(0);
+    expect([...keys.keys()].filter((name) => name.includes("restore:generation/"))).toHaveLength(1);
+  });
+
+  it("leaves an intention written where the committed copy went before, with one of its own", async () => {
+    const { namespace, keys, deleted } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    await ledger.append([intention]);
+    const [name = ""] = [...keys.keys()];
+    keys.set(name.replace("~", ":"), { ...(keys.get(name) as object), committed: false });
+    deleted.length = 0;
+    expect(await ledger.read({ limit: 10 })).toEqual([intention]);
+    expect(deleted).toEqual([]);
+  });
+
+  it("removes the intentions left behind, a batch a read, and reads no fence while none is", async () => {
+    const { namespace, keys, deleted } = countingNamespace();
+    let gets = 0;
+    const counted = {
+      ...namespace,
+      get: (...args: Parameters<KVNamespace["get"]>) => {
+        gets += 1;
+        return namespace.get(...args);
+      },
+    } as KVNamespace;
+    const ledger = createKvForgetLedger({ namespace: counted, prefix: "p/" });
+    const entries = Array.from({ length: 501 }, (_, index) => ({
+      ...committed,
+      eventId: `e-${String(index).padStart(3, "0")}`,
+    }));
+    await ledger.append(entries);
+    gets = 0;
+    expect(await ledger.read({ limit: 1_000 })).toHaveLength(501);
+    expect(gets).toBe(0);
+    for (const name of [...keys.keys()]) {
+      if (name.includes(":")) keys.set(name.replace(":", "~"), keys.get(name));
+    }
+    deleted.length = 0;
+    await ledger.read({ limit: 1_000 });
+    expect(deleted).toHaveLength(500);
+    await ledger.read({ limit: 1_000 });
+    expect(deleted).toHaveLength(501);
+    expect([...keys.keys()].filter((name) => name.includes("~"))).toEqual([]);
+  });
+
+  it("removes at most twenty of the values below the one it raises", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    for (let value = 1; value <= 25; value += 1) {
+      keys.set(
+        `bounda/forget-ledger-marks/p/restore:generation/${Number.MAX_SAFE_INTEGER - value}`,
+        null,
+      );
+    }
+    await ledger.raiseMark("restore:generation", 30);
+    expect(await ledger.readMark("restore:generation")).toBe(30);
+    expect([...keys.keys()].filter((name) => name.includes("restore:generation/"))).toHaveLength(6);
   });
 
   it("holds each entry once on a page, its committed copy over its intention", async () => {

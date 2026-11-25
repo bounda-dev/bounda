@@ -30,6 +30,7 @@ catalog:
   astro: 7.4.13
   commander: 15.1.0
   devalue: 6.0.3
+  fast-check: 4.11.0
   isbot: 5.2.3
   lefthook: 2.2.2
   postgres: 3.4.9
