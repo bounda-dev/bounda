@@ -63,6 +63,7 @@ export type {
   LoadResult,
   PendingEvent,
   ReadAllArgs,
+  ReadByPersonArgs,
   ReadOneArgs,
   ResealedEvent,
 } from "./storage/event-store.ts";
@@ -92,6 +93,7 @@ export type {
   ListIdempotencyRecordsArgs,
   PurgeIdempotencyRecordsArgs,
   PutIdempotencyRecordArgs,
+  ResealIdempotencyRecordArgs,
   StoredAnswer,
 } from "./storage/idempotency-store.ts";
 export type {
@@ -121,9 +123,11 @@ export type {
   KeyedPerson,
   ListByPersonArgs,
   ListDueArgs,
+  ListRetainedArgs,
   ListWrappedUnderArgs,
   NextDueHoldEndArgs,
   NextKeyHoldEndArgs,
+  NextRetainedHoldEndArgs,
   PersonalEnvelope,
   PersonalKeyRow,
   PersonalKeyStore,
@@ -132,11 +136,22 @@ export type {
   ScanArgs,
   SealedValue,
   StoredPersonalKey,
+  SupersedingKey,
 } from "./storage/personal-key-store.ts";
 export { DEFAULT_PERSONAL_CATEGORY } from "./storage/personal-key-store.ts";
 export type {
+  DeclaredRecipient,
+  Disclosure,
+  PersonsOfArgs,
+  RecipientPort,
+  RecipientStore,
+  RecipientSummary,
+  StoredDisclosure,
+} from "./storage/recipient-store.ts";
+export type {
   IsLeftOutArgs,
   IsLeftOutFunction,
+  IsRetainedKeyFunction,
   RestrictedFields,
   RestrictedFieldsOfFunction,
   RestrictedPerson,
@@ -173,6 +188,7 @@ export {
 export type { Snapshot, SnapshotStore } from "./storage/snapshot-store.ts";
 export type {
   NewSubscriberFailure,
+  ResealedSubscriberFailure,
   StoredSubscriberFailure,
   SubscriberFailureStore,
   SubscriberFailureVersion,

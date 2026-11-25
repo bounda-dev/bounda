@@ -1,0 +1,6 @@
+---
+"@bounda-dev/core": minor
+"@bounda-dev/postgresql": minor
+---
+
+Bringing an existing database forward and rebuilding a read model send their statements together instead of one per round trip. Each set of tables a database lacks migrations for is migrated in one transaction, its writes and the versions it records sent together up to each point where a migration reads what is there; a migration that fails leaves that set of tables at the version it was at, nothing of it half-applied, where before the migrations ahead of the failing one stayed applied. A libSQL server replaying every migration takes 45 requests instead of 221, PostgreSQL 75 writes instead of 362, and a rebuild's opening and commit take about half the requests on a libSQL server. `withBatchedWrites` in `@bounda-dev/core/adapter/sql` is the primitive: it holds a transaction's writes back until the next read or the end and sends them through `runInOrder`. `@bounda-dev/core/adapter` now exports every type its stores name, so an adapter of your own can name the store it implements: `RecipientStore` with `Disclosure`, `StoredDisclosure`, `DeclaredRecipient`, `RecipientPort`, `RecipientSummary` and `PersonsOfArgs`, and `ReadByPersonArgs`, `ResealIdempotencyRecordArgs`, `ListRetainedArgs`, `NextRetainedHoldEndArgs`, `SupersedingKey`, `ResealedSubscriberFailure` and `IsRetainedKeyFunction`.

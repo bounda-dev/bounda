@@ -6,6 +6,7 @@ import { silentLogger } from "../../contracts/logger.ts";
 import { type FieldsRecord, fieldBuilder as f } from "../../modules/view.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { tableNameFor } from "../sql/identifiers.ts";
+import type { SqlFragment } from "../sql/query-builder.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { DEFAULT_PERSONAL_CATEGORY, type KeyedPerson } from "../storage/personal-key-store.ts";
 import {
@@ -61,14 +62,24 @@ const eventTables = { table, personalKeys, restrictions };
 const bind = (params: readonly unknown[]): SQLInputValue[] =>
   params.map((value) => (typeof value === "boolean" ? Number(value) : value)) as SQLInputValue[];
 
+// `batches`, when given, gives the transactions a batch and records each it runs; a statement that
+// `failing` names throws, wherever it runs.
 const nodeSqlite = (
   db = new DatabaseSync(":memory:"),
   tablePrefix = "bounda_",
   statements: string[] = [],
+  {
+    batches,
+    failing = () => false,
+  }: { batches?: string[][]; failing?: (sql: string) => boolean } = {},
 ) => {
+  const fail = (sql: string): void => {
+    if (failing(sql)) throw new Error(`refused: ${sql}`);
+  };
   const executor: SqlExecutor = {
     run: async (sql, params) => {
       statements.push(sql);
+      fail(sql);
       db.prepare(sql).run(...bind(params));
     },
     all: async (sql, params) => {
@@ -83,7 +94,18 @@ const nodeSqlite = (
       const next = queue.then(async () => {
         db.exec("BEGIN IMMEDIATE");
         try {
-          const result = await work({ ...executor, raw: db });
+          const result = await work({
+            ...executor,
+            raw: db,
+            ...(batches === undefined
+              ? {}
+              : {
+                  batch: async (fragments: readonly SqlFragment[]) => {
+                    batches.push(fragments.map(({ sql }) => sql));
+                    for (const { sql, params } of fragments) await executor.run(sql, params);
+                  },
+                }),
+          });
           db.exec("COMMIT");
           return result;
         } catch (error) {
@@ -619,6 +641,92 @@ describe("createSqliteAdapter", () => {
       ["read model rebuild aborted", { readModel: "orderSummary", table }],
     ]);
     expect(tableNames(db, "bounda_rm_order")).toEqual([table]);
+  });
+
+  it("sends what opening, committing and aborting a rebuild write to the driver in one batch each, after what they read", async () => {
+    const batches: string[][] = [];
+    const { adapter } = nodeSqlite(undefined, "bounda_", [], { batches });
+    const args = {
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+      progress: "rebuild:1",
+    };
+    await (await adapter.createReadModel(args)).close();
+    const shadow = '"bounda_rm_order_summary__rebuild"';
+    const retired = '"bounda_rm_order_summary__retired"';
+    const live = '"bounda_rm_order_summary"';
+    const opening = () => {
+      batches.length = 0;
+      return adapter.rebuildReadModel(args).then((rebuild) => {
+        expect(batches).toHaveLength(1);
+        expect(batches[0]?.[0]).toMatch(/^INSERT INTO "bounda_checkpoints"/);
+        expect(batches[0]?.slice(1, 3)).toEqual([
+          `DROP TABLE IF EXISTS ${shadow}`,
+          `DROP TABLE IF EXISTS ${retired}`,
+        ]);
+        expect(batches[0]?.at(-1)).toMatch(/^DELETE FROM "bounda_checkpoints"/);
+        return rebuild;
+      });
+    };
+    const committed = await opening();
+    batches.length = 0;
+    await committed.commit({ subscriber: "projection:x", position: 3, marks: { "mark:x": 2 } });
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.slice(0, 3)).toEqual([
+      `ALTER TABLE ${live} RENAME TO ${retired}`,
+      `ALTER TABLE ${shadow} RENAME TO ${live}`,
+      `DROP TABLE IF EXISTS ${retired}`,
+    ]);
+    expect(batches[0]?.slice(-3).map((sql) => sql.split(" ")[0])).toEqual([
+      "INSERT",
+      "INSERT",
+      "DELETE",
+    ]);
+    const aborted = await opening();
+    batches.length = 0;
+    await aborted.abort();
+    expect(batches).toEqual([
+      [
+        `DROP TABLE IF EXISTS ${shadow}`,
+        expect.stringMatching(/^DELETE FROM "bounda_checkpoints"/),
+      ],
+    ]);
+  });
+
+  it("leaves the live table, the shadow and the checkpoints as they were when a commit fails part-way", async () => {
+    const db = new DatabaseSync(":memory:");
+    let refusing = false;
+    const { adapter } = nodeSqlite(db, "bounda_", [], {
+      batches: [],
+      failing: (sql) =>
+        refusing && sql === 'DROP TABLE IF EXISTS "bounda_rm_order_summary__retired"',
+    });
+    const args = {
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+      progress: "rebuild:1",
+    };
+    const model = await adapter.createReadModel<ContractRow>(args);
+    const row: ContractRow = { orderId: "1", customerId: "c-1", status: "placed", total: 10 };
+    await model.table.insert(row);
+    const rebuild = await adapter.rebuildReadModel<ContractRow>(args);
+    await rebuild.transact(async ({ table, checkpointStore }) => {
+      await table.insert({ ...row, total: 99 });
+      await checkpointStore.set(args.progress, 4);
+    });
+    refusing = true;
+    await expect(rebuild.commit({ subscriber: "projection:x", position: 4 })).rejects.toThrow(
+      /refused/,
+    );
+    expect(await model.table.findMany({})).toEqual([row]);
+    expect(db.prepare('SELECT "total" FROM "bounda_rm_order_summary__rebuild"').all()).toEqual([
+      { total: 99 },
+    ]);
+    expect(await model.checkpointStore.get("projection:x")).toBe(0);
+    expect(await model.checkpointStore.get(args.progress)).toBe(4);
+    await model.close();
   });
 
   it("evolves a read model table additively and refuses destructive changes", async () => {

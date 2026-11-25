@@ -8,8 +8,8 @@ import type { StorageSchemaTarget } from "./storage-schema.contract.ts";
 
 /**
  * A database for one case, as `storageSchemaContract` takes it, that also brings every scope under
- * `prefix` to its latest version one migration at a time, as it would a database an earlier version
- * of Bounda left behind.
+ * `prefix` to its latest version through every migration, as it would a database an earlier
+ * version of Bounda left behind.
  */
 export interface LatestSchemaTarget extends StorageSchemaTarget {
   readonly replay: () => Promise<void>;

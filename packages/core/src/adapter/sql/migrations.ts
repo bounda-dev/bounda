@@ -1,15 +1,17 @@
 import { StorageSchemaTooNewError } from "../../contracts/errors.ts";
 import type { SchemaVersion } from "../adapter.ts";
-import { runInOrder, type SqlTransaction } from "./database.ts";
+import { runInOrder, type SqlTransaction, withBatchedWrites } from "./database.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier, storageTableNameFor } from "./identifiers.ts";
 import type { SqlFragment } from "./query-builder.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 /**
- * One step forward of a scope's tables. It runs in a transaction that also records its version,
- * so it is applied whole or not at all, and it must be idempotent: an unversioned database may
- * already hold part of what it creates.
+ * One step forward of a scope's tables. It runs in the transaction that brings its scope forward
+ * and records its version, so it is applied whole or not at all, and it must be idempotent: an
+ * unversioned database may already hold part of what it creates. Its writes are sent with those
+ * around them when it next reads, as `withBatchedWrites` sends them: it must not use `raw`, nor
+ * go on past a write that fails.
  */
 export interface SchemaMigration {
   readonly version: number;
@@ -180,22 +182,20 @@ const behindIn = (
     .map((schema) => ({ schema, at: versionOf(versions, schema) }))
     .filter(({ schema, at }) => at < schema.migrations.length);
 
-const insertVersion = (table: string, dialect: SqlDialect): string =>
-  `INSERT INTO ${table} ("scope", "version", "applied_at") VALUES (${dialect.placeholder(1)}, ${dialect.placeholder(2)}, ${dialect.placeholder(3)})`;
-
 // What a Durable Object's SQLite binds to one statement at most.
 const DURABLE_OBJECT_PARAMETERS = 100;
 const VERSIONS_PER_INSERT = Math.floor(DURABLE_OBJECT_PARAMETERS / 3);
 
-// Every version of `scopes`, recorded as applied at `appliedAt`, in as few statements as fit.
+// The versions of each scope's `migrations`, recorded as applied at `appliedAt`, in as few
+// statements as fit.
 const insertVersions = (
   table: string,
   dialect: SqlDialect,
-  scopes: readonly SchemaScope[],
+  scopes: readonly Pick<SchemaScope, "scope" | "migrations">[],
   appliedAt: string,
 ): readonly SqlFragment[] => {
-  const rows = scopes.flatMap((schema) =>
-    schema.migrations.map(({ version }) => [schema.scope, version, appliedAt]),
+  const rows = scopes.flatMap(({ scope, migrations }) =>
+    migrations.map(({ version }) => [scope, version, appliedAt]),
   );
   const statements: SqlFragment[] = [];
   for (let start = 0; start < rows.length; start += VERSIONS_PER_INSERT) {
@@ -212,37 +212,40 @@ const insertVersions = (
   return statements;
 };
 
-// Each migration in a transaction of its own, after reading the version again under the lock, so
-// instances starting together apply each once and a failure keeps the ones before it.
+// Each scope in a transaction of its own, after reading its version again under the lock, so
+// instances starting together apply each migration once, and a failure leaves the scope at the
+// version it was at and the scopes before it as they committed.
 const replay = async (
   { dialect, table, locked, isMissingTable, now = () => new Date() }: ReplaySchemasArgs,
   behind: readonly Behind[],
 ): Promise<void> => {
-  for (const { schema, at } of behind) {
-    let version = at;
-    while (version < schema.migrations.length) {
-      version = await locked(async (tx) => {
-        await tx.run(schemaMigrationsTableStatement(table), []);
-        const current = versionOf(await versionsIn(tx, table, isMissingTable), schema);
-        const migration = schema.migrations[current];
-        if (migration === undefined) return current;
-        await migration.migrate(tx);
-        await tx.run(insertVersion(table, dialect), [
-          schema.scope,
-          migration.version,
-          now().toISOString(),
-        ]);
-        return migration.version;
-      });
-    }
+  for (const { schema } of behind) {
+    await locked((tx) =>
+      withBatchedWrites(tx, async (batched) => {
+        await batched.run(schemaMigrationsTableStatement(table), []);
+        const current = versionOf(await versionsIn(batched, table, isMissingTable), schema);
+        const applying = schema.migrations.slice(current);
+        for (const migration of applying) await migration.migrate(batched);
+        await runInOrder(
+          batched,
+          insertVersions(
+            table,
+            dialect,
+            [{ scope: schema.scope, migrations: applying }],
+            now().toISOString(),
+          ),
+        );
+      }),
+    );
   }
 };
 
 /**
- * Brings every scope to its latest version one migration at a time, as a database an earlier
- * version left behind is. A database already there costs one read and takes no lock, so running
- * instances never wait on one that starts. Throws `StorageSchemaTooNewError`, before writing
- * anything, when a scope is past what it knows.
+ * Brings every scope to its latest version through its migrations, as a database an earlier
+ * version left behind is: each scope behind in one transaction, its statements sent together up to
+ * each read a migration makes. A database already there costs one read and takes no lock, so
+ * running instances never wait on one that starts. Throws `StorageSchemaTooNewError`, before
+ * writing anything, when a scope is past what it knows.
  */
 export const replaySchemas: ReplaySchemasFunction = async (args) => {
   await replay(

@@ -4,7 +4,7 @@ import type { FieldsRecord } from "../../modules/view.ts";
 import type { ReadModelRebuild, ReadModelStorage } from "../index.ts";
 import { rebuildFencing } from "../rebuild-fencing.ts";
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
-import { runInOrder, type SqlDatabase } from "../sql/database.ts";
+import { runInOrder, type SqlDatabase, withBatchedWrites } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import {
   columnsOf,
@@ -264,19 +264,23 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
       sqliteCheckpointsScope({ checkpoints, restrictedPersons, restrictedPositions, tenantFence }),
     ],
   });
-  const opened = await db.write(async (tx) => {
-    const store = checkpointsIn(tx);
-    const generation = (await store.get(fencing.generation)) + 1;
-    await store.set(fencing.generation, generation);
-    const saved = await store.get(progress);
-    const resumed = saved > 0 && (await tableExists(tx, shadow));
-    if (!resumed) {
-      for (const statement of shadowTableStatements({ table, columns }))
-        await tx.run(statement, []);
-      await store.remove(progress);
-    }
-    return { generation, resumed, position: resumed ? saved : 0 };
-  });
+  const opened = await db.write((tx) =>
+    withBatchedWrites(tx, async (tx) => {
+      const store = checkpointsIn(tx);
+      const generation = (await store.get(fencing.generation)) + 1;
+      const saved = await store.get(progress);
+      const resumed = saved > 0 && (await tableExists(tx, shadow));
+      await store.set(fencing.generation, generation);
+      if (!resumed) {
+        await runInOrder(
+          tx,
+          shadowTableStatements({ table, columns }).map((sql) => ({ sql, params: [] })),
+        );
+        await store.remove(progress);
+      }
+      return { generation, resumed, position: resumed ? saved : 0 };
+    }),
+  );
   logger.info(opened.resumed ? "read model rebuild resumed" : "read model rebuild started", {
     readModel: name,
     table,
@@ -346,17 +350,20 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
       }),
     commit: async ({ subscriber, position, marks = {} }) => {
       try {
-        await db.write(async (tx) => {
-          await fenced(tx);
-          const live = await tableExists(tx, table);
-          for (const statement of swapTableStatements({ table, columns, live })) {
-            await tx.run(statement, []);
-          }
-          const store = checkpointsIn(tx);
-          await store.set(subscriber, position);
-          for (const [mark, value] of Object.entries(marks)) await store.set(mark, value);
-          await store.remove(progress);
-        });
+        await db.write((tx) =>
+          withBatchedWrites(tx, async (tx) => {
+            await fenced(tx);
+            const live = await tableExists(tx, table);
+            await runInOrder(
+              tx,
+              swapTableStatements({ table, columns, live }).map((sql) => ({ sql, params: [] })),
+            );
+            const store = checkpointsIn(tx);
+            await store.set(subscriber, position);
+            for (const [mark, value] of Object.entries(marks)) await store.set(mark, value);
+            await store.remove(progress);
+          }),
+        );
         logger.info("read model rebuild committed", { readModel: name, table });
       } finally {
         await end();
@@ -364,13 +371,17 @@ export const rebuildSqliteReadModel: RebuildSqliteReadModelFunction = async <
     },
     abort: async () => {
       try {
-        const aborted = await db.write(async (tx) => {
-          if (!(await current(tx))) return false;
-          for (const statement of dropShadowTableStatements(table)) await tx.run(statement, []);
-          const store = checkpointsIn(tx);
-          await store.remove(progress);
-          return true;
-        });
+        const aborted = await db.write((tx) =>
+          withBatchedWrites(tx, async (tx) => {
+            if (!(await current(tx))) return false;
+            await runInOrder(
+              tx,
+              dropShadowTableStatements(table).map((sql) => ({ sql, params: [] })),
+            );
+            await checkpointsIn(tx).remove(progress);
+            return true;
+          }),
+        );
         logger.info(aborted ? "read model rebuild aborted" : "read model rebuild superseded", {
           readModel: name,
           table,
