@@ -211,7 +211,7 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * `registry`'s `app/audit.ts`. Its `scheduled`, run by a cron trigger, wakes every
  * object whose tenant's key is still under a previous master key, so a rotation of the master key
  * reaches the tenants whose objects sleep. There is no authentication and no operator
- * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
+ * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when `registry`'s `app/audit.ts` does not export `onHostRejection`, when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
 export const createWorker: CreateWorkerFunction = ({
@@ -225,6 +225,8 @@ export const createWorker: CreateWorkerFunction = ({
 }) => {
   const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
+  // An app/audit.ts without onHostRejection is refused here, not at the first refusal.
+  hostLogOf({ registry, env: {}, logger });
   // One namespace per `env` the Worker is handed, rather than one per request.
   const namespaces = new WeakMap<object, DurableObjectNamespace | undefined>();
   const namespaceOf = (env: object): DurableObjectNamespace | undefined => {

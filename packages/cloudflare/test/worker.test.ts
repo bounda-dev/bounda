@@ -783,6 +783,20 @@ describe("createWorker's host log", () => {
     expect(JSON.stringify(records.map(({ rejection }) => rejection))).not.toContain("example.com");
   });
 
+  it("refuses at once a registry whose app/audit.ts does not export onHostRejection", () => {
+    expect(() =>
+      createWorker({
+        config: { storage: cloudflare({ binding: "SPY" }) },
+        tenantOf: () => "acme",
+        registry: {
+          aggregates: {},
+          readModels: {},
+          audit: { onPersonalDataAccess: () => {} },
+        } as unknown as Registry,
+      }),
+    ).toThrow(ConfigurationError);
+  });
+
   it("leaves what an object refuses to the object, which records it itself", async () => {
     const { records, registry } = auditing();
     const refused = {
