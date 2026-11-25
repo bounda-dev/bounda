@@ -225,12 +225,15 @@ app starts, before it serves anything, or before the deploy with
   together, recorded at that version. A first start against a remote database, a libSQL server
   such as Turso or a PostgreSQL server, takes a handful of round trips, however many migrations
   the tables went through.
-- One that is behind is migrated in place, one migration at a time, each in a transaction that
-  records its version as it commits, under the database's lock: an advisory lock on the schema on
-  PostgreSQL, the write transaction on SQLite and libSQL, the object itself in a Durable Object.
-  Instances that start together migrate it once; the others wait for the lock and find the work
-  done. A migration that fails leaves the database at the last version that committed, and the
-  next start tries again.
+- One that is behind is migrated in place, each set of tables in one transaction that applies
+  every migration it lacks and records their versions as it commits, under the database's lock:
+  an advisory lock on the schema on PostgreSQL, the write transaction on SQLite and libSQL, the
+  object itself in a Durable Object. Its statements go to the database together, up to each point
+  where a migration reads what is there, so a remote database takes a few round trips per set of
+  tables rather than one per statement. Instances that start together migrate it once; the others
+  wait for the lock and find the work done. A migration that fails leaves its set of tables at the
+  version it was at, nothing of it half-applied, and the sets before it migrated; the next start
+  tries again.
 - One that a newer version of Bounda migrated is refused, untouched, with
   [`STORAGE_SCHEMA_TOO_NEW`](/reference/errors/#codes). Bounda never takes a schema back: to go
   back to an older version after an upgrade, restore a backup taken before it, so take one before

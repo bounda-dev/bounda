@@ -11,6 +11,7 @@ import {
   type SchemaMigration,
   type SchemaScope,
   schemaMigrationsTableFor,
+  schemaMigrationsTableStatement,
 } from "./migrations.ts";
 import type { SqlFragment } from "./query-builder.ts";
 import type { SqlExecutor } from "./sql-table.ts";
@@ -171,14 +172,14 @@ describe("replaySchemas", () => {
     expect(locks()).toBe(before);
   });
 
-  it("applies only the migrations past the version a database is at, one transaction each", async () => {
+  it("applies only the migrations past the version a database is at, in one transaction for the scope", async () => {
     const { database, versions, locks } = memoryDatabase();
     await replay(database, [scopeOf("a", 1)]);
     const applied: string[] = [];
     const before = locks();
     await replay(database, [scopeOf("a", 3, { applied })]);
     expect(applied).toEqual(["a2", "a3"]);
-    expect(locks() - before).toBe(2);
+    expect(locks() - before).toBe(1);
     expect(versions().map((row) => row.version)).toEqual([1, 2, 3]);
   });
 
@@ -201,27 +202,98 @@ describe("replaySchemas", () => {
     expect(versions().map((row) => row.version)).toEqual([1, 2, 3]);
   });
 
-  it("rolls back a migration that fails with its version, keeps the ones before, and runs it again next time", async () => {
-    const { database, versions, tables } = memoryDatabase();
-    const first = { version: 1, migrate: creating("a1") };
+  it("rolls back every migration of a scope that fails part-way with their versions, keeps the scopes before it, and runs them again next time", async () => {
+    const { database, versions, tables } = memoryDatabase({ batching: true });
     const failing: SchemaScope = {
-      ...scopeOf("a", 2),
+      ...scopeOf("a", 3),
       migrations: [
-        first,
+        { version: 1, migrate: creating("a1") },
+        { version: 2, migrate: creating("a2") },
         {
-          version: 2,
+          version: 3,
           migrate: async (tx) => {
-            await creating("a2")(tx);
+            await creating("a3")(tx);
             throw new Error("boom");
           },
         },
       ],
     };
-    await expect(replay(database, [failing])).rejects.toThrow("boom");
-    expect(tables()).toEqual(["a1", "app_migrations"]);
-    expect(versions().map((row) => row.version)).toEqual([1]);
-    await replay(database, [scopeOf("a", 2)]);
-    expect(versions().map((row) => row.version)).toEqual([1, 2]);
+    await expect(replay(database, [scopeOf("b", 1), failing])).rejects.toThrow("boom");
+    expect(tables()).toEqual(["app_migrations", "b1"]);
+    expect(versions().map(({ scope, version }) => `${scope}${version}`)).toEqual(["b1"]);
+    await replay(database, [scopeOf("b", 1), scopeOf("a", 3)]);
+    expect(versions().map(({ scope, version }) => `${scope}${version}`)).toEqual([
+      "a1",
+      "a2",
+      "a3",
+      "b1",
+    ]);
+  });
+
+  it("rolls back a scope whose write fails part-way, even when its migration catches the failure", async () => {
+    const { database, versions, tables } = memoryDatabase({ batching: true });
+    const failing: SchemaScope = {
+      ...scopeOf("a", 3),
+      migrations: [
+        { version: 1, migrate: creating("a1") },
+        {
+          version: 2,
+          migrate: async (tx) => {
+            await tx.run('INSERT INTO "missing" VALUES (1)', []);
+            await tx.all("SELECT 1", []).catch(() => []);
+          },
+        },
+        { version: 3, migrate: creating("a3") },
+      ],
+    };
+    await expect(replay(database, [failing])).rejects.toThrow(/no such table: missing/);
+    expect(tables()).toEqual([]);
+    expect(versions).toThrow(/no such table/);
+  });
+
+  it("sends a scope's writes and versions to the driver together, up to each read a migration makes", async () => {
+    const { database, batches } = memoryDatabase({ batching: true });
+    await replay(database, [scopeOf("a", 1)]);
+    batches.length = 0;
+    const reading: SchemaScope = {
+      ...scopeOf("a", 4),
+      migrations: [
+        ...scopeOf("a", 2).migrations,
+        {
+          version: 3,
+          migrate: async (tx) => {
+            expect(
+              await tx.all(`SELECT "name" FROM sqlite_master WHERE "name" = 'a2'`, []),
+            ).toEqual([{ name: "a2" }]);
+            await creating("a3")(tx);
+          },
+        },
+        { version: 4, migrate: creating("a4") },
+      ],
+    };
+    await replay(database, [reading], { now: () => new Date("2026-11-25T08:00:00.000Z") });
+    expect(batches.map((batch) => batch.map(({ sql, params }) => [sql, params]))).toEqual([
+      [[schemaMigrationsTableStatement(table), []]],
+      [['CREATE TABLE IF NOT EXISTS "a2" ("id" TEXT)', []]],
+      [
+        ['CREATE TABLE IF NOT EXISTS "a3" ("id" TEXT)', []],
+        ['CREATE TABLE IF NOT EXISTS "a4" ("id" TEXT)', []],
+        [
+          `INSERT INTO ${table} ("scope", "version", "applied_at") VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)`,
+          [
+            "a",
+            2,
+            "2026-11-25T08:00:00.000Z",
+            "a",
+            3,
+            "2026-11-25T08:00:00.000Z",
+            "a",
+            4,
+            "2026-11-25T08:00:00.000Z",
+          ],
+        ],
+      ],
+    ]);
   });
 
   it("applies each migration once when instances start together", async () => {
@@ -424,7 +496,7 @@ describe("migrateSchemas", () => {
       scopeOf("c", 1, { applied }),
     ]);
     expect(applied).toEqual(["a1", "a2"]);
-    expect(locks()).toBe(4);
+    expect(locks()).toBe(3);
     expect(versions().map(({ scope, version }) => `${scope}${version}`)).toEqual([
       "a1",
       "a2",
@@ -440,7 +512,7 @@ describe("migrateSchemas", () => {
     const before = locks();
     await migrate(database, [scopeOf("a", 3, { applied })]);
     expect(applied).toEqual(["a2", "a3"]);
-    expect(locks() - before).toBe(2);
+    expect(locks() - before).toBe(1);
   });
 
   it("replays a scope another instance versioned while it waited for the lock", async () => {

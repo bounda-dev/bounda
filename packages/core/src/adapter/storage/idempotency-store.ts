@@ -85,6 +85,9 @@ export interface EraseIdempotencyRecordArgs {
   readonly now: Date;
 }
 
+/**
+ * What `reseal` writes again under `key`, as long as the record still holds `from`.
+ */
 export interface ResealIdempotencyRecordArgs {
   readonly key: string;
   /**

@@ -190,6 +190,36 @@ describe("the SQLite schema scopes", () => {
     }
   });
 
+  it("leave nothing of a scope whose last migration fails part-way, and replay it whole next time", async () => {
+    const { database, db } = onNodeSqlite();
+    const scope = sqliteStorageScope(storageTablesFor("app_"));
+    const last = scope.migrations.at(-1);
+    if (last === undefined) throw new Error("no migration");
+    const failing = {
+      ...scope,
+      migrations: [
+        ...scope.migrations.slice(0, -1),
+        {
+          version: last.version,
+          migrate: async (tx: Parameters<typeof last.migrate>[0]) => {
+            await last.migrate(tx);
+            throw new Error("boom");
+          },
+        },
+      ],
+    };
+    await expect(replaySqlite({ db: database, prefix: "app_", scopes: [failing] })).rejects.toThrow(
+      "boom",
+    );
+    expect(db.prepare(`SELECT "name" FROM sqlite_master`).all()).toEqual([]);
+    await replaySqlite({ db: database, prefix: "app_", scopes: [scope] });
+    expect(
+      db
+        .prepare(`SELECT max("version") AS "version" FROM ${schemaMigrationsTableFor("app_")}`)
+        .get(),
+    ).toEqual({ version: scope.migrations.length });
+  });
+
   it("name as their latest tables every table their migrations leave, and no other", async () => {
     for (const scope of Object.values(sqliteSchemaScopesFor("app_"))) {
       const { database, db } = onNodeSqlite();
