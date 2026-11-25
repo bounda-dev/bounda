@@ -298,10 +298,10 @@ export type TenantExportCounts = Omit<TenantExportAccess["detail"], "exportId">;
 
 /**
  * One piece of a tenant export, in this order: the header, every person, every recipient of their
- * data, every event up to the header's `position`, every scheduled command, dead letter, subscriber failure and remembered
- * answer, the rows of each read model, the header's `readModels` in turn, every entry of
- * `runtime.personalData.forgetLedger`, and last `end`, with how many parts of each kind came: an
- * export without its `end` is not whole.
+ * data, every event up to the header's `position`, every scheduled command, dead letter, subscriber
+ * failure and remembered answer, the rows of each read model, the header's `readModels` in turn,
+ * every entry of `runtime.personalData.forgetLedger`, and last `end`, with how many parts of each
+ * kind came: an export without its `end` is not whole.
  */
 export type TenantExportPart =
   | { readonly kind: "header"; readonly header: TenantExportHeader }
