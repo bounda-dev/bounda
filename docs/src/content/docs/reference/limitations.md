@@ -32,12 +32,6 @@ get today. Each item says why, so nobody discovers it the hard way:
   lands before then lands. An app without `runtime.personalData.tenantKeys` and without personal
   data keeps no such record, so a copy taken before a freeze takes writes again until the next
   `freezeTenant`. Restore with `bounda restore`.
-- **Pruning a SQL forget ledger with no app running.** A forget ledger in a SQLite or PostgreSQL
-  database is pruned past `keepFor` by an app of the tenant that runs: the periodic reconciliation,
-  or a forgotten tenant's worker until its recipients are told. A tenant whose app does not run
-  keeps its entries past `keepFor` until one does; nothing prunes the table on its own. KV expires
-  its keys, and the keeper on its own alarm. See [Keeping the ledger
-  short](/guides/personal-data/#keeping-the-ledger-short).
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each
   its own database, schema or Durable Object. See [Tenants](/guides/personal-data/#tenants).

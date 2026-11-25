@@ -5,6 +5,7 @@ import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type {
   ForgetLedger,
   ForgetLedgerEntry,
+  PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
 import { createFixedClock, type FixedClock } from "../../contracts/clock.ts";
@@ -16,7 +17,12 @@ import type { Registry } from "../../modules/registry.ts";
 import { type BoundaApp, createApp } from "../app.ts";
 import { createEphemeralKeys } from "../personal-data/ephemeral-keys.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
-import { FORGET_LEDGER_GRACE_MS } from "../personal-data/reconciliation.ts";
+import { pruneAsApplied } from "../personal-data/ledger-prune.ts";
+import {
+  FORGET_LEDGER_CURSOR,
+  FORGET_LEDGER_GRACE_MS,
+  FORGET_LEDGER_REREAD_MS,
+} from "../personal-data/reconciliation.ts";
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import {
   GENERATION_INTERVAL_MS,
@@ -46,6 +52,11 @@ import {
 // database stands where handling the last restore left it and nothing proves another; the operator
 // then says `again` for a copy. The runtime's count is how many restores an instance handled first,
 // and, while the ledger took every count, the count the database holds.
+//
+// An operator prunes the ledger with no app (`bounda forget-ledger prune`), at any moment, with a
+// `keepFor` of nothing, so only what the database has applied bounds it: what the ledger proves of
+// the database must read the same after a prune as before, and a prune removes only entries the
+// database holds the event of or will not read again.
 
 const registry = {
   aggregates: {
@@ -98,8 +109,12 @@ type InstanceAction =
   | { readonly kind: "forgetUncommitted"; readonly instance: Instance; readonly person: number }
   | { readonly kind: "pass"; readonly instance: Instance };
 
+// What happens beside the instances, as the operator's prune does.
+type Beside = InstanceAction | { readonly kind: "prune" };
+
 type Action =
   | InstanceAction
+  | { readonly kind: "prune" }
   | { readonly kind: "tick" }
   | { readonly kind: "backUp"; readonly slot: number }
   | {
@@ -110,7 +125,7 @@ type Action =
   | { readonly kind: "ledger"; readonly mode: LedgerMode }
   | { readonly kind: "release" }
   | { readonly kind: "declare"; readonly instance: Instance }
-  | { readonly kind: "together"; readonly first: InstanceAction; readonly second: InstanceAction };
+  | { readonly kind: "together"; readonly first: Beside; readonly second: Beside };
 
 // ---------------------------------------------------------------------------------------------
 // The world: one database, one ledger, two instances.
@@ -240,6 +255,13 @@ const createModelLedger = (kind: "sql" | "kv", gate: () => Promise<void>) => {
       }),
     clear: () => inner.clear(),
     fence: inner.fence,
+    // Workers KV expires its keys on its own: only the SQL ledger is pruned.
+    ...(kind === "sql"
+      ? {
+          prune: (args: PruneForgetLedgerArgs) =>
+            write(() => inner.prune?.(args) ?? Promise.resolve()),
+        }
+      : {}),
   };
   return {
     ledger,
@@ -502,6 +524,48 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     db.exec(`DROP TRIGGER IF EXISTS temp."model_fail_commit"`);
   };
 
+  // The operator's prune, with no app, at the model's time.
+  const prune = async (): Promise<void> => {
+    const { prune: removes } = ledger.ledger;
+    if (removes === undefined) return;
+    const storage = await adapter.createStorage();
+    try {
+      await pruneAsApplied({
+        ledger: { read: ledger.ledger.read, fence: ledger.ledger.fence, prune: removes },
+        forgotten: async () => false,
+        withStorage: (work) => work(storage),
+        keepForMs: 0,
+        now: new Date(now),
+      });
+    } catch {
+      // The ledger is down, or takes the prune only later.
+    } finally {
+      await storage.close();
+    }
+  };
+
+  // A prune nothing runs beside: it changes nothing a look reads.
+  const pruneAlone = async (): Promise<void> => {
+    const entries = await ledger.entries();
+    const proves = await ledgerProves(true);
+    const cursor = rowOf(db, FORGET_LEDGER_CURSOR);
+    const held = new Set(snapshotOf(db).events.map(({ id }) => id));
+    await prune();
+    const left = new Set((await ledger.entries()).map(({ eventId }) => eventId));
+    for (const entry of entries) {
+      if (left.has(entry.eventId) || held.has(entry.eventId)) continue;
+      if (cursor === 0 || Date.parse(entry.forgottenAt) >= cursor - FORGET_LEDGER_REREAD_MS) {
+        violations.push(`the prune removed ${entry.eventId}, which the database has yet to apply`);
+      }
+    }
+    if ((await ledgerProves(true)) !== proves) {
+      violations.push(`the prune changed what the ledger proves from ${proves}`);
+    }
+  };
+
+  const beside = (action: Beside): Promise<void> =>
+    action.kind === "prune" ? prune() : instanceAction(action);
+
   const instanceAction = async (action: InstanceAction): Promise<void> => {
     const live = instances[action.instance];
     // What an instance writes in between makes a restore after it another going back.
@@ -664,25 +728,31 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
         await ledger.release();
         for (const episode of open) episode.carried ||= episode.carrying;
         return;
-      case "together":
-        if (action.first.instance === action.second.instance) {
-          await instanceAction(action.first);
-          await instanceAction(action.second);
+      case "prune":
+        return pruneAlone();
+      case "together": {
+        const { first, second } = action;
+        if (
+          first.kind !== "prune" &&
+          second.kind !== "prune" &&
+          first.instance === second.instance
+        ) {
+          await instanceAction(first);
+          await instanceAction(second);
           return;
         }
         if (scheduler === undefined) {
-          await Promise.all([instanceAction(action.first), instanceAction(action.second)]);
+          await Promise.all([beside(first), beside(second)]);
           return;
         }
         interleaving = true;
         try {
-          await scheduler.waitFor(
-            Promise.all([instanceAction(action.first), instanceAction(action.second)]),
-          );
+          await scheduler.waitFor(Promise.all([beside(first), beside(second)]));
         } finally {
           interleaving = false;
         }
         return;
+      }
       default:
         await instanceAction(action);
     }
@@ -738,7 +808,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
       marks: ledger.marks(),
     });
 
-  return { run, settle, close, observe, truth: () => goingBacks };
+  return { run, settle, close, observe, truth: () => goingBacks, entries: ledger.entries };
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -769,10 +839,16 @@ const instanceAction: fc.Arbitrary<InstanceAction> = fc.oneof(
 
 const round = fc.constantFrom<Round>("pass", "crash", "stop");
 
+const besideAction: fc.Arbitrary<Beside> = fc.oneof(
+  { weight: 6, arbitrary: instanceAction },
+  { weight: 1, arbitrary: fc.constant({ kind: "prune" as const }) },
+);
+
 const actionOf = (): fc.Arbitrary<Action> =>
   fc.oneof(
     { weight: 12, arbitrary: instanceAction },
     { weight: 3, arbitrary: fc.constant({ kind: "tick" as const }) },
+    { weight: 2, arbitrary: fc.constant({ kind: "prune" as const }) },
     {
       weight: 4,
       arbitrary: fc.nat(1).map((slot) => ({ kind: "backUp" as const, slot })),
@@ -794,7 +870,7 @@ const actionOf = (): fc.Arbitrary<Action> =>
     {
       weight: 4,
       arbitrary: fc
-        .tuple(instanceAction, instanceAction)
+        .tuple(besideAction, besideAction)
         .map(([first, second]) => ({ kind: "together" as const, first, second })),
     },
   );
@@ -1033,6 +1109,35 @@ describe("restore counting, the counterexamples its model found", () => {
       [0, 0],
       [0, 0],
     ]);
+  });
+});
+
+describe("pruning the ledger with no app, against the model", () => {
+  it("keeps what a copy restored while no instance ran lacks until a start applies it, then removes it", async () => {
+    const world = createWorld("sql");
+    try {
+      const steps: readonly Action[] = [
+        by("start", 0),
+        by("write", 0),
+        { kind: "backUp", slot: 0 },
+        by("forget", 0),
+        by("stop", 0),
+        { kind: "tick" },
+        restore(0, ["pass", "pass"]),
+        { kind: "prune" },
+      ];
+      for (const step of steps) await world.run(step);
+      expect((await world.entries()).map(({ committed }) => committed)).toEqual([undefined]);
+      for (const step of [by("start", 0), by("pass", 0), { kind: "prune" } as const]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([1, 1]);
+    } finally {
+      await world.close();
+    }
   });
 });
 

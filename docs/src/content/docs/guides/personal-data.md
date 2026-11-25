@@ -2822,7 +2822,7 @@ told appends `TenantForgotten` again, and only the ledger says to whom the copy'
 it was taken; once everyone was told, no copy needs them: the tenant key store's record of the
 forgetting is what refuses every copy, and a person in one opens nothing without the tenant's key.
 Until then the instance that tells the recipients prunes the ledger past [`keepFor`](#keeping-the-ledger-short)
-as a running tenant's reconciliation does, and a ledger whose reads lag its writes, KV's, is
+as a running tenant's reconciliation does, and `bounda forget-ledger prune` while none runs, and a ledger whose reads lag its writes, KV's, is
 cleared only once a minute has passed since the forgetting, so every entry written before it is
 listed. The ledger's fence is raised again before the clear, should the ledger not have answered
 at the forgetting, and outlives the clear, so no entry lands after it. The app logs each step:
@@ -2981,7 +2981,8 @@ after which it reads committed whatever is appended again, and an intention's `r
 database stood when it was written, which it may drop once the entry is committed; its `read` returns
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
-time; its `readMark` and `raiseMark` keep numbers that only go up, which the runtime uses to tell
+time; its optional `tenants` lists, in code-unit order, every tenant whose entries its store holds,
+which [`bounda forget-ledger prune --all-tenants`](#keeping-the-ledger-short) reads; its `readMark` and `raiseMark` keep numbers that only go up, which the runtime uses to tell
 a copy [restored while the app was stopped](#restores); its `clear` removes every entry and mark of
 its tenant, which the runtime calls once the tenant is [forgotten](#forgetting-a-tenant) and every
 recipient told, and resolves `false` when it removed part only, so the runtime calls it again at
@@ -3114,10 +3115,28 @@ forgetting older than `keepFor` is not appended at all. KV expires each key on i
 `keepFor` after its forgetting, since it cannot list its oldest keys first. A backup older than
 `keepFor` brings back whom the removed entries named, so when you keep backups longer, raise it
 first. Without `keepFor` entries are kept until their tenant is [forgotten](#forgetting-a-tenant):
-ids, times and fingerprints only, but still the ids of people who asked to be forgotten. A ledger
-in a SQL database is pruned only by an app of its tenant that runs: a tenant whose app does not
-run for a while keeps its entries past `keepFor` until one does (see
-[Limitations](/reference/limitations/)); KV and the keeper expire theirs on their own.
+ids, times and fingerprints only, but still the ids of people who asked to be forgotten. KV and
+the keeper expire theirs on their own.
+
+A ledger in a SQL database is pruned by an app of its tenant that runs. For a
+tenant whose app does not run, a stopped one, one that starts only now and then, or a forgotten one
+whose recipients are not all told, prune it from the project's root, on a schedule as the backups
+run:
+
+```bash
+bounda forget-ledger prune --all-tenants
+```
+
+It removes an entry older than `keepFor` only once the tenant's database no longer needs it: once
+the database's reconciliation has read past it, or the database holds what it records. An entry the
+database has yet to apply stays, as one a copy restored while the app was stopped lacks, so that
+copy is still forgotten again at its next start, after which the next prune removes it; the command
+says when it kept one. A forgotten tenant's ledger is pruned past `keepFor` alone, as its app does.
+It runs safely beside the tenant's running instances. `--tenant`
+names one tenant, and with `--all-tenants`, whose configuration names the ledger's store; each
+tenant listed is pruned through its own configuration. `pruneTenantForgetLedger` and
+`listForgetLedgerTenants` from `@bounda-dev/core` do the same in code (see the
+[CLI](/reference/cli/#bounda-forget-ledger-prune)).
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or
 while it was longer, keep theirs. Give them the one `keepFor` sets now, from the project's root,

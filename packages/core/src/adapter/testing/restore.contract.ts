@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RuntimeRole } from "../../config/types.ts";
+import type { Config, RuntimeRole } from "../../config/types.ts";
 import { type Clock, createFixedClock } from "../../contracts/clock.ts";
 import {
   ForgetLedgerUnreconciledError,
@@ -16,6 +16,7 @@ import {
   type ForgetLedgerSource,
 } from "../../kernel/personal-data/forget-ledger.ts";
 import type { KeyWrapperDefinition } from "../../kernel/personal-data/key-wrapper.ts";
+import { pruneTenantForgetLedger } from "../../kernel/personal-data/ledger-prune.ts";
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../../kernel/personal-data/reconciliation.ts";
 import { RESEAL_SWITCH_MS } from "../../kernel/personal-data/reseal.ts";
@@ -838,6 +839,90 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       "forgets again, at the worker's next pass, whoever a restore under the running app brings back",
       async () => {
         await scenario("hot");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    // The ledger the source opens for the tenant, as an app does, for what a test reads of it.
+    const ledgerOf = async (source: ForgetLedgerSource): Promise<ForgetLedger> =>
+      source.kind === "bounda-forget-ledger"
+        ? source.create({ env, tenant: DEFAULT_TENANT })
+        : source.createForgetLedger({ tenant: DEFAULT_TENANT });
+
+    // A forgetting the copy lacks stays in the ledger, pruned with no app running, until an app
+    // applies it again; then it goes. `hot` prunes beside the app the copy was restored under.
+    const pruneScenario = async (
+      restoring: "hot" | "at start",
+      skip: (reason: string) => void,
+    ): Promise<void> => {
+      const target = await create();
+      const ledger = await ledgerOf(target.forgetLedger);
+      stops.push(async () => ledger.close?.());
+      if (ledger.prune === undefined) return skip("the ledger expires its entries on its own");
+      const clock = createFixedClock(START);
+      const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+      for (const person of ["ana", "bob"]) await write(first, person);
+      await target.backUp();
+      const anaForgotten = (await first.app.forget("ana")).eventIds;
+      await first.app.runUntilIdle();
+      const [{ forgottenAt } = { forgottenAt: "" }] = await ledger.read({ limit: 1 });
+
+      let storage: Adapter;
+      if (restoring === "hot") {
+        storage = await target.restore(openedAs(first.app.config.storage));
+      } else {
+        await first.app.stop();
+        storage = await target.restore();
+      }
+      const config: Config = {
+        storage,
+        runtime: {
+          personalData: {
+            keyWrapper: BEFORE_ROTATION,
+            tenantKeys,
+            forgetLedger: { store: target.forgetLedger, keepFor: "1d" },
+          },
+        },
+      };
+      const later = new Date(START.getTime() + 2 * 24 * 60 * 60_000);
+      expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+        tenant: DEFAULT_TENANT,
+        before: forgottenAt,
+        unapplied: true,
+      });
+      expect((await ledger.read({ limit: 10 })).map(({ personId }) => personId)).toContain("ana");
+
+      clock.advance(60_000);
+      const restored =
+        restoring === "hot"
+          ? first
+          : await start(storage, target.forgetLedger, BEFORE_ROTATION, clock);
+      await restored.app.runUntilIdle();
+      expect(await forgettings(restored.app, "ana")).toEqual(anaForgotten);
+      await expectForgottenIn(restored, "ana");
+      await expectReadable(restored, "bob");
+
+      // Beside the running app, now that its database holds every entry.
+      expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+        tenant: DEFAULT_TENANT,
+        before: new Date(later.getTime() - 24 * 60 * 60_000).toISOString(),
+        unapplied: false,
+      });
+      expect(await ledger.read({ limit: 10 })).toEqual([]);
+    };
+
+    it(
+      "keeps, pruning with no app running, what a copy restored while the app was stopped lacks, until its start applies it",
+      async (context) => {
+        await pruneScenario("at start", (reason) => context.skip(reason));
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it.skipIf(!hot)(
+      "keeps, pruning beside the app, what a copy restored under it lacks, until its next pass applies it",
+      async (context) => {
+        await pruneScenario("hot", (reason) => context.skip(reason));
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

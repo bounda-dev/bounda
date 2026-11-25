@@ -332,6 +332,28 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.read({ limit: 10 })).toEqual(entries.slice(0, 1));
     });
 
+    it("lists every tenant whose entries the store holds, in code-unit order, as entries come and go", async (context) => {
+      if (ledger.tenants === undefined) context.skip("the ledger cannot list its tenants");
+      expect(await ledger.tenants?.()).toEqual([]);
+      const others = await Promise.all(["tenant-B", "tenant-a b", "tenant-ä"].map(ledgerFor));
+      // A mark, a fence and a ledger opened hold no entry.
+      await others[0]?.raiseMark("restore:generation", 1);
+      await others[1]?.fence.set(FROZEN);
+      expect(await ledger.tenants?.()).toEqual([]);
+      await others[1]?.fence.set({ state: "open" });
+      await ledger.append([entry("c-1", "e-1", 1)]);
+      for (const other of others) await other.append([entry("c-2", "e-2", 2)]);
+      expect(await ledger.tenants?.()).toEqual(["tenant-B", "tenant-a", "tenant-a b", "tenant-ä"]);
+      expect(await others[2]?.tenants?.()).toEqual(await ledger.tenants?.());
+      await ledger.prune?.({ before: entry("c-9", "e-9", 9).forgottenAt });
+      await others[2]?.clear();
+      expect(await ledger.tenants?.()).toEqual(
+        ledger.prune === undefined
+          ? ["tenant-B", "tenant-a", "tenant-a b"]
+          : ["tenant-B", "tenant-a b"],
+      );
+    });
+
     it("keeps each tenant's entries apart", async () => {
       const other = await ledgerFor("tenant-b");
       const third = await ledgerFor("tenant-c");

@@ -8,10 +8,13 @@ import {
   type ForgetTenantOptions,
   type FrozenTenantStatus,
   type Logger,
+  listForgetLedgerTenants,
   listTenantsUnderPreviousMaster,
   migrateTables,
   type NotifiedRecipient,
   type PersonalCategoryName,
+  type PrunedTenantForgetLedger,
+  pruneTenantForgetLedger,
   type RewrappedTenantKeys,
   type RotateTenantKeyOptions,
   rewrapTenantKeys,
@@ -379,6 +382,34 @@ describe("a database file encrypted under the tenant's keys", () => {
       readonly env?: AppEnv;
       readonly tenant?: string;
     }>();
+  });
+});
+
+describe("pruning a forget ledger with no app running", () => {
+  it("prunes one tenant from its configuration, saying where it stopped, and lists the store's tenants", () => {
+    expectTypeOf(pruneTenantForgetLedger).parameter(0).toEqualTypeOf<{
+      readonly config: Config;
+      readonly env?: AppEnv;
+      readonly tenant?: string;
+      readonly now?: Date;
+    }>();
+    expectTypeOf(pruneTenantForgetLedger).returns.toEqualTypeOf<
+      Promise<PrunedTenantForgetLedger>
+    >();
+    expectTypeOf<PrunedTenantForgetLedger>().toEqualTypeOf<{
+      readonly tenant: string;
+      readonly before: string;
+      readonly unapplied: boolean;
+    }>();
+    expectTypeOf(listForgetLedgerTenants).parameter(0).toEqualTypeOf<{
+      readonly config: Config;
+      readonly env?: AppEnv;
+      readonly tenant?: string;
+    }>();
+    expectTypeOf(listForgetLedgerTenants).returns.toEqualTypeOf<Promise<readonly string[]>>();
+    expectTypeOf<ForgetLedger["tenants"]>().toEqualTypeOf<
+      (() => Promise<readonly string[]>) | undefined
+    >();
   });
 });
 

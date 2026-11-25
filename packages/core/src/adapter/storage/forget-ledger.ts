@@ -179,10 +179,16 @@ export interface ForgetLedger {
   readonly visibilityDelayMs?: number;
   /**
    * Removes the entries older than `before`, which the runtime calls with every periodic
-   * reconciliation when `keepFor` is set. A store that expires entries on its own leaves it out
+   * reconciliation when `keepFor` is set, and `pruneTenantForgetLedger` with no app running. A store that expires entries on its own leaves it out
    * and expires each entry `keepForMs` after its `forgottenAt` instead.
    */
   prune?(args: PruneForgetLedgerArgs): Promise<void>;
+  /**
+   * Every tenant whose entries the ledger's store holds, this ledger's own and others', in
+   * code-unit order: what `pruneTenantForgetLedger` reads to reach every tenant of a store that
+   * holds several. A store that cannot list them leaves it out.
+   */
+  tenants?(): Promise<readonly string[]>;
   /**
    * The highest value raised under `name` for this ledger's store, `0` for none. What the runtime
    * keeps of the database outside it: a copy restored while the app was stopped holds less than
@@ -229,7 +235,12 @@ export interface CreateForgetLedgerArgs {
   readonly keepForMs?: number | undefined;
 }
 
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+export interface ByCodeUnitFunction {
+  (a: string, b: string): number;
+}
+
+// What a ledger compares its ordering columns and its tenants by, as SQLite does.
+export const byCodeUnit: ByCodeUnitFunction = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 export interface ForgottenReasonOfFunction {
   (stored: unknown): PersonalDataForgottenReason;
