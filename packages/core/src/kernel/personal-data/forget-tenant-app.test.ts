@@ -1171,6 +1171,49 @@ describe("the host log of a forgotten or frozen tenant", () => {
     ]);
   });
 
+  it("goes to app/audit.ts in an app that is not a test's", async () => {
+    const refused: OnHostRejectionArgs[] = [];
+    const env = { BOUNDA_MASTER_KEY: randomKey() };
+    const app = await createApp({
+      registry: {
+        ...registry,
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: (args: OnHostRejectionArgs) => {
+            refused.push(args);
+          },
+        },
+      } as Registry,
+      config: {
+        storage: memory(),
+        runtime: {
+          personalData: {
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            tenantKeys: defineTenantKeyStore(() => createMemoryTenantKeyStore()),
+          },
+        },
+      },
+      env,
+      clock: createFixedClock(),
+    });
+    stops.push(() => app.stop());
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await expect(app.exportPersonalData("c-1")).rejects.toThrow(TenantForgottenError);
+    expect(refused).toEqual([
+      {
+        rejection: {
+          at: expect.any(String),
+          tenant: "default",
+          reason: "tenant-forgotten",
+          target: "exportPersonalData",
+          actor: null,
+        },
+        env,
+        logger: expect.anything(),
+      },
+    ]);
+  });
+
   it("records the writes a freeze refuses, never the reads it serves", async () => {
     const refused: HostRejection[] = [];
     const { app } = await createTestApp({

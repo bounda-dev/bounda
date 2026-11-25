@@ -1088,6 +1088,15 @@ describe("the access log", () => {
     ]);
   });
 
+  it("refuses an audit module without onHostRejection", async () => {
+    const registry = { ...registryWith(), audit: { onPersonalDataAccess: () => {} } } as never;
+    await expect(createTestApp({ registry })).rejects.toThrow(
+      new ConfigurationError(
+        'Invalid registry:\n  audit: missing export "onHostRejection" (expected a function)',
+      ),
+    );
+  });
+
   it("refuses an audit module without onPersonalDataAccess", async () => {
     await expect(createTestApp({ registry: registryWith({} as never) })).rejects.toThrow(
       new ConfigurationError(

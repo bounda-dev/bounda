@@ -130,8 +130,7 @@ export interface RecordedRejectionsFunction {
 
 /**
  * The client, each call of which that rejects because of its tenant's state, forgotten or frozen,
- * recorded in the host log before it rejects. `as` is handed out as it is: the client it returns
- * is the caller's to wrap.
+ * recorded in the host log before it rejects. The client `as` returns is the caller's to wrap.
  */
 export const recordedRejections: RecordedRejectionsFunction = ({
   client,
@@ -139,7 +138,7 @@ export const recordedRejections: RecordedRejectionsFunction = ({
   tenant,
   actor,
 }) => {
-  const settled = async (pending: PromiseLike<unknown>, target: string): Promise<unknown> => {
+  const settled = async (pending: Promise<unknown>, target: string): Promise<unknown> => {
     try {
       return await pending;
     } catch (error) {
@@ -171,7 +170,7 @@ export const recordedRejections: RecordedRejectionsFunction = ({
           self,
           args,
         );
-        return isThenable(result) ? settled(result, path) : result;
+        return result instanceof Promise ? settled(result, path) : result;
       },
     });
     paths.set(path, watched);
@@ -180,15 +179,10 @@ export const recordedRejections: RecordedRejectionsFunction = ({
   return new Proxy(client, {
     get: (target, property, receiver) => {
       const member: unknown = Reflect.get(target, property, receiver);
-      if (typeof property !== "string" || property === "as") return member;
+      if (typeof property !== "string") return member;
       return typeof member === "function" || FACADES.has(property)
         ? watch(member, property)
         : member;
     },
   });
 };
-
-const isThenable = (value: unknown): value is PromiseLike<unknown> =>
-  (typeof value === "object" || typeof value === "function") &&
-  value !== null &&
-  typeof Reflect.get(value, "then") === "function";

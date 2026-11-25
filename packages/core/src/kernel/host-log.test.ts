@@ -120,7 +120,7 @@ describe("recordedRejections", () => {
       config,
       other,
       commands: { placeOrder: fail },
-      deadLetters: { list: fail },
+      deadLetters: { list: fail, nothing: null },
       exportPersonalData: fail,
       count: () => 1,
       as: () => other,
@@ -192,6 +192,7 @@ describe("recordedRejections", () => {
     expect(again.exportPersonalData).toBe(again.exportPersonalData);
     expect(again.other).toBe(plain.other);
     expect(again.as()).toBe(plain.other);
+    expect(again.deadLetters.nothing).toBeNull();
     expect(again[Symbol.for("bounda.test")]).toBe(plain[Symbol.for("bounda.test")]);
     expect(Reflect.get(again.commands, Symbol.iterator)).toBeUndefined();
     expect(records).toEqual([]);
