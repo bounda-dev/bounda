@@ -21,11 +21,63 @@ const client = {
 const fromHeader = ({ request }: RequestArgs) => request.headers.get("x-user") ?? undefined;
 
 describe("actAs", () => {
+  const unused = async () => {
+    throw new Error("refused a request");
+  };
+
   it("binds the client to who makes the request, and leaves it as it is for nobody", async () => {
-    expect(await actAs(client, fromHeader, requestArgs("user-1"))).toEqual({ actedAs: "user-1" });
-    expect(await actAs(client, async () => "user-2", requestArgs())).toEqual({ actedAs: "user-2" });
-    expect(await actAs(client, fromHeader, requestArgs())).toBe(client);
-    expect(await actAs(client, undefined, requestArgs("user-1"))).toBe(client);
+    expect(await actAs(client, fromHeader, requestArgs("user-1"), unused)).toEqual({
+      actedAs: "user-1",
+    });
+    expect(await actAs(client, async () => "user-2", requestArgs(), unused)).toEqual({
+      actedAs: "user-2",
+    });
+    expect(await actAs(client, fromHeader, requestArgs(), unused)).toBe(client);
+    expect(await actAs(client, undefined, requestArgs("user-1"), unused)).toBe(client);
+  });
+
+  it("records a request whose actor function throws, or names what as refuses, before rejecting", async () => {
+    const refused: string[] = [];
+    const refuse = async (reason: string) => {
+      refused.push(reason);
+    };
+    const signIn = new Response(null, { status: 302, headers: { location: "/sign-in" } });
+    await expect(
+      actAs(
+        client,
+        () => {
+          throw signIn;
+        },
+        requestArgs(),
+        refuse,
+      ),
+    ).rejects.toBe(signIn);
+    const malformed = new ConfigurationError("not an actor");
+    const refusing = {
+      as: () => {
+        throw malformed;
+      },
+    } as unknown as BoundaClient<Registry>;
+    await expect(actAs(refusing, fromHeader, requestArgs("user-1"), refuse)).rejects.toBe(
+      malformed,
+    );
+    expect(refused).toEqual(["actor-unresolved", "actor-invalid"]);
+  });
+
+  it("rejects with what the host log throws in place of the refusal", async () => {
+    const down = async () => {
+      throw new Error("audit sink down");
+    };
+    await expect(
+      actAs(
+        client,
+        () => {
+          throw new Error("no session");
+        },
+        requestArgs(),
+        down,
+      ),
+    ).rejects.toThrow("audit sink down");
   });
 });
 

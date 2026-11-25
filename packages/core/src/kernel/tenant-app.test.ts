@@ -376,7 +376,7 @@ describe("an app without keys", () => {
     });
     stops.push(() => app.stop());
     expect((await app.status()).tenant).toBeNull();
-    // Without a tenant to check, its calls are the app's own, unwrapped.
+    // Without a tenant to check, no guard stands before its calls: each reads the same every time.
     expect(app.events.read).toBe(app.events.read);
     for (const [operation, call] of [
       ["forgetTenant", () => app.forgetTenant("default")],

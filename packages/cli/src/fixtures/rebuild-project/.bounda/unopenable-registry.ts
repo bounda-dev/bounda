@@ -11,5 +11,6 @@ export const registry = {
         throw new Error("the access log is down");
       }
     },
+    onHostRejection: () => {},
   },
 } as const satisfies Registry;

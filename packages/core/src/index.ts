@@ -62,6 +62,13 @@ export type {
   SubscriberFailures,
 } from "./kernel/dispatch/subscriber-failures.ts";
 export type { GlobalStream, ReadEventsArgs } from "./kernel/events/global-stream.ts";
+export type {
+  HostLogOfArgs,
+  HostLogOfFunction,
+  RecordHostRejection,
+  RecordHostRejectionArgs,
+} from "./kernel/host-log.ts";
+export { HOST_REJECTED, hostLogOf } from "./kernel/host-log.ts";
 export type { MigrateTablesArgs, MigrateTablesFunction } from "./kernel/migrate.ts";
 export { migrateTables } from "./kernel/migrate.ts";
 export type {

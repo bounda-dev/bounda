@@ -10,6 +10,7 @@ import {
 } from "../contracts/errors.ts";
 import { memory } from "../memory/index.ts";
 import {
+  type AuditModule,
   MAX_ACCESS_PERSONS,
   type OnPersonalDataAccessArgs,
   type PersonalDataAccess,
@@ -33,7 +34,8 @@ interface CustomerRow {
 
 type Events = Record<string, (payload?: unknown) => unknown>;
 
-const registryWith = (audit?: Registry["audit"]) =>
+// The host log is another test's.
+const registryWith = (audit?: Pick<AuditModule, "onPersonalDataAccess">) =>
   ({
     aggregates: {
       customer: {
@@ -169,7 +171,7 @@ const registryWith = (audit?: Registry["audit"]) =>
         },
       },
     },
-    ...(audit === undefined ? {} : { audit }),
+    ...(audit === undefined ? {} : { audit: { onHostRejection: () => {}, ...audit } }),
   }) satisfies Registry;
 
 const setUp = async () => {

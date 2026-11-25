@@ -1452,6 +1452,67 @@ The records are never sampled, unlike a trace, and nothing is written to the sto
 it would be a write on every read, and a record that names a person is personal data that
 `forget` would then have to reach. A logger that drops `info` drops them too.
 
+### Refused requests
+
+The access log sees the calls that reach an operation reading personal data. A request refused
+before that, because of its route, its body, its tenant or who makes it, goes to a log of its own,
+the host log, one record per refusal:
+
+| `reason` | Refused by | When |
+| --- | --- | --- |
+| `no-route` | the Worker of `createWorker` | the path names no route it serves |
+| `method-not-allowed` | the Worker | the route takes `POST` |
+| `payload-too-large` | the Worker | the body is over `maxPayloadBytes` |
+| `invalid-json` | the Worker | the body is not JSON |
+| `tenant-unresolved` | React Router's host, the Worker | the tenant function threw, or named no store |
+| `actor-unresolved` | React Router's host, the Worker | the actor function threw, as one does that refuses a request without a session or redirects it to sign in |
+| `actor-invalid` | React Router's host, the Worker, the Durable Object | [`as`](/concepts/ids-causation-and-correlation/#who-acts) refused what the actor function named |
+| `unknown-command`, `unknown-query` | the Durable Object | no command or query of that name |
+| `tenant-forgotten` | the app, on every host | the tenant was [forgotten](#forgetting-a-tenant) |
+| `tenant-frozen` | the app, on every host | the tenant is [frozen](#freezing-a-tenant), and the call writes |
+
+Each record is `{ at, tenant, reason, target, actor }`: `at` on the clock of whoever refused it;
+`tenant` the store the request was for, `null` when it was refused before its tenant was known;
+`target` what it asked for, the route's pattern in React Router (`/orders/:orderId`, never the
+path), `commands/<name>` or `queries/<name>` for the Worker, `null` for a path that names no route,
+`commands.<name>` or `queries.<name>` for a command or query, or the client's operation, such as
+`exportPersonalData`; `actor` who made it, as the access log names them, `null` for nobody, for a
+request refused before its actor was known, and for one whose actor was refused, since what `as`
+refuses may be what must not be kept, such as an email. Ids and names alone: never the path, the
+body, a header or the error's message.
+
+Without anything more, each record goes to the host's logger at `info`, with the message
+`request refused` and the record as its fields. With `app/audit.ts`, it goes to `onHostRejection`,
+which the module exports beside `onPersonalDataAccess`: the app refuses to start without both.
+
+```ts
+// app/audit.ts
+import type { OnHostRejection, OnPersonalDataAccess } from "@bounda-dev/core";
+
+export const onPersonalDataAccess: OnPersonalDataAccess = async ({ access, env }) => {
+  await fetch(env.AUDIT_URL, { method: "POST", body: JSON.stringify(access) });
+};
+
+export const onHostRejection: OnHostRejection = async ({ rejection, env }) => {
+  await fetch(env.AUDIT_URL, { method: "POST", body: JSON.stringify(rejection) });
+};
+```
+
+It receives the record with the host's `env` and logger. Every host reaches it: the app itself,
+under `boot()`, `createApp` and the Durable Object, for a forgotten or frozen tenant; React
+Router's, with the registry the [`bounda()` Vite plugin](/guides/react-router/) hands it, or the
+`registry` its `createBounda` takes; the Durable Object, with its own; the Worker, with the
+`registry` [`createWorker`](/adapters/cloudflare/#the-http-api) takes, which a project from
+`create-bounda` passes. A host of your own records what it refuses with `hostLogOf({ registry,
+env, logger })`. A test app sends the records to its `logger`, or to the `onHostRejection` the
+test passes to `createTestApp`. The refusal waits for the record, and when `onHostRejection`
+throws, the request fails with that error instead, as a call does whose access record fails: a
+sink that is down shows as failed requests, never as a refusal that left no trace. Like the access
+log, it is never sampled, and the runtime keeps nothing of it: how long the records are kept, and
+when they go, is the sink's to say. They name tenants and actors by id: [handing a
+tenant back](#handing-a-tenant-back) and [forgetting it](#forgetting-a-tenant) leave them where
+they went, as the access log's.
+
 ## Recipients
 
 What a port sends out stays out: the mailing provider has the contact, the CRM has the address.
@@ -1997,8 +2058,8 @@ database. The record lists:
   an export when that is more than one person, what went to each recipient, the
   [master key](#a-master-key), the [tenant key store](#the-tenant-key-store), the [forget ledger](#the-forget-ledger) for its
   `keepFor` and no longer than until its tenant is [forgotten](#forgetting-a-tenant) and every
-  recipient told, and the [access log](#who-opened-what) when `app/audit.ts` exists, each with
-  where it is kept;
+  recipient told, and the [access log](#who-opened-what) and the [host
+  log](#refused-requests) when `app/audit.ts` exists, each with where it is kept;
 - whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
   ledger are configured;
 - the fields marked `notPersonal`.
@@ -2609,8 +2670,9 @@ the data, not the means to open it.
 What it leaves out is not data of the tenant's: snapshots, the state of aggregates the events it
 holds rebuild; the subscribers' checkpoints, the inbox and the tables' versions, which say how far
 the runtime got; and the keys, its own and the tenant key store's. The [access log](#who-opened-what)
-is not the runtime's to hand back: it went to `app/audit.ts`, which is already the controller's,
-and records the export itself, `started` before its header is handed out and again when it ends.
+and the [host log](#refused-requests) are not the runtime's to hand back: they went to
+`app/audit.ts`, which is already the controller's, and the access log records the export itself,
+`started` before its header is handed out and again when it ends.
 
 `tenantExportJsonLines(parts)` writes it as [JSON Lines](https://jsonlines.org/), one part per line,
 each a `{ kind, ... }` as the table names it: a format anything reads a line at a time, documented
@@ -2719,7 +2781,8 @@ tenant forgotten: its recipients are told, and its forget ledger cleared
 A ledger that fails to clear logs an error and is cleared again 30 seconds later.
 
 From then on the app serves nothing: every command, query, export and other call rejects with
-`TenantForgottenError` (`TENANT_FORGOTTEN`), and a Worker from `createWorker` answers `410`. Another
+`TenantForgottenError` (`TENANT_FORGOTTEN`), recorded in the [host log](#refused-requests) as
+`tenant-forgotten`, and a Worker from `createWorker` answers `410`. Another
 instance sees it within `TENANT_CHECK_INTERVAL_MS` or at its first key it can no longer read, and
 does the same; until then its reads may still open what its cached keys open, but every write it
 makes is refused by the fences, the ledger's included, so nothing it does lands after the
@@ -2749,7 +2812,10 @@ fields not marked `.personal()` in the clear until it is restored and an app sta
 nothing needs its skeleton, the tenant's Durable Object with `deleteAll()`, its PostgreSQL schema,
 its SQLite file, once its recipients are told, its ledger cleared and its files' keys destroyed:
 nothing else does that for a tenant whose app never starts again, and a file deleted while the
-record still keeps its keys leaves every copy of it open to the master key.
+record still keeps its keys leaves every copy of it open to the master key. Nor does the runtime
+reach `app/audit.ts`: the [access log](#who-opened-what)'s records of the tenant, which its
+`onPersonalDataAccess` received with the tenant's name, and the [host log](#refused-requests)'s,
+which name it in `tenant`, are kept or deleted there, as the sink's retention says.
 `app.status().forgottenTenant` says it, as `{ recipientsTold, forgetLedgerCleared,
 fileKeysDestroyed }`, `forgetLedgerCleared` `null` without a ledger, and `bounda status` prints
 `forgotten tenant: recipients told, forget ledger cleared, no file key kept; the database may be

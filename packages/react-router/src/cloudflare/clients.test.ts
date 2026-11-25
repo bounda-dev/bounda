@@ -3,6 +3,7 @@ import { type BoundaClient, ConfigurationError, type Registry } from "@bounda-de
 import { RouterContextProvider } from "react-router";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { RequestArgs } from "../actor.ts";
+import type { RefuseRequestFunction } from "../host-log.ts";
 import { cloudflareClients, type TenantFunction } from "./clients.ts";
 import { storeNamespace } from "./test-support.ts";
 
@@ -15,6 +16,11 @@ const requestArgs = (params: Record<string, string> = {}): RequestArgs => {
     params,
     context: new RouterContextProvider(),
   };
+};
+
+// For the tests that refuse nothing.
+const unused: RefuseRequestFunction = async () => {
+  throw new Error("refused a request that names its tenant");
 };
 
 const byWorkspace: TenantFunction = ({ params }) => params.workspace ?? "default";
@@ -42,7 +48,7 @@ describe("cloudflareClients", () => {
       consistency: "eventual",
     });
 
-    const client = clientOf(requestArgs({ workspace: "acme" }));
+    const client = clientOf(requestArgs({ workspace: "acme" }), unused);
     expectTypeOf(client).toEqualTypeOf<BoundaClient<Registry>>();
     expect(tenants).toEqual([]);
     await Reflect.get(client.commands, "placeOrder")({ orderId: "o-1" }, { correlationId: "c-1" });
@@ -61,7 +67,7 @@ describe("cloudflareClients", () => {
       ["acme", "query", "getOrder", { orderId: "o-1" }, undefined, undefined],
     ]);
 
-    await Reflect.get(clientOf(requestArgs()).queries, "getOrder")({ orderId: "o-1" });
+    await Reflect.get(clientOf(requestArgs(), unused).queries, "getOrder")({ orderId: "o-1" });
     expect(tenants).toEqual(["acme", "default"]);
   });
 
@@ -73,7 +79,7 @@ describe("cloudflareClients", () => {
       tenant: byWorkspace,
       consistency: "eventual",
     });
-    await Reflect.get(clientOf(requestArgs({ workspace: "acme" })).queries, "getOrder")({});
+    await Reflect.get(clientOf(requestArgs({ workspace: "acme" }), unused).queries, "getOrder")({});
     expect(store.calls).toEqual([["eu/acme", "query", "getOrder", {}, undefined, undefined]]);
   });
 
@@ -84,7 +90,7 @@ describe("cloudflareClients", () => {
       config: { storage: cloudflare() },
       tenant: async () => "acme",
       consistency: "read-your-writes",
-    })(requestArgs());
+    })(requestArgs(), unused);
 
     await client.getLag();
     await client.status();
@@ -140,9 +146,11 @@ describe("cloudflareClients", () => {
     ]);
   });
 
-  it("names the tenant once per request even when it throws", async () => {
+  it("names the tenant once per request even when it throws, and records the refusal once", async () => {
     const store = storeNamespace();
     let calls = 0;
+    const refused: unknown[][] = [];
+    const args = requestArgs();
     const client = cloudflareClients<Registry>({
       env: { STORE: store.namespace },
       config: { storage: cloudflare() },
@@ -151,29 +159,55 @@ describe("cloudflareClients", () => {
         throw new Error("no session");
       },
       consistency: "read-your-writes",
-    })(requestArgs());
+    })(args, async (...refusal) => {
+      refused.push(refusal);
+    });
 
     await expect(client.getLag()).rejects.toThrow("no session");
     await expect(client.getLag()).rejects.toThrow("no session");
     expect(calls).toBe(1);
+    expect(refused).toEqual([[args, "tenant-unresolved"]]);
     expect(store.calls).toEqual([]);
   });
 
-  it("rejects every call of a request whose tenant is not a string", async () => {
-    const store = storeNamespace();
-    const client = cloudflareClients<Registry>({
-      env: { STORE: store.namespace },
-      config: { storage: cloudflare() },
-      tenant: (() => undefined) as unknown as TenantFunction,
-      consistency: "read-your-writes",
-    })(requestArgs());
+  it("rejects every call of a request whose tenant is not a non-empty string, recorded", async () => {
+    for (const [named, shown] of [
+      [undefined, "undefined"],
+      ["", '""'],
+    ] as const) {
+      const store = storeNamespace();
+      const refused: unknown[][] = [];
+      const client = cloudflareClients<Registry>({
+        env: { STORE: store.namespace },
+        config: { storage: cloudflare() },
+        tenant: (() => named) as unknown as TenantFunction,
+        consistency: "read-your-writes",
+      })(requestArgs(), async (_args, reason) => {
+        refused.push([reason]);
+      });
 
-    const refusal = new ConfigurationError(
-      "tenant must name the store of a request with a string, got undefined",
-    );
-    await expect(client.getLag()).rejects.toThrow(refusal);
-    await expect(client.deadLetters.list()).rejects.toThrow(refusal);
-    expect(store.calls).toEqual([]);
+      const refusal = new ConfigurationError(
+        `tenant must name the store of a request with a non-empty string, got ${shown}`,
+      );
+      await expect(client.getLag()).rejects.toThrow(refusal);
+      await expect(client.deadLetters.list()).rejects.toThrow(refusal);
+      expect(refused).toEqual([["tenant-unresolved"]]);
+      expect(store.calls).toEqual([]);
+    }
+  });
+
+  it("rejects with what the host log throws when it cannot record the refusal", async () => {
+    const client = cloudflareClients<Registry>({
+      env: { STORE: storeNamespace().namespace },
+      config: { storage: cloudflare() },
+      tenant: () => {
+        throw new Error("no session");
+      },
+      consistency: "read-your-writes",
+    })(requestArgs(), async () => {
+      throw new Error("audit sink down");
+    });
+    await expect(client.getLag()).rejects.toThrow("audit sink down");
   });
 
   it("refuses a storage that is not cloudflare()", () => {
@@ -238,7 +272,7 @@ describe("cloudflareClients", () => {
       consistency: "eventual",
     });
     for (const workspace of ["acme", "globex"]) {
-      await Reflect.get(clientOf(requestArgs({ workspace })).queries, "getOrder")({});
+      await Reflect.get(clientOf(requestArgs({ workspace }), unused).queries, "getOrder")({});
     }
     expect(narrowed).toEqual(["eu"]);
     expect(store.calls.map(([tenant]) => tenant)).toEqual(["eu/acme", "eu/globex"]);

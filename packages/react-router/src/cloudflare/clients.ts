@@ -12,8 +12,8 @@ import {
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
 import type { RequestArgs } from "../actor.ts";
-
-import type { TenantFunction } from "../tenant.ts";
+import type { RefuseRequestFunction } from "../host-log.ts";
+import { type TenantFunction, tenantOfRequest } from "../tenant.ts";
 
 export type { TenantFunction } from "../tenant.ts";
 
@@ -24,8 +24,12 @@ export interface CloudflareClientsArgs {
   readonly consistency: Consistency;
 }
 
+/**
+ * The client of a request; `refuse` records in the host log a request whose tenant `tenant` does
+ * not name.
+ */
 export interface ClientOfFunction<R extends Registry> {
-  (args: RequestArgs): BoundaClient<R>;
+  (args: RequestArgs, refuse: RefuseRequestFunction): BoundaClient<R>;
 }
 
 export interface CloudflareClientsFunction {
@@ -76,19 +80,16 @@ export const cloudflareClients: CloudflareClientsFunction = <R extends Registry>
       'tenant must be a function that names the store of a request, such as () => "default"',
     );
   }
-  return (args) => {
+  return (args, refuse) => {
     let stub: Promise<BoundaStub> | undefined;
     const stubOf = (): Promise<BoundaStub> => {
-      stub ??= Promise.resolve()
-        .then(() => tenant(args))
-        .then((name) => {
-          if (typeof name !== "string") {
-            throw new ConfigurationError(
-              `tenant must name the store of a request with a string, got ${JSON.stringify(name)}`,
-            );
-          }
-          return namespace.get(namespace.idFromName(name)) as unknown as BoundaStub;
-        });
+      stub ??= tenantOfRequest(tenant, args).then(
+        (name) => namespace.get(namespace.idFromName(name)) as unknown as BoundaStub,
+        async (error: unknown) => {
+          await refuse(args, "tenant-unresolved");
+          throw error;
+        },
+      );
       return stub;
     };
     return connect<R>(lazyStub(stubOf), { consistency });

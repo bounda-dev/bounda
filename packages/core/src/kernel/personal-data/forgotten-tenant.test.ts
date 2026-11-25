@@ -5,13 +5,14 @@ import type {
 } from "../../adapter/storage/forget-ledger.ts";
 import type { TenantFence } from "../../adapter/storage/tenant-fence.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
+import { TenantForgottenError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import type { TenantForgottenPayload } from "../../modules/bounda-events.ts";
 import { startedBy } from "../shared/causation.ts";
 import { createRecordingLogger } from "../test-support.ts";
-import { settleTenantForgetting } from "./forgotten-tenant.ts";
+import { rejecting, settleTenantForgetting } from "./forgotten-tenant.ts";
 import {
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_PAGE,
@@ -253,5 +254,29 @@ describe("settling a tenant's forgetting behind its fences", () => {
       ],
     ]);
     expect(await storage.eventStore.lastPosition()).toBe(1);
+  });
+});
+
+describe("rejecting", () => {
+  it("owns every name, at any depth, each of which rejects with the forgetting, and is no promise", async () => {
+    const forgetting = new TenantForgottenError("acme", "2026-01-01T00:00:00.000Z");
+    const facade = rejecting(() => forgetting) as Readonly<Record<string, unknown>>;
+    expect(Object.hasOwn(facade, "placeOrder")).toBe(true);
+    const placeOrder = Reflect.get(facade, "placeOrder") as () => Promise<unknown>;
+    await expect(placeOrder()).rejects.toBe(forgetting);
+    const deep = Reflect.get(Reflect.get(facade, "deadLetters") as object, "list");
+    await expect((deep as () => Promise<unknown>)()).rejects.toBe(forgetting);
+    expect(Object.getOwnPropertyDescriptor(facade, "placeOrder")).toEqual({
+      value: facade,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+    // Its own, as the function it stands on has them.
+    expect(Object.getOwnPropertyDescriptor(facade, "length")).toMatchObject({ value: 0 });
+    expect(Object.hasOwn(facade, "then")).toBe(false);
+    expect(Reflect.get(facade, "then")).toBeUndefined();
+    expect(Object.hasOwn(facade, Symbol.iterator)).toBe(false);
+    await expect(Promise.resolve(facade)).resolves.toBe(facade);
   });
 });
