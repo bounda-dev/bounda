@@ -256,6 +256,7 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
             onPersonalDataAccess: ({ access }: { access: PersonalDataAccess }) => {
               accesses.push(access);
             },
+            onHostRejection: () => {},
           },
         } as unknown as Registry,
         config: {

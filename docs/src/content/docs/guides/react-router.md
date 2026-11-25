@@ -278,6 +278,10 @@ action that acts for someone else binds the client again, as
 `context.get(bounda).as("billing-service")`, which keeps the request's idempotency key and reads
 its own writes as the context's client does. A file that does not export an `actor` function
 fails the request saying so, and so does an actor that is not a string of 1 to 255 characters.
+An `actor` that throws refuses the request, as one does that throws `redirect("/sign-in")` for a
+visitor it will not serve. Both refusals are recorded in the [host
+log](/guides/personal-data/#refused-requests), `actor-invalid` and `actor-unresolved`, under the
+route's pattern and the request's tenant, without the actor.
 On Cloudflare the actor goes over RPC with every call, and the Durable Object acts as it. Adding
 or removing `app/actor.ts` is picked up on the next request.
 
@@ -373,7 +377,10 @@ some, or moves to Cloudflare, where each tenant is its own Durable Object.
 // vite.config.ts
 bounda({ tenantApps: { max: 20, idleMs: 5 * 60_000 } });
 ``` A tenant that was [forgotten](/guides/personal-data/#forgetting-a-tenant)
-answers every call with `TenantForgottenError`, which `failure()` turns into a 410.
+answers every call with `TenantForgottenError`, which `failure()` turns into a 410. A `tenant`
+that throws, or names no store, refuses the request, and every refusal is recorded in the [host
+log](/guides/personal-data/#refused-requests): `tenant-unresolved`, or `tenant-forgotten` for each
+call the forgotten tenant refuses.
 
 ## On Cloudflare
 
@@ -505,9 +512,11 @@ then stops the app booted before, and the next request boots a new one once that
 finished, so the two never hold the storage at the same time. Its options are `boot` (how to
 create the app, `boot()` by default), `consistency`, `actor` (the function `app/actor.ts` would
 export), `tenant` (the function `app/tenant.ts` would export: one app per tenant, `boot` called
-with `{ tenant }`), `tenantApps` (as the plugin's), `key` (where the running app is kept on `globalThis`, one app per key), and for
-`handleError` a `logger` (`createConsoleLogger()` by default) and the `errorText` it follows before
-an app has booted (`"omit"` by default). `dispose()` stops the running app and forgets it, and resolves
+with `{ tenant }`), `tenantApps` (as the plugin's), `key` (where the running app is kept on `globalThis`, one app per key), `registry` (whose
+`app/audit.ts` receives the [host log](/guides/personal-data/#refused-requests); the plugin passes
+the project's), and for `handleError` and the host log without `app/audit.ts` a `logger`
+(`createConsoleLogger()` by default), and the `errorText` `handleError` follows before an app has
+booted (`"omit"` by default). `dispose()` stops the running app and forgets it, and resolves
 once every app booted under that key has stopped. Export `handleError` from
 `app/entry.server.tsx` as [above](#logging-errors). Import `failure` from
 `@bounda-dev/react-router`.
@@ -526,7 +535,7 @@ export const { bounda, boundaMiddleware, handleError } = createBounda({
 });
 ```
 
-It takes `consistency`, `actor` and a `logger` for `handleError` (`workersLogger` from
-`@bounda-dev/cloudflare` by default) too, and throws `ConfigurationError` when `storage` is not `cloudflare()`,
+It takes `consistency`, `actor`, `registry`, as on Node, and a `logger` for `handleError` and the
+host log (`workersLogger` from `@bounda-dev/cloudflare` by default) too, and throws `ConfigurationError` when `storage` is not `cloudflare()`,
 when the Worker has no such binding, without a `tenant` function, or for a `consistency` it does
 not know.

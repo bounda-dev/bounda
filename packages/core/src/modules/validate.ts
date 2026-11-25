@@ -205,6 +205,7 @@ export const validateRegistry: ValidateRegistryFunction = (registry) => {
   }
   if (registry.audit !== undefined) {
     requireFunction(problems, registry.audit, "audit", "onPersonalDataAccess");
+    requireFunction(problems, registry.audit, "audit", "onHostRejection");
   }
   if (problems.length > 0) {
     const details = problems.map((problem) => `  ${problem.path}: ${problem.message}`).join("\n");

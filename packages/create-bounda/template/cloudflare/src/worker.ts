@@ -19,9 +19,11 @@ export class Keeper extends createBoundaKeeper({ config }) {}
 /**
  * The Worker in front: a JSON API that routes each request to the tenant's object, picked by
  * the `x-bounda-tenant` header, over RPC. It has no authentication; an app with users writes its
- * own `fetch` and calls the object through `connect(tenantStub({ config, env, tenant }))`.
+ * own `fetch` and calls the object through `connect(tenantStub({ config, env, tenant }))`. What it
+ * refuses before an object serves it goes to the host log, app/audit.ts once the project has one.
  */
 export default createWorker({
   config,
+  registry,
   tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
 });

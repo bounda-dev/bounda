@@ -313,6 +313,10 @@ expect(records).toMatchObject([
 ]);
 ```
 
+The [host log](/guides/personal-data/#refused-requests) goes the same way: to `logger`, or to the
+`onHostRejection` the test passes, which receives each call the app refuses for its tenant's
+forgetting or freeze.
+
 ## Nothing left behind
 
 `app.getLag()` reports how far each subscriber is behind the head of the global stream.

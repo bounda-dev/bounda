@@ -3,9 +3,12 @@ import {
   ConfigurationError,
   createApp,
   type DispatchOptions,
+  type HostRejection,
   idempotencyKeyFor,
+  type OnHostRejectionArgs,
   type Registry,
   silentLogger,
+  ValidationError,
   type Witness,
 } from "@bounda-dev/core";
 import { memory } from "@bounda-dev/core/memory";
@@ -923,6 +926,156 @@ describe("createBounda with a tenant per request", () => {
       new ConfigurationError(
         "tenant must name the store of a request with a non-empty string, got 42",
       ),
+    );
+  });
+});
+
+describe("createBounda's host log", () => {
+  const requestOf = (headers: Record<string, string>, pattern = "/orders/:orderId") => {
+    const context = new RouterContextProvider();
+    return {
+      context,
+      args: { request: new Request(url, { headers }), url, pattern, params: {}, context },
+    };
+  };
+  // An app whose `as` refuses an empty actor, as the runtime's does.
+  const strictApp = (): BoundaApp =>
+    ({
+      ...fakeApp("strict").app,
+      as: (actor: string) => {
+        if (actor === "") throw new ValidationError("as needs the id of who acts", []);
+        return fakeApp(actor).app;
+      },
+    }) as unknown as BoundaApp;
+  const auditing = () => {
+    const records: OnHostRejectionArgs[] = [];
+    return {
+      records,
+      registry: {
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: (args: OnHostRejectionArgs) => {
+            records.push(args);
+          },
+        },
+      },
+    };
+  };
+  const signIn = new Response(null, { status: 302, headers: { location: "/sign-in" } });
+  const actorOfHeader = ({ request }: { readonly request: Request }) => {
+    const user = request.headers.get("x-user");
+    if (user === null) throw signIn;
+    return user;
+  };
+
+  it("records each request refused for its tenant or its actor in app/audit.ts, before it rejects", async () => {
+    const { records, registry } = auditing();
+    const { boundaMiddleware, dispose } = createBounda({
+      consistency: "eventual",
+      key: uniqueKey(),
+      tenant: ({ request }) => {
+        const tenant = request.headers.get("x-tenant");
+        if (tenant === "none") throw new Error("no such workspace");
+        return tenant ?? "";
+      },
+      actor: actorOfHeader,
+      boot: async () => strictApp(),
+      registry,
+    });
+    const next = async () => undefined;
+    await expect(boundaMiddleware(requestOf({}).args, next)).rejects.toThrow(ConfigurationError);
+    await expect(boundaMiddleware(requestOf({ "x-tenant": "none" }).args, next)).rejects.toThrow(
+      "no such workspace",
+    );
+    await expect(boundaMiddleware(requestOf({ "x-tenant": "acme" }).args, next)).rejects.toBe(
+      signIn,
+    );
+    await expect(
+      boundaMiddleware(requestOf({ "x-tenant": "acme", "x-user": "" }).args, next),
+    ).rejects.toThrow(ValidationError);
+    await boundaMiddleware(requestOf({ "x-tenant": "acme", "x-user": "user-1" }).args, next);
+
+    const refusal = (rejection: Omit<HostRejection, "at" | "target">) => ({
+      rejection: { at: expect.any(String), target: "/orders/:orderId", ...rejection },
+      env: process.env,
+      logger: expect.anything(),
+    });
+    expect(records).toEqual([
+      refusal({ tenant: null, reason: "tenant-unresolved", actor: null }),
+      refusal({ tenant: null, reason: "tenant-unresolved", actor: null }),
+      refusal({ tenant: "acme", reason: "actor-unresolved", actor: null }),
+      refusal({ tenant: "acme", reason: "actor-invalid", actor: null }),
+    ]);
+    await dispose();
+  });
+
+  it("records a refused actor of the app every request shares under the tenant it serves", async () => {
+    const { records, registry } = auditing();
+    const { boundaMiddleware, dispose } = createBounda({
+      key: uniqueKey(),
+      actor: actorOfHeader,
+      boot: async () => ({ ...strictApp(), tenant: "acme" }) as BoundaApp,
+      registry,
+    });
+    await expect(boundaMiddleware(requestOf({}, "/").args, async () => undefined)).rejects.toBe(
+      signIn,
+    );
+    expect(records.map(({ rejection }) => rejection)).toEqual([
+      {
+        at: expect.any(String),
+        tenant: "acme",
+        reason: "actor-unresolved",
+        target: "/",
+        actor: null,
+      },
+    ]);
+    await dispose();
+  });
+
+  it("goes to the logger at info without app/audit.ts, and rejects with what app/audit.ts throws", async () => {
+    const entries: unknown[][] = [];
+    const logger = {
+      ...silentLogger,
+      info: (message: string, fields?: object) => {
+        entries.push([message, fields]);
+      },
+    };
+    const logged = createBounda({
+      key: uniqueKey(),
+      tenant: () => "",
+      boot: async () => strictApp(),
+      logger,
+    });
+    await expect(
+      logged.boundaMiddleware(requestOf({}).args, async () => undefined),
+    ).rejects.toThrow(ConfigurationError);
+    expect(entries).toEqual([
+      [
+        "request refused",
+        {
+          at: expect.any(String),
+          tenant: null,
+          reason: "tenant-unresolved",
+          target: "/orders/:orderId",
+          actor: null,
+        },
+      ],
+    ]);
+    const down = createBounda({
+      key: uniqueKey(),
+      tenant: () => "",
+      boot: async () => strictApp(),
+      registry: {
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: () => {
+            throw new Error("audit sink down");
+          },
+        },
+      },
+    });
+    await expect(down.boundaMiddleware(requestOf({}).args, async () => undefined)).rejects.toThrow(
+      "audit sink down",
     );
   });
 });

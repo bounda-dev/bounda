@@ -161,7 +161,7 @@ const registry = {
       queries: {},
     },
   },
-  audit: { onPersonalDataAccess: () => {} },
+  audit: { onPersonalDataAccess: () => {}, onHostRejection: () => {} },
 } as unknown as Registry;
 
 const config: Config = {
@@ -323,6 +323,7 @@ describe("personalDataInventory", () => {
       },
       { name: "disclosures", where: "memory", location: null, transfer: null, keptFor: null },
       { name: "access-log", where: "app/audit.ts", location: null, transfer: null, keptFor: null },
+      { name: "host-log", where: "app/audit.ts", location: null, transfer: null, keptFor: null },
     ]);
     expect(inventory.security).toEqual({
       masterKey: false,
@@ -358,6 +359,7 @@ describe("personalDataInventory", () => {
       ["subscriber-failures", "eu"],
       ["disclosures", "eu"],
       ["access-log", null],
+      ["host-log", null],
     ]);
     expect(inventory.findings.filter(({ kind }) => kind === "no-location")).toEqual([]);
     // Under a storage that declares none, each store says its own.
@@ -419,6 +421,7 @@ describe("personalDataInventory", () => {
       ["tenant-keys", "ch", { safeguard: "adequacy", article: "45" }],
       ["forget-ledger", "us", { safeguard: "binding-corporate-rules", article: "47" }],
       ["access-log", null, null],
+      ["host-log", null, null],
     ]);
     expect(inventory.findings.filter(({ kind }) => kind === "no-location")).toEqual([]);
   });

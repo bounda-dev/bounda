@@ -24,12 +24,27 @@ export interface ActAsFunction {
     client: BoundaClient<R>,
     actor: ActorFunction | undefined,
     args: RequestArgs,
+    refuse: (reason: "actor-unresolved" | "actor-invalid") => Promise<void>,
   ): Promise<BoundaClient<R>>;
 }
 
-export const actAs: ActAsFunction = async (client, actor, args) => {
-  const id = await actor?.(args);
-  return id === undefined ? client : client.as(id);
+// An actor function that throws refuses the request, as one does that redirects to sign in; one
+// that names what `as` refuses, too. Each is recorded in the host log before it goes on.
+export const actAs: ActAsFunction = async (client, actor, args, refuse) => {
+  let id: string | undefined;
+  try {
+    id = await actor?.(args);
+  } catch (error) {
+    await refuse("actor-unresolved");
+    throw error;
+  }
+  if (id === undefined) return client;
+  try {
+    return client.as(id);
+  } catch (error) {
+    await refuse("actor-invalid");
+    throw error;
+  }
 };
 
 export interface ActorOfModuleFunction {

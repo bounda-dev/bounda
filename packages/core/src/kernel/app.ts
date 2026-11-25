@@ -27,7 +27,12 @@ import type { StoredEvent } from "../contracts/event.ts";
 import { type IdGenerator, uuidV7IdGenerator } from "../contracts/ids.ts";
 import { type Logger, silentLogger } from "../contracts/logger.ts";
 import { checkActor } from "../contracts/metadata.ts";
-import type { ExportOutcome, OnPersonalDataAccess, ReadOutcome } from "../modules/audit.ts";
+import type {
+  ExportOutcome,
+  OnHostRejection,
+  OnPersonalDataAccess,
+  ReadOutcome,
+} from "../modules/audit.ts";
 import type {
   ForgetOptions,
   RestrictOptions,
@@ -62,6 +67,7 @@ import {
 import { appStorage } from "./events/app-event-store.ts";
 import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts";
 import { createForgottenRunner, type ForgottenRunner, forgottenApp } from "./forgotten-app.ts";
+import { createHostLog, recordedRejections } from "./host-log.ts";
 import { checked, createAccessLog, recorded } from "./personal-data/access.ts";
 import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
 import { openDatabaseKey } from "./personal-data/blind-index.ts";
@@ -501,6 +507,10 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
   readonly config: ResolvedConfig;
   readonly role: RuntimeRole;
   /**
+   * The tenant the app serves: `DEFAULT_TENANT` unless its host named another.
+   */
+  readonly tenant: string;
+  /**
    * Starts background work: the dispatcher and the scheduled command worker. For `role: "web"`,
    * only the watch for a database restored under the app, which forgets again at once whom the
    * copy brought back.
@@ -781,6 +791,11 @@ export interface AssembleAppArgs<R extends Registry> {
    * `app/audit.ts`, and to the logger without it.
    */
   readonly onPersonalDataAccess?: OnPersonalDataAccess | undefined;
+  /**
+   * Given by `createTestApp`: with `test`, the host log goes here instead of to the registry's
+   * `app/audit.ts`, and to the logger without it.
+   */
+  readonly onHostRejection?: OnHostRejection | undefined;
   readonly witness?: Witness | undefined;
   /**
    * Given by `createTestApp`, `false` unless the test chose `runtime.telemetry.errorText`: the
@@ -833,6 +848,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   test,
   pendingRetries = ignoredRetries,
   onPersonalDataAccess,
+  onHostRejection,
   witness,
   searchErrorText = true,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
@@ -1130,6 +1146,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
       clock,
     });
+    const recordRejection = createHostLog({
+      hook: test === undefined ? registry.audit?.onHostRejection : onHostRejection,
+      env,
+      logger,
+      clock,
+    });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
     const transfers = storeTransfers({
       config,
@@ -1309,6 +1331,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           forgotten: forgottenError,
           forgetting: forgottenAtStart,
           tenant: tenantId,
+          recordRejection,
           close: async () => {
             await copies?.retry();
             await restores.flush();
@@ -2706,7 +2729,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       // Each call goes to what serves it then: the live app's letters, or, once the tenant is
       // forgotten, those of the notices to its recipients.
       const letters = (): DeadLetters => forgottenRunner?.deadLetters(actor) ?? gate.deadLetters;
-      return {
+      const client: BoundaClient<R> & { readonly deadLetters: DeadLetters } = {
         commands: gate.commands,
         queries: gate.queries,
         getLag: () => forgottenRunner?.getLag() ?? gate.getLag(),
@@ -2739,6 +2762,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           return clientOf(next);
         },
       };
+      return recordedRejections({ client, record: recordRejection, tenant: tenantId, actor });
     };
     const operations = guarded({
       rebuildReadModel: rebuild,
@@ -2780,6 +2804,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     const lifecycle: Omit<BoundaApp<R>, Exclude<keyof BoundaClient<R>, "rebuildReadModel">> = {
       config,
       role,
+      tenant: tenantId,
       start: () => {
         if (stopping !== undefined) return;
         started = true;

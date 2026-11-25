@@ -41,6 +41,7 @@ import config from "../bounda.config.ts";
 export class Store extends createBoundaObject({ registry, config }) {}
 export default createWorker({
   config,
+  registry,
   tenantOf: (request) => request.headers.get("x-bounda-tenant") ?? "default",
 });
 ```
@@ -417,6 +418,18 @@ logs, not to the caller, under the rule of [error text](/reference/observability
 `createWorker({ config, tenantOf, maxPayloadBytes })` says otherwise, is refused with a 413
 before it is read.
 
+Every request it refuses before an object serves it is recorded in the [host
+log](/guides/personal-data/#refused-requests) before the answer goes out: a path that names no
+route, a method other than `POST`, a body too large or not JSON, a `tenantOf` that throws or names
+no tenant, an `actorOf` that throws or names an actor `as` refuses. It names the tenant and the
+actor once they are known, which is why `tenantOf` and `actorOf` run before the body is read, and
+must leave it unread, and
+`commands/<name>` or `queries/<name>`, never the path. The records go to `onHostRejection` in the
+`app/audit.ts` of the `registry` it takes, the one its objects run, and to its `logger` without
+one. What an object refuses, a command or query it does not know, an actor `as` refuses over RPC,
+a call its forgotten or frozen tenant refuses, the object records itself, and the Worker does not
+record it again.
+
 It has **no authentication** and no operator endpoint, on purpose: it is a starting point. For
 the same reason it never [forgets](/guides/personal-data/) anyone, which cannot be undone, nor
 restricts anyone's processing. An app with users writes its own `fetch` and talks to a store with
@@ -487,7 +500,9 @@ anyone can send. The actor is an id, never a name or an email, since events keep
 `as` throws `ValidationError` for one that is not a string of 1 to 255 characters, and the object
 refuses one that reaches it that way with the same error. An `actorOf` that names such an actor is
 the Worker's mistake, not the caller's: the request gets a 500 and the log says so, without the
-value.
+value. An `actorOf` that throws, as one does for a request it cannot authenticate, gets a 500 too.
+Each is recorded in the [host log](/guides/personal-data/#refused-requests), `actor-invalid` or
+`actor-unresolved`, without the actor.
 
 ## Testing
 

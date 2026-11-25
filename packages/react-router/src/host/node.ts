@@ -92,5 +92,6 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
         }),
     errorText,
     ...(tenantApps === undefined ? {} : { tenantApps }),
+    registry,
   });
 };

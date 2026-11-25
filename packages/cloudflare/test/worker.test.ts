@@ -1,6 +1,13 @@
 import { createExecutionContext, runDurableObjectAlarm } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { ConfigurationError, type Consistency, type Logger } from "@bounda-dev/core";
+import {
+  ConfigurationError,
+  type Consistency,
+  type HostRejection,
+  type Logger,
+  type OnHostRejectionArgs,
+  type Registry,
+} from "@bounda-dev/core";
 import { describe, expect, it } from "vitest";
 import { connect } from "../src/client.ts";
 import { cloudflare } from "../src/definition.ts";
@@ -668,5 +675,201 @@ describe("createWorker", () => {
         error: { code: "NOT_FOUND", message: `No route for ${path}` },
       });
     }
+  });
+});
+
+describe("createWorker's host log", () => {
+  const send = (
+    worker: ReturnType<typeof createWorker>,
+    init: { readonly path?: string; readonly method?: string; readonly body?: BodyInit } = {},
+    environment: object = {},
+  ) => {
+    const { stub } = recordingStub();
+    return worker.fetch?.(
+      new Request(`https://bounda.test${init.path ?? "/commands/placeOrder"}`, {
+        method: init.method ?? "POST",
+        ...(init.body === undefined ? {} : { body: init.body }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      {
+        SPY: { idFromName: (name: string) => name, get: () => stub },
+        ...environment,
+      } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+  };
+  const quiet: Logger = {
+    debug: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  };
+  const auditing = () => {
+    const records: OnHostRejectionArgs[] = [];
+    const registry = {
+      aggregates: {},
+      readModels: {},
+      audit: {
+        onPersonalDataAccess: () => {},
+        onHostRejection: (args: OnHostRejectionArgs) => {
+          records.push(args);
+        },
+      },
+    } as Registry;
+    return { records, registry };
+  };
+
+  it("records every request it refuses before an object serves it in app/audit.ts, with the Worker's env", async () => {
+    const { records, registry } = auditing();
+    const worker = (
+      tenantOf: CreateWorkerArgs["tenantOf"],
+      actorOf?: CreateWorkerArgs["actorOf"],
+    ) =>
+      createWorker({
+        config: { storage: cloudflare({ binding: "SPY" }) },
+        tenantOf,
+        ...(actorOf === undefined ? {} : { actorOf }),
+        maxPayloadBytes: 8,
+        logger: quiet,
+        registry,
+      });
+    const acme = worker(
+      () => "acme",
+      (request) => request.headers.get("x-user") ?? "user-1",
+    );
+    const env = { REGION: "eu" };
+    expect((await send(acme, { path: "/users/ana@example.com" }, env))?.status).toBe(404);
+    expect((await send(acme, { method: "PUT" }, env))?.status).toBe(405);
+    expect((await send(acme, { body: '{"orderId":"o-1"}' }, env))?.status).toBe(413);
+    expect((await send(acme, { body: "{" }, env))?.status).toBe(400);
+    const unnamed = worker(() => "");
+    expect((await send(unnamed, {}, env))?.status).toBe(500);
+    const nameless = worker(() => undefined as unknown as string);
+    expect((await send(nameless, {}, env))?.status).toBe(500);
+    const throwing = worker(() => {
+      throw new Error("no such workspace");
+    });
+    expect((await send(throwing, {}, env))?.status).toBe(500);
+    const unauthenticated = worker(
+      () => "acme",
+      () => {
+        throw new Error("no session");
+      },
+    );
+    expect((await send(unauthenticated, {}, env))?.status).toBe(500);
+    const malformed = worker(
+      () => "acme",
+      () => "",
+    );
+    expect((await send(malformed, {}, env))?.status).toBe(500);
+    expect((await send(acme, { body: "{}" }, env))?.status).toBe(200);
+
+    const refusal = (rejection: Omit<HostRejection, "at">) => ({
+      rejection: { at: expect.any(String), ...rejection },
+      env: expect.objectContaining(env),
+      logger: expect.anything(),
+    });
+    const placeOrder = "commands/placeOrder";
+    expect(records).toEqual([
+      refusal({ tenant: null, reason: "no-route", target: null, actor: null }),
+      refusal({ tenant: null, reason: "method-not-allowed", target: placeOrder, actor: null }),
+      refusal({ tenant: "acme", reason: "payload-too-large", target: placeOrder, actor: "user-1" }),
+      refusal({ tenant: "acme", reason: "invalid-json", target: placeOrder, actor: "user-1" }),
+      refusal({ tenant: null, reason: "tenant-unresolved", target: placeOrder, actor: null }),
+      refusal({ tenant: null, reason: "tenant-unresolved", target: placeOrder, actor: null }),
+      refusal({ tenant: null, reason: "tenant-unresolved", target: placeOrder, actor: null }),
+      refusal({ tenant: "acme", reason: "actor-unresolved", target: placeOrder, actor: null }),
+      refusal({ tenant: "acme", reason: "actor-invalid", target: placeOrder, actor: null }),
+    ]);
+    expect(JSON.stringify(records.map(({ rejection }) => rejection))).not.toContain("example.com");
+  });
+
+  it("refuses at once a registry whose app/audit.ts does not export onHostRejection", () => {
+    expect(() =>
+      createWorker({
+        config: { storage: cloudflare({ binding: "SPY" }) },
+        tenantOf: () => "acme",
+        registry: {
+          aggregates: {},
+          readModels: {},
+          audit: { onPersonalDataAccess: () => {} },
+        } as unknown as Registry,
+      }),
+    ).toThrow(ConfigurationError);
+  });
+
+  it("leaves what an object refuses to the object, which records it itself", async () => {
+    const { records, registry } = auditing();
+    const refused = {
+      ok: false,
+      refusal: { name: "NotFoundError", code: "NOT_FOUND", message: 'Unknown command "nope"' },
+    };
+    const worker = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => "acme",
+      logger: quiet,
+      registry,
+    });
+    const response = await worker.fetch?.(
+      new Request("https://bounda.test/commands/nope", { method: "POST", body: "{}" }) as Request<
+        unknown,
+        IncomingRequestCfProperties
+      >,
+      {
+        SPY: { idFromName: (name: string) => name, get: () => ({ command: async () => refused }) },
+      } as unknown as Cloudflare.Env,
+      createExecutionContext(),
+    );
+    expect(response?.status).toBe(404);
+    expect(records).toEqual([]);
+  });
+
+  it("goes to its logger at info without app/audit.ts, and fails the request when app/audit.ts throws", async () => {
+    const infos: unknown[][] = [];
+    const errors: unknown[][] = [];
+    const logged = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => "acme",
+      logger: {
+        ...quiet,
+        info: (...entry) => void infos.push(entry),
+        error: (...entry) => void errors.push(entry),
+      },
+    });
+    expect((await send(logged, { body: "{" }))?.status).toBe(400);
+    expect(infos).toEqual([
+      [
+        "request refused",
+        {
+          at: expect.any(String),
+          tenant: "acme",
+          reason: "invalid-json",
+          target: "commands/placeOrder",
+          actor: null,
+        },
+      ],
+    ]);
+    const down = createWorker({
+      config: { storage: cloudflare({ binding: "SPY" }) },
+      tenantOf: () => "acme",
+      logger: { ...quiet, error: (...entry) => void errors.push(entry) },
+      registry: {
+        aggregates: {},
+        readModels: {},
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: () => {
+            throw new Error("audit sink down");
+          },
+        },
+      } as Registry,
+    });
+    const response = await send(down, { body: "{" });
+    expect(response?.status).toBe(500);
+    expect(await response?.json()).toEqual({
+      error: { code: "INTERNAL", message: "Internal error" },
+    });
+    expect(errors).toEqual([
+      ["bounda worker request failed", expect.objectContaining({ errorName: "Error" })],
+    ]);
   });
 });

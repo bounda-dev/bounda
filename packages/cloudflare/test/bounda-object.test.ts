@@ -840,6 +840,50 @@ describe("a Bounda Durable Object", () => {
     });
   });
 
+  it("records in the host log a command or query it does not know, an actor as refuses, and a call its forgotten tenant refuses", async () => {
+    const stub = sliced();
+    const tenant = stub.id.toString();
+    logs.info.length = 0;
+    expect(await stub.command("nope", {}, undefined, undefined, "user-1")).toMatchObject({
+      ok: false,
+      refusal: { code: "NOT_FOUND" },
+    });
+    expect(await stub.query("nope", {}, "user-1")).toMatchObject({
+      ok: false,
+      refusal: { code: "NOT_FOUND" },
+    });
+    expect(await stub.query("getOrder", { orderId: "o-1" }, "")).toMatchObject({
+      ok: false,
+      refusal: { code: "VALIDATION_FAILED" },
+    });
+    expect(await stub.listDeadLetters(undefined, "")).toMatchObject({
+      ok: false,
+      refusal: { code: "VALIDATION_FAILED" },
+    });
+    const store = connect<typeof registry>(stub);
+    await store.forgetTenant(tenant, { despiteLegalObligations: true });
+    await expect(
+      store.as("dpo").commands.placeOrder({ orderId: "o-1", total: 1, customer: "ada" }),
+    ).rejects.toMatchObject({ code: "TENANT_FORGOTTEN" });
+    const refused = logs.info.flatMap(([message, fields]) =>
+      message === "request refused" ? [fields] : [],
+    );
+    const refusal = (reason: string, target: string | null, actor: string | null) => ({
+      at: expect.any(String),
+      tenant,
+      reason,
+      target,
+      actor,
+    });
+    expect(refused).toEqual([
+      refusal("unknown-command", "commands.nope", "user-1"),
+      refusal("unknown-query", "queries.nope", "user-1"),
+      refusal("actor-invalid", null, null),
+      refusal("actor-invalid", null, null),
+      refusal("tenant-forgotten", "commands.placeOrder", "dpo"),
+    ]);
+  });
+
   it("reports its status and keeps a projection's last failure, opened through a recorded call", async () => {
     const { store } = open();
     outage.projection = true;

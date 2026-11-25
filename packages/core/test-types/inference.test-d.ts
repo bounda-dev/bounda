@@ -5,6 +5,7 @@ import type {
   AppLag,
   AppRegistry,
   AppStatus,
+  AuditModule,
   AutomatedDecision,
   AutomatedDecisionGround,
   AutomatedDecisions,
@@ -72,6 +73,9 @@ import type {
   ForgetsPersonalData,
   ForgottenTenantStatus,
   HasPersonalFields,
+  HostLogOfArgs,
+  HostRejection,
+  HostRejectionReason,
   ImplementationModule,
   IncludeRestrictedOptions,
   Instant,
@@ -84,6 +88,8 @@ import type {
   NotPersonalFunction,
   NotPersonalSchema,
   ObjectionPendingCategory,
+  OnHostRejection,
+  OnHostRejectionArgs,
   OnPersonalDataAccess,
   OnPersonalDataAccessArgs,
   OrderableField,
@@ -132,6 +138,7 @@ import type {
   ReadOutcome,
   RecipientKind,
   RecipientStatus,
+  RecordHostRejection,
   RedactedEvent,
   RedactedFields,
   RedactionTarget,
@@ -801,6 +808,34 @@ describe("personal data", () => {
     expectTypeOf<OnPersonalDataAccessArgs["access"]>().toEqualTypeOf<PersonalDataAccess>();
     expectTypeOf<OnPersonalDataAccessArgs["tenant"]>().toEqualTypeOf<string>();
     expectTypeOf<OnPersonalDataAccessArgs["logger"]>().toEqualTypeOf<Logger>();
+    expectTypeOf<typeof audit.onHostRejection>().toEqualTypeOf<OnHostRejection>();
+    expectTypeOf<OnHostRejectionArgs["rejection"]>().toEqualTypeOf<HostRejection>();
+    expectTypeOf<OnHostRejectionArgs["logger"]>().toEqualTypeOf<Logger>();
+    expectTypeOf<HostRejection>().toEqualTypeOf<{
+      readonly at: string;
+      readonly tenant: string | null;
+      readonly reason: HostRejectionReason;
+      readonly target: string | null;
+      readonly actor: string | null;
+    }>();
+    expectTypeOf<HostRejectionReason>().toEqualTypeOf<
+      | "no-route"
+      | "method-not-allowed"
+      | "payload-too-large"
+      | "invalid-json"
+      | "tenant-unresolved"
+      | "actor-unresolved"
+      | "actor-invalid"
+      | "unknown-command"
+      | "unknown-query"
+      | "tenant-forgotten"
+      | "tenant-frozen"
+    >();
+    expectTypeOf<AuditModule>().toHaveProperty("onHostRejection");
+    expectTypeOf<RecordHostRejection>().returns.toEqualTypeOf<Promise<void>>();
+    expectTypeOf<HostLogOfArgs["registry"]>().toEqualTypeOf<
+      Pick<AnyRegistry, "audit"> | undefined
+    >();
     expectTypeOf<PersonalDataAccess["operation"]>().toEqualTypeOf<
       | "query"
       | "command"
