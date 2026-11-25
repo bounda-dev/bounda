@@ -90,6 +90,25 @@ const keptIn = (
   return typeof location === "string" ? (location as DurableObjectJurisdiction) : storage;
 };
 
+export interface KeeperJurisdictions {
+  readonly keys: DurableObjectJurisdiction | undefined;
+  readonly ledger: DurableObjectJurisdiction | undefined;
+}
+
+export interface KeeperJurisdictionsFunction {
+  (config: Config, storage: DurableObjectJurisdiction | undefined): KeeperJurisdictions;
+}
+
+// Each store's keepers are in the jurisdiction it declares as its location, storage's unless it
+// names another; a tenant whose key and ledger are kept apart has a keeper in each.
+export const keeperJurisdictions: KeeperJurisdictionsFunction = (config, storage) => {
+  const personalData = valueAt(config.runtime, "personalData");
+  return {
+    keys: keptIn(valueAt(personalData, "tenantKeys"), storage),
+    ledger: keptIn(valueAt(valueAt(personalData, "forgetLedger"), "store"), storage),
+  };
+};
+
 /**
  * The class `createBoundaKeeper` returns, to export from the Worker and bind in `wrangler.jsonc`.
  */
@@ -125,11 +144,7 @@ export interface CreateBoundaKeeperFunction {
  */
 export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
   const { binding, jurisdiction } = cloudflareStorageOf(config).options;
-  const personalData = valueAt(config.runtime, "personalData");
-  // Each store's keepers are in the jurisdiction it declares as its location, storage's unless it
-  // names another; a tenant whose key and ledger are kept apart has a keeper in each.
-  const keys = keptIn(valueAt(personalData, "tenantKeys"), jurisdiction);
-  const ledger = keptIn(valueAt(valueAt(personalData, "forgetLedger"), "store"), jurisdiction);
+  const { keys, ledger } = keeperJurisdictions(config, jurisdiction);
   return class BoundaKeeper extends DurableObject implements BoundaKeeperMethods {
     #keys: Promise<TenantKeyStore> | undefined;
     #ledger: Promise<ForgetLedger> | undefined;
