@@ -298,6 +298,90 @@ describe("the intentions of forgetting", () => {
     expect(appends).toBe(2);
   });
 
+  it("keep with each intention where the database stood, read only for a ledger asked, and none with a disclosure", async () => {
+    const appended: ForgetLedgerEntry[] = [];
+    let reads = 0;
+    let late = false;
+    const ledger: BoundedForgetLedger = {
+      ...recordingLedger(async (entries) => {
+        appended.push(...entries);
+      }),
+      late: () => late,
+    };
+    const storage = await memory().createStorage();
+    const intentions = createForgetIntentions({
+      ledger: { store: ledger, strict: false },
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger: createRecordingLogger().logger,
+      reached: async () => {
+        reads += 1;
+        return { position: 7, generation: 2 };
+      },
+    });
+    await intentions.intend({
+      personId: "c-1",
+      reason: "requested",
+      scope: WHOLE,
+      keys: storage.personalKeys,
+    });
+    expect(appended.map(({ reached }) => reached)).toEqual([{ position: 7, generation: 2 }]);
+    late = true;
+    await intentions.record({ ...appended[0], eventId: "e-2" } as ForgetLedgerEntry);
+    expect(reads).toBe(1);
+    late = false;
+    await intentions.disclose(
+      [
+        {
+          person: "c-1",
+          port: "customer.mailer",
+          recipient: "Mailchimp",
+          kind: "processor",
+          country: "US",
+          safeguard: null,
+          category: "contact",
+        },
+      ],
+      NOW.toISOString(),
+    );
+    expect(reads).toBe(1);
+    expect(appended.at(-1)).not.toHaveProperty("reached");
+  });
+
+  it("keep an intention without where the database stood when it cannot be read, and say so", async () => {
+    const appended: ForgetLedgerEntry[] = [];
+    const { logger, entries } = createRecordingLogger();
+    const intentions = createForgetIntentions({
+      ledger: {
+        store: recordingLedger(async (written) => {
+          appended.push(...written);
+        }),
+        strict: true,
+      },
+      ids: createSequentialIdGenerator(),
+      clock: createFixedClock(NOW),
+      logger,
+      reached: async () => {
+        throw new Error("the mark could not be raised");
+      },
+    });
+    await intentions.record({
+      personId: "c-1",
+      categories: null,
+      eventId: "e-1",
+      forgottenAt: NOW.toISOString(),
+      reason: "requested",
+    });
+    expect(appended).toEqual([expect.objectContaining({ eventId: "e-1", committed: false })]);
+    expect(appended[0]).not.toHaveProperty("reached");
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: "where the database stood could not be kept with the intention",
+      }),
+    );
+  });
+
   it("record disclosures in the ledger under an id each, and only log a failure of a ledger that is not strict", async () => {
     const appended: ForgetLedgerEntry[] = [];
     const disclosure = {

@@ -413,16 +413,23 @@ restore recorded: 1 found so far; the background jobs start over from the copy, 
 
 The restore is counted, so every running instance starts its background jobs over; the holds of
 failures the copy brought back are cleared; and with a ledger, it is reconciled at once. A
-restore is counted once: run again after it failed, or after it went through while the database
-stands exactly where handling it left it, it finishes or repeats the same declaration (once the
-database was written to, it counts another), and a restore the start or
-`bounda restore` already counted is not counted again. With a ledger whose mark it cannot raise, it
-fails having counted nothing. Run it
+restore is counted once: run again after it failed, it finishes the same declaration (once the
+database was written to, it counts another). With a ledger whose mark it cannot raise, it fails
+having counted nothing. While the database stands exactly where handling the last restore left
+it, as after it ran already or after a start or `bounda restore` counted the restore, it counts
+nothing and says so:
+
+```
+nothing counted: the database stands exactly where handling the last restore left it, as when this already ran or a start found that restore; if it was restored from a copy taken right then, run bounda restored --again
+```
+
+A copy taken at that very moment is the same database, and the ledger cannot tell it either until
+the instances move their counter: if that is the copy you restored, `--again` counts it. Run it
 after `bounda forget --from` when restoring without a ledger (see
-[restores](/guides/personal-data/#restores)). Options: `--root`, `--config`, `--registry`,
-`--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, even when how many restores were
-found could not be read back, which it says in place of the count; `2` the project could not be
-loaded.
+[restores](/guides/personal-data/#restores)). Options: `--again`, and `--root`, `--config`,
+`--registry`, `--error-text`, as for `bounda rebuild`. Exit codes: `0` recorded, or nothing to
+count, even when how many restores were found could not be read back, which it says in place of
+the count; `2` the project could not be loaded.
 
 ## `bounda rekey`
 

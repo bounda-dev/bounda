@@ -6,12 +6,13 @@ import type {
   ForgetLedgerEntry,
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
-import { testPersonalKey } from "../../adapter/testing/fixtures.ts";
+import { pendingEvent, testPersonalKey } from "../../adapter/testing/fixtures.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { ForgetLedgerUnavailableError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { RESTORE_GENERATION } from "../shared/restores.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { boundForgetLedger } from "./forget-ledger.ts";
@@ -107,6 +108,18 @@ const setUp = async ({
     pageSize,
   });
   return { storage, reconciliation, reads };
+};
+
+// Three events of nobody's, positions 1 to 3.
+const threeEvents = async (storage: Storage): Promise<void> => {
+  for (let version = 1; version <= 3; version += 1) {
+    await storage.eventStore.append({
+      aggregateType: "order",
+      aggregateId: "o-1",
+      expectedVersion: version - 1,
+      events: [pendingEvent({ aggregateId: "o-1", version })],
+    });
+  }
 };
 
 const entry = (personId: string, eventId: string, forgottenAt: string): ForgetLedgerEntry => ({
@@ -807,6 +820,65 @@ describe("what the reconciliation commits again", () => {
     expect(reconciliation.undone()).toBe(1);
     reconciliation.declared(5);
     expect(reconciliation.undone()).toBe(0);
+  });
+
+  it("counts one restore undone from entries written where the database had gone further, whatever they are", async () => {
+    const reached = (position: number, generation: number) => ({ position, generation });
+    // c-1's forgetting the database holds already, as a store holding key-less persons tells.
+    const entries: ForgetLedgerEntry[] = [
+      { ...entry("c-1", "e-1", at(0)), committed: false, reached: reached(4, 0) },
+      { ...entry("c-2", "e-2", at(1)), committed: false, reached: reached(5, 0) },
+    ];
+    const { reconciliation, storage } = await setUp({ entries, persons: ["c-2"] });
+    // The database holds three events and no restore counted: it went back past both.
+    await threeEvents(storage);
+    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    expect(reconciliation.undone()).toBe(1);
+    // Declared, the restore moves the generation past the mark: the entries read again tell
+    // nothing more.
+    reconciliation.declared(1);
+    await storage.checkpointStore.set(RESTORE_GENERATION, 1);
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(reconciliation.undone()).toBe(0);
+  });
+
+  it.each([
+    ["standing where the entry was written", 3, 0, 0, 0],
+    ["standing past it", 2, 0, 0, 0],
+    ["behind it, a restore counted since", 9, 0, 1, 0],
+    ["behind it, no restore counted since", 9, 0, 0, 1],
+    ["holding a generation behind the entry's", 3, 1, 0, 1],
+  ])("tells whether a database %s went back", async (_, position, generation, moved, undone) => {
+    const entries: ForgetLedgerEntry[] = [
+      { ...entry("c-1", "e-1", at(0)), committed: false, reached: { position, generation } },
+    ];
+    const { reconciliation, storage } = await setUp({ entries });
+    await threeEvents(storage);
+    await storage.checkpointStore.set(RESTORE_GENERATION, moved);
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.undone()).toBe(undone);
+  });
+
+  it("keeps the highest generation of the entries that told a restore, until it is declared or found", async () => {
+    const entries: ForgetLedgerEntry[] = [
+      { ...entry("c-1", "e-1", at(0)), committed: false, reached: { position: 9, generation: 4 } },
+      { ...entry("c-2", "e-2", at(1)), committed: false, reached: { position: 9, generation: 3 } },
+      { ...entry("c-3", "e-3", at(2)), committed: false, reached: { position: 1, generation: 6 } },
+    ];
+    const { reconciliation, storage } = await setUp({ entries });
+    await threeEvents(storage);
+    await storage.checkpointStore.set(RESTORE_GENERATION, 5);
+    expect(reconciliation.past()).toBe(0);
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.undone()).toBe(1);
+    // c-3's stands at the generation past the database's, though at a position it holds.
+    expect(reconciliation.past()).toBe(6);
+    reconciliation.declared(1);
+    expect(reconciliation.past()).toBe(0);
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.past()).toBe(6);
+    await reconciliation.restored(false);
+    expect(reconciliation.past()).toBe(0);
   });
 
   it("counts nothing undone once a restore is known, nor what a drain applies of intentions", async () => {

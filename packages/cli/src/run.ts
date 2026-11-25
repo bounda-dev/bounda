@@ -962,14 +962,14 @@ const runRetireTenantKeys = (
   });
 
 const runRestored = (
-  options: ProjectOptions,
+  options: ProjectOptions & { readonly again?: boolean },
   cwd: string,
   stdout: Output,
   stderr: Output,
 ): Promise<number> =>
   withApp(options, cwd, stderr, async (app) => {
-    await app.restored();
-    line(stdout, formatRestored((await app.status()).restoresFound));
+    const declared = await app.restored({ again: options.again === true });
+    line(stdout, formatRestored((await app.status()).restoresFound, declared));
     return EXIT_OK;
   });
 
@@ -1600,8 +1600,12 @@ export const runCli: RunCliFunction = async ({
       .command("restored")
       .description(
         "say the database was restored from a copy while the app was stopped: every instance starts its background jobs over, without the holds the copy brought back",
+      )
+      .option(
+        "--again",
+        "count the restore though the database stands exactly where handling the last one left it: the copy was taken right then",
       ),
-  ).action(async (options: ProjectOptions) => {
+  ).action(async (options: ProjectOptions & { readonly again?: boolean }) => {
     exitCode = await runRestored(options, cwd, stdout, stderr);
   });
 

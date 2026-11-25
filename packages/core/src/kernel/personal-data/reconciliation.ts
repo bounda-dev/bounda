@@ -12,6 +12,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { discloseAgain } from "../recipients/again.ts";
 import { startedBy } from "../shared/causation.ts";
+import { RESTORE_GENERATION } from "../shared/restores.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
   endsKeptOf,
@@ -316,8 +317,12 @@ export interface ForgetLedgerReconciliation {
   // the ledger cannot be read through.
   drain(now: Date): Promise<number>;
   // How many committed entries the reconciliations applied again while no restore was known, the
-  // database having lost them, until `declared` takes them: a restore nothing else found.
+  // database having lost them, and reads of entries written where the database had gone further
+  // than it now stands, until `declared` takes them: a restore nothing else found.
   undone(): number;
+  // The highest generation an entry `undone` counts was written at: the restore declared for them
+  // moves the generation past it, though the mark reads lower, or they would tell it again.
+  past(): number;
   declared(count: number): void;
 }
 
@@ -390,6 +395,9 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   // A restore was found since the last reconciliation that read the ledger through.
   let restoredSince = false;
   let undone = 0;
+  // The highest generation of the entries that told what `undone` counts, which the restore
+  // declared moves past.
+  let past = 0;
   let dueAt: number | null = null;
   // When this instance next looks whether the periodic reconciliation is due.
   let periodicAt: number = clock.now().getTime() + reconcileEveryMs;
@@ -420,21 +428,36 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     // Of those, the intentions whose commit the ledger never saw, which may never have happened.
     let intended = 0;
     let youngest: number | null = null;
+    // Whether an entry was written where the database had gone further than it now stands, and the
+    // highest generation of those.
+    let wentBack = false;
+    let reachedPast = 0;
     const applied = (entry: ForgetLedgerEntry): void => {
       forgotten += 1;
       if (entry.committed === false) intended += 1;
       else if (!restoredSince) undone += 1;
     };
-    const ended = () => ({
-      forgotten,
-      intended,
-      young: youngest === null ? null : youngest + FORGET_LEDGER_GRACE_MS,
-    });
+    const ended = () => {
+      if (wentBack && !restoredSince) {
+        undone += 1;
+        past = Math.max(past, reachedPast);
+      }
+      return {
+        forgotten,
+        intended,
+        young: youngest === null ? null : youngest + FORGET_LEDGER_GRACE_MS,
+      };
+    };
     for (;;) {
       const page: readonly ForgetLedgerEntry[] = await ledger.read({
         ...(after === undefined ? {} : { after }),
         limit: pageSize,
       });
+      const ahead = await behind(page);
+      if (ahead !== null) {
+        wentBack = true;
+        reachedPast = Math.max(reachedPast, ahead);
+      }
       for (const entry of page) {
         const time = Date.parse(entry.forgottenAt);
         if (graced && time + FORGET_LEDGER_GRACE_MS > at) {
@@ -517,6 +540,23 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       if (page.length < pageSize) return ended();
       after = last;
     }
+  };
+
+  // Read after the page, so on a database that never went back each entry was written where the
+  // database stood at most, and each raised the mark to its generation before it was written, which
+  // a restore counted moves the generation past: the highest generation of the entries written
+  // further than the database stands.
+  const behind = async (page: readonly ForgetLedgerEntry[]): Promise<number | null> => {
+    const told = page.flatMap(({ reached }) => (reached === undefined ? [] : [reached]));
+    if (told.length === 0) return null;
+    const generation = await checkpointStore.get(RESTORE_GENERATION);
+    const position = await storage.eventStore.lastPosition();
+    const ahead = told.filter(
+      (reached) =>
+        generation < reached.generation ||
+        (generation === reached.generation && position < reached.position),
+    );
+    return ahead.length === 0 ? null : Math.max(...ahead.map((reached) => reached.generation));
   };
 
   // No row reads as a hold that ended long ago, after no failure.
@@ -674,13 +714,16 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     },
     drain: async (now) => (await run(now.getTime(), false)).forgotten,
     undone: () => undone,
+    past: () => past,
     declared: (count) => {
       undone = Math.max(0, undone - count);
+      if (undone === 0) past = 0;
     },
     restored: async (first) => {
       done = false;
       restoredSince = true;
       undone = 0;
+      past = 0;
       dueAt = clock.now().getTime();
       // A hold the copy brought back is not waited for: what it held was failing before the copy.
       local = null;

@@ -141,6 +141,8 @@ import type {
   RemovedDeadLetter,
   ResealStatus,
   ResealStep,
+  RestoreDeclaration,
+  RestoredOptions,
   RestrictedAccess,
   RestrictedProcessingAccess,
   RestrictionBasis,
@@ -2195,7 +2197,11 @@ describe("operations", () => {
   });
 
   it("declares a restore on the app, and keeps the ledger's marks outside the database", () => {
-    expectTypeOf<BoundaApp["restored"]>().toEqualTypeOf<() => Promise<void>>();
+    expectTypeOf<BoundaApp["restored"]>().toEqualTypeOf<
+      (options?: RestoredOptions) => Promise<RestoreDeclaration>
+    >();
+    expectTypeOf<RestoredOptions>().toEqualTypeOf<{ readonly again?: boolean }>();
+    expectTypeOf<RestoreDeclaration>().toEqualTypeOf<{ readonly counted: boolean }>();
     expectTypeOf<ForgetLedger["readMark"]>().toEqualTypeOf<(name: string) => Promise<number>>();
     expectTypeOf<ForgetLedger["raiseMark"]>().toEqualTypeOf<
       (name: string, value: number) => Promise<void>

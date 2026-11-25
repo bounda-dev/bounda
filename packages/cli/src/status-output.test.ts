@@ -544,11 +544,17 @@ describe("formatSchema", () => {
 
 describe("formatRestored", () => {
   it("says how many restores were found, or that the count could not be read", () => {
-    expect(formatRestored(3)).toBe(
+    expect(formatRestored(3, { counted: true })).toBe(
       "restore recorded: 3 found so far; the background jobs start over from the copy, without the holds it brought back",
     );
-    expect(formatRestored({ unreadable: true })).toBe(
+    expect(formatRestored({ unreadable: true }, { counted: true })).toBe(
       "restore recorded: how many were found so far, its store could not be read, see the logs; the background jobs start over from the copy, without the holds it brought back",
+    );
+  });
+
+  it("says nothing was counted, and how to count a copy taken right when the last restore was handled", () => {
+    expect(formatRestored(3, { counted: false })).toBe(
+      "nothing counted: the database stands exactly where handling the last restore left it, as when this already ran or a start found that restore; if it was restored from a copy taken right then, run bounda restored --again",
     );
   });
 });

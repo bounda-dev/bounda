@@ -2204,6 +2204,21 @@ describe("bounda restored", () => {
     );
   });
 
+  it("counts nothing run again while the database stands where it left it, and counts with --again", async () => {
+    await cli(["restored"], fixture);
+    const before = JSON.parse((await cli(["status", "--json"], fixture)).stdout).restoresFound;
+    const repeated = await cli(["restored"], fixture);
+    expect(repeated.code).toBe(EXIT_OK);
+    expect(repeated.stdout).toBe(
+      "nothing counted: the database stands exactly where handling the last restore left it, as when this already ran or a start found that restore; if it was restored from a copy taken right then, run bounda restored --again\n",
+    );
+    const again = await cli(["restored", "--again"], fixture);
+    expect(again.code).toBe(EXIT_OK);
+    expect(again.stdout).toBe(
+      `restore recorded: ${before + 1} found so far; the background jobs start over from the copy, without the holds it brought back\n`,
+    );
+  });
+
   it("documents itself in its help", async () => {
     const help = await cli(["restored", "--help"], fixture);
     expect(help.code).toBe(EXIT_OK);
@@ -2211,5 +2226,8 @@ describe("bounda restored", () => {
       "say the database was restored from a copy while the app was stopped",
     );
     expect(help.stdout).toContain("--registry <file>");
+    expect(help.stdout.replace(/\s+/g, " ")).toContain(
+      "--again count the restore though the database stands exactly where handling the last one left it",
+    );
   });
 });

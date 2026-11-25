@@ -441,7 +441,7 @@ describe("the status of the app", () => {
     const { app } = await start(adapter);
     expect((await app.status()).schema).toEqual([
       { database: "storage", scope: "storage", version: 11, latest: 11 },
-      { database: "storage", scope: "checkpoints", version: 4, latest: 4 },
+      { database: "storage", scope: "checkpoints", version: 5, latest: 5 },
     ]);
     const inMemory = await start(memory());
     expect(await inMemory.app.status()).toMatchObject({
@@ -497,9 +497,9 @@ describe("the status of the app", () => {
     const status = await app.status();
     expect(status.schema).toEqual([
       { database: "storage", scope: "storage", version: 11, latest: 11 },
-      { database: "storage", scope: "checkpoints", version: 4, latest: 4 },
-      { database: "readModels.customers", scope: "checkpoints", version: 4, latest: 4 },
-      { database: "forgetLedger", scope: "forget-ledger", version: 10, latest: 10 },
+      { database: "storage", scope: "checkpoints", version: 5, latest: 5 },
+      { database: "readModels.customers", scope: "checkpoints", version: 5, latest: 5 },
+      { database: "forgetLedger", scope: "forget-ledger", version: 11, latest: 11 },
       { database: "tenantKeys", scope: "tenant-keys", version: 1, latest: 1 },
     ]);
     expect(status).toMatchObject({

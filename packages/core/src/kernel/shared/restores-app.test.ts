@@ -522,6 +522,137 @@ describe("a database restored while the app was stopped", () => {
     expect((await after.app.getLag()).forgetLedger).toEqual({ reconciled: true });
   });
 
+  const forgettingsOf = async (app: BoundaApp<Registry>, person: string) =>
+    (await app.events.read({ limit: 100 })).filter(
+      ({ type, aggregateId }) => type === "PersonalDataForgotten" && aggregateId === person,
+    );
+
+  // A ledger that takes intentions but not, while `refusing`, a committed copy, and whose mark
+  // always reads as never raised: what a ledger down from a commit on leaves of it.
+  const downAtCommit = (path: string) => {
+    const state = { refusing: true };
+    const ledgerAdapter = createNodeSqliteAdapter(path).adapter;
+    const store = defineForgetLedger(async () => {
+      const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+      return {
+        append: async (entries) => {
+          if (state.refusing && entries.some(({ committed }) => committed !== false)) {
+            throw new Error("the ledger is down");
+          }
+          await inner.append(entries);
+        },
+        read: (args) => inner.read(args),
+        readMark: async () => 0,
+        raiseMark: (name, value) => inner.raiseMark(name, value),
+        clear: () => inner.clear(),
+        fence: inner.fence,
+      };
+    });
+    return { state, store, ledgerAdapter };
+  };
+
+  it("is found from an intention written past what the copy holds, though its commit never reached the ledger", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const { store: ledger } = downAtCommit(paths.ledger);
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: ledger } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    const copy = copyOf(store.db);
+    await register(before.app, "c-2");
+    await before.app.forget("c-1");
+    await before.app.stop();
+    restore(store.db, copy);
+    const logger = recordingLogger();
+    const now = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const after = await start({ adapter: store.adapter, runtime, logger, now });
+    expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
+    expect((await after.app.status()).restoresFound).toBe(1);
+    expect(await forgettingsOf(after.app, "c-1")).toHaveLength(1);
+  });
+
+  it("counts no restore of a database that holds where an intention was written, though its commit never reached the ledger", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const { store: ledger } = downAtCommit(paths.ledger);
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: ledger } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    const copy = copyOf(store.db);
+    await before.app.forget("c-1");
+    await before.app.stop();
+    // The copy holds the newest event the intention saw: a commit that failed leaves the same.
+    restore(store.db, copy);
+    const logger = recordingLogger();
+    const now = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const after = await start({ adapter: store.adapter, runtime, logger, now });
+    expect(restarts(logger)).toEqual([]);
+    expect((await after.app.status()).restoresFound).toBe(0);
+    expect(await forgettingsOf(after.app, "c-1")).toHaveLength(1);
+  });
+
+  it("counts once a restore of a copy older than a restore counted before, from the intentions written since", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const { store: ledger } = downAtCommit(paths.ledger);
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: ledger } } };
+    const first = await start({ adapter: store.adapter, runtime });
+    await register(first.app, "c-1");
+    const copy = copyOf(store.db);
+    await first.app.stop();
+    // A restore counted, then a forgetting whose intention keeps where the database stood since.
+    restore(store.db, copy);
+    const counted = await start({ adapter: store.adapter, runtime });
+    expect(await counted.app.restored()).toEqual({ counted: true });
+    // Of a person the copy does not hold, so applying it again writes nothing past the copy.
+    await register(counted.app, "c-2");
+    await counted.app.forget("c-2");
+    await counted.app.stop();
+    // The same copy again: it holds fewer restores than the intention's database had counted.
+    restore(store.db, copy);
+    const later = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const after = await start({ adapter: store.adapter, runtime, now: later });
+    await after.app.runUntilIdle();
+    const found = (await after.app.status()).restoresFound;
+    // Counted past the copy's own count, which knew of no restore.
+    expect(found).toBe(1);
+    await after.app.stop();
+    // Read again, the intention tells that restore no more.
+    const next = await start({
+      adapter: store.adapter,
+      runtime,
+      now: new Date(later.getTime() + FORGET_LEDGER_GRACE_MS),
+    });
+    await next.app.runUntilIdle();
+    expect((await next.app.status()).restoresFound).toBe(1);
+    await next.app.stop();
+  });
+
+  it("appends again, by its stop, a commit the ledger did not take, ahead of the stream's copy", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const { state, store: ledger, ledgerAdapter } = downAtCommit(paths.ledger);
+    const runtime: RuntimeConfig = {
+      role: "web",
+      personalData: { forgetLedger: { store: ledger } },
+    };
+    const { app } = await start({ adapter: store.adapter, runtime });
+    await register(app, "c-1");
+    await app.forget("c-1");
+    const entries = async () => {
+      const read = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+      try {
+        return (await read.read({ limit: 10 })).map(({ committed }) => committed);
+      } finally {
+        await read.close?.();
+      }
+    };
+    expect(await entries()).toEqual([false]);
+    state.refusing = false;
+    await app.stop();
+    expect(await entries()).toEqual([undefined]);
+  });
+
   it("joins the restore another instance counted while it started, from a forgetting the ledger holds and the copy does not", async () => {
     const paths = files();
     const store = createNodeSqliteAdapter(paths.storage);
@@ -770,6 +901,19 @@ describe("a database restored while the app was stopped", () => {
     await running.app.runUntilIdle();
     expect(restarts(runningLogger).map(({ fields }) => fields)).toEqual([{ first: false }]);
     expect((await running.app.status()).restoresFound).toBe(1);
+    // Declared again, it counts nothing, and starts nothing over: a hold since stays.
+    one.db
+      .prepare(
+        `UPDATE "bounda_persons" SET "held_until" = ?, "attempts" = 3 WHERE "person" = 'c-9'`,
+      )
+      .run(new Date(START.getTime() + HOLD_MAX_MS).toISOString());
+    expect(await operator.app.restored()).toEqual({ counted: false });
+    expect(restarts(operatorLogger)).toHaveLength(1);
+    expect(
+      one.db.prepare(`SELECT "attempts" FROM "bounda_persons" WHERE "person" = 'c-9'`).get(),
+    ).toEqual({ attempts: 3 });
+    await running.app.runUntilIdle();
+    expect(restarts(runningLogger)).toHaveLength(1);
   });
 });
 

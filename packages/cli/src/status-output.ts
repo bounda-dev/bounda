@@ -1,6 +1,7 @@
 import type {
   AppStatus,
   RecipientStatus,
+  RestoreDeclaration,
   SchemaStatus,
   SubscriberFailure,
   SubscriberFailureStatus,
@@ -284,13 +285,15 @@ export const formatRecipients: FormatRecipientsFunction = (recipients) =>
       ];
 
 export interface FormatRestoredFunction {
-  (found: AppStatus["restoresFound"]): string;
+  (found: AppStatus["restoresFound"], declared: RestoreDeclaration): string;
 }
 
 // What `bounda restored` prints once the restore is recorded, whether or not the count could be
-// read back.
-export const formatRestored: FormatRestoredFunction = (found) =>
-  `restore recorded: ${isUnreadable(found) ? `how many were found so far, ${UNREADABLE}` : `${found} found so far`}; the background jobs start over from the copy, without the holds it brought back`;
+// read back, or once it counted nothing.
+export const formatRestored: FormatRestoredFunction = (found, { counted }) =>
+  counted
+    ? `restore recorded: ${isUnreadable(found) ? `how many were found so far, ${UNREADABLE}` : `${found} found so far`}; the background jobs start over from the copy, without the holds it brought back`
+    : "nothing counted: the database stands exactly where handling the last restore left it, as when this already ran or a start found that restore; if it was restored from a copy taken right then, run bounda restored --again";
 
 /**
  * Where the runtime's background work stands, as `bounda status` prints it.

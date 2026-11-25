@@ -426,6 +426,7 @@ describe("sqlite adapter on a file", () => {
       ["checkpoints", 2],
       ["checkpoints", 3],
       ["checkpoints", 4],
+      ["checkpoints", 5],
       ["storage", 1],
       ["storage", 2],
       ["storage", 3],

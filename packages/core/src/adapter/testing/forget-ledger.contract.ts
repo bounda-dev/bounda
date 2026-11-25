@@ -262,6 +262,17 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(read).not.toHaveProperty("committed");
     });
 
+    it("keeps where the database stood with an intention, as large as a position gets, and reads it committed after", async () => {
+      const reached = { position: Number.MAX_SAFE_INTEGER, generation: 3 };
+      const intention: ForgetLedgerEntry = { ...entry("c-1", "e-1", 1), committed: false, reached };
+      await ledger.append([intention]);
+      expect(await ledger.read({ limit: 10 })).toEqual([intention]);
+      await ledger.append([entry("c-1", "e-1", 1)]);
+      const [read] = await ledger.read({ limit: 10 });
+      expect(read).not.toHaveProperty("committed");
+      expect(read).toMatchObject(entry("c-1", "e-1", 1));
+    });
+
     it("keeps committed an entry appended committed and as an intention in one call, either way round", async () => {
       const first: ForgetLedgerEntry = { ...entry("c-1", "e-1", 1), committed: false };
       const second: ForgetLedgerEntry = { ...entry("c-2", "e-2", 2), committed: false };

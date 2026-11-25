@@ -52,6 +52,21 @@ export interface LedgerDisclosure {
 }
 
 /**
+ * Where the database stood when an intention was written: the position of its newest event and its
+ * count of restores. Events are only ever appended, so a database holding the same count and an
+ * older newest event went back since, whether the intention committed or not.
+ */
+/**
+ * Where the database stood when an intention was written: the position of its newest event and its
+ * restore generation, which only goes up, and which every restore counted moves past what the
+ * database reached before.
+ */
+export interface LedgerReached {
+  readonly position: number;
+  readonly generation: number;
+}
+
+/**
  * One forgetting as the ledger keeps it: whom, which `PersonalDataForgotten` says so, when, why,
  * which of their categories it was asked for, and which keys it covers. Ids, names, a time and
  * fingerprints, nothing else: the ledger is a suppression list, the one thing about a forgotten
@@ -108,6 +123,13 @@ export interface ForgetLedgerEntry {
    * before Bounda told them apart. A disclosure's entry stays `false`: the stream copies none.
    */
   readonly committed?: false;
+  /**
+   * Where the database stood when the runtime wrote the entry as an intention, which a ledger keeps
+   * with it: what tells a restore of a copy taken before the intention though its commit never
+   * reached the ledger. A ledger may drop it once the entry is committed. Absent from an entry the
+   * stream wrote, and from one written before Bounda recorded it.
+   */
+  readonly reached?: LedgerReached;
 }
 
 /**

@@ -33,6 +33,8 @@ export type {
   ForgetLedgerLag,
   PersonalDataBackfillLag,
   RebuildReadModelOptions,
+  RestoreDeclaration,
+  RestoredOptions,
   RotateTenantKeyOptions,
   RunUntilIdleOptions,
   RunUntilIdleResult,

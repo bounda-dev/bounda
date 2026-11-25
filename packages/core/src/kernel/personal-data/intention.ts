@@ -1,4 +1,4 @@
-import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
+import type { ForgetLedgerEntry, LedgerReached } from "../../adapter/storage/forget-ledger.ts";
 import type {
   HeldPersonalKey,
   PersonalKeyStore,
@@ -119,6 +119,11 @@ export interface CreateForgetIntentionsArgs {
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
+  /**
+   * Where the database stands, read before each intention is written, which the intention keeps;
+   * one that rejects leaves it out.
+   */
+  readonly reached?: () => Promise<LedgerReached>;
 }
 
 export interface CreateForgetIntentionsFunction {
@@ -136,13 +141,18 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
   ids,
   clock,
   logger,
+  reached,
 }) => {
-  const append = async (entries: readonly ForgetLedgerEntry[], lost: string): Promise<void> => {
+  const append = async (
+    entries: () => Promise<readonly ForgetLedgerEntry[]>,
+    lost: string,
+  ): Promise<void> => {
     if (ledger === null) return;
     const { store, strict } = ledger;
     if (!strict && store.late()) return;
+    const appended = await entries();
     try {
-      await store.append(entries);
+      await store.append(appended);
     } catch (error) {
       // The tenant takes no write: what the ledger refused, the database refuses too.
       if (isFenceError(error)) throw error;
@@ -150,9 +160,20 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
       logger.warn(lost, { error });
     }
   };
+  // Without where the database stood, the entry tells no restore its commit missed, and misleads
+  // none: the append that follows meets the same ledger, and fails as a ledger that is down does.
+  const stood = async (): Promise<{ readonly reached?: LedgerReached }> => {
+    if (reached === undefined) return {};
+    try {
+      return { reached: await reached() };
+    } catch (error) {
+      logger.warn("where the database stood could not be kept with the intention", { error });
+      return {};
+    }
+  };
   const record = (entry: ForgetLedgerEntry): Promise<void> =>
     append(
-      [{ ...entry, committed: false }],
+      async () => [{ ...entry, committed: false, ...(await stood()) }],
       "forget ledger did not take the forgetting; it commits, and the stream copies it",
     );
   return {
@@ -177,15 +198,16 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
     record,
     disclose: (disclosures, at) =>
       append(
-        disclosures.map(({ person, ...disclosure }) => ({
-          personId: person,
-          categories: null,
-          eventId: disclosureEntryId({ person, ...disclosure }),
-          forgottenAt: at,
-          reason: "requested",
-          disclosure,
-          committed: false,
-        })),
+        async () =>
+          disclosures.map(({ person, ...disclosure }) => ({
+            personId: person,
+            categories: null,
+            eventId: disclosureEntryId({ person, ...disclosure }),
+            forgottenAt: at,
+            reason: "requested",
+            disclosure,
+            committed: false,
+          })),
         "forget ledger did not take the disclosure; a restore that loses it would not tell its recipient",
       ),
   };

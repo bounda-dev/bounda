@@ -6,6 +6,7 @@ import {
   fenceError,
   forgottenReasonOf,
   type LedgerDisclosure,
+  type LedgerReached,
   type LedgerRedaction,
   type LedgerRestriction,
   nextFence,
@@ -24,6 +25,11 @@ export const KV_LIST_DELAY_MS = 60_000;
 // entry lists first. Any time from 1970 on leaves sixteen digits, which sort as numbers do.
 const LATEST_MS = 8_640_000_000_000_000;
 const LIST_LIMIT = 1_000;
+// What follows an entry's time in its key: the committed copy and the intention have keys of their
+// own, so no write of one ever lands over the other.
+const COMMITTED = ":";
+const INTENDED = "~";
+const KEY = /^(\d+)([:~])(.*)$/s;
 // Below the thousand operations a Worker's invocation may make, with its lists.
 const KV_CLEAR_BATCH = 500;
 const MARKS_PREFIX = "bounda/forget-ledger-marks/";
@@ -46,6 +52,7 @@ interface EntryMetadata {
   readonly inValue?: true;
   // Only on an intention: a list reads it, whether the entry's value is fetched or not.
   readonly committed?: false;
+  readonly reached?: LedgerReached;
 }
 
 // What the value of an entry `inValue` holds: always where the entry records a change of
@@ -80,8 +87,12 @@ const storedOf = ({
   redaction,
   disclosure,
   committed,
+  reached,
 }: ForgetLedgerEntry): StoredEntry => {
-  const intended = committed === false ? { committed } : {};
+  const intended = {
+    ...(committed === false ? { committed } : {}),
+    ...(reached === undefined ? {} : { reached }),
+  };
   const full: EntryMetadata = {
     personId,
     forgottenAt,
@@ -196,8 +207,15 @@ const entryOf = (
     ...(redaction === undefined ? {} : { redaction }),
     ...(disclosure === undefined ? {} : { disclosure }),
     ...(metadata.committed === false ? { committed: false as const } : {}),
+    ...(isReached(metadata.reached) ? { reached: metadata.reached } : {}),
   };
 };
+
+const isReached = (value: unknown): value is LedgerReached =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof Reflect.get(value, "position") === "number" &&
+  typeof Reflect.get(value, "generation") === "number";
 
 interface ListedEntry {
   readonly name: string;
@@ -224,7 +242,9 @@ export interface CreateKvForgetLedgerFunction {
 }
 
 /**
- * One key per entry, `<prefix><time>:<eventId>`, with the person and the time in its metadata.
+ * One key per entry, `<prefix><time>:<eventId>`, with the person and the time in its metadata, and
+ * `<prefix><time>~<eventId>` for an intention until its committed copy lands: KV does not show a
+ * key written in another location at once, so no write looks at what the other wrote.
  * KV lists keys in order and starts nowhere but at the first, so the time is kept counting down:
  * the newest entries list first, and a read stops listing at the first entry it does not need.
  * That leaves the oldest entries last, out of reach of a prune, so with `keepForMs` each key
@@ -237,6 +257,10 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
 }) => {
   // Apart from the entries' keys, so no list of entries meets one.
   const markKey = (name: string): string => `${MARKS_PREFIX}${prefix}${name}`;
+  const committedKey = ({ forgottenAt, eventId }: ForgetLedgerEntry): string =>
+    `${prefix}${timeKey(forgottenAt)}${COMMITTED}${eventId}`;
+  const intentionKey = ({ forgottenAt, eventId }: ForgetLedgerEntry): string =>
+    `${prefix}${timeKey(forgottenAt)}${INTENDED}${eventId}`;
   // KV cannot check a key in the same step as it writes another: the tenant's own object, the one
   // writer of its ledger, checks the fence it set itself as well as the one KV holds, and waits for
   // its writes under way before a fence it sets is in force, so they land before it.
@@ -244,18 +268,6 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
   let own: TenantFence | null = null;
   let running = 0;
   let drained: (() => void)[] = [];
-  // The writes of one entry run one after another: an intention looks whether its entry is there
-  // before it writes, which a committed copy written meanwhile would make wrong.
-  const writing = new Map<string, Promise<unknown>>();
-  const inTurn = (key: string, write: () => Promise<void>): Promise<void> => {
-    const turn = (writing.get(key) ?? Promise.resolve()).then(write);
-    const settled = turn.catch(() => undefined);
-    writing.set(key, settled);
-    void settled.then(() => {
-      if (writing.get(key) === settled) writing.delete(key);
-    });
-    return turn;
-  };
   const storedFence = async (): Promise<TenantFence> => {
     const stored = await namespace.get(fenceKey);
     return stored === null ? { state: "open" } : (JSON.parse(stored) as TenantFence);
@@ -290,25 +302,26 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
     append: (entries) =>
       behindFence(async () => {
         const now = Date.now();
-        const put = (entry: ForgetLedgerEntry): Promise<void> => {
-          const key = `${prefix}${timeKey(entry.forgottenAt)}:${entry.eventId}`;
-          return inTurn(key, async () => {
-            // An entry already there is never put back to an intention.
-            if (entry.committed === false && (await namespace.get(key)) !== null) return;
-            const { metadata, value } = storedOf(entry);
-            if (keepForMs === undefined) return namespace.put(key, value, { metadata });
-            const expiration = expirationOf(entry.forgottenAt, keepForMs, now);
-            if (expiration !== null) await namespace.put(key, value, { metadata, expiration });
-          });
+        const put = async (key: string, entry: ForgetLedgerEntry): Promise<void> => {
+          const { metadata, value } = storedOf(entry);
+          if (keepForMs === undefined) return namespace.put(key, value, { metadata });
+          const expiration = expirationOf(entry.forgottenAt, keepForMs, now);
+          if (expiration !== null) await namespace.put(key, value, { metadata, expiration });
         };
-        // An entry's committed copy comes after its intention in one call, so it wins.
-        const intentions = entries.filter(({ committed }) => committed === false);
-        const committed = entries.filter(({ committed }) => committed !== false);
-        await Promise.all([...intentions.map(put), ...committed.map(put)]);
+        // An intention never writes the committed key, so it never lands over a committed copy,
+        // whatever KV shows of it where it is written. The committed copy removes the intention
+        // once it landed; one written again after that reads as committed all the same.
+        await Promise.all(
+          entries.map(async (entry) => {
+            if (entry.committed === false) return put(intentionKey(entry), entry);
+            await put(committedKey(entry), entry);
+            await namespace.delete(intentionKey(entry));
+          }),
+        );
       }),
     read: async ({ after, limit }) => {
       const oldest = after === undefined ? null : timeKey(after.forgottenAt);
-      const found: ListedEntry[] = [];
+      const found = new Map<string, ListedEntry>();
       let cursor: string | undefined;
       for (;;) {
         const page = await namespace.list<EntryMetadata>({
@@ -318,24 +331,28 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
         });
         let past = false;
         for (const { name, metadata } of page.keys) {
-          const rest = name.slice(prefix.length);
-          const separator = rest.indexOf(":");
-          if (oldest !== null && rest.slice(0, separator) > oldest) {
+          const parsed = KEY.exec(name.slice(prefix.length));
+          if (parsed === null) continue;
+          const [, time = "", separator, eventId = ""] = parsed;
+          if (oldest !== null && time > oldest) {
             past = true;
             break;
           }
           if (metadata === null || metadata === undefined) continue;
-          found.push({
+          const listed: ListedEntry = {
             name,
-            metadata,
+            metadata: separator === INTENDED ? { ...metadata, committed: false } : metadata,
             forgottenAt: metadata.forgottenAt,
-            eventId: rest.slice(separator + 1),
-          });
+            eventId,
+          };
+          const other = found.get(eventId);
+          // The committed copy wins over the intention of the same entry.
+          if (other === undefined || other.metadata.committed === false) found.set(eventId, listed);
         }
         if (past || page.list_complete) break;
         cursor = page.cursor;
       }
-      const candidates = found
+      const candidates = [...found.values()]
         .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
         .sort(byForgetLedgerOrder);
       // Only the values of the entries handed out, a page's worth at once; one whose value is
