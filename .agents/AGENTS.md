@@ -17,7 +17,7 @@ pnpm 12 (workspace catalog, `catalogMode: strict`), TypeScript 7, Biome (lint an
 | `pnpm typecheck` | `tsc -p` in every package and example; `astro check` in `docs`, on TypeScript 6 from the `docs` catalog because it does not accept 7 |
 | `pnpm build` | tsdown in every package |
 | `pnpm generate` | `bounda generate` in every example (`examples/*`), needs `build` first |
-| `pnpm test` / `pnpm test:types` | Vitest / Vitest typecheck-only |
+| `pnpm test` / `pnpm test:types` | Vitest, the type-level tests included / only the type-level tests (`core`'s `test-types`) |
 | `pnpm changeset` | add a changeset (required when a published package changes) |
 | `pnpm docs:dev` / `pnpm docs:build` | Starlight site |
 | `pnpm --filter @bounda-dev/core test` | one package |
@@ -71,7 +71,7 @@ The Cloudflare project without a framework also lives in `bounda-dev/bounda-clou
 
 ## Types are the product
 
-User-facing inference must never regress. `packages/core/test-types/` holds `expectTypeOf` assertions for every handler argument and return type; it runs in CI via `pnpm test:types`. Any change to typegen or public types adds or updates a case there.
+User-facing inference must never regress. `packages/core/test-types/` holds `expectTypeOf` assertions for every handler argument and return type; `pnpm test` runs them with the rest, in CI too, and `pnpm test:types` runs them alone. Any change to typegen or public types adds or updates a case there.
 
 ## Testing
 
