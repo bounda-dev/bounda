@@ -3,7 +3,7 @@ import { type Adapter, isAdapter, type Storage } from "../adapter/adapter.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
 import type { DeclaredRecipient } from "../adapter/storage/recipient-store.ts";
-import { fenceError, isFenceError } from "../adapter/storage/tenant-fence.ts";
+import { fenceError } from "../adapter/storage/tenant-fence.ts";
 import type { PendingRecipientDeclaration } from "../adapter/storage/tenant-key-store.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
@@ -68,6 +68,7 @@ import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
 import { checkClassification } from "./personal-data/classification.ts";
 import { logClearFields } from "./personal-data/clear-fields.ts";
+import { createCommittedCopies } from "./personal-data/committed-copies.ts";
 import { createEarlierAnswers } from "./personal-data/earlier-answers.ts";
 import { openEncryptedFiles } from "./personal-data/encrypted-files.ts";
 import {
@@ -96,7 +97,7 @@ import {
 import { createForgetIntentions } from "./personal-data/intention.ts";
 import { keySourcesOf, openKeyHierarchy } from "./personal-data/key-hierarchy.ts";
 import { buildKeyWrapper } from "./personal-data/key-wrapper.ts";
-import { createLedgerOutbox, ledgerEntries } from "./personal-data/ledger-outbox.ts";
+import { createLedgerOutbox } from "./personal-data/ledger-outbox.ts";
 import { marksPersonalFields } from "./personal-data/marks.ts";
 import {
   createForgetLedgerReconciliation,
@@ -578,9 +579,30 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
    * the app was stopped, without a forget ledger that tells it. Counts the restore, so every
    * running instance starts its background jobs over, clears the holds the copy brought back, and
    * reconciles the forget ledger at once when there is one. A restore made under a running app,
-   * or while it was stopped with a ledger, is found without it.
+   * or while it was stopped with a ledger, is found without it. Counts each restore once: made
+   * again after it failed, it finishes the same declaration. While the database stands exactly
+   * where handling the last restore left it, it counts nothing, starts nothing over and resolves
+   * `counted: false`, as the database cannot tell a declaration made again from a copy taken at
+   * that moment: `again` counts that copy.
    */
-  restored(): Promise<void>;
+  restored(options?: RestoredOptions): Promise<RestoreDeclaration>;
+}
+
+export interface RestoredOptions {
+  /**
+   * The database was restored from a copy taken exactly when the last restore was handled: count
+   * it though the database stands where that one left it.
+   */
+  readonly again?: boolean;
+}
+
+export interface RestoreDeclaration {
+  /**
+   * `false` when the database stood exactly where handling the last restore left it and nothing
+   * was counted: the declaration was made again, or the copy was taken at that moment, which
+   * `again` counts.
+   */
+  readonly counted: boolean;
 }
 
 /**
@@ -921,6 +943,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       ids,
       clock,
       logger,
+      // Read when an intention is written, by then the watch below exists.
+      reached: () => restores.reached(),
     });
     // The tenant's keys, once the key hierarchy is open: what says this instance knows it forgotten.
     let tenantKeysOpened: Pick<TenantKeys, "forgotten"> | null = null;
@@ -950,23 +974,17 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             },
       logger,
     });
+    const copies =
+      ledgerStore === undefined
+        ? null
+        : createCommittedCopies({ ledger: ledgerStore, keepForMs, clock, logger });
     // Every event this instance commits is the newest the watch knows of until it reads another.
     // What it commits of a forgetting, a restriction or a redaction marks its intention in the
-    // ledger committed as soon as the commit returns, ahead of the stream's copy, so a restore that
-    // loses it is found from the ledger from then on. A ledger that does not take it leaves that
-    // to the stream; one that hangs is skipped, as for an intention.
+    // ledger committed as soon as the commit returns, ahead of the stream's copy; what the ledger
+    // does not take then is appended again before each look for a restore, and at stop.
     const committed = async (events: readonly StoredEvent[]): Promise<void> => {
       for (const event of events) restores.saw(event);
-      if (ledgerStore === undefined || ledgerStore.late()) return;
-      const entries = ledgerEntries({ events, keepForMs, now: clock.now() });
-      if (entries.length === 0) return;
-      try {
-        await ledgerStore.append(entries);
-      } catch (error) {
-        if (!isFenceError(error)) {
-          logger.warn("forget ledger did not take a commit; the stream copies it", { error });
-        }
-      }
+      await copies?.copy(events);
     };
     // The declarations of recipients the starts on a frozen tenant could not write, as every read
     // sees them until they are: the tenant key record's once the key hierarchy is open.
@@ -1287,6 +1305,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           forgetting: forgottenAtStart,
           tenant: tenantId,
           close: async () => {
+            await copies?.retry();
             await restores.flush();
             try {
               for (const close of opened) await close();
@@ -1605,7 +1624,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       if (reconciliation === undefined) return;
       const undone = reconciliation.undone();
       if (undone === 0) return;
-      await worker.restored(await restores.declare({ reconciled: true }), { reconciled: true });
+      await worker.restored(
+        await restores.declare({ reconciled: true, past: reconciliation.past() }),
+        { reconciled: true },
+      );
       reconciliation.declared(undone);
       await restores.settled();
     };
@@ -1743,6 +1765,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await settleDeferred();
         await settlePending();
         await fileEncryptions.settle();
+        await copies?.retry();
         const found = await restores.check(clock.now());
         if (found !== null) await restartFound(found);
         // A read model's database restored apart from the stream is projected back before it serves.
@@ -1981,6 +2004,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             if (!fences.frozen()) {
               await settleDeferred();
               await settlePending();
+              await copies?.retry();
               const found = await restores.check(clock.now());
               if (found !== null && (await restartFound(found)) > 0) {
                 await dispatcher.catchUp("projection");
@@ -2740,8 +2764,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }
         return forgotten;
       },
-      restored: async (): Promise<void> => {
-        await restartFound(await restores.declare());
+      restored: async ({ again = false } = {}): Promise<RestoreDeclaration> => {
+        const declared = await restores.declare({ again });
+        // Counted nothing: the restore it would declare was handled already.
+        if (declared.counted) await restartFound(declared);
+        return { counted: declared.counted };
       },
     });
     const lifecycle: Omit<BoundaApp<R>, Exclude<keyof BoundaClient<R>, "rebuildReadModel">> = {
@@ -2770,6 +2797,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             const background = Promise.all([dispatcher.stop(), worker.stop()]);
             const runner = await entering?.catch(() => null);
             await Promise.all([background, runner?.stop()]);
+            await copies?.retry();
             await restores.flush();
             await readModelDatabases.flush();
             try {
@@ -2822,7 +2850,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
       rebuildReadModel: (name, options) => operations.rebuildReadModel(name, options),
       forgetAgain: (entries, options) => operations.forgetAgain(entries, options),
-      restored: () => operations.restored(),
+      restored: (options) => operations.restored(options),
       pendingRebuilds: async () => {
         if (entering !== null) return [];
         const paused = await Promise.all(

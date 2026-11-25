@@ -223,7 +223,7 @@ describe("a restore under a running app", () => {
     expect(previous).toHaveBeenCalled();
     const down = new Error("the database is down");
     previous.mockRejectedValueOnce(down);
-    await app.restored();
+    await app.restored({ again: true });
     expect(errors).toContainEqual([
       "the database's key could not be read again",
       expect.objectContaining({ errorMessage: "the database is down" }),

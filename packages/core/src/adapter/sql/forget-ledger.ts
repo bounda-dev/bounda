@@ -4,6 +4,7 @@ import {
   type ForgetLedgerEntry,
   forgottenReasonOf,
   type LedgerDisclosure,
+  type LedgerReached,
   type LedgerRedaction,
   type LedgerRestriction,
 } from "../storage/forget-ledger.ts";
@@ -25,6 +26,7 @@ const COLUMNS = [
   "redaction",
   "disclosure",
   "committed",
+  "reached",
 ] as const;
 // Within the hundred parameters a Durable Object's SQLite binds to one statement.
 const ENTRIES_PER_INSERT = Math.floor(100 / COLUMNS.length);
@@ -78,6 +80,7 @@ export const forgetLedgerLatestSchema: ForgetLedgerLatestSchemaFunction = (table
     "redaction" TEXT,
     "disclosure" TEXT,
     "committed" INTEGER NOT NULL DEFAULT 1,
+    "reached" TEXT,
     PRIMARY KEY ("tenant", "event_id")
   )`,
       orderIndexStatement(table),
@@ -276,6 +279,21 @@ export const forgetLedgerCommittedStatement: ForgetLedgerCommittedStatementFunct
 ) =>
   `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"committed" INTEGER NOT NULL DEFAULT 1`;
 
+export interface ForgetLedgerReachedStatementFunction {
+  (table: string, dialect: Pick<SqlDialect, "name">): string;
+}
+
+/**
+ * The eleventh version: where the database stood when an intention was written, as JSON, `NULL`
+ * for an entry the stream wrote, which tells nothing, as every entry written before. SQLite has no
+ * `IF NOT EXISTS` there, so its caller runs it only on a table without the column.
+ */
+export const forgetLedgerReachedStatement: ForgetLedgerReachedStatementFunction = (
+  table,
+  { name },
+) =>
+  `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"reached" TEXT`;
+
 // One entry per event, committed when any of its appends is: an upsert that meets one event twice
 // in a statement fails on PostgreSQL.
 const onePerEvent = (entries: readonly ForgetLedgerEntry[]): readonly ForgetLedgerEntry[] => {
@@ -304,6 +322,7 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
   const restriction = JSON.parse(String(row.restriction ?? null)) as LedgerRestriction | null;
   const redaction = JSON.parse(String(row.redaction ?? null)) as LedgerRedaction | null;
   const disclosure = JSON.parse(String(row.disclosure ?? null)) as LedgerDisclosure | null;
+  const reached = JSON.parse(String(row.reached ?? null)) as LedgerReached | null;
   return {
     ...entry,
     ...(Array.isArray(fingerprints) ? { fingerprints: fingerprints.map(String) } : {}),
@@ -311,10 +330,11 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
     ...(redaction === null ? {} : { redaction }),
     ...(disclosure === null ? {} : { disclosure }),
     ...(Number(row.committed) === 0 ? { committed: false as const } : {}),
+    ...(reached === null ? {} : { reached }),
   };
 };
 
-const SELECTED = `"event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure", "committed"`;
+const SELECTED = `"event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure", "committed", "reached"`;
 
 /**
  * The forget ledger of SQLite and PostgreSQL alike, in a table of its own that holds every
@@ -372,6 +392,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
                 redaction,
                 disclosure,
                 committed,
+                reached,
               }) => [
                 tenant,
                 eventId,
@@ -384,6 +405,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
                 redaction === undefined ? null : JSON.stringify(redaction),
                 disclosure === undefined ? null : JSON.stringify(disclosure),
                 committed === false ? 0 : 1,
+                reached === undefined ? null : JSON.stringify(reached),
               ],
             ),
           );

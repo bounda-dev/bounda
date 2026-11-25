@@ -1298,14 +1298,18 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         state.marksFailing = true;
         await expect(restored.app.restored()).rejects.toThrow("the ledger's marks are down");
         state.marksFailing = false;
-        await restored.app.restored();
+        expect(await restored.app.restored()).toEqual({ counted: true });
         expect((await restored.app.status()).restoresFound).toBe(1);
-        await restored.app.restored();
+        expect(await restored.app.restored()).toEqual({ counted: false });
         await restored.app.stop();
         // Run again by an operator, as `bounda restored` is, before the database moved on.
         const again = await start(target.storage, definition, BEFORE_ROTATION, clock);
-        await again.app.restored();
+        expect(await again.app.restored()).toEqual({ counted: false });
         expect((await again.app.status()).restoresFound).toBe(1);
+        // Told the database is a copy taken right then, it counts it.
+        expect(await again.app.restored({ again: true })).toEqual({ counted: true });
+        expect((await again.app.status()).restoresFound).toBe(2);
+        expect(await again.app.restored()).toEqual({ counted: false });
         await expectReadable(again, "ana");
       },
       RESTORE_CASE_TIMEOUT_MS,

@@ -48,6 +48,7 @@ const LATEST = [
   { scope: "checkpoints", version: 2 },
   { scope: "checkpoints", version: 3 },
   { scope: "checkpoints", version: 4 },
+  { scope: "checkpoints", version: 5 },
   { scope: "storage", version: 1 },
   { scope: "storage", version: 2 },
   { scope: "storage", version: 3 },
@@ -189,21 +190,21 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       const versions = await target.adapter.schemaVersions();
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
-        { scope: "checkpoints", version: 0, latest: 4 },
-        { scope: "forget-ledger", version: 0, latest: 10 },
+        { scope: "checkpoints", version: 0, latest: 5 },
+        { scope: "forget-ledger", version: 0, latest: 11 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
-        { scope: "checkpoints", version: 4, latest: 4 },
-        { scope: "forget-ledger", version: 0, latest: 10 },
+        { scope: "checkpoints", version: 5, latest: 5 },
+        { scope: "forget-ledger", version: 0, latest: 11 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
         { scope: "storage", version: STORAGE_LATEST[dialect], latest: STORAGE_LATEST[dialect] },
-        { scope: "checkpoints", version: 4, latest: 4 },
-        { scope: "forget-ledger", version: 10, latest: 10 },
+        { scope: "checkpoints", version: 5, latest: 5 },
+        { scope: "forget-ledger", version: 11, latest: 11 },
         { scope: "tenant-keys", version: 1, latest: 1 },
       ]);
       const shape = await shapeOf(target, dialect);
@@ -227,7 +228,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(await target.adapter.schemaVersions()).toContainEqual({
         scope: "checkpoints",
         version: 999,
-        latest: 4,
+        latest: 5,
       });
     });
 
@@ -413,6 +414,26 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
 
+    it("removes, at the fifth version of the checkpoints, the handled restore's position, which its one row names now", async () => {
+      const target = await create();
+      await opened(target.adapter, async (storage) => {
+        await storage.checkpointStore.set("runtime:restore-handled-at", 7);
+        await storage.checkpointStore.set("runtime:restore-handled", 11);
+        await storage.checkpointStore.set("projection:x", 3);
+      });
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'checkpoints' AND "version" >= 5`,
+      );
+      await opened(target.adapter, async (storage) => {
+        expect(await storage.checkpointStore.get("runtime:restore-handled-at")).toBe(0);
+        expect(await storage.checkpointStore.get("runtime:restore-handled")).toBe(11);
+        expect(await storage.checkpointStore.get("projection:x")).toBe(3);
+      });
+      expect(
+        (await versionsOf(target)).filter(({ scope }) => scope === "checkpoints"),
+      ).toHaveLength(5);
+    });
+
     it("adds, at migration 11, whom else a letter's and a failure's work read, naming nobody there before", async () => {
       const target = await create();
       await opened(target.adapter, async (storage) => {
@@ -543,6 +564,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 8 },
         { scope: "forget-ledger", version: 9 },
         { scope: "forget-ledger", version: 10 },
+        { scope: "forget-ledger", version: 11 },
       ]);
     });
 
@@ -629,7 +651,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at") VALUES ('t-1', 'e-1', 'p-1', '2026-01-01T00:00:01.000Z')`,
       );
       await target.execute(
-        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 10`,
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" >= 10`,
       );
       const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
       try {
@@ -651,6 +673,55 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         ).toEqual([
           { eventId: "e-1", committed: undefined },
           { eventId: "e-2", committed: false },
+        ]);
+      } finally {
+        await ledger.close?.();
+      }
+    });
+
+    it("keeps where the database stood when an intention was written from the eleventh version, and nothing for an entry before", async () => {
+      const target = await create();
+      const table = quoteIdentifier(
+        storageTableNameFor({ prefix: target.prefix, table: "forgetLedger" }),
+      );
+      const migrated = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        await migrated.read({ limit: 1 });
+      } finally {
+        await migrated.close?.();
+      }
+      await target.execute(`ALTER TABLE ${table} DROP COLUMN "reached"`);
+      await target.execute(
+        `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at", "committed") VALUES ('t-1', 'e-1', 'p-1', '2026-01-01T00:00:01.000Z', 0)`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 11`,
+      );
+      const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        const intention = {
+          personId: "p-2",
+          eventId: "e-2",
+          forgottenAt: "2026-01-01T00:00:02.000Z",
+          categories: null,
+          reason: "requested" as const,
+          committed: false as const,
+          reached: { position: 9_007_199_254_740_000, generation: 3 },
+        };
+        await ledger.append([intention]);
+        // Committed later, it keeps where the database stood.
+        const { committed: _, reached: __, ...copied } = intention;
+        await ledger.append([copied]);
+        expect(await ledger.read({ limit: 10 })).toEqual([
+          {
+            personId: "p-1",
+            eventId: "e-1",
+            forgottenAt: "2026-01-01T00:00:01.000Z",
+            categories: null,
+            reason: "requested",
+            committed: false,
+          },
+          { ...copied, reached: intention.reached },
         ]);
       } finally {
         await ledger.close?.();
@@ -826,6 +897,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "checkpoints", version: 2 },
         { scope: "checkpoints", version: 3 },
         { scope: "checkpoints", version: 4 },
+        { scope: "checkpoints", version: 5 },
       ]);
     });
   });
