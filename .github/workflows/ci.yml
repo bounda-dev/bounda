@@ -17,7 +17,19 @@ jobs:
     name: Lint, typecheck, build, test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Whether the step below can log in; the token itself stays out of the job's environment,
+      # where every step, the tests included, would see it.
+      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
     steps:
+      # A read-only Docker Hub token, so the images the tests start are pulled authenticated. Pull
+      # requests from forks get no secrets and pull anonymously.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_LOGIN == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
@@ -186,10 +198,21 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.mutation) }}
     env:
-      # Stryker runs the tests once per mutant: PostgreSQL's keep one container for all of them.
+      # Stryker runs the tests once per mutant: PostgreSQL's and the libSQL server's keep one
+      # container for all of them.
       BOUNDA_PG_REUSE: "1"
+      BOUNDA_LIBSQL_REUSE: "1"
       SHARD: ${{ matrix.shards > 1 && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
+      # As in the check job.
+      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
     steps:
+      # As in the check job.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_LOGIN == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
