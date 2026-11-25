@@ -10,20 +10,14 @@ import {
   replaySqliteSchemas,
   tenantFenceContract,
 } from "@bounda-dev/core/adapter/testing";
-import { startContainer } from "@bounda-dev/test-containers";
 import { createClient } from "@libsql/client";
-import { GenericContainer, Wait } from "testcontainers";
 import { afterAll, describe, expect, it } from "vitest";
 import { createSqliteDatabase } from "./database.ts";
 import { type SqliteAdapter, sqlite } from "./index.ts";
+import { startTestServer } from "./test-support.ts";
 
-const server = await startContainer(() =>
-  new GenericContainer("ghcr.io/tursodatabase/libsql-server:v0.24.33")
-    .withExposedPorts(8080)
-    .withWaitStrategy(Wait.forHttp("/health", 8080))
-    .start(),
-);
-const url = server === null ? "" : `http://${server.getHost()}:${server.getMappedPort(8080)}`;
+const server = await startTestServer();
+const url = server?.url ?? "";
 let prefixes = 0;
 
 const fresh = (): SqliteAdapter => {
@@ -61,7 +55,7 @@ const requestsOf = async (work: () => Promise<unknown>): Promise<number> => {
 afterAll(async () => {
   for (const client of clients) client.close();
   await new Promise((resolve) => counter.close(resolve));
-  await server?.stop();
+  await server?.close();
 });
 
 describe.skipIf(server === null)("sqlite adapter on a libSQL server", () => {
