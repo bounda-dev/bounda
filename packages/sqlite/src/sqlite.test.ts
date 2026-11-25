@@ -346,11 +346,16 @@ describe("sqlite adapter on a file", () => {
       await held;
     });
     await inside;
-    const started = Date.now();
-    const claiming = storage.checkpointStore.set("projection:x", 1);
-    setTimeout(release, 20);
+    const settled: string[] = [];
+    const claiming = storage.checkpointStore.set("projection:x", 1).then(() => {
+      settled.push("statement");
+    });
+    // libSQL waits for a lock by holding the thread, timers included, until its busy timeout.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    settled.push("timer");
+    release();
     await Promise.all([writing, claiming]);
-    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(settled).toEqual(["timer", "statement"]);
     expect(await storage.checkpointStore.get("projection:x")).toBe(1);
   });
 
