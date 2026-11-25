@@ -210,7 +210,7 @@ describe("scheduled command worker", () => {
       },
     });
     await harness.worker.runOnce();
-    expect(steps).toEqual(["declare", "settled"]);
+    expect(steps).toEqual(["declare"]);
     expect(entries.map(({ level, message }) => [level, message])).toEqual([
       ["error", "the restore the forget ledger tells could not be declared; it is tried again"],
     ]);
@@ -219,8 +219,9 @@ describe("scheduled command worker", () => {
     steps.length = 0;
     await harness.worker.runOnce();
     await harness.worker.runOnce();
-    // The reconciliation that told it is what found it: it is not restarted.
-    expect(steps).toEqual(["declare", "declared 2", "settled", "settled"]);
+    // The reconciliation that told it is what found it: it is not restarted, and a pass that
+    // handled no restore settles none.
+    expect(steps).toEqual(["declare", "declared 2", "settled"]);
     expect(entries.at(-1)?.message).toBe(
       "the database went back to an earlier copy; background jobs start over",
     );

@@ -33,11 +33,17 @@ export const RESTORE_UNCLAIMED = "runtime:restore-unclaimed";
 export const RESTORE_DECLARING = "runtime:restore-declaring";
 
 /**
- * The database as the last restore an instance counted left it once handled, as a 52-bit hash of
- * its generation, its count of restores and its newest event: a declaration that finds the
- * database still there declares that restore again, and counts nothing.
+ * The database as the last restore an instance counted left it once handled, as a hash of its
+ * count of restores and its newest event, at `RESTORE_HANDLED_AT`: a declaration that finds the
+ * count unchanged, that event still in its place and the generation not behind the forget
+ * ledger's mark declares that restore again, and counts nothing.
  */
 export const RESTORE_HANDLED = "runtime:restore-handled";
+
+/**
+ * The position of the newest event when the last restore counted was handled.
+ */
+export const RESTORE_HANDLED_AT = "runtime:restore-handled-at";
 
 /**
  * The forget ledger's mark the generation is raised to, outside the database: what tells a copy
@@ -233,9 +239,20 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     }
   };
 
-  const handledMark = async (stored: Seen): Promise<number> => {
-    const newest = await eventAt(await events.lastPosition());
-    return eventMark(`${stored.generation}:${stored.restores}:${newest?.id ?? ""}`);
+  const handledMark = async (restores: number, at: number): Promise<number> =>
+    eventMark(`${restores}:${at}:${(await eventAt(at))?.id ?? ""}`);
+
+  // Not behind the mark: a database that went back to a copy holds a generation lower than the
+  // mark, which only ever follows the generation up.
+  const current = async (stored: Seen): Promise<boolean> =>
+    marks === null || stored.generation >= (await marks.readMark(RESTORE_MARK));
+
+  // The restore handled last, and the database still where it left it or moved on from there.
+  const handledAlready = async (stored: Seen): Promise<boolean> => {
+    const handled = await checkpoints.get(RESTORE_HANDLED);
+    if (handled === 0) return false;
+    const at = await checkpoints.get(RESTORE_HANDLED_AT);
+    return handled === (await handledMark(stored.restores, at)) && (await current(stored));
   };
 
   // The generation a declaration moves to, past the mark, which it raises first: a mark that
@@ -280,13 +297,14 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     }
   };
 
-  // A mark past the database's generation: the database is a copy from before it.
-  const compareWithMark = async (stored: Seen): Promise<Restored | null> => {
+  // A mark past the database's generation: the database is a copy from before it, counted past
+  // `past` too.
+  const compareWithMark = async (stored: Seen, past: number): Promise<Restored | null> => {
     if (marks === null) return null;
     const mark = await marks.readMark(RESTORE_MARK);
     unmarked = false;
     if (stored.generation >= mark) return null;
-    const restored = await count(stored, stored.restores, mark);
+    const restored = await count(stored, Math.max(stored.restores, past), mark);
     await marks.raiseMark(RESTORE_MARK, seen?.generation ?? mark);
     return restored;
   };
@@ -312,7 +330,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     pending ||= active || joined || (head !== null && last !== head);
     head = last;
     if (unmarked) {
-      const restored = await compareWithMark(stored);
+      const restored = await compareWithMark(stored, declaring);
       if (restored !== null) return restored;
     }
     let restored: Restored | null = null;
@@ -352,15 +370,19 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         await watchHead(head);
         seen = stored;
         const declared = await checkpoints.get(RESTORE_DECLARING);
-        // A declaration that did not finish, of a restore counted once whoever finishes it.
-        if (declared > 0 && declared >= stored.restores) return await finish(stored, declared);
+        if (declared > 0 && declared >= stored.restores) {
+          // A declaration that did not finish, of a restore counted once whoever finishes it.
+          if (await current(stored)) return await finish(stored, declared);
+          // A copy taken while one was under way: another restore, counted past it.
+          declaring = declared;
+        }
         // One counted where it was made moved the generation past the mark; one the mark tells came
         // after, as a copy of a database that held it.
         const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
         foundAtStart = unclaimed === stored.restores ? unclaimed : 0;
         handling = foundAtStart > 0;
         const restored =
-          (await compareWithMark(stored)) ?? (foundAtStart > 0 ? { first: true } : null);
+          (await compareWithMark(stored, declaring)) ?? (foundAtStart > 0 ? { first: true } : null);
         // A mark only goes up: past a restore it is already higher.
         await raise(stored.generation);
         return restored;
@@ -382,9 +404,15 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         if (seen !== null && !unmarked && last !== head) await move(seen, movedAt);
         head = last;
         await watchHead(last);
-        const stored = await read();
+        const { restores } = await read();
+        const at = await checkpoints.get(RESTORE_HANDLED_AT);
+        await checkpoints.compareAndSet(RESTORE_HANDLED_AT, at, last);
         const handled = await checkpoints.get(RESTORE_HANDLED);
-        await checkpoints.compareAndSet(RESTORE_HANDLED, handled, await handledMark(stored));
+        await checkpoints.compareAndSet(
+          RESTORE_HANDLED,
+          handled,
+          await handledMark(restores, last),
+        );
       } catch (error) {
         logger.error("the restore handled could not be taken", { error });
       }
@@ -408,14 +436,16 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       for (;;) {
         const stored = await read();
         const declared = await checkpoints.get(RESTORE_DECLARING);
-        if (declared > 0 && declared >= stored.restores) return finish(stored, declared);
+        const pending = declared > 0 && declared >= stored.restores;
+        if (pending && (await current(stored))) return finish(stored, declared);
         // The restore this instance counted and has not settled, or the last one handled while
-        // the database has not moved since: the one declared.
-        if (handling || (await checkpoints.get(RESTORE_HANDLED)) === (await handledMark(stored))) {
-          return { first: true };
-        }
-        const target = Math.max(stored.restores, seen?.restores ?? 0) + 1;
+        // the database stands where it left it or moved on from there: the one declared.
+        if (handling || (await handledAlready(stored))) return { first: true };
+        // Past a declaration a copy brought back, too.
+        const target = Math.max(stored.restores, declared, seen?.restores ?? 0) + 1;
         const generation = await raiseFirst(stored);
+        // The generation first, so a declaration the row tells is never behind the mark it raised.
+        await advance(RESTORE_GENERATION, generation);
         // Another declaration under way took the row first: this one finishes it.
         if (!(await checkpoints.compareAndSet(RESTORE_DECLARING, declared, target))) continue;
         return finish(stored, target, generation);

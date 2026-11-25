@@ -717,8 +717,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       if (paused?.() === true) return 0;
       const restored = await restores?.check(clock.now(), { active: worked });
       let reconciledAtOnce = 0;
+      // Whether this pass handled a restore, which it then settles: one a caller outside the pass
+      // declared is settled by that caller once handled.
+      let settling = false;
       if (restored !== undefined && restored !== null && restored !== handled) {
         handled = restored;
+        settling = true;
         await restart(restored.first);
         // Before anything is claimed: the scheduled commands of whom the copy brought back go
         // with their forgetting.
@@ -770,6 +774,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         if (undone > 0) {
           try {
             handled = await restores.declare();
+            settling = true;
             reconciliation.declared(undone);
             await restart(handled.first, true);
           } catch (error) {
@@ -780,7 +785,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
           }
         }
       }
-      await restores?.settled();
+      if (settling) await restores?.settled();
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
       const purgedFailures = (await failureRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;
