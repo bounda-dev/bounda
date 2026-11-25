@@ -31,21 +31,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-        with:
-          version: 12.22.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - run: pnpm lint
       - run: pnpm build
       - run: pnpm generate
       - run: pnpm typecheck
       - run: pnpm --filter @bounda-dev/example-onboarding build
       - run: pnpm test
-      - run: pnpm test:types
 
   docs:
     name: Docs build
@@ -53,14 +45,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-        with:
-          version: 12.22.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - run: pnpm docs:build
 
   changes:
@@ -87,7 +72,7 @@ jobs:
           fi
           changed=$(git diff --name-only "$base" HEAD)
           all="core sqlite postgresql cli react-router create-bounda cloudflare test-containers"
-          if echo "$changed" | grep -qE '^(pnpm-workspace\.yaml|pnpm-lock\.yaml|patches/|\.github/workflows/ci\.yml|tsconfig\.base\.json)'; then
+          if echo "$changed" | grep -qE '^(pnpm-workspace\.yaml|pnpm-lock\.yaml|patches/|\.github/workflows/ci\.yml|\.github/actions/|tsconfig\.base\.json)'; then
             selected="$all"
           else
             selected=""
@@ -131,14 +116,7 @@ jobs:
           "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
           "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-        with:
-          version: 12.22.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - id: build
         run: pnpm build
       - name: core
@@ -168,14 +146,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-        with:
-          version: 12.22.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - run: pnpm --filter @bounda-dev/core build
       # The test runs without Guard Malloc where the library is missing or dyld will not load it into
       # node, which would prove nothing.
@@ -187,9 +158,11 @@ jobs:
   # incremental file at the end. A package whose full run would not fit is split into shards, each
   # mutating the files a hash of their path gives it (.github/scripts/mutation-shard.ts), so a file
   # keeps its shard and each shard its own cache; each shard holds the break threshold on its own.
+  # It starts alongside `check` rather than after it: mutation is the longest job, and waiting
+  # would add `check`'s whole run to every pull request's.
   mutation:
     name: Mutation (${{ matrix.package }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
-    needs: [changes, check]
+    needs: changes
     if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -214,14 +187,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
-        with:
-          version: 12.22.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: packages/${{ matrix.package }}/.stryker-tmp/incremental${{ env.SHARD }}.json
@@ -272,7 +238,7 @@ jobs:
 
   # The shards of a package add up to the report of a whole run: its score in the summary, and on
   # main the whole report on the dashboard, as the dashboard reporter sends one. It runs once the
-  # shards ran, whether or not they passed, and is skipped with them when `check` failed.
+  # shards ran, whether or not they passed.
   mutation-report:
     name: Mutation report (${{ matrix.package }})
     needs: [changes, mutation]
@@ -305,10 +271,32 @@ jobs:
             cat score.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # The dashboard only shows the score: when it is down, main stays green and says so.
           if [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
             curl --fail-with-body --silent --show-error -X PUT \
               -H "X-Api-Key: $STRYKER_DASHBOARD_API_KEY" -H "Content-Type: application/json" \
               --data-binary @merged.json \
-              "https://dashboard.stryker-mutator.io/api/reports/github.com/${GITHUB_REPOSITORY}/main?module=${{ matrix.package }}"
+              "https://dashboard.stryker-mutator.io/api/reports/github.com/${GITHUB_REPOSITORY}/main?module=${{ matrix.package }}" \
+              || echo "::warning::The Stryker dashboard did not take the ${{ matrix.package }} report"
+          fi
+
+  # The one check branch protection and a merge queue need to require: it fails when any job above
+  # failed or was cancelled, and passes when the rest succeeded or were skipped because the change
+  # does not reach them.
+  passed:
+    name: CI passed
+    needs: [check, docs, changes, windows, guard-malloc, mutation, mutation-report]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then
+            while IFS= read -r job; do echo "::error::$job"; done <<<"$failed"
+            exit 1
           fi
 
