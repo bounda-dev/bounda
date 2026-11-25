@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -14,9 +15,28 @@ permissions:
 
 jobs:
   check:
-    name: Lint, typecheck, build, test
+    name: Lint, typecheck, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm generate
+      - run: pnpm typecheck
+      - run: pnpm --filter @bounda-dev/example-onboarding build
+
+  # The suite split across runners: no file is split, so the longest file (create-bounda's
+  # end-to-end test) sets the floor, and more shards than this would only add setup.
+  test:
+    name: Test (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
       # Whether the step below can log in; the token itself stays out of the job's environment,
       # where every step, the tests included, would see it.
@@ -32,12 +52,60 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: ./.github/actions/setup
-      - run: pnpm lint
       - run: pnpm build
       - run: pnpm generate
-      - run: pnpm typecheck
-      - run: pnpm --filter @bounda-dev/example-onboarding build
-      - run: pnpm test
+      # Coverage is collected here and judged in test-report: a shard alone falls short of the
+      # thresholds.
+      - run: >-
+          pnpm exec vitest run --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+          --reporter=default --reporter=blob --coverage
+          --coverage.thresholds.lines=0 --coverage.thresholds.statements=0
+          --coverage.thresholds.functions=0 --coverage.thresholds.branches=0
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: .vitest/blob/*
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  # The shards add up to the whole run: its result, and its coverage, held to the thresholds in
+  # vitest.config.ts, which no single shard could meet.
+  test-report:
+    name: Test report and coverage
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vitest-blob-*
+          path: .vitest/blob
+          merge-multiple: true
+      - shell: bash
+        run: |
+          status=0
+          pnpm exec vitest run --merge-reports --coverage 2>&1 | tee merge.log || status=$?
+          {
+            echo "## Coverage"
+            echo
+            echo '```text'
+            sed 's/\x1b\[[0-9;]*m//g' merge.log | grep -E "^(Statements|Branches|Functions|Lines) +:|threshold" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 14
 
   docs:
     name: Docs build
@@ -65,6 +133,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            base="${{ github.event.merge_group.base_sha }}"
           elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
             base="${{ github.event.before }}"
           else
@@ -85,7 +155,10 @@ jobs:
           echo "Mutation testing for: $packages"
           # The packages whose mutants are too many for one job, and the shards each runs in.
           shard_counts='{"core": 8, "cli": 2, "postgresql": 3}'
-          mutation=$(for package in $selected; do
+          # The merge queue skips mutation testing: the pull request ran it on the same changes, and
+          # main runs it again once they land.
+          if [ "${{ github.event_name }}" = "merge_group" ]; then mutated=""; else mutated="$selected"; fi
+          mutation=$(for package in $mutated; do
             shards=$(jq -r --arg package "$package" '.[$package] // 1' <<<"$shard_counts")
             for shard in $(seq 1 "$shards"); do
               jq -nc --arg package "$package" --argjson shard "$shard" --argjson shards "$shards" \
@@ -163,7 +236,7 @@ jobs:
   mutation:
     name: Mutation (${{ matrix.package }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
     needs: changes
-    if: needs.changes.outputs.packages != '[]'
+    if: needs.changes.outputs.mutation != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -285,7 +358,7 @@ jobs:
   # does not reach them.
   passed:
     name: CI passed
-    needs: [check, docs, changes, windows, guard-malloc, mutation, mutation-report]
+    needs: [check, test, test-report, docs, changes, windows, guard-malloc, mutation, mutation-report]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
