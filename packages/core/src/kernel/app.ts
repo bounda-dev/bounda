@@ -2063,11 +2063,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         );
       } else if (typeof forgotten !== "number") {
         if (strict) throw new ForgetLedgerUnreconciledError(forgotten.failed);
-      } else if (forgotten > 0) {
-        // The ledger held a committed forgetting the database does not: a restore, whatever the
-        // mark said.
+      } else {
+        // The ledger held a committed entry the database lacks, or one written where the database
+        // had gone further than it stands: a restore, whatever the mark said.
         await declareUndone();
-        await dispatcher.catchUp("projection");
+        if (forgotten > 0) await dispatcher.catchUp("projection");
       }
       // Reconciled, or the start failed already.
       unreconciled = null;

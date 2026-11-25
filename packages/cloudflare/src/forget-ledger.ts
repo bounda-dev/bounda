@@ -33,6 +33,11 @@ const KEY = /^(\d+)([:~])(.*)$/s;
 // Below the thousand operations a Worker's invocation may make, with its lists.
 const KV_CLEAR_BATCH = 500;
 const MARKS_PREFIX = "bounda/forget-ledger-marks/";
+// A mark keeps a key for each value raised, counting down from the largest a value may be, so the
+// highest lists first: a raise writes its own key and never one another raise wrote. Any value a
+// generation or a count reaches leaves sixteen digits, which sort as numbers do.
+// The lower values a raise removes at most, within what one invocation may do.
+const MARK_PRUNE = 20;
 const FENCES_PREFIX = "bounda/forget-ledger-fences/";
 // The soonest KV lets a key expire, in seconds from now.
 const KV_MIN_TTL_S = 60;
@@ -254,6 +259,10 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
 }) => {
   // Apart from the entries' keys, so no list of entries meets one.
   const markKey = (name: string): string => `${MARKS_PREFIX}${prefix}${name}`;
+  const markValueKey = (name: string, value: number): string =>
+    `${markKey(name)}/${Number.MAX_SAFE_INTEGER - value}`;
+  const valueOfMark = (name: string, key: string): number =>
+    Number.MAX_SAFE_INTEGER - Number(key.slice(markKey(name).length + 1));
   const committedKey = ({ forgottenAt, eventId }: ForgetLedgerEntry): string =>
     `${prefix}${timeKey(forgottenAt)}${COMMITTED}${eventId}`;
   const intentionKey = ({ forgottenAt, eventId }: ForgetLedgerEntry): string =>
@@ -319,6 +328,9 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
     read: async ({ after, limit }) => {
       const oldest = after === undefined ? null : timeKey(after.forgottenAt);
       const found = new Map<string, ListedEntry>();
+      // Intentions whose committed copy lists too: a put given up for the ledger's timeout that
+      // landed after the copy removed its key.
+      const orphans: string[] = [];
       let cursor: string | undefined;
       for (;;) {
         const page = await namespace.list<EntryMetadata>({
@@ -344,10 +356,19 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
           };
           // `:` sorts before `~`: the committed copy lists before the intention of the same entry,
           // and wins over it.
-          if (!found.has(eventId)) found.set(eventId, listed);
+          const kept = found.get(eventId);
+          if (kept === undefined) found.set(eventId, listed);
+          // A committed copy lists first, at most once: what follows of the entry is an intention.
+          else if (kept.metadata.committed !== false) orphans.push(name);
         }
         if (past || page.list_complete) break;
         cursor = page.cursor;
+      }
+      // Removed behind the fence, as any write: a fence that refuses leaves them, read as before.
+      if (orphans.length > 0) {
+        await behindFence(async () => {
+          await Promise.all(orphans.slice(0, KV_CLEAR_BATCH).map((name) => namespace.delete(name)));
+        }).catch(() => undefined);
       }
       const candidates = [...found.values()]
         .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
@@ -369,14 +390,22 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
       }
       return entries;
     },
-    readMark: async (name) => Number((await namespace.get(markKey(name))) ?? 0),
-    // KV has no compare: of two instances raising at once the lower may win, which the next raise,
-    // of a mark that only grows, puts right.
+    readMark: async (name) => {
+      const { keys } = await namespace.list({ prefix: `${markKey(name)}/`, limit: 1 });
+      const [highest] = keys;
+      return highest === undefined ? 0 : valueOfMark(name, highest.name);
+    },
+    // KV has no compare: each raise writes a key of its own, so of two instances raising at once,
+    // from whatever reading, neither lands over the other and the mark never goes down.
     raiseMark: (name, value) =>
       behindFence(async () => {
-        const current = Number((await namespace.get(markKey(name))) ?? 0);
-        if (current >= value) return;
-        await namespace.put(markKey(name), String(value));
+        await namespace.put(markValueKey(name, value), "");
+        const { keys } = await namespace.list({
+          prefix: `${markKey(name)}/`,
+          limit: MARK_PRUNE + 1,
+        });
+        // The highest lists first, if this location shows it: only those below it go.
+        await Promise.all(keys.slice(1).map((key) => namespace.delete(key.name)));
       }),
     // Listed whole before the first delete, so no page is listed past keys a delete moved. KV
     // deletes one key a call, so each clear deletes at most `KV_CLEAR_BATCH`, within the

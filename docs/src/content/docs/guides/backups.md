@@ -210,9 +210,15 @@ moment than the other.
   work, and the next normal start forgets nobody again. A failed reconciliation the copy
   remembers does not hold the restored start back, and `bounda status` counts the restore.
 - **Each restore is counted once:** one an instance finds under the running app is not found again
-  by the next start; an intention whose commit never reached the ledger still tells a copy taken
-  before the newest event it saw; and `bounda restored` run again where handling the last restore
-  left the database counts nothing, unless `--again` says the copy was taken right then.
+  by the next start; one only a stopped instance saw is counted by the next look; one found while
+  the ledger could not be read is not counted again when it is reconciled; an intention whose
+  commit never reached the ledger still tells a copy taken before the newest event it saw; a
+  forgetting committed a moment before the copy came back tells it at once; `bounda status` counts
+  every restore found, past one on a copy a later restore took back; and `bounda restored` run again
+  where handling the last restore left the database counts nothing, unless `--again` says the copy
+  was taken right then. Restore counting is also tested against
+  [a model](/guides/personal-data/#restores) of every interleaving of copies, restores, crashes,
+  two instances and a ledger that fails.
 - **Without a forget ledger,** `bounda restored` counts the restore and starts the jobs over, and
   `bounda forget --from` forgets again whom you list; `bounda restrict` restricts again whom you
   know was restricted since.
