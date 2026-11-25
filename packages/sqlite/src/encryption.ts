@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { ConfigurationError, type Logger } from "@bounda-dev/core";
 import type {
   FileEncryption,
@@ -8,6 +9,7 @@ import type {
 } from "@bounda-dev/core/adapter";
 import { SQLITE_BUSY_TIMEOUT_MS } from "@bounda-dev/core/adapter/sqlite";
 import { type Client, createClient } from "@libsql/client";
+import { libsqlNative, type NativeDatabase } from "./close-once.ts";
 
 // Names the key a file was being encrypted from while the encryption runs: `null` in the clear.
 const MARK_SUFFIX = ".bounda-encrypting";
@@ -21,9 +23,39 @@ const quoted = (text: string): string => `'${text.replaceAll("'", "''")}'`;
 const isNotADatabase = (error: unknown): boolean =>
   error instanceof Error && Reflect.get(error, "code") === "SQLITE_NOTADB";
 
+// Whether the file's own pages read under `key`, `null` in the clear, through a connection that
+// takes no lock and leaves the WAL alone. `undefined` when it cannot tell: the native module is out
+// of reach, the read failed otherwise, or the file holds no page yet, which no file with pages in a
+// WAL is, since switching to WAL writes page 1 to the file under its key.
+const readsUnder = (path: string, key: string | null): boolean | undefined => {
+  const Database = libsqlNative();
+  if (Database === null || (statSync(path, { throwIfNoEntry: false })?.size ?? 0) === 0) {
+    return undefined;
+  }
+  let probe: NativeDatabase | undefined;
+  try {
+    probe = new Database(
+      `${pathToFileURL(path).href}?immutable=1`,
+      key === null ? {} : { encryptionKey: key },
+    );
+    probe.prepare("SELECT count(*) FROM sqlite_master").get();
+    return true;
+  } catch (error) {
+    return isNotADatabase(error) ? false : undefined;
+  } finally {
+    try {
+      probe?.close();
+    } catch {
+      // A probe that fails to close holds no lock: the verdict stands.
+    }
+  }
+};
+
 // A connection to the file under `key`, `null` for none, or `null` when it does not open under
-// it. A connection that failed lets go of the file at once; one that read holds it until
-// collected, so the one that opens is the one that encrypts.
+// it. One that read holds the file until collected, so the one that opens is the one that
+// encrypts. One that failed while the WAL held pages, page 1 among them, keeps the WAL open, and
+// with it the lock that refuses the file's encryption, until collected too: `readsUnder` spares the
+// file the keys it rules out.
 const openedUnder = async (path: string, key: string | null): Promise<Client | null> => {
   const client = createClient({
     url: `file:${path}`,
@@ -159,9 +191,14 @@ export const prepareFile: PrepareFileFunction = async ({ path, keys, logger, ten
       `The database file ${path} was being encrypted from a key its tenant's record no longer holds: restore the file from a copy`,
     );
   }
-  // The key a cut-short encryption started from first, then the one in force, then the rest.
-  const candidates: (FileKey | null)[] =
-    marked === undefined ? [current, ...others, null] : [marked, current, ...others, null];
+  // The key a cut-short encryption started from first, tried on the file itself, whose journal it
+  // rolls back. Then the one in force, then the rest, those the file's own pages rule out last.
+  const inOrder: (FileKey | null)[] = [current, ...others, null];
+  const ruledOut = inOrder.filter(
+    (candidate) => readsUnder(path, candidate?.key ?? null) === false,
+  );
+  const ordered = [...inOrder.filter((candidate) => !ruledOut.includes(candidate)), ...ruledOut];
+  const candidates: (FileKey | null)[] = marked === undefined ? ordered : [marked, ...ordered];
   for (const candidate of candidates) {
     const source = await openedUnder(path, candidate?.key ?? null);
     if (source === null) continue;

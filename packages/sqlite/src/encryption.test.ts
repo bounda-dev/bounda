@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { ConfigurationError, type Logger } from "@bounda-dev/core";
 import type { FileKey, FileKeyAccess } from "@bounda-dev/core/adapter";
 import { createTestApp, expectForgotten } from "@bounda-dev/core/testing";
@@ -105,8 +106,9 @@ const fileUnder = (path: string, key: string | null, also = ""): Promise<void> =
     );
   });
 
-// A process that holds the file open, as another instance of the app would, until let go.
-const heldElsewhere = async (path: string): Promise<() => Promise<void>> => {
+// A process that holds the file open, as another instance of the app would, until let go, after
+// running the statements `writes` on it.
+const heldElsewhere = async (path: string, writes = ""): Promise<() => Promise<void>> => {
   const child = spawn(
     process.execPath,
     [
@@ -117,6 +119,7 @@ const heldElsewhere = async (path: string): Promise<() => Promise<void>> => {
       closeConnectionsOnce();
       const client = createClient({ url: ${JSON.stringify(`file:${path}`)} });
       await client.execute("SELECT count(*) FROM sqlite_master");
+      ${writes}
       console.log("holding");
       setInterval(() => undefined, 1000);`,
     ],
@@ -586,30 +589,130 @@ describe("a libSQL file left in the clear while another process held it", () => 
     const paths = fresh();
     await elsewhere(paths, `await registerCustomer(app, "c-1");`, false);
     const letGo = await heldElsewhere(paths.store);
-    // What the encryption once let go logs if it fails: a file still in the clear with none was
-    // still held.
-    const errors: unknown[] = [];
+    const file = paths.store.replaceAll("\\", "/");
+    // What the app logs once the file is let go names the branch a file still in the clear took: an
+    // error, a warning that it was still held, or no word of the file, no pass having tried.
+    const logged: { level: string; message: string; fields: unknown }[] = [];
+    let recording = false;
+    const record =
+      (level: string, ofTheFileOnly = false) =>
+      (message: string, fields?: Record<string, unknown>): void => {
+        if (recording && (!ofTheFileOnly || fields?.file === file)) {
+          logged.push({ level, message, fields });
+        }
+      };
     const app = await bootTestApp(paths, {
-      logger: { ...silent, error: (message, fields) => void errors.push({ message, fields }) },
+      logger: {
+        debug: () => undefined,
+        info: record("info", true),
+        warn: record("warn"),
+        error: record("error"),
+      },
     });
     try {
-      expect((await app.status()).files).toEqual([
-        { database: "storage", file: paths.store.replaceAll("\\", "/"), state: "clear" },
-      ]);
+      expect((await app.status()).files).toEqual([{ database: "storage", file, state: "clear" }]);
       await expect(app.forgetTenant("default")).rejects.toThrow(
         "is still in the clear, so forgetting the tenant would leave it readable",
       );
       expect((await app.status()).tenant).toMatchObject({ forgottenAt: null });
       await letGo();
+      recording = true;
       await app.runUntilIdle();
-      expect({ files: (await app.status()).files, errors }).toMatchObject({
-        files: [{ state: "current" }],
-        errors: [],
+      recording = false;
+      expect(
+        { files: (await app.status()).files, logged },
+        `the descriptors this process has open on the file: ${await openHere(paths.store)}`,
+      ).toEqual({
+        files: [{ database: "storage", file, state: "current" }],
+        logged: [
+          {
+            level: "info",
+            message: "bounda encrypted a database file under its tenant's key in force",
+            fields: { file },
+          },
+        ],
       });
       expect(await nameOf(app, "c-1")).toBe("name of c-1");
       await app.forgetTenant("default");
     } finally {
       await letGo();
+      await app.stop();
+    }
+    expect(await readsInTheClear(paths.store)).toBe(false);
+  });
+});
+
+// An app started on `paths` in a process of its own whose young generation outgrows what the app
+// allocates, so nothing it lets go of is collected while it runs: what it holds on the file is
+// what it never closed. Once `booted`, `proceed` has it run until idle and resolves to where its
+// file stands; `stop` ends it, whatever it was doing.
+const bootedElsewhere = (paths: TestAppPaths) => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--max-semi-space-size=512",
+      "--min-semi-space-size=512",
+      "--input-type=module",
+      "-e",
+      `import { createInterface } from "node:readline";
+      import { bootTestApp } from "./test-app.ts";
+      const app = await bootTestApp(${JSON.stringify(paths)});
+      console.log("booted");
+      for await (const _ of createInterface({ input: process.stdin })) break;
+      await app.runUntilIdle();
+      console.log((await app.status()).files[0]?.state);
+      await app.stop();`,
+    ],
+    { cwd: import.meta.dirname, stdio: ["pipe", "pipe", "inherit"] },
+  );
+  const said = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const next = async (): Promise<string | undefined> => {
+    const { done, value } = await said.next();
+    return done === true ? undefined : value;
+  };
+  const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+  return {
+    booted: next(),
+    proceed: async () => {
+      child.stdin.end("go\n");
+      return { state: await next(), code: await exited };
+    },
+    stop: async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await exited;
+    },
+  };
+};
+
+// The descriptors this process has open on the database at `path` and its WAL, where the system
+// lists them: one connection holds one of each.
+const openHere = async (path: string): Promise<string> => {
+  if (process.platform !== "linux") return "not listed here";
+  const targets = await Promise.all(
+    (await readdir("/proc/self/fd")).map((fd) => readlink(`/proc/self/fd/${fd}`).catch(() => null)),
+  );
+  return JSON.stringify(targets.filter((target) => target?.startsWith(path) === true));
+};
+
+describe("a libSQL file in the clear held by another process that wrote to it", () => {
+  it("is encrypted once let go, though no garbage was collected since the app tried its keys on it", async () => {
+    const paths = fresh();
+    await elsewhere(paths, `await registerCustomer(app, "c-1");`, false);
+    // What the other process writes stays in the WAL, page 1 included, until it lets go.
+    const letGo = await heldElsewhere(
+      paths.store,
+      `await client.execute("PRAGMA wal_autocheckpoint = 0");
+      await client.execute("PRAGMA user_version = 1");`,
+    );
+    const app = bootedElsewhere(paths);
+    try {
+      try {
+        expect(await app.booted).toBe("booted");
+      } finally {
+        await letGo();
+      }
+      expect(await app.proceed()).toEqual({ state: "current", code: 0 });
+    } finally {
       await app.stop();
     }
     expect(await readsInTheClear(paths.store)).toBe(false);

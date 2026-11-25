@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CONNECTION_HOLDER, closeConnectionsLeftOpen, closeConnectionsOnce } from "./close-once.ts";
 
 const CLOSES = 20;
@@ -240,5 +240,15 @@ describe("closing a libSQL connection", () => {
     const { close } = Database.prototype;
     closeConnectionsOnce();
     expect(Database.prototype.close).toBe(close);
+  });
+});
+
+describe("libSQL's native module", () => {
+  it("is the copy @libsql/client loads, found on the first call of a fresh module and kept", async () => {
+    vi.resetModules();
+    const { libsqlNative } = await import("./close-once.ts");
+    const found = libsqlNative();
+    expect(found).toBe(Database);
+    expect(libsqlNative()).toBe(found);
   });
 });
