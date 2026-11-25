@@ -14,6 +14,8 @@ import {
   errorFields,
   type ForgetOptions,
   type ForgetTenantOptions,
+  type HostRejectionReason,
+  hostLogOf,
   type IdGenerator,
   type IncludeRestrictedOptions,
   type ListDeadLettersArgs,
@@ -307,7 +309,9 @@ const ownFunction = <F extends (...args: never[]) => unknown>(
  * in that `env`, such as `.dev.vars` sets in development, overrides `runtime.telemetry.errorText`;
  * any value but `"omit"` or `"include"` fails the object's start with `ConfigurationError`, as
  * does an object created in another jurisdiction than the one `cloudflare()` names, or in one
- * when it names none, before anything is stored in it.
+ * when it names none, before anything is stored in it. A call for a command or query it does not
+ * know, or with an actor `as` refuses, is recorded in the host log, the `onHostRejection` of the
+ * registry's `app/audit.ts`, before it is refused.
  */
 export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registry>({
   registry,
@@ -374,10 +378,26 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       return errorFields({ error, errorText: this.#app?.config.runtime.telemetry.errorText });
     }
 
+    // In the host log, as the Worker in front records what it refuses itself.
+    #refused(reason: HostRejectionReason, target: string | null, actor: string | undefined) {
+      return hostLogOf({ registry, env: this.env, logger: this.#logger, clock })({
+        tenant: this.ctx.id.name ?? this.ctx.id.toString(),
+        reason,
+        target,
+        actor: actor ?? null,
+      });
+    }
+
     // `as` checks the actor, so one that came over RPC malformed is refused like a bad payload.
-    #as(actor: string | undefined): BoundaClient<R> {
+    async #as(actor: string | undefined): Promise<BoundaClient<R>> {
       const app = this.#ready();
-      return actor === undefined ? app : app.as(actor);
+      if (actor === undefined) return app;
+      try {
+        return app.as(actor);
+      } catch (error) {
+        await this.#refused("actor-invalid", null, undefined);
+        throw error;
+      }
     }
 
     async #rearm(settled: boolean, idle: boolean, rebuildFailed = false): Promise<void> {
@@ -445,8 +465,11 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
         const app = this.#ready();
         const dispatch = ownFunction<
           (payload?: unknown, options?: DispatchOptions) => Promise<DispatchResult>
-        >(this.#as(actor).commands, name);
-        if (dispatch === undefined) throw new NotFoundError(`Unknown command "${name}"`);
+        >((await this.#as(actor)).commands, name);
+        if (dispatch === undefined) {
+          await this.#refused("unknown-command", `commands.${name}`, actor);
+          throw new NotFoundError(`Unknown command "${name}"`);
+        }
         const result = await dispatch(payload, options);
         // Under "eventual" the read models are behind, so the rearm arms the alarm for now.
         if (consistency !== "eventual") await app.catchUpReadModels({ through: result });
@@ -463,10 +486,13 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
     ): Promise<RpcOutcome<unknown>> {
       return settle(async () => {
         const run = ownFunction<(payload?: unknown, options?: QueryOptions) => Promise<unknown>>(
-          this.#as(actor).queries,
+          (await this.#as(actor)).queries,
           name,
         );
-        if (run === undefined) throw new NotFoundError(`Unknown query "${name}"`);
+        if (run === undefined) {
+          await this.#refused("unknown-query", `queries.${name}`, actor);
+          throw new NotFoundError(`Unknown query "${name}"`);
+        }
         return run(payload, options);
       });
     }
@@ -490,7 +516,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       actor?: string,
       options?: IncludeRestrictedOptions,
     ): Promise<RpcOutcome<readonly SubscriberFailure[]>> {
-      return settle(() => this.#as(actor).subscriberFailures.list(options));
+      return settle(async () => (await this.#as(actor)).subscriberFailures.list(options));
     }
 
     getSubscriberFailure(
@@ -498,7 +524,9 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       actor?: string,
       options?: IncludeRestrictedOptions,
     ): Promise<RpcOutcome<SubscriberFailure | null>> {
-      return settle(() => this.#as(actor).subscriberFailures.get(subscriber, options));
+      return settle(async () =>
+        (await this.#as(actor)).subscriberFailures.get(subscriber, options),
+      );
     }
 
     readEvents(args?: ReadEventsArgs): Promise<RpcOutcome<readonly StoredEvent[]>> {
@@ -510,19 +538,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       actor?: string,
       options?: IncludeRestrictedOptions,
     ): Promise<RpcOutcome<readonly DeadLetter[]>> {
-      return settle(() => this.#as(actor).deadLetters.list(args, options));
+      return settle(async () => (await this.#as(actor)).deadLetters.list(args, options));
     }
 
     retryDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>> {
       return settle(async () => {
-        const letter = await this.#as(actor).deadLetters.retry(id);
+        const letter = await (await this.#as(actor)).deadLetters.retry(id);
         await this.#rearm(false, true);
         return letter;
       });
     }
 
     discardDeadLetter(id: string, actor?: string): Promise<RpcOutcome<DeadLetter>> {
-      return settle(() => this.#as(actor).deadLetters.discard(id));
+      return settle(async () => (await this.#as(actor)).deadLetters.discard(id));
     }
 
     rebuildReadModel(name: string): Promise<RpcOutcome<RebuildReadModelResult>> {
@@ -543,7 +571,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
     ): Promise<RpcOutcome<StoredDispatch>> {
       return settle(async () => {
         const app = this.#ready();
-        const result = await act(this.#as(actor));
+        const result = await act(await this.#as(actor));
         if (consistency !== "eventual") await app.catchUpReadModels({ through: result });
         await this.#rearm(false, true);
         return result;
@@ -555,7 +583,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       actor?: string,
       options?: PersonalDataExportOptions,
     ): Promise<RpcOutcome<PersonalDataExport>> {
-      return settle(() => this.#as(actor).exportPersonalData(personId, options));
+      return settle(async () => (await this.#as(actor)).exportPersonalData(personId, options));
     }
 
     streamPersonalData(
@@ -564,7 +592,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       options?: PersonalDataExportOptions,
     ): Promise<RpcOutcome<ReadableStream<Uint8Array>>> {
       return settle(async () =>
-        partLines(await this.#as(actor).streamPersonalData(personId, options)),
+        partLines(await (await this.#as(actor)).streamPersonalData(personId, options)),
       );
     }
 
@@ -572,7 +600,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       personId: string,
       actor?: string,
     ): Promise<RpcOutcome<readonly PersonRecipient[]>> {
-      return settle(() => this.#as(actor).recipientsOf(personId));
+      return settle(async () => (await this.#as(actor)).recipientsOf(personId));
     }
 
     forget(
@@ -621,19 +649,19 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       options?: ForgetTenantOptions,
     ): Promise<RpcOutcome<TenantForgottenResult>> {
       return settle(async () => {
-        const forgotten = await this.#as(actor).forgetTenant(tenant, options);
+        const forgotten = await (await this.#as(actor)).forgetTenant(tenant, options);
         await this.#rearm(false, true);
         return forgotten;
       });
     }
 
     exportTenant(tenant: string, actor?: string): Promise<RpcOutcome<ReadableStream<Uint8Array>>> {
-      return settle(async () => partLines(await this.#as(actor).exportTenant(tenant)));
+      return settle(async () => partLines(await (await this.#as(actor)).exportTenant(tenant)));
     }
 
     freezeTenant(tenant: string, actor?: string): Promise<RpcOutcome<TenantFrozenResult>> {
       return settle(async () => {
-        const frozen = await this.#as(actor).freezeTenant(tenant);
+        const frozen = await (await this.#as(actor)).freezeTenant(tenant);
         await this.#rearm(false, true);
         return frozen;
       });
@@ -641,7 +669,7 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
 
     unfreezeTenant(tenant: string, actor?: string): Promise<RpcOutcome<undefined>> {
       return settle(async () => {
-        await this.#as(actor).unfreezeTenant(tenant);
+        await (await this.#as(actor)).unfreezeTenant(tenant);
         await this.#rearm(false, true);
         return undefined;
       });
@@ -652,14 +680,14 @@ export const createBoundaObject: CreateBoundaObjectFunction = <R extends Registr
       options?: RotateTenantKeyOptions,
     ): Promise<RpcOutcome<TenantKeyVersions>> {
       return settle(async () => {
-        const versions = await this.#as(actor).rotateTenantKey(options);
+        const versions = await (await this.#as(actor)).rotateTenantKey(options);
         await this.#rearm(false, true);
         return versions;
       });
     }
 
     retireTenantKeys(actor?: string): Promise<RpcOutcome<readonly string[]>> {
-      return settle(() => this.#as(actor).retireTenantKeys());
+      return settle(async () => (await this.#as(actor)).retireTenantKeys());
     }
 
     override async alarm(): Promise<void> {

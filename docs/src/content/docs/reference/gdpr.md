@@ -64,7 +64,8 @@ else, in a port's own store, a log, a file, another service, is the app's to ans
   [article 32](#security-article-32)).
 - **Accountability, 5(2).** Bounda: the [access log](/guides/personal-data/#who-opened-what)
   records every call that hands a person's data out in the clear, and every call that asks for it
-  and is refused before it reads, the event store records
+  and is refused before it reads, the [host log](/guides/personal-data/#refused-requests) every
+  request refused before it reaches the app, the event store records
   [who acted](/concepts/ids-causation-and-correlation/#who-acts) on every command, forgetting,
   restriction and redaction, and the [test helpers](/guides/personal-data/#in-tests),
   `expectForgotten`, `expectRedacted` and `expectRestricted`, prove in CI that a right was honoured
@@ -499,8 +500,10 @@ organised by the controllers it serves, which Bounda does not know.
   [replaced](/guides/personal-data/#recovering-from-a-full-compromise) and the data sealed again.
 - **Confidentiality, 32(1)(b).** The [access log](/guides/personal-data/#who-opened-what) records
   every call that hands a person's data out in the clear, and queries receive the actor, to read
-  only what it may see. What it does not see, a column kept in the clear read around the client, is
-  in the [limitations](/reference/limitations/#the-access-log).
+  only what it may see; the [host log](/guides/personal-data/#refused-requests) records every
+  request refused before it reached the app, for its route, its body, its tenant or who made it.
+  What they do not see, a column kept in the clear read around the client, is in the
+  [limitations](/reference/limitations/#the-access-log).
 - **Restoring availability, 32(1)(c).** [Backups and restores](/guides/backups/) has the steps for
   each engine, `bounda restore` puts a SQLite copy back under a running app in one transaction, and
   the runtime forgets again, after a restore, whoever the copy brought back, before a read model

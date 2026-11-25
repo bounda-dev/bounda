@@ -10,12 +10,14 @@ import { createFixedClock } from "../../contracts/clock.ts";
 import { TenantForgottenError, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
+import type { HostRejection, OnHostRejectionArgs } from "../../modules/audit.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp, expectForgotten, expectTenantForgotten } from "../../testing/index.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { HOST_REJECTED } from "../host-log.ts";
 import { GENERATION_INTERVAL_MS, RESTORE_MARK } from "../shared/restores.ts";
 import { createRecordingLogger } from "../test-support.ts";
 import { defineForgetLedger } from "./forget-ledger.ts";
@@ -150,7 +152,7 @@ interface Commands {
   }) => Promise<unknown>;
 }
 
-const register = (app: BoundaApp, customerId: string): Promise<unknown> =>
+const register = (app: Pick<BoundaApp, "commands">, customerId: string): Promise<unknown> =>
   (app.commands as unknown as Commands).registerCustomer({
     customerId,
     email: `${customerId}@example.com`,
@@ -1092,5 +1094,189 @@ describe("freezeTenant", () => {
     await expect(app.freezeTenant("default")).rejects.toThrow(TenantForgottenError);
     await expect(app.unfreezeTenant("default")).rejects.toThrow(TenantForgottenError);
     await expectTenantForgotten(app);
+  });
+});
+
+describe("the host log of a forgotten or frozen tenant", () => {
+  interface Queries {
+    readonly byEmail: (payload: { readonly email: string }) => Promise<unknown>;
+  }
+
+  it("records each call refused for the forgetting, as whoever called, with what it called", async () => {
+    const adapter = memory();
+    const refused: OnHostRejectionArgs[] = [];
+    const onHostRejection = (args: OnHostRejectionArgs) => {
+      refused.push(args);
+    };
+    const { app } = await createTestApp({
+      registry,
+      adapter,
+      tenant: "acme",
+      env: { REGION: "eu" },
+      onHostRejection,
+    });
+    stops.push(() => app.stop());
+    expect(app.tenant).toBe("acme");
+    await register(app, "c-1");
+    await app.runUntilIdle();
+    expect(refused).toEqual([]);
+    await app.forgetTenant("acme", { despiteLegalObligations: true });
+    const ana = app.as("ana");
+    await expect(register(ana, "c-2")).rejects.toThrow(TenantForgottenError);
+    await expect(
+      (ana.queries as unknown as Queries).byEmail({ email: "c-1@example.com" }),
+    ).rejects.toThrow(TenantForgottenError);
+    await expect(app.exportPersonalData("c-1")).rejects.toThrow(TenantForgottenError);
+    await expect(ana.events.read()).rejects.toThrow(TenantForgottenError);
+    // What it still serves is no refusal.
+    await app.status();
+    await ana.deadLetters.list();
+
+    // An app started on the forgotten tenant refuses the same, every name its own.
+    const { app: restarted } = await createTestApp({
+      registry,
+      adapter,
+      tenant: "acme",
+      env: { REGION: "eu" },
+      onHostRejection,
+    });
+    stops.push(() => restarted.stop());
+    expect(restarted.tenant).toBe("acme");
+    const bob = restarted.as("bob");
+    await expect(register(bob, "c-3")).rejects.toThrow(TenantForgottenError);
+    const commands = bob.commands as unknown as Readonly<Record<string, () => Promise<unknown>>>;
+    expect(Object.hasOwn(commands, "noSuchCommand")).toBe(true);
+    await expect(commands.noSuchCommand?.()).rejects.toThrow(TenantForgottenError);
+    await expect(restarted.subscriberFailures.list()).rejects.toThrow(TenantForgottenError);
+
+    const refusal = (target: string, actor: string | null) => ({
+      rejection: {
+        at: expect.any(String),
+        tenant: "acme",
+        reason: "tenant-forgotten",
+        target,
+        actor,
+      },
+      env: { REGION: "eu" },
+      logger: expect.anything(),
+    });
+    expect(refused).toEqual([
+      refusal("commands.registerCustomer", "ana"),
+      refusal("queries.byEmail", "ana"),
+      refusal("exportPersonalData", null),
+      refusal("events.read", "ana"),
+      refusal("commands.registerCustomer", "bob"),
+      refusal("commands.noSuchCommand", "bob"),
+      refusal("subscriberFailures.list", null),
+    ]);
+  });
+
+  it("goes to app/audit.ts in an app that is not a test's", async () => {
+    const refused: OnHostRejectionArgs[] = [];
+    const env = { BOUNDA_MASTER_KEY: randomKey() };
+    const app = await createApp({
+      registry: {
+        ...registry,
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: (args: OnHostRejectionArgs) => {
+            refused.push(args);
+          },
+        },
+      } as Registry,
+      config: {
+        storage: memory(),
+        runtime: {
+          personalData: {
+            keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+            tenantKeys: defineTenantKeyStore(() => createMemoryTenantKeyStore()),
+          },
+        },
+      },
+      env,
+      clock: createFixedClock(),
+    });
+    stops.push(() => app.stop());
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await expect(app.exportPersonalData("c-1")).rejects.toThrow(TenantForgottenError);
+    expect(refused).toEqual([
+      {
+        rejection: {
+          at: expect.any(String),
+          tenant: "default",
+          reason: "tenant-forgotten",
+          target: "exportPersonalData",
+          actor: null,
+        },
+        env,
+        logger: expect.anything(),
+      },
+    ]);
+  });
+
+  it("records the writes a freeze refuses, never the reads it serves", async () => {
+    const refused: HostRejection[] = [];
+    const { app } = await createTestApp({
+      registry,
+      onHostRejection: ({ rejection }) => {
+        refused.push(rejection);
+      },
+    });
+    stops.push(() => app.stop());
+    await register(app, "c-1");
+    await app.runUntilIdle();
+    await app.freezeTenant("default");
+    const ana = app.as("ana");
+    await expect(register(ana, "c-2")).rejects.toMatchObject({ code: "TENANT_FROZEN" });
+    await expect(ana.forget("c-1")).rejects.toMatchObject({ code: "TENANT_FROZEN" });
+    await (ana.queries as unknown as Queries).byEmail({ email: "c-1@example.com" });
+    await ana.exportPersonalData("c-1");
+    expect(refused).toEqual([
+      {
+        at: expect.any(String),
+        tenant: "default",
+        reason: "tenant-frozen",
+        target: "commands.registerCustomer",
+        actor: "ana",
+      },
+      {
+        at: expect.any(String),
+        tenant: "default",
+        reason: "tenant-frozen",
+        target: "forget",
+        actor: "ana",
+      },
+    ]);
+  });
+
+  it("goes to the logger at info without a hook, and rejects with what the hook throws", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const logged = await createTestApp({ registry, logger });
+    stops.push(() => logged.app.stop());
+    await logged.app.forgetTenant("default", { despiteLegalObligations: true });
+    await expect(register(logged.app, "c-1")).rejects.toThrow(TenantForgottenError);
+    expect(entries.filter(({ message }) => message === HOST_REJECTED)).toEqual([
+      {
+        level: "info",
+        message: "request refused",
+        fields: {
+          at: expect.any(String),
+          tenant: "default",
+          reason: "tenant-forgotten",
+          target: "commands.registerCustomer",
+          actor: null,
+        },
+      },
+    ]);
+
+    const { app } = await createTestApp({
+      registry,
+      onHostRejection: () => {
+        throw new Error("audit sink down");
+      },
+    });
+    stops.push(() => app.stop());
+    await app.forgetTenant("default", { despiteLegalObligations: true });
+    await expect(register(app, "c-1")).rejects.toThrow("audit sink down");
   });
 });

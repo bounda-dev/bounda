@@ -4,8 +4,11 @@ import {
   checkConsistency,
   type DispatchOptions,
   errorFields,
+  type HostRejectionReason,
+  hostLogOf,
   type Logger,
   listTenantsUnderPreviousMaster,
+  type Registry,
   resolveErrorText,
 } from "@bounda-dev/core";
 import type { Config } from "@bounda-dev/core/config";
@@ -37,13 +40,14 @@ export interface CreateWorkerArgs {
   /**
    * Which store a request belongs to: the name the object is addressed by. Every tenant is its
    * own object, with its own events and read models. An empty name answers a 500, logged, and
-   * reaches no object.
+   * reaches no object. Called before the body is read, which it must leave unread.
    */
   readonly tenantOf: TenantOfFunction;
   /**
    * Who makes a request: the id of the user or service the request authenticates, which every
    * command and query it carries acts as (`BoundaClient.as`); `undefined` for nobody. Never a name
-   * or an email: events keep it in the clear. Left out, requests act as nobody.
+   * or an email: events keep it in the clear. Left out, requests act as nobody. Called before the
+   * body is read, which it must leave unread.
    */
   readonly actorOf?: ActorOfFunction;
   /**
@@ -60,6 +64,12 @@ export interface CreateWorkerArgs {
    * is read. Defaults to `DEFAULT_MAX_PAYLOAD_BYTES`.
    */
   readonly maxPayloadBytes?: number;
+  /**
+   * The registry the objects run, whose `app/audit.ts` receives the host log: each request the
+   * Worker refuses before an object serves it. Left out, or without `app/audit.ts`, the records go
+   * to `logger`.
+   */
+  readonly registry?: Registry;
 }
 
 /**
@@ -195,10 +205,13 @@ const route = (pathname: string): { readonly kind: string; readonly name: string
  * conflict, 410 once the tenant was forgotten, 413 for a body over `maxPayloadBytes`. Anything
  * else is a
  * 500 without its message, which is logged instead, as `BOUNDA_ERROR_TEXT` in the Worker's `env`
- * says, or else `runtime.telemetry.errorText`. Its `scheduled`, run by a cron trigger, wakes every
+ * says, or else `runtime.telemetry.errorText`. Each request it refuses before an object serves
+ * it, for a route it does not serve, a body it cannot read, a tenant `tenantOf` does not name or
+ * an actor `actorOf` does not, is recorded first in the host log, the `onHostRejection` of
+ * `registry`'s `app/audit.ts`. Its `scheduled`, run by a cron trigger, wakes every
  * object whose tenant's key is still under a previous master key, so a rotation of the master key
  * reaches the tenants whose objects sleep. There is no authentication and no operator
- * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when
+ * endpoint: it is a starting point, and an app with users writes its own `fetch` over `connect`. Throws `ConfigurationError` when `registry`'s `app/audit.ts` does not export `onHostRejection`, when
  * `storage` is not `cloudflare()` or for a `consistency` it does not know.
  */
 export const createWorker: CreateWorkerFunction = ({
@@ -208,9 +221,12 @@ export const createWorker: CreateWorkerFunction = ({
   consistency = "read-your-writes",
   logger = workersLogger,
   maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES,
+  registry,
 }) => {
   const { binding } = cloudflareStorageOf(config).options;
   checkConsistency(consistency);
+  // An app/audit.ts without onHostRejection is refused here, not at the first refusal.
+  hostLogOf({ registry, env: {}, logger });
   // One namespace per `env` the Worker is handed, rather than one per request.
   const namespaces = new WeakMap<object, DurableObjectNamespace | undefined>();
   const namespaceOf = (env: object): DurableObjectNamespace | undefined => {
@@ -265,38 +281,71 @@ export const createWorker: CreateWorkerFunction = ({
     fetch: async (request, env) => {
       const url = new URL(request.url);
       const target = route(url.pathname);
-      if (target === null) return failure("NOT_FOUND", `No route for ${url.pathname}`, 404);
-      if (request.method !== "POST") {
-        return new Response(null, { status: 405, headers: { allow: "POST" } });
-      }
-      let payload: unknown;
+      // Each refusal before an object serves the request, recorded before it goes out; what an
+      // object refuses, it records itself.
+      const refuse = (
+        reason: HostRejectionReason,
+        known: { readonly tenant?: string; readonly actor?: string | undefined } = {},
+      ): Promise<void> =>
+        hostLogOf({ registry, env, logger: log() })({
+          tenant: known.tenant ?? null,
+          reason,
+          target: target === null ? null : `${target.kind}/${target.name}`,
+          actor: known.actor ?? null,
+        });
+      const internal = (): Response => failure("INTERNAL", "Internal error", 500);
       try {
-        payload = await readPayload(request, maxPayloadBytes);
-      } catch (error) {
-        if (error instanceof PayloadTooLargeError) {
-          return failure(error.code, error.message, STATUS_BY_CODE[error.code] as number);
+        if (target === null) {
+          await refuse("no-route");
+          return failure("NOT_FOUND", `No route for ${url.pathname}`, 404);
         }
-        return failure("INVALID_JSON", "The body is not JSON", 400);
-      }
-      const namespace = namespaceOf(env);
-      if (namespace === undefined) {
-        log().error("bounda worker has no such binding", { binding });
-        return failure("INTERNAL", "Internal error", 500);
-      }
-      try {
-        const tenant = await tenantOf(request);
+        if (request.method !== "POST") {
+          await refuse("method-not-allowed");
+          return new Response(null, { status: 405, headers: { allow: "POST" } });
+        }
+        const namespace = namespaceOf(env);
+        if (namespace === undefined) {
+          log().error("bounda worker has no such binding", { binding });
+          return internal();
+        }
+        let tenant: unknown;
+        try {
+          tenant = await tenantOf(request);
+        } catch (error) {
+          await refuse("tenant-unresolved");
+          throw error;
+        }
         // An empty name names no tenant: the object would refuse every start.
-        if (tenant === "") {
+        if (typeof tenant !== "string" || tenant === "") {
           log().error("bounda worker tenantOf named no tenant", { path: url.pathname });
-          return failure("INTERNAL", "Internal error", 500);
+          await refuse("tenant-unresolved");
+          return internal();
         }
-        const stub = namespace.get(namespace.idFromName(tenant)) as unknown as BoundaStub;
-        const actor = await actorOf?.(request);
+        let actor: string | undefined;
+        try {
+          actor = await actorOf?.(request);
+        } catch (error) {
+          await refuse("actor-unresolved", { tenant });
+          throw error;
+        }
         if (actor !== undefined && !isActor(actor)) {
           // Not the caller's mistake, and the value may be what must not be logged, such as an email.
           log().error("bounda worker actorOf named no valid actor", { path: url.pathname });
-          return failure("INTERNAL", "Internal error", 500);
+          await refuse("actor-invalid", { tenant });
+          return internal();
         }
+        let payload: unknown;
+        try {
+          payload = await readPayload(request, maxPayloadBytes);
+        } catch (error) {
+          if (error instanceof PayloadTooLargeError) {
+            await refuse("payload-too-large", { tenant, actor });
+            return failure(error.code, error.message, STATUS_BY_CODE[error.code] as number);
+          }
+          await refuse("invalid-json", { tenant, actor });
+          return failure("INVALID_JSON", "The body is not JSON", 400);
+        }
+        const stub = namespace.get(namespace.idFromName(tenant)) as unknown as BoundaStub;
         const result = await unwrap(
           target.kind === "commands"
             ? stub.command(target.name, payload, optionsOf(url), consistency, actor)
@@ -323,7 +372,7 @@ export const createWorker: CreateWorkerFunction = ({
             errorText: resolveErrorText({ env, config, ignoreInvalidEnv: true }),
           }),
         });
-        return failure("INTERNAL", "Internal error", 500);
+        return internal();
       }
     },
   };

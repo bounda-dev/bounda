@@ -332,7 +332,8 @@ export interface RejectingFunction {
 
 /**
  * A facade every call of which, at any depth, rejects with the tenant's forgetting: what an app
- * whose tenant was forgotten has for commands, queries and every other read.
+ * whose tenant was forgotten has for commands, queries and every other read. Every name is its
+ * own, so a host that looks a command up by name before calling it meets the forgetting too.
  */
 export const rejecting: RejectingFunction = (forgetting) => {
   const reject = async (): Promise<never> => {
@@ -340,6 +341,11 @@ export const rejecting: RejectingFunction = (forgetting) => {
   };
   const facade: unknown = new Proxy(reject, {
     get: (_, property) => (property === "then" ? undefined : facade),
+    getOwnPropertyDescriptor: (target, property) =>
+      Reflect.getOwnPropertyDescriptor(target, property) ??
+      (typeof property === "string" && property !== "then"
+        ? { value: facade, writable: false, enumerable: false, configurable: true }
+        : undefined),
     apply: () => reject(),
   });
   return facade;

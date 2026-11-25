@@ -10,6 +10,7 @@ import {
 } from "../contracts/errors.ts";
 import { memory } from "../memory/index.ts";
 import {
+  type AuditModule,
   MAX_ACCESS_PERSONS,
   type OnPersonalDataAccessArgs,
   type PersonalDataAccess,
@@ -33,7 +34,8 @@ interface CustomerRow {
 
 type Events = Record<string, (payload?: unknown) => unknown>;
 
-const registryWith = (audit?: Registry["audit"]) =>
+// The host log is another test's.
+const registryWith = (audit?: Pick<AuditModule, "onPersonalDataAccess">) =>
   ({
     aggregates: {
       customer: {
@@ -169,7 +171,7 @@ const registryWith = (audit?: Registry["audit"]) =>
         },
       },
     },
-    ...(audit === undefined ? {} : { audit }),
+    ...(audit === undefined ? {} : { audit: { onHostRejection: () => {}, ...audit } }),
   }) satisfies Registry;
 
 const setUp = async () => {
@@ -1084,6 +1086,15 @@ describe("the access log", () => {
         },
       },
     ]);
+  });
+
+  it("refuses an audit module without onHostRejection", async () => {
+    const registry = { ...registryWith(), audit: { onPersonalDataAccess: () => {} } } as never;
+    await expect(createTestApp({ registry })).rejects.toThrow(
+      new ConfigurationError(
+        'Invalid registry:\n  audit: missing export "onHostRejection" (expected a function)',
+      ),
+    );
   });
 
   it("refuses an audit module without onPersonalDataAccess", async () => {

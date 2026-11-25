@@ -90,6 +90,11 @@ const RECORDS: Readonly<Record<InventoryRecordName, { holds: string; kept: strin
     holds: "every access to personal data, by ids, handed to app/audit.ts",
     kept: "as the app keeps it",
   },
+  "host-log": {
+    holds:
+      "every request refused before the app served it, by tenant, reason and actor id, handed to app/audit.ts",
+    kept: "as the app keeps it",
+  },
 };
 
 const keptFor = (record: InventoryRecord): string => {

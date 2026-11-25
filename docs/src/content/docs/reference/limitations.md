@@ -73,17 +73,42 @@ is what is not sealed:
   hold a person's id: an id alone is what every event already carries. One whose port's answer or
   raw read names someone is.
 - **Calls refused before they are known to read personal data.** A query whose name no read model
-  serves, an actor that `as` refuses, a request a host refuses before it reaches the app (the
-  tenant it names, the RPC that carries it), and a query, an export, `recipientsOf` or a read of
-  the subscribers' failures of a [forgotten tenant](/guides/personal-data/#forgetting-a-tenant),
-  refused because nothing of it is left to read: none of these reaches an operation the log
-  records.
+  serves, an actor that `as` refuses, a request a host refuses before it reaches the app, and a
+  call of a [forgotten tenant](/guides/personal-data/#forgetting-a-tenant), refused because
+  nothing of it is left to read, reach no operation the access log records. The [host
+  log](/guides/personal-data/#refused-requests) records them instead, with the limits
+  [below](#the-host-log).
 - **The global stream.** `app.events.read()` hands out events as stored, personal fields
   encrypted, so it opens nothing and is not recorded; what decrypts them, such as a projection,
   is the runtime's own work.
 - **What a port that declares no recipient sends out.** A port that declares a
   [recipient](/guides/personal-data/#recipients) has each disclosure recorded, as `disclosure`;
   one that declares none is, to Bounda, a port that sends no personal data out.
+
+## The host log
+
+The [host log](/guides/personal-data/#refused-requests) records what the hosts Bounda ships, and
+the app itself, refuse. What it does not see:
+
+- **Refusals outside them.** A reverse proxy, the platform, React Router's own `404` for a path no
+  route matches, a middleware mounted before `boundaMiddleware`, and a `fetch` of your own over
+  `connect` refuse requests Bounda never sees; such a host records its own with `hostLogOf`.
+- **A Durable Object that cannot answer.** An object whose app failed to start refuses every call
+  with `ConfigurationError`, and RPC itself can fail on the way: those are failures of the host,
+  logged as errors, not refusals of a request.
+- **What a query or command name is on Node.** In-process, `app.queries.nope` does not exist, so
+  calling it is a `TypeError` in your code, not a refusal: only the Durable Object, which takes
+  names over RPC, records `unknown-command` and `unknown-query`.
+- **A forgetting met part way through a streamed export.** `streamPersonalData` and `exportTenant`
+  record a forgetting that refuses them as they start; one another instance makes while the
+  stream is read stops it with `TenantForgottenError` on the page it reaches, which the access log
+  records as `failed`, and the host log does not.
+- **Why a tenant function threw.** `tenant-unresolved` is recorded whatever made it throw: a
+  request it refuses, or an `app/tenant.ts` that does not import. Read the host's error log beside
+  it to tell them apart.
+- **The tenant of an actor refused on Cloudflare.** React Router's Cloudflare host names the tenant
+  on the request's first call, after the actor: an `actor-unresolved` or `actor-invalid` there has
+  `tenant: null`.
 
 ## Restricted rows
 

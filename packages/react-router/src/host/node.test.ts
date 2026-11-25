@@ -1,4 +1,9 @@
-import { type BoundaApp, ConfigurationError, type Registry } from "@bounda-dev/core";
+import {
+  type BoundaApp,
+  ConfigurationError,
+  type HostRejection,
+  type Registry,
+} from "@bounda-dev/core";
 import type { BootArgs } from "@bounda-dev/core/node";
 import { RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -233,6 +238,39 @@ describe("createHost in Node", () => {
     expect(await served(host)).toBe(app);
     expect(imports).toBe(2);
     expect(booted.map(({ tenant }) => tenant)).toEqual(["localhost"]);
+  });
+
+  it("records the requests it refuses in the project's app/audit.ts", async () => {
+    const refused: HostRejection[] = [];
+    host = createHost<Registry>({
+      registry: {
+        ...registry,
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: ({ rejection }) => {
+            refused.push(rejection);
+          },
+        },
+      },
+      importConfig: async () => ({}),
+      importTenant: async () => ({ tenant: () => "acme" }),
+      importActor: async () => ({
+        actor: () => {
+          throw new Response(null, { status: 401 });
+        },
+      }),
+      consistency: "eventual",
+    });
+    await expect(served(host)).rejects.toBeInstanceOf(Response);
+    expect(refused).toEqual([
+      {
+        at: expect.any(String),
+        tenant: "acme",
+        reason: "actor-unresolved",
+        target: "/",
+        actor: null,
+      },
+    ]);
   });
 
   it("bounds the tenants' apps as the plugin says", () => {

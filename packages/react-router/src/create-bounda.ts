@@ -15,6 +15,7 @@ import type { ErrorText } from "@bounda-dev/core/config";
 import { createContext, type MiddlewareFunction, type RouterContext } from "react-router";
 import { type ActorFunction, actAs } from "./actor.ts";
 import { createHandleError, type HandleBoundaErrorFunction } from "./handle-error.ts";
+import { requestRefusals } from "./host-log.ts";
 import { withIdempotencyKey } from "./idempotency-key.ts";
 import { type TenantFunction, tenantOfRequest } from "./tenant.ts";
 
@@ -61,8 +62,8 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    */
   readonly actor?: ActorFunction;
   /**
-   * Where `handleError` logs. Defaults to `createConsoleLogger()` from `@bounda-dev/core/node`,
-   * the logger `boot()` defaults to.
+   * Where `handleError` logs, and the host log goes without `app/audit.ts`. Defaults to
+   * `createConsoleLogger()` from `@bounda-dev/core/node`, the logger `boot()` defaults to.
    */
   readonly logger?: Logger;
   /**
@@ -84,6 +85,13 @@ export interface CreateBoundaArgs<R extends Registry = AppRegistry> {
    * and `DEFAULT_TENANT_IDLE_MS`.
    */
   readonly tenantApps?: TenantAppsOptions | undefined;
+  /**
+   * The registry `boot` runs, whose `app/audit.ts` receives the host log: each request refused
+   * before the app serves it, for a tenant `tenant` does not name or an actor `actor` does not.
+   * Left out, or without `app/audit.ts`, the records go to `logger` at `info`. The `bounda()` Vite
+   * plugin passes the project's.
+   */
+  readonly registry?: Pick<Registry, "audit"> | undefined;
   /**
    * For tests: what `createWitness()` from `@bounda-dev/core/testing` returns. `boot` receives it
    * with each app's arguments, the default one handing it to `boot()`, so the witness records
@@ -286,6 +294,7 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   errorText = "omit",
   tenant,
   tenantApps: { max = DEFAULT_TENANT_APPS, idleMs = DEFAULT_TENANT_IDLE_MS } = {},
+  registry,
   witness,
 }: CreateBoundaArgs<R> = {}): Bounda<R> => {
   checkConsistency(consistency);
@@ -312,6 +321,15 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   // What `handleError` logs, through the witness when there is one.
   const logged = (to: Logger): Logger => (witness === undefined ? to : witness.logger(to));
   const given = logger === undefined ? undefined : logged(logger);
+  // Where `handleError` and the host log go.
+  const hostLogger = (): Logger | Promise<Logger> => {
+    if (given !== undefined) return given;
+    consoleLogger ??= import("@bounda-dev/core/node").then((node) =>
+      logged(node.createConsoleLogger()),
+    );
+    return consoleLogger;
+  };
+  const refuse = requestRefusals({ registry, env: process.env, logger: hostLogger });
 
   // The tenant's app, served last now; the apps past the bound or idle too long go.
   const tenantApp = (name: string): TenantApp => {
@@ -340,11 +358,20 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   const boundaMiddleware: BoundaMiddleware = async (args, next) => {
     if (tenant === undefined) {
       const booting = () => (witness === undefined ? bootApp() : bootApp({ witness }));
-      const client = await actAs(await load(slot, booting, consistency), actor, args);
+      const app = await load(slot, booting, consistency);
+      const client = await actAs(app, actor, args, (reason) =>
+        refuse(args, reason, { tenant: app.tenant }),
+      );
       args.context.set(bounda, await withIdempotencyKey(client, args.request));
       return next();
     }
-    const name = await tenantOfRequest(tenant, args);
+    let name: string;
+    try {
+      name = await tenantOfRequest(tenant, args);
+    } catch (error) {
+      await refuse(args, "tenant-unresolved");
+      throw error;
+    }
     const app = tenantApp(name);
     app.inFlight += 1;
     try {
@@ -353,7 +380,9 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
         () => bootApp({ tenant: name, ...(witness === undefined ? {} : { witness }) }),
         consistency,
       );
-      const client = await actAs(booted, actor, args);
+      const client = await actAs(booted, actor, args, (reason) =>
+        refuse(args, reason, { tenant: name }),
+      );
       args.context.set(bounda, await withIdempotencyKey(client, args.request));
       return await next();
     } finally {
@@ -374,13 +403,7 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
       [...tenants.values()].find(({ slot: each }) => each.errorText !== undefined)?.slot
         .errorText ??
       resolveErrorText({ env: process.env, fallback: errorText, ignoreInvalidEnv: true }),
-    logger: () => {
-      if (given !== undefined) return given;
-      consoleLogger ??= import("@bounda-dev/core/node").then((node) =>
-        logged(node.createConsoleLogger()),
-      );
-      return consoleLogger;
-    },
+    logger: hostLogger,
   });
 
   return { bounda, boundaMiddleware, dispose, handleError };
