@@ -9,6 +9,7 @@ import {
   forgetLedgerCommittedStatement,
   forgetLedgerDisclosureStatement,
   forgetLedgerLatestSchema,
+  forgetLedgerReachedStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
   forgetLedgerStatements,
@@ -58,6 +59,15 @@ describe("the SQL forget ledger", () => {
     );
   });
 
+  it("adds the reached column, empty on every row before, if missing on PostgreSQL, which SQLite checks before", () => {
+    expect(forgetLedgerReachedStatement(`"t"`, postgresqlDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN IF NOT EXISTS "reached" TEXT`,
+    );
+    expect(forgetLedgerReachedStatement(`"t"`, sqliteDialect)).toBe(
+      `ALTER TABLE "t" ADD COLUMN "reached" TEXT`,
+    );
+  });
+
   it("orders by code unit in PostgreSQL, as SQLite does by default", () => {
     const [postgresTable] = forgetLedgerStatements(`"t_forget_ledger"`, postgresqlDialect);
     expect(postgresTable).toContain(`"event_id" TEXT COLLATE "C" NOT NULL`);
@@ -93,7 +103,7 @@ describe("the SQL forget ledger", () => {
     );
   });
 
-  it("inserts at most 9 entries a statement, each bound to its own numbered parameters", async () => {
+  it("inserts at most 8 entries a statement, each bound to its own numbered parameters", async () => {
     const { db, statements } = recording();
     const ledger = createSqlForgetLedger({
       db,
@@ -118,7 +128,7 @@ describe("the SQL forget ledger", () => {
       category: "contact",
     };
     await ledger.append([
-      ...Array.from({ length: 9 }, (_, index) => entry(index)),
+      ...Array.from({ length: 8 }, (_, index) => entry(index)),
       {
         ...unrecorded,
         reason: "retention",
@@ -133,20 +143,20 @@ describe("the SQL forget ledger", () => {
         },
       },
       { ...entry(11), redaction },
-      { ...entry(12), disclosure, committed: false },
+      { ...entry(12), disclosure, committed: false, reached: { position: 7, generation: 1 } },
     ]);
     // The fence of the tenant first, in the same transaction.
     expect(statements[0]?.[0]).toContain('FROM "t_fence" WHERE "scope" = $1');
     expect(statements).toHaveLength(3);
     const [, first, second] = statements;
     expect(first?.[0]).toContain(
-      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure", "committed") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11), ($12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+      `INSERT INTO "t" ("tenant", "event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure", "committed", "reached") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12), ($13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
     );
     expect(first?.[0]).toContain(
-      `($89, $90, $91, $92, $93, $94, $95, $96, $97, $98, $99) ON CONFLICT ("tenant", "event_id") DO UPDATE SET "committed" = 1 WHERE "t"."committed" = 0 AND EXCLUDED."committed" = 1`,
+      `($85, $86, $87, $88, $89, $90, $91, $92, $93, $94, $95, $96) ON CONFLICT ("tenant", "event_id") DO UPDATE SET "committed" = 1 WHERE "t"."committed" = 0 AND EXCLUDED."committed" = 1`,
     );
-    expect(first?.[1]).toHaveLength(99);
-    expect(first?.[1].slice(0, 22)).toEqual([
+    expect(first?.[1]).toHaveLength(96);
+    expect(first?.[1].slice(0, 24)).toEqual([
       DEFAULT_TENANT,
       "e-0",
       "c-0",
@@ -158,6 +168,7 @@ describe("the SQL forget ledger", () => {
       null,
       null,
       1,
+      null,
       DEFAULT_TENANT,
       "e-1",
       "c-1",
@@ -169,9 +180,10 @@ describe("the SQL forget ledger", () => {
       null,
       null,
       1,
+      null,
     ]);
     expect(second?.[0]).toContain(
-      `VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11), ($12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22), ($23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33) ON CONFLICT`,
+      `VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12), ($13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24), ($25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36) ON CONFLICT`,
     );
     expect(second?.[1]).toEqual([
       DEFAULT_TENANT,
@@ -193,6 +205,7 @@ describe("the SQL forget ledger", () => {
       null,
       null,
       1,
+      null,
       DEFAULT_TENANT,
       "e-11",
       "c-11",
@@ -204,6 +217,7 @@ describe("the SQL forget ledger", () => {
       JSON.stringify(redaction),
       null,
       1,
+      null,
       DEFAULT_TENANT,
       "e-12",
       "c-12",
@@ -215,6 +229,7 @@ describe("the SQL forget ledger", () => {
       null,
       JSON.stringify(disclosure),
       0,
+      JSON.stringify({ position: 7, generation: 1 }),
     ]);
   });
 
@@ -237,10 +252,10 @@ describe("the SQL forget ledger", () => {
       { ...entry(2), committed: false },
     ]);
     const [, insert] = statements;
-    expect(insert?.[1]).toHaveLength(33);
+    expect(insert?.[1]).toHaveLength(36);
     expect([insert?.[1][1], insert?.[1][10]]).toEqual(["e-0", 1]);
-    expect([insert?.[1][12], insert?.[1][21]]).toEqual(["e-1", 1]);
-    expect([insert?.[1][23], insert?.[1][32]]).toEqual(["e-2", 0]);
+    expect([insert?.[1][13], insert?.[1][22]]).toEqual(["e-1", 1]);
+    expect([insert?.[1][25], insert?.[1][34]]).toEqual(["e-2", 0]);
   });
 
   it("adds the disclosure column, if missing on PostgreSQL, which SQLite checks before", () => {

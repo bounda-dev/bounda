@@ -8,6 +8,7 @@ import {
   forgetLedgerFenceStatement,
   forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
+  forgetLedgerReachedStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
@@ -387,6 +388,15 @@ export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (t
     },
     // Every database that holds the tenant's writes holds their fence.
     { version: 4, migrate: (tx) => tx.run(tenantFenceTableStatement(tables.tenantFence), []) },
+    // The handled restore is one row now, whose hash names the position it was handled at.
+    {
+      version: 5,
+      migrate: (tx) =>
+        tx.run(
+          `DELETE FROM ${tables.checkpoints} WHERE "subscriber" = 'runtime:restore-handled-at'`,
+          [],
+        ),
+    },
   ],
 });
 
@@ -441,6 +451,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
     {
       version: 10,
       migrate: (tx) => tx.run(forgetLedgerCommittedStatement(table, postgresqlDialect), []),
+    },
+    {
+      version: 11,
+      migrate: (tx) => tx.run(forgetLedgerReachedStatement(table, postgresqlDialect), []),
     },
   ],
 });

@@ -191,7 +191,7 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
       it("counts a restore an operator declares, which every running instance then learns", async () => {
         const running = watchOver();
         await running.check(at(0));
-        expect(await watchOver().declare()).toEqual({ first: true });
+        expect(await watchOver().declare()).toEqual({ first: true, counted: true });
         expect(await running.check(at(1))).toEqual({ first: false });
         expect(await running.found()).toBe(1);
       });

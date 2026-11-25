@@ -140,6 +140,8 @@ describe("the KV forget ledger's listing", () => {
     // KV deletes one key a call: a clear deletes a batch within what an invocation may make.
     const rounds: boolean[] = [];
     const listed = pages();
+    // The appends of committed entries removed their intentions' keys.
+    deleted.length = 0;
     for (let done = false; !done; ) {
       done = await ledger.clear();
       rounds.push(done);
@@ -359,7 +361,23 @@ describe("the KV forget ledger's listing", () => {
     const { namespace, keys } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     keys.set("p/1:e-stray", null);
+    keys.set("p/2:e-gone", undefined);
     expect(await ledger.read({ limit: 10 })).toEqual([]);
+  });
+
+  it("reads where the database stood only from a key that holds a position and a generation", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const kept = { personId: "c-1", forgottenAt: minute(0), reason: "requested" };
+    keys.set("p/1:e-1", { ...kept, reached: { position: 4, generation: 2 } });
+    keys.set("p/2:e-2", { ...kept, reached: null });
+    keys.set("p/3:e-3", { ...kept, reached: "4" });
+    keys.set("p/4:e-4", { ...kept, reached: { generation: 2 } });
+    keys.set("p/5:e-5", { ...kept, reached: { position: 4, restores: 2 } });
+    const read = await ledger.read({ limit: 10 });
+    expect(read.map(({ eventId }) => eventId)).toEqual(["e-1", "e-2", "e-3", "e-4", "e-5"]);
+    expect(read[0]).toHaveProperty("reached", { position: 4, generation: 2 });
+    for (const entry of read.slice(1)) expect(entry).not.toHaveProperty("reached");
   });
 
   it("keeps an entry's categories and keys in its value when they do not fit KV's metadata", async () => {
@@ -908,51 +926,66 @@ describe("a Durable Object's forgetting and the KV ledger", () => {
 });
 
 describe("the KV forget ledger's writes of one entry", () => {
-  it("keeps them in turn after one that failed, so an intention never lands over its committed copy", async () => {
-    const stored = new Map<string, unknown>();
-    const puts: { readonly name: string; readonly land: (fail?: boolean) => void }[] = [];
-    const namespace = {
-      get: async (name: string) => (stored.has(name) ? "{}" : null),
-      put: (name: string, _value: string, options?: KVNamespacePutOptions) =>
-        new Promise<void>((resolve, reject) => {
-          puts.push({
-            name,
-            land: (fail = false) => {
-              if (fail) return reject(new Error("KV is down"));
-              stored.set(name, options?.metadata ?? null);
-              resolve();
-            },
-          });
-        }),
-    } as unknown as KVNamespace;
-    const until = async (done: () => boolean) => {
-      while (!done()) await new Promise((resolve) => setTimeout(resolve, 1));
-    };
+  const committed = {
+    personId: "c-1",
+    eventId: "e-1",
+    forgottenAt: minute(1),
+    categories: null,
+    reason: "requested" as const,
+  };
+  const intention = { ...committed, committed: false as const };
+
+  it("never lets an intention land over its committed copy, though KV shows neither where it writes", async () => {
+    // A namespace whose reads show nothing written, as another location's may for a while.
+    const { namespace, keys } = countingNamespace();
+    const copied = createKvForgetLedger({ namespace, prefix: "p/" });
+    const intended = createKvForgetLedger({ namespace, prefix: "p/" });
+    await copied.append([committed]);
+    await intended.append([intention]);
+    expect(await copied.read({ limit: 10 })).toEqual([committed]);
+    await Promise.all([intended.append([intention]), copied.append([committed])]);
+    expect(await intended.read({ limit: 10 })).toEqual([committed]);
+    expect([...keys.keys()].filter((name) => name.endsWith(":e-1"))).toHaveLength(1);
+  });
+
+  it("reads an intention until its committed copy lands, which removes it", async () => {
+    const { namespace, keys } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
-    const committed = {
+    await ledger.append([intention]);
+    expect(await ledger.read({ limit: 10 })).toEqual([intention]);
+    expect([...keys.keys()]).toEqual([expect.stringMatching(/^p\/\d+~e-1$/)]);
+    // Its key alone says it is an intention.
+    expect([...keys.values()]).toEqual([expect.not.objectContaining({ committed: false })]);
+    await ledger.append([committed]);
+    expect(await ledger.read({ limit: 10 })).toEqual([committed]);
+    expect([...keys.keys()]).toEqual([expect.stringMatching(/^p\/\d+:e-1$/)]);
+  });
+
+  it("reads committed an intention written where the committed copy went before, as a ledger did", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    await ledger.append([intention]);
+    const [name = ""] = [...keys.keys()];
+    keys.set(name.replace("~", ":"), {
       personId: "c-1",
-      eventId: "e-1",
       forgottenAt: minute(1),
-      categories: null,
-      reason: "requested" as const,
-    };
-    const intention = { ...committed, committed: false as const };
-    const failed = ledger.append([intention]);
-    await until(() => puts.length === 1);
-    const copied = ledger.append([committed]);
-    puts[0]?.land(true);
-    await expect(failed).rejects.toThrow("KV is down");
-    await until(() => puts.length === 2);
-    // Another intention of the same entry, while its committed copy is being written.
-    const again = ledger.append([intention]);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    puts[1]?.land();
-    await copied;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    for (const put of puts.slice(2)) put.land();
-    await again;
-    const [name] = [...stored.keys()];
-    expect(stored.size).toBe(1);
-    expect(stored.get(name ?? "")).not.toHaveProperty("committed");
+      reason: "requested",
+      committed: false,
+    });
+    keys.delete(name);
+    expect(await ledger.read({ limit: 10 })).toEqual([intention]);
+    await ledger.append([committed]);
+    expect(await ledger.read({ limit: 10 })).toEqual([committed]);
+  });
+
+  it("holds each entry once on a page, its committed copy over its intention", async () => {
+    const { namespace } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const later = { ...committed, eventId: "e-2", personId: "c-2", forgottenAt: minute(2) };
+    await ledger.append([intention, { ...later, committed: false }]);
+    await ledger.append([later]);
+    await ledger.append([intention]);
+    expect(await ledger.read({ limit: 1 })).toEqual([{ ...intention }]);
+    expect(await ledger.read({ limit: 10 })).toEqual([intention, later]);
   });
 });

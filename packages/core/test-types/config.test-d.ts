@@ -25,6 +25,7 @@ import type {
   ForgetLedger,
   ForgetLedgerEntry,
   LedgerDisclosure,
+  LedgerReached,
   LedgerRedaction,
   LedgerRestriction,
   PruneForgetLedgerArgs,
@@ -511,6 +512,11 @@ describe("defineConfig", () => {
       readonly redaction?: LedgerRedaction;
       readonly disclosure?: LedgerDisclosure;
       readonly committed?: false;
+      readonly reached?: LedgerReached;
+    }>();
+    expectTypeOf<LedgerReached>().toEqualTypeOf<{
+      readonly position: number;
+      readonly generation: number;
     }>();
     expectTypeOf<LedgerDisclosure>().toEqualTypeOf<{
       readonly port: string;

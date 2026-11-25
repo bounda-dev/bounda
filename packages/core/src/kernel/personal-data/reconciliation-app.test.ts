@@ -228,6 +228,8 @@ describe("the forget ledger", () => {
       events.map((event) => ({
         ...entry(event.aggregateId, event.id, new Date(event.timestamp)),
         fingerprints: [],
+        // The intention kept where the database stood: c-0's forgetting before it.
+        ...(event.aggregateId === "c-1" ? { reached: { position: 1, generation: 1 } } : {}),
       })),
     );
     expect(events.map((event) => event.aggregateId)).toEqual(["c-0", "c-1"]);
@@ -633,8 +635,9 @@ describe("the forget ledger", () => {
   it("copies a forgetting from the stream once the ledger takes it, when it refused its intention", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
-    // The intention, the copy of the commit, and the stream's first copy.
-    let refusals = 3;
+    // The intention, the copy of the commit, that copy again before the next pass, and the
+    // stream's first copy.
+    let refusals = 4;
     const refusing = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
@@ -655,7 +658,7 @@ describe("the forget ledger", () => {
     const { logs, logger } = recording();
     const { app, clock } = await start({ storage, forgetLedger: refusing, logger });
     await app.forget("c-1");
-    expect(refusals).toBe(1);
+    expect(refusals).toBe(2);
     expect(logs).toContainEqual([
       "warn",
       "forget ledger did not take the forgetting; it commits, and the stream copies it",
@@ -663,7 +666,7 @@ describe("the forget ledger", () => {
     ]);
     expect(logs).toContainEqual([
       "warn",
-      "forget ledger did not take a commit; the stream copies it",
+      "forget ledger did not take a commit; it is appended again",
       expect.objectContaining({ errorName: "Error" }),
     ]);
     await app.runUntilIdle({ maxPasses: 1 });
@@ -690,7 +693,11 @@ describe("the forget ledger", () => {
       (event) => event.type === "PersonalDataForgotten",
     );
     const appended = [
-      { ...entry("c-1", forgetting?.id ?? "", START), fingerprints: [expect.any(String)] },
+      {
+        ...entry("c-1", forgetting?.id ?? "", START),
+        fingerprints: [expect.any(String)],
+        reached: { position: 1, generation: 1 },
+      },
     ];
     expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toEqual(appended);
     await app.runUntilIdle();
@@ -710,6 +717,7 @@ describe("the forget ledger", () => {
       {
         ...entry("c-1", forgetting?.id ?? "", START, ["default"]),
         fingerprints: [expect.any(String)],
+        reached: { position: 1, generation: 1 },
       },
     ]);
     await register("c-2");
@@ -741,7 +749,10 @@ describe("the forget ledger", () => {
     ).toEqual(["c-1"]);
     const elsewhere = entry("c-2", "from-elsewhere", LOST);
     await app.forgetAgain([elsewhere]);
-    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toContainEqual(elsewhere);
+    expect(await (await opened(ledgerAdapter)).read({ limit: 10 })).toContainEqual({
+      ...elsewhere,
+      reached: { position: 3, generation: 1 },
+    });
     expect(await forgotten()).toEqual([
       ["c-1", "requested"],
       ["c-2", "requested"],
@@ -1157,6 +1168,7 @@ describe("the intention a forgetting records first", () => {
       reason: "requested",
       fingerprints: [expect.any(String)],
       committed: false,
+      reached: { position: 1, generation: 1 },
     });
     expect(await app.exportPersonalData("c-1")).toMatchObject({
       events: [{ data: { name: "name of c-1" } }],

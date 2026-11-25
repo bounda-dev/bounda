@@ -266,7 +266,10 @@ list a key. With `keepFor` each key expires in KV by itself; `bounda forget-ledg
 the keys written before `keepFor` was set theirs. An entry lives in its key's metadata, which KV
 caps at 1024 bytes; the categories and keys of a forgetting with too many to fit there, some
 thirty, go to the key's value, which a read fetches for the entries it hands out alone, and
-`bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile. A
+`bounda forget-ledger expire` writes back as it was, leaving alone a key gone meanwhile. An
+intention has a key of its own, which its committed copy removes once it landed, so no write looks
+at what another wrote: KV may not show it yet where an object runs, and an intention written there
+after its committed copy still reads committed. A
 forgotten tenant's object deletes its keys once its recipients are told and a minute has passed
 since the forgetting, waking for it, so every key written before is listed; KV deletes one key a
 call, so each wake deletes a batch within the operations one invocation may make, and a larger

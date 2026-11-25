@@ -11,6 +11,7 @@ import {
   forgetLedgerFenceStatement,
   forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
+  forgetLedgerReachedStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
@@ -338,6 +339,15 @@ export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (tables) =
     },
     // Every database that holds the tenant's writes holds their fence.
     { version: 4, migrate: (tx) => tx.run(tenantFenceTableStatement(tables.tenantFence), []) },
+    // The handled restore is one row now, whose hash names the position it was handled at.
+    {
+      version: 5,
+      migrate: (tx) =>
+        tx.run(
+          `DELETE FROM ${tables.checkpoints} WHERE "subscriber" = 'runtime:restore-handled-at'`,
+          [],
+        ),
+    },
   ],
 });
 
@@ -406,6 +416,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
       migrate: async (tx) => {
         if ((await columnsOf(tx, table)).has("committed")) return;
         await tx.run(forgetLedgerCommittedStatement(table, sqliteDialect), []);
+      },
+    },
+    {
+      version: 11,
+      migrate: async (tx) => {
+        if ((await columnsOf(tx, table)).has("reached")) return;
+        await tx.run(forgetLedgerReachedStatement(table, sqliteDialect), []);
       },
     },
   ],

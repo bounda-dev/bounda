@@ -67,9 +67,10 @@ const restoresFinding = (found: () => Promise<number>): RestoreWatch => ({
   start: async () => null,
   settled: async () => undefined,
   check: async () => null,
-  declare: async () => ({ first: true }),
+  declare: async () => ({ first: true, counted: true }),
   flush: async () => undefined,
   found,
+  reached: async () => ({ generation: 0, position: 0 }),
   saw: () => undefined,
 });
 

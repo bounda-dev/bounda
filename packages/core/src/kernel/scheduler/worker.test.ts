@@ -67,9 +67,10 @@ describe("scheduled command worker", () => {
           finds = null;
           return result;
         },
-        declare: async () => ({ first: true }),
+        declare: async () => ({ first: true, counted: true }),
         flush: async () => undefined,
         found: async () => 0,
+        reached: async () => ({ generation: 0, position: 0 }),
         saw: () => undefined,
       },
     });
@@ -102,9 +103,10 @@ describe("scheduled command worker", () => {
           finds = null;
           return result;
         },
-        declare: async () => ({ first: true }),
+        declare: async () => ({ first: true, counted: true }),
         flush: async () => undefined,
         found: async () => 0,
+        reached: async () => ({ generation: 0, position: 0 }),
         saw: () => undefined,
       },
       reconciliation: {
@@ -118,6 +120,7 @@ describe("scheduled command worker", () => {
         reconciled: () => true,
         status: async () => ({}) as never,
         undone: () => 0,
+        past: () => 0,
         declared: () => undefined,
         restored: async (first) => {
           steps.push(`restored ${first}`);
@@ -161,6 +164,7 @@ describe("scheduled command worker", () => {
         reconciled: () => true,
         status: async () => ({}) as never,
         undone: () => 2,
+        past: () => 0,
         declared: (count) => {
           steps.push(`declared ${count}`);
         },
@@ -192,10 +196,11 @@ describe("scheduled command worker", () => {
           expect(options).toEqual({ reconciled: true });
           steps.push("declare");
           if (failing) throw new Error("store is down");
-          return { first: true };
+          return { first: true, counted: true };
         },
         flush: async () => undefined,
         found: async () => 0,
+        reached: async () => ({ generation: 0, position: 0 }),
         saw: () => undefined,
       },
       reconciliation: {
@@ -206,6 +211,7 @@ describe("scheduled command worker", () => {
         reconciled: () => true,
         status: async () => ({}) as never,
         undone: () => undone,
+        past: () => 0,
         declared: (count) => {
           steps.push(`declared ${count}`);
           undone -= count;
@@ -246,9 +252,10 @@ describe("scheduled command worker", () => {
           checks += 1;
           return null;
         },
-        declare: async () => ({ first: true }),
+        declare: async () => ({ first: true, counted: true }),
         flush: async () => undefined,
         found: async () => 0,
+        reached: async () => ({ generation: 0, position: 0 }),
         saw: () => undefined,
       },
     });

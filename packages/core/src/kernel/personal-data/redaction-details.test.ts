@@ -476,6 +476,7 @@ describe("redact, in detail", () => {
       reason: "requested",
       redaction: { events: [target(registered, ["email", "note"])] },
       committed: false,
+      reached: { position: 1, generation: 0 },
     });
     expect(copy?.redaction).toEqual({ events: [target(registered, ["email"])] });
     // A later round reads the entry again and finds the store holds it: nothing is committed.

@@ -75,6 +75,7 @@ export type {
   ForgetLedgerPosition,
   ForgottenReasonOfFunction,
   LedgerDisclosure,
+  LedgerReached,
   LedgerRedaction,
   LedgerRestriction,
   PruneForgetLedgerArgs,

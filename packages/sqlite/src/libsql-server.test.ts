@@ -97,7 +97,7 @@ describe.skipIf(server === null)("sqlite adapter on a libSQL server", () => {
         prefix: "replayed_",
       }),
     );
-    expect(replayed).toBeLessThanOrEqual(45);
+    expect(replayed).toBeLessThanOrEqual(47);
   });
 
   it("opens, commits and aborts a rebuild in a few requests each, however many statements it writes", async () => {

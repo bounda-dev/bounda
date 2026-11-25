@@ -523,6 +523,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
       { scope: "checkpoints", version: 2 },
       { scope: "checkpoints", version: 3 },
       { scope: "checkpoints", version: 4 },
+      { scope: "checkpoints", version: 5 },
     ]);
   });
 
