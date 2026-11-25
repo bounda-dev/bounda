@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -132,6 +133,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            base="${{ github.event.merge_group.base_sha }}"
           elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
             base="${{ github.event.before }}"
           else
@@ -152,7 +155,10 @@ jobs:
           echo "Mutation testing for: $packages"
           # The packages whose mutants are too many for one job, and the shards each runs in.
           shard_counts='{"core": 8, "cli": 2, "postgresql": 3}'
-          mutation=$(for package in $selected; do
+          # The merge queue skips mutation testing: the pull request ran it on the same changes, and
+          # main runs it again once they land.
+          if [ "${{ github.event_name }}" = "merge_group" ]; then mutated=""; else mutated="$selected"; fi
+          mutation=$(for package in $mutated; do
             shards=$(jq -r --arg package "$package" '.[$package] // 1' <<<"$shard_counts")
             for shard in $(seq 1 "$shards"); do
               jq -nc --arg package "$package" --argjson shard "$shard" --argjson shards "$shards" \
@@ -230,7 +236,7 @@ jobs:
   mutation:
     name: Mutation (${{ matrix.package }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
     needs: changes
-    if: needs.changes.outputs.packages != '[]'
+    if: needs.changes.outputs.mutation != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
