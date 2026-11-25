@@ -1,5 +1,6 @@
 import type { Tenancy, TenancyStore } from "../../adapter/storage/tenancy-store.ts";
 import type {
+  PendingRecipientDeclaration,
   StoredFileKey,
   StoredTenantKey,
   TenantForgetting,
@@ -131,6 +132,13 @@ export interface TenantKeys {
   freeze(at: string): Promise<string>;
   // Lifts what `freeze` recorded.
   unfreeze(): Promise<void>;
+  // The declarations of recipients the record held as read last, oldest first.
+  pendingRecipients(): readonly PendingRecipientDeclaration[];
+  // Adds `declaration` after the others, removing one that declares the same, unless the last
+  // does already. Rejects with `TenantForgottenError` once the tenant is forgotten.
+  addPendingRecipients(declaration: PendingRecipientDeclaration): Promise<void>;
+  // Removes the declarations of `ids`, forgotten or not.
+  removePendingRecipients(ids: readonly string[]): Promise<void>;
   /**
    * Destroys the keys of a forgotten tenant's database files, and resolves to whether the record
    * held any: the files, and every copy of them, never open again.
@@ -582,6 +590,33 @@ export const openTenantKeys: OpenTenantKeysFunction = async (args) => {
         if (current.frozenAt === undefined) return null;
         const { frozenAt: _, ...rest } = current;
         return rest;
+      });
+    },
+    pendingRecipients: () => record.pendingRecipients ?? [],
+    addPendingRecipients: async (declaration) => {
+      const { id: _, at: __, ...declares } = declaration;
+      const same = JSON.stringify(declares);
+      const declaring = ({ id: _, at: __, ...held }: PendingRecipientDeclaration): string =>
+        JSON.stringify(held);
+      await update((current) => {
+        live(current);
+        const held = current.pendingRecipients ?? [];
+        const last = held.at(-1);
+        if (last !== undefined && declaring(last) === same) return null;
+        return {
+          ...current,
+          pendingRecipients: [...held.filter((each) => declaring(each) !== same), declaration],
+        };
+      });
+    },
+    removePendingRecipients: async (ids) => {
+      await update((current) => {
+        const held = current.pendingRecipients;
+        if (held === undefined) return null;
+        const kept = held.filter(({ id }) => !ids.includes(id));
+        if (kept.length === held.length) return null;
+        const { pendingRecipients: _, ...rest } = current;
+        return kept.length === 0 ? rest : { ...rest, pendingRecipients: kept };
       });
     },
     releaseFiles: async () => {

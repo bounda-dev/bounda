@@ -91,6 +91,35 @@ export const tenantKeyStoreContract: TenantKeyStoreContractFunction = ({
       }
     });
 
+    it("keeps a freeze and the declarations of recipients a frozen start left, and drops them once written without", async () => {
+      const store = await create();
+      try {
+        const frozen: TenantKeyRecord = {
+          ...record(["t-1"]),
+          frozenAt: "2026-03-01T00:00:00.000Z",
+          pendingRecipients: [
+            {
+              id: "d-1",
+              renames: [{ from: "customer.mailer", to: "customer.newsletter" }],
+              ports: [
+                { port: "customer.newsletter", categories: ["contact", "profile"] },
+                { port: "customer.crm", categories: [] },
+              ],
+              position: 7,
+              at: "2026-03-02T00:00:00.000Z",
+            },
+            { id: "d-2", renames: [], ports: [], position: 0, at: "2026-03-03T00:00:00.000Z" },
+          ],
+        };
+        await store.put("acme", frozen, null);
+        expect(await store.get("acme")).toEqual({ ...frozen, revision: 1 });
+        await store.put("acme", record(["t-1"]), 1);
+        expect(await store.get("acme")).toEqual({ ...record(["t-1"]), revision: 2 });
+      } finally {
+        await store.close?.();
+      }
+    });
+
     it("lists the tenants it holds a record of, in order, in pages", async () => {
       const store = await create();
       try {
