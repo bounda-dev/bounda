@@ -894,8 +894,10 @@ describe("a project created by create-bounda", () => {
           total: 1,
         }),
       });
-      expect(placed.status).toBe(500);
-      expect(await placed.json()).toEqual({
+      const answer = await placed.text();
+      // What answered and what the server printed, should anything but the Worker answer.
+      expect(placed.status, `${answer}\n${keyless.output()}`).toBe(500);
+      expect(JSON.parse(answer)).toEqual({
         error: { code: "INTERNAL", message: "Internal error" },
       });
       await until(
