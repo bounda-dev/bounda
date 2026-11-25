@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { silentLogger } from "@bounda-dev/core";
 import {
+  contractFields,
   eventStoreContract,
   latestSchemaContract,
   readModelRebuildContract,
@@ -84,6 +86,44 @@ describe.skipIf(server === null)("sqlite adapter on a libSQL server", () => {
         await storage.close();
       }),
     ).toBe(1);
+  });
+
+  it("replays a database an earlier version left behind in a few requests per scope, however many migrations it applies", async () => {
+    const client = createClient({ url: counted });
+    clients.push(client);
+    const replayed = await requestsOf(() =>
+      replaySqliteSchemas({
+        db: createSqliteDatabase(client, { local: false, wal: false }).db,
+        prefix: "replayed_",
+      }),
+    );
+    expect(replayed).toBeLessThanOrEqual(45);
+  });
+
+  it("opens, commits and aborts a rebuild in a few requests each, however many statements it writes", async () => {
+    const adapter = sqlite({ url: counted, tablePrefix: "rebuilds_" });
+    const args = {
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+      progress: "rebuild:orderSummary:1",
+    };
+    // Open throughout, so every rebuild shares its connection.
+    const live = await adapter.createReadModel(args);
+    let rebuild = await adapter.rebuildReadModel(args);
+    await rebuild.pause();
+    const opening = await requestsOf(async () => {
+      rebuild = await adapter.rebuildReadModel(args);
+    });
+    const committing = await requestsOf(() =>
+      rebuild.commit({ subscriber: "projection:orderSummary", position: 1, marks: { m: 1 } }),
+    );
+    rebuild = await adapter.rebuildReadModel(args);
+    const aborting = await requestsOf(() => rebuild.abort());
+    await live.close();
+    expect(opening).toBeLessThanOrEqual(6);
+    expect(committing).toBeLessThanOrEqual(5);
+    expect(aborting).toBeLessThanOrEqual(4);
   });
 
   latestSchemaContract({

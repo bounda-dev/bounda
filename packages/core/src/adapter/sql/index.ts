@@ -5,8 +5,13 @@ export type {
   CreateSqlCheckpointStoreFunction,
 } from "./checkpoint-store.ts";
 export { createSqlCheckpointStore } from "./checkpoint-store.ts";
-export type { RunInOrderFunction, SqlDatabase, SqlTransaction } from "./database.ts";
-export { runInOrder } from "./database.ts";
+export type {
+  RunInOrderFunction,
+  SqlDatabase,
+  SqlTransaction,
+  WithBatchedWritesFunction,
+} from "./database.ts";
+export { runInOrder, withBatchedWrites } from "./database.ts";
 export {
   byFirstFailure,
   decodeErrorText,

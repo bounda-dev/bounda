@@ -1,4 +1,4 @@
-import { type AddressInfo, connect, createServer } from "node:net";
+import { type AddressInfo, connect, createServer, type Socket } from "node:net";
 import {
   type CommandPayloadArgs,
   ConfigurationError,
@@ -78,6 +78,51 @@ const url = testDatabase?.url ?? "";
 const run = Date.now().toString(36);
 const closers: (() => Promise<void>)[] = [];
 let prefixes = 0;
+
+// A client whose connections go through a proxy that counts what they send the server, each write
+// a round trip at most.
+const counted = async () => {
+  const target = new URL(url);
+  let sent = 0;
+  const sockets = new Set<Socket>();
+  const counter = createServer((client) => {
+    const server = connect(Number(target.port), target.hostname);
+    sockets.add(client).add(server);
+    client.on("data", (chunk) => {
+      sent += 1;
+      server.write(chunk);
+    });
+    server.on("data", (chunk) => client.write(chunk));
+    client.on("close", () => server.end());
+    server.on("close", () => client.end());
+    client.on("error", () => undefined);
+    server.on("error", () => undefined);
+  });
+  await new Promise<void>((resolve) => counter.listen(0, "127.0.0.1", resolve));
+  // Destroys what is still connected, so a case that fails mid-query cannot keep the proxy open.
+  closers.push(
+    () =>
+      new Promise((resolve) => {
+        counter.close(() => resolve());
+        for (const socket of sockets) socket.destroy();
+      }),
+  );
+  const proxied = new URL(url);
+  proxied.hostname = "127.0.0.1";
+  proxied.port = String((counter.address() as AddressInfo).port);
+  const client = postgres(proxied.toString(), { max: 1, onnotice: () => undefined });
+  closers.push(() => client.end({ timeout: 5 }));
+  await client`SELECT 1`;
+  return {
+    client,
+    url: proxied.toString(),
+    sentOf: async (work: () => Promise<unknown>): Promise<number> => {
+      const before = sent;
+      await work();
+      return sent - before;
+    },
+  };
+};
 
 const fresh = (options: Partial<PostgresqlOptions> = {}): PostgresqlAdapter => {
   prefixes += 1;
@@ -482,46 +527,110 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   });
 
   it("creates a new schema's tables in a few round trips, however many migrations shaped them", async () => {
-    const target = new URL(url);
-    let sent = 0;
-    const counter = createServer((client) => {
-      const server = connect(Number(target.port), target.hostname);
-      client.on("data", (chunk) => {
-        sent += 1;
-        server.write(chunk);
-      });
-      server.on("data", (chunk) => client.write(chunk));
-      client.on("close", () => server.end());
-      server.on("close", () => client.end());
-      client.on("error", () => undefined);
-      server.on("error", () => undefined);
-    });
-    await new Promise<void>((resolve) => counter.listen(0, "127.0.0.1", resolve));
-    closers.push(() => new Promise((resolve) => counter.close(() => resolve())));
-    const proxied = new URL(url);
-    proxied.hostname = "127.0.0.1";
-    proxied.port = String((counter.address() as AddressInfo).port);
-    const client = postgres(proxied.toString(), { max: 1, onnotice: () => undefined });
-    closers.push(() => client.end({ timeout: 5 }));
-    await client`SELECT 1`;
+    const { client, sentOf } = await counted();
     const prefix = `rt${run}_`;
-    const migrate = async (): Promise<number> => {
-      const before = sent;
-      await migratePostgresql({
-        db: createPostgresqlDatabase(client),
-        schema: "public",
-        prefix,
-        scopes: Object.values(
-          postgresqlSchemaScopesFor({
-            schema: "public",
-            tables: storageTablesFor({ prefix, schema: "public" }),
-          }),
-        ),
-      });
-      return sent - before;
-    };
+    const migrate = () =>
+      sentOf(() =>
+        migratePostgresql({
+          db: createPostgresqlDatabase(client),
+          schema: "public",
+          prefix,
+          scopes: Object.values(
+            postgresqlSchemaScopesFor({
+              schema: "public",
+              tables: storageTablesFor({ prefix, schema: "public" }),
+            }),
+          ),
+        }),
+      );
     expect(await migrate()).toBeLessThanOrEqual(11);
     expect(await migrate()).toBe(1);
+  });
+
+  it("replays a schema an earlier version left behind in a few round trips per scope, however many migrations it applies", async () => {
+    const { client, sentOf } = await counted();
+    const prefix = `rp${run}_`;
+    expect(
+      await sentOf(() =>
+        replayPostgresql({
+          db: createPostgresqlDatabase(client),
+          schema: "public",
+          prefix,
+          scopes: Object.values(
+            postgresqlSchemaScopesFor({
+              schema: "public",
+              tables: storageTablesFor({ prefix, schema: "public" }),
+            }),
+          ),
+        }),
+      ),
+    ).toBeLessThanOrEqual(75);
+  });
+
+  it("leaves nothing of a scope whose last migration fails part-way, and replays it whole next time", async () => {
+    const client = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    const db = createPostgresqlDatabase(client);
+    const prefix = `pw${run}_`;
+    const scope = postgresqlStorageScope({
+      schema: "public",
+      tables: storageTablesFor({ prefix, schema: "public" }),
+    });
+    const last = scope.migrations.at(-1);
+    if (last === undefined) throw new Error("no migration");
+    const failing = {
+      ...scope,
+      migrations: [
+        ...scope.migrations.slice(0, -1),
+        {
+          version: last.version,
+          migrate: async (tx: Parameters<typeof last.migrate>[0]) => {
+            await last.migrate(tx);
+            throw new Error("boom");
+          },
+        },
+      ],
+    };
+    await expect(
+      replayPostgresql({ db, schema: "public", prefix, scopes: [failing] }),
+    ).rejects.toThrow("boom");
+    const tablesLeft = () =>
+      db.all(
+        `SELECT "tablename" FROM pg_tables WHERE "schemaname" = 'public' AND starts_with("tablename", $1)`,
+        [prefix],
+      );
+    expect(await tablesLeft()).toEqual([]);
+    await replayPostgresql({ db, schema: "public", prefix, scopes: [scope] });
+    expect(
+      await db.all(`SELECT max("version") AS "version" FROM "${prefix}migrations"`, []),
+    ).toEqual([{ version: scope.migrations.length }]);
+  });
+
+  it("opens, commits and aborts a rebuild in a few round trips each, however many statements it writes", async () => {
+    const { url: through, sentOf } = await counted();
+    const adapter = fresh({ url: through });
+    const args = {
+      name: "orderSummary",
+      fields: contractFields,
+      logger: silentLogger,
+      progress: "rebuild:orderSummary:1",
+    };
+    // Open throughout, so every rebuild shares its connection.
+    const live = await adapter.createReadModel(args);
+    let rebuild = await adapter.rebuildReadModel(args);
+    await rebuild.pause();
+    const opening = await sentOf(async () => {
+      rebuild = await adapter.rebuildReadModel(args);
+    });
+    const committing = await sentOf(() =>
+      rebuild.commit({ subscriber: "projection:orderSummary", position: 1, marks: { m: 1 } }),
+    );
+    rebuild = await adapter.rebuildReadModel(args);
+    const aborting = await sentOf(() => rebuild.abort());
+    await live.close();
+    expect(opening).toBeLessThanOrEqual(18);
+    expect(committing).toBeLessThanOrEqual(21);
+    expect(aborting).toBeLessThanOrEqual(13);
   });
 
   it("runs a batch in order, a statement with parameters on its own and each run of those without as one", async () => {
