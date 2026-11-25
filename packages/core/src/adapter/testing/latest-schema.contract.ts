@@ -37,12 +37,9 @@ type Row = Readonly<Record<string, unknown>>;
 const listed = (rows: readonly Row[], local: (text: unknown) => string): readonly string[] =>
   rows.map((row) => Object.values(row).map(local).join(" | "));
 
-/**
- * Everything the engine keeps of the tables under a prefix, the prefix taken out of every name so
- * two prefixes compare. SQLite keeps each table, index and trigger as the text that defines it,
- * spacing aside; PostgreSQL as its catalogs describe it, a table's columns in the order a query
- * sees them.
- */
+// The prefix is taken out of every name so two prefixes compare. SQLite keeps each table, index and
+// trigger as the text that defines it; PostgreSQL as its catalogs describe it, a table's columns in
+// the order a query sees them.
 const schemaOf = async (
   { execute, prefix }: StorageSchemaTarget,
   dialect: LatestSchemaContractArgs["dialect"],

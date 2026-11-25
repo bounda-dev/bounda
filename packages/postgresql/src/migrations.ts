@@ -489,9 +489,6 @@ export interface PostgresqlSchemaScopesForFunction {
   (args: PostgresqlSchemaScopesForArgs): Readonly<Record<SchemaScopeName, SchemaScope>>;
 }
 
-/**
- * Every scope an adapter's schema holds.
- */
 export const postgresqlSchemaScopesFor: PostgresqlSchemaScopesForFunction = ({
   schema,
   tables,
@@ -529,9 +526,7 @@ const postgresqlArgs = ({
 export const migratePostgresql: MigratePostgresqlFunction = (args) =>
   migrateSchemas(postgresqlArgs(args));
 
-/**
- * `replaySchemas` as `migratePostgresql` would bring forward a schema an earlier version left
- * behind.
- */
+// How a schema an earlier version left behind is brought forward, which the one-pass schema is
+// compared against.
 export const replayPostgresql: MigratePostgresqlFunction = (args) =>
   replaySchemas(postgresqlArgs(args));

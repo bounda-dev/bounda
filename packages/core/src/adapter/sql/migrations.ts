@@ -183,8 +183,9 @@ const behindIn = (
 const insertVersion = (table: string, dialect: SqlDialect): string =>
   `INSERT INTO ${table} ("scope", "version", "applied_at") VALUES (${dialect.placeholder(1)}, ${dialect.placeholder(2)}, ${dialect.placeholder(3)})`;
 
-// Within the hundred parameters a Durable Object's SQLite binds to one statement.
-const VERSIONS_PER_INSERT = Math.floor(100 / 3);
+// What a Durable Object's SQLite binds to one statement at most.
+const DURABLE_OBJECT_PARAMETERS = 100;
+const VERSIONS_PER_INSERT = Math.floor(DURABLE_OBJECT_PARAMETERS / 3);
 
 // Every version of `scopes`, recorded as applied at `appliedAt`, in as few statements as fit.
 const insertVersions = (

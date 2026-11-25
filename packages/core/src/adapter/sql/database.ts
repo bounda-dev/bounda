@@ -27,6 +27,10 @@ export interface RunInOrderFunction {
   (tx: SqlTransaction, statements: readonly SqlFragment[]): Promise<void>;
 }
 
+/**
+ * Runs `statements` in order within `tx`, through the driver's `batch` when it has one and one by
+ * one otherwise, and fails with the first that fails. Sends nothing when there is nothing to run.
+ */
 export const runInOrder: RunInOrderFunction = async (tx, statements) => {
   if (statements.length === 0) return;
   if (tx.batch !== undefined) {

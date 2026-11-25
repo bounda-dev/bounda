@@ -7,12 +7,8 @@ export interface CanonicalSqlFunction {
 const AFTER = new Set(["(", ","]);
 const BEFORE = new Set(["(", ")", ","]);
 
-/**
- * `sql` with the whitespace a statement means nothing by taken out: every run outside a quoted
- * name or string becomes one space, and none is kept beside a parenthesis or a comma. SQLite keeps
- * a table's definition as text, and a column added later sits in it spaced as `ALTER TABLE` wrote
- * it, so two tables of the same shape compare by this.
- */
+// SQLite keeps a table's definition as text, and a column added later sits in it spaced as
+// `ALTER TABLE` wrote it, so two tables of the same shape compare by this.
 export const canonicalSql: CanonicalSqlFunction = (sql) => {
   let text = "";
   let quote: string | undefined;
