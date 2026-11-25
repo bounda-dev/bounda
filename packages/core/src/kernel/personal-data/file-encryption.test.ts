@@ -70,7 +70,15 @@ describe("createFileEncryptions", () => {
     await files.settle();
     await files.settle();
     expect(storage.settles()).toBe(1);
-    expect(recording.entries).toEqual([]);
+    expect(recording.entries).toEqual([
+      {
+        level: "warn",
+        message:
+          "bounda left a database file as it is for now: another connection has it open, so the worker tries again later",
+        fields: { file: "data/acme.db", state: "clear" },
+      },
+    ]);
+    recording.entries.length = 0;
     clock.advance(FILE_ENCRYPTION_RETRY_MS - 1);
     await files.settle();
     expect(storage.settles()).toBe(1);

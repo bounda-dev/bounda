@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConfigurationError, StorageSchemaTooNewError } from "../../contracts/errors.ts";
+import { ON_DISK_TIMEOUT_MS } from "../../kernel/test-support.ts";
 import type { SqlDatabase } from "../sql/database.ts";
 import { createSqliteAdapter } from "./adapter.ts";
 import {
@@ -12,10 +13,6 @@ import {
   createNodeSqliteAdapter as openNodeSqlite,
 } from "./node-sqlite.ts";
 import { restoreSqliteCopy } from "./restore-copy.ts";
-
-// Every case writes several database files, each write synced to disk: on a Windows runner that
-// takes seconds, waiting on nothing but the disk, for what takes milliseconds elsewhere.
-const ON_DISK_TIMEOUT_MS = 30_000;
 
 let directory: string;
 let files = 0;

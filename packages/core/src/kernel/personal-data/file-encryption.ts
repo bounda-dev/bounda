@@ -1,3 +1,4 @@
+import type { FileEncryptionState } from "../../adapter/storage/encrypted-file.ts";
 import type { ResolvedConfig } from "../../config/types.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
@@ -57,17 +58,28 @@ export const createFileEncryptions: CreateFileEncryptionsFunction = ({ config, c
       }
     }
   };
-  const settleOne = async (encryption: (typeof files)[number]["encryption"]): Promise<void> => {
-    if ((await encryption.settle()) === "current") {
+  const settleOne = async (
+    encryption: (typeof files)[number]["encryption"],
+  ): Promise<FileEncryptionState> => {
+    const state = await encryption.settle();
+    if (state === "current") {
       logger.info("bounda encrypted a database file under its tenant's key in force", {
         file: encryption.database,
       });
     }
+    return state;
   };
-  // What fails is logged and tried again later: the worker's pass goes on.
+  // What fails, or finds the file still held, is logged and tried again later: the worker's pass
+  // goes on.
   const settleQuietly = async (encryption: (typeof files)[number]["encryption"]): Promise<void> => {
     try {
-      await settleOne(encryption);
+      const state = await settleOne(encryption);
+      if (state !== "current") {
+        logger.warn(
+          "bounda left a database file as it is for now: another connection has it open, so the worker tries again later",
+          { file: encryption.database, state },
+        );
+      }
     } catch (error) {
       logger.error("bounda could not encrypt a database file under its tenant's key", {
         file: encryption.database,
@@ -99,8 +111,7 @@ export const createFileEncryptions: CreateFileEncryptionsFunction = ({ config, c
     refuseClear: async () => {
       for (const { encryption } of files) {
         if (encryption.state() !== "clear") continue;
-        await settleOne(encryption);
-        if (encryption.state() === "clear") {
+        if ((await settleOne(encryption)) === "clear") {
           throw runtimeText(
             new ConfigurationError(
               `The database file ${encryption.database} is still in the clear, so forgetting the tenant would leave it readable: stop every other connection to it, run bounda rekey, then forget the tenant again`,
