@@ -217,13 +217,14 @@ const READY_WITHIN_MS = 90_000;
  * The bug that made this test install tarballs only showed up in dev: the production build
  * resolved the app module through the plugin and succeeded while every request 500ed.
  *
- * Readiness is a request that answers, not a line in the log: the banner's wording is Vite's to
- * change. The command makes the server listen on 127.0.0.1 and exit rather than move when the
- * port is taken, so the port found free is the one it listens on. Between finding it and binding it
- * another process can take it; the server then exits, and a port found busy afterwards means
- * exactly that, so it tries another. Any other exit fails with what the server printed. A request
- * is dropped when the server exits or the deadline passes: whatever held the port may accept the
- * connection and never answer.
+ * Readiness is a request that answers while the server's own process group listens on the port,
+ * not a line in the log: the banner's wording is Vite's to change. The command makes the server
+ * listen on 127.0.0.1 and exit rather than move when the port is taken, so the port found free is
+ * the one it listens on. Between finding it and binding it another process can take it, and answer
+ * before the server exits, as a Worker's inspector once did with a 403; a server that then exits on
+ * a port found busy means exactly that, so it tries another. Any other exit fails with what the
+ * server printed. A request is dropped when the server exits or the deadline passes: whatever held
+ * the port may accept the connection and never answer.
  */
 const startServer = async (project: string, command: ServerCommand): Promise<Server> => {
   for (let attempt = 1; ; attempt += 1) {
@@ -255,8 +256,10 @@ const startServer = async (project: string, command: ServerCommand): Promise<Ser
         () => true,
         () => false,
       );
+    const ours = async (): Promise<boolean> =>
+      (await answers()) && (await listeningGroups(port)).includes(child.pid ?? Number.NaN);
     await until(
-      async () => exited() || (await answers()),
+      async () => exited() || (await ours()),
       () => `the server never answered on ${port}:\n${output}`,
       READY_WITHIN_MS,
     ).catch(async (error: Error) => {
@@ -270,6 +273,21 @@ const startServer = async (project: string, command: ServerCommand): Promise<Ser
       `the server exited (${child.exitCode ?? child.signalCode}) before answering on ${port}:\n${output}`,
     );
   }
+};
+
+// The process groups with a socket listening on `port`, as lsof lists them; it exits with 1 when
+// there is none.
+const listeningGroups = async (port: number): Promise<readonly number[]> => {
+  const { stdout } = await run("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-g", "-Fg"]).catch(
+    (error: { readonly code?: unknown }) => {
+      if (error.code === 1) return { stdout: "" };
+      throw error;
+    },
+  );
+  return stdout
+    .split("\n")
+    .filter((line) => line.startsWith("g"))
+    .map((line) => Number(line.slice(1)));
 };
 
 const freePort = (): Promise<number> =>
