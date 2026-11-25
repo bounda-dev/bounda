@@ -9,7 +9,7 @@ import {
   type TenantKeyStoreDefinition,
 } from "@bounda-dev/core/config";
 import { type CloudflareDefinition, isCloudflareDefinition } from "./definition.ts";
-import { namespaceIn } from "./jurisdiction.ts";
+import { isJurisdiction, JURISDICTIONS_LISTED, namespaceIn } from "./jurisdiction.ts";
 import { type BoundaKeeperMethods, KEEPER_DIRECTORY, keeperNameOf } from "./keeper.ts";
 import { unwrap } from "./outcome.ts";
 import { inWorkerRuntime, LEDGER_IN_OBJECT, ROTATE_IN_WORKER } from "./worker-runtime.ts";
@@ -84,10 +84,10 @@ const placeOf = (options: DurableObjectKeeperOptions, what: string): KeeperPlace
       ),
     );
   }
-  if (own !== undefined && (typeof own !== "string" || own === "")) {
+  if (own !== undefined && !isJurisdiction(own)) {
     throw runtimeText(
       new ConfigurationError(
-        `${what} names a Durable Object jurisdiction, such as "eu", not ${JSON.stringify(own)}`,
+        `${what} names a Durable Object jurisdiction, one of ${JURISDICTIONS_LISTED}, not ${JSON.stringify(own)}`,
       ),
     );
   }
@@ -98,8 +98,7 @@ const placeOf = (options: DurableObjectKeeperOptions, what: string): KeeperPlace
       ),
     );
   }
-  const jurisdiction =
-    (own as DurableObjectJurisdiction | undefined) ?? storage.options.jurisdiction;
+  const jurisdiction = own ?? storage.options.jurisdiction;
   return {
     jurisdiction,
     placement:

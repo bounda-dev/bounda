@@ -10,15 +10,15 @@ export type KvPlacementOptions =
   | { readonly location?: never; readonly safeguard?: never }
   | {
       /**
-       * Where the namespace may keep and cache what it holds, such as `"global"`, as you answer
-       * for it: never the jurisdiction `cloudflare()` names, which KV does not hold to.
+       * `"global"`: the namespace keeps and caches what it holds anywhere in the world, never in
+       * the jurisdiction `cloudflare()` names alone.
        */
-      readonly location: string;
+      readonly location: "global";
       /**
-       * What allows keeping it there, under articles 45 to 47 of the GDPR, which the record of
-       * processing and each person's export tell of.
+       * What allows keeping it there, under articles 46 and 47 of the GDPR, which the record of
+       * processing and each person's export tell of: no adequacy decision covers anywhere.
        */
-      readonly safeguard: StoreSafeguard;
+      readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
     };
 
 // The definitions of Workers KV stores, which hold to no jurisdiction even when they name one.
@@ -44,15 +44,15 @@ export interface KvPlacementOfFunction {
   (options: KvPlacementOptions, path: string): StoreDefinitionOptions;
 }
 
-// A Worker's code is not always type-checked: what the options hold is passed on for
-// `checkLocations` to judge, but a location without its safeguard would claim a place KV does not
-// keep to.
+// A Worker's code is not always type-checked: the safeguard is passed on for `checkLocations` to
+// judge, but any location other than "global", or one without its safeguard, would claim a place
+// KV does not keep to.
 export const kvPlacementOf: KvPlacementOfFunction = ({ location, safeguard }, path) => {
   if (location === undefined && safeguard === undefined) return {};
-  if (location === undefined || safeguard === undefined) {
+  if (location !== "global" || safeguard === undefined) {
     throw runtimeText(
       new ConfigurationError(
-        `${path} is kept in Workers KV, which holds what it keeps to no jurisdiction: declare where it may keep it together with the safeguard that allows that, both or neither`,
+        `${path} is kept in Workers KV, which keeps and caches what it holds anywhere in the world, in no jurisdiction: declare location: "global" together with the safeguard that allows that, both or neither`,
       ),
     );
   }

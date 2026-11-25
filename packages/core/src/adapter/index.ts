@@ -26,6 +26,8 @@ export type {
   PlacementOfFunction,
 } from "./adapter-definition.ts";
 export { placementOf } from "./adapter-definition.ts";
+export type { CheckPlacementArgs, CheckPlacementFunction } from "./placement.ts";
+export { checkPlacement } from "./placement.ts";
 export type { RebuildFencing, RebuildFencingFunction } from "./rebuild-fencing.ts";
 export { rebuildFencing } from "./rebuild-fencing.ts";
 export type {

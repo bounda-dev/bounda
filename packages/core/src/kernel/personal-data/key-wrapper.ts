@@ -4,6 +4,7 @@ import {
   placementOf,
 } from "../../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
+import type { DataLocation } from "../../modules/data-location.ts";
 import type { StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
@@ -70,7 +71,7 @@ export interface KeyWrapperDefinition {
    * Where the master key is kept, as `masterKey` or `defineKeyWrapper` declares it, such as
    * `"eu"`.
    */
-  readonly location?: string;
+  readonly location?: DataLocation;
   /**
    * What allows keeping it in another `location` than `storage`'s, as `masterKey` or
    * `defineKeyWrapper` declares it.
@@ -169,7 +170,7 @@ export interface DefineKeyWrapperFunction {
  * A key wrapper of your own, such as one that asks a KMS, built from the host's environment when
  * the app starts. A `create` that throws fails the start. `location` declares where the KMS keeps
  * the master key: under a storage that declares one, the app refuses to start on a wrapper that
- * declares none, or another without a `safeguard`.
+ * declares none, or one under another legal regime without a `safeguard`.
  */
 export const defineKeyWrapper: DefineKeyWrapperFunction = (create, options) =>
   defineCryptoKeyWrapper(async (args) => cryptoKeyWrapperOver(await create(args)), options);

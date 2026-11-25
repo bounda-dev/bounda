@@ -145,7 +145,7 @@ const wrapperOver = (current: MasterKey, older: readonly MasterKey[]): CryptoKey
  * from the right one, and rotating takes only moving the old variable to `previous`. WebCrypto
  * wraps and unwraps the keys itself: a tenant's raw key never reaches JavaScript memory. Under a
  * storage that declares a `location`, the app refuses to start on a master key that declares
- * none, or another without a `safeguard`.
+ * none, or one under another legal regime without a `safeguard`.
  */
 export const masterKey: MasterKeyFunction = ({ from, previous = [], location, safeguard }) =>
   defineCryptoKeyWrapper(
