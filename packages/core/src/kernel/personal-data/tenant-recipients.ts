@@ -1,7 +1,7 @@
 import type { LegalBasis, PersonalCategoryName } from "../../modules/personal-data.ts";
 import { type PersonRecipient, TRANSFER_ARTICLES } from "../../modules/recipient.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
-import type { PersonalCategories } from "./categories.ts";
+import type { PersonalCategories, PersonalCategory } from "./categories.ts";
 import type { TenantExportRecipient } from "./tenant-export.ts";
 
 // The recipients the `person` parts list, summed as each page of them is built: it holds one entry
@@ -42,11 +42,13 @@ const STATUS_ORDER: Readonly<Record<PersonRecipient["status"], number>> = {
   declared: 2,
 };
 
+// The entries of one key share a status, and only a disclosed one has times, so `a` and `b` are
+// both timestamps or both `null`.
 const earlier = (a: string | null, b: string | null): string | null =>
-  a === null ? b : b === null || a < b ? a : b;
+  (b as string) < (a as string) ? b : a;
 
 const later = (a: string | null, b: string | null): string | null =>
-  a === null ? b : b === null || a > b ? a : b;
+  (b as string) > (a as string) ? b : a;
 
 export const tallyRecipients: TallyRecipientsFunction = ({ recipients, categories }) => {
   const tallied = new Map<string, Tallied>();
@@ -102,7 +104,8 @@ export const tallyRecipients: TallyRecipientsFunction = ({ recipients, categorie
           status: "declared",
           categories: [...declared.categories].sort(byText).map((name) => ({
             name: name as PersonalCategoryName,
-            basis: categories.of(name)?.basis ?? null,
+            // `buildRecipients` refuses a declaration that names a category the app lacks.
+            basis: (categories.of(name) as PersonalCategory).basis,
           })),
           firstDisclosedAt: null,
           lastDisclosedAt: null,
@@ -115,9 +118,7 @@ export const tallyRecipients: TallyRecipientsFunction = ({ recipients, categorie
           byText(a.port, b.port) ||
           STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
           byText(a.name, b.name) ||
-          byText(a.kind, b.kind) ||
-          byText(a.country, b.country) ||
-          byText(a.transfer?.safeguard ?? "", b.transfer?.safeguard ?? ""),
+          byText(identityOf(a), identityOf(b)),
       );
     },
   };
