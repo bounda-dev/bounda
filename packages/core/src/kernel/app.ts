@@ -130,6 +130,7 @@ import { recordedTenantExport, streamTenantExport } from "./personal-data/tenant
 import { guardClient } from "./personal-data/tenant-guard.ts";
 import type { TenantKeys } from "./personal-data/tenant-keys.ts";
 import { checkPersonId, isPersonId } from "./personal-data/transact.ts";
+import { storeTransfers } from "./personal-data/transfers.ts";
 import { witnessedWrapping } from "./personal-data/witness.ts";
 import { keylessWrapping, UNWRAPPED_KEY_TTL_MS } from "./personal-data/wrapped-keys.ts";
 import { buildPolicies } from "./policy/build-policies.ts";
@@ -1130,6 +1131,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       clock,
     });
     const recipients = buildRecipients({ registry, categories: personalCategories, ports });
+    const transfers = storeTransfers({
+      config,
+      personal: (name) => (readModels.byName[name]?.layout.personal.length ?? 0) > 0,
+    });
     const returns = buildPortReturns({ registry, categories: personalCategories });
     const returningPorts = portsByCategory(returns);
     const notices = createRecipientNotices({
@@ -2349,6 +2354,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               batchSize: config.runtime.dispatcher.batchSize,
               categories: personalCategories,
               recipients,
+              transfers,
               personId,
               includeWithheld,
               // The header and each page, vouched for before they are handed out.

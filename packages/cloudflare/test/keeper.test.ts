@@ -135,6 +135,60 @@ describe("the tenant key store in keeper objects", () => {
   });
 });
 
+describe("a keeper store in another jurisdiction than storage's", () => {
+  it("is kept in the jurisdiction it names, under its safeguard, and works where workerd has none", async () => {
+    const keys = durableObjectTenantKeys({
+      storage: eu,
+      binding: "EU_KEEPER",
+      jurisdiction: "us",
+      safeguard: "adequacy",
+    });
+    expect([keys.location, keys.safeguard]).toEqual(["us", "adequacy"]);
+    const ledger = durableObjectForgetLedger({ storage, jurisdiction: "eu" });
+    expect([ledger.location, ledger.safeguard]).toEqual(["eu", undefined]);
+    const tenant = `${fresh()}abroad`;
+    const store = await keys.create({ env });
+    expect(await store.put(tenant, record("s-1"), null)).toBe(true);
+    expect(await store.get(tenant)).toEqual({ ...record("s-1"), revision: 1 });
+  });
+
+  it("refuses a jurisdiction that is no name, and a safeguard without a jurisdiction", () => {
+    for (const jurisdiction of ["", 7]) {
+      expect(() =>
+        durableObjectTenantKeys({ storage: eu, jurisdiction: jurisdiction as never }),
+      ).toThrow(
+        `durableObjectTenantKeys() names a Durable Object jurisdiction, such as "eu", not ${JSON.stringify(jurisdiction)}`,
+      );
+    }
+    expect(() =>
+      durableObjectForgetLedger({ storage: eu, safeguard: "adequacy" } as never),
+    ).toThrow(
+      "durableObjectForgetLedger() declares a safeguard and no jurisdiction: a safeguard allows keeping the keepers in another jurisdiction than storage's, so name it beside the safeguard",
+    );
+  });
+
+  it("answers each store's calls only in that store's jurisdiction", async () => {
+    const tenant = `${fresh()}split`;
+    const refused = (jurisdiction: string) => ({
+      ok: false,
+      refusal: {
+        name: "ConfigurationError",
+        code: "INVALID_CONFIGURATION",
+        message: `This keeper Durable Object was created in no jurisdiction, and the store it answers for is kept in jurisdiction ${jurisdiction}: the keys and ledger entries it holds never leave where it was created. Reach it through durableObjectTenantKeys() and durableObjectForgetLedger() alone`,
+      },
+    });
+    const split = env.UNBOUND_SPLIT_KEEPER.get(
+      env.UNBOUND_SPLIT_KEEPER.idFromName(`tenant:${tenant}`),
+    );
+    expect(await split.getTenantKeys(tenant)).toEqual(refused("us"));
+    expect(await split.readLedger(tenant, { limit: 1 })).toEqual(refused("eu"));
+    const directory = env.UNBOUND_SPLIT_KEEPER.get(
+      env.UNBOUND_SPLIT_KEEPER.idFromName("directory"),
+    );
+    expect(await directory.listTenants({ cursor: null, limit: 1 })).toEqual(refused("us"));
+  });
+});
+
 describe("the forget ledger in keeper objects", () => {
   forgetLedgerContract({
     create: async () => {
@@ -427,7 +481,7 @@ describe("a keeper object", () => {
         name: "ConfigurationError",
         code: "INVALID_CONFIGURATION",
         message:
-          "This keeper Durable Object was created in no jurisdiction, and cloudflare() names jurisdiction eu: the keys and ledger entries it holds never leave where it was created. Reach it through durableObjectTenantKeys() and durableObjectForgetLedger() alone",
+          "This keeper Durable Object was created in no jurisdiction, and the store it answers for is kept in jurisdiction eu: the keys and ledger entries it holds never leave where it was created. Reach it through durableObjectTenantKeys() and durableObjectForgetLedger() alone",
       },
     };
     const unbound = env.UNBOUND_EU_KEEPER.get(env.UNBOUND_EU_KEEPER.idFromName(`tenant:${tenant}`));
@@ -459,7 +513,7 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       }),
     ).toBe(
-      'runtime.personalData.tenantKeys keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineTenantKeyStore(create, { location: "eu" })',
+      'runtime.personalData.tenantKeys keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, durableObjectTenantKeys({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through defineTenantKeyStore(create, { location: "eu" })',
     );
     expect(
       refusal({
@@ -473,7 +527,7 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       }),
     ).toBe(
-      'runtime.personalData.forgetLedger.store keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectForgetLedger({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineForgetLedger(create, { location: "eu" })',
+      'runtime.personalData.forgetLedger.store keeps what it holds where it names no jurisdiction, as Workers KV does, and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectForgetLedger({ storage }), which keeps it in the same jurisdiction, durableObjectForgetLedger({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through defineForgetLedger(create, { location: "eu" })',
     );
     expect(
       refusal({
@@ -488,7 +542,107 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       }),
     ).toBe(
-      'runtime.personalData.tenantKeys keeps what it holds in "fedramp", and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through defineTenantKeyStore(create, { location: "eu" })',
+      'runtime.personalData.tenantKeys keeps what it holds in "fedramp", and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, durableObjectTenantKeys({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through defineTenantKeyStore(create, { location: "eu" })',
+    );
+  });
+
+  it("takes a store kept in another jurisdiction under a safeguard, and tells the record of processing", () => {
+    const usKeys = durableObjectTenantKeys({
+      storage: eu,
+      jurisdiction: "us",
+      safeguard: "standard-contractual-clauses",
+    });
+    const kvLedger = kvForgetLedger({
+      binding: "FORGET_LEDGER",
+      location: "global",
+      safeguard: "standard-contractual-clauses",
+    });
+    const config: Config = {
+      storage: eu,
+      runtime: {
+        personalData: { keyWrapper, tenantKeys: usKeys, forgetLedger: { store: kvLedger } },
+      },
+    };
+    expect(refusal(config)).toBe("resolved");
+    const { records } = personalDataInventory({ registry: quietRegistry, config });
+    expect(records).toContainEqual({
+      name: "tenant-keys",
+      where: "tenant-keys",
+      location: "us",
+      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+      keptFor: null,
+    });
+    expect(records.find(({ name }) => name === "forget-ledger")).toMatchObject({
+      location: "global",
+      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+    });
+    expect(
+      kvTenantKeys({ binding: "TENANT_KEYS", location: "global", safeguard: "adequacy" }),
+    ).toMatchObject({ location: "global", safeguard: "adequacy" });
+  });
+
+  it("refuses a keeper store elsewhere without a safeguard, or with one where storage is", () => {
+    expect(
+      refusal({
+        storage: eu,
+        runtime: {
+          personalData: {
+            keyWrapper,
+            tenantKeys: durableObjectTenantKeys({ storage: eu, jurisdiction: "us" }),
+          },
+        },
+      }),
+    ).toBe(
+      'runtime.personalData.tenantKeys keeps what it holds in "us", and cloudflare() keeps the tenants\' objects in jurisdiction "eu": use durableObjectTenantKeys({ storage }), which keeps it in the same jurisdiction, durableObjectTenantKeys({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through defineTenantKeyStore(create, { location: "eu" })',
+    );
+    expect(() =>
+      personalDataInventory({
+        registry: quietRegistry,
+        config: {
+          storage: eu,
+          runtime: {
+            personalData: {
+              keyWrapper,
+              tenantKeys: durableObjectTenantKeys({
+                storage: eu,
+                jurisdiction: "eu",
+                safeguard: "adequacy",
+              }),
+            },
+          },
+        },
+      }),
+    ).toThrow(
+      'runtime.personalData.tenantKeys keeps its data in "eu", where storage keeps the app\'s, under a safeguard, and keeping it there is no transfer: remove its safeguard',
+    );
+  });
+
+  it("refuses Workers KV that declares a location without the safeguard of keeping it there", () => {
+    for (const declared of [{ location: "global" }, { safeguard: "adequacy" }]) {
+      expect(() => kvForgetLedger({ binding: "FORGET_LEDGER", ...declared } as never)).toThrow(
+        "runtime.personalData.forgetLedger.store is kept in Workers KV, which holds what it keeps to no jurisdiction: declare where it may keep it together with the safeguard that allows that, both or neither",
+      );
+      expect(() => kvTenantKeys({ binding: "TENANT_KEYS", ...declared } as never)).toThrow(
+        "runtime.personalData.tenantKeys is kept in Workers KV, which holds what it keeps to no jurisdiction: declare where it may keep it together with the safeguard that allows that, both or neither",
+      );
+    }
+    // Workers KV never keeps to the jurisdiction the objects are in, safeguard or not.
+    expect(
+      refusal({
+        storage: eu,
+        runtime: {
+          personalData: {
+            keyWrapper,
+            tenantKeys: kvTenantKeys({
+              binding: "TENANT_KEYS",
+              location: "eu",
+              safeguard: "adequacy",
+            }),
+          },
+        },
+      }),
+    ).toBe(
+      'runtime.personalData.tenantKeys is kept in Workers KV, which holds what it keeps to no jurisdiction, never to jurisdiction "eu" alone, where cloudflare() keeps the tenants\' objects: use durableObjectTenantKeys({ storage }), which keeps it there, or declare where KV may keep it, another location, with the safeguard that allows that',
     );
   });
 
@@ -509,13 +663,14 @@ describe("cloudflare() with a jurisdiction", () => {
         },
       });
     expect(() => inventoryOf(memory())).toThrow(
-      'readModels.search declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, so give its memory() location: "eu"',
+      'readModels.search declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, or elsewhere under a safeguard, so give its memory() location: "eu"',
     );
     expect(() => inventoryOf(memory({ location: "us" }))).toThrow(ConfigurationError);
     expect(inventoryOf(memory({ location: "eu" })).records).toContainEqual({
       name: "tenant-keys",
       where: "tenant-keys",
       location: "eu",
+      transfer: null,
       keptFor: null,
     });
   });

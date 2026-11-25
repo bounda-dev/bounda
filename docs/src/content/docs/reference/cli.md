@@ -543,7 +543,10 @@ recipient, what the runtime keeps about persons and for how long, and the fields
 project it reads modules that import the Workers runtime, without running them. Where each holder
 and record is kept names the database's adapter, and the jurisdiction it keeps the data in when it
 declares one, such as `postgresql, in eu`, or `cloudflare, in eu` for [Durable Objects in the
-EU](/adapters/cloudflare/#data-location): see [data location](/reference/configuration/#data-location). See [The record of processing
+EU](/adapters/cloudflare/#data-location), and the safeguard of one kept out of `storage`'s
+jurisdiction, `tenant-keys, in ch, transferred under adequacy (article 45)`: see [data
+location](/reference/configuration/#data-location) and [stores in another
+jurisdiction](/reference/configuration/#stores-in-another-jurisdiction). See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
 
 ```bash
@@ -606,7 +609,7 @@ personal data that declares no location, so the record cannot say whether it is 
 | --- | --- |
 | `0` | The record is complete |
 | `1` | It has findings, printed with it; or the command line is wrong |
-| `2` | The project failed to load, or its configuration is one the app refuses to start on, such as a read model kept in another [location](/reference/configuration/#data-location) than `storage` |
+| `2` | The project failed to load, or its configuration is one the app refuses to start on, such as a read model kept in another [location](/reference/configuration/#data-location) than `storage` without a safeguard |
 
 ## `bounda recipients`
 

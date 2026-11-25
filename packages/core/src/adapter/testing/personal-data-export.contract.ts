@@ -351,6 +351,7 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
           automatedDecisions: [],
           restrictions: [],
           recipients: [],
+          transfers: [],
           readModels: ["notes"],
         },
       });

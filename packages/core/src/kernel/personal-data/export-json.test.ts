@@ -34,6 +34,7 @@ const header = (readModels: readonly string[]): PersonalDataExportPart => ({
     automatedDecisions: [],
     restrictions: [],
     recipients: [],
+    transfers: [],
     readModels,
   } satisfies PersonalDataExportHeader,
 });

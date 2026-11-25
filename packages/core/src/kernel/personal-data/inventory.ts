@@ -11,7 +11,12 @@ import type {
   SpecialCategoryData,
   SpecificPurpose,
 } from "../../modules/personal-data.ts";
-import type { RecipientKind, TransferSafeguard } from "../../modules/recipient.ts";
+import {
+  type RecipientKind,
+  type StoreSafeguard,
+  TRANSFER_ARTICLES,
+  type TransferSafeguard,
+} from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import { schemaArgs } from "../aggregate/build-aggregates.ts";
@@ -83,6 +88,20 @@ export interface InventoryHolder {
    * declares none.
    */
   readonly location: string | null;
+  /**
+   * The safeguard that allows keeping them there, out of the jurisdiction `storage` declares;
+   * `null` when they are kept where `storage` is.
+   */
+  readonly transfer: InventoryTransfer | null;
+}
+
+/**
+ * The safeguard of chapter V of the GDPR a store kept in another jurisdiction than `storage`
+ * declares, with the article it rests on: the transfer article 30(1)(e) asks the record to name.
+ */
+export interface InventoryTransfer {
+  readonly safeguard: StoreSafeguard;
+  readonly article: string;
 }
 
 export interface InventoryCategory {
@@ -183,6 +202,11 @@ export interface InventoryRecord {
    * declares none, and for the access log, which the app keeps where it chooses.
    */
   readonly location: string | null;
+  /**
+   * The safeguard that allows keeping it there, out of the jurisdiction `storage` declares;
+   * `null` when it is kept where `storage` is.
+   */
+  readonly transfer: InventoryTransfer | null;
   /**
    * How long an entry is kept, as configuration writes it, when a setting bounds it; `null`
    * otherwise.
@@ -317,11 +341,21 @@ const review = (
 interface KeptIn {
   readonly database: string;
   readonly location: string | null;
+  readonly transfer: InventoryTransfer | null;
 }
+
+// `resolveConfig` lets a store declare a safeguard only when kept out of `storage`'s jurisdiction.
+const transferOf = (store: {
+  readonly safeguard?: StoreSafeguard | undefined;
+}): InventoryTransfer | null =>
+  store.safeguard === undefined
+    ? null
+    : { safeguard: store.safeguard, article: TRANSFER_ARTICLES[store.safeguard] };
 
 const keptIn = (definition: AdapterDefinition): KeptIn => ({
   database: definition.name,
   location: definition.location ?? null,
+  transfer: transferOf(definition),
 });
 
 const reviewSchema = (
@@ -452,33 +486,31 @@ const recordsOf = (
   config: ResolvedConfig,
   recipients: readonly InventoryRecipient[],
 ): InventoryRecord[] => {
-  const { database: storage, location } = keptIn(config.storage);
+  const { database: where, ...placed } = keptIn(config.storage);
+  const storage = { where, ...placed };
   const { keyWrapper, tenantKeys, forgetLedger: ledger } = config.runtime.personalData;
   return [
-    { name: "personal-keys", where: storage, location, keptFor: null },
-    { name: "persons", where: storage, location, keptFor: null },
-    { name: "forgettings", where: storage, location, keptFor: null },
+    { name: "personal-keys", ...storage, keptFor: null },
+    { name: "persons", ...storage, keptFor: null },
+    { name: "forgettings", ...storage, keptFor: null },
     {
       name: "remembered-answers",
-      where: storage,
-      location,
+      ...storage,
       keptFor: msText(config.runtime.commands.idempotencyKeyLifetimeMs),
     },
     {
       name: "dead-letters",
-      where: storage,
-      location,
+      ...storage,
       keptFor: msText(config.runtime.deadLetters.retentionMs),
     },
     {
       name: "subscriber-failures",
-      where: storage,
-      location,
+      ...storage,
       keptFor: msText(config.runtime.subscriberFailures.retentionMs),
     },
     ...(recipients.length === 0
       ? []
-      : [{ name: "disclosures" as const, where: storage, location, keptFor: null }]),
+      : [{ name: "disclosures" as const, ...storage, keptFor: null }]),
     ...(keyWrapper === null
       ? []
       : [
@@ -486,6 +518,7 @@ const recordsOf = (
             name: "master-key" as const,
             where: "key-wrapper",
             location: keyWrapper.location ?? null,
+            transfer: transferOf(keyWrapper),
             keptFor: null,
           },
         ]),
@@ -496,6 +529,7 @@ const recordsOf = (
             name: "tenant-keys" as const,
             where: "tenant-keys",
             location: tenantKeys.location ?? null,
+            transfer: transferOf(tenantKeys),
             keptFor: null,
           },
         ]),
@@ -506,12 +540,21 @@ const recordsOf = (
             name: "forget-ledger" as const,
             where: "forget-ledger",
             location: ledger.store.location ?? null,
+            transfer: transferOf(ledger.store),
             keptFor: msText(ledger.keepForMs),
           },
         ]),
     ...(registry.audit === undefined
       ? []
-      : [{ name: "access-log" as const, where: "app/audit.ts", location: null, keptFor: null }]),
+      : [
+          {
+            name: "access-log" as const,
+            where: "app/audit.ts",
+            location: null,
+            transfer: null,
+            keptFor: null,
+          },
+        ]),
   ];
 };
 

@@ -6,6 +6,7 @@ import type {
   Storage,
   StorageTransaction,
 } from "../adapter.ts";
+import type { Placement } from "../adapter-definition.ts";
 import { createSqlCheckpointStore } from "../sql/checkpoint-store.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
@@ -52,9 +53,9 @@ export interface CreateSqliteAdapterArgs<Name extends string, Options, Raw> {
   readonly name: Name;
   readonly options: Options;
   /**
-   * As `AdapterDefinition.location`.
+   * As `AdapterDefinition.location` and `AdapterDefinition.safeguard`.
    */
-  readonly location?: string;
+  readonly placement?: Placement;
   readonly tablePrefix: string;
   /**
    * Hands out the connection, opening it if needed. Called once for the storage and once for
@@ -110,7 +111,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
 >({
   name,
   options,
-  location,
+  placement,
   tablePrefix,
   acquire,
   release,
@@ -160,7 +161,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
     kind: "bounda-adapter",
     name,
     options,
-    ...(location === undefined ? {} : { location }),
+    ...placement,
     ...(ephemeralKeys === undefined ? {} : { ephemeralKeys }),
     ...(encryptedFile === undefined ? {} : { encryptedFile }),
     ...(fileEncryption === undefined ? {} : { fileEncryption }),

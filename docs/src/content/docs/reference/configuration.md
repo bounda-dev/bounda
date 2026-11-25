@@ -38,7 +38,8 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
   `"STORE"` by default. See [adapters](/adapters/).
 - **`readModels`**, default `{}`. A different adapter for some read models, by read model name: `{
   orderSummary: postgresql({ url: READ_URL }) }`. The rest stay in `storage`. Under a `storage` that
-  declares a [location](#data-location), each must declare the same.
+  declares a [location](#data-location), each must declare the same, or another with a
+  [safeguard](#stores-in-another-jurisdiction).
 - **`ports`**, default `{}`. The implementation each port uses, by module and port: `{ order: {
   notifier: "smtp" } }`. A port with one implementation may be left out; one with several must be
   named. The names are typed from the project. See [ports](/guides/project-layout/#ports-portts).
@@ -70,9 +71,10 @@ export default defineConfig({
 - The location `storage` declares is the app's. The app refuses to start, with `ConfigurationError`,
   and [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) to draw the
   record, on a read model in `readModels`, `personalData.keyWrapper`, `personalData.tenantKeys` or
-  `personalData.forgetLedger.store` that declares another location, or none: each carries the
-  persons' data, or the key that opens it, wherever it is kept, and encryption protects data from
-  a transfer only while its keys stay behind.
+  `personalData.forgetLedger.store` that declares none, or another without a
+  [safeguard](#stores-in-another-jurisdiction): each carries the persons' data, or the key that
+  opens it, wherever it is kept, and encryption protects data from a transfer only while its keys
+  stay behind.
 - A `storage` that declares none holds nothing else to one, and each store says its own.
 - The record of processing states each one's location next to everything kept there, the master
   key's included, and lists every store of personal data, and the key wrapper, that declares none
@@ -84,6 +86,47 @@ export default defineConfig({
   storage is.
 - `create-bounda` writes `"eu"`. See [transfers out of the
   EEA](/reference/gdpr/#transfers-out-of-the-eea-articles-44-to-49).
+
+### Stores in another jurisdiction
+
+A store may be kept in another location than `storage`'s when a safeguard of chapter V of the GDPR
+allows the transfer: every adapter, `masterKey`, `defineKeyWrapper`, `defineTenantKeyStore` and
+`defineForgetLedger` take **`safeguard`** beside `location`, one of `"adequacy"` (article 45),
+`"standard-contractual-clauses"` (46(2)(c)), `"binding-corporate-rules"` (47), `"code-of-conduct"`
+(46(2)(e)) or `"certification"` (46(2)(f)), as [recipients](/guides/personal-data/#recipients)
+declare theirs. Here the keys are held in Switzerland, under its adequacy decision, and the data in
+the EU:
+
+```ts
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL!, location: "eu" }),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "ch", safeguard: "adequacy" }),
+      tenantKeys: postgresql({
+        url: process.env.TENANT_KEYS_URL!,
+        location: "ch",
+        safeguard: "adequacy",
+      }),
+    },
+  },
+});
+```
+
+- The types take a `safeguard` only beside a `location`. The app refuses to start, with
+  `ConfigurationError`, on a store kept elsewhere without a safeguard, on a safeguard where
+  `storage` is, which is no transfer, on a safeguard on `storage` itself or under a `storage` that
+  declares no location, which leaves nothing to tell a transfer by, and on a `derogation`: article
+  49 allows one for occasional transfers alone, never for data kept somewhere as long as the app
+  runs.
+- The record of processing names each transfer, its safeguard and its article, next to everything
+  kept there, as article 30(1)(e) asks, and each person's
+  [export](/guides/personal-data/#exporting-a-persons-data) lists it in `transfers`, as article
+  15(2) asks.
+- Locations are compared as written, so two names are two jurisdictions even where both are in
+  one country. The safeguard itself, the clauses signed and the transfer impact assessment are
+  yours: Bounda states what you declare. On Cloudflare, the keeper takes a
+  [`jurisdiction`](/adapters/cloudflare/#data-location) of its own.
 
 ## `runtime`
 
@@ -182,8 +225,9 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   store from `defineTenantKeyStore`, or on Cloudflare `durableObjectTenantKeys({ storage })`, in the
   app's jurisdiction, or `kvTenantKeys({ binding })`, for an app that names none. An adapter that
   points at the storage's own database fails the start, and so, under a `storage` that declares a
-  [location](#data-location), does a store that declares another, or none:
-  `defineTenantKeyStore(create, { location })` declares one's. `forgetTenant` destroys the key
+  [location](#data-location), does a store that declares none, or another without a
+  [safeguard](#stores-in-another-jurisdiction): `defineTenantKeyStore(create, { location,
+  safeguard })` declares one's. `forgetTenant` destroys the key
   there. See
   [the tenant key store](/guides/personal-data/#the-tenant-key-store).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the

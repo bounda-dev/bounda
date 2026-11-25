@@ -8,6 +8,7 @@ import {
   type InventoryRecordName,
   type InventorySealing,
   type InventoryStore,
+  type InventoryTransfer,
   type PersonalDataInventory,
   type PersonalDataSource,
   SPECIAL_CATEGORY_CONDITIONS,
@@ -135,9 +136,14 @@ const sourcesOf = ({ sources }: InventoryCategory): string =>
 const decisionOf = (decision: InventoryAutomatedDecision): string =>
   `${decision.profiling ? "profiling, " : ""}on ${decision.ground}, from ${decision.categories.join(", ")}`;
 
-// The database, and the jurisdiction it keeps its data in when it declares one.
-const placed = (database: string, location: string | null): string =>
-  location === null ? database : `${database}, in ${location}`;
+// The database, the jurisdiction it keeps its data in when it declares one, and the safeguard
+// that allows keeping it there when that is out of storage's.
+const placed = (
+  database: string,
+  location: string | null,
+  transfer: InventoryTransfer | null,
+): string =>
+  `${location === null ? database : `${database}, in ${location}`}${transfer === null ? "" : `, transferred under ${transfer.safeguard} (article ${transfer.article})`}`;
 
 // A condition with its point of article 9(2), from (a) to (j) in the order the article gives them.
 const conditionOf = ({ condition }: SpecialCategoryData): string =>
@@ -227,7 +233,7 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
       lines.push(`    ${field.name}  ${field.category}  ${SEALING[field.sealing]}`);
     }
     lines.push(
-      `    kept in: ${holder.stores.map((store) => STORES[store]).join(", ")} (${placed(holder.database, holder.location)})`,
+      `    kept in: ${holder.stores.map((store) => STORES[store]).join(", ")} (${placed(holder.database, holder.location, holder.transfer)})`,
     );
   }
   lines.push("", "Recipients");
@@ -240,7 +246,7 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
   lines.push("", "Kept by the runtime");
   for (const record of inventory.records) {
     lines.push(
-      `  ${record.name}  ${RECORDS[record.name].holds}; ${keptFor(record)} (${placed(record.where, record.location)})`,
+      `  ${record.name}  ${RECORDS[record.name].holds}; ${keptFor(record)} (${placed(record.where, record.location, record.transfer)})`,
     );
   }
   lines.push("", "Keys", ...security(inventory).map((text) => `  ${text}`));
@@ -358,7 +364,7 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
             field?.category ?? "",
             whose(holder),
             field === null ? "" : SEALING[field.sealing],
-            `${holder.stores.map((store) => STORES[store]).join(", ")} (${placed(holder.database, holder.location)})`,
+            `${holder.stores.map((store) => STORES[store]).join(", ")} (${placed(holder.database, holder.location, holder.transfer)})`,
           ]),
         ),
       ),
@@ -392,7 +398,7 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
         record.name,
         RECORDS[record.name].holds,
         keptFor(record),
-        placed(record.where, record.location),
+        placed(record.where, record.location, record.transfer),
       ]),
     ),
     "",

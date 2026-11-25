@@ -1,4 +1,5 @@
 import type { Config } from "../config/types.ts";
+import type { StoreSafeguard } from "../modules/recipient.ts";
 
 /**
  * What `bounda.config.ts` holds under `storage` and `readModels`: an adapter's name and options.
@@ -13,9 +14,14 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
    * Where the database keeps its data, as its `location` option, or `cloudflare({ jurisdiction })`,
    * declares it, such as `"eu"`. The record of processing (`personalDataInventory`) states it next
    * to every holder and record kept there, and under a storage that declares one, every other
-   * store must declare the same.
+   * store must declare the same, or another with a `safeguard`.
    */
   readonly location?: string;
+  /**
+   * What allows a read model's database to keep its data in another `location` than `storage`'s,
+   * as its `safeguard` option declares it.
+   */
+  readonly safeguard?: StoreSafeguard;
   /**
    * Refuses, with `ConfigurationError`, a configuration this adapter cannot serve, such as a read
    * model kept apart from where the adapter says the data lives. Run every time a configuration
@@ -26,19 +32,55 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
 }
 
 /**
- * The `location` option every adapter, `masterKey` and `defineKeyWrapper` take: where the data, or
- * the master key, is kept.
+ * The `location` and `safeguard` options every adapter, `masterKey`, `defineKeyWrapper`,
+ * `defineTenantKeyStore` and `defineForgetLedger` take: where the data, or the key, is kept, and
+ * what allows keeping it there when that is not where `storage` keeps the app's.
  */
-export interface DataLocationOptions {
-  /**
-   * The jurisdiction it is kept in, such as `"eu"`, written the same way across the app; you answer
-   * for it, as Bounda cannot see where a database or a host runs. The record of processing states
-   * it next to everything kept there, and lists each store that declares none as a finding.
-   * Declared on `storage`, it is the app's: the app refuses to start on a read model, tenant key
-   * store, forget ledger or key wrapper that declares another, or none.
-   */
+export type DataLocationOptions =
+  | {
+      /**
+       * The jurisdiction it is kept in, such as `"eu"`, written the same way across the app; you
+       * answer for it, as Bounda cannot see where a database or a host runs. The record of
+       * processing states it next to everything kept there, and lists each store that declares
+       * none as a finding. Declared on `storage`, it is the app's: the app refuses to start on a
+       * read model, tenant key store, forget ledger or key wrapper that declares none, or another
+       * without a `safeguard`.
+       */
+      readonly location?: string;
+      readonly safeguard?: never;
+    }
+  | {
+      readonly location: string;
+      /**
+       * What allows keeping it in `location`, another jurisdiction than `storage`'s, under
+       * articles 45 to 47 of the GDPR. The record of processing and each person's export tell of
+       * the transfer and its safeguard. The app refuses to start on one declared where `storage`
+       * keeps the app's data, which is no transfer, on `storage` itself, or under a `storage` that
+       * declares no location.
+       */
+      readonly safeguard: StoreSafeguard;
+    };
+
+export interface Placement {
   readonly location?: string;
+  readonly safeguard?: StoreSafeguard;
 }
+
+export interface PlacementOfFunction {
+  (options: {
+    readonly location?: string | undefined;
+    readonly safeguard?: StoreSafeguard | undefined;
+  }): Placement;
+}
+
+/**
+ * The `location` and `safeguard` of an adapter's or a store's options, as its definition carries
+ * them, each left out when not declared: what an adapter of your own spreads into what it returns.
+ */
+export const placementOf: PlacementOfFunction = ({ location, safeguard }) => ({
+  ...(location === undefined ? {} : { location }),
+  ...(safeguard === undefined ? {} : { safeguard }),
+});
 
 export interface IsAdapterDefinitionFunction {
   (value: unknown): value is AdapterDefinition;

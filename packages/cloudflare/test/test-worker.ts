@@ -211,6 +211,30 @@ export const EuKeeper = createBoundaKeeper({ config: { storage: eu } });
 export const UnboundEuKeeper = createBoundaKeeper({ config: { storage: unboundEu } });
 
 /**
+ * A keeper with no binding of the app in its `env` whose tenant keys are kept in the US under a
+ * safeguard and whose ledger stays in the EU with the objects: it refuses each store's calls
+ * outside that store's jurisdiction.
+ */
+export const UnboundSplitKeeper = createBoundaKeeper({
+  config: {
+    storage: unboundEu,
+    runtime: {
+      personalData: {
+        tenantKeys: durableObjectTenantKeys({
+          storage: unboundEu,
+          binding: "UNBOUND_SPLIT_KEEPER",
+          jurisdiction: "us",
+          safeguard: "adequacy",
+        }),
+        forgetLedger: {
+          store: durableObjectForgetLedger({ storage: unboundEu, binding: "UNBOUND_SPLIT_KEEPER" }),
+        },
+      },
+    },
+  },
+});
+
+/**
  * The keeper of every tenant's key and ledger kept in no jurisdiction.
  */
 export const Keeper = createBoundaKeeper({ config: { storage: cloudflare() } });

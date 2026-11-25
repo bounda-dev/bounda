@@ -50,6 +50,7 @@ import type {
   VersionedTenantKeyRecord,
 } from "@bounda-dev/core/adapter";
 import {
+  type DataLocationOptions,
   type FenceErrorFunction,
   type ForgetLedger,
   fenceError,
@@ -271,7 +272,7 @@ describe("the tenant in the configuration", () => {
     expectTypeOf<Parameters<typeof defineTenantKeyStore>[1]>().toEqualTypeOf<
       StoreDefinitionOptions | undefined
     >();
-    expectTypeOf<StoreDefinitionOptions>().toEqualTypeOf<{ readonly location?: string }>();
+    expectTypeOf<StoreDefinitionOptions>().toEqualTypeOf<DataLocationOptions>();
     // @ts-expect-error a location is a jurisdiction's name, such as "eu"
     defineTenantKeyStore(() => ({}) as TenantKeyStore, { location: 7 });
     defineConfig({ storage: sqlite, ports, runtime: { personalData: { tenantKeys: own } } });

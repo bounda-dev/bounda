@@ -52,6 +52,36 @@ export const TRANSFER_SAFEGUARDS: readonly TransferSafeguard[] = [
 ];
 
 /**
+ * The article of the GDPR each safeguard rests on.
+ */
+export const TRANSFER_ARTICLES: Readonly<Record<TransferSafeguard, string>> = {
+  adequacy: "45",
+  "standard-contractual-clauses": "46(2)(c)",
+  "binding-corporate-rules": "47",
+  "code-of-conduct": "46(2)(e)",
+  certification: "46(2)(f)",
+  derogation: "49",
+};
+
+/**
+ * What allows a store, such as the tenant key store or a read model's database, to keep data in
+ * another jurisdiction than `storage`: a safeguard of articles 45 to 47. A `derogation` of article
+ * 49 covers occasional transfers only, never data kept somewhere for as long as the app runs.
+ */
+export type StoreSafeguard = Exclude<TransferSafeguard, "derogation">;
+
+/**
+ * Every safeguard a store may declare, in the order of chapter V.
+ */
+export const STORE_SAFEGUARDS: readonly StoreSafeguard[] = [
+  "adequacy",
+  "standard-contractual-clauses",
+  "binding-corporate-rules",
+  "code-of-conduct",
+  "certification",
+];
+
+/**
  * The countries of the European Economic Area, by their ISO 3166-1 alpha-2 code: a transfer to one
  * of them needs no safeguard.
  */

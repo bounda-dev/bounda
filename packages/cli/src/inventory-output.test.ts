@@ -104,6 +104,7 @@ const inventory: PersonalDataInventory = {
       stores: ["event-store"],
       database: "cloudflare",
       location: "eu",
+      transfer: null,
     },
     {
       kind: "command",
@@ -113,6 +114,7 @@ const inventory: PersonalDataInventory = {
       stores: ["scheduled-commands", "dead-letters"],
       database: "cloudflare",
       location: "eu",
+      transfer: null,
     },
     {
       kind: "read-model",
@@ -124,7 +126,8 @@ const inventory: PersonalDataInventory = {
       ],
       stores: ["read-model"],
       database: "postgresql",
-      location: null,
+      location: "us",
+      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
     },
   ],
   recipients: [
@@ -146,19 +149,38 @@ const inventory: PersonalDataInventory = {
     },
   ],
   records: [
-    { name: "personal-keys", where: "cloudflare", location: "eu", keptFor: null },
-    { name: "remembered-answers", where: "cloudflare", location: "eu", keptFor: "1d" },
-    { name: "dead-letters", where: "cloudflare", location: "eu", keptFor: "30d" },
+    { name: "personal-keys", where: "cloudflare", location: "eu", transfer: null, keptFor: null },
+    {
+      name: "remembered-answers",
+      where: "cloudflare",
+      location: "eu",
+      transfer: null,
+      keptFor: "1d",
+    },
+    { name: "dead-letters", where: "cloudflare", location: "eu", transfer: null, keptFor: "30d" },
     {
       name: "subscriber-failures",
       where: "cloudflare",
       location: "eu",
+      transfer: null,
       keptFor: "30d",
     },
-    { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
-    { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
-    { name: "forget-ledger", where: "forget-ledger", location: null, keptFor: "400d" },
-    { name: "access-log", where: "app/audit.ts", location: null, keptFor: null },
+    { name: "master-key", where: "key-wrapper", location: "eu", transfer: null, keptFor: null },
+    {
+      name: "tenant-keys",
+      where: "tenant-keys",
+      location: "ch",
+      transfer: { safeguard: "adequacy", article: "45" },
+      keptFor: null,
+    },
+    {
+      name: "forget-ledger",
+      where: "forget-ledger",
+      location: null,
+      transfer: null,
+      keptFor: "400d",
+    },
+    { name: "access-log", where: "app/audit.ts", location: null, transfer: null, keptFor: null },
   ],
   notPersonal: [{ kind: "event", name: "order.OrderPlaced", field: "sku" }],
   security: { masterKey: true, tenantKeys: true, forgetLedger: true },
@@ -184,7 +206,9 @@ const empty: PersonalDataInventory = {
   automatedDecisions: [],
   holders: [],
   recipients: [],
-  records: [{ name: "dead-letters", where: "memory", location: null, keptFor: null }],
+  records: [
+    { name: "dead-letters", where: "memory", location: null, transfer: null, keptFor: null },
+  ],
   notPersonal: [],
   security: { masterKey: false, tenantKeys: false, forgetLedger: false },
   findings: [],
@@ -242,7 +266,7 @@ describe("formatInventory", () => {
         "  read model customers, of the person in customerId",
         "    email  contact  sealed under the person's key, found by a blind index",
         "    name  default  in the clear, forgotten by the read model's projection",
-        "    kept in: read-model table (postgresql)",
+        "    kept in: read-model table (postgresql, in us, transferred under standard-contractual-clauses (article 46(2)(c)))",
         "",
         "Recipients",
         "  customer.mailer  Mail | Co, processor in US under standard-contractual-clauses: contact",
@@ -254,7 +278,7 @@ describe("formatInventory", () => {
         "  dead-letters  the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4)); retried or discarded letters for 30d, longer while a person they hold data of is restricted and that data still opens, failed ones until resolved; unreadable once their person is forgotten (cloudflare, in eu)",
         "  subscriber-failures  the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)); until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten (cloudflare, in eu)",
         "  master-key  the master key, which every tenant's key is wrapped under, outside the database; until rotated out, and for as long as a backup of the tenant keys needs it (key-wrapper, in eu)",
-        "  tenant-keys  the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database; until the tenant is forgotten (tenant-keys, in eu)",
+        "  tenant-keys  the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database; until the tenant is forgotten (tenant-keys, in ch, transferred under adequacy (article 45))",
         "  forget-ledger  each forgetting's person, categories and reason, and each change of restrictions, redaction and disclosure with its ids and names, the recipient's included, outside the database; 400d, or until the tenant is forgotten and every recipient of its data told (forget-ledger)",
         "  access-log  every access to personal data, by ids, handed to app/audit.ts; as the app keeps it (app/audit.ts)",
         "",
@@ -307,7 +331,15 @@ describe("formatInventory", () => {
     expect(
       formatInventory({
         ...empty,
-        records: [{ name: "subscriber-failures", where: "memory", location: null, keptFor: null }],
+        records: [
+          {
+            name: "subscriber-failures",
+            where: "memory",
+            location: null,
+            transfer: null,
+            keptFor: null,
+          },
+        ],
       }),
     ).toContain(
       "until the subscriber's next failure replaces it, unreadable once their person is forgotten (memory)",
@@ -316,14 +348,24 @@ describe("formatInventory", () => {
     expect(
       formatInventory({
         ...empty,
-        records: [{ name: "personal-keys", where: "memory", location: null, keptFor: "1d" }],
+        records: [
+          { name: "personal-keys", where: "memory", location: null, transfer: null, keptFor: "1d" },
+        ],
       }),
     ).toContain("; 1d (memory)");
     // A ledger without keepFor: kept until its tenant is forgotten and told.
     expect(
       formatInventory({
         ...empty,
-        records: [{ name: "forget-ledger", where: "forget-ledger", location: null, keptFor: null }],
+        records: [
+          {
+            name: "forget-ledger",
+            where: "forget-ledger",
+            location: null,
+            transfer: null,
+            keptFor: null,
+          },
+        ],
       }),
     ).toContain(
       "outside the database; until the tenant is forgotten and every recipient of its data told (forget-ledger)",
@@ -362,8 +404,8 @@ describe("formatInventoryMarkdown", () => {
         "| --- | --- | --- | --- | --- | --- |",
         "| process state `order.lifecycle` | `note` | default | the instance's id | sealed under the person's key | event store (cloudflare, in eu) |",
         "| command `order.remind` | (names the person only) |  | the person in customerId |  | scheduled commands, dead letters (cloudflare, in eu) |",
-        "| read model `customers` | `email` | contact | the person in customerId | sealed under the person's key, found by a blind index | read-model table (postgresql) |",
-        "| read model `customers` | `name` | default | the person in customerId | in the clear, forgotten by the read model's projection | read-model table (postgresql) |",
+        "| read model `customers` | `email` | contact | the person in customerId | sealed under the person's key, found by a blind index | read-model table (postgresql, in us, transferred under standard-contractual-clauses (article 46(2)(c))) |",
+        "| read model `customers` | `name` | default | the person in customerId | in the clear, forgotten by the read model's projection | read-model table (postgresql, in us, transferred under standard-contractual-clauses (article 46(2)(c))) |",
         "",
         "## Recipients",
         "",
@@ -381,7 +423,7 @@ describe("formatInventoryMarkdown", () => {
         "| dead-letters | the payload of each command that gave up, and the error text of failed work, sealed under the persons it names and everyone whose data the work read; an export holds the text back from each when it is sealed under several (article 15(4)) | retried or discarded letters for 30d, longer while a person they hold data of is restricted and that data still opens, failed ones until resolved; unreadable once their person is forgotten | cloudflare, in eu |",
         "| subscriber-failures | the error text of each subscriber's last failure, sealed under the person its event names and everyone whose data its delivery read; an export holds it back from each when it is sealed under several (article 15(4)) | until the subscriber's next failure replaces it, or for 30d once the subscriber got past it or the app stopped running it, longer while a person its text is sealed under is restricted and it still opens; unreadable once their person is forgotten | cloudflare, in eu |",
         "| master-key | the master key, which every tenant's key is wrapped under, outside the database | until rotated out, and for as long as a backup of the tenant keys needs it | key-wrapper, in eu |",
-        "| tenant-keys | the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database | until the tenant is forgotten | tenant-keys, in eu |",
+        "| tenant-keys | the tenant's key, wrapped under the master key, which every personal key is wrapped under, outside the database | until the tenant is forgotten | tenant-keys, in ch, transferred under adequacy (article 45) |",
         "| forget-ledger | each forgetting's person, categories and reason, and each change of restrictions, redaction and disclosure with its ids and names, the recipient's included, outside the database | 400d, or until the tenant is forgotten and every recipient of its data told | forget-ledger |",
         "| access-log | every access to personal data, by ids, handed to app/audit.ts | as the app keeps it | app/audit.ts |",
         "",

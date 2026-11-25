@@ -63,6 +63,6 @@ export const checkObjectJurisdiction: CheckObjectJurisdictionFunction = ({
   throw new ConfigurationError(
     kind === "tenant"
       ? `This Durable Object was created in ${named(actual)}, and cloudflare() names ${named(jurisdiction)}: a tenant reached in two jurisdictions is two objects, each with part of its data. Reach the objects through tenantStub(), or through the namespace's jurisdiction() as cloudflare() names it`
-      : `This keeper Durable Object was created in ${named(actual)}, and cloudflare() names ${named(jurisdiction)}: the keys and ledger entries it holds never leave where it was created. Reach it through durableObjectTenantKeys() and durableObjectForgetLedger() alone`,
+      : `This keeper Durable Object was created in ${named(actual)}, and the store it answers for is kept in ${named(jurisdiction)}: the keys and ledger entries it holds never leave where it was created. Reach it through durableObjectTenantKeys() and durableObjectForgetLedger() alone`,
   );
 };

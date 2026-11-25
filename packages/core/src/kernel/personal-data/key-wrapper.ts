@@ -1,5 +1,10 @@
-import type { DataLocationOptions } from "../../adapter/adapter-definition.ts";
+import {
+  type DataLocationOptions,
+  type PlacementOfFunction,
+  placementOf,
+} from "../../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
+import type { StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { importRawKey, type KeyKind, withRawKey } from "./crypto.ts";
@@ -66,6 +71,11 @@ export interface KeyWrapperDefinition {
    * `"eu"`.
    */
   readonly location?: string;
+  /**
+   * What allows keeping it in another `location` than `storage`'s, as `masterKey` or
+   * `defineKeyWrapper` declares it.
+   */
+  readonly safeguard?: StoreSafeguard;
 }
 
 export interface CryptoUnwrapArgs extends UnwrapArgs {
@@ -109,18 +119,15 @@ export interface BuildableKeyWrapperDefinition extends KeyWrapperDefinition {
 export interface DefineCryptoKeyWrapperFunction {
   (
     create: BuildableKeyWrapperDefinition["create"],
-    options?: { readonly location?: string | undefined },
+    options?: Parameters<PlacementOfFunction>[0],
   ): KeyWrapperDefinition;
 }
 
-export const defineCryptoKeyWrapper: DefineCryptoKeyWrapperFunction = (
-  create,
-  { location } = {},
-) => {
+export const defineCryptoKeyWrapper: DefineCryptoKeyWrapperFunction = (create, options = {}) => {
   const definition: BuildableKeyWrapperDefinition = {
     kind: "bounda-key-wrapper",
     create,
-    ...(location === undefined ? {} : { location }),
+    ...placementOf(options),
   };
   return definition;
 };
@@ -162,7 +169,7 @@ export interface DefineKeyWrapperFunction {
  * A key wrapper of your own, such as one that asks a KMS, built from the host's environment when
  * the app starts. A `create` that throws fails the start. `location` declares where the KMS keeps
  * the master key: under a storage that declares one, the app refuses to start on a wrapper that
- * declares another, or none.
+ * declares none, or another without a `safeguard`.
  */
 export const defineKeyWrapper: DefineKeyWrapperFunction = (create, options) =>
   defineCryptoKeyWrapper(async (args) => cryptoKeyWrapperOver(await create(args)), options);

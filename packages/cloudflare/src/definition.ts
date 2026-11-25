@@ -1,6 +1,7 @@
 import { ConfigurationError } from "@bounda-dev/core";
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 import type { Config } from "@bounda-dev/core/config";
+import { isKeptInKv } from "./kv-placement.ts";
 
 /**
  * Options of the Cloudflare adapter.
@@ -25,8 +26,9 @@ export interface CloudflareOptions {
    * that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
    * which has no jurisdictions. It is the app's `location`: every read model, the tenant key
    * store, the forget ledger and the key wrapper must be kept in it too, as
-   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are; a read model on another adapter,
-   * and `masterKey` or `defineKeyWrapper`, declare it as their `location`.
+   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are, or in another under a
+   * `safeguard`; a read model on another adapter, and `masterKey` or `defineKeyWrapper`, declare
+   * it as their `location`.
    */
   readonly jurisdiction?: DurableObjectJurisdiction;
 }
@@ -51,8 +53,8 @@ export interface CloudflareFunction {
  * `jurisdiction` that is not a name; a configuration that puts it beside another storage, a read
  * model on it in another jurisdiction than `storage`, or, with a `jurisdiction`, a read model,
  * tenant key store, forget ledger or key wrapper whose `location` is not that jurisdiction, as a
- * Workers KV one's never is, is refused wherever it is resolved, the record of processing
- * included.
+ * Workers KV one's never is, and that declares no `safeguard` for the one it names, is refused
+ * wherever it is resolved, the record of processing included.
  */
 export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options } = {}) => {
   // A Worker's code is not always type-checked.
@@ -141,12 +143,19 @@ interface CheckKeptInArgs {
 }
 
 // The tenant key store and the forget ledger hold wrapped keys and the ids of persons: kept
-// anywhere but the jurisdiction the tenants' objects are in, they would be transferred out of it.
+// anywhere but the jurisdiction the tenants' objects are in, they would be transferred out of it,
+// which only a safeguard allows, as `checkLocations` checks. Workers KV names no jurisdiction.
 const checkKeptIn = ({ where, path, source, keeper, define }: CheckKeptInArgs): void => {
   if (source === undefined) return;
   const location = valueAt(source, "location");
+  if (location === where && isKeptInKv(source)) {
+    throw new ConfigurationError(
+      `${path} is kept in Workers KV, which holds what it keeps to no jurisdiction, never to jurisdiction ${JSON.stringify(where)} alone, where cloudflare() keeps the tenants' objects: use ${keeper}({ storage }), which keeps it there, or declare where KV may keep it, another location, with the safeguard that allows that`,
+    );
+  }
   if (location === where) return;
+  if (typeof location === "string" && valueAt(source, "safeguard") !== undefined) return;
   throw new ConfigurationError(
-    `${path} keeps what it holds ${typeof location === "string" ? `in ${JSON.stringify(location)}` : "where it names no jurisdiction, as Workers KV does"}, and cloudflare() keeps the tenants' objects in jurisdiction ${JSON.stringify(where)}: use ${keeper}({ storage }), which keeps it in the same jurisdiction, or a store of your own that names it, through ${define}(create, { location: ${JSON.stringify(where)} })`,
+    `${path} keeps what it holds ${typeof location === "string" ? `in ${JSON.stringify(location)}` : "where it names no jurisdiction, as Workers KV does"}, and cloudflare() keeps the tenants' objects in jurisdiction ${JSON.stringify(where)}: use ${keeper}({ storage }), which keeps it in the same jurisdiction, ${keeper}({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through ${define}(create, { location: ${JSON.stringify(where)} })`,
   );
 };

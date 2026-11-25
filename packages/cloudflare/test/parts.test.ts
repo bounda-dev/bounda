@@ -13,6 +13,7 @@ const header: PersonalDataExportPart = {
     automatedDecisions: [],
     restrictions: [],
     recipients: [],
+    transfers: [],
     readModels: [],
   },
 };

@@ -8,6 +8,7 @@ import type {
   ScheduledDispatch,
   StoredDispatch,
   StoredEvent,
+  StoreSafeguard,
 } from "@bounda-dev/core";
 import type { VersionedTenantKeyRecord } from "@bounda-dev/core/adapter";
 import type { ForgetLedgerDefinition, TenantKeyStoreDefinition } from "@bounda-dev/core/config";
@@ -23,6 +24,8 @@ import {
   type DurableObjectKeeperOptions,
   durableObjectForgetLedger,
   durableObjectTenantKeys,
+  kvForgetLedger,
+  kvTenantKeys,
   type RpcOutcome,
 } from "../src/index.ts";
 import { tenantStub } from "../src/tenant-stub.ts";
@@ -128,10 +131,44 @@ describe("the keeper", () => {
     expectTypeOf(
       durableObjectForgetLedger({ storage, binding: "KEEPER" }),
     ).toEqualTypeOf<ForgetLedgerDefinition>();
-    expectTypeOf<DurableObjectKeeperOptions>().toEqualTypeOf<{
-      readonly storage: CloudflareDefinition;
-      readonly binding?: string;
-    }>();
+    expectTypeOf<DurableObjectKeeperOptions>().toEqualTypeOf<
+      {
+        readonly storage: CloudflareDefinition;
+        readonly binding?: string;
+      } & (
+        | { readonly jurisdiction?: never; readonly safeguard?: never }
+        | {
+            readonly jurisdiction: DurableObjectJurisdiction;
+            readonly safeguard?: StoreSafeguard;
+          }
+      )
+    >();
+    expectTypeOf(
+      durableObjectTenantKeys({ storage, jurisdiction: "us", safeguard: "adequacy" }),
+    ).toEqualTypeOf<TenantKeyStoreDefinition>();
+    expectTypeOf(
+      durableObjectForgetLedger({ storage, jurisdiction: "eu" }),
+    ).toEqualTypeOf<ForgetLedgerDefinition>();
+    const unplaced = () =>
+      // @ts-expect-error a safeguard allows keeping the keepers in a jurisdiction, so it names one
+      durableObjectTenantKeys({ storage, safeguard: "adequacy" });
+    void unplaced;
+    const derogated = () =>
+      // @ts-expect-error a derogation covers occasional transfers alone, never a store
+      durableObjectForgetLedger({ storage, jurisdiction: "us", safeguard: "derogation" });
+    void derogated;
+    expectTypeOf(
+      kvTenantKeys({
+        binding: "KEYS",
+        location: "global",
+        safeguard: "standard-contractual-clauses",
+      }),
+    ).toEqualTypeOf<TenantKeyStoreDefinition>();
+    expectTypeOf(kvForgetLedger({ binding: "LEDGER" })).toEqualTypeOf<ForgetLedgerDefinition>();
+    const kvWithoutSafeguard = () =>
+      // @ts-expect-error Workers KV holds to no jurisdiction: a location takes its safeguard
+      kvForgetLedger({ binding: "LEDGER", location: "global" });
+    void kvWithoutSafeguard;
     const elsewhere = () =>
       // @ts-expect-error the keeper shares the jurisdiction of the app's cloudflare(), not another adapter's
       durableObjectTenantKeys({ storage: { kind: "bounda-adapter", name: "sqlite", options: {} } });

@@ -40,6 +40,7 @@ import {
   type ExportedDeadLetter,
   type ExportedRedaction,
   type ExportedRestricted,
+  type ExportedTransfer,
   type ExportedWithheld,
   NO_EXPORTED_RECORDS,
   type PersonalDataExport,
@@ -79,6 +80,10 @@ export interface StreamPersonalDataArgs {
    * The recipients the app declares, which the export lists beside those the store recorded.
    */
   readonly recipients: RecipientsRuntime;
+  /**
+   * The stores kept out of `storage`'s jurisdiction under a safeguard, which every export lists.
+   */
+  readonly transfers: readonly ExportedTransfer[];
   readonly personId: string;
   /**
    * Whether what article 15(4) holds back is opened, still marked.
@@ -264,6 +269,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
   batchSize,
   categories,
   recipients,
+  transfers,
   personId,
   includeWithheld,
   onPage,
@@ -287,6 +293,7 @@ export const streamPersonalData: StreamPersonalDataFunction = async ({
     ...information,
     restrictions,
     recipients: await recipientsOf({ storage, recipients, categories, personId }),
+    transfers,
     readModels: Object.values(readModels.byName)
       .filter(({ personalData }) => personalData !== null)
       .map(({ name }) => name),

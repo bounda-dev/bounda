@@ -211,6 +211,7 @@ export type {
   RecipientRedactedArgs,
   RecipientRestrictedArgs,
   RecipientTenantForgottenArgs,
+  StoreSafeguard,
   TransferSafeguard,
 } from "./recipient.ts";
 export {
@@ -218,6 +219,8 @@ export {
   EEA_COUNTRIES,
   RECIPIENT_HANDLERS,
   RECIPIENT_KINDS,
+  STORE_SAFEGUARDS,
+  TRANSFER_ARTICLES,
   TRANSFER_SAFEGUARDS,
 } from "./recipient.ts";
 export type {

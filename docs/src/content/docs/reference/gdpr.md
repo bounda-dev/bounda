@@ -167,7 +167,7 @@ answers every item of article 15(1) from what the app declares, nothing written 
 | confirmation that data is processed, and the data | every record that names the person, with the category of each field, and `held` per category |
 | (a) the purposes | each category's `purposes`, with its `basis` and, for special or criminal data, its `special` condition or `criminal` authority |
 | (b) the categories of data | `categories`, with the special categories of data each holds |
-| (c) the recipients, and 15(2) the safeguards of a transfer | `recipients`, as `recipientsOf` lists them |
+| (c) the recipients, and 15(2) the safeguards of a transfer | `recipients`, as `recipientsOf` lists them, and `transfers`, the stores kept out of `storage`'s jurisdiction with their safeguard |
 | (d) how long it is kept | each category's `retention`, `keptUntil` and `restrictedUntil` |
 | (e) rectification, erasure, restriction and objection | `rights` |
 | (f) the complaint to a supervisory authority | `rights`, `complaint` |
@@ -473,7 +473,8 @@ with their country and safeguard; what the runtime keeps about persons and for h
 letters, the subscribers' last failures and the remembered answers among it, with what an export
 holds back of them under 15(4); the keys,
 the master key, the tenant key store and the forget ledger; where each database and store keeps them, as its
-`location` declares it, so the record tells whether any is a transfer to a third country, 30(1)(e);
+`location` declares it, and the safeguard of each one kept out of `storage`'s, so the record names
+every transfer to a third country, 30(1)(e);
 and the fields marked `notPersonal`. `--markdown` writes it as a document and
 `--json` as data; it exits `1` while anything keeps it from being complete, a store of personal data that
 declares no location among it, so a CI step fails on it. See [The record of processing
@@ -562,20 +563,26 @@ Every database and store declares the jurisdiction it keeps its data in: `locati
 of `defineTenantKeyStore` and `defineForgetLedger` for stores of your own; `masterKey` and
 `defineKeyWrapper` declare where the master key is. The location `storage` declares is the app's:
 the app refuses to start, and the record of processing to be drawn, on a read model, tenant key
-store, forget ledger or key wrapper that declares another, or none, since each carries the persons'
-data, or the key that opens it, wherever it is kept, and encryption protects data from a transfer
-only while its keys stay where the data is (EDPB recommendations 01/2020). The record of processing
-states each one's location, and lists every store of personal data, and the key wrapper, that
-declares none as a finding, 30(1)(e).
+store, forget ledger or key wrapper that declares none, or another without a `safeguard`, since
+each carries the persons' data, or the key that opens it, wherever it is kept, and encryption
+protects data from a transfer only while its keys stay where the data is (EDPB recommendations
+01/2020). A store kept elsewhere declares its safeguard as a recipient does, one of articles 45 to
+47; a `derogation` of article 49 covers occasional transfers alone (EDPB guidelines 2/2018), never a
+store that keeps data for as long as the app runs, and is refused, as is a safeguard on a store kept
+where `storage` is. The record of processing states each one's location and the safeguard of each
+transfer, 30(1)(e), and lists every store of personal data, and the key wrapper, that declares no
+location as a finding; each person's export lists the transfers in `transfers`, 15(2).
 `create-bounda` writes `"eu"` in every project. See [Data
 location](/reference/configuration/#data-location).
 
 On Cloudflare, `cloudflare({ jurisdiction: "eu" })` keeps every tenant's Durable Object, its
 events, read models and keys, in the EU, and the keeper objects that hold each tenant's key and
-forget ledger with them. Every way Bounda reaches an object follows it, an object or a keeper
-created elsewhere refuses to start, so no tenant has part of its data outside. A tenant key store or
-forget ledger in Workers KV, whose pairs Cloudflare does not hold to a jurisdiction, declares none,
-and is refused under one. See [Data location](/adapters/cloudflare/#data-location).
+forget ledger with them, unless `durableObjectTenantKeys` or `durableObjectForgetLedger` names
+another `jurisdiction` with a `safeguard`. Every way Bounda reaches an object follows it, an object
+or a keeper created elsewhere refuses to start, so no tenant has part of its data outside where it
+is declared. A tenant key store or forget ledger in Workers KV, whose pairs Cloudflare does not hold
+to a jurisdiction, declares none, and is refused under one, unless it declares where it may keep
+them, never that jurisdiction, with a safeguard. See [Data location](/adapters/cloudflare/#data-location).
 
 Left to the controller: the safeguard itself, the clauses signed and the transfer impact
 assessment, and the truth of every `location` but the one Cloudflare holds an object to. Bounda
@@ -583,10 +590,8 @@ cannot see where a PostgreSQL server, a SQLite file or a process runs, so a decl
 taken at its word, and the processes of a Node app must run where its storage is. Backups, logs and
 the access log `app/audit.ts` are where the app puts them; on Cloudflare, an object checks its
 own jurisdiction, but Bounda cannot see where a Worker's secrets are kept, so the master key's
-location is the controller's to keep true. One app keeps its stores in one
-jurisdiction: stores in two, even between which a transfer needs no safeguard, as from the EU to an
-adequate country, are declared by giving `storage` no location and each store its own, and the
-record then lists `storage` as a finding. On Cloudflare, the jurisdiction holds the objects, not the
+location is the controller's to keep true. Locations are compared as written: two names are two
+jurisdictions, even both in one country. On Cloudflare, the jurisdiction holds the objects, not the
 Worker that serves each request near it.
 
 ## Remedies (articles 77 to 82)

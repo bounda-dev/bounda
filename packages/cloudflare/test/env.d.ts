@@ -15,6 +15,7 @@ import type {
   Store,
   UnboundEuKeeper,
   UnboundEuStore,
+  UnboundSplitKeeper,
   WitnessedStore,
   WrappedStore,
 } from "./test-worker.ts";
@@ -41,6 +42,9 @@ declare global {
       readonly EU_KEEPER: DurableObjectNamespace<InstanceType<typeof EuKeeper>>;
       readonly UNBOUND_EU_KEEPER: DurableObjectNamespace<InstanceType<typeof UnboundEuKeeper>>;
       readonly KEPT_KEEPER: DurableObjectNamespace<InstanceType<typeof KeptKeeper>>;
+      readonly UNBOUND_SPLIT_KEEPER: DurableObjectNamespace<
+        InstanceType<typeof UnboundSplitKeeper>
+      >;
       readonly KEPT_STORE: DurableObjectNamespace<InstanceType<typeof KeptStore>>;
       readonly STORE_REGION: string;
       readonly BOUNDA_MASTER_KEY: string;

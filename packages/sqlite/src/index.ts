@@ -1,6 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Adapter, EncryptedFile, FileKey, FileKeyAccess } from "@bounda-dev/core/adapter";
+import {
+  type Adapter,
+  type EncryptedFile,
+  type FileKey,
+  type FileKeyAccess,
+  placementOf,
+} from "@bounda-dev/core/adapter";
 import {
   DEFAULT_TABLE_PREFIX,
   quoteIdentifier,
@@ -91,7 +97,7 @@ const libsqlAdapter = (
   return createSqliteAdapter({
     name: "sqlite",
     options,
-    ...(options.location === undefined ? {} : { location: options.location }),
+    placement: placementOf(options),
     tablePrefix,
     acquire: () => {
       const { db, raw } = open();
