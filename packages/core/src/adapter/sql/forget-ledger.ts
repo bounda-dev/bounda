@@ -77,6 +77,7 @@ export const forgetLedgerLatestSchema: ForgetLedgerLatestSchemaFunction = (table
     "restriction" TEXT,
     "redaction" TEXT,
     "disclosure" TEXT,
+    "committed" INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY ("tenant", "event_id")
   )`,
       orderIndexStatement(table),
