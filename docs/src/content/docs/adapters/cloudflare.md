@@ -214,13 +214,15 @@ lacks it fails to start with a `ConfigurationError` that names it. Each tenant's
 its keeper's SQLite, written under compare-and-set; one more keeper, the directory, lists the
 tenants with a record, which a [rotation of the master key](#rotating-the-master-key) goes through.
 Restoring a tenant's object leaves its keeper as it was. A keeper checks where it was created as a
-tenant's object does, and refuses every call outside the jurisdiction `cloudflare()` names, or for a
-tenant other than its own.
+tenant's object does, and refuses every call outside the jurisdiction its store is kept in, or for a
+tenant other than its own. A store may keep its keepers in
+[another jurisdiction](#keepers-in-another-jurisdiction) under a safeguard.
 
 `kvTenantKeys({ binding })` keeps the records in a Workers KV namespace instead, one key each
 under `bounda/tenant-keys/` and the tenant's name, for an app whose `cloudflare()` names no
-jurisdiction: KV is cached outside any jurisdiction, so with one the app refuses to start on it
-(see [data location](#data-location)). Bind it under `kv_namespaces`; `wrangler deploy` creates the
+jurisdiction: KV is cached outside any jurisdiction, so with one the app refuses to start on it,
+unless it declares where it may keep the records with a safeguard (see [data
+location](#data-location)). Bind it under `kv_namespaces`; `wrangler deploy` creates the
 namespace when the binding has no id. KV has no compare-and-set; each tenant's record is written by
 its own object alone, one at a time, so none is needed. `prefix` keeps the records under another
 root, for two apps on one namespace.
@@ -347,7 +349,8 @@ configuration names none, refuses to start with a `ConfigurationError`.
 - The jurisdiction holds the objects, not the Worker in front of them, which runs near each
   request. [Tenant keys](#tenant-keys) and the [forget ledger](#the-forget-ledger), wrapped keys
   and the ids of persons, are held to it too: with a jurisdiction, the app refuses to start on a
-  tenant key store or a forget ledger whose `location` is not that jurisdiction, and so does
+  tenant key store or a forget ledger whose `location` is not that jurisdiction, unless it
+  declares a [safeguard](#keepers-in-another-jurisdiction) for the one it names, and so does
   `bounda personal-data inventory`. The keeper's, `durableObjectTenantKeys({ storage })` and
   `durableObjectForgetLedger({ storage })`, are in it. Workers KV is not: its
   [compatibility table](https://developers.cloudflare.com/data-localization/compatibility/) says
@@ -359,6 +362,43 @@ configuration names none, refuses to start with a `ConfigurationError`.
 - [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) says where
   each holder and store is kept: `cloudflare, in eu`. Without a jurisdiction it lists the storage,
   and every store that declares no location, as findings.
+
+### Keepers in another jurisdiction
+
+`durableObjectTenantKeys` and `durableObjectForgetLedger` take a **`jurisdiction`** of their own,
+with the **`safeguard`** that allows keeping the store there, one of articles 45 to 47 as for any
+[store in another jurisdiction](/reference/configuration/#stores-in-another-jurisdiction). Here the
+objects are in the EU and the tenants' keys in the US, under the EU-US Data Privacy Framework's
+adequacy decision:
+
+```ts
+const storage = cloudflare({ jurisdiction: "eu" });
+
+export default defineConfig({
+  storage,
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }),
+      tenantKeys: durableObjectTenantKeys({ storage, jurisdiction: "us", safeguard: "adequacy" }),
+      forgetLedger: { store: durableObjectForgetLedger({ storage }) },
+    },
+  },
+});
+```
+
+- Each store's keepers are created in its jurisdiction and never leave it; a keeper refuses each
+  store's calls outside that store's, so a tenant whose key and ledger are kept apart has a keeper
+  in each, both through the one `KEEPER` binding. The types take a `safeguard` only beside a
+  `jurisdiction`; without one, the keepers are in `storage`'s.
+- The app refuses to start on a keeper elsewhere without a safeguard, and on one that names
+  `storage`'s jurisdiction with a safeguard, which is no transfer. Choose before the first keeper
+  exists, as for the objects: a tenant whose key is reached in a new jurisdiction finds none.
+- Workers KV holds to no jurisdiction, so `kvTenantKeys` and `kvForgetLedger` take a `location` only
+  together with a `safeguard`, `kvTenantKeys({ binding, location: "global", safeguard:
+  "standard-contractual-clauses" })`, where KV may keep and cache what it holds, as you answer for;
+  the app refuses one that names `storage`'s jurisdiction, which KV does not keep to.
+- `bounda personal-data inventory` states the transfer next to the store, `tenant-keys, in us,
+  transferred under adequacy (article 45)`, and each person's export lists it in `transfers`.
 
 `create-bounda` writes `jurisdiction: "eu"`: Bounda's defaults favour personal data staying in
 the European Union, and an object placed elsewhere cannot be moved later. Take it out for an

@@ -1,9 +1,15 @@
 import type {
   AppStatus,
   DeadLetterRetentionStanding,
+  ExportedTransfer,
+  InventoryTransfer,
+  PersonalDataExport,
+  PersonalDataExportHeader,
   PersonalDataForgottenReason,
   RedactedEvent,
+  StoreSafeguard,
   SubscriberFailureRetentionStanding,
+  TransferSafeguard,
   UnreadableRetentionStatus,
 } from "@bounda-dev/core";
 import {
@@ -15,7 +21,9 @@ import {
   type InventoryFindingKind,
   type InventoryRecordName,
   resolveErrorText,
+  STORE_SAFEGUARDS,
   type SubscriberFailing,
+  TRANSFER_ARTICLES,
   withErrorText,
 } from "@bounda-dev/core";
 import type {
@@ -28,18 +36,20 @@ import type {
   LedgerReached,
   LedgerRedaction,
   LedgerRestriction,
+  Placement,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
   RuntimeTextFunction,
   TenantFence,
 } from "@bounda-dev/core/adapter";
-import { runtimeText } from "@bounda-dev/core/adapter";
+import { placementOf, runtimeText } from "@bounda-dev/core/adapter";
 import {
   type Config,
   DEFAULT_DEAD_LETTER_RETENTION_MS,
   defineConfig,
   defineForgetLedger,
   defineKeyWrapper,
+  defineTenantKeyStore,
   type ErrorText,
   type ForgetLedgerConfig,
   type ForgetLedgerDefinition,
@@ -48,6 +58,8 @@ import {
   type KeyWrapperDefinition,
   masterKey,
   type ResolvedConfig,
+  type StoreDefinitionOptions,
+  type TenantKeyStoreDefinition,
 } from "@bounda-dev/core/config";
 import { type MemoryOptions, memory } from "@bounda-dev/core/memory";
 import { describe, expectTypeOf, it } from "vitest";
@@ -395,11 +407,12 @@ describe("defineConfig", () => {
   });
 
   it("types the key wrappers: masterKey names variables, defineKeyWrapper builds one from env", () => {
-    expectTypeOf(masterKey).parameter(0).toEqualTypeOf<{
-      readonly from: string;
-      readonly previous?: readonly string[];
-      readonly location?: string;
-    }>();
+    expectTypeOf(masterKey).parameter(0).toEqualTypeOf<
+      DataLocationOptions & {
+        readonly from: string;
+        readonly previous?: readonly string[];
+      }
+    >();
     expectTypeOf(masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }).location).toEqualTypeOf<
       string | undefined
     >();
@@ -585,7 +598,10 @@ describe("runtimeText", () => {
 
 describe("location", () => {
   it("lets every adapter declare the jurisdiction it keeps its data in, which the record states", () => {
-    expectTypeOf<DataLocationOptions>().toEqualTypeOf<{ readonly location?: string }>();
+    expectTypeOf<DataLocationOptions>().toEqualTypeOf<
+      | { readonly location?: string; readonly safeguard?: never }
+      | { readonly location: string; readonly safeguard: StoreSafeguard }
+    >();
     expectTypeOf<AdapterDefinition["location"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<MemoryOptions>().toEqualTypeOf<DataLocationOptions>();
     expectTypeOf(memory({ location: "eu" }).location).toEqualTypeOf<string | undefined>();
@@ -605,5 +621,67 @@ describe("location", () => {
     expectTypeOf<"tenant-keys">().toExtend<InventoryRecordName>();
     expectTypeOf<"master-key">().toExtend<InventoryRecordName>();
     expectTypeOf<"no-location">().toExtend<InventoryFindingKind>();
+  });
+
+  it("lets a store be kept in another location than storage's under a safeguard of articles 45 to 47", () => {
+    expectTypeOf<StoreSafeguard>().toEqualTypeOf<Exclude<TransferSafeguard, "derogation">>();
+    expectTypeOf(STORE_SAFEGUARDS).toEqualTypeOf<readonly StoreSafeguard[]>();
+    expectTypeOf(TRANSFER_ARTICLES).toEqualTypeOf<Readonly<Record<TransferSafeguard, string>>>();
+    expectTypeOf<AdapterDefinition["safeguard"]>().toEqualTypeOf<StoreSafeguard | undefined>();
+    expectTypeOf<StoreDefinitionOptions>().toEqualTypeOf<DataLocationOptions>();
+    expectTypeOf<TenantKeyStoreDefinition["safeguard"]>().toEqualTypeOf<
+      StoreSafeguard | undefined
+    >();
+    expectTypeOf<ForgetLedgerDefinition["safeguard"]>().toEqualTypeOf<StoreSafeguard | undefined>();
+    expectTypeOf<KeyWrapperDefinition["safeguard"]>().toEqualTypeOf<StoreSafeguard | undefined>();
+    expectTypeOf(memory({ location: "ch", safeguard: "adequacy" }).safeguard).toEqualTypeOf<
+      StoreSafeguard | undefined
+    >();
+    expectTypeOf(placementOf).returns.toEqualTypeOf<Placement>();
+    defineConfig({
+      storage: memory({ location: "eu" }),
+      ports,
+      readModels: { search: memory({ location: "ch", safeguard: "adequacy" }) },
+      runtime: {
+        personalData: {
+          keyWrapper: masterKey({
+            from: "BOUNDA_MASTER_KEY",
+            location: "us",
+            safeguard: "standard-contractual-clauses",
+          }),
+          tenantKeys: defineTenantKeyStore(() => ({}) as never, {
+            location: "ch",
+            safeguard: "adequacy",
+          }),
+          forgetLedger: {
+            store: defineForgetLedger(() => ({}) as ForgetLedger, {
+              location: "us",
+              safeguard: "binding-corporate-rules",
+            }),
+          },
+        },
+      },
+    });
+    // @ts-expect-error a safeguard allows keeping data in a location, so it comes with one
+    memory({ safeguard: "adequacy" });
+    // @ts-expect-error a derogation covers occasional transfers alone, never a store
+    memory({ location: "us", safeguard: "derogation" });
+    // @ts-expect-error a safeguard is one of articles 45 to 47
+    defineForgetLedger(() => ({}) as ForgetLedger, { location: "us", safeguard: "privacy-shield" });
+    expectTypeOf<InventoryTransfer>().toEqualTypeOf<{
+      readonly safeguard: StoreSafeguard;
+      readonly article: string;
+    }>();
+    expectTypeOf<ExportedTransfer>().toEqualTypeOf<{
+      readonly store: "read-model" | "master-key" | "tenant-keys" | "forget-ledger";
+      readonly readModel: string | null;
+      readonly location: string;
+      readonly safeguard: StoreSafeguard;
+      readonly article: string;
+    }>();
+    expectTypeOf<PersonalDataExport["transfers"]>().toEqualTypeOf<readonly ExportedTransfer[]>();
+    expectTypeOf<PersonalDataExportHeader["transfers"]>().toEqualTypeOf<
+      readonly ExportedTransfer[]
+    >();
   });
 });

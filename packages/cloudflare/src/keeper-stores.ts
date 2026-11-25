@@ -1,9 +1,11 @@
+import type { StoreSafeguard } from "@bounda-dev/core";
 import { ConfigurationError } from "@bounda-dev/core";
 import { type ForgetLedger, runtimeText, type TenantKeyStore } from "@bounda-dev/core/adapter";
 import {
   defineForgetLedger,
   defineTenantKeyStore,
   type ForgetLedgerDefinition,
+  type StoreDefinitionOptions,
   type TenantKeyStoreDefinition,
 } from "@bounda-dev/core/config";
 import { type CloudflareDefinition, isCloudflareDefinition } from "./definition.ts";
@@ -21,9 +23,10 @@ export const DEFAULT_KEEPER_BINDING = "KEEPER";
 /**
  * Options of `durableObjectTenantKeys` and `durableObjectForgetLedger`.
  */
-export interface DurableObjectKeeperOptions {
+export type DurableObjectKeeperOptions = {
   /**
-   * The app's `storage`, its `cloudflare()`: the keeper lives in the jurisdiction it names.
+   * The app's `storage`, its `cloudflare()`: the keeper lives in the jurisdiction it names, unless
+   * `jurisdiction` names another.
    */
   readonly storage: CloudflareDefinition;
   /**
@@ -31,7 +34,21 @@ export interface DurableObjectKeeperOptions {
    * Defaults to `DEFAULT_KEEPER_BINDING`.
    */
   readonly binding?: string;
-}
+} & (
+  | { readonly jurisdiction?: never; readonly safeguard?: never }
+  | {
+      /**
+       * The jurisdiction the keepers are created in and never leave, when not `storage`'s: the
+       * store's `location`. Choose it before the first keeper exists, as for `cloudflare()`.
+       */
+      readonly jurisdiction: DurableObjectJurisdiction;
+      /**
+       * What allows keeping the store in `jurisdiction`, another than `storage`'s, under articles 45
+       * to 47 of the GDPR, which the record of processing and each person's export tell of.
+       */
+      readonly safeguard?: StoreSafeguard;
+    }
+);
 
 export interface DurableObjectTenantKeysFunction {
   (options: DurableObjectKeeperOptions): TenantKeyStoreDefinition;
@@ -51,8 +68,15 @@ const isNamespace = (value: unknown): value is DurableObjectNamespace =>
   typeof Reflect.get(value, "idFromName") === "function" &&
   typeof Reflect.get(value, "get") === "function";
 
+interface KeeperPlace {
+  readonly jurisdiction: DurableObjectJurisdiction | undefined;
+  readonly placement: StoreDefinitionOptions;
+}
+
 // A Worker's code is not always type-checked.
-const jurisdictionOf = (storage: unknown, what: string): DurableObjectJurisdiction | undefined => {
+const placeOf = (options: DurableObjectKeeperOptions, what: string): KeeperPlace => {
+  const { storage, safeguard } = options;
+  const own: unknown = options.jurisdiction;
   if (!isCloudflareDefinition(storage)) {
     throw runtimeText(
       new ConfigurationError(
@@ -60,7 +84,31 @@ const jurisdictionOf = (storage: unknown, what: string): DurableObjectJurisdicti
       ),
     );
   }
-  return storage.options.jurisdiction;
+  if (own !== undefined && (typeof own !== "string" || own === "")) {
+    throw runtimeText(
+      new ConfigurationError(
+        `${what} names a Durable Object jurisdiction, such as "eu", not ${JSON.stringify(own)}`,
+      ),
+    );
+  }
+  if (own === undefined && safeguard !== undefined) {
+    throw runtimeText(
+      new ConfigurationError(
+        `${what} declares a safeguard and no jurisdiction: a safeguard allows keeping the keepers in another jurisdiction than storage's, so name it beside the safeguard`,
+      ),
+    );
+  }
+  const jurisdiction =
+    (own as DurableObjectJurisdiction | undefined) ?? storage.options.jurisdiction;
+  return {
+    jurisdiction,
+    placement:
+      jurisdiction === undefined
+        ? {}
+        : safeguard === undefined
+          ? { location: jurisdiction }
+          : { location: jurisdiction, safeguard },
+  };
 };
 
 const keepersIn = (
@@ -91,23 +139,19 @@ const keepersIn = (
   };
 };
 
-const locationOf = (storage: CloudflareDefinition) =>
-  storage.location === undefined ? {} : { location: storage.location };
-
 /**
  * A tenant key store in keeper Durable Objects, for `runtime.personalData.tenantKeys` of an app on
  * Cloudflare: each tenant's key, wrapped under the master key, in a keeper object of its own, in
- * the jurisdiction `storage` names, outside the tenant's object, so neither a restore of that
+ * the jurisdiction `storage` names, or the one `jurisdiction` names under a `safeguard`, outside
+ * the tenant's object, so neither a restore of that
  * object nor a copy of it brings back the key of a tenant `forgetTenant` destroyed. Its writes
  * compare the revision and set the record at once. A binding missing from the object's `env`
  * fails its start with `ConfigurationError`, and so does a `storage` that is not `cloudflare()`,
  * or opening it outside a Worker, as `bounda tenant-key rewrap-master` would from a terminal.
  */
-export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
-  storage,
-  binding = DEFAULT_KEEPER_BINDING,
-}) => {
-  const jurisdiction = jurisdictionOf(storage, "durableObjectTenantKeys()");
+export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = (options) => {
+  const { binding = DEFAULT_KEEPER_BINDING } = options;
+  const { jurisdiction, placement } = placeOf(options, "durableObjectTenantKeys()");
   return defineTenantKeyStore(({ env }): TenantKeyStore => {
     const { keeper } = keepersIn(
       env,
@@ -134,23 +178,21 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = ({
       },
       list: (args) => unwrap(directory.listTenants(args)),
     };
-  }, locationOf(storage));
+  }, placement);
 };
 
 /**
  * A forget ledger in keeper Durable Objects, for `runtime.personalData.forgetLedger.store` of an
  * app on Cloudflare: each tenant's entries in its keeper object, in the jurisdiction `storage`
- * names, outside the tenant's object, so restoring that object to an earlier time leaves the
+ * names, or the one `jurisdiction` names under a `safeguard`, outside the tenant's object, so restoring that object to an earlier time leaves the
  * ledger whole. Its reads see every write at once, and with `keepFor` the keeper removes each
  * entry once past it on its own alarm, whether the tenant's object is awake or not. A binding
  * missing from the object's `env` fails its start with `ConfigurationError`, and so does a
  * `storage` that is not `cloudflare()`, or opening it outside a Worker.
  */
-export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
-  storage,
-  binding = DEFAULT_KEEPER_BINDING,
-}) => {
-  const jurisdiction = jurisdictionOf(storage, "durableObjectForgetLedger()");
+export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = (options) => {
+  const { binding = DEFAULT_KEEPER_BINDING } = options;
+  const { jurisdiction, placement } = placeOf(options, "durableObjectForgetLedger()");
   return defineForgetLedger(({ env, tenant, keepForMs }): ForgetLedger => {
     const { keeper } = keepersIn(
       env,
@@ -207,5 +249,5 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = ({
         },
       },
     };
-  }, locationOf(storage));
+  }, placement);
 };

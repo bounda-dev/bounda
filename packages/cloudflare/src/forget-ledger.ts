@@ -14,6 +14,7 @@ import {
   type TenantFence,
 } from "@bounda-dev/core/adapter";
 import { defineForgetLedger, type ForgetLedgerDefinition } from "@bounda-dev/core/config";
+import { type KvPlacementOptions, keptInKv, kvPlacementOf } from "./kv-placement.ts";
 import { inWorkerRuntime, LEDGER_IN_OBJECT } from "./worker-runtime.ts";
 
 /**
@@ -442,12 +443,12 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
   };
 };
 
-export interface KvForgetLedgerOptions {
+export type KvForgetLedgerOptions = KvPlacementOptions & {
   /**
    * The name of the KV namespace's binding in `wrangler.jsonc`.
    */
   readonly binding: string;
-}
+};
 
 export interface KvForgetLedgerFunction {
   (options: KvForgetLedgerOptions): ForgetLedgerDefinition;
@@ -468,32 +469,38 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
  * a forgetting made in the last minute before a restore is applied by then. A binding missing
  * from the object's `env` fails its start with `ConfigurationError`, and so does opening it
  * outside a Worker. KV holds its keys to no
- * jurisdiction, so an app whose `cloudflare()` names one refuses it with `ConfigurationError`:
- * use `durableObjectForgetLedger` there.
+ * jurisdiction, so an app whose `cloudflare()` names one refuses it with `ConfigurationError`,
+ * unless it declares where it may keep them under a `safeguard`: use `durableObjectForgetLedger`
+ * there otherwise.
  */
-export const kvForgetLedger: KvForgetLedgerFunction = ({ binding }) =>
-  defineForgetLedger(({ env, tenant, keepForMs }) => {
-    if (!inWorkerRuntime()) {
-      throw runtimeText(
-        new ConfigurationError(
-          `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which only a Worker holds, and this runs outside one: ${LEDGER_IN_OBJECT}; bounda forget-ledger expire reaches the namespace through wrangler`,
-        ),
-      );
-    }
-    const namespace: unknown = Reflect.get(env, binding);
-    if (!isKvNamespace(namespace)) {
-      throw runtimeText(
-        new ConfigurationError(
-          `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
-        ),
-      );
-    }
-    return createKvForgetLedger({
-      namespace,
-      prefix: `${KV_FORGET_LEDGER_ROOT}${encodeURIComponent(tenant)}/`,
-      keepForMs,
-    });
-  });
+export const kvForgetLedger: KvForgetLedgerFunction = ({ binding, ...placement }) =>
+  keptInKv(
+    defineForgetLedger(
+      ({ env, tenant, keepForMs }) => {
+        if (!inWorkerRuntime()) {
+          throw runtimeText(
+            new ConfigurationError(
+              `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which only a Worker holds, and this runs outside one: ${LEDGER_IN_OBJECT}; bounda forget-ledger expire reaches the namespace through wrangler`,
+            ),
+          );
+        }
+        const namespace: unknown = Reflect.get(env, binding);
+        if (!isKvNamespace(namespace)) {
+          throw runtimeText(
+            new ConfigurationError(
+              `runtime.personalData.forgetLedger.store names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
+            ),
+          );
+        }
+        return createKvForgetLedger({
+          namespace,
+          prefix: `${KV_FORGET_LEDGER_ROOT}${encodeURIComponent(tenant)}/`,
+          keepForMs,
+        });
+      },
+      kvPlacementOf(placement, "runtime.personalData.forgetLedger.store"),
+    ),
+  );
 
 /**
  * A key of the ledger's namespace as KV lists it.

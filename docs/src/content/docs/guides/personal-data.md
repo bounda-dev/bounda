@@ -773,6 +773,9 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
       firstDisclosedAt: "2026-02-01T09:00:00.000Z", lastDisclosedAt: "2026-02-20T09:00:00.000Z",
       declared: true },
   ],
+  transfers: [
+    { store: "tenant-keys", readModel: null, location: "ch", safeguard: "adequacy", article: "45" },
+  ],
   redactions: [
     { eventId, at: "2026-02-21T09:00:00.000Z", events: [{ id, fields: ["phone"] }] },
   ],
@@ -824,7 +827,7 @@ declares, so nothing has to be written by hand next to it:
 | --- | --- |
 | (a) the purposes | each category's `purposes` and `processedFor`, with its `basis` and, for special or criminal data, its `special` condition or `criminal` authority |
 | (b) the categories of data | `categories`, and the category of each field of every record |
-| (c) the recipients, and (15(2)) the safeguards of a transfer out of the EEA | `recipients` |
+| (c) the recipients, and (15(2)) the safeguards of a transfer out of the EEA | `recipients` and `transfers` |
 | (d) how long it is kept, or the criteria | each category's `retention`, `keptUntil` and `restrictedUntil`, and the `erasureExemptions` that keep it past erasure |
 | (e) the rights to rectification, erasure, restriction and objection | `rights` |
 | (f) the right to complain to a supervisory authority | `rights`, `complaint` |
@@ -876,6 +879,12 @@ error's text or a rejection's message may quote any of their data.
 one disclosed data of theirs, presumed to hold it, or declared for a category of theirs, with the
 categories concerned and their basis, its country and the safeguard of a transfer out of the
 European Economic Area, as article 15(1)(c) asks.
+
+`transfers` are the stores the app keeps out of the jurisdiction `storage` declares, each under the
+safeguard that allows it, as article 15(2) asks: a read model that holds personal data
+(`read-model`, with its name), the master key, the tenant's key, or the forget ledger, with its
+`location`, its `safeguard` and the `article` it rests on. It is empty while every store is kept
+where `storage` is. See [stores in another jurisdiction](#stores-in-another-jurisdiction).
 
 `redactions` are the [redactions](#correcting-a-persons-data) of their data, in the order they
 were made, each with the id of its `PersonalDataRedacted`, when, and the events and fields it
@@ -2043,7 +2052,8 @@ database. The record lists:
   scheduled commands and dead letters for a command, the read model's table, each in the database
   its adapter names, and the jurisdiction that database keeps it in, as its
   [`location`](/reference/configuration/#data-location) declares it, or
-  [a Durable Object jurisdiction](/adapters/cloudflare/#data-location);
+  [a Durable Object jurisdiction](/adapters/cloudflare/#data-location), with the safeguard of the
+  transfer when it is kept out of `storage`'s;
 - each [recipient](#recipients): its port, name, kind, country, the safeguard of a transfer out
   of the European Economic Area, and the categories it receives;
 - what the runtime keeps about persons besides those fields: their keys, their activity and
@@ -2059,7 +2069,8 @@ database. The record lists:
   [master key](#a-master-key), the [tenant key store](#the-tenant-key-store), the [forget ledger](#the-forget-ledger) for its
   `keepFor` and no longer than until its tenant is [forgotten](#forgetting-a-tenant) and every
   recipient told, and the [access log](#who-opened-what) and the [host
-  log](#refused-requests) when `app/audit.ts` exists, each with where it is kept;
+  log](#refused-requests) when `app/audit.ts` exists, each with where it is kept and, out of
+  `storage`'s jurisdiction, the safeguard of the transfer;
 - whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
   ledger are configured;
 - the fields marked `notPersonal`.
@@ -2524,8 +2535,9 @@ export default defineConfig({
 ```
 
 `location` declares where the KMS keeps the key, the region of its ARN: one outside the storage's
-location is refused, since encryption protects the data from a transfer only while the key stays
-where the data is.
+location is refused without a `safeguard`, since encryption protects the data from a transfer only
+while the key stays where the data is (see [stores in another
+jurisdiction](#stores-in-another-jurisdiction)).
 
 `kid` is stored next to every version of the tenant's key the wrapper wraps; `unwrap` receives it
 back, with what `wrap` returned. A KMS needs the key's raw bytes, so the tenant's key exists as bytes
@@ -2541,6 +2553,45 @@ version of its tenant's key, and once more every five minutes while it runs.
 
 A wrapper that fails, because KMS is unreachable, fails the command that needed the tenant's key,
 which the caller or the reaction's retry sees; the person's data is not touched.
+
+### Stores in another jurisdiction
+
+Every store is kept where `storage` declares the app's data is, unless a safeguard of chapter V of
+the GDPR allows keeping it elsewhere: the keys in a country with an adequacy decision and the data
+in the EU, say. The store declares its `location` and its `safeguard`, with the vocabulary a
+[recipient](#recipients) uses, one of articles 45 to 47:
+
+```ts
+export default defineConfig({
+  storage: postgresql({ url: process.env.DATABASE_URL!, location: "eu" }),
+  readModels: {
+    search: postgresql({
+      url: process.env.SEARCH_URL!,
+      location: "us",
+      safeguard: "standard-contractual-clauses",
+    }),
+  },
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY", location: "ch", safeguard: "adequacy" }),
+      tenantKeys: sqlite({ path: "./keys/tenant-keys.db", location: "ch", safeguard: "adequacy" }),
+    },
+  },
+});
+```
+
+- A store kept elsewhere without a safeguard is refused when the app starts, with a
+  `ConfigurationError` that names it, its location and the safeguards it may declare. So is a
+  safeguard where `storage` is, which is no transfer, a safeguard on `storage` itself or under a
+  `storage` that declares no location, and a `derogation`, which article 49 allows for occasional
+  transfers alone, never for a store that keeps data as long as the app runs.
+- The [record of processing](#the-record-of-processing-activities) names each transfer next to the
+  store, `in ch, transferred under adequacy (article 45)`, and every person's
+  [export](#exporting-a-persons-data) lists it in `transfers`.
+- On Cloudflare the keeper takes a `jurisdiction` and a `safeguard` of its own: see [keepers in
+  another jurisdiction](/adapters/cloudflare/#keepers-in-another-jurisdiction).
+- Bounda states what you declare: the safeguard itself, the clauses signed and the transfer impact
+  assessment are yours. See [Data location](/reference/configuration/#stores-in-another-jurisdiction).
 
 ## Freezing a tenant
 

@@ -11,7 +11,7 @@ import type {
   SpecialCategoryData,
   SpecificPurpose,
 } from "../../modules/personal-data.ts";
-import type { PersonRecipient } from "../../modules/recipient.ts";
+import type { PersonRecipient, StoreSafeguard } from "../../modules/recipient.ts";
 
 /**
  * The marked fields of a stored payload, as a handler reads them: a field forgotten is `null`,
@@ -137,6 +137,27 @@ export type PersonalDataRight =
   | "withdraw-consent"
   | "human-intervention"
   | "complaint";
+
+/**
+ * A store the app keeps in another jurisdiction than `storage` under a safeguard, as article 15(2)
+ * asks the person be told of: `read-model`, the rows of the read model `readModel`, which holds
+ * personal data; `master-key`, the key every tenant's key is wrapped under; `tenant-keys`, the
+ * tenant's key, which every key of the person is wrapped under; `forget-ledger`, the record of
+ * whom the app forgot or disclosed data of, by id.
+ */
+export interface ExportedTransfer {
+  readonly store: "read-model" | "master-key" | "tenant-keys" | "forget-ledger";
+  /**
+   * `null` unless `store` is `read-model`.
+   */
+  readonly readModel: string | null;
+  readonly location: string;
+  readonly safeguard: StoreSafeguard;
+  /**
+   * The article of the GDPR the safeguard rests on.
+   */
+  readonly article: string;
+}
 
 /**
  * A right the person has, as article 15(1)(e) and (f) ask they be told, with its article and the
@@ -338,6 +359,11 @@ export interface PersonalDataExport {
    */
   readonly recipients: readonly PersonRecipient[];
   /**
+   * The stores the app keeps out of the jurisdiction `storage` declares, with the safeguard that
+   * allows it, as article 15(2) asks; none when every store is kept where `storage` is.
+   */
+  readonly transfers: readonly ExportedTransfer[];
+  /**
    * The redactions of the person's data, in the order they were made; each event they reached says
    * which of its fields in `redacted`.
    */
@@ -372,6 +398,7 @@ export interface PersonalDataExportHeader
     | "automatedDecisions"
     | "restrictions"
     | "recipients"
+    | "transfers"
   > {
   readonly readModels: readonly string[];
 }

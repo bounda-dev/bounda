@@ -79,6 +79,36 @@ export interface BoundaKeeperMethods {
   alarm(): Promise<void>;
 }
 
+const valueAt = (holder: unknown, key: string): unknown =>
+  typeof holder === "object" && holder !== null ? Reflect.get(holder, key) : undefined;
+
+const keptIn = (
+  store: unknown,
+  storage: DurableObjectJurisdiction | undefined,
+): DurableObjectJurisdiction | undefined => {
+  const location = valueAt(store, "location");
+  return typeof location === "string" ? (location as DurableObjectJurisdiction) : storage;
+};
+
+export interface KeeperJurisdictions {
+  readonly keys: DurableObjectJurisdiction | undefined;
+  readonly ledger: DurableObjectJurisdiction | undefined;
+}
+
+export interface KeeperJurisdictionsFunction {
+  (config: Config, storage: DurableObjectJurisdiction | undefined): KeeperJurisdictions;
+}
+
+// Each store's keepers are in the jurisdiction it declares as its location, storage's unless it
+// names another; a tenant whose key and ledger are kept apart has a keeper in each.
+export const keeperJurisdictions: KeeperJurisdictionsFunction = (config, storage) => {
+  const personalData = valueAt(config.runtime, "personalData");
+  return {
+    keys: keptIn(valueAt(personalData, "tenantKeys"), storage),
+    ledger: keptIn(valueAt(valueAt(personalData, "forgetLedger"), "store"), storage),
+  };
+};
+
 /**
  * The class `createBoundaKeeper` returns, to export from the Worker and bind in `wrangler.jsonc`.
  */
@@ -103,24 +133,26 @@ export interface CreateBoundaKeeperFunction {
  * the tenant's storage: each tenant's key, wrapped under the master key, and its forget ledger,
  * one keeper object per tenant, plus one that lists the tenants for a rotation of the master key.
  * In the jurisdiction `cloudflare()` names, like the tenants' objects, so nothing tied to a person
- * leaves it; restoring a tenant's object to an earlier time leaves its keeper as it is. Use it
+ * leaves it, or in the one `durableObjectTenantKeys` or `durableObjectForgetLedger` names under a
+ * safeguard; restoring a tenant's object to an earlier time leaves its keeper as it is. Use it
  * through `durableObjectTenantKeys` and `durableObjectForgetLedger`. With `keepFor`, a keeper
  * removes each entry of its ledger once past it on its own alarm, its tenant's object asleep or
  * not. Throws `ConfigurationError` for a configuration `cloudflare()` refuses, such as one whose
- * tenant key store or forget ledger is not kept in its jurisdiction. A keeper created in another
- * jurisdiction than `cloudflare()` names, or reached by a name the stores never give, refuses
+ * tenant key store or forget ledger is kept elsewhere without a safeguard. A keeper created in
+ * another jurisdiction than its store names, or reached by a name the stores never give, refuses
  * every call with `ConfigurationError`.
  */
 export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
   const { binding, jurisdiction } = cloudflareStorageOf(config).options;
+  const { keys, ledger } = keeperJurisdictions(config, jurisdiction);
   return class BoundaKeeper extends DurableObject implements BoundaKeeperMethods {
     #keys: Promise<TenantKeyStore> | undefined;
     #ledger: Promise<ForgetLedger> | undefined;
 
-    #checked(): void {
+    #checked(store: DurableObjectJurisdiction | undefined): void {
       checkObjectJurisdiction({
         id: this.ctx.id,
-        jurisdiction,
+        jurisdiction: store,
         namespace: Reflect.get(this.env as object, binding) as DurableObjectNamespace | undefined,
         kind: "keeper",
       });
@@ -128,8 +160,8 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
 
     // Only the keeper of `tenant` answers for it: a record or an entry kept anywhere else would
     // be one no reader finds.
-    #of(tenant: string): void {
-      this.#checked();
+    #of(tenant: string, store: DurableObjectJurisdiction | undefined): void {
+      this.#checked(store);
       if (this.ctx.id.name !== keeperNameOf(tenant)) {
         throw new ConfigurationError(
           `This keeper Durable Object keeps ${this.ctx.id.name === undefined ? "no tenant" : `"${this.ctx.id.name}"`}, not tenant ${tenant}: reach it through durableObjectTenantKeys() and durableObjectForgetLedger() alone`,
@@ -138,7 +170,7 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
     }
 
     #directoryTable(): void {
-      this.#checked();
+      this.#checked(keys);
       if (this.ctx.id.name !== KEEPER_DIRECTORY) {
         throw new ConfigurationError(
           "Only the keeper named directory lists the tenants: reach it through durableObjectTenantKeys() alone",
@@ -154,13 +186,13 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
     }
 
     #tenantKeys(tenant: string): Promise<TenantKeyStore> {
-      this.#of(tenant);
+      this.#of(tenant, keys);
       this.#keys ??= this.#adapter().createTenantKeyStore();
       return this.#keys;
     }
 
     #forgetLedger(tenant: string): Promise<ForgetLedger> {
-      this.#of(tenant);
+      this.#of(tenant, ledger);
       this.#ledger ??= this.#adapter().createForgetLedger({ tenant });
       return this.#ledger;
     }

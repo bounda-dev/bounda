@@ -2,6 +2,7 @@ import { ConfigurationError } from "@bounda-dev/core";
 import { runtimeText, type TenantKeyStore } from "@bounda-dev/core/adapter";
 import { parseTenantKeyRecord, tenantKeyRecordText } from "@bounda-dev/core/adapter/sql";
 import { defineTenantKeyStore, type TenantKeyStoreDefinition } from "@bounda-dev/core/config";
+import { type KvPlacementOptions, keptInKv, kvPlacementOf } from "./kv-placement.ts";
 import { inWorkerRuntime, ROTATE_IN_WORKER } from "./worker-runtime.ts";
 
 /**
@@ -84,7 +85,7 @@ export const createKvTenantKeyStore: CreateKvTenantKeyStoreFunction = ({ namespa
   };
 };
 
-export interface KvTenantKeysOptions {
+export type KvTenantKeysOptions = KvPlacementOptions & {
   /**
    * The name of the KV namespace's binding in `wrangler.jsonc`.
    */
@@ -94,7 +95,7 @@ export interface KvTenantKeysOptions {
    * `KV_TENANT_KEYS_ROOT`.
    */
   readonly prefix?: string;
-}
+};
 
 export interface KvTenantKeysFunction {
   (options: KvTenantKeysOptions): TenantKeyStoreDefinition;
@@ -114,24 +115,34 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
  * binding missing from the object's `env` fails its start with `ConfigurationError`, and so does
  * opening it outside a Worker, as `bounda tenant-key rewrap-master` would. KV holds its
  * keys to no jurisdiction, so an app whose `cloudflare()` names one refuses it with
- * `ConfigurationError`: use `durableObjectTenantKeys` there.
+ * `ConfigurationError`, unless it declares where it may keep them under a `safeguard`: use
+ * `durableObjectTenantKeys` there otherwise.
  */
-export const kvTenantKeys: KvTenantKeysFunction = ({ binding, prefix = KV_TENANT_KEYS_ROOT }) =>
-  defineTenantKeyStore(({ env }) => {
-    if (!inWorkerRuntime()) {
-      throw runtimeText(
-        new ConfigurationError(
-          `runtime.personalData.tenantKeys names the KV binding ${binding}, which only a Worker holds, and this runs outside one: ${ROTATE_IN_WORKER}`,
-        ),
-      );
-    }
-    const namespace: unknown = Reflect.get(env, binding);
-    if (!isKvNamespace(namespace)) {
-      throw runtimeText(
-        new ConfigurationError(
-          `runtime.personalData.tenantKeys names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
-        ),
-      );
-    }
-    return createKvTenantKeyStore({ namespace, prefix });
-  });
+export const kvTenantKeys: KvTenantKeysFunction = ({
+  binding,
+  prefix = KV_TENANT_KEYS_ROOT,
+  ...placement
+}) =>
+  keptInKv(
+    defineTenantKeyStore(
+      ({ env }) => {
+        if (!inWorkerRuntime()) {
+          throw runtimeText(
+            new ConfigurationError(
+              `runtime.personalData.tenantKeys names the KV binding ${binding}, which only a Worker holds, and this runs outside one: ${ROTATE_IN_WORKER}`,
+            ),
+          );
+        }
+        const namespace: unknown = Reflect.get(env, binding);
+        if (!isKvNamespace(namespace)) {
+          throw runtimeText(
+            new ConfigurationError(
+              `runtime.personalData.tenantKeys names the KV binding ${binding}, which the Worker's env does not hold: add it under kv_namespaces in wrangler.jsonc`,
+            ),
+          );
+        }
+        return createKvTenantKeyStore({ namespace, prefix });
+      },
+      kvPlacementOf(placement, "runtime.personalData.tenantKeys"),
+    ),
+  );

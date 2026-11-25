@@ -252,6 +252,7 @@ describe("personalDataInventory", () => {
         stores: ["event-store", "snapshots"],
         database: "memory",
         location: null,
+        transfer: null,
       },
       {
         kind: "command",
@@ -261,6 +262,7 @@ describe("personalDataInventory", () => {
         stores: ["scheduled-commands", "dead-letters"],
         database: "memory",
         location: null,
+        transfer: null,
       },
       {
         kind: "process-state",
@@ -270,6 +272,7 @@ describe("personalDataInventory", () => {
         stores: ["event-store"],
         database: "memory",
         location: null,
+        transfer: null,
       },
       {
         kind: "read-model",
@@ -282,6 +285,7 @@ describe("personalDataInventory", () => {
         stores: ["read-model"],
         database: "memory",
         location: null,
+        transfer: null,
       },
     ]);
   });
@@ -299,15 +303,27 @@ describe("personalDataInventory", () => {
       },
     ]);
     expect(inventory.records).toEqual([
-      { name: "personal-keys", where: "memory", location: null, keptFor: null },
-      { name: "persons", where: "memory", location: null, keptFor: null },
-      { name: "forgettings", where: "memory", location: null, keptFor: null },
-      { name: "remembered-answers", where: "memory", location: null, keptFor: "1d" },
-      { name: "dead-letters", where: "memory", location: null, keptFor: "30d" },
-      { name: "subscriber-failures", where: "memory", location: null, keptFor: "30d" },
-      { name: "disclosures", where: "memory", location: null, keptFor: null },
-      { name: "access-log", where: "app/audit.ts", location: null, keptFor: null },
-      { name: "host-log", where: "app/audit.ts", location: null, keptFor: null },
+      { name: "personal-keys", where: "memory", location: null, transfer: null, keptFor: null },
+      { name: "persons", where: "memory", location: null, transfer: null, keptFor: null },
+      { name: "forgettings", where: "memory", location: null, transfer: null, keptFor: null },
+      {
+        name: "remembered-answers",
+        where: "memory",
+        location: null,
+        transfer: null,
+        keptFor: "1d",
+      },
+      { name: "dead-letters", where: "memory", location: null, transfer: null, keptFor: "30d" },
+      {
+        name: "subscriber-failures",
+        where: "memory",
+        location: null,
+        transfer: null,
+        keptFor: "30d",
+      },
+      { name: "disclosures", where: "memory", location: null, transfer: null, keptFor: null },
+      { name: "access-log", where: "app/audit.ts", location: null, transfer: null, keptFor: null },
+      { name: "host-log", where: "app/audit.ts", location: null, transfer: null, keptFor: null },
     ]);
     expect(inventory.security).toEqual({
       masterKey: false,
@@ -355,6 +371,61 @@ describe("personalDataInventory", () => {
     expect(apart.holders.find(({ name }) => name === "customer.onboarding")?.location).toBeNull();
   });
 
+  it("names the transfer of every store kept out of the storage's location, with its safeguard", () => {
+    const inventory = personalDataInventory({
+      registry,
+      config: {
+        ...config,
+        storage: memory({ location: "eu" }),
+        readModels: { customers: memory({ location: "ch", safeguard: "adequacy" }) },
+        runtime: {
+          personalData: {
+            keyWrapper: masterKey({
+              from: "BOUNDA_MASTER_KEY",
+              location: "us",
+              safeguard: "standard-contractual-clauses",
+            }),
+            tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore, {
+              location: "ch",
+              safeguard: "adequacy",
+            }),
+            forgetLedger: {
+              store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf("t"), {
+                location: "us",
+                safeguard: "binding-corporate-rules",
+              }),
+            },
+          },
+        },
+      },
+    });
+    expect(
+      inventory.holders.map(({ name, location, transfer }) => [name, location, transfer]),
+    ).toEqual([
+      ["customer.CustomerRegistered", "eu", null],
+      ["customer.remindCustomer", "eu", null],
+      ["customer.onboarding", "eu", null],
+      ["customers", "ch", { safeguard: "adequacy", article: "45" }],
+    ]);
+    expect(
+      inventory.records.map(({ name, location, transfer }) => [name, location, transfer]),
+    ).toEqual([
+      ["personal-keys", "eu", null],
+      ["persons", "eu", null],
+      ["forgettings", "eu", null],
+      ["remembered-answers", "eu", null],
+      ["dead-letters", "eu", null],
+      ["subscriber-failures", "eu", null],
+      ["disclosures", "eu", null],
+      ["master-key", "us", { safeguard: "standard-contractual-clauses", article: "46(2)(c)" }],
+      ["tenant-keys", "ch", { safeguard: "adequacy", article: "45" }],
+      ["forget-ledger", "us", { safeguard: "binding-corporate-rules", article: "47" }],
+      ["access-log", null, null],
+      ["host-log", null, null],
+    ]);
+    expect(inventory.findings.filter(({ kind }) => kind === "no-location")).toEqual([]);
+  });
+
   it("refuses a store kept elsewhere than a storage that declares a location, as the app does", () => {
     expect(() =>
       personalDataInventory({
@@ -366,7 +437,7 @@ describe("personalDataInventory", () => {
         },
       }),
     ).toThrow(
-      'readModels.customers declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, so give its memory() location: "eu"',
+      'readModels.customers declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, or elsewhere under a safeguard, so give its memory() location: "eu"',
     );
   });
 
@@ -670,6 +741,7 @@ describe("personalDataInventory", () => {
         stores: ["event-store"],
         database: "memory",
         location: null,
+        transfer: null,
       },
       {
         kind: "event",
@@ -679,6 +751,7 @@ describe("personalDataInventory", () => {
         stores: ["event-store"],
         database: "memory",
         location: null,
+        transfer: null,
       },
       {
         kind: "read-model",
@@ -688,6 +761,7 @@ describe("personalDataInventory", () => {
         stores: ["read-model"],
         database: "memory",
         location: null,
+        transfer: null,
       },
       {
         kind: "read-model",
@@ -697,6 +771,7 @@ describe("personalDataInventory", () => {
         stores: ["read-model"],
         database: "memory",
         location: null,
+        transfer: null,
       },
       {
         kind: "read-model",
@@ -706,12 +781,14 @@ describe("personalDataInventory", () => {
         stores: ["read-model"],
         database: "memory",
         location: null,
+        transfer: null,
       },
     ]);
     expect(records).toContainEqual({
       name: "forget-ledger",
       where: "forget-ledger",
       location: null,
+      transfer: null,
       keptFor: "400d",
     });
     // Bounded by default, as data protection by default asks (article 25(2)).
@@ -719,18 +796,21 @@ describe("personalDataInventory", () => {
       name: "dead-letters",
       where: "memory",
       location: null,
+      transfer: null,
       keptFor: "30d",
     });
     expect(records).toContainEqual({
       name: "master-key",
       where: "key-wrapper",
       location: null,
+      transfer: null,
       keptFor: null,
     });
     expect(records).toContainEqual({
       name: "tenant-keys",
       where: "tenant-keys",
       location: null,
+      transfer: null,
       keptFor: null,
     });
     expect(security).toEqual({ masterKey: true, tenantKeys: true, forgetLedger: true });
@@ -755,6 +835,7 @@ describe("personalDataInventory", () => {
       name: "master-key",
       where: "key-wrapper",
       location: "eu",
+      transfer: null,
       keptFor: null,
     });
     expect(recordOf(masterKey({ from: "BOUNDA_MASTER_KEY" }))?.location).toBeNull();
@@ -777,6 +858,7 @@ describe("personalDataInventory", () => {
       name: "tenant-keys",
       where: "tenant-keys",
       location: "eu",
+      transfer: null,
       keptFor: null,
     });
     expect(recordOf(defineTenantKeyStore(keys))?.location).toBeNull();
@@ -936,6 +1018,7 @@ describe("personalDataInventory", () => {
       name: "forget-ledger",
       where: "forget-ledger",
       location: "eu",
+      transfer: null,
       keptFor: null,
     });
     expect(recordOf(defineForgetLedger(ledger))?.location).toBeNull();

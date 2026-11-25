@@ -58,6 +58,7 @@ import type {
   ExportedRow,
   ExportedScheduledCommand,
   ExportedSubscriberFailure,
+  ExportedTransfer,
   ExportedWithheld,
   ExportOutcome,
   Field,
@@ -1183,6 +1184,7 @@ describe("personal data", () => {
       readonly automatedDecisions: readonly ExportedAutomatedDecision[];
       readonly restrictions: readonly ProcessingRestriction[];
       readonly recipients: readonly PersonRecipient[];
+      readonly transfers: readonly ExportedTransfer[];
       readonly redactions: readonly ExportedRedaction[];
       readonly events: readonly ExportedEvent[];
       readonly scheduledCommands: readonly ExportedScheduledCommand[];
@@ -1209,6 +1211,7 @@ describe("personal data", () => {
       readonly automatedDecisions: readonly ExportedAutomatedDecision[];
       readonly restrictions: readonly ProcessingRestriction[];
       readonly recipients: readonly PersonRecipient[];
+      readonly transfers: readonly ExportedTransfer[];
       readonly readModels: readonly string[];
     }>();
     expectTypeOf<PersonalDataExportPart>().toEqualTypeOf<

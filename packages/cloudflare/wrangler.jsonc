@@ -30,7 +30,8 @@
       { "name": "EU_KEEPER", "class_name": "EuKeeper" },
       { "name": "UNBOUND_EU_KEEPER", "class_name": "UnboundEuKeeper" },
       { "name": "KEPT_STORE", "class_name": "KeptStore" },
-      { "name": "KEPT_KEEPER", "class_name": "KeptKeeper" }
+      { "name": "KEPT_KEEPER", "class_name": "KeptKeeper" },
+      { "name": "UNBOUND_SPLIT_KEEPER", "class_name": "UnboundSplitKeeper" }
     ]
   },
   "migrations": [
@@ -46,6 +47,7 @@
     {
       "tag": "v10",
       "new_sqlite_classes": ["Keeper", "EuKeeper", "UnboundEuKeeper", "KeptStore", "KeptKeeper"]
-    }
+    },
+    { "tag": "v11", "new_sqlite_classes": ["UnboundSplitKeeper"] }
   ]
 }

@@ -25,6 +25,7 @@ postgresql({ host: "localhost", port: 5432, database: "shop", user: "shop", pass
 | `tablePrefix` | `bounda_` | Put in front of every table Bounda creates |
 | `maxConnections` | `10` | Size of the connection pool |
 | `location` | | The jurisdiction the server keeps its data in, such as `"eu"`. See [data location](/reference/configuration/#data-location) |
+| `safeguard` | | What allows keeping the data in `location`, another jurisdiction than `storage`'s, such as `"standard-contractual-clauses"`, for a read model or store kept apart. See [stores in another jurisdiction](/reference/configuration/#stores-in-another-jurisdiction) |
 
 ## How it stores things
 

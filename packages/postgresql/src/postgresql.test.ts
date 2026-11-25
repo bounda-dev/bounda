@@ -124,7 +124,9 @@ const counted = async () => {
   };
 };
 
-const fresh = (options: Partial<PostgresqlOptions> = {}): PostgresqlAdapter => {
+const fresh = (
+  options: Partial<Extract<PostgresqlOptions, { readonly safeguard?: never }>> = {},
+): PostgresqlAdapter => {
   prefixes += 1;
   return postgresql({
     url,

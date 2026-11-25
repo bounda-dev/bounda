@@ -1,7 +1,12 @@
 import type { Adapter } from "../../adapter/adapter.ts";
-import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
+import {
+  type AdapterDefinition,
+  type DataLocationOptions,
+  placementOf,
+} from "../../adapter/adapter-definition.ts";
 import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
+import type { StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { sharesStorage } from "./forget-ledger.ts";
 
@@ -25,19 +30,21 @@ export interface TenantKeyStoreDefinition {
    * `"eu"`.
    */
   readonly location?: string;
+  /**
+   * What allows keeping them in another `location` than `storage`'s, as an adapter's `safeguard`
+   * does.
+   */
+  readonly safeguard?: StoreSafeguard;
 }
 
 /**
- * Options of `defineTenantKeyStore` and `defineForgetLedger`.
+ * Options of `defineTenantKeyStore` and `defineForgetLedger`: the jurisdiction the store keeps
+ * what it holds in, written as an adapter's `location` is, such as `"eu"`, which you answer for,
+ * and the `safeguard` that allows keeping it in another jurisdiction than `storage`'s. The record
+ * of processing states both, and an app whose storage declares a location refuses a store that
+ * declares none, or another without a safeguard.
  */
-export interface StoreDefinitionOptions {
-  /**
-   * The jurisdiction the store keeps what it holds in, written as an adapter's `location` is, such
-   * as `"eu"`, which you answer for: the record of processing states it, and an app whose storage
-   * declares a location refuses a store that does not declare the same.
-   */
-  readonly location?: string;
-}
+export type StoreDefinitionOptions = DataLocationOptions;
 
 /**
  * What `runtime.personalData.tenantKeys` holds: an adapter pointed at another database than the
@@ -58,10 +65,10 @@ export interface DefineTenantKeyStoreFunction {
  * list its tenants in pages, and its `put` must compare the revision and set the record at once,
  * unless one writer alone writes each tenant's record, when it says `oneWriterPerTenant: true`.
  */
-export const defineTenantKeyStore: DefineTenantKeyStoreFunction = (create, { location } = {}) => ({
+export const defineTenantKeyStore: DefineTenantKeyStoreFunction = (create, options = {}) => ({
   kind: "bounda-tenant-key-store",
   create,
-  ...(location === undefined ? {} : { location }),
+  ...placementOf(options),
 });
 
 export interface IsTenantKeySourceFunction {

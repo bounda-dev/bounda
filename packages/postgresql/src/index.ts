@@ -1,9 +1,10 @@
-import type {
-  Adapter,
-  CreateReadModelArgs,
-  CreateReadModelRebuildArgs,
-  Storage,
-  StorageTransaction,
+import {
+  type Adapter,
+  type CreateReadModelArgs,
+  type CreateReadModelRebuildArgs,
+  placementOf,
+  type Storage,
+  type StorageTransaction,
 } from "@bounda-dev/core/adapter";
 import {
   createSqlCheckpointStore,
@@ -121,7 +122,7 @@ export const postgresql: PostgresqlFunction = (options) => {
     kind: "bounda-adapter",
     name: "postgresql",
     options,
-    ...(options.location === undefined ? {} : { location: options.location }),
+    ...placementOf(options),
     schemaVersions: () => briefly(({ db }) => versionsOn(db)),
     migrate: (names) =>
       briefly(async ({ db }) => {

@@ -51,6 +51,7 @@ export {
   durableObjectForgetLedger,
   durableObjectTenantKeys,
 } from "./keeper-stores.ts";
+export type { KvPlacementOptions } from "./kv-placement.ts";
 export { workersLogger } from "./logger.ts";
 export type { RpcOutcome, RpcRefusal } from "./outcome.ts";
 export type { DurableSqlStorage } from "./sql-database.ts";

@@ -27,6 +27,7 @@ sqlite({ url: "libsql://my-app-me.turso.io", authToken: process.env.TURSO_AUTH_T
 | `url`, `authToken` | | A libSQL URL (`libsql://`, `https://` or `file:`) and its token |
 | `tablePrefix` | `bounda_` | Put in front of every table Bounda creates |
 | `location` | | The jurisdiction the database keeps its data in, such as `"eu"`: where the host runs for a file or memory, where the server is for a URL. See [data location](/reference/configuration/#data-location) |
+| `safeguard` | | What allows keeping the data in `location`, another jurisdiction than `storage`'s, such as `"adequacy"`, for a read model or store kept apart. See [stores in another jurisdiction](/reference/configuration/#stores-in-another-jurisdiction) |
 
 ## How it stores things
 

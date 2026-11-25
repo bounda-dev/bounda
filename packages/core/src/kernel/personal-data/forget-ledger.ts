@@ -1,8 +1,9 @@
 import type { Adapter } from "../../adapter/adapter.ts";
-import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
+import { type AdapterDefinition, placementOf } from "../../adapter/adapter-definition.ts";
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError, ForgetLedgerTimeoutError } from "../../contracts/errors.ts";
+import type { StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import type { StoreDefinitionOptions } from "./tenant-key-source.ts";
 
@@ -36,6 +37,11 @@ export interface ForgetLedgerDefinition {
    * as `"eu"`.
    */
   readonly location?: string;
+  /**
+   * What allows keeping them in another `location` than `storage`'s, as an adapter's `safeguard`
+   * does.
+   */
+  readonly safeguard?: StoreSafeguard;
 }
 
 /**
@@ -56,10 +62,10 @@ export interface DefineForgetLedgerFunction {
  * that throws fails the start, so it should only read its settings and open what it needs
  * lazily: the ledger's own calls may fail, and the runtime tries them again.
  */
-export const defineForgetLedger: DefineForgetLedgerFunction = (create, { location } = {}) => ({
+export const defineForgetLedger: DefineForgetLedgerFunction = (create, options = {}) => ({
   kind: "bounda-forget-ledger",
   create,
-  ...(location === undefined ? {} : { location }),
+  ...placementOf(options),
 });
 
 export interface IsForgetLedgerSourceFunction {

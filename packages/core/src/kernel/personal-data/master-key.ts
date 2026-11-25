@@ -24,7 +24,7 @@ const WRAP_ALGORITHM = "AES-KW";
 /**
  * Options of `masterKey`; `location` declares where the host whose environment holds the key runs.
  */
-export interface MasterKeyOptions extends DataLocationOptions {
+export type MasterKeyOptions = DataLocationOptions & {
   /**
    * The name of the environment variable that holds the master key, never the key itself.
    */
@@ -34,7 +34,7 @@ export interface MasterKeyOptions extends DataLocationOptions {
    * wrapped until the worker has rewrapped it under `from`'s.
    */
   readonly previous?: readonly string[];
-}
+};
 
 export interface MasterKeyFunction {
   (options: MasterKeyOptions): KeyWrapperDefinition;
@@ -145,9 +145,9 @@ const wrapperOver = (current: MasterKey, older: readonly MasterKey[]): CryptoKey
  * from the right one, and rotating takes only moving the old variable to `previous`. WebCrypto
  * wraps and unwraps the keys itself: a tenant's raw key never reaches JavaScript memory. Under a
  * storage that declares a `location`, the app refuses to start on a master key that declares
- * another, or none.
+ * none, or another without a `safeguard`.
  */
-export const masterKey: MasterKeyFunction = ({ from, previous = [], location }) =>
+export const masterKey: MasterKeyFunction = ({ from, previous = [], location, safeguard }) =>
   defineCryptoKeyWrapper(
     async ({ env }): Promise<CryptoKeyWrapper> => {
       const current = await importMasterKey(read(env, from));
@@ -156,7 +156,7 @@ export const masterKey: MasterKeyFunction = ({ from, previous = [], location }) 
       ).filter(({ kid }) => kid !== current.kid);
       return wrapperOver(current, older);
     },
-    { location },
+    { location, safeguard },
   );
 
 export interface EphemeralMasterKeyFunction {
