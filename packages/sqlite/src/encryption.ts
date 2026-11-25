@@ -29,7 +29,9 @@ const isNotADatabase = (error: unknown): boolean =>
 // WAL is, since switching to WAL writes page 1 to the file under its key.
 const readsUnder = (path: string, key: string | null): boolean | undefined => {
   const Database = libsqlNative();
-  if (Database === null || !existsSync(path) || statSync(path).size === 0) return undefined;
+  if (Database === null || (statSync(path, { throwIfNoEntry: false })?.size ?? 0) === 0) {
+    return undefined;
+  }
   let probe: NativeDatabase | undefined;
   try {
     probe = new Database(
@@ -41,7 +43,11 @@ const readsUnder = (path: string, key: string | null): boolean | undefined => {
   } catch (error) {
     return isNotADatabase(error) ? false : undefined;
   } finally {
-    probe?.close();
+    try {
+      probe?.close();
+    } catch {
+      // A probe that fails to close holds no lock: the verdict stands.
+    }
   }
 };
 
