@@ -25,7 +25,7 @@ import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
 import type { TenantExportPart } from "../personal-data/tenant-export.ts";
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { advanceUntilWaiting } from "../test-support.ts";
-import { GENERATION_INTERVAL_MS, RESTORES_FOUND } from "./restores.ts";
+import { GENERATION_INTERVAL_MS, RESTORE_DECLARING, RESTORES_FOUND } from "./restores.ts";
 
 const START = new Date("2026-04-01T00:00:00.000Z");
 
@@ -520,6 +520,52 @@ describe("a database restored while the app was stopped", () => {
     expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
     expect((await after.app.status()).restoresFound).toBe(1);
     expect((await after.app.getLag()).forgetLedger).toEqual({ reconciled: true });
+  });
+
+  it("joins the restore another instance counted while it started, from a forgetting the ledger holds and the copy does not", async () => {
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
+    const stale = defineForgetLedger(async () => {
+      const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+      return { ...inner, readMark: async () => 0 };
+    });
+    let counting = false;
+    // Another instance counts the restore right after this one's start read the count.
+    const adapter: typeof store.adapter = {
+      ...store.adapter,
+      createStorage: async (...args) => {
+        const storage = await store.adapter.createStorage(...args);
+        const { checkpointStore } = storage;
+        return {
+          ...storage,
+          checkpointStore: {
+            ...checkpointStore,
+            get: async (name) => {
+              if (counting && name === RESTORE_DECLARING) {
+                counting = false;
+                const found = await checkpointStore.get(RESTORES_FOUND);
+                await checkpointStore.compareAndSet(RESTORES_FOUND, found, found + 1);
+              }
+              return checkpointStore.get(name);
+            },
+          },
+        };
+      },
+    };
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    await register(before.app, "c-1");
+    const copy = copyOf(store.db);
+    await before.app.forget("c-1");
+    await before.app.stop();
+    restore(store.db, copy);
+    counting = true;
+    const logger = recordingLogger();
+    const now = new Date(START.getTime() + FORGET_LEDGER_GRACE_MS);
+    const after = await start({ adapter, runtime, logger, now });
+    expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: false }]);
+    expect((await after.app.status()).restoresFound).toBe(1);
   });
 
   it("is found once a tenant frozen at start thaws, from a forgetting the ledger holds and the copy does not", async () => {

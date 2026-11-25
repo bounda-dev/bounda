@@ -690,6 +690,13 @@ describe("createRestoreWatch, declaring a restore", () => {
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
   });
 
+  it("counts a restore the ledger tells to an instance that has read nothing yet", async () => {
+    const { checkpointStore, watchOver } = await setUp();
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    expect(await watchOver().declare({ reconciled: true })).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
   it("joins, for a restore the ledger tells, the one another instance counted since this one read", async () => {
     const { checkpointStore, watchOver } = await setUp();
     const watch = watchOver();

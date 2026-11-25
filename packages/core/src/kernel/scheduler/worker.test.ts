@@ -188,7 +188,8 @@ describe("scheduled command worker", () => {
           steps.push("settled");
         },
         check: async () => null,
-        declare: async () => {
+        declare: async (options) => {
+          expect(options).toEqual({ reconciled: true });
           steps.push("declare");
           if (failing) throw new Error("store is down");
           return { first: true };
