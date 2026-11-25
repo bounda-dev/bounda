@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
+import { ON_DISK_TIMEOUT_MS } from "../../kernel/test-support.ts";
 import { createNodeSqliteAdapter } from "./node-sqlite.ts";
 import { SQLITE_BUSY_TIMEOUT_MS, switchToWal } from "./wal.ts";
 
@@ -165,7 +166,7 @@ const openAtOnce = async (workers: readonly Worker[], path: string): Promise<rea
   return waiting.every((message) => message === "waiting") ? Promise.all(outcomes) : waiting;
 };
 
-describe("the node:sqlite adapter on a file", () => {
+describe("the node:sqlite adapter on a file", { timeout: ON_DISK_TIMEOUT_MS }, () => {
   it("opens a file not in WAL yet, such as one just restored, from several connections at once", async () => {
     const directory = await mkdtemp(join(tmpdir(), "bounda-wal-"));
     const workers = Array.from(
