@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
@@ -8,11 +11,14 @@ import type { DurationInput } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
+import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createApp } from "../app.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
 import { listForgetLedgerTenants, pruneTenantForgetLedger } from "./ledger-prune.ts";
+import { masterKey } from "./master-key.ts";
+import { defineTenantKeyStore } from "./tenant-key-source.ts";
 import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 const DAY = 24 * 60 * 60_000;
@@ -128,6 +134,93 @@ describe("pruning a tenant's forget ledger with no app running", () => {
       unapplied: false,
     });
     expect(await entriesOf(ledger)).toEqual([]);
+  });
+
+  it("prunes past keepFor, without opening its database, a tenant forgotten while its ledger did not answer", async () => {
+    const base = memory();
+    let opened = 0;
+    const storage: Adapter = {
+      ...base,
+      createStorage: async () => {
+        opened += 1;
+        return base.createStorage();
+      },
+    };
+    const ledgerAdapter = memory();
+    const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+    const config = configOf(
+      storage,
+      defineForgetLedger(() => ({
+        ...inner,
+        fence: {
+          read: inner.fence.read,
+          set: async () => {
+            throw new Error("the ledger is down");
+          },
+        },
+      })),
+      "30d",
+    );
+    const app = await start(config);
+    await app.forgetTenant(DEFAULT_TENANT);
+    await app.stop();
+    expect((await inner.fence.read()).state).toBe("open");
+    await inner.append([entry("ana", "e-ana", new Date(START.getTime() - DAY))]);
+    opened = 0;
+    expect(await pruneTenantForgetLedger({ config, now: LATER })).toEqual({
+      tenant: DEFAULT_TENANT,
+      before: new Date(LATER.getTime() - KEEP_FOR_MS).toISOString(),
+      unapplied: false,
+    });
+    expect(opened).toBe(0);
+    expect(await entriesOf(inner)).toEqual([]);
+  });
+
+  it("asks the tenant key store whether the tenant was forgotten, and closes it", async () => {
+    const closed: string[] = [];
+    const store = createMemoryTenantKeyStore();
+    const ledgerAdapter = memory();
+    const ledger = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+    await ledger.append([entry("ana", "e-ana", START)]);
+    const config: Config = {
+      storage: memory(),
+      runtime: {
+        personalData: {
+          keyWrapper: masterKey({ from: "PRUNE_KEY" }),
+          tenantKeys: defineTenantKeyStore(() => ({
+            ...store,
+            close: async () => {
+              closed.push("tenant keys");
+            },
+          })),
+          forgetLedger: { store: ledgerAdapter, keepFor: "30d" },
+        },
+      },
+    };
+    const env = { PRUNE_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) };
+    expect(await pruneTenantForgetLedger({ config, env, now: LATER })).toMatchObject({
+      unapplied: true,
+    });
+    expect(closed).toEqual(["tenant keys"]);
+  });
+
+  it("keeps what a database without keys has not applied, with no tenant key store to ask", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bounda-prune-"));
+    try {
+      const { adapter, db } = createNodeSqliteAdapter(join(directory, "store.db"));
+      const ledgerAdapter = memory();
+      const ledger = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+      await ledger.append([entry("ana", "e-ana", START)]);
+      expect(
+        await pruneTenantForgetLedger({
+          config: configOf(adapter, ledgerAdapter, "30d"),
+          now: LATER,
+        }),
+      ).toEqual({ tenant: DEFAULT_TENANT, before: START.toISOString(), unapplied: true });
+      db.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("prunes the tenant named, and leaves the others' entries", async () => {

@@ -14,11 +14,13 @@ import { runtimeText } from "../shared/runtime-text.ts";
 import { tenantIdOf } from "../tenant.ts";
 import { withEncryptedFiles } from "./encrypted-files.ts";
 import { openForgetLedger } from "./forget-ledger.ts";
+import { keySourcesOf } from "./key-hierarchy.ts";
 import {
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_PAGE,
   FORGET_LEDGER_REREAD_MS,
 } from "./reconciliation.ts";
+import { openTenantKeyStore } from "./tenant-key-source.ts";
 
 export type AppliedStorage = Pick<
   Storage,
@@ -27,6 +29,8 @@ export type AppliedStorage = Pick<
 
 export interface PruneAsAppliedArgs {
   readonly ledger: Pick<ForgetLedger, "read" | "fence"> & Required<Pick<ForgetLedger, "prune">>;
+  // Whether the tenant is known forgotten outside the ledger, as its tenant key store knows it.
+  readonly forgotten: () => Promise<boolean>;
   // `null` for a database that holds no table yet.
   readonly withStorage: <T>(work: (storage: AppliedStorage | null) => Promise<T>) => Promise<T>;
   readonly keepForMs: number;
@@ -83,6 +87,7 @@ const appliedIn = async (storage: AppliedStorage, entry: ForgetLedgerEntry): Pro
 // lacks stays until a start applies it.
 export const pruneAsApplied: PruneAsAppliedFunction = async ({
   ledger,
+  forgotten,
   withStorage,
   keepForMs,
   now,
@@ -93,9 +98,9 @@ export const pruneAsApplied: PruneAsAppliedFunction = async ({
   if (oldest === undefined || oldest.forgottenAt >= cutoff) {
     return { before: cutoff, unapplied: false };
   }
-  // A forgotten tenant's database may be gone already: its ledger's fence tells it first.
+  // A forgotten tenant's database may be gone already, or open under keys destroyed with it.
   const before =
-    (await ledger.fence.read()).state === "forgotten"
+    (await ledger.fence.read()).state === "forgotten" || (await forgotten())
       ? cutoff
       : await withStorage(async (storage) => {
           if (storage === null) return oldest.forgottenAt;
@@ -210,7 +215,7 @@ const prunable = async ({ config, env, tenant }: Required<ListForgetLedgerTenant
       "The forget ledger expires its entries on its own, as Workers KV and a Durable Object's do: there is nothing to prune; for KV keys written before keepFor was set, run bounda forget-ledger expire",
     );
   }
-  return { ledger, prune, keepForMs, storage: resolved.storage };
+  return { ledger, prune, keepForMs, resolved };
 };
 
 /**
@@ -220,8 +225,8 @@ const prunable = async ({ config, env, tenant }: Required<ListForgetLedgerTenant
  * older than `keepFor` stays until the database has applied it, so a copy restored while the app
  * was stopped is forgotten again at the next start. Safe beside running instances of the tenant.
  * It opens the tenant's database as `migrateTables` does, through the tenant's keys, only when an
- * entry older than `keepFor` is there, and never a forgotten tenant's, whose ledger it prunes past
- * `keepFor` alone. Rejects with `ConfigurationError` without a forget ledger or `keepFor`, for a
+ * entry older than `keepFor` is there; a tenant its ledger or its tenant key store knows forgotten
+ * it prunes past `keepFor` alone, without opening its database. Rejects with `ConfigurationError` without a forget ledger or `keepFor`, for a
  * ledger that expires its entries on its own, and for a storage only its host opens.
  */
 export const pruneTenantForgetLedger: PruneTenantForgetLedgerFunction = async ({
@@ -231,7 +236,8 @@ export const pruneTenantForgetLedger: PruneTenantForgetLedgerFunction = async ({
   now = new Date(),
 }) => {
   const tenant = tenantIdOf(named);
-  const { ledger, prune, keepForMs, storage } = await prunable({ config, env, tenant });
+  const { ledger, prune, keepForMs, resolved } = await prunable({ config, env, tenant });
+  const { storage } = resolved;
   try {
     if (!isAdapter(storage)) {
       throw refused(
@@ -242,6 +248,19 @@ export const pruneTenantForgetLedger: PruneTenantForgetLedgerFunction = async ({
       ledger: { read: ledger.read.bind(ledger), fence: ledger.fence, prune: prune.bind(ledger) },
       keepForMs,
       now,
+      forgotten: async () => {
+        const { tenantKeys } = keySourcesOf({
+          storage,
+          personalData: resolved.runtime.personalData,
+        });
+        if (tenantKeys === null) return false;
+        const store = await openTenantKeyStore({ source: tenantKeys, storage, env });
+        try {
+          return ((await store.get(tenant))?.forgotten ?? null) !== null;
+        } finally {
+          await store.close?.();
+        }
+      },
       withStorage: (work) =>
         withEncryptedFiles({
           config,

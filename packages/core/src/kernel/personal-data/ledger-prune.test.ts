@@ -90,11 +90,16 @@ const ledgerWith = async (entries: readonly ForgetLedgerEntry[], fence: TenantFe
   const ledger = createMemoryForgetLedgers().ledgerOf("acme");
   await ledger.append(entries);
   if (fence.state !== "open") await ledger.fence.set(fence);
-  return ledger;
+  const { prune } = ledger;
+  if (prune === undefined) throw new Error("the memory ledger prunes");
+  return { ...ledger, prune };
 };
 
 const kept = async (ledger: Awaited<ReturnType<typeof ledgerWith>>): Promise<readonly string[]> =>
   (await ledger.read({ limit: 100 })).map(({ eventId }) => eventId);
+
+// A tenant its tenant key store does not know forgotten.
+const unknown = async (): Promise<boolean> => false;
 
 const opening = (storage: AppliedStorage | null) => {
   const opened = { times: 0 };
@@ -111,24 +116,36 @@ describe("pruning a forget ledger with no app running", () => {
   it("removes the entries older than keepFor the database holds, and keeps the younger ones", async () => {
     const ledger = await ledgerWith([entry("1", 3), entry("2", 1), entry("3", -1)]);
     const { withStorage } = opening(database({ held: ["e-1", "e-2", "e-3"] }));
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: CUTOFF,
-        unapplied: false,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: CUTOFF,
+      unapplied: false,
+    });
     expect(await kept(ledger)).toEqual(["e-3"]);
   });
 
   it("keeps, from the oldest entry the database lacks on, what its reconciliation has yet to read", async () => {
     const ledger = await ledgerWith([entry("1", 5), entry("2", 3), entry("3", 2), entry("4", -1)]);
     const { withStorage } = opening(database({ held: ["e-1", "e-3", "e-4"] }));
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: at(3),
-        unapplied: true,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: at(3),
+      unapplied: true,
+    });
     expect(await kept(ledger)).toEqual(["e-2", "e-3", "e-4"]);
   });
 
@@ -141,12 +158,18 @@ describe("pruning a forget ledger with no app running", () => {
       entry("3", -1),
     ]);
     const { withStorage } = opening(database({ cursor }));
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: at(2 + (FORGET_LEDGER_REREAD_MS - 1) / DAY),
-        unapplied: true,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: at(2 + (FORGET_LEDGER_REREAD_MS - 1) / DAY),
+      unapplied: true,
+    });
     expect(await kept(ledger)).toEqual(["e-2", "e-3"]);
   });
 
@@ -157,24 +180,36 @@ describe("pruning a forget ledger with no app running", () => {
       { ...entry("2", 2 + FORGET_LEDGER_REREAD_MS / DAY), eventId: "A-2", personId: "p-A-2" },
     ]);
     const { withStorage } = opening(database({ cursor }));
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: at(2 + FORGET_LEDGER_REREAD_MS / DAY),
-        unapplied: true,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: at(2 + FORGET_LEDGER_REREAD_MS / DAY),
+      unapplied: true,
+    });
     expect(await kept(ledger)).toEqual(["A-2"]);
   });
 
   it("removes up to keepFor when the cursor stands past it", async () => {
     const ledger = await ledgerWith([entry("1", 5), entry("2", -1), entry("3", -2)]);
     const { withStorage } = opening(database({ cursor: Date.parse(at(-3)) }));
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: CUTOFF,
-        unapplied: false,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: CUTOFF,
+      unapplied: false,
+    });
     expect(await kept(ledger)).toEqual(["e-2", "e-3"]);
   });
 
@@ -182,7 +217,14 @@ describe("pruning a forget ledger with no app running", () => {
     const ledger = await ledgerWith([entry("1", 5), entry("2", 4), entry("3", 3), entry("4", 2)]);
     const { withStorage } = opening(database({ held: ["e-1", "e-2", "e-3"] }));
     expect(
-      await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW, pageSize: 2 }),
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+        pageSize: 2,
+      }),
     ).toEqual({ before: at(2), unapplied: true });
     expect(await kept(ledger)).toEqual(["e-4"]);
   });
@@ -191,7 +233,14 @@ describe("pruning a forget ledger with no app running", () => {
     const ledger = await ledgerWith([entry("1", 5), entry("2", 4), entry("3", 3)]);
     const { withStorage } = opening(database({ held: ["e-1", "e-2"] }));
     expect(
-      await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW, pageSize: 1 }),
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+        pageSize: 1,
+      }),
     ).toEqual({ before: at(3), unapplied: true });
     expect(await kept(ledger)).toEqual(["e-3"]);
   });
@@ -209,6 +258,7 @@ describe("pruning a forget ledger with no app running", () => {
             prunes.push(before);
           },
         },
+        forgotten: unknown,
         withStorage,
         keepForMs: KEEP_FOR_MS,
         now: NOW,
@@ -221,7 +271,14 @@ describe("pruning a forget ledger with no app running", () => {
     const ledger = await ledgerWith([entry("1", 5), entry("2", 4), entry("3", 3), entry("4", 2)]);
     const { withStorage } = opening(database({ held: ["e-1", "e-2", "e-3", "e-4"] }));
     expect(
-      await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW, pageSize: 2 }),
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+        pageSize: 2,
+      }),
     ).toEqual({ before: CUTOFF, unapplied: false });
     expect(await kept(ledger)).toEqual([]);
   });
@@ -231,7 +288,13 @@ describe("pruning a forget ledger with no app running", () => {
       const ledger = await ledgerWith(entries);
       const { opened, withStorage } = opening(database());
       expect(
-        await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW }),
+        await pruneAsApplied({
+          ledger,
+          forgotten: unknown,
+          withStorage,
+          keepForMs: KEEP_FOR_MS,
+          now: NOW,
+        }),
       ).toEqual({ before: CUTOFF, unapplied: false });
       expect(opened.times).toBe(0);
       expect(await kept(ledger)).toEqual(entries.map(({ eventId }) => eventId));
@@ -241,12 +304,34 @@ describe("pruning a forget ledger with no app running", () => {
   it("prunes a forgotten tenant's ledger past keepFor alone, without opening its database", async () => {
     const ledger = await ledgerWith([entry("1", 3), entry("2", -1)], FORGOTTEN);
     const { opened, withStorage } = opening(database());
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: CUTOFF,
-        unapplied: false,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: CUTOFF,
+      unapplied: false,
+    });
+    expect(opened.times).toBe(0);
+    expect(await kept(ledger)).toEqual(["e-2"]);
+  });
+
+  it("prunes past keepFor alone, without opening its database, a tenant forgotten though its ledger's fence is open", async () => {
+    const ledger = await ledgerWith([entry("1", 3), entry("2", -1)]);
+    const { opened, withStorage } = opening(database());
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: async () => true,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({ before: CUTOFF, unapplied: false });
     expect(opened.times).toBe(0);
     expect(await kept(ledger)).toEqual(["e-2"]);
   });
@@ -254,24 +339,36 @@ describe("pruning a forget ledger with no app running", () => {
   it("prunes past keepFor alone a ledger whose database says the tenant was forgotten", async () => {
     const ledger = await ledgerWith([entry("1", 3), entry("2", -1)]);
     const { withStorage } = opening(database({ fence: FORGOTTEN }));
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: CUTOFF,
-        unapplied: false,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: CUTOFF,
+      unapplied: false,
+    });
     expect(await kept(ledger)).toEqual(["e-2"]);
   });
 
   it("keeps every entry for a database that holds no table yet", async () => {
     const ledger = await ledgerWith([entry("1", 3), entry("2", -1)]);
     const { withStorage } = opening(null);
-    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
-      {
-        before: at(3),
-        unapplied: true,
-      },
-    );
+    expect(
+      await pruneAsApplied({
+        ledger,
+        forgotten: unknown,
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({
+      before: at(3),
+      unapplied: true,
+    });
     expect(await kept(ledger)).toEqual(["e-1", "e-2"]);
   });
 
@@ -297,7 +394,13 @@ describe("pruning a forget ledger with no app running", () => {
       ]);
       const { withStorage } = opening(database({ disclosures: [{ ...stored, ...differing }] }));
       expect(
-        await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW }),
+        await pruneAsApplied({
+          ledger,
+          forgotten: unknown,
+          withStorage,
+          keepForMs: KEEP_FOR_MS,
+          now: NOW,
+        }),
       ).toEqual(expected);
     }
   });
@@ -325,7 +428,13 @@ describe("pruning a forget ledger with no app running", () => {
       ]);
       const { withStorage } = opening(database({ events }));
       expect(
-        await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW }),
+        await pruneAsApplied({
+          ledger,
+          forgotten: unknown,
+          withStorage,
+          keepForMs: KEEP_FOR_MS,
+          now: NOW,
+        }),
       ).toEqual(expected);
     }
   });

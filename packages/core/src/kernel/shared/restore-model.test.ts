@@ -532,6 +532,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     try {
       await pruneAsApplied({
         ledger: { read: ledger.ledger.read, fence: ledger.ledger.fence, prune: removes },
+        forgotten: async () => false,
         withStorage: (work) => work(storage),
         keepForMs: 0,
         now: new Date(now),
