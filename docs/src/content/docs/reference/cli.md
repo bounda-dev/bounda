@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, print the record of processing activities, list the recipients of personal data, forget a tenant and rotate its key, migrate its tables and declare a restore."
+description: "The bounda command: generate the registry and the types, rebuild a read model, deal with dead letters, read the runtime's status, print the record of processing activities, list the recipients of personal data, forget a tenant and rotate its key, prune a forget ledger, migrate its tables and declare a restore."
 sidebar:
   order: 0
 ---
@@ -945,6 +945,45 @@ gave 1204 entries the expiration keepFor sets; removed 37 already past it
 Exit codes: `0` done, `1` bad arguments, `2` wrangler failed, is not installed, or
 `@bounda-dev/cloudflare` is not; the failure is printed as [error text](#error-text) says.
 
+## `bounda forget-ledger prune`
+
+Prunes a SQL [forget ledger](/guides/personal-data/#keeping-the-ledger-short) past `keepFor` with no
+app of the tenant running, as the periodic reconciliation of one that runs does. Run it on a
+schedule, from the project's root, for the tenants whose apps do not run:
+
+```bash
+bounda forget-ledger prune --all-tenants
+```
+
+For each tenant, it removes the entries older than `keepFor` that the tenant's database no longer
+needs: those its reconciliation has read past, and those whose forgetting, change of restrictions,
+redaction or disclosure the database holds. It stops at the oldest entry older than `keepFor` the
+database has yet to apply, as one a copy restored while the app was stopped lacks, and keeps it and
+every later one, so that copy is forgotten again at its next start; run it again after. A forgotten
+tenant's ledger is pruned past `keepFor` alone, as its app does. It opens the tenant's database as
+an app of the tenant does, through the tenant's keys, only when an entry older than `keepFor` is
+there, and creates no table in a database without them. Running instances of the tenant may run
+beside it. It prints one line per tenant:
+
+```
+acme: removed the entries before 2026-10-26T03:00:00.000Z
+globex: removed the entries before 2026-09-14T08:12:40.511Z; kept from then on those older than keepFor its database has not applied: an app of the tenant applies them when it starts
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--all-tenants` | Every tenant whose entries the ledger's store holds, each through its own configuration; the store is the one the configuration names for `--tenant`, or for `default` |
+| `--tenant <name>` | The tenant to prune, as [which tenant](#which-tenant) says |
+| `--root <dir>`, `--config <file>` | As every command that loads the project takes them |
+| `--error-text` | Print the message of the error it fails on, as [error text](#error-text) says |
+
+It refuses a configuration without `runtime.personalData.forgetLedger` or its `keepFor`, a ledger
+that expires its entries on its own, as Workers KV and the keeper do (for KV keys written before
+`keepFor` was set, run [`bounda forget-ledger expire`](#bounda-forget-ledger-expire)), a storage
+only its host opens, as a Durable Object's, and, for `--all-tenants`, a ledger of your own without
+`tenants`. Exit codes: `0` done, `1` bad arguments, `2` refused, or a tenant could not be pruned:
+each such tenant is named on standard error, the others pruned all the same.
+
 ## Programmatic use
 
 `bounda generate` is exported from `@bounda-dev/cli` as `generate`:
@@ -975,6 +1014,9 @@ or `app.as(actor).deadLetters`, `bounda personal-data export` is
 is `readTenantExport(createReadStream(file))`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
-`rewrapTenantKeys({ config, env })` for `rewrap-master`. The
+`rewrapTenantKeys({ config, env })` for `rewrap-master`. `bounda forget-ledger prune` is
+`pruneTenantForgetLedger({ config, env, tenant })` from `@bounda-dev/core`, on the configuration
+`loadProject` resolves for the tenant, and `--all-tenants` runs it for each tenant
+`listForgetLedgerTenants({ config, env })` lists. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.

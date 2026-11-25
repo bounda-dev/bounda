@@ -9,11 +9,14 @@ import {
   isUnreadable,
   type ListDeadLettersArgs,
   type Logger,
+  listForgetLedgerTenants,
   MAX_ACTOR_LENGTH,
   migrateTables,
+  type PrunedTenantForgetLedger,
   parseDuration,
   personalDataExportJson,
   personalDataInventory,
+  pruneTenantForgetLedger,
   RESTRICTION_GROUNDS,
   type Registry,
   type RestrictionGround,
@@ -1169,6 +1172,96 @@ const runRewrapMaster = async (
   }
 };
 
+interface PruneLedgerOptions extends ProjectOptions {
+  readonly allTenants: boolean;
+}
+
+const prunedLine = ({ tenant, before, unapplied }: PrunedTenantForgetLedger): string =>
+  unapplied
+    ? `${tenant}: removed the entries before ${before}; kept from then on those older than keepFor its database has not applied: an app of the tenant applies them when it starts`
+    : `${tenant}: removed the entries before ${before}`;
+
+// Each tenant through its own configuration, as a configuration that is a function of the tenant
+// may point each at a database of its own; one that fails leaves the others to go on.
+const runPruneLedger = async (
+  options: PruneLedgerOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  standInWorkersRuntime();
+  const logger = logTo(stderr);
+  const projectFor = (tenant: string | undefined, loadEnv: boolean) =>
+    loadProject({
+      root: rootOf(options, cwd),
+      configPath: options.config,
+      registry: NO_REGISTRY,
+      logger,
+      loadEnv,
+      ...(tenant === undefined ? {} : { tenant }),
+    });
+  let config: Config;
+  let tenant: string | undefined;
+  try {
+    ({ config, tenant } = await projectFor(options.tenant, true));
+    resolveErrorText({ env: process.env });
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  const errorText = resolveErrorText(errorTextArgs(options, config));
+  const named = tenant === undefined ? {} : { tenant };
+  try {
+    if (!options.allTenants) {
+      line(
+        stdout,
+        prunedLine(await pruneTenantForgetLedger({ config, env: process.env, ...named })),
+      );
+      return EXIT_OK;
+    }
+    const tenants = await listForgetLedgerTenants({ config, env: process.env, ...named });
+    if (tenants.length === 0) {
+      line(stdout, "the forget ledger holds no tenant's entries");
+      return EXIT_OK;
+    }
+    let left = 0;
+    for (const each of tenants) {
+      let project: Awaited<ReturnType<typeof projectFor>>;
+      try {
+        project = await projectFor(each, false);
+      } catch (error) {
+        left += 1;
+        line(
+          stderr,
+          `error: ${each} could not be pruned: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        continue;
+      }
+      try {
+        line(
+          stdout,
+          prunedLine(
+            await pruneTenantForgetLedger({
+              config: project.config,
+              env: process.env,
+              tenant: each,
+            }),
+          ),
+        );
+      } catch (error) {
+        left += 1;
+        const { errorName, errorMessage } = errorFields({ error, errorText });
+        line(stderr, `error: ${each} could not be pruned: ${errorMessage ?? errorName}`);
+      }
+    }
+    if (left === 0) return EXIT_OK;
+    line(stderr, `${left} tenant(s) not pruned: run again once what failed is fixed`);
+    return EXIT_FAILURE;
+  } catch (error) {
+    return failed(stderr, error, errorText);
+  }
+};
+
 // Records, so a kind or status added to core fails to compile here until the CLI accepts it.
 const DEAD_LETTER_KINDS = Object.keys({
   policy: true,
@@ -1449,9 +1542,10 @@ export const runCli: RunCliFunction = async ({
     exitCode = await runExport(personId, options, cwd, stdout, stderr);
   });
 
-  program
+  const forgetLedger = program
     .command("forget-ledger")
-    .description("look after a forget ledger outside the app")
+    .description("look after a forget ledger outside the app");
+  forgetLedger
     .command("expire")
     .description(
       "give every entry of a Workers KV forget ledger the expiration keepFor sets, those written before it was set included",
@@ -1471,6 +1565,20 @@ export const runCli: RunCliFunction = async ({
     .action(async (options: ExpireOptions) => {
       exitCode = await runExpire(options, cwd, stdout, stderr, wrangler);
     });
+  projectOptions(
+    forgetLedger
+      .command("prune")
+      .description(
+        "prune a SQL forget ledger past keepFor with no app of the tenant running, keeping what the tenant's database has not applied yet",
+      )
+      .option(
+        "--all-tenants",
+        "every tenant whose entries the ledger's store holds, each through its own configuration",
+        false,
+      ),
+  ).action(async (options: PruneLedgerOptions) => {
+    exitCode = await runPruneLedger(options, cwd, stdout, stderr);
+  });
 
   actingOptions(
     program

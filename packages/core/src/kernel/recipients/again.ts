@@ -1,5 +1,6 @@
 import type { Storage } from "../../adapter/adapter.ts";
 import type { ForgetLedgerEntry, LedgerDisclosure } from "../../adapter/storage/forget-ledger.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import {
   BOUNDA_AGGREGATE,
   PERSONAL_DATA_FORGOTTEN_EVENT,
@@ -17,6 +18,24 @@ export interface DiscloseAgainFunction {
   (args: DiscloseAgainArgs): Promise<boolean>;
 }
 
+export interface ForgottenSinceFunction {
+  (
+    events: readonly StoredEvent[],
+    entry: Pick<ForgetLedgerEntry, "forgottenAt"> & { readonly disclosure: LedgerDisclosure },
+  ): boolean;
+}
+
+// Whether the person's events hold a forgetting of the disclosure's category at or after it, which
+// told the recipient and removed it from the store.
+export const forgottenSince: ForgottenSinceFunction = (events, { forgottenAt, disclosure }) =>
+  events.some((event) => {
+    if (event.type !== PERSONAL_DATA_FORGOTTEN_EVENT || event.timestamp < forgottenAt) {
+      return false;
+    }
+    const { categories, expired } = event.payload as PersonalDataForgottenPayload;
+    return ([...categories, ...expired] as readonly string[]).includes(disclosure.category);
+  });
+
 /**
  * Records again a disclosure the ledger holds and the store lost, at the time it was first
  * recorded, and resolves whether it did: unless the store holds it, or a forgetting of its
@@ -32,14 +51,7 @@ export const discloseAgain: DiscloseAgainFunction = ({ storage, concurrencyRetri
         aggregateType: BOUNDA_AGGREGATE,
         aggregateId: personId,
       });
-      const forgottenSince = events.some((event) => {
-        if (event.type !== PERSONAL_DATA_FORGOTTEN_EVENT || event.timestamp < forgottenAt) {
-          return false;
-        }
-        const { categories, expired } = event.payload as PersonalDataForgottenPayload;
-        return ([...categories, ...expired] as readonly string[]).includes(disclosure.category);
-      });
-      if (forgottenSince) return false;
+      if (forgottenSince(events, entry)) return false;
       const added = await transaction.recipients.disclose(
         [{ person: personId, ...disclosure }],
         forgottenAt,

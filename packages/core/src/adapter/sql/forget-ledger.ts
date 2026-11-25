@@ -1,5 +1,6 @@
 import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
 import {
+  byCodeUnit,
   type ForgetLedger,
   type ForgetLedgerEntry,
   forgottenReasonOf,
@@ -432,6 +433,11 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
         tenant,
         before,
       ]);
+    },
+    tenants: async () => {
+      await prepared();
+      const rows = await db.all(`SELECT DISTINCT "tenant" FROM ${table}`, []);
+      return rows.map(({ tenant: held }) => String(held)).sort(byCodeUnit);
     },
     readMark: async (name) => {
       await prepared();

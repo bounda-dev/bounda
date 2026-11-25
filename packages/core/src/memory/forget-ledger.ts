@@ -1,4 +1,5 @@
 import {
+  byCodeUnit,
   byForgetLedgerOrder,
   type ForgetLedger,
   type ForgetLedgerEntry,
@@ -57,6 +58,11 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
             if (entry.forgottenAt < before) entries.delete(eventId);
           }
         },
+        tenants: async () =>
+          [...byTenant]
+            .filter(([, held]) => held.size > 0)
+            .map(([held]) => held)
+            .sort(byCodeUnit),
         readMark: async (name) => marks.get(`${tenant}\u0000${name}`) ?? 0,
         raiseMark: (name, value) =>
           fence.write(async () => {
