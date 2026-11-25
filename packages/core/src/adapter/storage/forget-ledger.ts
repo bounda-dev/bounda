@@ -53,11 +53,6 @@ export interface LedgerDisclosure {
 
 /**
  * Where the database stood when an intention was written: the position of its newest event and its
- * count of restores. Events are only ever appended, so a database holding the same count and an
- * older newest event went back since, whether the intention committed or not.
- */
-/**
- * Where the database stood when an intention was written: the position of its newest event and its
  * restore generation, which only goes up, and which every restore counted moves past what the
  * database reached before.
  */
