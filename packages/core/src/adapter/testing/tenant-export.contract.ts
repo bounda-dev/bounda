@@ -235,6 +235,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
             onPersonalDataAccess: ({ access }: { access: PersonalDataAccess }) => {
               accesses.push(access);
             },
+            onHostRejection: () => {},
           },
         } as unknown as Registry,
         config: {

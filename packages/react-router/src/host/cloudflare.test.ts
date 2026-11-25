@@ -1,6 +1,12 @@
 import { cloudflare } from "@bounda-dev/cloudflare";
 import { witnessObjects } from "@bounda-dev/cloudflare/testing";
-import { ConfigurationError, type Consistency, createApp, type Registry } from "@bounda-dev/core";
+import {
+  ConfigurationError,
+  type Consistency,
+  createApp,
+  type HostRejection,
+  type Registry,
+} from "@bounda-dev/core";
 import { memory } from "@bounda-dev/core/memory";
 import type { ImportModuleFunction } from "@bounda-dev/core/node";
 import { expectForgotten, type NotForgottenError } from "@bounda-dev/core/testing";
@@ -111,6 +117,66 @@ describe("createHost under the workerd condition", () => {
     await Reflect.get(context.get(bounda).commands, "placeOrder")({ orderId: "o-1" });
     expect(store.calls).toEqual([
       ["acme", "command", "placeOrder", { orderId: "o-1" }, undefined, "eventual", "user-1"],
+    ]);
+  });
+
+  it("records the requests it refuses in the project's app/audit.ts", async () => {
+    const refused: HostRejection[] = [];
+    const { bounda, boundaMiddleware } = createHost({
+      registry: {
+        ...registry,
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: ({ rejection }) => {
+            refused.push(rejection);
+          },
+        },
+      },
+      importConfig: async () => ({ default: { storage: cloudflare() } }),
+      importTenant: async () => ({ tenant: () => "" }),
+      consistency: "eventual",
+    });
+    const { context, args } = middlewareArgs();
+    await boundaMiddleware(args, async () => undefined);
+    await expect(context.get(bounda).getLag()).rejects.toThrow(ConfigurationError);
+    expect(refused).toEqual([
+      {
+        at: expect.any(String),
+        tenant: null,
+        reason: "tenant-unresolved",
+        target: "/",
+        actor: null,
+      },
+    ]);
+    expect(store.calls).toEqual([]);
+  });
+
+  it("records the requests it refuses as one JSON line each without app/audit.ts", async () => {
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "info").mockImplementation((...args) => void written.push(args));
+    try {
+      const { bounda, boundaMiddleware } = createHost({
+        registry,
+        importConfig: async () => ({ default: { storage: cloudflare() } }),
+        importTenant: async () => ({ tenant: () => "" }),
+        consistency: "eventual",
+      });
+      const { context, args } = middlewareArgs();
+      await boundaMiddleware(args, async () => undefined);
+      await expect(context.get(bounda).getLag()).rejects.toThrow(ConfigurationError);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written.map(([line]) => JSON.parse(String(line)))).toEqual([
+      {
+        level: "info",
+        message: "request refused",
+        at: expect.any(String),
+        tenant: null,
+        reason: "tenant-unresolved",
+        target: "/",
+        actor: null,
+      },
     ]);
   });
 

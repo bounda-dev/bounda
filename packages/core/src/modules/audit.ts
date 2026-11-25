@@ -291,8 +291,83 @@ export interface OnPersonalDataAccess {
 }
 
 /**
+ * Why a host refused a request before the app served it, or the app refused it for its tenant:
+ *
+ * - `no-route`: the path names no route the host serves.
+ * - `method-not-allowed`: the route takes another method.
+ * - `payload-too-large`: the body is larger than the host takes.
+ * - `invalid-json`: the body is not JSON.
+ * - `tenant-unresolved`: the host's tenant function threw, or named no store.
+ * - `actor-unresolved`: the host's actor function threw, as one does that refuses a request
+ *   without a session or redirects it to sign in.
+ * - `actor-invalid`: `as` refused what the actor function named.
+ * - `unknown-command`, `unknown-query`: no command or query of that name.
+ * - `tenant-forgotten`: the tenant was forgotten.
+ * - `tenant-frozen`: the tenant is frozen, and the call writes.
+ */
+export type HostRejectionReason =
+  | "no-route"
+  | "method-not-allowed"
+  | "payload-too-large"
+  | "invalid-json"
+  | "tenant-unresolved"
+  | "actor-unresolved"
+  | "actor-invalid"
+  | "unknown-command"
+  | "unknown-query"
+  | "tenant-forgotten"
+  | "tenant-frozen";
+
+/**
+ * One record of the host log: a request refused before the app served it. Ids and names alone,
+ * never the request's path, body or headers, nor the error's message.
+ */
+export interface HostRejection {
+  /**
+   * When, on the clock of whoever refused it.
+   */
+  readonly at: string;
+  /**
+   * The store the request was for, `null` when it was refused before its tenant was known.
+   */
+  readonly tenant: string | null;
+  readonly reason: HostRejectionReason;
+  /**
+   * What the request asked for: the route's pattern in React Router, `commands/<name>` or
+   * `queries/<name>` for the Worker, `commands.<name>` or `queries.<name>` for a command or query,
+   * or the client's operation, such as `exportPersonalData`; `null` for a path that names no route.
+   */
+  readonly target: string | null;
+  /**
+   * Who made it, as the access log names them: the actor `as` acts as, `null` for nobody, and for
+   * a request refused before its actor was known or whose actor was refused.
+   */
+  readonly actor: string | null;
+}
+
+/**
+ * What `onHostRejection` receives: the record, and the host's environment and logger.
+ */
+export interface OnHostRejectionArgs {
+  readonly rejection: HostRejection;
+  readonly env: AppEnv;
+  readonly logger: Logger;
+}
+
+/**
+ * Where the host log goes, exported from `app/audit.ts` beside `onPersonalDataAccess`. Called once
+ * per request refused before the app served it, and the refusal waits for it: when it throws, the
+ * request fails with that error instead. Never sampled. Without `app/audit.ts`, each record goes
+ * to the host's logger at `info`.
+ */
+export interface OnHostRejection {
+  (args: OnHostRejectionArgs): void | Promise<void>;
+}
+
+/**
  * The shape of `app/audit.ts`, which the generated registry checks it against.
  */
 export interface AuditModule {
   readonly onPersonalDataAccess: OnPersonalDataAccess;
+  readonly onHostRejection: OnHostRejection;
 }

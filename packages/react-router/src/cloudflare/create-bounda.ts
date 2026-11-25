@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { hostLogger, workersLogger } from "@bounda-dev/cloudflare";
 import {
   type AppRegistry,
   type Consistency,
@@ -9,6 +10,7 @@ import {
 import type { Config } from "@bounda-dev/core/config";
 import type { ActorFunction } from "../actor.ts";
 import type { Bounda } from "../create-bounda.ts";
+import { requestRefusals } from "../host-log.ts";
 import { cloudflareClients, type TenantFunction } from "./clients.ts";
 import { cloudflareHandleError } from "./handle-error.ts";
 import { serve } from "./serve.ts";
@@ -31,10 +33,16 @@ export interface CreateBoundaArgs {
    */
   readonly actor?: ActorFunction;
   /**
-   * Where `handleError` logs. Defaults to `workersLogger` from `@bounda-dev/cloudflare`, one JSON
-   * line per entry.
+   * Where `handleError` logs, and the host log goes without `app/audit.ts`. Defaults to
+   * `workersLogger` from `@bounda-dev/cloudflare`, one JSON line per entry.
    */
   readonly logger?: Logger;
+  /**
+   * The registry the Durable Objects run, whose `app/audit.ts` receives the host log: each
+   * request refused before an object serves it, for a tenant `tenant` does not name or an actor
+   * `actor` does not. Left out, or without `app/audit.ts`, the records go to `logger` at `info`.
+   */
+  readonly registry?: Pick<Registry, "audit"> | undefined;
 }
 
 export interface CreateBoundaFunction {
@@ -65,8 +73,15 @@ export const createBounda: CreateBoundaFunction = <R extends Registry = AppRegis
   consistency = "read-your-writes",
   actor,
   logger,
+  registry,
 }: CreateBoundaArgs): Bounda<R> => {
   checkConsistency(consistency);
   const clientOf = cloudflareClients<R>({ env, config, tenant, consistency });
-  return serve(() => clientOf, cloudflareHandleError({ config: () => config, logger }), actor);
+  return serve<R>({
+    load: () => clientOf,
+    handleErrorOf: cloudflareHandleError({ config: () => config, logger }),
+    refusalsOf: (host) =>
+      requestRefusals({ registry, env, logger: () => hostLogger(host, logger ?? workersLogger) }),
+    actor,
+  });
 };

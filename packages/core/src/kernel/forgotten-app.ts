@@ -17,6 +17,7 @@ import { createDispatcher } from "./dispatch/dispatcher.ts";
 import type { SubscriberFailures } from "./dispatch/subscriber-failures.ts";
 import type { AppStorage } from "./events/app-event-store.ts";
 import type { GlobalStream } from "./events/global-stream.ts";
+import { type RecordHostRejection, recordedRejections } from "./host-log.ts";
 import type { RecordAccess } from "./personal-data/access.ts";
 import { createTenantNoticeSubscriber, rejecting } from "./personal-data/forgotten-tenant.ts";
 import type { TenantKeys } from "./personal-data/tenant-keys.ts";
@@ -236,6 +237,7 @@ export interface ForgottenAppArgs {
   readonly forgotten: () => TenantForgottenError;
   readonly forgetting: TenantForgetting;
   readonly tenant: string;
+  readonly recordRejection: RecordHostRejection;
   /**
    * Closes everything the start opened.
    */
@@ -254,6 +256,7 @@ export const forgottenApp = <R extends Registry>({
   forgotten,
   forgetting,
   tenant,
+  recordRejection,
   close,
 }: ForgottenAppArgs): BoundaApp<R> => {
   const reject = async (): Promise<never> => {
@@ -263,47 +266,54 @@ export const forgottenApp = <R extends Registry>({
     actor: string | undefined,
   ): BoundaClient<R> & {
     readonly deadLetters: DeadLetters;
-  } => ({
-    commands: rejecting(forgotten) as CommandsFacade<R>,
-    queries: rejecting(forgotten) as QueriesFacade<R>,
-    getLag: () => runner.getLag(),
-    status: () => runner.status(),
-    subscriberFailures: rejecting(forgotten) as SubscriberFailures,
-    events: rejecting(forgotten) as GlobalStream,
-    deadLetters: runner.deadLetters(actor),
-    rebuildReadModel: reject,
-    forget: reject,
-    exportPersonalData: reject,
-    streamPersonalData: reject,
-    recipientsOf: reject,
-    restrict: reject,
-    unrestrict: reject,
-    redact: reject,
-    forgetTenant: async (name) => {
-      if (name !== tenant) {
-        throw runtimeText(
-          new ValidationError(`forgetTenant names tenant ${name}, and the app serves another`, [
-            { path: ["tenant"], message: "Expected the tenant the app serves" },
-          ]),
-        );
-      }
-      return { tenant, forgottenAt: forgetting.at, eventId: forgetting.eventId };
-    },
-    exportTenant: reject,
-    freezeTenant: reject,
-    unfreezeTenant: reject,
-    rotateTenantKey: reject,
-    retireTenantKeys: reject,
-    as: (next) => {
-      checkActor(next);
-      return clientOf(next);
-    },
-  });
+  } =>
+    recordedRejections({
+      client: {
+        commands: rejecting(forgotten) as CommandsFacade<R>,
+        queries: rejecting(forgotten) as QueriesFacade<R>,
+        getLag: () => runner.getLag(),
+        status: () => runner.status(),
+        subscriberFailures: rejecting(forgotten) as SubscriberFailures,
+        events: rejecting(forgotten) as GlobalStream,
+        deadLetters: runner.deadLetters(actor),
+        rebuildReadModel: reject,
+        forget: reject,
+        exportPersonalData: reject,
+        streamPersonalData: reject,
+        recipientsOf: reject,
+        restrict: reject,
+        unrestrict: reject,
+        redact: reject,
+        forgetTenant: async (name) => {
+          if (name !== tenant) {
+            throw runtimeText(
+              new ValidationError(`forgetTenant names tenant ${name}, and the app serves another`, [
+                { path: ["tenant"], message: "Expected the tenant the app serves" },
+              ]),
+            );
+          }
+          return { tenant, forgottenAt: forgetting.at, eventId: forgetting.eventId };
+        },
+        exportTenant: reject,
+        freezeTenant: reject,
+        unfreezeTenant: reject,
+        rotateTenantKey: reject,
+        retireTenantKeys: reject,
+        as: (next) => {
+          checkActor(next);
+          return clientOf(next);
+        },
+      },
+      record: recordRejection,
+      tenant,
+      actor,
+    });
   let stopping: Promise<void> | undefined;
   return {
     ...clientOf(undefined),
     config,
     role,
+    tenant,
     start: () => {
       if (stopping === undefined) runner.start();
     },

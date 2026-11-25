@@ -74,6 +74,22 @@ store](/guides/personal-data/#the-tenant-key-store), `tenantKeys: sqlite({ path:
 "./keys/tenant-keys.db" })`, or as a [forget ledger](/guides/personal-data/#the-forget-ledger):
 it creates its table there on first use. One pointed at the storage's own file is refused.
 
+## In a bundle
+
+On a file or in memory, the adapter works with libSQL's native module, `libsql`, the package
+`@libsql/client` loads. It closes each connection once: libSQL 0.5 closes one twice when it is
+collected, or left open as the process exits, and on Windows that second close ends the process
+with an access violation. It also tries an encrypted file's keys on the file's pages without
+opening it, since a key that does not open a file whose write-ahead log holds pages keeps that file
+from being encrypted until the failed connection is collected.
+
+The adapter finds `libsql` beside `@libsql/client`, or, when a bundler took the client in, where
+the bundle's own code finds it: for a bundle emitted as CommonJS, where the script Node runs finds
+it. `libsql` loads a binary built for each platform, so it stays out of
+any bundle: install it at the version `@libsql/client` depends on, or leave both packages out of the
+bundle. Where `libsql` is out of reach, or fails to load, the adapter runs without either safeguard,
+and Node prints one warning, coded `BOUNDA_LIBSQL_NATIVE_MISSING`, saying why.
+
 ## In tests
 
 `createTestApp` defaults to the in-memory adapter from `@bounda-dev/core/memory`, which runs no
