@@ -95,16 +95,24 @@ describe("withBatchedWrites", () => {
 
   it("fails the read a failing write is sent at, and the work even when it catches that", async () => {
     const { tx, calls } = recording(true, { failing: "B" });
-    const outcome = withBatchedWrites(tx, async (batched) => {
+    const caught: unknown[] = [];
+    const outcome = await withBatchedWrites(tx, async (batched) => {
       await batched.run("A", []);
       await batched.run("B", []);
-      await expect(batched.all("R", [])).rejects.toThrow("B failed");
-      await expect(batched.run("C", [])).rejects.toThrow("B failed");
-      await expect(batched.batch?.([{ sql: "D", params: [] }])).rejects.toThrow("B failed");
-      await expect(batched.all("S", [])).rejects.toThrow("B failed");
+      for (const attempt of [
+        () => batched.all("R", []),
+        () => batched.run("C", []),
+        () => batched.batch?.([{ sql: "D", params: [] }]),
+        () => batched.all("S", []),
+      ]) {
+        caught.push(await attempt()?.catch((error: unknown) => error));
+      }
       return "done";
-    });
-    await expect(outcome).rejects.toThrow("B failed");
+    }).catch((error: unknown) => error);
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toBe("B failed");
+    expect(caught).toEqual([outcome, outcome, outcome, outcome]);
+    expect(caught.every((error) => error === outcome)).toBe(true);
     expect(calls).toEqual(["batch A; B"]);
   });
 
