@@ -371,14 +371,13 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     }
   };
 
-  // The database not gone back since the count stands below the mark only by that count.
-  const lift = async (stored: Seen): Promise<void> => {
+  // A database gone back since is counted past the mark by the same check, from what it read
+  // before.
+  const lift = async (): Promise<void> => {
     const mark = await (marks?.readMark(RESTORE_MARK) ?? 0);
     lifting = false;
     unmarked = false;
-    if (seen !== null && stored.generation >= seen.generation && stored.generation < mark) {
-      await advance(RESTORE_GENERATION, mark + 1);
-    }
+    await advance(RESTORE_GENERATION, mark + 1);
   };
 
   // Moves the generation past what this instance read, and the mark with it: a copy taken before
@@ -404,7 +403,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     // What the database reached stays what it reached: raised late, the mark still tells a copy
     // from before.
     if (unraised > 0) await raise(unraised);
-    if (lifting) await lift(stored);
+    if (lifting) await lift();
     else if (unmarked) {
       const restored = await compareWithMark(stored, declaring);
       if (restored !== null) return restored;

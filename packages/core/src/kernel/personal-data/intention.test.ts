@@ -378,6 +378,7 @@ describe("the intentions of forgetting", () => {
       expect.objectContaining({
         level: "warn",
         message: "where the database stood could not be kept with the intention",
+        fields: expect.objectContaining({ errorName: "Error" }),
       }),
     );
   });

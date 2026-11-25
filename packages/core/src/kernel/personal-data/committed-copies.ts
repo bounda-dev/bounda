@@ -59,9 +59,7 @@ export const createCommittedCopies: CreateCommittedCopiesFunction = ({
     try {
       await ledger.append(entries);
       refusing = false;
-      for (const entry of entries) {
-        if (waiting.get(entry.eventId) === entry) waiting.delete(entry.eventId);
-      }
+      for (const entry of entries) waiting.delete(entry.eventId);
     } catch (error) {
       if (isFenceError(error)) {
         for (const entry of entries) waiting.delete(entry.eventId);

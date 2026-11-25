@@ -66,17 +66,19 @@ describe("createRestoreWatch", () => {
       await watch.check(at(round * GENERATION_INTERVAL_MS), { active: true });
     }
     expect(await ledger.readMark(RESTORE_MARK)).toBe(4);
+    // Another instance moved the generation further, and the mark with it.
+    await ledger.raiseMark(RESTORE_MARK, 9);
     await checkpointStore.set(RESTORE_GENERATION, 1);
     expect(await watch.check(at(4 * GENERATION_INTERVAL_MS))).toEqual({ first: true });
     await watch.settled();
-    expect(await checkpointStore.get(RESTORE_GENERATION)).toBeGreaterThan(4);
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBeGreaterThan(9);
     expect(await watchOver().start()).toBeNull();
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
   });
 
   it("counts a restore found while running though the mark cannot be read, and moves past the mark once it can", async () => {
     let down = false;
-    const { checkpointStore, ledger, watchOver } = await setUp({
+    const { checkpointStore, ledger, entries, stream, watchOver } = await setUp({
       ledger: (store) => ({
         readMark: async (name) => {
           if (down) throw new Error("ledger is down");
@@ -95,15 +97,30 @@ describe("createRestoreWatch", () => {
     await checkpointStore.set(RESTORE_GENERATION, 1);
     down = true;
     expect(await watch.check(at(4 * GENERATION_INTERVAL_MS))).toEqual({ first: true });
+    expect(entries).toContainEqual({
+      level: "error",
+      message: "the forget ledger's mark could not be read",
+      fields: expect.objectContaining({ errorName: "Error" }),
+    });
+    const counted = await checkpointStore.get(RESTORE_GENERATION);
+    expect(counted).toBeLessThan(9);
+    // Moved nowhere while the mark cannot be read: not by what handling the restore committed, a
+    // stop, nor an active app.
+    stream.head += 1;
     await watch.settled();
-    expect(await checkpointStore.get(RESTORE_GENERATION)).toBeLessThan(9);
-    expect(await watch.check(at(5 * GENERATION_INTERVAL_MS))).toBeNull();
+    await watch.flush();
+    expect(await watch.check(at(5 * GENERATION_INTERVAL_MS), { active: true })).toBeNull();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(counted);
     down = false;
     expect(await watch.check(at(6 * GENERATION_INTERVAL_MS))).toBeNull();
-    expect(await checkpointStore.get(RESTORE_GENERATION)).toBeGreaterThan(9);
-    expect(await ledger.readMark(RESTORE_MARK)).toBeLessThanOrEqual(
-      await checkpointStore.get(RESTORE_GENERATION),
-    );
+    const lifted = await checkpointStore.get(RESTORE_GENERATION);
+    expect(lifted).toBe(10);
+    expect(await ledger.readMark(RESTORE_MARK)).toBeLessThanOrEqual(lifted);
+    // Moved past it, the watch reads the mark no more, and moves on with a ledger down again.
+    down = true;
+    expect(await watch.check(at(7 * GENERATION_INTERVAL_MS), { active: true })).toBeNull();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(lifted + 1);
+    down = false;
     expect(await watchOver().start()).toBeNull();
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
   });
@@ -136,12 +153,14 @@ describe("createRestoreWatch", () => {
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBeGreaterThan(9);
   });
 
-  it("raises again, on the next check, a mark the ledger did not take", async () => {
+  it("raises again, on the next check, a mark the ledger did not take, and nothing once it did", async () => {
     let refusing = true;
+    let raises = 0;
     const { ledger, entries, watchOver } = await setUp({
       ledger: (store) => ({
         readMark: (name) => store.readMark(name),
         raiseMark: async (name, value) => {
+          raises += 1;
           if (refusing) throw new Error("ledger is down");
           await store.raiseMark(name, value);
         },
@@ -158,6 +177,38 @@ describe("createRestoreWatch", () => {
     // Nothing written since: only the mark that failed is raised.
     await watch.check(at(1));
     expect(await ledger.readMark(RESTORE_MARK)).toBe(1);
+    const raised = raises;
+    await watch.check(at(2));
+    expect(raises).toBe(raised);
+  });
+
+  it("keeps raising a mark it could not raise, though a lower one went through since", async () => {
+    let refusing = false;
+    const { checkpointStore, ledger, watchOver } = await setUp({
+      ledger: (store) => ({
+        readMark: (name) => store.readMark(name),
+        raiseMark: async (name, value) => {
+          if (refusing) throw new Error("ledger is down");
+          await store.raiseMark(name, value);
+        },
+      }),
+    });
+    const watch = watchOver();
+    await watch.start();
+    await watch.check(at(0), { active: true });
+    refusing = true;
+    await watch.check(at(GENERATION_INTERVAL_MS), { active: true });
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(2);
+    // Another instance counted a restore in place, behind what this one reached.
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    await checkpointStore.set(RESTORE_GENERATION, 0);
+    await checkpointStore.set(RESTORE_UNCLAIMED, 1);
+    await watch.check(at(2 * GENERATION_INTERVAL_MS));
+    refusing = false;
+    await watch.flush();
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(1);
+    await watch.check(at(2 * GENERATION_INTERVAL_MS + 1));
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(2);
   });
 
   it("counts a restore once when two instances find it at the same moment, and then nothing more", async () => {
@@ -362,12 +413,18 @@ describe("createRestoreWatch", () => {
     expect(await ledger.readMark(RESTORE_MARK)).toBe(1);
   });
 
-  it("touches no ledger and logs nothing without one", async () => {
-    const { entries, watchOver } = await setUp({ marks: false });
+  it("touches no ledger and logs nothing without one, and moves on past a restore it found", async () => {
+    const { checkpointStore, entries, watchOver } = await setUp({ marks: false });
     const watch = watchOver();
     expect(await watch.start()).toBeNull();
     await watch.check(at(1), { active: true });
     await watch.flush();
+    await checkpointStore.set(RESTORE_GENERATION, 0);
+    expect(await watch.check(at(2))).toEqual({ first: true });
+    await watch.settled();
+    const counted = await checkpointStore.get(RESTORE_GENERATION);
+    await watch.check(at(2 + GENERATION_INTERVAL_MS), { active: true });
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(counted + 1);
     expect(entries).toEqual([]);
   });
 

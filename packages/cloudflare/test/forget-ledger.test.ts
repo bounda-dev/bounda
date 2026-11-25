@@ -361,7 +361,23 @@ describe("the KV forget ledger's listing", () => {
     const { namespace, keys } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     keys.set("p/1:e-stray", null);
+    keys.set("p/2:e-gone", undefined);
     expect(await ledger.read({ limit: 10 })).toEqual([]);
+  });
+
+  it("reads where the database stood only from a key that holds a position and a generation", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const kept = { personId: "c-1", forgottenAt: minute(0), reason: "requested" };
+    keys.set("p/1:e-1", { ...kept, reached: { position: 4, generation: 2 } });
+    keys.set("p/2:e-2", { ...kept, reached: null });
+    keys.set("p/3:e-3", { ...kept, reached: "4" });
+    keys.set("p/4:e-4", { ...kept, reached: { generation: 2 } });
+    keys.set("p/5:e-5", { ...kept, reached: { position: 4, restores: 2 } });
+    const read = await ledger.read({ limit: 10 });
+    expect(read.map(({ eventId }) => eventId)).toEqual(["e-1", "e-2", "e-3", "e-4", "e-5"]);
+    expect(read[0]).toHaveProperty("reached", { position: 4, generation: 2 });
+    for (const entry of read.slice(1)) expect(entry).not.toHaveProperty("reached");
   });
 
   it("keeps an entry's categories and keys in its value when they do not fit KV's metadata", async () => {
@@ -938,6 +954,8 @@ describe("the KV forget ledger's writes of one entry", () => {
     await ledger.append([intention]);
     expect(await ledger.read({ limit: 10 })).toEqual([intention]);
     expect([...keys.keys()]).toEqual([expect.stringMatching(/^p\/\d+~e-1$/)]);
+    // Its key alone says it is an intention.
+    expect([...keys.values()]).toEqual([expect.not.objectContaining({ committed: false })]);
     await ledger.append([committed]);
     expect(await ledger.read({ limit: 10 })).toEqual([committed]);
     expect([...keys.keys()]).toEqual([expect.stringMatching(/^p\/\d+:e-1$/)]);
@@ -948,14 +966,19 @@ describe("the KV forget ledger's writes of one entry", () => {
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     await ledger.append([intention]);
     const [name = ""] = [...keys.keys()];
-    keys.set(name.replace("~", ":"), keys.get(name));
+    keys.set(name.replace("~", ":"), {
+      personId: "c-1",
+      forgottenAt: minute(1),
+      reason: "requested",
+      committed: false,
+    });
     keys.delete(name);
     expect(await ledger.read({ limit: 10 })).toEqual([intention]);
     await ledger.append([committed]);
     expect(await ledger.read({ limit: 10 })).toEqual([committed]);
   });
 
-  it("holds each entry once on a page, whichever of its keys lists first", async () => {
+  it("holds each entry once on a page, its committed copy over its intention", async () => {
     const { namespace } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     const later = { ...committed, eventId: "e-2", personId: "c-2", forgottenAt: minute(2) };

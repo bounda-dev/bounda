@@ -50,7 +50,8 @@ interface EntryMetadata {
   readonly fingerprints?: readonly string[];
   // The categories and the fingerprints are the key's value instead, as JSON: they did not fit.
   readonly inValue?: true;
-  // Only on an intention: a list reads it, whether the entry's value is fetched or not.
+  // Only on an intention a ledger wrote under the committed copy's key, before intentions had keys
+  // of their own.
   readonly committed?: false;
   readonly reached?: LedgerReached;
 }
@@ -86,20 +87,16 @@ const storedOf = ({
   restriction,
   redaction,
   disclosure,
-  committed,
   reached,
 }: ForgetLedgerEntry): StoredEntry => {
-  const intended = {
-    ...(committed === false ? { committed } : {}),
-    ...(reached === undefined ? {} : { reached }),
-  };
+  const stood = reached === undefined ? {} : { reached };
   const full: EntryMetadata = {
     personId,
     forgottenAt,
     ...(categories === null ? {} : { categories }),
     reason,
     ...(fingerprints === undefined ? {} : { fingerprints }),
-    ...intended,
+    ...stood,
   };
   if (
     restriction === undefined &&
@@ -117,7 +114,7 @@ const storedOf = ({
     ...(disclosure === undefined ? {} : { disclosure }),
   };
   return {
-    metadata: { personId, forgottenAt, reason, inValue: true, ...intended },
+    metadata: { personId, forgottenAt, reason, inValue: true, ...stood },
     value: JSON.stringify(spilled),
   };
 };
@@ -338,16 +335,16 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
             past = true;
             break;
           }
-          if (metadata === null || metadata === undefined) continue;
+          if (!metadata) continue;
           const listed: ListedEntry = {
             name,
             metadata: separator === INTENDED ? { ...metadata, committed: false } : metadata,
             forgottenAt: metadata.forgottenAt,
             eventId,
           };
-          const other = found.get(eventId);
-          // The committed copy wins over the intention of the same entry.
-          if (other === undefined || other.metadata.committed === false) found.set(eventId, listed);
+          // `:` sorts before `~`: the committed copy lists before the intention of the same entry,
+          // and wins over it.
+          if (!found.has(eventId)) found.set(eventId, listed);
         }
         if (past || page.list_complete) break;
         cursor = page.cursor;

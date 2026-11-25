@@ -861,9 +861,9 @@ describe("what the reconciliation commits again", () => {
 
   it("keeps the highest generation of the entries that told a restore, until it is declared or found", async () => {
     const entries: ForgetLedgerEntry[] = [
-      { ...entry("c-1", "e-1", at(0)), committed: false, reached: { position: 9, generation: 4 } },
-      { ...entry("c-2", "e-2", at(1)), committed: false, reached: { position: 9, generation: 3 } },
-      { ...entry("c-3", "e-3", at(2)), committed: false, reached: { position: 1, generation: 6 } },
+      { ...entry("c-1", "e-1", at(0)), committed: false, reached: { position: 9, generation: 5 } },
+      { ...entry("c-2", "e-2", at(1)), committed: false, reached: { position: 1, generation: 6 } },
+      { ...entry("c-3", "e-3", at(2)), committed: false, reached: { position: 9, generation: 3 } },
     ];
     const { reconciliation, storage } = await setUp({ entries });
     await threeEvents(storage);
@@ -871,11 +871,16 @@ describe("what the reconciliation commits again", () => {
     expect(reconciliation.past()).toBe(0);
     await reconciliation.reconcile(NOW);
     expect(reconciliation.undone()).toBe(1);
-    // c-3's stands at the generation past the database's, though at a position it holds.
+    // c-2's stands at the generation past the database's, though at a position it holds.
     expect(reconciliation.past()).toBe(6);
     reconciliation.declared(1);
     expect(reconciliation.past()).toBe(0);
     await reconciliation.reconcile(NOW);
+    expect(reconciliation.past()).toBe(6);
+    // Kept while a restore it told is not declared yet.
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.undone()).toBe(2);
+    reconciliation.declared(1);
     expect(reconciliation.past()).toBe(6);
     await reconciliation.restored(false);
     expect(reconciliation.past()).toBe(0);
