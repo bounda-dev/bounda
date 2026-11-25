@@ -578,9 +578,9 @@ export interface PersonRecipient {
   readonly country: CountryCode;
   /**
    * Whether the country is outside the European Economic Area, and on what safeguard the transfer
-   * rests then; `null` inside it.
+   * rests then, with the article of the GDPR it rests on; `null` inside it.
    */
-  readonly transfer: { readonly safeguard: TransferSafeguard } | null;
+  readonly transfer: { readonly safeguard: TransferSafeguard; readonly article: string } | null;
   /**
    * `disclosed` when a run handed the port data of the person, `presumed` when it cannot be ruled
    * out, as for a recipient declared after the data already existed, and `declared` when the port

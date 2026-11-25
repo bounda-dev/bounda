@@ -5,11 +5,12 @@ import type {
 } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredDisclosure } from "../../adapter/storage/recipient-store.ts";
 import type { PersonalCategoryName } from "../../modules/personal-data.ts";
-import type {
-  CountryCode,
-  PersonRecipient,
-  RecipientKind,
-  TransferSafeguard,
+import {
+  type CountryCode,
+  type PersonRecipient,
+  type RecipientKind,
+  TRANSFER_ARTICLES,
+  type TransferSafeguard,
 } from "../../modules/recipient.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { RecipientStatus } from "../status.ts";
@@ -143,7 +144,10 @@ const recipientsFrom = ({
     name: identity.name,
     kind: identity.kind,
     country: identity.country,
-    transfer: identity.safeguard === null ? null : { safeguard: identity.safeguard },
+    transfer:
+      identity.safeguard === null
+        ? null
+        : { safeguard: identity.safeguard, article: TRANSFER_ARTICLES[identity.safeguard] },
     status,
     categories: [...new Set(names)].sort().map((name) => ({
       name: name as PersonalCategoryName,

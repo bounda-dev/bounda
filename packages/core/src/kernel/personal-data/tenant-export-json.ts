@@ -42,6 +42,7 @@ type Kind = TenantExportPart["kind"];
 const HOLDERS: Readonly<Record<Kind, string>> = {
   header: "header",
   person: "person",
+  recipient: "recipient",
   event: "event",
   scheduledCommand: "scheduledCommand",
   deadLetter: "deadLetter",
@@ -122,6 +123,7 @@ export const readTenantExport: ReadTenantExportFunction = async function* (body)
   const order = [
     "header",
     "person",
+    "recipient",
     "event",
     "scheduledCommand",
     "deadLetter",

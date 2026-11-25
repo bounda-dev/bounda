@@ -28,7 +28,7 @@ import type { PersonalCategories } from "./categories.ts";
 import { openCommandPayload, sealedKeys } from "./commands.ts";
 import { openTextWith, textPersons } from "./errors.ts";
 import { openedUnder, redactedIn } from "./event-store.ts";
-import type { ExportedCategories, ExportedRestricted } from "./export.ts";
+import type { ExportedCategories, ExportedRestricted, ExportedTransfer } from "./export.ts";
 import { personalDataInformation } from "./information.ts";
 import { FORGET_LEDGER_SUBSCRIBER } from "./ledger-outbox.ts";
 import { fieldCategory, type PersonalMarks } from "./marks.ts";
@@ -45,6 +45,7 @@ import {
   type TenantExportPart,
   type TenantExportRecord,
 } from "./tenant-export.ts";
+import { tallyRecipients } from "./tenant-recipients.ts";
 
 /**
  * Thrown by a tenant export, once it has read everything, when the stream moved past the head its
@@ -86,6 +87,10 @@ export interface StreamTenantExportArgs {
    * The ports that return each category's data, by category.
    */
   readonly ports: ReadonlyMap<string, readonly string[]>;
+  /**
+   * The stores kept out of `storage`'s jurisdiction, as a person's export lists them.
+   */
+  readonly transfers: readonly ExportedTransfer[];
   readonly tenant: string;
   readonly exportId: string;
   /**
@@ -221,6 +226,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
   categories,
   recipients,
   ports,
+  transfers,
   tenant,
   exportId,
   ledger,
@@ -260,6 +266,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
     frozenAt,
     reached,
     categories: appCategories,
+    transfers,
     readModels: Object.keys(readModels.byName),
   };
 
@@ -324,6 +331,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
     );
   };
 
+  const tally = tallyRecipients({ recipients, categories });
   const personPages = async function* (): Pages {
     const rows = new Map<string, StoredPerson>();
     const ids = mergedIds(
@@ -346,6 +354,7 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
         persons: page,
         keys,
       });
+      for (const personId of page) tally.add(listed.get(personId) as readonly PersonRecipient[]);
       yield await built(page, async (personId) => {
         // A person the store keeps a row of is read before their id comes out of the merge.
         const person = rows.get(personId) ?? null;
@@ -665,6 +674,8 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
 
   async function* pages(): Pages {
     yield* personPages();
+    // Once every person is listed, so it sums what their parts said.
+    yield tally.recipients().map((recipient) => ({ kind: "recipient", recipient }));
     yield* eventPages();
     yield* scheduledPages();
     yield* letterPages();

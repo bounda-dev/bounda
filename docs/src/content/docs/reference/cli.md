@@ -782,9 +782,10 @@ call was refused or failed.
 ## `bounda export-tenant`
 
 [Hands a tenant back](/guides/personal-data/#handing-a-tenant-back) to its controller, as
-article 28(3)(g) asks of a processor at the end of its service: every person, event, scheduled
-command, dead letter, subscriber failure, remembered answer, read-model row and forget ledger
-entry, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
+article 28(3)(g) asks of a processor at the end of its service: every person, recipient of their
+data with its country and the safeguard of a transfer, event, scheduled command, dead letter,
+subscriber failure, remembered answer, read-model row and forget ledger entry, with the stores kept
+in another jurisdiction, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
 time whatever the tenant holds. It boots the project for that tenant, unless `--tenant` names
 another, which it refuses, and refuses a tenant not [frozen](#bounda-freeze-tenant-and-bounda-unfreeze-tenant)
 in every store. Recorded in the access log, `started` and then how it ended.
@@ -794,7 +795,7 @@ bounda export-tenant acme --output acme.jsonl --actor ops-ana
 ```
 
 ```
-exported tenant acme to /srv/acme.jsonl: 1204 persons, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant
+exported tenant acme to /srv/acme.jsonl: 1204 persons, 3 recipients, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant
 ```
 
 Without `--output` the lines go to standard output, written as fast as it takes them, and the
@@ -823,7 +824,7 @@ bounda check-tenant-export acme.jsonl
 ```
 
 ```
-/srv/acme.jsonl is a whole export of tenant acme up to position 98112: 1204 persons, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries
+/srv/acme.jsonl is a whole export of tenant acme up to position 98112: 1204 persons, 3 recipients, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries
 ```
 
 Exit codes: `0` whole, `2` the file cannot be read or is not a whole export, with the first thing

@@ -24,6 +24,7 @@ import { createAtRestSealer } from "./at-rest.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { sealCommandPayload } from "./commands.ts";
 import { sealError } from "./errors.ts";
+import type { ExportedTransfer } from "./export.ts";
 import type { TenantExportCounts, TenantExportPart, TenantExportRecord } from "./tenant-export.ts";
 import {
   recordedTenantExport,
@@ -186,6 +187,7 @@ const setup = async () => {
     batchSize = 2,
     ledger = null,
     recipients = NO_RECIPIENTS,
+    transfers = [],
     onPage = async () => {
       pages.push("page");
     },
@@ -193,6 +195,7 @@ const setup = async () => {
     readonly batchSize?: number;
     readonly ledger?: ForgetLedger | null;
     readonly recipients?: RecipientsRuntime;
+    readonly transfers?: readonly ExportedTransfer[];
     readonly onPage?: () => Promise<void>;
   } = {}) =>
     streamTenantExport({
@@ -213,6 +216,7 @@ const setup = async () => {
       categories,
       recipients,
       ports: new Map([["invoices", ["order.billing", "order.ledger"]]]),
+      transfers,
       tenant: "acme",
       exportId: "x-1",
       ledger,
@@ -319,7 +323,7 @@ describe("streamTenantExport", () => {
       kind: "header",
       header: {
         format: "bounda.tenant-export",
-        version: 2,
+        version: 3,
         tenant: "acme",
         exportId: "x-1",
         exportedAt: "2026-01-01T00:00:00.000Z",
@@ -350,6 +354,7 @@ describe("streamTenantExport", () => {
             ports: ["order.billing", "order.ledger"],
           },
         },
+        transfers: [],
         readModels: ["orderNotes", "orderTotals"],
       },
     });
@@ -958,6 +963,163 @@ describe("streamTenantExport", () => {
     ]);
   });
 
+  it("sums the persons' recipients into one part per identity and status, after the persons, with a declared one none is listed for", async () => {
+    const { exported, register, storage } = await setup();
+    for (const person of ["c-1", "c-2", "c-3"]) await register(person, `${person}@example.com`);
+    const disclosed = (person: string, category: string, country = "US") => ({
+      person,
+      port: "customer.mailer",
+      recipient: "Postmark",
+      kind: "processor",
+      country,
+      safeguard: country === "US" ? "standard-contractual-clauses" : null,
+      category,
+    });
+    await storage.recipients.disclose(
+      [disclosed("c-1", "default"), disclosed("c-1", "invoices")],
+      "2026-01-02T00:00:00.000Z",
+    );
+    await storage.recipients.disclose([disclosed("c-3", "default")], "2026-01-04T00:00:00.000Z");
+    await storage.recipients.disclose([disclosed("c-1", "default")], "2026-01-05T00:00:00.000Z");
+    // The same port under another identity, once it moved: a transfer of its own.
+    await storage.recipients.disclose(
+      [{ ...disclosed("c-2", "default", "DE"), recipient: "Postmark EU" }],
+      "2026-01-03T00:00:00.000Z",
+    );
+    await storage.recipients.declare(
+      [{ port: "customer.crm", categories: ["default"] }],
+      1,
+      "2026-01-03T00:00:00.000Z",
+    );
+    await storage.recipients.presumeThrough(3);
+    const crm = {
+      port: "customer.crm",
+      recipient: "HubSpot",
+      kind: "processor",
+      country: "US",
+      safeguard: "binding-corporate-rules",
+      categories: ["default"],
+    } as unknown as RecipientRuntime;
+    // Declared for every person, who each hold a key of the default category.
+    const ledger = {
+      port: "order.ledger",
+      recipient: "Datev",
+      kind: "joint-controller",
+      country: "DE",
+      safeguard: null,
+      categories: ["invoices", "default"],
+    } as unknown as RecipientRuntime;
+    // Declared under its identity now for a category no person holds a key of, so no person is
+    // listed for it.
+    const mailer = {
+      port: "customer.mailer",
+      recipient: "Postmark",
+      kind: "processor",
+      country: "CH",
+      safeguard: "adequacy",
+      categories: ["invoices"],
+    } as unknown as RecipientRuntime;
+    const runtime: RecipientsRuntime = {
+      all: [crm, ledger, mailer],
+      byPort: { [crm.port]: crm, [ledger.port]: ledger, [mailer.port]: mailer },
+      byOwner: {},
+    };
+    const parts = await exported({ batchSize: 2, recipients: runtime });
+    const kinds = parts.map(({ kind }) => kind);
+    expect(kinds.lastIndexOf("person")).toBeLessThan(kinds.indexOf("recipient"));
+    expect(kinds.lastIndexOf("recipient")).toBeLessThan(kinds.indexOf("event"));
+    const scc = { safeguard: "standard-contractual-clauses", article: "46(2)(c)" };
+    const of = (...names: string[]) =>
+      names.map((name) => ({
+        name,
+        basis: name === "invoices" ? "legal-obligation" : null,
+      }));
+    expect(parts.filter((part) => part.kind === "recipient").map((part) => part.recipient)).toEqual(
+      [
+        {
+          port: "customer.crm",
+          name: "HubSpot",
+          kind: "processor",
+          country: "US",
+          transfer: { safeguard: "binding-corporate-rules", article: "47" },
+          status: "presumed",
+          categories: of("default"),
+          firstDisclosedAt: null,
+          lastDisclosedAt: null,
+          declared: true,
+          persons: 3,
+        },
+        {
+          port: "customer.mailer",
+          name: "Postmark",
+          kind: "processor",
+          country: "US",
+          transfer: scc,
+          status: "disclosed",
+          categories: of("default", "invoices"),
+          firstDisclosedAt: "2026-01-02T00:00:00.000Z",
+          lastDisclosedAt: "2026-01-05T00:00:00.000Z",
+          declared: true,
+          persons: 2,
+        },
+        {
+          port: "customer.mailer",
+          name: "Postmark EU",
+          kind: "processor",
+          country: "DE",
+          transfer: null,
+          status: "disclosed",
+          categories: of("default"),
+          firstDisclosedAt: "2026-01-03T00:00:00.000Z",
+          lastDisclosedAt: "2026-01-03T00:00:00.000Z",
+          declared: true,
+          persons: 1,
+        },
+        {
+          port: "customer.mailer",
+          name: "Postmark",
+          kind: "processor",
+          country: "CH",
+          transfer: { safeguard: "adequacy", article: "45" },
+          status: "declared",
+          categories: of("invoices"),
+          firstDisclosedAt: null,
+          lastDisclosedAt: null,
+          declared: true,
+          persons: 0,
+        },
+        {
+          port: "order.ledger",
+          name: "Datev",
+          kind: "joint-controller",
+          country: "DE",
+          transfer: null,
+          status: "declared",
+          categories: of("default"),
+          firstDisclosedAt: null,
+          lastDisclosedAt: null,
+          declared: true,
+          persons: 3,
+        },
+      ],
+    );
+    expect(parts.at(-1)).toMatchObject({ kind: "end", counts: { persons: 3, recipients: 5 } });
+  });
+
+  it("names in its header the stores kept in another jurisdiction, as it is given them", async () => {
+    const { stream } = await setup();
+    const transfers: ExportedTransfer[] = [
+      {
+        store: "tenant-keys",
+        readModel: null,
+        location: "ch",
+        safeguard: "adequacy",
+        article: "45",
+      },
+    ];
+    expect((await stream({ transfers })).header.transfers).toEqual(transfers);
+  });
+
   it("reads each store of persons once a page, and once more only when a page was full", async () => {
     const { exported, register, restrict, storage } = await setup();
     for (const person of ["c-1", "c-2", "c-3"]) await register(person, `${person}@example.com`);
@@ -1012,6 +1174,7 @@ describe("streamTenantExport", () => {
       kind: "end",
       counts: {
         persons: 1,
+        recipients: 0,
         events: 1,
         scheduledCommands: 0,
         deadLetters: 0,
@@ -1099,6 +1262,7 @@ describe("streamTenantExport", () => {
 describe("recordedTenantExport", () => {
   const counts = (records: number): TenantExportCounts => ({
     persons: records,
+    recipients: 0,
     events: 1,
     scheduledCommands: 0,
     deadLetters: 0,
@@ -1114,7 +1278,7 @@ describe("recordedTenantExport", () => {
   ): StreamedTenantExport => ({
     header: {
       format: "bounda.tenant-export",
-      version: 2,
+      version: 3,
       tenant: "acme",
       exportId: "x-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
@@ -1122,6 +1286,7 @@ describe("recordedTenantExport", () => {
       frozenAt: "2026-01-01T00:00:00.000Z",
       reached: { readModels: {}, forgetLedger: null },
       categories: {},
+      transfers: [],
       readModels: [],
     },
     parts: (async function* () {

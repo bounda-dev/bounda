@@ -12,7 +12,7 @@ const header: TenantExportPart = {
   kind: "header",
   header: {
     format: "bounda.tenant-export",
-    version: 2,
+    version: 3,
     tenant: "acme",
     exportId: "x-1",
     exportedAt: "2026-01-01T00:00:00.000Z",
@@ -20,6 +20,7 @@ const header: TenantExportPart = {
     frozenAt: "2026-01-01T00:00:00.000Z",
     reached: { readModels: {}, forgetLedger: null },
     categories: {},
+    transfers: [],
     readModels: [],
   },
 };
@@ -28,6 +29,7 @@ const end: TenantExportPart = {
   kind: "end",
   counts: {
     persons: 0,
+    recipients: 0,
     events: 0,
     scheduledCommands: 0,
     deadLetters: 0,

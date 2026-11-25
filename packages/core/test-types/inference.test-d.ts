@@ -1289,7 +1289,7 @@ describe("personal data", () => {
       readonly name: string;
       readonly kind: RecipientKind;
       readonly country: CountryCode;
-      readonly transfer: { readonly safeguard: TransferSafeguard } | null;
+      readonly transfer: { readonly safeguard: TransferSafeguard; readonly article: string } | null;
       readonly status: "disclosed" | "presumed" | "declared";
       readonly categories: readonly {
         readonly name: PersonalCategoryName;

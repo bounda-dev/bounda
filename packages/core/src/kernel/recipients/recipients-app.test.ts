@@ -1509,7 +1509,7 @@ describe("recipients of personal data", () => {
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses" },
+        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
         status: "disclosed",
         categories: [{ name: "contact", basis: "consent" }],
         firstDisclosedAt: START.toISOString(),
@@ -1529,6 +1529,32 @@ describe("recipients of personal data", () => {
         declared: true,
       },
     ]);
+  });
+
+  it("sums in the tenant export every person's recipients, where each is and the transfer's safeguard", async () => {
+    const { app, register } = await start();
+    await register("c-1");
+    await register("c-2");
+    await app.runUntilIdle();
+    await app.freezeTenant("default");
+    const parts: TenantExportPart[] = [];
+    for await (const part of await app.exportTenant("default")) parts.push(part);
+    const listed = parts.flatMap((part) => (part.kind === "recipient" ? [part.recipient] : []));
+    expect(listed).toEqual(
+      (await app.exportPersonalData("c-1")).recipients.map((recipient) => ({
+        ...recipient,
+        persons: 2,
+      })),
+    );
+    expect(listed.filter(({ transfer }) => transfer !== null)).toEqual([
+      expect.objectContaining({
+        port: "customer.mailer",
+        country: "US",
+        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+        status: "disclosed",
+      }),
+    ]);
+    expect(parts.at(-1)).toMatchObject({ kind: "end", counts: { persons: 2, recipients: 3 } });
   });
 
   it("records recipientsOf in the access log, and refuses an empty id", async () => {

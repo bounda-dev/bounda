@@ -768,7 +768,8 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   ],
   recipients: [
     { port: "customer.mailer", name: "Mailchimp", kind: "processor", country: "US",
-      transfer: { safeguard: "standard-contractual-clauses" }, status: "disclosed",
+      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+      status: "disclosed",
       categories: [{ name: "profile", basis: "contract" }],
       firstDisclosedAt: "2026-02-01T09:00:00.000Z", lastDisclosedAt: "2026-02-20T09:00:00.000Z",
       declared: true },
@@ -878,7 +879,7 @@ error's text or a rejection's message may quote any of their data.
 `recipients` are the [recipients](#recipients) of their data, as `recipientsOf` lists them: each
 one disclosed data of theirs, presumed to hold it, or declared for a category of theirs, with the
 categories concerned and their basis, its country and the safeguard of a transfer out of the
-European Economic Area, as article 15(1)(c) asks.
+European Economic Area with the article it rests on, as article 15(1)(c) asks.
 
 `transfers` are the stores the app keeps out of the jurisdiction `storage` declares, each under the
 safeguard that allows it, as article 15(2) asks: a read model that holds personal data
@@ -1374,7 +1375,7 @@ person's data in the clear records it, once per call, and an export once more as
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
 | `exportPersonalData` and `streamPersonalData`, as each starts and as it ends | the person, and with `includeWithheld`, after them, everyone else whose data the values it opened in spite of [article 15(4)](#someone-elses-data) may quote | `{ exportId, redactions, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients, withheld, includeWithheld }`: the export's id, the same in both records, how many of each it handed out by then, before it failed or was cancelled for one that did, how many of those held a value back under article 15(4), or opened it with `includeWithheld`, and whether it was asked for with it |
-| `exportTenant`, as it starts and as it ends | the first persons it handed out, `MAX_ACCESS_PERSONS` at most, none at its start, and `personCount` all of them so far | `{ exportId, persons, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, forgetLedgerEntries }`: the export's id, the same in both records and in its header, and how many parts of each kind it handed out by then |
+| `exportTenant`, as it starts and as it ends | the first persons it handed out, `MAX_ACCESS_PERSONS` at most, none at its start, and `personCount` all of them so far | `{ exportId, persons, recipients, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, forgetLedgerEntries }`: the export's id, the same in both records and in its header, and how many parts of each kind it handed out by then |
 | `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
 | `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
 | `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
@@ -1685,8 +1686,8 @@ presumed to hold the data of every person whose data existed then.
 person may ask (article 19): those disclosed data of theirs, with the identity the port declared
 then and when it was first and last recorded; those presumed to hold it; and those declared for a
 category the person has data of that received none yet and may (article 15(1)(c) asks for those
-too). Each one with its `port`, `name`, `kind`, `country`, `transfer`, the safeguard of one out of
-the European Economic Area or `null`, its `status`, `disclosed`, `presumed` or `declared`, the
+too). Each one with its `port`, `name`, `kind`, `country`, `transfer`, the `safeguard` of one out of
+the European Economic Area and the `article` it rests on, or `null`, its `status`, `disclosed`, `presumed` or `declared`, the
 `categories` concerned with their basis, and `declared`, `false` for a port the app no longer
 declares. The [export](#exporting-a-persons-data) lists the same as `recipients`. Each call is
 recorded in the access log, as `recipientsOf`. From the command line:
@@ -2587,7 +2588,8 @@ export default defineConfig({
   transfers alone, never for a store that keeps data as long as the app runs.
 - The [record of processing](#the-record-of-processing-activities) names each transfer next to the
   store, `in ch, transferred under adequacy (article 45)`, and every person's
-  [export](#exporting-a-persons-data) lists it in `transfers`.
+  [export](#exporting-a-persons-data) lists it in `transfers`, as does the tenant's when it is
+  [handed back](#handing-a-tenant-back).
 - On Cloudflare the keeper takes a `jurisdiction` and a `safeguard` of its own: see [keepers in
   another jurisdiction](/adapters/cloudflare/#keepers-in-another-jurisdiction).
 - Bounda states what you declare: the safeguard itself, the clauses signed and the transfer impact
@@ -2699,8 +2701,9 @@ then hands out, in this order:
 
 | Part | What it holds |
 | --- | --- |
-| `header` | `format` (`"bounda.tenant-export"`) and `version` (`2`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, and every read model, in the order their rows come |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`3`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
 | `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
+| `recipient` | each recipient of the tenant's data, the `person` parts' recipients summed: one per port, identity it had then and status, with its `country` and `transfer`, the categories concerned, the earliest and latest disclosure, and how many `persons` list it so; and each recipient the app declares that no person lists under its identity now, `declared`, for none |
 | `event` | every event of the stream up to the header's `position`, as the handlers read it today: upcast, its whole `payload` opened, with its `metadata` and the `person` it names; `categories` names the category of each field marked `personal`, `restricted` the fields the controller may only keep, and `redacted` the fields a [redaction](#correcting-a-persons-data) sealed for good |
 | `scheduledCommand` | every command waiting to run, its payload opened, with the `persons` it names |
 | `deadLetter` | every [dead letter](/guides/dead-letters/), whatever its status, its error's text and payload opened |
@@ -2719,6 +2722,20 @@ is [restricted](#restricting-processing), or that a forgetting kept under an exe
 17(3), is opened too, since keeping it is what a restriction allows, and named in its part's
 `restricted`, so the controller goes on only keeping it. No key leaves: what the export opens is
 the data, not the means to open it.
+
+Where the tenant's data went, and on what each transfer rests, is in two places. The header's
+`transfers` are the stores the app keeps out of the jurisdiction `storage` declares, each with its
+`location`, `safeguard` and `article` (see [stores in another
+jurisdiction](#stores-in-another-jurisdiction)). The `recipient` parts are every recipient the
+data went to, may hold it or may receive it, each with its `country` and, out of the European
+Economic Area, the `safeguard` of the transfer and its `article`: a recipient that moved, or changed
+its safeguard, comes once under each identity its disclosures were recorded with, so each transfer
+is told under what allowed it then. Each person's part says which of them hold their data. A
+[forgetting](#forgetting-a-person) removes the disclosures it forgot, so they count in no
+`recipient` part: its event, among the `event` parts, names the recipients it told. With a [forget
+ledger](#the-forget-ledger), the first disclosure of each category of a person to a recipient is
+also among the `forgetLedgerEntry` parts, with the recipient's country and safeguard then, for as
+long as the ledger keeps it.
 
 What it leaves out is not data of the tenant's: snapshots, the state of aggregates the events it
 holds rebuild; the subscribers' checkpoints, the inbox and the tables' versions, which say how far

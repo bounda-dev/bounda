@@ -47,6 +47,7 @@ export interface FormatTenantExportCountsFunction {
 
 const COUNTED: readonly (readonly [keyof TenantExportCounts, string])[] = [
   ["persons", "persons"],
+  ["recipients", "recipients"],
   ["events", "events"],
   ["scheduledCommands", "scheduled commands"],
   ["deadLetters", "dead letters"],

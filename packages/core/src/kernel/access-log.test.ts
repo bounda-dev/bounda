@@ -833,6 +833,7 @@ describe("the access log", () => {
         detail: {
           exportId: expect.any(String),
           persons: 0,
+          recipients: 0,
           events: 0,
           scheduledCommands: 0,
           deadLetters: 0,

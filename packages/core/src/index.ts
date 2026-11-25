@@ -178,6 +178,7 @@ export type {
   TenantExportHeader,
   TenantExportPart,
   TenantExportReached,
+  TenantExportRecipient,
 } from "./kernel/personal-data/tenant-export.ts";
 export {
   TENANT_EXPORT_FORMAT,
