@@ -5,7 +5,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type BoundaApp, createApp } from "../../kernel/app.ts";
 import { createEphemeralKeys } from "../../kernel/personal-data/ephemeral-keys.ts";
-import { createRecordingLogger } from "../../kernel/test-support.ts";
+import { createRecordingLogger, ON_DISK_TIMEOUT_MS } from "../../kernel/test-support.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { Adapter } from "../adapter.ts";
@@ -35,7 +35,7 @@ const createNodeSqliteAdapter = (path: string): NodeSqliteAdapter => {
 afterAll(async () => {
   for (const { db } of opened.splice(0)) db.close();
   await rm(directory, { recursive: true, force: true });
-});
+}, ON_DISK_TIMEOUT_MS);
 
 const fresh = (name: string): string => {
   files += 1;
@@ -137,7 +137,7 @@ const forgottenSinceTheCopy = async (forgetLedger?: Adapter) => {
   return { config, restore };
 };
 
-describe("a restore under a running app", () => {
+describe("a restore under a running app", { timeout: ON_DISK_TIMEOUT_MS }, () => {
   it("is noticed even before the app's first pass", async () => {
     const { config, restore } = await forgottenSinceTheCopy(
       createNodeSqliteAdapter(fresh("ledger")).adapter,

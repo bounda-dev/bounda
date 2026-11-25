@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createNodeSqliteAdapter } from "../adapter/sqlite/node-sqlite.ts";
 import { memory } from "../memory/index.ts";
 import { migrateTables } from "./migrate.ts";
+import { ON_DISK_TIMEOUT_MS } from "./test-support.ts";
 
 const tablesIn = (db: ReturnType<typeof createNodeSqliteAdapter>["db"]): string[] =>
   (
@@ -12,10 +13,6 @@ const tablesIn = (db: ReturnType<typeof createNodeSqliteAdapter>["db"]): string[
       name: string;
     }[]
   ).map(({ name }) => name);
-
-// Four database files migrated twice, each write synced to disk: on a Windows runner that takes
-// seconds, waiting on nothing but the disk, for what takes milliseconds elsewhere.
-const ON_DISK_TIMEOUT_MS = 30_000;
 
 describe("migrateTables", { timeout: ON_DISK_TIMEOUT_MS }, () => {
   it("migrates every database the configuration names to this release, each with its own scopes", async () => {

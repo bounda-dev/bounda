@@ -455,6 +455,11 @@ export const breakNextCommit: BreakNextCommitFunction = (storage) => {
   return { broke: () => broken };
 };
 
+// How long a test on database files may take: each write is synced to disk, which on a Windows
+// runner's system drive took seconds, waiting on nothing but the disk, for what takes milliseconds
+// elsewhere, and several connections or threads at once took up to about 8 s there.
+export const ON_DISK_TIMEOUT_MS = 30_000;
+
 /**
  * An access log that records nothing, for tests of what does not look at it.
  */

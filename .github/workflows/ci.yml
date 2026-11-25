@@ -112,6 +112,12 @@ jobs:
       # A worker that dies in native code, as libSQL can there, names the test it was running.
       BOUNDA_TEST_TRACE: "1"
     steps:
+      # The tests write their databases under the system's temporary directory, on C:, where each
+      # commit synced to disk waited up to seconds and timed tests out; on the runner's own temporary
+      # directory, on D:, the same runs took a fraction of that.
+      - run: |
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
