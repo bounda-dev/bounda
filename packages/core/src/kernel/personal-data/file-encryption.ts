@@ -64,10 +64,18 @@ export const createFileEncryptions: CreateFileEncryptionsFunction = ({ config, c
       });
     }
   };
-  // What fails is logged and tried again later: the worker's pass goes on.
+  // What fails, or finds the file still held, is logged and tried again later: the worker's pass
+  // goes on.
   const settleQuietly = async (encryption: (typeof files)[number]["encryption"]): Promise<void> => {
     try {
       await settleOne(encryption);
+      const state = encryption.state();
+      if (state !== "current") {
+        logger.warn(
+          "bounda left a database file as it is for now: another connection has it open, so the worker tries again later",
+          { file: encryption.database, state },
+        );
+      }
     } catch (error) {
       logger.error("bounda could not encrypt a database file under its tenant's key", {
         file: encryption.database,

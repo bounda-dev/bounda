@@ -2377,8 +2377,8 @@ file in the clear, or under an earlier key, is encrypted under the key in force,
 app starts with the file to itself. While another connection has it open, another process's or one
 this process closed and libSQL has not let go of yet, it opens as it is and the app logs that it
 left it so; from then on the worker tries again through the app's own connection every
-`FILE_ENCRYPTION_RETRY_MS` (a minute) and encrypts it as soon as no other connection has it open,
-as the next start does. Until then `app.status().files` and `bounda status` say which file is still
+`FILE_ENCRYPTION_RETRY_MS` (a minute), logs a warning each time it finds the file still held, and
+encrypts it as soon as no other connection has it open, as the next start does. Until then `app.status().files` and `bounda status` say which file is still
 `"clear"` or under an `"earlier"` key, `bounda rekey` encrypts it once the other processes have let
 go, exiting with `2` while one still holds it, and `forgetTenant` refuses while a file is in the
 clear, since forgetting would leave it readable. A start that stops halfway leaves

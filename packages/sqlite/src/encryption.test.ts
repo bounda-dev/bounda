@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigurationError, type Logger } from "@bounda-dev/core";
@@ -586,25 +586,48 @@ describe("a libSQL file left in the clear while another process held it", () => 
     const paths = fresh();
     await elsewhere(paths, `await registerCustomer(app, "c-1");`, false);
     const letGo = await heldElsewhere(paths.store);
-    // What the encryption once let go logs if it fails: a file still in the clear with none was
-    // still held.
-    const errors: unknown[] = [];
+    const file = paths.store.replaceAll("\\", "/");
+    // What the app logs once the file is let go names the branch a file still in the clear took: an
+    // error, a warning that it was still held, or no word of the file, no pass having tried.
+    const logged: { level: string; message: string; fields: unknown }[] = [];
+    let recording = false;
+    const record =
+      (level: string, ofTheFileOnly = false) =>
+      (message: string, fields?: Record<string, unknown>): void => {
+        if (recording && (!ofTheFileOnly || fields?.file === file)) {
+          logged.push({ level, message, fields });
+        }
+      };
     const app = await bootTestApp(paths, {
-      logger: { ...silent, error: (message, fields) => void errors.push({ message, fields }) },
+      logger: {
+        debug: () => undefined,
+        info: record("info", true),
+        warn: record("warn"),
+        error: record("error"),
+      },
     });
     try {
-      expect((await app.status()).files).toEqual([
-        { database: "storage", file: paths.store.replaceAll("\\", "/"), state: "clear" },
-      ]);
+      expect((await app.status()).files).toEqual([{ database: "storage", file, state: "clear" }]);
       await expect(app.forgetTenant("default")).rejects.toThrow(
         "is still in the clear, so forgetting the tenant would leave it readable",
       );
       expect((await app.status()).tenant).toMatchObject({ forgottenAt: null });
       await letGo();
+      recording = true;
       await app.runUntilIdle();
-      expect({ files: (await app.status()).files, errors }).toMatchObject({
-        files: [{ state: "current" }],
-        errors: [],
+      recording = false;
+      expect(
+        { files: (await app.status()).files, logged },
+        `the descriptors this process has open on the file: ${await openHere(paths.store)}`,
+      ).toEqual({
+        files: [{ database: "storage", file, state: "current" }],
+        logged: [
+          {
+            level: "info",
+            message: "bounda encrypted a database file under its tenant's key in force",
+            fields: { file },
+          },
+        ],
       });
       expect(await nameOf(app, "c-1")).toBe("name of c-1");
       await app.forgetTenant("default");
@@ -615,6 +638,16 @@ describe("a libSQL file left in the clear while another process held it", () => 
     expect(await readsInTheClear(paths.store)).toBe(false);
   });
 });
+
+// The descriptors this process has open on the database at `path` and its WAL, where the system
+// lists them: one connection holds one of each.
+const openHere = async (path: string): Promise<string> => {
+  if (process.platform !== "linux") return "not listed here";
+  const targets = await Promise.all(
+    (await readdir("/proc/self/fd")).map((fd) => readlink(`/proc/self/fd/${fd}`).catch(() => null)),
+  );
+  return JSON.stringify(targets.filter((target) => target?.startsWith(path) === true));
+};
 
 describe("a test app over a libSQL file", () => {
   it("encrypts it under the test's keys, and searches it through them once a person is forgotten", async () => {
