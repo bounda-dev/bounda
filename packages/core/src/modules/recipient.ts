@@ -384,12 +384,10 @@ export const COUNTRY_CODES = [
 
 /**
  * The countries with an adequacy decision of the European Commission under article 45 of the GDPR,
- * as of November 2026, by their ISO 3166-1 alpha-2 code: Andorra, Argentina, Brazil, Canada, the
- * Faroe Islands, Guernsey, Israel, the Isle of Man, Japan, Jersey, New Zealand, the Republic of
- * Korea, Switzerland, the United Kingdom, the United States and Uruguay. Only these take the
- * `adequacy` safeguard. The decisions for Canada and the United States cover some organisations
- * alone (commercial ones under PIPEDA; those certified under the EU-US Data Privacy Framework):
- * you answer for the recipient or the provider being one.
+ * as of November 2026, by their ISO 3166-1 alpha-2 code. Only these take the `adequacy` safeguard.
+ * The decisions for Canada and the United States cover some organisations alone (commercial ones
+ * under PIPEDA; those certified under the EU-US Data Privacy Framework): you answer for the
+ * recipient or the provider being one.
  */
 export const ADEQUATE_COUNTRIES = [
   "AD",

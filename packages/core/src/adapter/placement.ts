@@ -99,6 +99,8 @@ export const checkPlacement: CheckPlacementFunction = ({ path, holder, where, fi
       `${path} keeps its data in ${JSON.stringify(location)} under a safeguard, and storage declares no location, so nothing tells whether that is a transfer: declare where storage keeps the app's data`,
     );
   }
+  // An unchecked configuration may hold anything, there as in the store.
+  locationOf("storage", { location: where });
   const home = regimeOf(where);
   if (home === "anywhere") throw globalStorage();
   if (location === undefined) {

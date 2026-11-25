@@ -5,7 +5,11 @@ const JURISDICTIONS: readonly DurableObjectJurisdiction[] = ["eu", "us", "fedram
 
 export const JURISDICTIONS_LISTED = JURISDICTIONS.map((known) => JSON.stringify(known)).join(", ");
 
-export const isJurisdiction = (value: unknown): value is DurableObjectJurisdiction =>
+export interface IsJurisdictionFunction {
+  (value: unknown): value is DurableObjectJurisdiction;
+}
+
+export const isJurisdiction: IsJurisdictionFunction = (value): value is DurableObjectJurisdiction =>
   JURISDICTIONS.some((known) => known === value);
 
 // What workerd throws from `jurisdiction()` where it runs locally, under `wrangler dev`, `vite dev`
