@@ -61,11 +61,18 @@ export type DataLocationOptions =
       readonly safeguard: StoreSafeguard;
     };
 
+/**
+ * Where an adapter's or a store's definition says it keeps its data, and the safeguard that allows
+ * keeping it there, as `AdapterDefinition` carries them.
+ */
 export interface Placement {
   readonly location?: string;
   readonly safeguard?: StoreSafeguard;
 }
 
+/**
+ * `placementOf`'s signature.
+ */
 export interface PlacementOfFunction {
   (options: {
     readonly location?: string | undefined;

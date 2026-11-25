@@ -168,6 +168,7 @@ describe("bounda binary end to end", () => {
       name: "forget-ledger",
       where: "forget-ledger",
       location: "eu",
+      transfer: null,
       keptFor: null,
     });
   }, 60_000);

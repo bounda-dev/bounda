@@ -1,4 +1,5 @@
 import { ConfigurationError, type StoreSafeguard } from "@bounda-dev/core";
+import { runtimeText } from "@bounda-dev/core/adapter";
 import type { StoreDefinitionOptions } from "@bounda-dev/core/config";
 
 /**
@@ -49,8 +50,10 @@ export interface KvPlacementOfFunction {
 export const kvPlacementOf: KvPlacementOfFunction = ({ location, safeguard }, path) => {
   if (location === undefined && safeguard === undefined) return {};
   if (location === undefined || safeguard === undefined) {
-    throw new ConfigurationError(
-      `${path} is kept in Workers KV, which holds what it keeps to no jurisdiction: declare where it may keep it together with the safeguard that allows that, both or neither`,
+    throw runtimeText(
+      new ConfigurationError(
+        `${path} is kept in Workers KV, which holds what it keeps to no jurisdiction: declare where it may keep it together with the safeguard that allows that, both or neither`,
+      ),
     );
   }
   return { location, safeguard };

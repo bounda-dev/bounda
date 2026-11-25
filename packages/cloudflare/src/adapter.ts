@@ -1,4 +1,4 @@
-import type { Adapter } from "@bounda-dev/core/adapter";
+import { type Adapter, placementOf } from "@bounda-dev/core/adapter";
 import { DEFAULT_TABLE_PREFIX } from "@bounda-dev/core/adapter/sql";
 import { createSqliteAdapter } from "@bounda-dev/core/adapter/sqlite";
 import type { CloudflareOptions } from "./definition.ts";
@@ -38,7 +38,7 @@ export const durableObjectAdapter: DurableObjectAdapterFunction = ({
     name: "cloudflare",
     options,
     // Where the object is, so the app it opens holds every other store to it as the Worker does.
-    ...(options.jurisdiction === undefined ? {} : { location: options.jurisdiction }),
+    placement: placementOf({ location: options.jurisdiction }),
     tablePrefix: options.tablePrefix ?? DEFAULT_TABLE_PREFIX,
     acquire: () => ({ db, raw: storage.sql }),
     // Nothing to close: the storage lives as long as the object.

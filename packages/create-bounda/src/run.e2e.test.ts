@@ -445,10 +445,22 @@ describe("a project created by create-bounda", () => {
     );
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
-        { name: "persons", where: "sqlite", location: "eu", keptFor: null },
-        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
-        { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
-        { name: "forget-ledger", where: "forget-ledger", location: "eu", keptFor: null },
+        { name: "persons", where: "sqlite", location: "eu", transfer: null, keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", transfer: null, keptFor: null },
+        {
+          name: "tenant-keys",
+          where: "tenant-keys",
+          location: "eu",
+          transfer: null,
+          keptFor: null,
+        },
+        {
+          name: "forget-ledger",
+          where: "forget-ledger",
+          location: "eu",
+          transfer: null,
+          keptFor: null,
+        },
       ]),
       findings: [],
     });
@@ -528,10 +540,22 @@ describe("a project created by create-bounda", () => {
     });
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
-        { name: "persons", where: "postgresql", location: "eu", keptFor: null },
-        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
-        { name: "tenant-keys", where: "tenant-keys", location: "eu", keptFor: null },
-        { name: "forget-ledger", where: "forget-ledger", location: "eu", keptFor: null },
+        { name: "persons", where: "postgresql", location: "eu", transfer: null, keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", transfer: null, keptFor: null },
+        {
+          name: "tenant-keys",
+          where: "tenant-keys",
+          location: "eu",
+          transfer: null,
+          keptFor: null,
+        },
+        {
+          name: "forget-ledger",
+          where: "forget-ledger",
+          location: "eu",
+          transfer: null,
+          keptFor: null,
+        },
       ]),
       findings: [],
     });
@@ -792,13 +816,14 @@ describe("a project created by create-bounda", () => {
     );
     expect(JSON.parse(inventory.stdout)).toMatchObject({
       records: expect.arrayContaining([
-        { name: "persons", where: "cloudflare", location: "eu", keptFor: null },
-        { name: "master-key", where: "key-wrapper", location: "eu", keptFor: null },
+        { name: "persons", where: "cloudflare", location: "eu", transfer: null, keptFor: null },
+        { name: "master-key", where: "key-wrapper", location: "eu", transfer: null, keptFor: null },
         // In the keeper, in the same jurisdiction as the objects.
         {
           name: "forget-ledger",
           where: "forget-ledger",
           location: "eu",
+          transfer: null,
           keptFor: null,
         },
       ]),

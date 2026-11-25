@@ -68,6 +68,7 @@ describe("personalDataExportResponse", () => {
       automatedDecisions: [],
       restrictions: [],
       recipients: [],
+      transfers: [],
       redactions: [],
       events: [],
       scheduledCommands: [],

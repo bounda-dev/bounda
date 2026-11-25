@@ -617,6 +617,30 @@ describe("cloudflare() with a jurisdiction", () => {
     );
   });
 
+  it("refuses a derogation, or anything that is no safeguard, before any object starts", () => {
+    for (const safeguard of ["derogation", "privacy-shield"]) {
+      expect(
+        refusal({
+          storage: eu,
+          runtime: {
+            personalData: {
+              keyWrapper,
+              forgetLedger: {
+                store: durableObjectForgetLedger({
+                  storage: eu,
+                  jurisdiction: "us",
+                  safeguard: safeguard as never,
+                }),
+              },
+            },
+          },
+        }),
+      ).toBe(
+        `runtime.personalData.forgetLedger.store keeps what it holds in "us" under the safeguard "${safeguard}", which is none of the safeguards of articles 45 to 47 that allow keeping a store abroad: "adequacy" (article 45), "standard-contractual-clauses" (article 46(2)(c)), "binding-corporate-rules" (article 47), "code-of-conduct" (article 46(2)(e)), "certification" (article 46(2)(f))`,
+      );
+    }
+  });
+
   it("refuses Workers KV that declares a location without the safeguard of keeping it there", () => {
     for (const declared of [{ location: "global" }, { safeguard: "adequacy" }]) {
       expect(() => kvForgetLedger({ binding: "FORGET_LEDGER", ...declared } as never)).toThrow(

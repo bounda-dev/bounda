@@ -1,4 +1,4 @@
-import { ConfigurationError } from "@bounda-dev/core";
+import { ConfigurationError, STORE_SAFEGUARDS, TRANSFER_ARTICLES } from "@bounda-dev/core";
 import type { AdapterDefinition } from "@bounda-dev/core/adapter";
 import type { Config } from "@bounda-dev/core/config";
 import { isKeptInKv } from "./kv-placement.ts";
@@ -154,7 +154,14 @@ const checkKeptIn = ({ where, path, source, keeper, define }: CheckKeptInArgs): 
     );
   }
   if (location === where) return;
-  if (typeof location === "string" && valueAt(source, "safeguard") !== undefined) return;
+  const safeguard = valueAt(source, "safeguard");
+  if (typeof location === "string" && safeguard !== undefined) {
+    // Checked here too, as the Worker and the keeper start without resolving the configuration.
+    if (STORE_SAFEGUARDS.some((known) => known === safeguard)) return;
+    throw new ConfigurationError(
+      `${path} keeps what it holds in ${JSON.stringify(location)} under the safeguard ${JSON.stringify(safeguard)}, which is none of the safeguards of articles 45 to 47 that allow keeping a store abroad: ${STORE_SAFEGUARDS.map((known) => `"${known}" (article ${TRANSFER_ARTICLES[known]})`).join(", ")}`,
+    );
+  }
   throw new ConfigurationError(
     `${path} keeps what it holds ${typeof location === "string" ? `in ${JSON.stringify(location)}` : "where it names no jurisdiction, as Workers KV does"}, and cloudflare() keeps the tenants' objects in jurisdiction ${JSON.stringify(where)}: use ${keeper}({ storage }), which keeps it in the same jurisdiction, ${keeper}({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through ${define}(create, { location: ${JSON.stringify(where)} })`,
   );
