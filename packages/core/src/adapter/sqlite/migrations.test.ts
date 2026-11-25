@@ -152,6 +152,34 @@ describe("the superseded keys' table", () => {
   });
 });
 
+describe("the personal keys' table", () => {
+  it("is indexed under the same names whether created in one pass or migrated", async () => {
+    const tables = storageTablesFor("app_");
+    const indexes = async (
+      run: (database: SqlDatabase) => Promise<void>,
+    ): Promise<readonly unknown[]> => {
+      const { database, db } = onNodeSqlite();
+      await run(database);
+      return db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL ORDER BY name",
+        )
+        .all(tables.personalKeys.slice(1, -1))
+        .map((row) => row.name);
+    };
+    const named = [
+      "app_personal_keys_due_idx",
+      "app_personal_keys_held_idx",
+      "app_personal_keys_in_force_idx",
+      "app_personal_keys_kid_idx",
+      "app_personal_keys_retained_idx",
+    ];
+    const scopes = [sqliteStorageScope(tables)];
+    expect(await indexes((db) => migrateSqlite({ db, prefix: "app_", scopes }))).toEqual(named);
+    expect(await indexes((db) => replaySqlite({ db, prefix: "app_", scopes }))).toEqual(named);
+  });
+});
+
 describe("the SQLite schema scopes", () => {
   it("number their migrations from 1, with no gap", () => {
     for (const { migrations } of Object.values(sqliteSchemaScopesFor("bounda_"))) {

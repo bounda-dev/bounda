@@ -524,6 +524,29 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     expect(await migrate()).toBe(1);
   });
 
+  it("runs a batch in order, a statement with parameters on its own and each run of those without as one", async () => {
+    const client = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    const db = createPostgresqlDatabase(client);
+    const name = `"batch${run}"`;
+    await db.write(async ({ batch }) => {
+      expect(batch).toBeDefined();
+      await batch?.([
+        { sql: `CREATE TABLE ${name} ("n" INTEGER)`, params: [] },
+        { sql: `INSERT INTO ${name} VALUES ($1)`, params: [1] },
+        { sql: `INSERT INTO ${name} VALUES (2)`, params: [] },
+        { sql: `INSERT INTO ${name} VALUES (3)`, params: [] },
+        { sql: `INSERT INTO ${name} VALUES ($1)`, params: [4] },
+      ]);
+    });
+    expect(await db.all(`SELECT "n" FROM ${name} ORDER BY "n"`, [])).toEqual([
+      { n: 1 },
+      { n: 2 },
+      { n: 3 },
+      { n: 4 },
+    ]);
+  });
+
   it("names as each scope's latest tables every table its migrations leave, and no other", async () => {
     const client = postgres(url, { max: 1, onnotice: () => undefined });
     closers.push(() => client.end({ timeout: 5 }));

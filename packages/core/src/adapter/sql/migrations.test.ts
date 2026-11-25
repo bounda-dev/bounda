@@ -343,6 +343,28 @@ describe("migrateSchemas", () => {
     expect(versions()).toHaveLength(70);
   });
 
+  it("records a number of versions that fills its statements exactly with no empty statement after them", async () => {
+    const { database, batches, versions } = memoryDatabase({ batching: true });
+    await migrate(database, [scopeOf("a", 40), scopeOf("b", 26)]);
+    const inserts = (batches[0] ?? []).filter(({ sql }) => sql.startsWith("INSERT"));
+    expect(inserts.map(({ params }) => params.length)).toEqual([99, 99]);
+    expect(versions()).toHaveLength(66);
+  });
+
+  it("numbers the parameters of every recorded version from 1 in each statement, on a dialect that numbers them", async () => {
+    const { database, versions } = memoryDatabase({ batching: true });
+    await migrate(database, [scopeOf("a", 35)], {
+      dialect: { ...sqliteDialect, placeholder: (index) => `?${index}` },
+    });
+    expect(versions()).toEqual(
+      Array.from({ length: 35 }, (_, index) => ({
+        scope: "a",
+        version: index + 1,
+        applied_at: "2026-11-08T10:00:00.000Z",
+      })),
+    );
+  });
+
   it("reads the tables and nothing else under the lock of a database that has no versions yet", async () => {
     const { database, statements } = memoryDatabase();
     await migrate(database, [scopeOf("a", 1)]);
