@@ -2451,7 +2451,9 @@ naming the key it was encrypting from: leave it, and the next start opens the fi
 which rolls back what was half written, and finishes. A copy restored under another path opens under
 the key of the file it copies, and is encrypted under its own. A file in the clear that another
 tenant's database is bound to is left as it is, and the start fails; so does a new file whose
-tenant's record keeps another database's keys alone.
+tenant's record keeps another database's keys alone. An app bundled without libSQL's native module
+in reach still encrypts its files, with the caveats [In a bundle](/adapters/sqlite/#in-a-bundle)
+names.
 
 [Rotating the tenant's key](#rotating-the-tenants-key) gives each file a new key too: the app that
 rotates moves the file under it as soon as no other connection holds the file, and the others

@@ -9,6 +9,12 @@ import { CheapestFirst } from "../../vitest.sequencer.ts";
 // fresh tables: one that takes 0.3 s alone took about 7 s beside the rest of the suite.
 const TEST_TIMEOUT_MS = 30_000;
 
+// pnpm puts its hidden store on `NODE_PATH` for the commands it runs, from which any directory
+// resolves every package; an app's code finds only its own, and so must the tests of what it finds.
+// The test processes, forked after this, inherit the change: in a run of the whole workspace, every
+// project's do, and none needs the store.
+delete process.env.NODE_PATH;
+
 export default defineConfig({
   test: {
     name: "sqlite",
