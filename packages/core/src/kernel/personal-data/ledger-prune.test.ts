@@ -51,6 +51,11 @@ interface DatabaseArgs {
   readonly events?: readonly StoredEvent[];
 }
 
+interface Stream {
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+}
+
 const database = ({
   held = [],
   cursor = 0,
@@ -63,13 +68,21 @@ const database = ({
       get: async (name: string) => (name === FORGET_LEDGER_CURSOR ? cursor : 0),
     },
     eventStore: {
-      readOne: async ({ aggregateType, eventId }: { aggregateType: string; eventId: string }) =>
-        aggregateType === BOUNDA_AGGREGATE && held.includes(eventId)
+      // Each entry's event is the person's of the same suffix: `e-1` is `p-1`'s.
+      readOne: async ({ aggregateType, aggregateId, eventId }: Stream & { eventId: string }) =>
+        aggregateType === BOUNDA_AGGREGATE &&
+        aggregateId === eventId.replace("e-", "p-") &&
+        held.includes(eventId)
           ? ({ id: eventId } as StoredEvent)
           : null,
-      load: async () => ({ events, version: events.length }),
+      load: async ({ aggregateType, aggregateId }: Stream) => {
+        const own = aggregateType === BOUNDA_AGGREGATE && aggregateId === "p-1" ? events : [];
+        return { events: own, version: own.length };
+      },
     },
-    recipients: { disclosures: async () => disclosures },
+    recipients: {
+      disclosures: async (person: string) => disclosures.filter((held) => held.person === person),
+    },
     fence: { read: async () => fence, set: async (asked: TenantFence) => asked },
   }) as unknown as AppliedStorage;
 
@@ -137,6 +150,22 @@ describe("pruning a forget ledger with no app running", () => {
     expect(await kept(ledger)).toEqual(["e-2", "e-3"]);
   });
 
+  it("reads again the entries at the very time the cursor less what it reads again stands at", async () => {
+    const cursor = Date.parse(at(2));
+    const ledger = await ledgerWith([
+      entry("1", 5),
+      { ...entry("2", 2 + FORGET_LEDGER_REREAD_MS / DAY), eventId: "A-2", personId: "p-A-2" },
+    ]);
+    const { withStorage } = opening(database({ cursor }));
+    expect(await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW })).toEqual(
+      {
+        before: at(2 + FORGET_LEDGER_REREAD_MS / DAY),
+        unapplied: true,
+      },
+    );
+    expect(await kept(ledger)).toEqual(["A-2"]);
+  });
+
   it("removes up to keepFor when the cursor stands past it", async () => {
     const ledger = await ledgerWith([entry("1", 5), entry("2", -1), entry("3", -2)]);
     const { withStorage } = opening(database({ cursor: Date.parse(at(-3)) }));
@@ -156,6 +185,36 @@ describe("pruning a forget ledger with no app running", () => {
       await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW, pageSize: 2 }),
     ).toEqual({ before: at(2), unapplied: true });
     expect(await kept(ledger)).toEqual(["e-4"]);
+  });
+
+  it("reads on past each page, one entry a page", async () => {
+    const ledger = await ledgerWith([entry("1", 5), entry("2", 4), entry("3", 3)]);
+    const { withStorage } = opening(database({ held: ["e-1", "e-2"] }));
+    expect(
+      await pruneAsApplied({ ledger, withStorage, keepForMs: KEEP_FOR_MS, now: NOW, pageSize: 1 }),
+    ).toEqual({ before: at(3), unapplied: true });
+    expect(await kept(ledger)).toEqual(["e-3"]);
+  });
+
+  it("writes nothing when the oldest entry is one the database has yet to apply", async () => {
+    const ledger = await ledgerWith([entry("1", 3), entry("2", 2)]);
+    const prunes: string[] = [];
+    const { withStorage } = opening(database({ held: ["e-2"] }));
+    expect(
+      await pruneAsApplied({
+        ledger: {
+          read: ledger.read,
+          fence: ledger.fence,
+          prune: async ({ before }) => {
+            prunes.push(before);
+          },
+        },
+        withStorage,
+        keepForMs: KEEP_FOR_MS,
+        now: NOW,
+      }),
+    ).toEqual({ before: at(3), unapplied: true });
+    expect(prunes).toEqual([]);
   });
 
   it("removes every entry older than keepFor across pages when the database applied them all", async () => {

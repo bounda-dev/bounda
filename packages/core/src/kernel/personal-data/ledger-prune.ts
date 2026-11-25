@@ -26,7 +26,7 @@ export type AppliedStorage = Pick<
 >;
 
 export interface PruneAsAppliedArgs {
-  readonly ledger: Pick<ForgetLedger, "read" | "prune" | "fence">;
+  readonly ledger: Pick<ForgetLedger, "read" | "fence"> & Required<Pick<ForgetLedger, "prune">>;
   // `null` for a database that holds no table yet.
   readonly withStorage: <T>(work: (storage: AppliedStorage | null) => Promise<T>) => Promise<T>;
   readonly keepForMs: number;
@@ -101,27 +101,22 @@ export const pruneAsApplied: PruneAsAppliedFunction = async ({
           if (storage === null) return oldest.forgottenAt;
           if ((await storage.fence.read()).state === "forgotten") return cutoff;
           const cursor = await storage.checkpointStore.get(FORGET_LEDGER_CURSOR);
-          let after: ForgetLedgerPosition | undefined =
-            cursor === 0
-              ? undefined
-              : {
-                  forgottenAt: new Date(cursor - FORGET_LEDGER_REREAD_MS).toISOString(),
-                  eventId: "",
-                };
+          // From before 1970 for a database whose reconciliation read nothing yet.
+          let after: ForgetLedgerPosition = {
+            forgottenAt: new Date(cursor - FORGET_LEDGER_REREAD_MS).toISOString(),
+            eventId: "",
+          };
           for (;;) {
-            const page = await ledger.read({
-              ...(after === undefined ? {} : { after }),
-              limit: pageSize,
-            });
+            const page = await ledger.read({ after, limit: pageSize });
             for (const entry of page) {
               if (entry.forgottenAt >= cutoff) return cutoff;
               if (!(await appliedIn(storage, entry))) return entry.forgottenAt;
             }
-            after = page.at(-1);
             if (page.length < pageSize) return cutoff;
+            after = page.at(-1) ?? after;
           }
         });
-  if (before > oldest.forgottenAt) await ledger.prune?.({ before });
+  if (before > oldest.forgottenAt) await ledger.prune({ before });
   return { before, unapplied: before < cutoff };
 };
 

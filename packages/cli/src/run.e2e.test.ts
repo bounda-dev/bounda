@@ -172,6 +172,29 @@ describe("bounda binary end to end", () => {
     });
   }, 60_000);
 
+  it("loads a Cloudflare project to prune its forget ledger, and says why there is nothing to prune", async () => {
+    const pruned = run(
+      process.execPath,
+      [
+        join(repoRoot, "packages/cli/src/cli.ts"),
+        "forget-ledger",
+        "prune",
+        "--config",
+        "bounda.keeper.config.ts",
+      ],
+      {
+        cwd: join(repoRoot, "packages/cli/src/fixtures/cloudflare-project"),
+        env: { ...process.env, NODE_NO_WARNINGS: "1" },
+      },
+    );
+    await expect(pruned).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining(
+        "error: Pruning the forget ledger needs runtime.personalData.forgetLedger.keepFor",
+      ),
+    });
+  }, 60_000);
+
   it("refuses the record of a Cloudflare project the app would refuse to start", async () => {
     const refused = run(
       process.execPath,

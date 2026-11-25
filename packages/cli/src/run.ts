@@ -1191,19 +1191,18 @@ const runPruneLedger = async (
 ): Promise<number> => {
   standInWorkersRuntime();
   const logger = logTo(stderr);
-  const projectFor = (tenant: string | undefined, loadEnv: boolean) =>
+  const projectFor = (tenant: string | undefined) =>
     loadProject({
       root: rootOf(options, cwd),
       configPath: options.config,
       registry: NO_REGISTRY,
       logger,
-      loadEnv,
       ...(tenant === undefined ? {} : { tenant }),
     });
   let config: Config;
   let tenant: string | undefined;
   try {
-    ({ config, tenant } = await projectFor(options.tenant, true));
+    ({ config, tenant } = await projectFor(options.tenant));
     resolveErrorText({ env: process.env });
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
@@ -1228,7 +1227,7 @@ const runPruneLedger = async (
     for (const each of tenants) {
       let project: Awaited<ReturnType<typeof projectFor>>;
       try {
-        project = await projectFor(each, false);
+        project = await projectFor(each);
       } catch (error) {
         left += 1;
         line(

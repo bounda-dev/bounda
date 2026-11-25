@@ -186,6 +186,15 @@ describe("pruning a tenant's forget ledger with no app running", () => {
         ),
         /expires its entries on its own/,
       ],
+      // One that holds nothing open.
+      [
+        configOf(
+          memory(),
+          defineForgetLedger(() => expiring),
+          "30d",
+        ),
+        /expires its entries on its own/,
+      ],
     ];
     for (const [config, message] of cases) {
       await expect(pruneTenantForgetLedger({ config })).rejects.toThrow(message);
@@ -193,6 +202,42 @@ describe("pruning a tenant's forget ledger with no app running", () => {
       await expect(pruneTenantForgetLedger({ config })).rejects.toBeInstanceOf(ConfigurationError);
     }
     expect(closed).toEqual(["expiring", "expiring", "expiring"]);
+  });
+
+  it("closes the database it opened and the ledger, once pruned", async () => {
+    const closed: string[] = [];
+    const base = memory();
+    const storage: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const opened = await base.createStorage();
+        return {
+          ...opened,
+          close: async () => {
+            closed.push("storage");
+            await opened.close();
+          },
+        };
+      },
+    };
+    const ledger = await memory().createForgetLedger({ tenant: DEFAULT_TENANT });
+    await ledger.append([entry("ana", "e-ana", START)]);
+    const config = configOf(
+      storage,
+      defineForgetLedger(() => ({
+        ...ledger,
+        close: async () => {
+          closed.push("ledger");
+        },
+      })),
+      "30d",
+    );
+    expect(await pruneTenantForgetLedger({ config, now: LATER })).toMatchObject({
+      unapplied: true,
+    });
+    expect(closed).toEqual(["storage", "ledger"]);
+    expect(await listForgetLedgerTenants({ config })).toEqual([DEFAULT_TENANT]);
+    expect(closed).toEqual(["storage", "ledger", "ledger"]);
   });
 });
 

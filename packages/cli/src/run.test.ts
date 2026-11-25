@@ -1203,6 +1203,10 @@ describe("bounda forget-ledger prune", () => {
     await app.stop();
     const ledger = await ledgerOf(tenant);
     await ledger.append([ledgerEntry("ghost", "e-ghost")]);
+    // Another tenant's entries in the same store, which a prune of this one leaves.
+    const other = await ledgerOf(tenantOf("left"));
+    await other.append([ledgerEntry("p-left", "e-left")]);
+    await other.fence.set({ state: "forgotten", tenant: "left", since: old });
     const pruned = await cli(["forget-ledger", "prune", ...config, "--tenant", tenant], fixture);
     expect(besidesLogs(pruned.stderr)).toBe("");
     expect(pruned.code).toBe(EXIT_OK);
@@ -1210,10 +1214,16 @@ describe("bounda forget-ledger prune", () => {
       `${tenant}: removed the entries before ${old}; kept from then on those older than keepFor its database has not applied: an app of the tenant applies them when it starts\n`,
     );
     expect((await ledger.read({ limit: 10 })).map(({ eventId }) => eventId)).toEqual(["e-ghost"]);
+    expect(await other.read({ limit: 10 })).toHaveLength(1);
   });
 
   it("prunes every tenant the ledger holds through its own configuration, and goes on past one that fails", async () => {
-    const [gone, unloadable] = [tenantOf("gone"), tenantOf("unloadable")];
+    const [gone, unloadable, unkept, young] = [
+      tenantOf("gone"),
+      tenantOf("unloadable"),
+      tenantOf("unkept"),
+      tenantOf("young"),
+    ];
     const goneLedger = await ledgerOf(gone);
     await goneLedger.append([ledgerEntry("p-1", "e-1")]);
     // Forgotten, so its database is never opened, and its entries go past keepFor.
@@ -1221,17 +1231,41 @@ describe("bounda forget-ledger prune", () => {
     // In the same store, though no configuration loads for it.
     const unloadableLedger = await ledgerOf(gone, unloadable);
     await unloadableLedger.append([ledgerEntry("p-2", "e-2")]);
+    // Nothing older than keepFor, so nothing to remove, and its database never opened.
+    const youngLedger = await ledgerOf(young);
+    await youngLedger.append([
+      { ...ledgerEntry("p-4", "e-4"), forgottenAt: new Date().toISOString() },
+    ]);
+    // Loaded, and refused.
+    const unkeptLedger = await ledgerOf(gone, unkept);
+    await unkeptLedger.append([ledgerEntry("p-3", "e-3")]);
 
     const pruned = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
     expect(pruned.code).toBe(EXIT_FAILURE);
     expect(pruned.stdout).toMatch(new RegExp(`^${gone}: removed the entries before \\S+Z$`, "m"));
     expect(besidesLogs(pruned.stderr)).toMatch(
       new RegExp(
-        `^error: ${unloadable} could not be pruned: ${unloadable} has no database\\n\\d+ tenant\\(s\\) not pruned: run again once what failed is fixed\\n$`,
+        `^error: ${unkept} could not be pruned: Pruning the forget ledger needs runtime\\.personalData\\.forgetLedger\\.keepFor: without it, entries are kept until their tenant is forgotten\\nerror: ${unloadable} could not be pruned: ${unloadable} has no database\\n2 tenant\\(s\\) not pruned: run again once what failed is fixed\\n$`,
       ),
     );
     expect(await goneLedger.read({ limit: 10 })).toEqual([]);
     expect(await unloadableLedger.read({ limit: 10 })).toHaveLength(1);
+
+    // Once what failed is gone, every tenant is pruned; once none holds an entry, it says so.
+    await unloadableLedger.clear();
+    await unkeptLedger.clear();
+    const again = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
+    expect(besidesLogs(again.stderr)).toBe("");
+    expect(again.code).toBe(EXIT_OK);
+    expect(again.stdout).not.toContain(gone);
+    expect(again.stdout).toMatch(new RegExp(`^${young}: removed the entries before \\S+Z$`, "m"));
+    expect(await youngLedger.read({ limit: 10 })).toHaveLength(1);
+    for (const tenant of (await goneLedger.tenants?.()) ?? []) {
+      await (await ledgerOf(gone, tenant)).clear();
+    }
+    const none = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
+    expect(none.code).toBe(EXIT_OK);
+    expect(none.stdout).toBe("the forget ledger holds no tenant's entries\n");
   });
 
   it("says why it prunes nothing for a project without a forget ledger, or a ledger without entries", async () => {
@@ -1247,6 +1281,16 @@ describe("bounda forget-ledger prune", () => {
     const missing = await cli(["forget-ledger", "prune", "--config", "missing.config.ts"], fixture);
     expect(missing.code).toBe(EXIT_FAILURE);
     expect(besidesLogs(missing.stderr)).toMatch(/^error: Cannot find the configuration/);
+    process.env.BOUNDA_ERROR_TEXT = "loud";
+    try {
+      const loud = await cli(["forget-ledger", "prune", ...config], fixture);
+      expect(loud.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(loud.stderr)).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
   });
 
   it("documents itself in its help", async () => {
