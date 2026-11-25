@@ -22,9 +22,9 @@ export interface CloudflareOptions {
    * The jurisdiction every tenant's Durable Object is created in and never leaves: `"eu"` to keep
    * the data in the European Union, `"us"`, `"fedramp"` or `"fedramp-high"` in the United States.
    * `createWorker`, the React Router hosts and `tenantStub` reach the objects through it, and an
-   * object reached through any other refuses to start. Choose it before the first object exists: an object never moves, and a tenant reached
-   * in a new jurisdiction is a new, empty object. Left out, each object is placed near the request
-   * that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
+   * object reached through any other refuses to start. Choose it before the first object exists:
+   * an object never moves, and a tenant reached in a new jurisdiction is a new, empty object. Left
+   * out, each object is placed near the request that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
    * which has no jurisdictions. It is the app's `location`: every read model, the tenant key
    * store, the forget ledger and the key wrapper must be kept under its legal regime too, as
    * `durableObjectTenantKeys` and `durableObjectForgetLedger` are, or under another with a

@@ -12,7 +12,7 @@ import { STORE_SAFEGUARDS, type StoreSafeguard, TRANSFER_ARTICLES } from "../mod
 const AREAS = DATA_AREAS.map((area) => JSON.stringify(area)).join(", ");
 
 // A configuration is not always type-checked: a location is read as whatever it holds, and one
-// Bounda does not know is refused rather than guessed at, since a wrong guess would hide a transfer.
+// Bounda does not know is refused rather than guessed at, as a wrong guess would hide a transfer.
 const locationOf = (path: string, holder: object): DataLocation | undefined => {
   const location: unknown = Reflect.get(holder, "location");
   if (location === undefined || isDataLocation(location)) return location;
