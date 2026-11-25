@@ -1,3 +1,4 @@
+import { type AddressInfo, connect, createServer } from "node:net";
 import {
   type CommandPayloadArgs,
   ConfigurationError,
@@ -15,7 +16,7 @@ import {
   type Table,
   ValidationError,
 } from "@bounda-dev/core";
-import type { Storage } from "@bounda-dev/core/adapter";
+import type { SchemaScopeName, Storage } from "@bounda-dev/core/adapter";
 import { type SqlExecutor, tableNameFor } from "@bounda-dev/core/adapter/sql";
 import {
   checkpointStoreContract,
@@ -27,6 +28,7 @@ import {
   idempotencyStoreContract,
   inboxLedgerContract,
   inspectionContract,
+  latestSchemaContract,
   pendingEvent,
   personalDataExportContract,
   personalKeyStoreContract,
@@ -63,7 +65,9 @@ import { type PostgresqlAdapter, type PostgresqlOptions, postgresql } from "./in
 import {
   migratePostgresql,
   postgresqlCheckpointsScope,
+  postgresqlSchemaScopesFor,
   postgresqlStorageScope,
+  replayPostgresql,
 } from "./migrations.ts";
 import { resolvePostgresqlOptions } from "./options.ts";
 import { storageTablesFor } from "./schema.ts";
@@ -113,6 +117,33 @@ afterAll(async () => {
 });
 
 describe.skipIf(testDatabase === null)("postgresql adapter", () => {
+  latestSchemaContract({
+    create: async () => {
+      const adapter = fresh();
+      const { tablePrefix: prefix, schema } = resolvePostgresqlOptions(adapter.options);
+      const client = postgres(url, {
+        max: 1,
+        onnotice: () => undefined,
+        connection: { search_path: schema },
+      });
+      closers.push(() => client.end({ timeout: 5 }));
+      return {
+        adapter,
+        prefix,
+        execute: async (statement) => [...(await client.unsafe(statement))],
+        replay: () =>
+          replayPostgresql({
+            db: createPostgresqlDatabase(client),
+            schema,
+            prefix,
+            scopes: Object.values(
+              postgresqlSchemaScopesFor({ schema, tables: storageTablesFor({ prefix, schema }) }),
+            ),
+          }),
+      };
+    },
+    dialect: "postgresql",
+  });
   storageSchemaContract({
     create: async () => {
       const adapter = fresh();
@@ -450,6 +481,76 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     ]);
   });
 
+  it("creates a new schema's tables in a few round trips, however many migrations shaped them", async () => {
+    const target = new URL(url);
+    let sent = 0;
+    const counter = createServer((client) => {
+      const server = connect(Number(target.port), target.hostname);
+      client.on("data", (chunk) => {
+        sent += 1;
+        server.write(chunk);
+      });
+      server.on("data", (chunk) => client.write(chunk));
+      client.on("close", () => server.end());
+      server.on("close", () => client.end());
+      client.on("error", () => undefined);
+      server.on("error", () => undefined);
+    });
+    await new Promise<void>((resolve) => counter.listen(0, "127.0.0.1", resolve));
+    closers.push(() => new Promise((resolve) => counter.close(() => resolve())));
+    const proxied = new URL(url);
+    proxied.hostname = "127.0.0.1";
+    proxied.port = String((counter.address() as AddressInfo).port);
+    const client = postgres(proxied.toString(), { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    await client`SELECT 1`;
+    const prefix = `rt${run}_`;
+    const migrate = async (): Promise<number> => {
+      const before = sent;
+      await migratePostgresql({
+        db: createPostgresqlDatabase(client),
+        schema: "public",
+        prefix,
+        scopes: Object.values(
+          postgresqlSchemaScopesFor({
+            schema: "public",
+            tables: storageTablesFor({ prefix, schema: "public" }),
+          }),
+        ),
+      });
+      return sent - before;
+    };
+    expect(await migrate()).toBeLessThanOrEqual(11);
+    expect(await migrate()).toBe(1);
+  });
+
+  it("names as each scope's latest tables every table its migrations leave, and no other", async () => {
+    const client = postgres(url, { max: 1, onnotice: () => undefined });
+    closers.push(() => client.end({ timeout: 5 }));
+    const db = createPostgresqlDatabase(client);
+    const names = Object.keys(
+      postgresqlSchemaScopesFor({
+        schema: "public",
+        tables: storageTablesFor({ prefix: `l${run}_`, schema: "public" }),
+      }),
+    ) as SchemaScopeName[];
+    for (const [index, name] of names.entries()) {
+      const prefix = `l${run}_${index}_`;
+      const scope = postgresqlSchemaScopesFor({
+        schema: "public",
+        tables: storageTablesFor({ prefix, schema: "public" }),
+      })[name];
+      await replayPostgresql({ db, schema: "public", prefix, scopes: [scope] });
+      const left = await db.all(
+        `SELECT "tablename" FROM pg_tables WHERE "schemaname" = 'public' AND starts_with("tablename", $1) AND "tablename" <> $2`,
+        [prefix, `${prefix}migrations`],
+      );
+      expect([...scope.latest.tables].sort()).toEqual(
+        left.map(({ tablename }) => `"${String(tablename)}"`).sort(),
+      );
+    }
+  });
+
   it("takes in the keys of a schema from before categories, in the default category, last active when their person was", async () => {
     const adapter = fresh();
     const { tablePrefix: prefix, schema } = resolvePostgresqlOptions(adapter.options);
@@ -458,7 +559,7 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
     const db = createPostgresqlDatabase(client);
     const tables = storageTablesFor({ prefix, schema });
     const current = postgresqlStorageScope({ schema, tables });
-    await migratePostgresql({
+    await replayPostgresql({
       db,
       schema,
       prefix,

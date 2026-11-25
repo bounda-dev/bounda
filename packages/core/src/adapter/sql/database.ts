@@ -1,3 +1,4 @@
+import type { SqlFragment } from "./query-builder.ts";
 import type { SqlExecutor } from "./sql-table.ts";
 
 /**
@@ -14,4 +15,23 @@ export interface SqlDatabase extends SqlExecutor {
  */
 export interface SqlTransaction extends SqlExecutor {
   readonly raw: unknown;
+  /**
+   * Runs the statements in order, in as few round trips to the database as the driver allows, and
+   * fails with the first that fails. A driver whose statements never leave the process has no
+   * need of it: `runInOrder` runs them one by one there.
+   */
+  readonly batch?: (statements: readonly SqlFragment[]) => Promise<void>;
 }
+
+export interface RunInOrderFunction {
+  (tx: SqlTransaction, statements: readonly SqlFragment[]): Promise<void>;
+}
+
+export const runInOrder: RunInOrderFunction = async (tx, statements) => {
+  if (statements.length === 0) return;
+  if (tx.batch !== undefined) {
+    await tx.batch(statements);
+    return;
+  }
+  for (const { sql, params } of statements) await tx.run(sql, params);
+};

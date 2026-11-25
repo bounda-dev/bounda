@@ -133,7 +133,16 @@ export const createSqliteDatabase: CreateSqliteDatabaseFunction = (client, { loc
               recovering(async () => {
                 const transaction = await client.transaction("write");
                 try {
-                  const result = await work({ ...executorOf(transaction), raw: transaction });
+                  const result = await work({
+                    ...executorOf(transaction),
+                    raw: transaction,
+                    // One request to a server, however many statements.
+                    batch: async (statements) => {
+                      await transaction.batch(
+                        statements.map(({ sql, params }) => ({ sql, args: params as InValue[] })),
+                      );
+                    },
+                  });
                   await transaction.commit();
                   return result;
                 } catch (error) {
