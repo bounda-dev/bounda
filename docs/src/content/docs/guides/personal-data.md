@@ -3103,10 +3103,11 @@ bounda restored
 too, clears the waits, and reconciles the ledger at once when there is one. It counts each restore
 once: it raises the ledger's mark before it counts, so a ledger that refuses fails it with nothing
 counted; one that failed after it counted is finished, not counted again, by running it again or by
-the next start; and run again while the database holds what handling the restore left, written to
-since or not, or after a start or a `bounda restore` that counted the same restore, it counts
-nothing more. A copy taken while it ran, restored later, is another restore: the ledger's mark tells
-it, and it is counted.
+the next start; and run again while the database stands exactly where handling the restore left it,
+or after a start or a `bounda restore` that counted the same restore, it counts nothing more. Once
+the database was written to, running it again counts another restore: a copy taken since cannot be
+told from the database it was copied from, and counting one too many is the safe side. A copy taken
+while it ran, restored later, is another restore too: the ledger's mark tells it, and it is counted.
 
 ### Old backups
 

@@ -414,8 +414,8 @@ restore recorded: 1 found so far; the background jobs start over from the copy, 
 The restore is counted, so every running instance starts its background jobs over; the holds of
 failures the copy brought back are cleared; and with a ledger, it is reconciled at once. A
 restore is counted once: run again after it failed, or after it went through while the database
-still holds what handling it left, written to since or not, it finishes or repeats the same
-declaration, and a restore the start or
+stands exactly where handling it left it, it finishes or repeats the same declaration (once the
+database was written to, it counts another), and a restore the start or
 `bounda restore` already counted is not counted again. With a ledger whose mark it cannot raise, it
 fails having counted nothing. Run it
 after `bounda forget --from` when restoring without a ledger (see

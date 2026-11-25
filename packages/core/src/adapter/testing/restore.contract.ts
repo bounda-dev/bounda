@@ -1312,6 +1312,54 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
     );
 
     it(
+      "counts, without a ledger, a restore an operator declares of a copy taken after the last one was handled",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, null, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await first.app.restored();
+        expect((await first.app.status()).restoresFound).toBe(1);
+        // Written to, copied, written to again, then put back to the copy.
+        await write(first, "bob");
+        await target.backUp();
+        await write(first, "cy");
+        await first.app.stop();
+
+        const storage = await target.restore();
+        const restored = await start(storage, null, BEFORE_ROTATION, clock);
+        await restored.app.restored();
+        expect((await restored.app.status()).restoresFound).toBe(2);
+        await restored.app.restored();
+        expect((await restored.app.status()).restoresFound).toBe(2);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts a restore the ledger tells after one was handled, though the database stands where that one left it",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const { definition, opened } = faultyLedger(target.forgetLedger);
+        const first = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        await first.app.restored();
+        expect((await first.app.status()).restoresFound).toBe(1);
+        // A forgetting committed since, which the database lost while nothing told the mark.
+        const { committed: _, ...copied } = await intentionOf(first, "ana", clock.now());
+        await opened[0]?.append([copied]);
+        await first.app.stop();
+
+        clock.advance(FORGET_LEDGER_GRACE_MS);
+        const next = await start(target.storage, definition, BEFORE_ROTATION, clock);
+        expect(await forgettings(next.app, "ana")).toEqual([copied.eventId]);
+        expect((await next.app.status()).restoresFound).toBe(2);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
       "restricts again whoever a restore brings back unrestricted, and lifts again whoever it brings back restricted, each change once, with its id",
       async () => {
         const target = await create();

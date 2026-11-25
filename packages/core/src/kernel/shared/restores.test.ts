@@ -618,7 +618,7 @@ describe("createRestoreWatch, declaring a restore", () => {
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
   });
 
-  it("declares nothing more of a database that stands where the last restore handled left it or moved on from there, and counts a copy behind the mark", async () => {
+  it("declares nothing more, for an operator, of a database that stands exactly where the last restore handled left it", async () => {
     const { checkpointStore, ledger, stream, watchOver } = await setUp();
     const first = watchOver();
     await first.start();
@@ -631,15 +631,74 @@ describe("createRestoreWatch, declaring a restore", () => {
     await next.start();
     expect(await next.declare()).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
-    // Written to and moved on, as a retry of the same declaration finds it.
-    stream.head = 3;
+    // The same database once the generation moved, the mark with it: still where it was left.
     await next.check(at(0), { active: true });
     expect(await next.declare()).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
-    // A copy of the same count and stream, taken before the generation's last move.
+    // A copy of it taken before that move stands behind the mark.
     expect(await ledger.readMark(RESTORE_MARK)).toBeGreaterThan(1);
     await checkpointStore.set(RESTORE_GENERATION, 1);
     expect(await watchOver().declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("counts an operator's declaration of a database that moved on from where the last restore handled left it", async () => {
+    const { checkpointStore, stream, watchOver } = await setUp();
+    const first = watchOver();
+    await first.start();
+    await first.declare();
+    await first.settled();
+    stream.head = 4;
+    expect(await watchOver().declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("counts, without a ledger, an operator's declaration of a copy taken after the last restore was handled", async () => {
+    const { checkpointStore } = await memory().createStorage();
+    const stream = rewritable();
+    const watchOver = () =>
+      createRestoreWatch({
+        checkpoints: checkpointStore,
+        events: stream.events,
+        marks: null,
+        logger: createRecordingLogger("omit").logger,
+      });
+    stream.append("e-1");
+    const first = watchOver();
+    await first.start();
+    await first.declare();
+    await first.settled();
+    // Written to, copied, written to again, then put back to the copy while stopped.
+    stream.append("e-2");
+    stream.append("e-3");
+    stream.restore(2);
+    const next = watchOver();
+    await next.start();
+    expect(await next.declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("counts a restore the ledger tells, though the database stands where the last restore handled left it", async () => {
+    const { checkpointStore, watchOver } = await setUp();
+    const first = watchOver();
+    await first.start();
+    await first.declare();
+    await first.settled();
+    const next = watchOver();
+    await next.start();
+    expect(await next.declare({ reconciled: true })).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("joins, for a restore the ledger tells, the one another instance counted since this one read", async () => {
+    const { checkpointStore, watchOver } = await setUp();
+    const watch = watchOver();
+    await watch.start();
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    expect(await watch.declare({ reconciled: true })).toEqual({ first: false });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    // Read since: a later one counts.
+    expect(await watch.declare({ reconciled: true })).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
   });
 

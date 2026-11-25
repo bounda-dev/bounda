@@ -773,7 +773,7 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
         const undone = reconciliation.undone();
         if (undone > 0) {
           try {
-            handled = await restores.declare();
+            handled = await restores.declare({ reconciled: true });
             settling = true;
             reconciliation.declared(undone);
             await restart(handled.first, true);

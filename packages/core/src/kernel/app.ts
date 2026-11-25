@@ -1605,7 +1605,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       if (reconciliation === undefined) return;
       const undone = reconciliation.undone();
       if (undone === 0) return;
-      await worker.restored(await restores.declare(), { reconciled: true });
+      await worker.restored(await restores.declare({ reconciled: true }), { reconciled: true });
       reconciliation.declared(undone);
       await restores.settled();
     };

@@ -34,9 +34,9 @@ export const RESTORE_DECLARING = "runtime:restore-declaring";
 
 /**
  * The database as the last restore an instance counted left it once handled, as a hash of its
- * count of restores and its newest event, at `RESTORE_HANDLED_AT`: a declaration that finds the
- * count unchanged, that event still in its place and the generation not behind the forget
- * ledger's mark declares that restore again, and counts nothing.
+ * count of restores and its newest event, at `RESTORE_HANDLED_AT`: an operator's declaration that
+ * finds the database standing exactly there, not behind the forget ledger's mark, declares that
+ * restore again, and counts nothing.
  */
 export const RESTORE_HANDLED = "runtime:restore-handled";
 
@@ -85,13 +85,14 @@ export interface RestoreWatch {
    */
   check(now: Date, options?: CheckRestoreOptions): Promise<Restored | null>;
   /**
-   * Records a restore an operator made: counted as found, so every running instance learns of
-   * it, and this one first. Raises the forget ledger's mark before it counts, so a mark that
-   * cannot be raised rejects with nothing counted. Counts a restore once: a declaration that
-   * failed part way is finished, not counted again, and one made while the database stands where
-   * the last restore handled left it is of that restore.
+   * Records a restore an operator made, or one the forget ledger tells: counted as found, so every
+   * running instance learns of it, and this one first. Raises the forget ledger's mark before it
+   * counts, so a mark that cannot be raised rejects with nothing counted. Counts a restore once: a
+   * declaration that failed part way is finished, not counted again; an operator's made while the
+   * database stands exactly where the last restore handled left it is of that restore; and one the
+   * ledger tells after another instance counted a restore this one had not read is of that one.
    */
-  declare(): Promise<Restored>;
+  declare(options?: DeclareRestoreOptions): Promise<Restored>;
   /**
    * Moves the generation once more when this instance wrote since it last did, whatever the
    * interval, and raises the forget ledger's mark to it: what a stop does, so a copy taken before
@@ -113,6 +114,14 @@ export interface RestoreWatch {
 export interface WatchedEvent {
   readonly id: string;
   readonly position: number;
+}
+
+export interface DeclareRestoreOptions {
+  /**
+   * Whether committed entries of the forget ledger the database lost tell the restore, rather
+   * than an operator.
+   */
+  readonly reconciled?: boolean;
 }
 
 export interface CheckRestoreOptions {
@@ -247,10 +256,12 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   const current = async (stored: Seen): Promise<boolean> =>
     marks === null || stored.generation >= (await marks.readMark(RESTORE_MARK));
 
-  // The restore handled last, and the database still where it left it or moved on from there.
-  const handledAlready = async (stored: Seen): Promise<boolean> => {
-    const handled = await checkpoints.get(RESTORE_HANDLED);
+  // The database exactly where handling the last restore left it: a copy of it taken later holds
+  // more, and one taken before holds less or stands behind the mark.
+  const standsWhereHandled = async (stored: Seen): Promise<boolean> => {
     const at = await checkpoints.get(RESTORE_HANDLED_AT);
+    if ((await events.lastPosition()) !== at) return false;
+    const handled = await checkpoints.get(RESTORE_HANDLED);
     return handled === (await handledMark(stored.restores, at)) && (await current(stored));
   };
 
@@ -431,15 +442,21 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         });
       return checking;
     },
-    declare: async () => {
+    declare: async ({ reconciled = false } = {}) => {
       for (;;) {
         const stored = await read();
         const declared = await checkpoints.get(RESTORE_DECLARING);
         const pending = declared > 0 && declared >= stored.restores;
         if (pending && (await current(stored))) return finish(stored, declared);
-        // The restore this instance counted and has not settled, or the last one handled while
-        // the database stands where it left it or moved on from there: the one declared.
-        if (handling || (await handledAlready(stored))) return { first: true };
+        // The restore this instance counted and has not settled: the one declared.
+        if (handling) return { first: true };
+        if (reconciled) {
+          // Another instance counted a restore since this one read: the one the entries tell.
+          if (seen !== null && stored.restores > seen.restores) {
+            seen = stored;
+            return { first: false };
+          }
+        } else if (await standsWhereHandled(stored)) return { first: true };
         // Past a declaration a copy brought back, too.
         const target = Math.max(stored.restores, declared, seen?.restores ?? 0) + 1;
         const generation = await raiseFirst(stored);
