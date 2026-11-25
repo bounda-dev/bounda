@@ -1,4 +1,4 @@
-import { type AddressInfo, connect, createServer } from "node:net";
+import { type AddressInfo, connect, createServer, type Socket } from "node:net";
 import {
   type CommandPayloadArgs,
   ConfigurationError,
@@ -84,8 +84,10 @@ let prefixes = 0;
 const counted = async () => {
   const target = new URL(url);
   let sent = 0;
+  const sockets = new Set<Socket>();
   const counter = createServer((client) => {
     const server = connect(Number(target.port), target.hostname);
+    sockets.add(client).add(server);
     client.on("data", (chunk) => {
       sent += 1;
       server.write(chunk);
@@ -97,7 +99,14 @@ const counted = async () => {
     server.on("error", () => undefined);
   });
   await new Promise<void>((resolve) => counter.listen(0, "127.0.0.1", resolve));
-  closers.push(() => new Promise((resolve) => counter.close(() => resolve())));
+  // Destroys what is still connected, so a case that fails mid-query cannot keep the proxy open.
+  closers.push(
+    () =>
+      new Promise((resolve) => {
+        counter.close(() => resolve());
+        for (const socket of sockets) socket.destroy();
+      }),
+  );
   const proxied = new URL(url);
   proxied.hostname = "127.0.0.1";
   proxied.port = String((counter.address() as AddressInfo).port);
