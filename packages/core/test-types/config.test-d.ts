@@ -510,6 +510,7 @@ describe("defineConfig", () => {
       readonly restriction?: LedgerRestriction;
       readonly redaction?: LedgerRedaction;
       readonly disclosure?: LedgerDisclosure;
+      readonly committed?: false;
     }>();
     expectTypeOf<LedgerDisclosure>().toEqualTypeOf<{
       readonly port: string;

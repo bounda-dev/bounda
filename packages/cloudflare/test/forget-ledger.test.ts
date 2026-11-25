@@ -906,3 +906,53 @@ describe("a Durable Object's forgetting and the KV ledger", () => {
     });
   });
 });
+
+describe("the KV forget ledger's writes of one entry", () => {
+  it("keeps them in turn after one that failed, so an intention never lands over its committed copy", async () => {
+    const stored = new Map<string, unknown>();
+    const puts: { readonly name: string; readonly land: (fail?: boolean) => void }[] = [];
+    const namespace = {
+      get: async (name: string) => (stored.has(name) ? "{}" : null),
+      put: (name: string, _value: string, options?: KVNamespacePutOptions) =>
+        new Promise<void>((resolve, reject) => {
+          puts.push({
+            name,
+            land: (fail = false) => {
+              if (fail) return reject(new Error("KV is down"));
+              stored.set(name, options?.metadata ?? null);
+              resolve();
+            },
+          });
+        }),
+    } as unknown as KVNamespace;
+    const until = async (done: () => boolean) => {
+      while (!done()) await new Promise((resolve) => setTimeout(resolve, 1));
+    };
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    const committed = {
+      personId: "c-1",
+      eventId: "e-1",
+      forgottenAt: minute(1),
+      categories: null,
+      reason: "requested" as const,
+    };
+    const intention = { ...committed, committed: false as const };
+    const failed = ledger.append([intention]);
+    await until(() => puts.length === 1);
+    const copied = ledger.append([committed]);
+    puts[0]?.land(true);
+    await expect(failed).rejects.toThrow("KV is down");
+    await until(() => puts.length === 2);
+    // Another intention of the same entry, while its committed copy is being written.
+    const again = ledger.append([intention]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    puts[1]?.land();
+    await copied;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    for (const put of puts.slice(2)) put.land();
+    await again;
+    const [name] = [...stored.keys()];
+    expect(stored.size).toBe(1);
+    expect(stored.get(name ?? "")).not.toHaveProperty("committed");
+  });
+});

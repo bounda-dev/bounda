@@ -61,7 +61,7 @@ describe("scheduled command worker", () => {
       logger,
       restores: {
         start: async () => null,
-        started: async () => undefined,
+        settled: async () => undefined,
         check: async () => {
           const result = finds;
           finds = null;
@@ -93,7 +93,9 @@ describe("scheduled command worker", () => {
       logger,
       restores: {
         start: async () => null,
-        started: async () => undefined,
+        settled: async () => {
+          steps.push("settled");
+        },
         check: async () => {
           steps.push("check");
           const result = finds;
@@ -115,6 +117,8 @@ describe("scheduled command worker", () => {
         nextDueAt: () => null,
         reconciled: () => true,
         status: async () => ({}) as never,
+        undone: () => 0,
+        declared: () => undefined,
         restored: async (first) => {
           steps.push(`restored ${first}`);
         },
@@ -128,6 +132,8 @@ describe("scheduled command worker", () => {
     });
     expect(await harness.worker.runOnce()).toBe(2);
     expect(steps.slice(0, 5)).toEqual(["check", "restored true", "sweep", "claim", "sweep"]);
+    // The pass settles the restore it handled, and only that one.
+    expect(steps.filter((step) => step === "settled")).toHaveLength(1);
     expect(entries.map(({ message }) => message)).toEqual([
       "the database went back to an earlier copy; background jobs start over",
     ]);
@@ -136,8 +142,95 @@ describe("scheduled command worker", () => {
     finds = found;
     await harness.worker.runOnce();
     expect(steps.filter((step) => step.startsWith("restored"))).toEqual(["restored true"]);
+    expect(steps.filter((step) => step === "settled")).toHaveLength(1);
     expect(await harness.worker.restored({ first: false })).toBe(true);
     expect(steps.at(-1)).toBe("restored false");
+  });
+
+  it("declares nothing a reconciliation found without a restore watch to count it", async () => {
+    const steps: string[] = [];
+    const { logger, entries } = createRecordingLogger("omit");
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      logger,
+      reconciliation: {
+        reconcile: async () => 0,
+        drain: async () => 0,
+        sweep: async () => 0,
+        nextDueAt: () => null,
+        reconciled: () => true,
+        status: async () => ({}) as never,
+        undone: () => 2,
+        declared: (count) => {
+          steps.push(`declared ${count}`);
+        },
+        restored: async (first) => {
+          steps.push(`restored ${first}`);
+        },
+      },
+    });
+    await harness.worker.runOnce();
+    expect(steps).toEqual([]);
+    expect(entries.filter(({ level }) => level === "error")).toEqual([]);
+  });
+
+  it("declares, once, the restore a reconciliation found from committed entries the database lost, and logs a declaration that fails", async () => {
+    const steps: string[] = [];
+    let undone = 2;
+    let failing = true;
+    const { logger, entries } = createRecordingLogger("omit");
+    const harness = await createReactiveHarness({
+      registry: orderRegistry,
+      logger,
+      restores: {
+        start: async () => null,
+        settled: async () => {
+          steps.push("settled");
+        },
+        check: async () => null,
+        declare: async (options) => {
+          expect(options).toEqual({ reconciled: true });
+          steps.push("declare");
+          if (failing) throw new Error("store is down");
+          return { first: true };
+        },
+        flush: async () => undefined,
+        found: async () => 0,
+        saw: () => undefined,
+      },
+      reconciliation: {
+        reconcile: async () => 0,
+        drain: async () => 0,
+        sweep: async () => 0,
+        nextDueAt: () => null,
+        reconciled: () => true,
+        status: async () => ({}) as never,
+        undone: () => undone,
+        declared: (count) => {
+          steps.push(`declared ${count}`);
+          undone -= count;
+        },
+        restored: async (first) => {
+          steps.push(`restored ${first}`);
+        },
+      },
+    });
+    await harness.worker.runOnce();
+    expect(steps).toEqual(["declare"]);
+    expect(entries.map(({ level, message }) => [level, message])).toEqual([
+      ["error", "the restore the forget ledger tells could not be declared; it is tried again"],
+    ]);
+    expect(entries[0]?.fields).toEqual({ errorName: "Error" });
+    failing = false;
+    steps.length = 0;
+    await harness.worker.runOnce();
+    await harness.worker.runOnce();
+    // The reconciliation that told it is what found it: it is not restarted, and a pass that
+    // handled no restore settles none.
+    expect(steps).toEqual(["declare", "declared 2", "settled"]);
+    expect(entries.at(-1)?.message).toBe(
+      "the database went back to an earlier copy; background jobs start over",
+    );
   });
 
   it("does nothing in a run that finds it paused, not even the restore check", async () => {
@@ -148,7 +241,7 @@ describe("scheduled command worker", () => {
       paused: () => paused,
       restores: {
         start: async () => null,
-        started: async () => undefined,
+        settled: async () => undefined,
         check: async () => {
           checks += 1;
           return null;

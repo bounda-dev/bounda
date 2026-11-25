@@ -264,7 +264,7 @@ describe("the forget ledger", () => {
     expect(logs).toContainEqual([
       "warn",
       "committed again forgettings the database did not hold",
-      { forgotten: 1 },
+      { forgotten: 1, intentions: 0 },
     ]);
     expect(await app.getLag()).toMatchObject({ forgetLedger: { reconciled: true } });
     await app.runUntilIdle();
@@ -633,7 +633,8 @@ describe("the forget ledger", () => {
   it("copies a forgetting from the stream once the ledger takes it, when it refused its intention", async () => {
     const storage = memory();
     const ledgerAdapter = memory();
-    let refusals = 2;
+    // The intention, the copy of the commit, and the stream's first copy.
+    let refusals = 3;
     const refusing = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
@@ -658,6 +659,11 @@ describe("the forget ledger", () => {
     expect(logs).toContainEqual([
       "warn",
       "forget ledger did not take the forgetting; it commits, and the stream copies it",
+      expect.objectContaining({ errorName: "Error" }),
+    ]);
+    expect(logs).toContainEqual([
+      "warn",
+      "forget ledger did not take a commit; the stream copies it",
       expect.objectContaining({ errorName: "Error" }),
     ]);
     await app.runUntilIdle({ maxPasses: 1 });
@@ -782,8 +788,8 @@ describe("the forget ledger", () => {
         (event) => event.type === "PersonalDataForgotten",
       ),
     ).toHaveLength(1);
-    // Once as the forgetting's intention, once more from the stream.
-    expect(appends).toEqual(["c-1", "c-1"]);
+    // Once as the forgetting's intention, once as its commit, once more from the stream.
+    expect(appends).toEqual(["c-1", "c-1", "c-1"]);
   });
 
   it("commits a forgetting once the ledger has not taken its intention in time, says so, and waits for it no more while it hangs", async () => {
@@ -1150,6 +1156,7 @@ describe("the intention a forgetting records first", () => {
       forgottenAt: START.toISOString(),
       reason: "requested",
       fingerprints: [expect.any(String)],
+      committed: false,
     });
     expect(await app.exportPersonalData("c-1")).toMatchObject({
       events: [{ data: { name: "name of c-1" } }],

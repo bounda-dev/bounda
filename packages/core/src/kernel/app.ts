@@ -3,7 +3,7 @@ import { type Adapter, isAdapter, type Storage } from "../adapter/adapter.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
 import type { DeclaredRecipient } from "../adapter/storage/recipient-store.ts";
-import { fenceError } from "../adapter/storage/tenant-fence.ts";
+import { fenceError, isFenceError } from "../adapter/storage/tenant-fence.ts";
 import type { PendingRecipientDeclaration } from "../adapter/storage/tenant-key-store.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
@@ -96,7 +96,7 @@ import {
 import { createForgetIntentions } from "./personal-data/intention.ts";
 import { keySourcesOf, openKeyHierarchy } from "./personal-data/key-hierarchy.ts";
 import { buildKeyWrapper } from "./personal-data/key-wrapper.ts";
-import { createLedgerOutbox } from "./personal-data/ledger-outbox.ts";
+import { createLedgerOutbox, ledgerEntries } from "./personal-data/ledger-outbox.ts";
 import { marksPersonalFields } from "./personal-data/marks.ts";
 import {
   createForgetLedgerReconciliation,
@@ -951,8 +951,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       logger,
     });
     // Every event this instance commits is the newest the watch knows of until it reads another.
-    const committed = (events: readonly StoredEvent[]): void => {
+    // What it commits of a forgetting, a restriction or a redaction marks its intention in the
+    // ledger committed as soon as the commit returns, ahead of the stream's copy, so a restore that
+    // loses it is found from the ledger from then on. A ledger that does not take it leaves that
+    // to the stream; one that hangs is skipped, as for an intention.
+    const committed = async (events: readonly StoredEvent[]): Promise<void> => {
       for (const event of events) restores.saw(event);
+      if (ledgerStore === undefined || ledgerStore.late()) return;
+      const entries = ledgerEntries({ events, keepForMs, now: clock.now() });
+      if (entries.length === 0) return;
+      try {
+        await ledgerStore.append(entries);
+      } catch (error) {
+        if (!isFenceError(error)) {
+          logger.warn("forget ledger did not take a commit; the stream copies it", { error });
+        }
+      }
     };
     // The declarations of recipients the starts on a frozen tenant could not write, as every read
     // sees them until they are: the tenant key record's once the key hierarchy is open.
@@ -1581,7 +1595,19 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await written.recipients.presumeThrough(await written.eventStore.lastPosition());
       }
       const forgotten = await reconciliation?.reconcile(clock.now());
+      await restores.settled();
       return typeof forgotten === "number" ? forgotten : 0;
+    };
+    // Committed entries the ledger holds and the database lost, which a reconciliation applied
+    // again while no restore was known: the database went back unseen, a restore counted once.
+    // An intention whose commit never came is applied again as asked, and is no restore.
+    const declareUndone = async (): Promise<void> => {
+      if (reconciliation === undefined) return;
+      const undone = reconciliation.undone();
+      if (undone === 0) return;
+      await worker.restored(await restores.declare({ reconciled: true }), { reconciled: true });
+      reconciliation.declared(undone);
+      await restores.settled();
     };
     // The databases that hold read models and not the stream, each restored apart from it.
     const readModelAdapter = (name: string) => adapterForReadModel({ name, config });
@@ -1922,29 +1948,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // A copy restored while the app was stopped holds less than the forget ledger's mark: the
     // holds it brought back are cleared before anything runs, and the reconciliation below forgets
     // again whom it brought back.
-    const startRestores = async (): Promise<Restored | null> => {
+    const startRestores = async (): Promise<void> => {
       const found = await restores.start();
       if (found !== null) await worker.restored(found);
-      return found;
     };
     // A frozen tenant compares its database with the ledger once it thaws, as a start does.
-    const cold = frozenAtStart ? null : await startRestores();
     if (frozenAtStart) {
       // Run before a pass of the dispatcher, which then projects what it committed again.
       deferred.push(async () => {
-        const found = await startRestores();
-        const forgotten = await reconciliation?.reconcile(clock.now());
-        // The ledger held a forgetting the database does not: a restore, whatever the mark said.
-        // A step of its own, right after this one, since a reconciliation run again forgets
-        // nobody and would no longer tell.
-        if (found === null && typeof forgotten === "number" && forgotten > 0) {
-          deferred.splice(1, 0, async () => {
-            await worker.restored(await restores.declare(), { reconciled: true });
-          });
-        }
-        await restores.started();
+        await startRestores();
+        await reconciliation?.reconcile(clock.now());
+        await restores.settled();
+        // A step of its own, right after this one, so a declaration that fails is made again
+        // alone.
+        deferred.splice(1, 0, declareUndone);
       });
-    }
+    } else await startRestores();
     // An instance that runs no worker still watches for a restore, and reconciles the ledger at
     // once when it finds one, since no pass of its own would.
     const watchForRestores = (): (() => void) => {
@@ -1998,10 +2017,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       } else if (typeof forgotten !== "number") {
         if (strict) throw new ForgetLedgerUnreconciledError(forgotten.failed);
       } else if (forgotten > 0) {
-        // The ledger held a forgetting the database does not: a restore, whatever the mark said.
-        if (cold === null) {
-          await worker.restored(await restores.declare(), { reconciled: true });
-        }
+        // The ledger held a committed forgetting the database does not: a restore, whatever the
+        // mark said.
+        await declareUndone();
         await dispatcher.catchUp("projection");
       }
       // Reconciled, or the start failed already.
@@ -2017,7 +2035,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await dispatcher.catchUp("projection");
         await readModelDatabases.check();
       }
-      await restores.started();
+      await restores.settled();
     }
     const rebuild = (
       name: string,
@@ -2172,6 +2190,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           const forgotten = (await reconciliation?.drain(clock.now())) ?? 0;
           if (forgotten > 0)
             logger.warn("committed before the freeze what the forget ledger held", { forgotten });
+          await declareUndone();
         },
       });
       freezeKeeper.recorded(frozen.frozenAt);

@@ -2,6 +2,7 @@ import { ConfigurationError } from "@bounda-dev/core";
 import type { SchemaScopeName, SchemaVersion } from "@bounda-dev/core/adapter";
 import {
   forgetLedgerCategoriesStatement,
+  forgetLedgerCommittedStatement,
   forgetLedgerDefaultTenantStatements,
   forgetLedgerDisclosureStatement,
   forgetLedgerFenceStatement,
@@ -436,6 +437,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
           await tx.run(statement, []);
         }
       },
+    },
+    {
+      version: 10,
+      migrate: (tx) => tx.run(forgetLedgerCommittedStatement(table, postgresqlDialect), []),
     },
   ],
 });

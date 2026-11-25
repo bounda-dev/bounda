@@ -717,8 +717,12 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       if (paused?.() === true) return 0;
       const restored = await restores?.check(clock.now(), { active: worked });
       let reconciledAtOnce = 0;
+      // Whether this pass handled a restore, which it then settles: one a caller outside the pass
+      // declared is settled by that caller once handled.
+      let settling = false;
       if (restored !== undefined && restored !== null && restored !== handled) {
         handled = restored;
+        settling = true;
         await restart(restored.first);
         // Before anything is claimed: the scheduled commands of whom the copy brought back go
         // with their forgetting.
@@ -763,12 +767,25 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       const rewrapped = (await rotation?.sweep(claimedAt)) ?? 0;
       const resealed = (await reseal?.sweep(claimedAt)) ?? 0;
       const forgottenAgain = (await reconciliation?.sweep(claimedAt)) ?? 0;
-      // A forgetting the ledger holds and the database does not: the database went back, though
-      // the generation did not show it, as for a copy taken just before a forget.
-      if (forgottenAgain > 0 && restores !== undefined && (restored ?? null) === null) {
-        handled = await restores.declare();
-        await restart(handled.first, true);
+      // A committed forgetting the ledger holds and the database does not: the database went
+      // back, though the generation did not show it, as for a copy taken just before a forget.
+      if (reconciliation !== undefined && restores !== undefined) {
+        const undone = reconciliation.undone();
+        if (undone > 0) {
+          try {
+            handled = await restores.declare({ reconciled: true });
+            settling = true;
+            reconciliation.declared(undone);
+            await restart(handled.first, true);
+          } catch (error) {
+            logger.error(
+              "the restore the forget ledger tells could not be declared; it is tried again",
+              { error },
+            );
+          }
+        }
       }
+      if (settling) await restores?.settled();
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
       const purgedFailures = (await failureRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;

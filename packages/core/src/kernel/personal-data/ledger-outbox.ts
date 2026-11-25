@@ -159,10 +159,12 @@ export interface CreateLedgerOutboxFunction {
 
 /**
  * Follows the global stream from its first event and appends every `PersonalDataForgotten`, every
- * change of restrictions and every redaction to the ledger, a batch at a time: the event store is the outbox, behind the intention each forgetting
- * writes before it commits, for the forgettings whose intention a ledger that is not strict did
- * not take. A batch the ledger refuses is delivered again, and so is every batch after a restored
- * database rolls the checkpoint back, which the ledger takes as the entries it holds already.
+ * change of restrictions and every redaction to the ledger, a batch at a time: the event store is
+ * the outbox, behind the intention each forgetting writes before it commits, for the forgettings
+ * whose intention a ledger that is not strict did not take. Each entry it appends is committed,
+ * which marks the intention so: one the database lacks from then on was undone by a restore. A
+ * batch the ledger refuses is delivered again, and so is every batch after a restored database
+ * rolls the checkpoint back, which the ledger takes as the entries it holds already.
  */
 export const createLedgerOutbox: CreateLedgerOutboxFunction = ({ ledger, keepForMs, clock }) => ({
   name: FORGET_LEDGER_SUBSCRIBER,

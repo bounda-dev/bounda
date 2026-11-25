@@ -5,6 +5,7 @@ import { resolvedAtOfEarlierLetters } from "../sql/dead-letters.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
 import {
   forgetLedgerCategoriesStatement,
+  forgetLedgerCommittedStatement,
   forgetLedgerDefaultTenantStatements,
   forgetLedgerDisclosureStatement,
   forgetLedgerFenceStatement,
@@ -398,6 +399,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
         for (const statement of forgetLedgerDefaultTenantStatements(table)) {
           await tx.run(statement, []);
         }
+      },
+    },
+    {
+      version: 10,
+      migrate: async (tx) => {
+        if ((await columnsOf(tx, table)).has("committed")) return;
+        await tx.run(forgetLedgerCommittedStatement(table, sqliteDialect), []);
       },
     },
   ],

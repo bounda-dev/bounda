@@ -101,6 +101,13 @@ export interface ForgetLedgerEntry {
    * holds data of has to outlive a restore, so it is told when they are forgotten.
    */
   readonly disclosure?: LedgerDisclosure;
+  /**
+   * `false` on an intention the runtime wrote before its commit, until the stream copies the
+   * commit, which leaves it out: a committed entry the database lacks was undone by a restore,
+   * an intention may never have committed. Absent, the entry is committed, as every entry written
+   * before Bounda told them apart. A disclosure's entry stays `false`: the stream copies none.
+   */
+  readonly committed?: false;
 }
 
 /**
@@ -139,7 +146,9 @@ export interface PruneForgetLedgerArgs {
 export interface ForgetLedger {
   /**
    * Adds the entries, one per `eventId`, each with every field it has: an event names one person
-   * at one time, so appending the same entries again leaves the ledger as it was.
+   * at one time, so appending the same entries again leaves the ledger as it was. The one field an
+   * entry appended again changes is `committed`: an entry appended committed, in this call or
+   * before, reads committed from then on, whatever is appended after.
    */
   append(entries: readonly ForgetLedgerEntry[]): Promise<void>;
   /**

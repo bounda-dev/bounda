@@ -781,6 +781,75 @@ describe("what the reconciliation commits again", () => {
     await expect(failing.reconciliation.drain(NOW)).rejects.toThrow("person");
   });
 
+  it("tells the committed entries it applied again while no restore was known from the intentions, until they are declared", async () => {
+    const intention = (personId: string, eventId: string): ForgetLedgerEntry => ({
+      ...entry(personId, eventId, at(1)),
+      committed: false,
+    });
+    const entries: ForgetLedgerEntry[] = [
+      entry("c-1", "e-1", at(0)),
+      intention("c-2", "e-2"),
+      entry("c-3", "e-3", at(2)),
+    ];
+    const { logger, entries: logs } = createRecordingLogger();
+    const { reconciliation } = await setUp({ entries, persons: ["c-1", "c-2", "c-3"], logger });
+    expect(reconciliation.undone()).toBe(0);
+    expect(await reconciliation.reconcile(NOW)).toBe(3);
+    expect(reconciliation.undone()).toBe(2);
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: "committed again forgettings the database did not hold",
+        fields: { forgotten: 3, intentions: 1 },
+      }),
+    );
+    reconciliation.declared(1);
+    expect(reconciliation.undone()).toBe(1);
+    reconciliation.declared(5);
+    expect(reconciliation.undone()).toBe(0);
+  });
+
+  it("counts nothing undone once a restore is known, nor what a drain applies of intentions", async () => {
+    const entries: ForgetLedgerEntry[] = [entry("c-1", "e-1", at(0))];
+    const { reconciliation } = await setUp({ entries, persons: ["c-1", "c-2", "c-3"] });
+    await reconciliation.restored(true);
+    expect(await reconciliation.reconcile(NOW)).toBe(1);
+    expect(reconciliation.undone()).toBe(0);
+    entries.push({ ...entry("c-2", "e-2", at(1)), committed: false }, entry("c-3", "e-3", at(2)));
+    expect(await reconciliation.drain(NOW)).toBe(2);
+    expect(reconciliation.undone()).toBe(1);
+    // A restore found since explains what was undone before it.
+    await reconciliation.restored(false);
+    expect(reconciliation.undone()).toBe(0);
+  });
+
+  it("counts a restriction and a redaction the database lost as undone, and their intentions not", async () => {
+    const restriction = (eventId: string, committed: boolean): ForgetLedgerEntry => ({
+      ...entry("c-1", eventId, at(eventId === "r-1" ? 0 : 1)),
+      restriction: {
+        type: "ProcessingRestricted",
+        payload: {
+          personId: "c-1",
+          ground: "accuracy-contested",
+          categories: null,
+          restrictions: [{ ground: "accuracy-contested", categories: null, since: at(0) }],
+        },
+      },
+      ...(committed ? {} : { committed: false as const }),
+    });
+    for (const [committed, undone] of [
+      [true, 1],
+      [false, 0],
+    ] as const) {
+      const { reconciliation } = await setUp({
+        entries: [restriction("r-1", committed)],
+        persons: ["c-1"],
+      });
+      expect(await reconciliation.reconcile(NOW)).toBe(1);
+      expect(reconciliation.undone()).toBe(undone);
+    }
+  });
+
   it("is due at the sooner of a ledger's delay and an entry's grace", async () => {
     const young = new Date(NOW.getTime() - 1).toISOString();
     const late = await setUp({ entries: [entry("c-1", "e-1", young)], visibilityDelayMs: 1_000 });
@@ -1125,7 +1194,10 @@ describe("forgetAgain", () => {
     const unrecorded = entry("c-2", "e-2", at(4));
     expect(await run(whole)).toMatchObject({ event: { id: "e-1", timestamp: at(3) } });
     expect(await run(unrecorded)).toMatchObject({ event: { id: "e-2" } });
-    expect(recorded).toEqual([whole, unrecorded]);
+    expect(recorded).toEqual([
+      { ...whole, committed: false },
+      { ...unrecorded, committed: false },
+    ]);
     expect(recorded[1]).not.toHaveProperty("fingerprints");
   });
 
@@ -1144,6 +1216,7 @@ describe("forgetAgain", () => {
         forgottenAt: NOW.toISOString(),
         reason: "requested",
         fingerprints: ["f-c-1"],
+        committed: false,
       },
     ]);
   });

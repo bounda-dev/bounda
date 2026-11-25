@@ -89,6 +89,7 @@ describe("the intentions of forgetting", () => {
         forgottenAt: NOW.toISOString(),
         reason: "retention",
         fingerprints: ["f-1", "f-2"],
+        committed: false,
       },
       {
         personId: "c-2",
@@ -97,6 +98,7 @@ describe("the intentions of forgetting", () => {
         forgottenAt: NOW.toISOString(),
         reason: "retention",
         fingerprints: [],
+        committed: false,
       },
       {
         personId: "c-1",
@@ -105,6 +107,7 @@ describe("the intentions of forgetting", () => {
         forgottenAt: NOW.toISOString(),
         reason: "retention",
         fingerprints: ["f-2"],
+        committed: false,
       },
       {
         personId: "c-1",
@@ -113,6 +116,7 @@ describe("the intentions of forgetting", () => {
         forgottenAt: NOW.toISOString(),
         reason: "retention",
         fingerprints: ["f-2", "f-3"],
+        committed: false,
       },
     ]);
   });
@@ -320,6 +324,7 @@ describe("the intentions of forgetting", () => {
         forgottenAt: NOW.toISOString(),
         reason: "requested",
         disclosure: ledgered,
+        committed: false,
       },
     ]);
     expect(disclosureEntryId(disclosure)).toBe("f8d89ec8-eb75-5ec1-8312-46f9fc212492");

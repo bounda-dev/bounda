@@ -6,9 +6,10 @@ export interface WithCommittedEventsArgs {
   readonly storage: Storage;
   /**
    * Called with the events of each append once they committed: at once outside a transaction,
-   * after the transaction otherwise, and never for one that rolled back.
+   * after the transaction otherwise, and never for one that rolled back. The append or the
+   * transaction resolves once it has.
    */
-  readonly committed: (events: readonly StoredEvent[]) => void;
+  readonly committed: (events: readonly StoredEvent[]) => void | Promise<void>;
 }
 
 export interface WithCommittedEventsFunction {
@@ -17,11 +18,11 @@ export interface WithCommittedEventsFunction {
 
 const appendingTo = (
   eventStore: EventStore,
-  appended: (events: readonly StoredEvent[]) => void,
+  appended: (events: readonly StoredEvent[]) => void | Promise<void>,
 ): EventStore => ({
   append: async (args) => {
     const result = await eventStore.append(args);
-    appended(result.events);
+    await appended(result.events);
     return result;
   },
   load: (args) => eventStore.load(args),
@@ -47,10 +48,12 @@ export const withCommittedEvents: WithCommittedEventsFunction = ({ storage, comm
       appended.length = 0;
       return work({
         ...transaction,
-        eventStore: appendingTo(transaction.eventStore, (events) => appended.push(...events)),
+        eventStore: appendingTo(transaction.eventStore, (events) => {
+          appended.push(...events);
+        }),
       });
     });
-    if (appended.length > 0) committed(appended);
+    if (appended.length > 0) await committed(appended);
     return result;
   },
 });
