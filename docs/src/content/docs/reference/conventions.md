@@ -28,7 +28,7 @@ Names are kebab-case. `<x>` is a name you choose.
 | `app/domain/<aggregate>/processes/<process>/on-<event>.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/at-<deadline>.ts`, `at-timeout.ts` | `handler` |
 | `app/domain/<aggregate>/processes/<process>/<other-aggregate>/on-<event>.ts` | `handler`, for that aggregate's event |
-| `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes; without it, the app's logger |
+| `app/audit.ts` | optional: `onPersonalDataAccess`, typed as `OnPersonalDataAccess`, where the [access log](/guides/personal-data/#who-opened-what) goes, and `onHostRejection`, typed as `OnHostRejection`, where the [host log](/guides/personal-data/#refused-requests) goes; without it, the host's logger |
 | `app/personal-data.ts` | optional: `categories`, `satisfies PersonalData.Categories`, the [categories of personal data](/guides/personal-data/#categories) with their basis, retention, purposes, sources, any special or criminal data, the purposes the GDPR has rules for and an exemption from erasure they claim, and `automatedDecisions`, `satisfies PersonalData.AutomatedDecisions`, `{}` for none; without it, every personal field is in the default category |
 | `app/read/<read-model>/view.ts` | `fields`; `.person()` on at most one field, `.personal()` on those that hold that person's data, `.notPersonal()` on those that hold none; `holdsPersonalData = false` (optional) to state it keeps nothing of anyone's data though it projects events with personal fields |
 | `app/read/<read-model>/projections/<aggregate>/<event>.ts` | `project`; `on` optional |
@@ -89,8 +89,8 @@ object or keeps keys it does not declare, naming each
 not export `returnsPersonalData`, or exports one that does not fit the port
 ([personal data a port returns](/guides/calling-the-outside-world/#personal-data-a-port-returns)).
 The app refuses to start on the same rules, with `ConfigurationError`. The generated registry is checked against
-`Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`
-fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
+`Registry`, so an `app/audit.ts` whose `onPersonalDataAccess` is not an `OnPersonalDataAccess`,
+or whose `onHostRejection` is not an `OnHostRejection`, fails to compile there. `PersonalDataDeclaration` fails to compile while `app/personal-data.ts`
 declares a category named `default`, or one without a basis Bounda knows, a retention, a purpose
 or a source, or with special or criminal data without a kind, condition or authority Bounda knows,
 or with a purpose in `processedFor` or an `erasureExemption` Bounda does not know; special data on
@@ -130,7 +130,7 @@ Some rules need the modules themselves, so the app checks them when it is create
   `.person()`, or keeps a field in the clear with `.personal({ clear: true })` and does not project
   `PersonalDataForgotten`; one that seals its primary key, or names a field like the columns the
   runtime keeps beside personal ones, ending in `__key` or `__index`;
-- an `app/audit.ts` that does not export `onPersonalDataAccess` as a function;
+- an `app/audit.ts` that does not export `onPersonalDataAccess` and `onHostRejection` as functions;
 - a port that declares a `recipient` without a name, a kind the GDPR names, an ISO 3166-1 country,
   the safeguard a transfer out of the European Economic Area rests on (and none within it) or
   categories the app has, or without one of its six handlers; one that has no implementation; a

@@ -6,7 +6,9 @@ import {
   ConfigurationError,
   type Consistency,
   createApp,
+  type HostRejection,
   idempotencyKeyFor,
+  type OnHostRejectionArgs,
   type Registry,
 } from "@bounda-dev/core";
 import { memory } from "@bounda-dev/core/memory";
@@ -167,6 +169,104 @@ describe("createBounda on Cloudflare", () => {
         tenant: () => "acme",
       }),
     ).toThrow(ConfigurationError);
+  });
+});
+
+describe("createBounda on Cloudflare: the host log", () => {
+  const requestOf = (headers: Record<string, string>) => {
+    const context = new RouterContextProvider();
+    const url = new URL("http://localhost/");
+    return {
+      context,
+      args: {
+        request: new Request(url, { headers }),
+        url,
+        pattern: "/w/:workspace",
+        params: {},
+        context,
+      },
+    };
+  };
+
+  it("records each request refused for its actor or its tenant in app/audit.ts, with the Worker's env", async () => {
+    env.STORE = storeNamespace().namespace;
+    const records: OnHostRejectionArgs[] = [];
+    const { bounda, boundaMiddleware } = createBounda({
+      config: { storage: cloudflare() },
+      tenant: ({ request }) => request.headers.get("x-tenant") ?? "",
+      actor: ({ request }) => {
+        const user = request.headers.get("x-user");
+        if (user === null) throw new Response(null, { status: 401 });
+        return user;
+      },
+      registry: {
+        audit: {
+          onPersonalDataAccess: () => {},
+          onHostRejection: (args) => {
+            records.push(args);
+          },
+        },
+      },
+    });
+    const next = async () => undefined;
+    await expect(boundaMiddleware(requestOf({}).args, next)).rejects.toBeInstanceOf(Response);
+    await expect(boundaMiddleware(requestOf({ "x-user": "" }).args, next)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
+    const unnamed = requestOf({ "x-user": "user-1" });
+    await boundaMiddleware(unnamed.args, next);
+    await expect(unnamed.context.get(bounda).getLag()).rejects.toThrow(ConfigurationError);
+    await expect(unnamed.context.get(bounda).status()).rejects.toThrow(ConfigurationError);
+
+    const refusal = (reason: HostRejection["reason"]) => ({
+      rejection: {
+        at: expect.any(String),
+        tenant: null,
+        reason,
+        target: "/w/:workspace",
+        actor: null,
+      },
+      env,
+      logger: expect.anything(),
+    });
+    expect(records).toEqual([
+      refusal("actor-unresolved"),
+      refusal("actor-invalid"),
+      refusal("tenant-unresolved"),
+    ]);
+  });
+
+  it("goes to the logger at info without app/audit.ts", async () => {
+    env.STORE = storeNamespace().namespace;
+    const entries: unknown[][] = [];
+    const bounda = createBounda({
+      config: { storage: cloudflare() },
+      tenant: () => "acme",
+      actor: () => {
+        throw new Response(null, { status: 401 });
+      },
+      logger: {
+        debug: () => undefined,
+        info: (...entry: unknown[]) => void entries.push(entry),
+        warn: () => undefined,
+        error: () => undefined,
+      },
+    });
+    await expect(
+      bounda.boundaMiddleware(requestOf({}).args, async () => undefined),
+    ).rejects.toBeInstanceOf(Response);
+    expect(entries).toEqual([
+      [
+        "request refused",
+        {
+          at: expect.any(String),
+          tenant: null,
+          reason: "actor-unresolved",
+          target: "/w/:workspace",
+          actor: null,
+        },
+      ],
+    ]);
   });
 });
 

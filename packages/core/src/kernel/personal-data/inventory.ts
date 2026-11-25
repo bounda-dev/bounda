@@ -155,7 +155,8 @@ export interface InventoryRecipient {
  * (`subscriber-failures`), what went to each recipient (`disclosures`), the master key that
  * wraps every tenant's key (`master-key`), the tenant's key that every personal key is wrapped
  * under, kept apart (`tenant-keys`), the forgettings recorded
- * outside the database (`forget-ledger`) and the accesses handed to `app/audit.ts` (`access-log`).
+ * outside the database (`forget-ledger`), the accesses handed to `app/audit.ts` (`access-log`) and
+ * the requests refused before the app served them, handed there too (`host-log`).
  */
 export type InventoryRecordName =
   | "personal-keys"
@@ -168,19 +169,20 @@ export type InventoryRecordName =
   | "master-key"
   | "tenant-keys"
   | "forget-ledger"
-  | "access-log";
+  | "access-log"
+  | "host-log";
 
 export interface InventoryRecord {
   readonly name: InventoryRecordName;
   /**
    * The name of the adapter of the database that keeps it, `"key-wrapper"` for the master key,
    * `"tenant-keys"` for the tenant key store, `"forget-ledger"` for the ledger and
-   * `"app/audit.ts"` for the access log.
+   * `"app/audit.ts"` for the access log and the host log.
    */
   readonly where: string;
   /**
    * Where it is kept, as the `location` of its adapter or store declares it; `null` when it
-   * declares none, and for the access log, which the app keeps where it chooses.
+   * declares none, and for the access log and the host log, which the app keeps where it chooses.
    */
   readonly location: string | null;
   /**
@@ -511,7 +513,10 @@ const recordsOf = (
         ]),
     ...(registry.audit === undefined
       ? []
-      : [{ name: "access-log" as const, where: "app/audit.ts", location: null, keptFor: null }]),
+      : [
+          { name: "access-log" as const, where: "app/audit.ts", location: null, keptFor: null },
+          { name: "host-log" as const, where: "app/audit.ts", location: null, keptFor: null },
+        ]),
   ];
 };
 

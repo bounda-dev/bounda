@@ -358,7 +358,7 @@ const registryWithDoubles = (
   });
   return {
     ...registry,
-    audit: { onPersonalDataAccess: onAccess },
+    audit: { onPersonalDataAccess: onAccess, onHostRejection: () => {} },
     aggregates: Object.fromEntries(
       Object.entries(registry.aggregates).map(([name, entry]) => [name, withPorts(name, entry)]),
     ),

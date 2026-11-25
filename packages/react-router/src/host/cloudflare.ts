@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { hostLogger, workersLogger } from "@bounda-dev/cloudflare";
 import {
   type AppRegistry,
   ConfigurationError,
@@ -11,6 +12,7 @@ import { cloudflareClients, type TenantFunction } from "../cloudflare/clients.ts
 import { cloudflareHandleError } from "../cloudflare/handle-error.ts";
 import { serve } from "../cloudflare/serve.ts";
 import type { Bounda } from "../create-bounda.ts";
+import { requestRefusals } from "../host-log.ts";
 import type { CreateHostArgs, CreateHostFunction } from "./args.ts";
 
 export { failure } from "../failure.ts";
@@ -29,6 +31,7 @@ export type { CreateHostArgs, CreateHostFunction } from "./args.ts";
  * rejects with one without `app/tenant.ts`, or as `createBounda` does.
  */
 export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>({
+  registry,
   importConfig,
   importTenant,
   importActor,
@@ -38,8 +41,8 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
   // What `handleError` reads: it cannot wait for an import, which the Worker may cancel once the
   // response is sent, so until the first request has imported it only the `env` decides.
   let imported: Config | undefined;
-  return serve<R>(
-    async () => {
+  return serve<R>({
+    load: async () => {
       if (importTenant === undefined) {
         throw new ConfigurationError(
           'On Cloudflare every request reaches the store of its tenant: create app/tenant.ts and export tenant from it, a function of the request that names the store, such as () => "default" for a single one',
@@ -64,7 +67,9 @@ export const createHost: CreateHostFunction = <R extends Registry = AppRegistry>
         consistency,
       });
     },
-    cloudflareHandleError({ config: () => imported }),
-    importActor === undefined ? undefined : actorOfModule(importActor),
-  );
+    handleErrorOf: cloudflareHandleError({ config: () => imported }),
+    refusalsOf: (host) =>
+      requestRefusals({ registry, env, logger: () => hostLogger(host, workersLogger) }),
+    actor: importActor === undefined ? undefined : actorOfModule(importActor),
+  });
 };
