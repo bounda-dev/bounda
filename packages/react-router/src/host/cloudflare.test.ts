@@ -151,6 +151,35 @@ describe("createHost under the workerd condition", () => {
     expect(store.calls).toEqual([]);
   });
 
+  it("records the requests it refuses as one JSON line each without app/audit.ts", async () => {
+    const written: unknown[][] = [];
+    const spy = vi.spyOn(console, "info").mockImplementation((...args) => void written.push(args));
+    try {
+      const { bounda, boundaMiddleware } = createHost({
+        registry,
+        importConfig: async () => ({ default: { storage: cloudflare() } }),
+        importTenant: async () => ({ tenant: () => "" }),
+        consistency: "eventual",
+      });
+      const { context, args } = middlewareArgs();
+      await boundaMiddleware(args, async () => undefined);
+      await expect(context.get(bounda).getLag()).rejects.toThrow(ConfigurationError);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written.map(([line]) => JSON.parse(String(line)))).toEqual([
+      {
+        level: "info",
+        message: "request refused",
+        at: expect.any(String),
+        tenant: null,
+        reason: "tenant-unresolved",
+        target: "/",
+        actor: null,
+      },
+    ]);
+  });
+
   it("rejects a request when the project has no app/tenant.ts", async () => {
     const { boundaMiddleware } = createHost({
       registry,
