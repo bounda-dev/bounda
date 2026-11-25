@@ -2381,15 +2381,16 @@ app starts with the file to itself. While another connection has it open, anothe
 this process closed and libSQL has not let go of yet, it opens as it is and the app logs that it
 left it so; from then on the worker tries again through the app's own connection every
 `FILE_ENCRYPTION_RETRY_MS` (a minute), logs a warning each time it finds the file still held, and
-encrypts it as soon as no other connection has it open, as the next start does. Until then `app.status().files` and `bounda status` say which file is still
-`"clear"` or under an `"earlier"` key, `bounda rekey` encrypts it once the other processes have let
-go, exiting with `2` while one still holds it, and `forgetTenant` refuses while a file is in the
-clear, since forgetting would leave it readable. A start that stops halfway leaves
-`<file>.bounda-encrypting` beside the file, naming the key it was encrypting from: leave it, and the
-next start opens the file under that key, which rolls back what was half written, and finishes. A copy restored under
-another path opens under the key of the file it copies, and is encrypted under its own. A file in
-the clear that another tenant's database is bound to is left as it is, and the start fails; so does
-a new file whose tenant's record keeps another database's keys alone.
+encrypts it as soon as no other connection has it open, as the next start does. Until then
+`app.status().files` and `bounda status` say which file is still `"clear"` or under an `"earlier"`
+key, `bounda rekey` encrypts it once the other processes have let go, exiting with `2` while one
+still holds it, and `forgetTenant` refuses while a file is in the clear, since forgetting would
+leave it readable. A start that stops halfway leaves `<file>.bounda-encrypting` beside the file,
+naming the key it was encrypting from: leave it, and the next start opens the file under that key,
+which rolls back what was half written, and finishes. A copy restored under another path opens under
+the key of the file it copies, and is encrypted under its own. A file in the clear that another
+tenant's database is bound to is left as it is, and the start fails; so does a new file whose
+tenant's record keeps another database's keys alone.
 
 [Rotating the tenant's key](#rotating-the-tenants-key) gives each file a new key too: the app that
 rotates moves the file under it as soon as no other connection holds the file, and the others
