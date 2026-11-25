@@ -1,4 +1,5 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
+import type { SchemaScopeName } from "../adapter.ts";
 import type { SqlDatabase, SqlTransaction } from "../sql/database.ts";
 import { resolvedAtOfEarlierLetters } from "../sql/dead-letters.ts";
 import { sqliteDialect } from "../sql/dialect.ts";
@@ -8,16 +9,19 @@ import {
   forgetLedgerDefaultTenantStatements,
   forgetLedgerDisclosureStatement,
   forgetLedgerFenceStatement,
+  forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
 } from "../sql/forget-ledger.ts";
-import { quoteIdentifier } from "../sql/identifiers.ts";
+import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { indexKeysTableStatement } from "../sql/index-key-store.ts";
 import {
+  type MigrateSchemasArgs,
   migrateSchemas,
+  replaySchemas,
   SCHEMA_SCOPES,
   type SchemaScope,
   schemaMigrationsTableFor,
@@ -31,12 +35,16 @@ import { tenantKeysTableStatement } from "../sql/tenant-key-store.ts";
 import {
   checkpointTableStatement,
   deadLetterReadsStatements,
+  latestStorageTablesStatements,
+  personalKeysIndexStatements,
+  personalKeysTableStatement,
   personRowsBackfillStatements,
   restrictedPersonsTableStatements,
   restrictionStatements,
   type StorageTables,
   statePersonIndexStatement,
   storageSchemaStatements,
+  storageTablesFor,
   subscriberFailuresTableStatement,
 } from "./schema.ts";
 import { busyRetryDelay, pause } from "./wal.ts";
@@ -154,9 +162,6 @@ const adoptStorageTables = async (tx: SqlTransaction, tables: StorageTables): Pr
   for (const statement of personRowsBackfillStatements(tables)) await tx.run(statement, []);
 };
 
-const keysIndex = (tables: StorageTables, suffix: string): string =>
-  quoteIdentifier(`${tables.personalKeys.slice(1, -1)}_${suffix}_idx`);
-
 /**
  * The third migration: a key per person and category instead of one per person, each named by
  * its fingerprint, with the person's last activity on it and whether a forgetting kept it under a
@@ -171,33 +176,11 @@ const adoptCategories = async (tx: SqlTransaction, tables: StorageTables): Promi
   // A database migrated before, whose versions were lost, has the keys as this leaves them.
   const rebuilt = (await columnsOf(tx, keys)).has("category");
   const statements = [
-    `CREATE TABLE ${next} (
-    "person" TEXT NOT NULL,
-    "category" TEXT NOT NULL,
-    "fingerprint" TEXT NOT NULL,
-    "key" TEXT NOT NULL,
-    "kid" TEXT,
-    "held_until" TEXT,
-    "attempts" INTEGER NOT NULL DEFAULT 0,
-    "last_active_at" TEXT,
-    "retained_since" TEXT,
-    "forget_held_until" TEXT,
-    "forget_attempts" INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY ("person", "fingerprint")
-  )`,
+    personalKeysTableStatement(next),
     `INSERT INTO ${next} ("person", "category", "fingerprint", "key", "kid", "held_until", "attempts", "last_active_at") SELECT "k"."person", 'default', "k"."fingerprint", "k"."key", "k"."kid", "k"."held_until", "k"."attempts", (SELECT "p"."last_active_at" FROM ${tables.persons} AS "p" WHERE "p"."person" = "k"."person" AND "p"."forgotten_at" IS NULL) FROM ${keys} AS "k"`,
     `DROP TABLE ${keys}`,
     `ALTER TABLE ${next} RENAME TO ${keys}`,
-    // One key in force per person and category, which `add` resolves its race on.
-    `CREATE UNIQUE INDEX ${keysIndex(tables, "in_force")} ON ${keys} ("person", "category") WHERE "retained_since" IS NULL`,
-    // What the rotation of the wrapping key reads: the keys still under an old one.
-    `CREATE INDEX ${keysIndex(tables, "kid")} ON ${keys} ("kid", "person")`,
-    // When the rotation is next due while every key it has left is held.
-    `CREATE INDEX ${keysIndex(tables, "held")} ON ${keys} ("held_until") WHERE "held_until" IS NOT NULL`,
-    // What a category's retention reads, least recently active first.
-    `CREATE INDEX ${keysIndex(tables, "due")} ON ${keys} ("category", "last_active_at") WHERE "last_active_at" IS NOT NULL`,
-    // The keys a forgetting kept, which no legal obligation may keep any more.
-    `CREATE INDEX ${keysIndex(tables, "retained")} ON ${keys} ("retained_since") WHERE "retained_since" IS NOT NULL`,
+    ...personalKeysIndexStatements(tables),
   ];
   for (const statement of rebuilt ? [] : statements) await tx.run(statement, []);
   await tx.run(forgettings, []);
@@ -209,6 +192,33 @@ export interface SqliteStorageScopeFunction {
 
 export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.storage,
+  latest: {
+    tables: [
+      tables.events,
+      tables.inbox,
+      tables.deadLetters,
+      tables.scheduledCommands,
+      tables.idempotencyKeys,
+      tables.persons,
+      tables.snapshots,
+      tables.personRows,
+      tables.subscriberFailures,
+      tables.personalKeys,
+      tables.restrictions,
+      tables.indexKeys,
+      tables.disclosures,
+      tables.recipients,
+      tables.tenancy,
+      tables.supersededKeys,
+    ],
+    statements: [
+      ...latestStorageTablesStatements(tables),
+      indexKeysTableStatement(tables.indexKeys),
+      ...recipientTablesStatements(tables),
+      tenancyTableStatement(tables.tenancy),
+      ...supersededKeysTableStatements(tables.supersededKeys),
+    ],
+  },
   migrations: [
     { version: 1, migrate: (tx) => adoptStorageTables(tx, tables) },
     {
@@ -298,6 +308,19 @@ export interface SqliteCheckpointsScopeFunction {
 
 export const sqliteCheckpointsScope: SqliteCheckpointsScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.checkpoints,
+  latest: {
+    tables: [
+      tables.checkpoints,
+      tables.restrictedPersons,
+      tables.restrictedPositions,
+      tables.tenantFence,
+    ],
+    statements: [
+      checkpointTableStatement(tables.checkpoints),
+      ...restrictedPersonsTableStatements(tables),
+      tenantFenceTableStatement(tables.tenantFence),
+    ],
+  },
   migrations: [
     { version: 1, migrate: (tx) => tx.run(checkpointTableStatement(tables.checkpoints), []) },
     {
@@ -324,6 +347,7 @@ export interface SqliteForgetLedgerScopeFunction {
 
 export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) => ({
   scope: SCHEMA_SCOPES.forgetLedger,
+  latest: forgetLedgerLatestSchema(table, sqliteDialect),
   migrations: [
     {
       version: 1,
@@ -393,6 +417,7 @@ export interface SqliteTenantKeysScopeFunction {
 
 export const sqliteTenantKeysScope: SqliteTenantKeysScopeFunction = (table) => ({
   scope: SCHEMA_SCOPES.tenantKeys,
+  latest: { tables: [table], statements: [tenantKeysTableStatement(table)] },
   migrations: [{ version: 1, migrate: (tx) => tx.run(tenantKeysTableStatement(table), []) }],
 });
 
@@ -419,31 +444,68 @@ export interface MigrateSqliteFunction {
   (args: MigrateSqliteArgs): Promise<void>;
 }
 
-/**
- * `migrateSchemas` on SQLite, whose write transaction is the lock. Another process migrating a
- * large database can hold it past the busy timeout, so a busy write is tried again until it runs.
- */
-export const migrateSqlite: MigrateSqliteFunction = ({
+const tablesIn = async (executor: SqlExecutor): Promise<ReadonlySet<string>> =>
+  new Set(
+    (await executor.all(`SELECT "name" FROM sqlite_master WHERE "type" = 'table'`, [])).map((row) =>
+      String(row.name),
+    ),
+  );
+
+// SQLite's write transaction is the lock. Another process migrating a large database can hold it
+// past the busy timeout, so a busy write is tried again until it runs.
+const sqliteArgs = ({
   db,
   isBusy = () => false,
   prefix,
   scopes,
   sleep = pause,
-}) =>
-  migrateSchemas({
-    db,
-    dialect: sqliteDialect,
-    table: schemaMigrationsTableFor(prefix),
-    scopes,
-    locked: async (work) => {
-      for (;;) {
-        try {
-          return await db.write(work);
-        } catch (error) {
-          if (!isBusy(error)) throw error;
-          await sleep(busyRetryDelay());
-        }
+}: MigrateSqliteArgs): MigrateSchemasArgs => ({
+  db,
+  dialect: sqliteDialect,
+  table: schemaMigrationsTableFor(prefix),
+  scopes,
+  locked: async (work) => {
+    for (;;) {
+      try {
+        return await db.write(work);
+      } catch (error) {
+        if (!isBusy(error)) throw error;
+        await sleep(busyRetryDelay());
       }
-    },
-    isMissingTable: isMissingSqliteTable,
-  });
+    }
+  },
+  isMissingTable: isMissingSqliteTable,
+  tablesIn,
+});
+
+/**
+ * `migrateSchemas` on SQLite.
+ */
+export const migrateSqlite: MigrateSqliteFunction = (args) => migrateSchemas(sqliteArgs(args));
+
+/**
+ * `replaySchemas` on SQLite, as `migrateSqlite` would bring forward a database an earlier version
+ * left behind.
+ */
+export const replaySqlite: MigrateSqliteFunction = (args) => replaySchemas(sqliteArgs(args));
+
+export interface SqliteSchemaScopesForFunction {
+  (prefix: string): Readonly<Record<SchemaScopeName, SchemaScope>>;
+}
+
+/**
+ * Every scope an adapter's database holds under `prefix`.
+ */
+export const sqliteSchemaScopesFor: SqliteSchemaScopesForFunction = (prefix) => {
+  const tables = storageTablesFor(prefix);
+  return {
+    storage: sqliteStorageScope(tables),
+    checkpoints: sqliteCheckpointsScope(tables),
+    "forget-ledger": sqliteForgetLedgerScope(
+      quoteIdentifier(storageTableNameFor({ prefix, table: "forgetLedger" })),
+    ),
+    "tenant-keys": sqliteTenantKeysScope(
+      quoteIdentifier(storageTableNameFor({ prefix, table: "tenantKeys" })),
+    ),
+  };
+};

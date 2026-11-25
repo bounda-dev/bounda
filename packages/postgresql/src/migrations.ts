@@ -1,22 +1,25 @@
 import { ConfigurationError } from "@bounda-dev/core";
-import type { SchemaVersion } from "@bounda-dev/core/adapter";
+import type { SchemaScopeName, SchemaVersion } from "@bounda-dev/core/adapter";
 import {
   forgetLedgerCategoriesStatement,
   forgetLedgerCommittedStatement,
   forgetLedgerDefaultTenantStatements,
   forgetLedgerDisclosureStatement,
   forgetLedgerFenceStatement,
+  forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
   indexKeysTableStatement,
+  type MigrateSchemasArgs,
   migrateSchemas,
   postgresqlDialect,
   quoteIdentifier,
   readSchemaVersions,
   recipientTablesStatements,
+  replaySchemas,
   resolvedAtOfEarlierLetters,
   SCHEMA_SCOPES,
   type SchemaScope,
@@ -32,6 +35,8 @@ import type { PostgresqlDatabase } from "./database.ts";
 import {
   checkpointTableStatement,
   inSchema,
+  latestStorageTablesStatements,
+  personalKeysCategoryIndexStatements,
   readPersonsIndexStatement,
   restrictedPersonsTableStatements,
   restrictionStatements,
@@ -171,9 +176,6 @@ const adoptStorageTables = async (
   for (const statement of storageSchemaStatements(tables)) await tx.run(statement, []);
 };
 
-const keysIndex = (tables: StorageTables, suffix: string): string =>
-  quoteIdentifier(`${tables.personalKeys.slice(1, -1)}_${suffix}_idx`);
-
 /**
  * The third migration: a key per person and category instead of one per person, each named by
  * its fingerprint, with the person's last activity on it and whether a forgetting kept it under a
@@ -207,12 +209,7 @@ const adoptCategories = async (
         ]),
     `ALTER TABLE ${keys} ADD PRIMARY KEY ("person", "fingerprint")`,
     `UPDATE ${keys} AS "k" SET "last_active_at" = "p"."last_active_at" FROM ${tables.persons} AS "p" WHERE "p"."person" = "k"."person" AND "p"."forgotten_at" IS NULL`,
-    // One key in force per person and category, which `add` resolves its race on.
-    `CREATE UNIQUE INDEX ${keysIndex(tables, "in_force")} ON ${keys} ("person", "category") WHERE "retained_since" IS NULL`,
-    // What a category's retention reads, least recently active first.
-    `CREATE INDEX ${keysIndex(tables, "due")} ON ${keys} ("category", "last_active_at") WHERE "last_active_at" IS NOT NULL`,
-    // The keys a forgetting kept, which no legal obligation may keep any more.
-    `CREATE INDEX ${keysIndex(tables, "retained")} ON ${keys} ("retained_since") WHERE "retained_since" IS NOT NULL`,
+    ...personalKeysCategoryIndexStatements(tables),
     forgettings,
   ];
   for (const statement of statements) await tx.run(statement, []);
@@ -229,6 +226,32 @@ export interface PostgresqlStorageScopeFunction {
 
 export const postgresqlStorageScope: PostgresqlStorageScopeFunction = ({ schema, tables }) => ({
   scope: SCHEMA_SCOPES.storage,
+  latest: {
+    tables: [
+      tables.events,
+      tables.inbox,
+      tables.deadLetters,
+      tables.scheduledCommands,
+      tables.idempotencyKeys,
+      tables.personalKeys,
+      tables.persons,
+      tables.snapshots,
+      tables.subscriberFailures,
+      tables.restrictions,
+      tables.indexKeys,
+      tables.disclosures,
+      tables.recipients,
+      tables.tenancy,
+      tables.supersededKeys,
+    ],
+    statements: [
+      ...latestStorageTablesStatements(tables),
+      indexKeysTableStatement(tables.indexKeys),
+      ...recipientTablesStatements(tables),
+      tenancyTableStatement(tables.tenancy),
+      ...supersededKeysTableStatements(tables.supersededKeys),
+    ],
+  },
   migrations: [
     { version: 1, migrate: (tx) => adoptStorageTables(tx, schema, tables) },
     {
@@ -319,6 +342,7 @@ export interface PostgresqlTenantKeysScopeFunction {
 
 export const postgresqlTenantKeysScope: PostgresqlTenantKeysScopeFunction = (table) => ({
   scope: SCHEMA_SCOPES.tenantKeys,
+  latest: { tables: [table], statements: [tenantKeysTableStatement(table)] },
   migrations: [{ version: 1, migrate: (tx) => tx.run(tenantKeysTableStatement(table), []) }],
 });
 
@@ -333,6 +357,19 @@ export interface PostgresqlCheckpointsScopeFunction {
 
 export const postgresqlCheckpointsScope: PostgresqlCheckpointsScopeFunction = (tables) => ({
   scope: SCHEMA_SCOPES.checkpoints,
+  latest: {
+    tables: [
+      tables.checkpoints,
+      tables.restrictedPersons,
+      tables.restrictedPositions,
+      tables.tenantFence,
+    ],
+    statements: [
+      checkpointTableStatement(tables.checkpoints),
+      ...restrictedPersonsTableStatements(tables),
+      tenantFenceTableStatement(tables.tenantFence),
+    ],
+  },
   migrations: [
     { version: 1, migrate: (tx) => tx.run(checkpointTableStatement(tables.checkpoints), []) },
     {
@@ -359,6 +396,7 @@ export interface PostgresqlForgetLedgerScopeFunction {
 
 export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = (table) => ({
   scope: SCHEMA_SCOPES.forgetLedger,
+  latest: forgetLedgerLatestSchema(table, postgresqlDialect),
   migrations: [
     {
       version: 1,
@@ -447,16 +485,53 @@ export const readPostgresqlSchemaVersions: ReadPostgresqlSchemaVersionsFunction 
     isMissingTable: isUndefinedTable,
   });
 
+export interface PostgresqlSchemaScopesForArgs {
+  readonly schema: string;
+  readonly tables: StorageTables;
+}
+
+export interface PostgresqlSchemaScopesForFunction {
+  (args: PostgresqlSchemaScopesForArgs): Readonly<Record<SchemaScopeName, SchemaScope>>;
+}
+
+export const postgresqlSchemaScopesFor: PostgresqlSchemaScopesForFunction = ({
+  schema,
+  tables,
+}) => ({
+  storage: postgresqlStorageScope({ schema, tables }),
+  checkpoints: postgresqlCheckpointsScope(tables),
+  "forget-ledger": postgresqlForgetLedgerScope(tables.forgetLedger),
+  "tenant-keys": postgresqlTenantKeysScope(tables.tenantKeys),
+});
+
+const postgresqlArgs = ({
+  db,
+  schema,
+  prefix,
+  scopes,
+}: MigratePostgresqlArgs): MigrateSchemasArgs => ({
+  db,
+  dialect: postgresqlDialect,
+  table: schemaMigrationsTableFor(prefix),
+  scopes,
+  locked: (work) => inSchema({ db, schema, work }),
+  isMissingTable: isUndefinedTable,
+  tablesIn: async (executor) =>
+    new Set(
+      (
+        await executor.all(`SELECT "tablename" FROM pg_tables WHERE "schemaname" = $1`, [schema])
+      ).map((row) => String(row.tablename)),
+    ),
+});
+
 /**
  * `migrateSchemas` in a schema, under the schema's advisory lock, which the read models' changes
  * to their tables take too.
  */
-export const migratePostgresql: MigratePostgresqlFunction = ({ db, schema, prefix, scopes }) =>
-  migrateSchemas({
-    db,
-    dialect: postgresqlDialect,
-    table: schemaMigrationsTableFor(prefix),
-    scopes,
-    locked: (work) => inSchema({ db, schema, work }),
-    isMissingTable: isUndefinedTable,
-  });
+export const migratePostgresql: MigratePostgresqlFunction = (args) =>
+  migrateSchemas(postgresqlArgs(args));
+
+// How a schema an earlier version left behind is brought forward, which the one-pass schema is
+// compared against.
+export const replayPostgresql: MigratePostgresqlFunction = (args) =>
+  replaySchemas(postgresqlArgs(args));

@@ -148,9 +148,8 @@ export interface StorageSchemaStatementsFunction {
   (tables: StorageTables): readonly string[];
 }
 
-// The storage tables as the first migration leaves them; later migrations change them from there.
 // Every statement must be able to run again on a database that already has the tables.
-export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables) => [
+const leadingTablesStatements = (tables: StorageTables): readonly string[] => [
   `CREATE TABLE IF NOT EXISTS ${tables.events} (
     "position" BIGSERIAL PRIMARY KEY,
     "id" text NOT NULL UNIQUE,
@@ -222,26 +221,16 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "execute_at")} ON ${tables.scheduledCommands} ("execute_at")`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "unclaimed")} ON ${tables.scheduledCommands} ("execute_at") WHERE "claimed_at" IS NULL`,
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.scheduledCommands, "claimed_at")} ON ${tables.scheduledCommands} ("claimed_at") WHERE "claimed_at" IS NOT NULL`,
-  `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
-    "key" text PRIMARY KEY,
-    "fingerprint" text NOT NULL,
-    "outcome" jsonb NOT NULL,
-    "expires_at" text NOT NULL,
-    "persons" jsonb NOT NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`,
-  `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
-    "person" text PRIMARY KEY,
-    "key" text NOT NULL,
-    "fingerprint" text NOT NULL,
-    "kid" text,
-    "held_until" text,
-    "attempts" integer NOT NULL DEFAULT 0
-  )`,
+];
+
+const personalKeysIndexStatements = (tables: StorageTables): readonly string[] => [
   // What the rotation of the wrapping key reads: the keys still under an old one.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "kid")} ON ${tables.personalKeys} ("kid", "person")`,
   // When the rotation is next due while every key it has left is held.
   `CREATE INDEX IF NOT EXISTS ${indexName(tables.personalKeys, "held")} ON ${tables.personalKeys} ("held_until") WHERE "held_until" IS NOT NULL`,
+];
+
+const trailingTablesStatements = (tables: StorageTables): readonly string[] => [
   `CREATE TABLE IF NOT EXISTS ${tables.persons} (
     "person" text PRIMARY KEY,
     "restricted_since" text,
@@ -273,6 +262,84 @@ export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables)
   ...scanIndexStatements(tables),
 ];
 
+const idempotencyKeysIndexStatement = (tables: StorageTables): string =>
+  `CREATE INDEX IF NOT EXISTS ${indexName(tables.idempotencyKeys, "expires_at")} ON ${tables.idempotencyKeys} ("expires_at")`;
+
+// The storage tables as the first migration leaves them; later migrations change them from there.
+export const storageSchemaStatements: StorageSchemaStatementsFunction = (tables) => [
+  ...leadingTablesStatements(tables),
+  `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
+    "key" text PRIMARY KEY,
+    "fingerprint" text NOT NULL,
+    "outcome" jsonb NOT NULL,
+    "expires_at" text NOT NULL,
+    "persons" jsonb NOT NULL
+  )`,
+  idempotencyKeysIndexStatement(tables),
+  `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
+    "person" text PRIMARY KEY,
+    "key" text NOT NULL,
+    "fingerprint" text NOT NULL,
+    "kid" text,
+    "held_until" text,
+    "attempts" integer NOT NULL DEFAULT 0
+  )`,
+  ...personalKeysIndexStatements(tables),
+  ...trailingTablesStatements(tables),
+];
+
+export interface PersonalKeysCategoryIndexStatementsFunction {
+  (tables: Pick<StorageTables, "personalKeys">): readonly string[];
+}
+
+// What the third migration of the storage tables indexes the keys by, once each has a category.
+export const personalKeysCategoryIndexStatements: PersonalKeysCategoryIndexStatementsFunction = (
+  tables,
+) => [
+  // One key in force per person and category, which `add` resolves its race on.
+  `CREATE UNIQUE INDEX ${indexName(tables.personalKeys, "in_force")} ON ${tables.personalKeys} ("person", "category") WHERE "retained_since" IS NULL`,
+  // What a category's retention reads, least recently active first.
+  `CREATE INDEX ${indexName(tables.personalKeys, "due")} ON ${tables.personalKeys} ("category", "last_active_at") WHERE "last_active_at" IS NOT NULL`,
+  // The keys a forgetting kept, which no legal obligation may keep any more.
+  `CREATE INDEX ${indexName(tables.personalKeys, "retained")} ON ${tables.personalKeys} ("retained_since") WHERE "retained_since" IS NOT NULL`,
+];
+
+export interface LatestStorageTablesStatementsFunction {
+  (tables: StorageTables): readonly string[];
+}
+
+// The tables of this file as the last migration of the storage tables leaves them. The keys keep
+// the order of columns the third migration, which added the ones after `attempts`, leaves.
+export const latestStorageTablesStatements: LatestStorageTablesStatementsFunction = (tables) => [
+  ...leadingTablesStatements(tables),
+  `CREATE TABLE IF NOT EXISTS ${tables.idempotencyKeys} (
+    "key" text PRIMARY KEY,
+    "outcome" jsonb NOT NULL,
+    "expires_at" text NOT NULL,
+    "persons" jsonb NOT NULL
+  )`,
+  idempotencyKeysIndexStatement(tables),
+  `CREATE TABLE IF NOT EXISTS ${tables.personalKeys} (
+    "person" text NOT NULL,
+    "key" text NOT NULL,
+    "fingerprint" text NOT NULL,
+    "kid" text,
+    "held_until" text,
+    "attempts" integer NOT NULL DEFAULT 0,
+    "category" text NOT NULL,
+    "last_active_at" text,
+    "retained_since" text,
+    "forget_held_until" text,
+    "forget_attempts" integer NOT NULL DEFAULT 0,
+    PRIMARY KEY ("person", "fingerprint")
+  )`,
+  ...personalKeysIndexStatements(tables),
+  ...personalKeysCategoryIndexStatements(tables),
+  ...trailingTablesStatements(tables),
+  subscriberFailuresTableStatement(tables.subscriberFailures),
+  restrictionsTableStatement(tables.restrictions),
+];
+
 export interface InSchemaArgs<T> {
   readonly db: PostgresqlDatabase;
   readonly schema: string;
@@ -296,6 +363,15 @@ export const inSchema: InSchemaFunction = ({ db, schema, work }) =>
     return work(tx);
   });
 
+const restrictionsTableStatement = (table: string): string =>
+  `CREATE TABLE IF NOT EXISTS ${table} (
+    "person" text NOT NULL,
+    "ground" text NOT NULL,
+    "category" text NOT NULL,
+    "since" text NOT NULL,
+    PRIMARY KEY ("person", "ground", "category")
+  )`;
+
 export interface RestrictionStatementsFunction {
   (tables: Pick<StorageTables, "events" | "persons" | "restrictions">): readonly string[];
 }
@@ -304,13 +380,7 @@ export interface RestrictionStatementsFunction {
 // person as a whole, and is taken in as `accuracy-contested`, the first ground of article 18(1);
 // its events say so, and what restrictions the person had after each.
 export const restrictionStatements: RestrictionStatementsFunction = (tables) => [
-  `CREATE TABLE IF NOT EXISTS ${tables.restrictions} (
-    "person" text NOT NULL,
-    "ground" text NOT NULL,
-    "category" text NOT NULL,
-    "since" text NOT NULL,
-    PRIMARY KEY ("person", "ground", "category")
-  )`,
+  restrictionsTableStatement(tables.restrictions),
   `INSERT INTO ${tables.restrictions} ("person", "ground", "category", "since") SELECT "person", 'accuracy-contested', '', "restricted_since" FROM ${tables.persons} WHERE "restricted_since" IS NOT NULL ON CONFLICT DO NOTHING`,
   `UPDATE ${tables.events} SET "payload" = "payload" || jsonb_build_object('ground', 'accuracy-contested', 'categories', 'null'::jsonb, 'restrictions', jsonb_build_array(jsonb_build_object('ground', 'accuracy-contested', 'categories', 'null'::jsonb, 'since', "timestamp"))) WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestricted' AND "payload"->'ground' IS NULL`,
   `UPDATE ${tables.events} SET "payload" = "payload" || '{"grounds":["accuracy-contested"],"categories":null,"restrictions":[]}'::jsonb WHERE "aggregate_type" = 'bounda' AND "type" = 'ProcessingRestrictionLifted' AND "payload"->'grounds' IS NULL`,

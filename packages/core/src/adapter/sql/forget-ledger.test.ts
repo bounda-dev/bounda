@@ -8,6 +8,7 @@ import {
   forgetLedgerCategoriesStatement,
   forgetLedgerCommittedStatement,
   forgetLedgerDisclosureStatement,
+  forgetLedgerLatestSchema,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
   forgetLedgerStatements,
@@ -63,6 +64,14 @@ describe("the SQL forget ledger", () => {
     expect(postgresTable).toContain(`"forgotten_at" TEXT COLLATE "C" NOT NULL`);
     const [sqliteTable, index] = forgetLedgerStatements(`"t_forget_ledger"`, sqliteDialect);
     expect(sqliteTable).not.toContain("COLLATE");
+    const [postgresLatest] = forgetLedgerLatestSchema(
+      `"t_forget_ledger"`,
+      postgresqlDialect,
+    ).statements;
+    expect(postgresLatest).toContain(`"event_id" TEXT COLLATE "C" NOT NULL`);
+    expect(postgresLatest).toContain(`"forgotten_at" TEXT COLLATE "C" NOT NULL`);
+    const [sqliteLatest] = forgetLedgerLatestSchema(`"t_forget_ledger"`, sqliteDialect).statements;
+    expect(sqliteLatest).not.toContain("COLLATE");
     expect(index).toBe(
       `CREATE INDEX IF NOT EXISTS "t_forget_ledger_order_idx" ON "t_forget_ledger" ("tenant", "forgotten_at", "event_id")`,
     );

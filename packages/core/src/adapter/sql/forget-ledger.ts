@@ -10,6 +10,7 @@ import {
 import type { SqlDatabase } from "./database.ts";
 import type { SqlDialect } from "./dialect.ts";
 import { quoteIdentifier } from "./identifiers.ts";
+import type { LatestSchema } from "./migrations.ts";
 import { createSqlTenantFence, tenantFenceTableStatement } from "./tenant-fence.ts";
 
 const COLUMNS = [
@@ -27,6 +28,9 @@ const COLUMNS = [
 ] as const;
 // Within the hundred parameters a Durable Object's SQLite binds to one statement.
 const ENTRIES_PER_INSERT = Math.floor(100 / COLUMNS.length);
+
+const orderIndexStatement = (table: string): string =>
+  `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${table.slice(1, -1)}_order_idx`)} ON ${table} ("tenant", "forgotten_at", "event_id")`;
 
 export interface ForgetLedgerStatementsFunction {
   (table: string, dialect: Pick<SqlDialect, "name">): readonly string[];
@@ -46,8 +50,40 @@ export const forgetLedgerStatements: ForgetLedgerStatementsFunction = (table, { 
     "forgotten_at" TEXT${ordered} NOT NULL,
     PRIMARY KEY ("tenant", "event_id")
   )`,
-    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${table.slice(1, -1)}_order_idx`)} ON ${table} ("tenant", "forgotten_at", "event_id")`,
+    orderIndexStatement(table),
   ];
+};
+
+export interface ForgetLedgerLatestSchemaFunction {
+  (table: string, dialect: Pick<SqlDialect, "name">): LatestSchema;
+}
+
+/**
+ * The ledger's tables beside its own `table`, quoted, as its last version leaves them.
+ */
+export const forgetLedgerLatestSchema: ForgetLedgerLatestSchemaFunction = (table, { name }) => {
+  const ordered = name === "postgresql" ? ` COLLATE "C"` : "";
+  return {
+    tables: [table, forgetLedgerMarksTableFor(table), forgetLedgerFenceTableFor(table)],
+    statements: [
+      `CREATE TABLE IF NOT EXISTS ${table} (
+    "tenant" TEXT NOT NULL,
+    "event_id" TEXT${ordered} NOT NULL,
+    "person" TEXT NOT NULL,
+    "forgotten_at" TEXT${ordered} NOT NULL,
+    "reason" TEXT NOT NULL DEFAULT 'requested',
+    "fingerprints" TEXT,
+    "categories" TEXT,
+    "restriction" TEXT,
+    "redaction" TEXT,
+    "disclosure" TEXT,
+    PRIMARY KEY ("tenant", "event_id")
+  )`,
+      orderIndexStatement(table),
+      forgetLedgerMarksStatement(table),
+      forgetLedgerFenceStatement(table),
+    ],
+  };
 };
 
 export interface ForgetLedgerMarksTableForFunction {
