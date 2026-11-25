@@ -1,4 +1,6 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { ConfigurationError, type Logger } from "@bounda-dev/core";
 import type {
   FileEncryption,
@@ -21,9 +23,57 @@ const quoted = (text: string): string => `'${text.replaceAll("'", "''")}'`;
 const isNotADatabase = (error: unknown): boolean =>
   error instanceof Error && Reflect.get(error, "code") === "SQLITE_NOTADB";
 
+interface NativeDatabase {
+  prepare(sql: string): { get(): unknown };
+  close(): void;
+}
+
+type NativeDatabaseClass = new (
+  path: string,
+  options: { readonly encryptionKey?: string },
+) => NativeDatabase;
+
+let native: NativeDatabaseClass | null | undefined;
+
+// libSQL's native module, the copy @libsql/client loads; `null` where it cannot be found, say in a
+// bundle.
+const nativeDatabase = (): NativeDatabaseClass | null => {
+  if (native !== undefined) return native;
+  try {
+    const client = createRequire(import.meta.url).resolve("@libsql/client");
+    native = createRequire(client)("libsql") as NativeDatabaseClass;
+  } catch {
+    native = null;
+  }
+  return native;
+};
+
+// Whether the file's own pages read under `key`, `null` in the clear, through a connection that
+// takes no lock and leaves the WAL alone. `undefined` when it cannot tell: the file holds no page of
+// its own yet, the native module is out of reach, or the read failed otherwise.
+const readsUnder = (path: string, key: string | null): boolean | undefined => {
+  const Database = nativeDatabase();
+  if (Database === null || !existsSync(path) || statSync(path).size === 0) return undefined;
+  let probe: NativeDatabase | undefined;
+  try {
+    probe = new Database(
+      `${pathToFileURL(path).href}?immutable=1`,
+      key === null ? {} : { encryptionKey: key },
+    );
+    probe.prepare("SELECT count(*) FROM sqlite_master").get();
+    return true;
+  } catch (error) {
+    return isNotADatabase(error) ? false : undefined;
+  } finally {
+    probe?.close();
+  }
+};
+
 // A connection to the file under `key`, `null` for none, or `null` when it does not open under
-// it. A connection that failed lets go of the file at once; one that read holds it until
-// collected, so the one that opens is the one that encrypts.
+// it. One that read holds the file until collected, so the one that opens is the one that
+// encrypts. One that failed while the WAL held pages, page 1 among them, keeps the WAL open, and
+// with it the lock that refuses the file's encryption, until collected too: `readsUnder` spares the
+// file the keys it rules out.
 const openedUnder = async (path: string, key: string | null): Promise<Client | null> => {
   const client = createClient({
     url: `file:${path}`,
@@ -159,9 +209,14 @@ export const prepareFile: PrepareFileFunction = async ({ path, keys, logger, ten
       `The database file ${path} was being encrypted from a key its tenant's record no longer holds: restore the file from a copy`,
     );
   }
-  // The key a cut-short encryption started from first, then the one in force, then the rest.
-  const candidates: (FileKey | null)[] =
-    marked === undefined ? [current, ...others, null] : [marked, current, ...others, null];
+  // The key a cut-short encryption started from first, tried on the file itself, whose journal it
+  // rolls back. Then the one in force, then the rest, those the file's own pages rule out last.
+  const inOrder: (FileKey | null)[] = [current, ...others, null];
+  const ruledOut = inOrder.filter(
+    (candidate) => readsUnder(path, candidate?.key ?? null) === false,
+  );
+  const ordered = [...inOrder.filter((candidate) => !ruledOut.includes(candidate)), ...ruledOut];
+  const candidates: (FileKey | null)[] = marked === undefined ? ordered : [marked, ...ordered];
   for (const candidate of candidates) {
     const source = await openedUnder(path, candidate?.key ?? null);
     if (source === null) continue;

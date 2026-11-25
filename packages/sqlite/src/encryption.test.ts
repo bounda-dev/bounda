@@ -3,6 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { copyFile, mkdtemp, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { ConfigurationError, type Logger } from "@bounda-dev/core";
 import type { FileKey, FileKeyAccess } from "@bounda-dev/core/adapter";
 import { createTestApp, expectForgotten } from "@bounda-dev/core/testing";
@@ -105,8 +106,9 @@ const fileUnder = (path: string, key: string | null, also = ""): Promise<void> =
     );
   });
 
-// A process that holds the file open, as another instance of the app would, until let go.
-const heldElsewhere = async (path: string): Promise<() => Promise<void>> => {
+// A process that holds the file open, as another instance of the app would, until let go, after
+// running the statements `writes` on it.
+const heldElsewhere = async (path: string, writes = ""): Promise<() => Promise<void>> => {
   const child = spawn(
     process.execPath,
     [
@@ -117,6 +119,7 @@ const heldElsewhere = async (path: string): Promise<() => Promise<void>> => {
       closeConnectionsOnce();
       const client = createClient({ url: ${JSON.stringify(`file:${path}`)} });
       await client.execute("SELECT count(*) FROM sqlite_master");
+      ${writes}
       console.log("holding");
       setInterval(() => undefined, 1000);`,
     ],
@@ -639,6 +642,44 @@ describe("a libSQL file left in the clear while another process held it", () => 
   });
 });
 
+// An app started on `paths` in a process of its own whose young generation outgrows what the app
+// allocates, so nothing it lets go of is collected while it runs: what it holds on the file is
+// what it never closed. Once `booted`, `proceed` has it run until idle and resolves to where its
+// file stands.
+const bootedElsewhere = (paths: TestAppPaths) => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--max-semi-space-size=512",
+      "--min-semi-space-size=512",
+      "--input-type=module",
+      "-e",
+      `import { createInterface } from "node:readline";
+      import { bootTestApp } from "./test-app.ts";
+      const app = await bootTestApp(${JSON.stringify(paths)});
+      console.log("booted");
+      for await (const _ of createInterface({ input: process.stdin })) break;
+      await app.runUntilIdle();
+      console.log((await app.status()).files[0]?.state);
+      await app.stop();`,
+    ],
+    { cwd: import.meta.dirname, stdio: ["pipe", "pipe", "inherit"] },
+  );
+  const said = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const next = async (): Promise<string | undefined> => {
+    const { done, value } = await said.next();
+    return done === true ? undefined : value;
+  };
+  const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+  return {
+    booted: next(),
+    proceed: async () => {
+      child.stdin.end("go\n");
+      return { state: await next(), code: await exited };
+    },
+  };
+};
+
 // The descriptors this process has open on the database at `path` and its WAL, where the system
 // lists them: one connection holds one of each.
 const openHere = async (path: string): Promise<string> => {
@@ -648,6 +689,27 @@ const openHere = async (path: string): Promise<string> => {
   );
   return JSON.stringify(targets.filter((target) => target?.startsWith(path) === true));
 };
+
+describe("a libSQL file in the clear held by another process that wrote to it", () => {
+  it("is encrypted once let go, though no garbage was collected since the app tried its keys on it", async () => {
+    const paths = fresh();
+    await elsewhere(paths, `await registerCustomer(app, "c-1");`, false);
+    // What the other process writes stays in the WAL, page 1 included, until it lets go.
+    const letGo = await heldElsewhere(
+      paths.store,
+      `await client.execute("PRAGMA wal_autocheckpoint = 0");
+      await client.execute("PRAGMA user_version = 1");`,
+    );
+    const app = bootedElsewhere(paths);
+    try {
+      expect(await app.booted).toBe("booted");
+    } finally {
+      await letGo();
+    }
+    expect(await app.proceed()).toEqual({ state: "current", code: 0 });
+    expect(await readsInTheClear(paths.store)).toBe(false);
+  });
+});
 
 describe("a test app over a libSQL file", () => {
   it("encrypts it under the test's keys, and searches it through them once a person is forgotten", async () => {
