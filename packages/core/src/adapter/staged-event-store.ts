@@ -7,8 +7,9 @@ import { type KeyedPerson, keyedPersonId } from "./storage/personal-key-store.ts
 /**
  * An event store that keeps what is appended to it aside: `load` answers with the base store's
  * events plus the ones staged for that stream, `append` stages with the version the stream has
- * in that view, and `readOne`, `readAll`, `readByPerson` and `lastPosition` read the base store
- * alone, since staged events are not written yet, nor are the events `reseal` stages. `batches`
+ * in that view, and `readOne`, `readAll`, `readByPerson`, `firstPositions`, `loadMany` and
+ * `lastPosition` read the base store alone, since staged events are not written yet, nor are the
+ * events `reseal` stages. `batches`
  * hands out what to append at commit, one batch per stream, each expecting the version the stream
  * had in the base store when the view first met it, and `reseals` what to write again after.
  */
@@ -155,6 +156,8 @@ export const createStagedEventStore: CreateStagedEventStoreFunction = (
     readOne: (args) => base.readOne(args),
     readAll: (args) => base.readAll(args),
     readByPerson: (args) => base.readByPerson(args),
+    firstPositions: (persons) => base.firstPositions(persons),
+    loadMany: (args) => base.loadMany(args),
     lastPosition: () => base.lastPosition(),
     reseal: async (events) => {
       resealed.push(...events);

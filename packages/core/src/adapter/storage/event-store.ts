@@ -92,6 +92,11 @@ export interface ResealedEvent {
   readonly schemaVersion?: number;
 }
 
+export interface LoadManyArgs {
+  readonly aggregateType: string;
+  readonly aggregateIds: readonly string[];
+}
+
 export interface ReadOneArgs {
   readonly aggregateType: string;
   readonly aggregateId: string;
@@ -114,6 +119,17 @@ export interface EventStore {
   readOne(args: ReadOneArgs): Promise<StoredEvent | null>;
   readAll(args: ReadAllArgs): Promise<readonly StoredEvent[]>;
   readByPerson(args: ReadByPersonArgs): Promise<readonly StoredEvent[]>;
+  /**
+   * The position of the first event of each of `persons` that has one, as `readByPerson` would
+   * read it, in one read however many they are: a person with none is left out.
+   */
+  firstPositions(persons: readonly string[]): Promise<ReadonlyMap<string, number>>;
+  /**
+   * The whole stream of each of `aggregateIds`, every one of `aggregateType`, its events in version
+   * order as `load` reads them, in one read however many they are: a stream with no event is left
+   * out.
+   */
+  loadMany(args: LoadManyArgs): Promise<ReadonlyMap<string, readonly StoredEvent[]>>;
   lastPosition(): Promise<number>;
   /**
    * Replaces the payload and `person` of the event at each position given, and its

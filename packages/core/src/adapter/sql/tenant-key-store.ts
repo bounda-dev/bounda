@@ -1,4 +1,5 @@
 import type {
+  PendingRecipientDeclaration,
   StoredFileKey,
   StoredTenantKey,
   TenantForgetting,
@@ -88,6 +89,55 @@ const forgettingOf = (value: unknown): TenantForgetting | null => {
   };
 };
 
+const listOf = (value: unknown, field: string): readonly unknown[] => {
+  if (!Array.isArray(value)) throw new Error(`A tenant key record holds no list in ${field}`);
+  return value;
+};
+
+const pendingDeclarationOf = (value: unknown): PendingRecipientDeclaration => {
+  const declaration = value as Record<string, unknown>;
+  if (typeof declaration.position !== "number") {
+    throw new Error("A tenant key record holds no number in position");
+  }
+  return {
+    id: textOf(declaration.id, "id"),
+    renames: listOf(declaration.renames, "renames").map((rename) => {
+      const { from, to } = rename as Record<string, unknown>;
+      return { from: textOf(from, "from"), to: textOf(to, "to") };
+    }),
+    ports: listOf(declaration.ports, "ports").map((declared) => {
+      const { port, categories } = declared as Record<string, unknown>;
+      return {
+        port: textOf(port, "port"),
+        categories: listOf(categories, "categories").map((name) => textOf(name, "categories")),
+      };
+    }),
+    position: declaration.position,
+    at: textOf(declaration.at, "at"),
+  };
+};
+
+const pendingRecipientsOf = (
+  value: unknown,
+): { readonly pendingRecipients?: readonly PendingRecipientDeclaration[] } =>
+  value === undefined
+    ? {}
+    : { pendingRecipients: listOf(value, "pendingRecipients").map(pendingDeclarationOf) };
+
+const pendingDeclarationText = ({
+  id,
+  renames,
+  ports,
+  position,
+  at,
+}: PendingRecipientDeclaration) => ({
+  id,
+  renames: renames.map(({ from, to }) => ({ from, to })),
+  ports: ports.map(({ port, categories }) => ({ port, categories: [...categories] })),
+  position,
+  at,
+});
+
 export interface ParseTenantKeyRecordFunction {
   (text: string, revision: number): VersionedTenantKeyRecord;
 }
@@ -106,6 +156,7 @@ export const parseTenantKeyRecord: ParseTenantKeyRecordFunction = (text, revisio
     forgotten: forgettingOf(parsed.forgotten),
     ...filesOf(parsed.files),
     ...(typeof parsed.frozenAt === "string" ? { frozenAt: parsed.frozenAt } : {}),
+    ...pendingRecipientsOf(parsed.pendingRecipients),
   };
 };
 
@@ -128,6 +179,7 @@ export const tenantKeyRecordText: TenantKeyRecordTextFunction = ({
   forgotten,
   files,
   frozenAt,
+  pendingRecipients,
 }) =>
   JSON.stringify({
     store,
@@ -148,6 +200,9 @@ export const tenantKeyRecordText: TenantKeyRecordTextFunction = ({
           },
     ...(files === undefined ? {} : { files: files.map(fileKeyText) }),
     ...(frozenAt === undefined ? {} : { frozenAt }),
+    ...(pendingRecipients === undefined
+      ? {}
+      : { pendingRecipients: pendingRecipients.map(pendingDeclarationText) }),
   });
 
 /**

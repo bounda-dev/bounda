@@ -29,6 +29,8 @@ const appendingTo = (
   readOne: (args) => eventStore.readOne(args),
   readAll: (args) => eventStore.readAll(args),
   readByPerson: (args) => eventStore.readByPerson(args),
+  firstPositions: (persons) => eventStore.firstPositions(persons),
+  loadMany: (args) => eventStore.loadMany(args),
   lastPosition: () => eventStore.lastPosition(),
   reseal: (events) => eventStore.reseal(events),
 });

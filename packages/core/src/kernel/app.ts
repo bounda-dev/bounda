@@ -2,7 +2,9 @@ import type { ObservableResult } from "@opentelemetry/api";
 import { type Adapter, isAdapter, type Storage } from "../adapter/adapter.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
+import type { DeclaredRecipient } from "../adapter/storage/recipient-store.ts";
 import { fenceError, isFenceError } from "../adapter/storage/tenant-fence.ts";
+import type { PendingRecipientDeclaration } from "../adapter/storage/tenant-key-store.ts";
 import { checkConfigNames } from "../config/names.ts";
 import { resolveConfig } from "../config/schema.ts";
 import type {
@@ -167,9 +169,14 @@ import {
   createRecipientSubscriber,
 } from "./recipients/notices.ts";
 import {
-  type PendingDeclaration,
-  withPendingDeclaration,
+  localPendingRecipients,
+  type PendingRecipients,
+  pendingRecipientsStore,
+  recordedPendingRecipients,
+  unwritten,
+  withPendingDeclarations,
   writeDeclaration,
+  writePendingRecipients,
 } from "./recipients/pending.ts";
 import { createScheduledCommandWorker } from "./scheduler/worker.ts";
 import { startedBy } from "./shared/causation.ts";
@@ -961,17 +968,18 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }
       }
     };
-    // The recipients a start on a frozen tenant declares once it thaws, as every read sees them.
-    let pendingDeclaration: PendingDeclaration | null = null;
-    const written = withPendingDeclaration(
+    // The declarations of recipients the starts on a frozen tenant could not write, as every read
+    // sees them until they are: the tenant key record's once the key hierarchy is open.
+    let pendingDeclarations: PendingRecipients = localPendingRecipients();
+    const written = withPendingDeclarations(
       withCommittedEvents({ storage: adapted, committed }),
-      () => pendingDeclaration,
+      () => pendingDeclarations.held(),
     );
     // What settles the tenant's forgetting, and tells its recipients after it, writes through the
     // fence of a forgotten tenant.
-    const writtenForgotten = withPendingDeclaration(
+    const writtenForgotten = withPendingDeclarations(
       withCommittedEvents({ storage: adapted.forgotten(), committed }),
-      () => pendingDeclaration,
+      () => pendingDeclarations.held(),
     );
     // An app whose ports tell recipients reads the head of the stream before each read that opens
     // personal data, so a disclosure can tell whether the person's stream moved since.
@@ -1003,6 +1011,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
     // Closed last, after the storage, as `stop` closes them.
     if (hierarchy !== null) opened.push(hierarchy.close);
     tenantKeysOpened = hierarchy?.tenantKeys ?? null;
+    if (hierarchy !== null) pendingDeclarations = recordedPendingRecipients(hierarchy.tenantKeys);
+    // Writes what the record holds, `wait`ing for one another instance writes, as `storage` writes.
+    const writePending = (storage: Storage, wait: boolean): Promise<boolean> =>
+      writePendingRecipients({ storage, pending: pendingDeclarations, clock, wait });
+    // On every pass of a tenant not frozen, whichever instance's start left them; one another
+    // instance writes is left to the next.
+    const settlePending = async (): Promise<void> => {
+      try {
+        await writePending(adapted, false);
+      } catch (error) {
+        logger.error("the declarations of recipients the freeze held could not be written yet", {
+          error,
+        });
+      }
+    };
     // The fence each database of the tenant holds, the read models' once they are built.
     const fencedDatabases: Pick<Storage, "fence">[] = [adapted];
     const freezeKeeper = createFreezeKeeper({
@@ -1121,14 +1144,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       storage: own,
       personal: registry.readModels[name]?.view.holdsPersonalData !== false,
     }));
-    // A frozen tenant's recipients its start had not declared yet are declared with its forgetting,
-    // whose fence lets them through, so every instance tells them.
+    // The declarations of recipients the starts on a frozen tenant left are among its recipients
+    // when it is forgotten, and written with the forgetting, whose fence lets them through.
     const settleTenantForgettingWith: typeof settleTenantForgetting = async (args) => {
+      await pendingDeclarations.refresh();
       await settleTenantForgetting(args);
-      const pending = pendingDeclaration;
-      if (pending === null) return;
-      await writeDeclaration(writtenForgotten.recipients, pending);
-      pendingDeclaration = null;
+      await writePending(adapted.forgotten(), true);
     };
     const settleForgotten = (
       forgetting: NonNullable<ReturnType<NonNullable<typeof hierarchy>["tenantKeys"]["forgotten"]>>,
@@ -1286,7 +1307,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       settleReadModels({ readModels: Object.values(readModels.byName), sealing, logger }),
     );
     // What was disclosed under a port's former key is the renamed port's, presumption included.
-    const declaration: PendingDeclaration = {
+    const declaration: Omit<PendingRecipientDeclaration, "id"> = {
       renames: recipients.all.flatMap(({ port, formerly }) =>
         formerly.map((from) => ({ from, to: port })),
       ),
@@ -1294,17 +1315,21 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       position: await written.eventStore.lastPosition(),
       at: clock.now().toISOString(),
     };
-    // A frozen tenant's are written once it thaws, and read as written until then.
+    // A frozen tenant's wait in the record, read as written by every instance until the thaw
+    // writes them; one forgotten meanwhile has no recipient to declare any more. Those left by
+    // earlier starts are written before this one's, so none overwrites a later declaration.
+    let declaredRecipients: readonly DeclaredRecipient[];
     if (frozenAtStart) {
-      pendingDeclaration = declaration;
-      deferred.push(async () => {
-        await writeDeclaration(written.recipients, declaration);
-        pendingDeclaration = null;
+      await pendingDeclarations.add({ id: ids.next(), ...declaration }).catch((error: unknown) => {
+        if (!(error instanceof TenantForgottenError)) throw error;
       });
+      // A thaw that lowered the fence meanwhile writes no declaration added after it.
+      if ((await adapted.fence.read()).state === "open") await writePending(adapted, true);
+      declaredRecipients = await written.recipients.declared();
+    } else {
+      await writePending(adapted, true);
+      declaredRecipients = await writeDeclaration(written.recipients, declaration);
     }
-    const declaredRecipients = frozenAtStart
-      ? await written.recipients.declared()
-      : await writeDeclaration(written.recipients, declaration);
     for (const { port, persons } of await written.recipients.summary()) {
       if (recipients.byPort[port] === undefined) {
         logger.warn(
@@ -1715,6 +1740,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         await fences.check();
         if (fences.frozen()) return;
         await settleDeferred();
+        await settlePending();
         await fileEncryptions.settle();
         const found = await restores.check(clock.now());
         if (found !== null) await restartFound(found);
@@ -1906,7 +1932,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         retention,
         letterRetention,
         failureRetention,
-        recipients: () => recipientStatuses({ storage: written, recipients }),
+        // A record that does not answer is the tenant's status to report: the declarations are
+        // read as it held them last.
+        recipients: async () => {
+          await pendingDeclarations.refresh().catch(() => undefined);
+          return recipientStatuses({ storage: written, recipients });
+        },
         frozenTenant: async () => {
           const fence = await adapted.fence.read();
           if (fence.state !== "frozen") return null;
@@ -1948,6 +1979,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
             await fences.check();
             if (!fences.frozen()) {
               await settleDeferred();
+              await settlePending();
               const found = await restores.check(clock.now());
               if (found !== null && (await restartFound(found)) > 0) {
                 await dispatcher.catchUp("projection");
@@ -2173,6 +2205,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       await unfreezeStores(fencedStores);
       freezeKeeper.recorded(null);
       await fences.check({ now: true });
+      // The thaw writes what the starts the freeze held declared, before it resolves.
+      await pendingDeclarations.refresh();
+      await writePending(adapted, true);
     };
     const rotateTenantKey = async ({
       reseal: resealing = false,
@@ -2277,8 +2312,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           async (outcome, error) => {
             if (outcome === "failed") await record(outcome, error);
           },
-          () =>
-            streamPersonalData({
+          async () => {
+            await pendingDeclarations.refresh();
+            return streamPersonalData({
               storage,
               readModels,
               aggregates,
@@ -2292,7 +2328,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               includeWithheld,
               // The header and each page, vouched for before they are handed out.
               onPage: () => vouchAfter(...readModelNames),
-            }),
+            });
+          },
         );
         others = streamed.others;
         return recordedExport({
@@ -2336,6 +2373,9 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           await vouchBefore(...readModelNames);
           return since;
         });
+        // Read once, as the freeze holds them: one a start adds meanwhile comes after the cut.
+        await pendingDeclarations.refresh();
+        const pinned = await unwritten(adapted.inboxLedger, pendingDeclarations.held());
         const streamed = await recorded(
           // Only a failure is recorded here: what resolves is recorded as it starts and ends.
           async (outcome, error) => {
@@ -2343,7 +2383,10 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           },
           () =>
             streamTenantExport({
-              storage,
+              storage: {
+                ...storage,
+                recipients: pendingRecipientsStore(adapted.recipients, async () => pinned),
+              },
               readModels,
               aggregates,
               processes: processDefinitions,
@@ -2475,6 +2518,8 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
                 });
               await checked(record, () => checkPersonId(personId, "recipientsOf"));
               return recorded(record, async () => {
+                // Another instance's start may have declared some since this one read them.
+                await pendingDeclarations.refresh();
                 listed = await listRecipientsOf({
                   storage,
                   recipients,

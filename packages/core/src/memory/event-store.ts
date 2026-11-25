@@ -182,6 +182,28 @@ export const createMemoryEventStore: CreateMemoryEventStoreFunction = ({
         .sort((a, b) => a - b)
         .slice(0, limit)
         .map((position) => restore(log.get(position) as Kept)),
+    firstPositions: async (asked) => {
+      const first = new Map<string, number>();
+      for (const person of new Set(asked)) {
+        const positions = persons.get(person);
+        if (positions === undefined) continue;
+        const visible = positions.filter((position) => position <= watermark);
+        if (visible.length > 0)
+          first.set(
+            person,
+            visible.reduce((a, b) => Math.min(a, b)),
+          );
+      }
+      return first;
+    },
+    loadMany: async ({ aggregateType, aggregateIds }) => {
+      const loaded = new Map<string, readonly StoredEvent[]>();
+      for (const aggregateId of new Set(aggregateIds)) {
+        const stream = streams.get(streamId({ aggregateType, aggregateId })) ?? [];
+        if (stream.length > 0) loaded.set(aggregateId, stream.map(restore));
+      }
+      return loaded;
+    },
     lastPosition: async () => watermark,
     reseal: async (events) => {
       const kept = events.map(({ position, payload, person, schemaVersion }) => ({
