@@ -250,7 +250,6 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // The restore handled last, and the database still where it left it or moved on from there.
   const handledAlready = async (stored: Seen): Promise<boolean> => {
     const handled = await checkpoints.get(RESTORE_HANDLED);
-    if (handled === 0) return false;
     const at = await checkpoints.get(RESTORE_HANDLED_AT);
     return handled === (await handledMark(stored.restores, at)) && (await current(stored));
   };

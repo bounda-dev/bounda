@@ -93,7 +93,9 @@ describe("scheduled command worker", () => {
       logger,
       restores: {
         start: async () => null,
-        settled: async () => undefined,
+        settled: async () => {
+          steps.push("settled");
+        },
         check: async () => {
           steps.push("check");
           const result = finds;
@@ -130,6 +132,8 @@ describe("scheduled command worker", () => {
     });
     expect(await harness.worker.runOnce()).toBe(2);
     expect(steps.slice(0, 5)).toEqual(["check", "restored true", "sweep", "claim", "sweep"]);
+    // The pass settles the restore it handled, and only that one.
+    expect(steps.filter((step) => step === "settled")).toHaveLength(1);
     expect(entries.map(({ message }) => message)).toEqual([
       "the database went back to an earlier copy; background jobs start over",
     ]);
@@ -138,6 +142,7 @@ describe("scheduled command worker", () => {
     finds = found;
     await harness.worker.runOnce();
     expect(steps.filter((step) => step.startsWith("restored"))).toEqual(["restored true"]);
+    expect(steps.filter((step) => step === "settled")).toHaveLength(1);
     expect(await harness.worker.restored({ first: false })).toBe(true);
     expect(steps.at(-1)).toBe("restored false");
   });
