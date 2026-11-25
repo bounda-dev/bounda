@@ -5,7 +5,8 @@ export type {
   CreateSqlCheckpointStoreFunction,
 } from "./checkpoint-store.ts";
 export { createSqlCheckpointStore } from "./checkpoint-store.ts";
-export type { SqlDatabase, SqlTransaction } from "./database.ts";
+export type { RunInOrderFunction, SqlDatabase, SqlTransaction } from "./database.ts";
+export { runInOrder } from "./database.ts";
 export {
   byFirstFailure,
   decodeErrorText,
@@ -19,6 +20,7 @@ export { EVENTS_PER_INSERT, insertEventsStatements, positionsByVersion } from ".
 export type {
   CreateSqlForgetLedgerArgs,
   CreateSqlForgetLedgerFunction,
+  ForgetLedgerLatestSchemaFunction,
   ForgetLedgerStatementsFunction,
 } from "./forget-ledger.ts";
 export {
@@ -28,6 +30,7 @@ export {
   forgetLedgerDisclosureStatement,
   forgetLedgerFenceStatement,
   forgetLedgerFenceTableFor,
+  forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
   forgetLedgerMarksTableFor,
   forgetLedgerReasonStatements,
@@ -51,16 +54,20 @@ export type {
 } from "./inspection.ts";
 export { inspectSqlTable, quoteName, storeOfTable } from "./inspection.ts";
 export type {
+  LatestSchema,
   MigrateSchemasArgs,
   MigrateSchemasFunction,
   ReadSchemaVersionsArgs,
   ReadSchemaVersionsFunction,
+  ReplaySchemasArgs,
+  ReplaySchemasFunction,
   SchemaMigration,
   SchemaScope,
 } from "./migrations.ts";
 export {
   migrateSchemas,
   readSchemaVersions,
+  replaySchemas,
   SCHEMA_SCOPES,
   schemaMigrationsTableFor,
 } from "./migrations.ts";
@@ -74,6 +81,7 @@ export {
   createSqlPersonalKeyStore,
   supersededKeysTableStatements,
 } from "./personal-key-store.ts";
+export type { SqlFragment } from "./query-builder.ts";
 export type { ExistingColumn } from "./read-model-schema.ts";
 export {
   columnsOf,

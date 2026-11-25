@@ -19,6 +19,7 @@ import {
   postgresqlDialect,
   quoteIdentifier,
   rebuildTablesFor,
+  runInOrder,
   type SqlExecutor,
   selectUnsettled,
   shadowTableStatements,
@@ -162,7 +163,10 @@ export const openPostgresqlReadModel: OpenPostgresqlReadModelFunction = async <R
       schema,
       work: async (tx) => {
         const { existing, statements } = await plan(tx);
-        for (const statement of statements) await tx.run(statement, []);
+        await runInOrder(
+          tx,
+          statements.map((sql) => ({ sql, params: [] })),
+        );
         if (existing.length > 0 && statements.length > 0) {
           logger.info("read model table evolved", {
             readModel: name,

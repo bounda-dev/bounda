@@ -220,6 +220,11 @@ app starts, before it serves anything, or before the deploy with
 [`bounda migrate`](/reference/cli/#bounda-migrate):
 
 - A database at the version the installed Bounda expects costs one read, and no lock.
+- A new database, or one that holds none of a set of tables yet, gets those tables as the latest
+  version shapes them, all of them in one transaction whose statements go to the database
+  together, recorded at that version. A first start against a remote database, a libSQL server
+  such as Turso or a PostgreSQL server, takes a handful of round trips, however many migrations
+  the tables went through.
 - One that is behind is migrated in place, one migration at a time, each in a transaction that
   records its version as it commits, under the database's lock: an advisory lock on the schema on
   PostgreSQL, the write transaction on SQLite and libSQL, the object itself in a Durable Object.

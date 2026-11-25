@@ -2,7 +2,6 @@ import type {
   Adapter,
   CreateReadModelArgs,
   CreateReadModelRebuildArgs,
-  SchemaScopeName,
   Storage,
   StorageTransaction,
 } from "@bounda-dev/core/adapter";
@@ -20,7 +19,6 @@ import {
   inspectSqlTable,
   postgresqlDialect,
   quoteName,
-  type SchemaScope,
   type SqlTransaction,
 } from "@bounda-dev/core/adapter/sql";
 import postgres, { type Sql } from "postgres";
@@ -32,10 +30,7 @@ import { createPostgresqlIdempotencyStore } from "./idempotency-store.ts";
 import { createPostgresqlInboxLedger } from "./inbox-ledger.ts";
 import {
   migratePostgresql,
-  postgresqlCheckpointsScope,
-  postgresqlForgetLedgerScope,
-  postgresqlStorageScope,
-  postgresqlTenantKeysScope,
+  postgresqlSchemaScopesFor,
   readPostgresqlSchemaVersions,
 } from "./migrations.ts";
 import { type PostgresqlOptions, resolvePostgresqlOptions } from "./options.ts";
@@ -109,12 +104,7 @@ export const postgresql: PostgresqlFunction = (options) => {
     }
   };
 
-  const scopes: Readonly<Record<SchemaScopeName, SchemaScope>> = {
-    storage: postgresqlStorageScope({ schema, tables }),
-    checkpoints: postgresqlCheckpointsScope(tables),
-    "forget-ledger": postgresqlForgetLedgerScope(tables.forgetLedger),
-    "tenant-keys": postgresqlTenantKeysScope(tables.tenantKeys),
-  };
+  const scopes = postgresqlSchemaScopesFor({ schema, tables });
   // A use of the pool for one call, handed back whatever the call does.
   const briefly = async <T>(work: (connection: Connection) => Promise<T>): Promise<T> => {
     const connection = open();
@@ -149,7 +139,7 @@ export const postgresql: PostgresqlFunction = (options) => {
           db,
           schema,
           prefix: tablePrefix,
-          scopes: [postgresqlStorageScope({ schema, tables }), postgresqlCheckpointsScope(tables)],
+          scopes: [scopes.storage, scopes.checkpoints],
         });
         const storesOver = (database: PostgresqlDatabase): StorageTransaction => ({
           eventStore: createPostgresqlEventStore({
@@ -327,7 +317,7 @@ export const postgresql: PostgresqlFunction = (options) => {
             db,
             schema,
             prefix: tablePrefix,
-            scopes: [postgresqlTenantKeysScope(tables.tenantKeys)],
+            scopes: [scopes["tenant-keys"]],
           }),
         close: release,
       });
@@ -345,7 +335,7 @@ export const postgresql: PostgresqlFunction = (options) => {
             db,
             schema,
             prefix: tablePrefix,
-            scopes: [postgresqlForgetLedgerScope(tables.forgetLedger)],
+            scopes: [scopes["forget-ledger"]],
           }),
         close: release,
       });
