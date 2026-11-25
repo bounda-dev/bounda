@@ -190,20 +190,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 0, latest: 4 },
-        { scope: "forget-ledger", version: 0, latest: 9 },
+        { scope: "forget-ledger", version: 0, latest: 10 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 4, latest: 4 },
-        { scope: "forget-ledger", version: 0, latest: 9 },
+        { scope: "forget-ledger", version: 0, latest: 10 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
         { scope: "storage", version: STORAGE_LATEST[dialect], latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 4, latest: 4 },
-        { scope: "forget-ledger", version: 9, latest: 9 },
+        { scope: "forget-ledger", version: 10, latest: 10 },
         { scope: "tenant-keys", version: 1, latest: 1 },
       ]);
       const shape = await shapeOf(target, dialect);
@@ -542,6 +542,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 7 },
         { scope: "forget-ledger", version: 8 },
         { scope: "forget-ledger", version: 9 },
+        { scope: "forget-ledger", version: 10 },
       ]);
     });
 
@@ -578,7 +579,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         `INSERT INTO ${fence} ("scope", "tenant", "state", "since") VALUES ('', '${DEFAULT_TENANT}', 'frozen', '2026-01-01T00:00:00.000Z'), ('${DEFAULT_TENANT}', '${DEFAULT_TENANT}', 'frozen', '2026-01-02T00:00:00.000Z')`,
       );
       await target.execute(
-        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 9`,
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" >= 9`,
       );
       const ledger = await target.adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
       try {
@@ -609,6 +610,51 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
           ({ event_id }) => event_id,
         ),
       ).toEqual(["e-4"]);
+    });
+
+    it("reads every entry written before the tenth version as committed, and keeps telling intentions apart after", async () => {
+      const target = await create();
+      const table = quoteIdentifier(
+        storageTableNameFor({ prefix: target.prefix, table: "forgetLedger" }),
+      );
+      const migrated = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        await migrated.read({ limit: 1 });
+      } finally {
+        await migrated.close?.();
+      }
+      // As a release before the tenth version left them: no column, and an entry per forgetting.
+      await target.execute(`ALTER TABLE ${table} DROP COLUMN "committed"`);
+      await target.execute(
+        `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at") VALUES ('t-1', 'e-1', 'p-1', '2026-01-01T00:00:01.000Z')`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 10`,
+      );
+      const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        await ledger.append([
+          {
+            personId: "p-2",
+            eventId: "e-2",
+            forgottenAt: "2026-01-01T00:00:02.000Z",
+            categories: null,
+            reason: "requested",
+            committed: false,
+          },
+        ]);
+        expect(
+          (await ledger.read({ limit: 10 })).map(({ eventId, committed }) => ({
+            eventId,
+            committed,
+          })),
+        ).toEqual([
+          { eventId: "e-1", committed: undefined },
+          { eventId: "e-2", committed: false },
+        ]);
+      } finally {
+        await ledger.close?.();
+      }
     });
 
     // An open fence is no row; of two raised, the ninth version keeps the forgotten one, or of the
@@ -678,7 +724,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
           );
         }
         await target.execute(
-          `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 9`,
+          `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" >= 9`,
         );
         const ledger = await target.adapter.createForgetLedger({ tenant: DEFAULT_TENANT });
         try {
@@ -722,7 +768,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at") VALUES ('', 'e-1', 'ana', '2026-01-01T00:00:00.000Z')`,
       );
       await target.execute(
-        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 9`,
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" >= 9`,
       );
       const unnamed = await boot();
       try {

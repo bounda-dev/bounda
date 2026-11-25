@@ -451,6 +451,7 @@ describe("createReactionCommands", () => {
         forgottenAt: forgotten?.timestamp,
         reason: "requested",
         fingerprints: ["f-1"],
+        committed: false,
       },
     ]);
   });

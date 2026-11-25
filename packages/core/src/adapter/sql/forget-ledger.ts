@@ -23,6 +23,7 @@ const COLUMNS = [
   "restriction",
   "redaction",
   "disclosure",
+  "committed",
 ] as const;
 // Within the hundred parameters a Durable Object's SQLite binds to one statement.
 const ENTRIES_PER_INSERT = Math.floor(100 / COLUMNS.length);
@@ -221,6 +222,38 @@ export const forgetLedgerDisclosureStatement: ForgetLedgerDisclosureStatementFun
 ) =>
   `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"disclosure" TEXT`;
 
+export interface ForgetLedgerCommittedStatementFunction {
+  (table: string, dialect: Pick<SqlDialect, "name">): string;
+}
+
+/**
+ * The tenth version: whether an entry is an intention whose commit the stream has not copied yet,
+ * `0`, or committed, `1`, which every entry written before reads as: the stream copied each one
+ * whose forgetting committed, and a start of the version that wrote it committed again, as a
+ * restore, any intention whose commit never came. SQLite has no `IF NOT EXISTS` there, so its
+ * caller runs it only on a table without the column.
+ */
+export const forgetLedgerCommittedStatement: ForgetLedgerCommittedStatementFunction = (
+  table,
+  { name },
+) =>
+  `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"committed" INTEGER NOT NULL DEFAULT 1`;
+
+// One entry per event, committed when any of its appends is: an upsert that meets one event twice
+// in a statement fails on PostgreSQL.
+const onePerEvent = (entries: readonly ForgetLedgerEntry[]): readonly ForgetLedgerEntry[] => {
+  const byEvent = new Map<string, ForgetLedgerEntry>();
+  for (const entry of entries) {
+    const kept = byEvent.get(entry.eventId);
+    if (kept === undefined) byEvent.set(entry.eventId, entry);
+    else if (entry.committed !== false) {
+      const { committed: _, ...committed } = kept;
+      byEvent.set(entry.eventId, committed);
+    }
+  }
+  return [...byEvent.values()];
+};
+
 const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
   const categories: unknown = JSON.parse(String(row.categories ?? null));
   const entry: ForgetLedgerEntry = {
@@ -240,10 +273,11 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
     ...(restriction === null ? {} : { restriction }),
     ...(redaction === null ? {} : { redaction }),
     ...(disclosure === null ? {} : { disclosure }),
+    ...(Number(row.committed) === 0 ? { committed: false as const } : {}),
   };
 };
 
-const SELECTED = `"event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure"`;
+const SELECTED = `"event_id", "person", "forgotten_at", "reason", "fingerprints", "categories", "restriction", "redaction", "disclosure", "committed"`;
 
 /**
  * The forget ledger of SQLite and PostgreSQL alike, in a table of its own that holds every
@@ -279,15 +313,16 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
   return {
     append: async (entries) => {
       await prepared();
+      const appended = onePerEvent(entries);
       await fenced.write(async (tx) => {
-        for (let start = 0; start < entries.length; start += ENTRIES_PER_INSERT) {
-          const chunk = entries.slice(start, start + ENTRIES_PER_INSERT);
+        for (let start = 0; start < appended.length; start += ENTRIES_PER_INSERT) {
+          const chunk = appended.slice(start, start + ENTRIES_PER_INSERT);
           const rows = chunk.map(
             (_, row) =>
               `(${COLUMNS.map((_, column) => p(row * COLUMNS.length + column + 1)).join(", ")})`,
           );
           await tx.run(
-            `INSERT INTO ${table} (${COLUMNS.map((column) => `"${column}"`).join(", ")}) VALUES ${rows.join(", ")} ON CONFLICT ("tenant", "event_id") DO NOTHING`,
+            `INSERT INTO ${table} (${COLUMNS.map((column) => `"${column}"`).join(", ")}) VALUES ${rows.join(", ")} ON CONFLICT ("tenant", "event_id") DO UPDATE SET "committed" = 1 WHERE ${table}."committed" = 0 AND EXCLUDED."committed" = 1`,
             chunk.flatMap(
               ({
                 eventId,
@@ -299,6 +334,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
                 restriction,
                 redaction,
                 disclosure,
+                committed,
               }) => [
                 tenant,
                 eventId,
@@ -310,6 +346,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
                 restriction === undefined ? null : JSON.stringify(restriction),
                 redaction === undefined ? null : JSON.stringify(redaction),
                 disclosure === undefined ? null : JSON.stringify(disclosure),
+                committed === false ? 0 : 1,
               ],
             ),
           );

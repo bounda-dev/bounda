@@ -65,7 +65,7 @@ describe("databasesOf", () => {
 
 const restoresFinding = (found: () => Promise<number>): RestoreWatch => ({
   start: async () => null,
-  started: async () => undefined,
+  settled: async () => undefined,
   check: async () => null,
   declare: async () => ({ first: true }),
   flush: async () => undefined,

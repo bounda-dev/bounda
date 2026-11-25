@@ -48,7 +48,8 @@ export interface ForgetIntentions {
    */
   intend(args: IntendArgs): Promise<ForgetIntention>;
   /**
-   * Records an entry in the ledger. A strict ledger that does not take it rejects with
+   * Records an entry in the ledger, as an intention until the stream copies its commit. A strict
+   * ledger that does not take it rejects with
    * `ForgetLedgerUnavailableError`, and a ledger whose fence refuses it with the fence's error,
    * whether it is strict or not; any other failure is logged, and the stream copies the
    * forgetting once it commits.
@@ -151,7 +152,7 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
   };
   const record = (entry: ForgetLedgerEntry): Promise<void> =>
     append(
-      [entry],
+      [{ ...entry, committed: false }],
       "forget ledger did not take the forgetting; it commits, and the stream copies it",
     );
   return {
@@ -183,6 +184,7 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
           forgottenAt: at,
           reason: "requested",
           disclosure,
+          committed: false,
         })),
         "forget ledger did not take the disclosure; a restore that loses it would not tell its recipient",
       ),

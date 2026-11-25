@@ -44,6 +44,8 @@ interface EntryMetadata {
   readonly fingerprints?: readonly string[];
   // The categories and the fingerprints are the key's value instead, as JSON: they did not fit.
   readonly inValue?: true;
+  // Only on an intention: a list reads it, whether the entry's value is fetched or not.
+  readonly committed?: false;
 }
 
 // What the value of an entry `inValue` holds: always where the entry records a change of
@@ -77,13 +79,16 @@ const storedOf = ({
   restriction,
   redaction,
   disclosure,
+  committed,
 }: ForgetLedgerEntry): StoredEntry => {
+  const intended = committed === false ? { committed } : {};
   const full: EntryMetadata = {
     personId,
     forgottenAt,
     ...(categories === null ? {} : { categories }),
     reason,
     ...(fingerprints === undefined ? {} : { fingerprints }),
+    ...intended,
   };
   if (
     restriction === undefined &&
@@ -101,7 +106,7 @@ const storedOf = ({
     ...(disclosure === undefined ? {} : { disclosure }),
   };
   return {
-    metadata: { personId, forgottenAt, reason, inValue: true },
+    metadata: { personId, forgottenAt, reason, inValue: true, ...intended },
     value: JSON.stringify(spilled),
   };
 };
@@ -190,6 +195,7 @@ const entryOf = (
     ...(restriction === undefined ? {} : { restriction }),
     ...(redaction === undefined ? {} : { redaction }),
     ...(disclosure === undefined ? {} : { disclosure }),
+    ...(metadata.committed === false ? { committed: false as const } : {}),
   };
 };
 
@@ -238,6 +244,18 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
   let own: TenantFence | null = null;
   let running = 0;
   let drained: (() => void)[] = [];
+  // The writes of one entry run one after another: an intention looks whether its entry is there
+  // before it writes, which a committed copy written meanwhile would make wrong.
+  const writing = new Map<string, Promise<unknown>>();
+  const inTurn = (key: string, write: () => Promise<void>): Promise<void> => {
+    const turn = (writing.get(key) ?? Promise.resolve()).then(write);
+    const settled = turn.catch(() => undefined);
+    writing.set(key, settled);
+    void settled.then(() => {
+      if (writing.get(key) === settled) writing.delete(key);
+    });
+    return turn;
+  };
   const storedFence = async (): Promise<TenantFence> => {
     const stored = await namespace.get(fenceKey);
     return stored === null ? { state: "open" } : (JSON.parse(stored) as TenantFence);
@@ -272,16 +290,21 @@ export const createKvForgetLedger: CreateKvForgetLedgerFunction = ({
     append: (entries) =>
       behindFence(async () => {
         const now = Date.now();
-        await Promise.all(
-          entries.flatMap((entry) => {
-            const { eventId, forgottenAt } = entry;
+        const put = (entry: ForgetLedgerEntry): Promise<void> => {
+          const key = `${prefix}${timeKey(entry.forgottenAt)}:${entry.eventId}`;
+          return inTurn(key, async () => {
+            // An entry already there is never put back to an intention.
+            if (entry.committed === false && (await namespace.get(key)) !== null) return;
             const { metadata, value } = storedOf(entry);
-            const key = `${prefix}${timeKey(forgottenAt)}:${eventId}`;
-            if (keepForMs === undefined) return [namespace.put(key, value, { metadata })];
-            const expiration = expirationOf(forgottenAt, keepForMs, now);
-            return expiration === null ? [] : [namespace.put(key, value, { metadata, expiration })];
-          }),
-        );
+            if (keepForMs === undefined) return namespace.put(key, value, { metadata });
+            const expiration = expirationOf(entry.forgottenAt, keepForMs, now);
+            if (expiration !== null) await namespace.put(key, value, { metadata, expiration });
+          });
+        };
+        // An entry's committed copy comes after its intention in one call, so it wins.
+        const intentions = entries.filter(({ committed }) => committed === false);
+        const committed = entries.filter(({ committed }) => committed !== false);
+        await Promise.all([...intentions.map(put), ...committed.map(put)]);
       }),
     read: async ({ after, limit }) => {
       const oldest = after === undefined ? null : timeKey(after.forgottenAt);

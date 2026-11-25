@@ -2512,7 +2512,8 @@ status.
 2. What the ledger holds and the database does not, an intention whose commit had not happened yet,
    is committed now, as a [reconciliation](#what-the-runtime-does-with-it) does, young entries
    included: a `forget`, `restrict` or `redact` whose intention landed before the freeze and whose
-   own commit the freeze refuses resolves as committed.
+   own commit the freeze refuses resolves as committed. A committed entry among them says the
+   database went back, a [restore](#restores) counted then.
 3. The database's, and the tenant key store's record.
 4. Each read model's. A projection that had not caught up stays where it was, and the export says
    how far each one got.
@@ -2838,7 +2839,9 @@ ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
 environment, the tenant (`default` for an app that names none) and `keepForMs` when the app
 starts, and keeps its tenant's entries apart from every other's: it keeps every field of an entry, the
-reason and the fingerprints included, which the reconciliation decides by; its `read` returns
+reason and the fingerprints included, which the reconciliation decides by, and `committed: false`
+on an intention until the same entry is appended without it, in the same call or a later one,
+after which it reads committed whatever is appended again; its `read` returns
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
 time; its `readMark` and `raiseMark` keep numbers that only go up, which the runtime uses to tell
@@ -2859,13 +2862,16 @@ Every forgetting writes its intention to the ledger first, and commits after: `f
 or process, the retention, `forgetAgain`. The intention is the entry the forgetting will be: its
 event's id and time are set before the transaction, and the transaction appends the event with
 them, so the ledger and the database name one forgetting by one id. A policy's or process's
-`forget` writes it just before its run's transaction opens, once the run has decided.
+`forget` writes it just before its run's transaction opens, once the run has decided. The entry
+reads `committed: false` until the commit returns, which appends it again as committed, as the
+stream's copy does after: a committed entry the database lacks was undone by a restore, an
+intention it lacks may never have committed.
 
 An intention the ledger's fence refuses, the tenant [frozen](#freezing-a-tenant) or forgotten,
 fails the forgetting with the fence's error, strict ledger or not, and nothing is written. What
 happens to an intention whose commit does not happen, because the process stopped in between or
 the database refused the transaction, is the same in every case: the next reconciliation
-commits it, since forgetting is what was asked. A `forget` that rejects after its intention was
+commits it, since forgetting is what was asked, and counts no [restore](#restores) for it. A `forget` that rejects after its intention was
 written still forgets the person then; calling it again forgets them at once, and is never an
 error. The retention is the one exception, as it decides on the person's activity: a forgetting
 the retention made is committed again only while the retention would still forget the person,
@@ -2884,7 +2890,8 @@ commits them at once: the copy cannot be committing any of them.
 
 The event store is also the ledger's outbox: a subscriber of the dispatcher, `forget-ledger`,
 copies every `PersonalDataForgotten` to the ledger again in batches, with a policy's guarantee,
-and the ledger keeps one entry per event however often it receives it. So a forgetting whose
+and the ledger keeps one entry per event however often it receives it, committed from the first
+copy. So a forgetting whose
 intention the ledger refused, or did not take within its `timeout`, which an app that is not
 strict logs as a warning and commits all the same, still reaches it: a batch the ledger refuses is
 delivered again, and the subscriber's lag in `getLag` and `bounda.dispatcher.lag` shows how far
@@ -2898,7 +2905,8 @@ reason, each forgetting the database does not hold whose person still holds a ke
 a normal start that read returns next to nothing. After a restore the cursor went back with the
 copy, and the read returns exactly the forgettings made since the copy was taken, the intentions
 whose commit never happened included; the read models that show those persons hear of it before
-the start resolves, and the app logs how many it committed again:
+the start resolves, and the app logs how many it committed again, and how many of those were
+intentions whose commit the ledger never heard of:
 
 ```
 committed again forgettings the database did not hold
@@ -3046,7 +3054,7 @@ and `bounda status` counts the restores found. How it is found depends on when t
 | The copy was restored | Found by | What is guaranteed |
 | --- | --- | --- |
 | under the running app | every instance, on its next pass, before it delivers an event or claims a scheduled command, or within five seconds in the `web` role; with a strict ledger, also after every query and export | Any copy taken before the last write the instances saw, or before the newest event an instance read or committed. A copy taken after both differs from the database in nothing but waits, which the jobs read again anyway. |
-| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, or before a forgetting the ledger holds and the copy does not. Only after a crash can a copy of the last five seconds of writes, with no forgetting among them, go unseen: it differs from the database in waits alone. |
+| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, or before a commit the ledger holds and the copy does not. Only after a crash can a copy of the last five seconds of writes go unseen, with no forgetting, restriction or redaction among them whose commit reached the ledger: it differs from the database in waits alone, and what the ledger holds of it as intentions is applied again all the same. |
 | while the app was stopped, without a ledger | `bounda restored`, which you run after restoring, or the first instance to start after `bounda restore`, which counts the restore in the copy it puts back | What you declare, or what `bounda restore` counted: the database alone cannot tell a copy from itself. |
 
 Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
@@ -3059,9 +3067,11 @@ counter moved. A pass that finds a restore reconciles the ledger before the disp
 anything or the worker claims anything, so a scheduled command of someone the copy brought back
 never runs. [Backups and restores](/guides/backups/) has the steps for each engine. With a forget ledger the
 counter is also raised in the ledger, as a mark outside the database, which is how a start tells
-a copy restored while the app was stopped; and a forgetting the ledger holds that the database
-does not is a restore too, whatever the counter says, so the forgettings a copy undid are
-applied again and found by the same reconciliation. A forgetting never depends on the mark: what
+a copy restored while the app was stopped; and a committed forgetting, restriction or redaction the
+ledger holds that the database does not is a restore too, whatever the counter says, found by the
+reconciliation that applies it again, at a start, on a round or before a freeze. An intention whose
+commit never came is applied again and is no restore: a process that stopped, or a transaction
+that failed, between the intention and the commit leaves no count behind. A forgetting never depends on the mark: what
 a restore that goes unseen leaves is waits, which end on their own within an hour.
 
 On Workers KV, `kvForgetLedger`, a read may lag a write by up to a minute in another location, so
@@ -3074,7 +3084,11 @@ bounda restored
 ```
 
 `app.restored()` is the same in code. It counts the restore, so running instances learn of it
-too, clears the waits, and reconciles the ledger at once when there is one.
+too, clears the waits, and reconciles the ledger at once when there is one. It counts each restore
+once: it raises the ledger's mark before it counts, so a ledger that refuses fails it with nothing
+counted; one that failed after it counted is finished, not counted again, by running it again or by
+the next start; and run again while the database stands where the restore left it, or after a start
+or a `bounda restore` that counted the same restore, it counts nothing more.
 
 ### Old backups
 

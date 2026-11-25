@@ -763,12 +763,24 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       const rewrapped = (await rotation?.sweep(claimedAt)) ?? 0;
       const resealed = (await reseal?.sweep(claimedAt)) ?? 0;
       const forgottenAgain = (await reconciliation?.sweep(claimedAt)) ?? 0;
-      // A forgetting the ledger holds and the database does not: the database went back, though
-      // the generation did not show it, as for a copy taken just before a forget.
-      if (forgottenAgain > 0 && restores !== undefined && (restored ?? null) === null) {
-        handled = await restores.declare();
-        await restart(handled.first, true);
+      // A committed forgetting the ledger holds and the database does not: the database went
+      // back, though the generation did not show it, as for a copy taken just before a forget.
+      const undone = reconciliation?.undone() ?? 0;
+      if (undone > 0 && restores !== undefined) {
+        try {
+          handled = await restores.declare();
+          reconciliation?.declared(undone);
+          await restart(handled.first, true);
+        } catch (error) {
+          logger.error(
+            "the restore the forget ledger tells could not be declared; it is tried again",
+            {
+              error,
+            },
+          );
+        }
       }
+      await restores?.settled();
       const purged = (await letterRetention?.sweep(claimedAt)) ?? 0;
       const purgedFailures = (await failureRetention?.sweep(claimedAt)) ?? 0;
       const backfilled = (await backfill?.sweep(claimedAt)) ?? 0;

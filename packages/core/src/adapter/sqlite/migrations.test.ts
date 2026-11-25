@@ -182,6 +182,28 @@ describe("the SQLite schema scopes", () => {
           `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
         )
         .get(),
-    ).toEqual({ version: 9 });
+    ).toEqual({ version: 10 });
+  });
+
+  it("takes the forget ledger's committed column as there already, from a migration that stopped before recording its version", async () => {
+    const { database, db } = onNodeSqlite();
+    const migrate = () =>
+      migrateSqlite({
+        db: database,
+        prefix: "app_",
+        scopes: [sqliteForgetLedgerScope(`"app_forget_ledger"`)],
+      });
+    await migrate();
+    db.prepare(
+      `DELETE FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' AND "version" = 10`,
+    ).run();
+    await migrate();
+    expect(
+      db
+        .prepare(
+          `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
+        )
+        .get(),
+    ).toEqual({ version: 10 });
   });
 });

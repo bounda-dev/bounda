@@ -1360,6 +1360,7 @@ describe("the retention and the forget ledger", () => {
         forgottenAt: forgetting?.timestamp,
         reason: "retention",
         fingerprints: ["f-1"],
+        committed: false,
       },
     ]);
   });

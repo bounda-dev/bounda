@@ -1,7 +1,9 @@
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
+import { isFenceError } from "../../adapter/storage/tenant-fence.ts";
 import type { Logger } from "../../contracts/logger.ts";
+import { eventMark } from "../read-model/stream-marks.ts";
 
 /**
  * The checkpoint row the running instances move one forward, each at most once every
@@ -23,6 +25,19 @@ export const RESTORES_FOUND = "runtime:restores";
  * running, find such a restore, and counts it exactly once.
  */
 export const RESTORE_UNCLAIMED = "runtime:restore-unclaimed";
+
+/**
+ * The count a declaration of a restore moves the restores to, until the restore is handled: a
+ * declaration made again, or the next start, finishes it rather than counting another.
+ */
+export const RESTORE_DECLARING = "runtime:restore-declaring";
+
+/**
+ * The database as the last restore an instance counted left it once handled, as a 52-bit hash of
+ * its generation, its count of restores and its newest event: a declaration that finds the
+ * database still there declares that restore again, and counts nothing.
+ */
+export const RESTORE_HANDLED = "runtime:restore-handled";
 
 /**
  * The forget ledger's mark the generation is raised to, outside the database: what tells a copy
@@ -50,10 +65,12 @@ export interface RestoreWatch {
    */
   start(): Promise<Restored | null>;
   /**
-   * Takes the restore counted in place that `start` found, once the start went through: a start
-   * that fails before leaves it for the next. Never rejects.
+   * Takes the restore this instance counted, found at start or declared, once it is handled: a
+   * start or a declaration that fails before leaves it for the next. Moves the generation past
+   * what handling it committed, and keeps where the database then stands, which a declaration of
+   * the same restore finds. Never rejects.
    */
-  started(): Promise<void>;
+  settled(): Promise<void>;
   /**
    * Reads the rows and resolves to what this instance learnt: `null` while the database holds at
    * least what it read last. Moves the generation after activity, a write to the stream since the
@@ -63,7 +80,10 @@ export interface RestoreWatch {
   check(now: Date, options?: CheckRestoreOptions): Promise<Restored | null>;
   /**
    * Records a restore an operator made: counted as found, so every running instance learns of
-   * it, and this one first.
+   * it, and this one first. Raises the forget ledger's mark before it counts, so a mark that
+   * cannot be raised rejects with nothing counted. Counts a restore once: a declaration that
+   * failed part way is finished, not counted again, and one made while the database stands where
+   * the last restore handled left it is of that restore.
    */
   declare(): Promise<Restored>;
   /**
@@ -144,6 +164,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   let checking: Promise<Restored | null> | null = null;
   // The count of a restore counted in place that `start` found, until the start went through.
   let foundAtStart = 0;
+  // The count of the declaration this instance made or finished, until the restore is handled.
+  let declaring = 0;
+  // Whether this instance counted a restore, found or declared, that `settled` has not taken.
+  let handling = false;
   // Activity of a caller that joined a check under way, for the next one.
   let joinedActive = false;
 
@@ -186,6 +210,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     );
     seen = { generation: moved ? generation : await checkpoints.get(RESTORE_GENERATION), restores };
     movedAt = Number.NEGATIVE_INFINITY;
+    handling ||= first;
     return { first };
   };
 
@@ -193,10 +218,59 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   const take = async (stored: Seen): Promise<boolean> => {
     const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
     // The count it read moved past what this instance had read, so it is never 0 here.
-    return (
+    const taken =
       unclaimed === stored.restores &&
-      (await checkpoints.compareAndSet(RESTORE_UNCLAIMED, unclaimed, 0))
-    );
+      (await checkpoints.compareAndSet(RESTORE_UNCLAIMED, unclaimed, 0));
+    handling ||= taken;
+    return taken;
+  };
+
+  // Moves the row only up, as other instances move it too.
+  const advance = async (row: string, to: number): Promise<void> => {
+    for (;;) {
+      const at = await checkpoints.get(row);
+      if (at >= to || (await checkpoints.compareAndSet(row, at, to))) return;
+    }
+  };
+
+  const handledMark = async (stored: Seen): Promise<number> => {
+    const newest = await eventAt(await events.lastPosition());
+    return eventMark(`${stored.generation}:${stored.restores}:${newest?.id ?? ""}`);
+  };
+
+  // The generation a declaration moves to, past the mark, which it raises first: a mark that
+  // cannot be raised fails the declaration before anything counts. A frozen or forgotten tenant's
+  // ledger takes no mark, which its next start raises.
+  const raiseFirst = async (stored: Seen): Promise<number> => {
+    const floor = Math.max(stored.generation, seen?.generation ?? 0);
+    if (marks === null) return floor + 1;
+    const mark = await marks.readMark(RESTORE_MARK);
+    unmarked = false;
+    const generation = Math.max(floor, mark) + 1;
+    try {
+      await marks.raiseMark(RESTORE_MARK, generation);
+    } catch (error) {
+      if (!isFenceError(error)) throw error;
+    }
+    return generation;
+  };
+
+  // Counts the declaration of `target` unless the database counted it already, and moves the
+  // generation past the mark.
+  const finish = async (stored: Seen, target: number, raised?: number): Promise<Restored> => {
+    const generation = raised ?? (await raiseFirst(stored));
+    if (stored.restores < target) {
+      await checkpoints.compareAndSet(RESTORES_FOUND, stored.restores, target);
+    }
+    await advance(RESTORE_GENERATION, generation);
+    seen = await read();
+    movedAt = Number.NEGATIVE_INFINITY;
+    witness = null;
+    head = await events.lastPosition();
+    await watchHead(head);
+    declaring = target;
+    handling = true;
+    return { first: true };
   };
 
   const raise = async (generation: number): Promise<void> => {
@@ -279,10 +353,14 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         head = await events.lastPosition();
         await watchHead(head);
         seen = stored;
+        const declared = await checkpoints.get(RESTORE_DECLARING);
+        // A declaration that did not finish, of a restore counted once whoever finishes it.
+        if (declared > 0 && declared >= stored.restores) return await finish(stored, declared);
         // One counted where it was made moved the generation past the mark; one the mark tells came
         // after, as a copy of a database that held it.
         const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
         foundAtStart = unclaimed === stored.restores ? unclaimed : 0;
+        handling = foundAtStart > 0;
         const restored =
           (await compareWithMark(stored)) ?? (foundAtStart > 0 ? { first: true } : null);
         // A mark only goes up: past a restore it is already higher.
@@ -292,14 +370,26 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         return logged("the database could not be compared with the forget ledger's mark")(error);
       }
     },
-    started: async () => {
-      if (foundAtStart === 0) return;
+    settled: async () => {
+      if (!handling) return;
       try {
-        await checkpoints.compareAndSet(RESTORE_UNCLAIMED, foundAtStart, 0);
+        if (foundAtStart > 0) await checkpoints.compareAndSet(RESTORE_UNCLAIMED, foundAtStart, 0);
+        if (declaring > 0) await checkpoints.compareAndSet(RESTORE_DECLARING, declaring, 0);
+        // What handling the restore committed, as the forgettings it applied again, is past the
+        // copy: one taken before it holds less.
+        const last = await events.lastPosition();
+        if (seen !== null && !unmarked && last !== head) await move(seen, movedAt);
+        head = last;
+        await watchHead(last);
+        const stored = await read();
+        const handled = await checkpoints.get(RESTORE_HANDLED);
+        await checkpoints.compareAndSet(RESTORE_HANDLED, handled, await handledMark(stored));
       } catch (error) {
-        logger.error("the restore found at start could not be taken", { error });
+        logger.error("the restore handled could not be taken", { error });
       }
       foundAtStart = 0;
+      declaring = 0;
+      handling = false;
     },
     check: (now, { active = false } = {}) => {
       if (checking !== null) {
@@ -314,12 +404,21 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       return checking;
     },
     declare: async () => {
-      const stored = await read();
-      const restored = await count(stored, Math.max(stored.restores, seen?.restores ?? 0), 0);
-      witness = null;
-      await watchHead(await events.lastPosition());
-      if (marks !== null && seen !== null) await marks.raiseMark(RESTORE_MARK, seen.generation);
-      return restored;
+      for (;;) {
+        const stored = await read();
+        const declared = await checkpoints.get(RESTORE_DECLARING);
+        if (declared > 0 && declared >= stored.restores) return finish(stored, declared);
+        // The restore this instance counted and has not settled, or the last one handled while
+        // the database has not moved since: the one declared.
+        if (handling || (await checkpoints.get(RESTORE_HANDLED)) === (await handledMark(stored))) {
+          return { first: true };
+        }
+        const target = Math.max(stored.restores, seen?.restores ?? 0) + 1;
+        const generation = await raiseFirst(stored);
+        // Another declaration under way took the row first: this one finishes it.
+        if (!(await checkpoints.compareAndSet(RESTORE_DECLARING, declared, target))) continue;
+        return finish(stored, target, generation);
+      }
     },
     flush: async () => {
       if (seen === null || unmarked) return;

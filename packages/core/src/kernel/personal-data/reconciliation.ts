@@ -315,6 +315,10 @@ export interface ForgetLedgerReconciliation {
   // ledger takes no entry more, so the database holds every intention it recorded. Rejects when
   // the ledger cannot be read through.
   drain(now: Date): Promise<number>;
+  // How many committed entries the reconciliations applied again while no restore was known, the
+  // database having lost them, until `declared` takes them: a restore nothing else found.
+  undone(): number;
+  declared(count: number): void;
 }
 
 export interface CreateForgetLedgerReconciliationArgs {
@@ -385,6 +389,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   let done = false;
   // A restore was found since the last reconciliation that read the ledger through.
   let restoredSince = false;
+  let undone = 0;
   let dueAt: number | null = null;
   // When this instance next looks whether the periodic reconciliation is due.
   let periodicAt: number = clock.now().getTime() + reconcileEveryMs;
@@ -405,16 +410,24 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   const run = async (
     at: number,
     graced = !restoredSince,
-  ): Promise<{ forgotten: number; young: number | null }> => {
+  ): Promise<{ forgotten: number; intended: number; young: number | null }> => {
     const cursor = await checkpointStore.get(FORGET_LEDGER_CURSOR);
     let after: ForgetLedgerPosition | undefined =
       cursor === 0
         ? undefined
         : { forgottenAt: new Date(cursor - FORGET_LEDGER_REREAD_MS).toISOString(), eventId: "" };
     let forgotten = 0;
+    // Of those, the intentions whose commit the ledger never saw, which may never have happened.
+    let intended = 0;
     let youngest: number | null = null;
+    const applied = (entry: ForgetLedgerEntry): void => {
+      forgotten += 1;
+      if (entry.committed === false) intended += 1;
+      else if (!restoredSince) undone += 1;
+    };
     const ended = () => ({
       forgotten,
+      intended,
       young: youngest === null ? null : youngest + FORGET_LEDGER_GRACE_MS,
     });
     for (;;) {
@@ -445,7 +458,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
             personId: entry.personId,
             eventId: entry.eventId,
           });
-          forgotten += 1;
+          applied(entry);
           continue;
         }
         if (entry.disclosure !== undefined) {
@@ -477,7 +490,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
             eventId: entry.eventId,
             eventType: restricted.type,
           });
-          forgotten += 1;
+          applied(entry);
           continue;
         }
         const again = await forgetAgain({
@@ -495,7 +508,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         if (again === null) continue;
         logForgotten(logger, again);
         onForgotten?.(entry.personId);
-        forgotten += 1;
+        applied(entry);
       }
       const last = page.at(-1);
       if (last === undefined) return ended();
@@ -543,9 +556,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   const reconcile = async (now: Date): Promise<number | ReconciliationFailed> => {
     const at = now.getTime();
     let forgotten: number;
+    let intended: number;
     let young: number | null;
     try {
-      ({ forgotten, young } = await run(at));
+      ({ forgotten, intended, young } = await run(at));
     } catch (error) {
       done = false;
       logger.error(
@@ -558,7 +572,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       return { failed: error };
     }
     if (forgotten > 0) {
-      logger.warn("committed again forgettings the database did not hold", { forgotten });
+      logger.warn("committed again forgettings the database did not hold", {
+        forgotten,
+        intentions: intended,
+      });
     }
     done = true;
     restoredSince = false;
@@ -656,9 +673,14 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       };
     },
     drain: async (now) => (await run(now.getTime(), false)).forgotten,
+    undone: () => undone,
+    declared: (count) => {
+      undone = Math.max(0, undone - count);
+    },
     restored: async (first) => {
       done = false;
       restoredSince = true;
+      undone = 0;
       dueAt = clock.now().getTime();
       // A hold the copy brought back is not waited for: what it held was failing before the copy.
       local = null;

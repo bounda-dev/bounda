@@ -38,7 +38,12 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
         append: (appended) =>
           fence.write(async () => {
             for (const entry of appended) {
-              if (!entries.has(entry.eventId)) entries.set(entry.eventId, { ...entry });
+              const kept = entries.get(entry.eventId);
+              if (kept === undefined) entries.set(entry.eventId, { ...entry });
+              else if (kept.committed === false && entry.committed !== false) {
+                const { committed: _, ...committed } = kept;
+                entries.set(entry.eventId, committed);
+              }
             }
           }),
         read: async ({ after, limit }) =>

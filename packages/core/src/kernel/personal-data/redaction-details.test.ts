@@ -466,7 +466,7 @@ describe("redact, in detail", () => {
     });
     await commands.correctEmail?.({ customerId: "ana", email: "ana@new.example" });
     await app.runUntilIdle();
-    // The intention asked for both fields; the outbox copied what the event says it reached.
+    // The intention asked for both fields; its commit copied what the event says it reached.
     const [intention, copy] = appendsOf(redacted.eventIds[0]);
     expect(intention).toEqual({
       personId: "ana",
@@ -475,6 +475,7 @@ describe("redact, in detail", () => {
       forgottenAt: expect.any(String),
       reason: "requested",
       redaction: { events: [target(registered, ["email", "note"])] },
+      committed: false,
     });
     expect(copy?.redaction).toEqual({ events: [target(registered, ["email"])] });
     // A later round reads the entry again and finds the store holds it: nothing is committed.
@@ -703,7 +704,8 @@ describe("redact, in detail", () => {
     await app.forget("ana", { categories: ["profile"] });
     await app.runUntilIdle();
     const [, followUp] = await redactions();
-    expect(appendsOf(followUp?.id)).toHaveLength(2);
+    // Its intention, its commit and the stream's copy.
+    expect(appendsOf(followUp?.id)).toHaveLength(3);
     const reached =
       (followUp?.payload as { events: readonly RedactedFields[] } | undefined)?.events ?? [];
     // The process carried the old value into its state from the late correction on.

@@ -71,6 +71,21 @@ describe("withCommittedEvents", () => {
     expect(once).toEqual([["o-2-1"]]);
   });
 
+  it("resolves an append and a transaction once what is reported of them is done", async () => {
+    const done: string[] = [];
+    const storage = withCommittedEvents({
+      storage: await memory().createStorage(),
+      committed: async (events) => {
+        await Promise.resolve();
+        done.push(...events.map(({ id }) => id));
+      },
+    });
+    await storage.eventStore.append(append("o-1"));
+    expect(done).toEqual(["o-1-1"]);
+    await storage.transact((transaction) => transaction.eventStore.append(append("o-2")));
+    expect(done).toEqual(["o-1-1", "o-2-1"]);
+  });
+
   it("reads and reseals through the store as it is", async () => {
     const { storage } = await setUp();
     await storage.eventStore.append(append("o-1"));

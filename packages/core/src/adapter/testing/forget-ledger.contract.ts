@@ -245,6 +245,28 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       ]);
     });
 
+    it("keeps an intention uncommitted until its committed copy comes, and committed for good after", async () => {
+      const intention: ForgetLedgerEntry = { ...entry("c-1", "e-1", 1), committed: false };
+      await ledger.append([intention]);
+      expect(await ledger.read({ limit: 10 })).toEqual([intention]);
+      await ledger.append([entry("c-1", "e-1", 1)]);
+      await ledger.append([intention]);
+      const [read] = await ledger.read({ limit: 10 });
+      expect(read).toEqual(entry("c-1", "e-1", 1));
+      expect(read).not.toHaveProperty("committed");
+    });
+
+    it("keeps committed an entry appended committed and as an intention in one call, either way round", async () => {
+      const first: ForgetLedgerEntry = { ...entry("c-1", "e-1", 1), committed: false };
+      const second: ForgetLedgerEntry = { ...entry("c-2", "e-2", 2), committed: false };
+      await ledger.append([first, entry("c-1", "e-1", 1)]);
+      await ledger.append([entry("c-2", "e-2", 2), second]);
+      expect(await ledger.read({ limit: 10 })).toEqual([
+        entry("c-1", "e-1", 1),
+        entry("c-2", "e-2", 2),
+      ]);
+    });
+
     it("keeps each entry's reason and the keys it names, none, or none recorded", async () => {
       const retained: ForgetLedgerEntry = {
         ...entry("c-1", "e-1", 1),

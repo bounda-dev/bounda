@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
+import { fenceError } from "../../adapter/storage/tenant-fence.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { memory } from "../../memory/index.ts";
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
@@ -8,7 +9,9 @@ import { createRecordingLogger } from "../test-support.ts";
 import {
   createRestoreWatch,
   GENERATION_INTERVAL_MS,
+  RESTORE_DECLARING,
   RESTORE_GENERATION,
+  RESTORE_HANDLED,
   RESTORE_MARK,
   RESTORE_UNCLAIMED,
   RESTORES_FOUND,
@@ -77,8 +80,8 @@ describe("createRestoreWatch", () => {
       expect(await watchOver().start()).toEqual({ first: true });
       const through = watchOver();
       expect(await through.start()).toEqual({ first: true });
-      await through.started();
-      await through.started();
+      await through.settled();
+      await through.settled();
       expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
       expect(await checkpointStore.get(RESTORE_UNCLAIMED)).toBe(0);
       expect(await watchOver().start()).toBeNull();
@@ -92,7 +95,7 @@ describe("createRestoreWatch", () => {
     const watch = watchOver();
     expect(await watch.start()).toEqual({ first: true });
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(4);
-    await watch.started();
+    await watch.settled();
     expect(await watchOver().start()).toBeNull();
   });
 
@@ -109,16 +112,16 @@ describe("createRestoreWatch", () => {
     });
     const nothing = watchOver();
     expect(await nothing.start()).toBeNull();
-    await nothing.started();
+    await nothing.settled();
     expect(entries).toEqual([]);
     await restoredInPlace(checkpointStore, 2);
     const found = watchOver();
     await found.start();
-    await found.started();
+    await found.settled();
     expect(entries).toEqual([
       expect.objectContaining({
         level: "error",
-        message: "the restore found at start could not be taken",
+        message: "the restore handled could not be taken",
         fields: expect.objectContaining({ errorName: "Error" }),
       }),
     ]);
@@ -496,5 +499,190 @@ describe("createRestoreWatch, watching the newest event", () => {
     expect(found[1]).toBe(found[0]);
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
     expect(await watch.check(at(1))).toBeNull();
+  });
+});
+
+describe("createRestoreWatch, declaring a restore", () => {
+  it("raises the mark before it counts: a mark it cannot raise counts nothing", async () => {
+    const { checkpointStore, watchOver } = await setUp({
+      ledger: (inner) => ({
+        readMark: (name) => inner.readMark(name),
+        raiseMark: () => Promise.reject(new Error("down")),
+      }),
+    });
+    await expect(watchOver().declare()).rejects.toThrow("down");
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(0);
+    expect(await checkpointStore.get(RESTORE_DECLARING)).toBe(0);
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(0);
+  });
+
+  it.each(["frozen", "forgotten"] as const)(
+    "counts a declaration whose mark the ledger of a %s tenant refuses, which its next start raises",
+    async (state) => {
+      const { checkpointStore, watchOver } = await setUp({
+        ledger: (inner) => ({
+          readMark: (name) => inner.readMark(name),
+          raiseMark: () =>
+            Promise.reject(
+              fenceError({ state, tenant: DEFAULT_TENANT, since: at(0).toISOString() }),
+            ),
+        }),
+      });
+      expect(await watchOver().declare()).toEqual({ first: true });
+      expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    },
+  );
+
+  it("moves the generation past the mark, which it raises to the same", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    await ledger.raiseMark(RESTORE_MARK, 9);
+    await checkpointStore.set(RESTORE_GENERATION, 4);
+    await watchOver().declare();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(10);
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(10);
+  });
+
+  it("finishes a declaration that failed once its row was written, counting the restore once", async () => {
+    let failing = true;
+    const { checkpointStore, watchOver } = await setUp({
+      wrap: (store) => ({
+        ...store,
+        compareAndSet: async (subscriber, expected, position) => {
+          if (failing && subscriber === RESTORES_FOUND) throw new Error("store is down");
+          return store.compareAndSet(subscriber, expected, position);
+        },
+      }),
+    });
+    await expect(watchOver().declare()).rejects.toThrow("store is down");
+    expect(await checkpointStore.get(RESTORE_DECLARING)).toBe(1);
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(0);
+    failing = false;
+    const again = watchOver();
+    expect(await again.declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    // Taken once handled, and declaring it again counts nothing more.
+    expect(await checkpointStore.get(RESTORE_DECLARING)).toBe(1);
+    await again.settled();
+    expect(await checkpointStore.get(RESTORE_DECLARING)).toBe(0);
+    expect(await watchOver().declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+  });
+
+  it.each([
+    ["before it was counted", 0],
+    ["once it was counted", 1],
+  ])(
+    "finishes at the next start a declaration that stopped %s, counting the restore once",
+    async (_, counted) => {
+      const { checkpointStore, ledger, watchOver } = await setUp();
+      await checkpointStore.set(RESTORE_DECLARING, 1);
+      await checkpointStore.set(RESTORES_FOUND, counted);
+      // The mark it raised first, past the generation it had not moved yet.
+      await ledger.raiseMark(RESTORE_MARK, 1);
+      const watch = watchOver();
+      expect(await watch.start()).toEqual({ first: true });
+      expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+      expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(2);
+      await watch.settled();
+      expect(await checkpointStore.get(RESTORE_DECLARING)).toBe(0);
+      expect(await watchOver().start()).toBeNull();
+      expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    },
+  );
+
+  it("leaves a declaration of an older count a copy held to the next, which counts past it", async () => {
+    const { checkpointStore, watchOver } = await setUp({ marks: false });
+    await checkpointStore.set(RESTORE_DECLARING, 2);
+    await checkpointStore.set(RESTORES_FOUND, 3);
+    expect(await watchOver().start()).toBeNull();
+    await watchOver().declare();
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(4);
+    expect(await checkpointStore.get(RESTORE_DECLARING)).toBe(4);
+  });
+
+  it("counts two declarations made at once as one", async () => {
+    const { checkpointStore, watchOver } = await setUp();
+    const declared = await Promise.all([watchOver().declare(), watchOver().declare()]);
+    expect(declared).toEqual([{ first: true }, { first: true }]);
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+  });
+
+  it("declares again the restore it counted and has not settled, counting it once", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    await ledger.raiseMark(RESTORE_MARK, 5);
+    const watch = watchOver();
+    expect(await watch.start()).toEqual({ first: true });
+    expect(await watch.declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+  });
+
+  it("declares nothing more of a database that stands where the last restore handled left it, and counts one once it moved on", async () => {
+    const { checkpointStore, watchOver } = await setUp();
+    const first = watchOver();
+    await first.start();
+    await first.declare();
+    await first.settled();
+    expect(await checkpointStore.get(RESTORE_HANDLED)).not.toBe(0);
+    const next = watchOver();
+    await next.start();
+    expect(await next.declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    await next.check(at(0), { active: true });
+    expect(await next.declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("tells a database apart by its newest event from where the last restore handled left it", async () => {
+    const { checkpointStore } = await memory().createStorage();
+    const stream = rewritable();
+    const watchOver = () =>
+      createRestoreWatch({
+        checkpoints: checkpointStore,
+        events: stream.events,
+        marks: null,
+        logger: createRecordingLogger("omit").logger,
+      });
+    stream.append("e-1");
+    const first = watchOver();
+    await first.start();
+    await first.declare();
+    await first.settled();
+    // A copy of the same generation and count, whose stream went another way.
+    stream.restore(0);
+    stream.append("e-2");
+    expect(await watchOver().declare()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("moves the generation and the mark past what handling the restore committed, once settled", async () => {
+    const { checkpointStore, ledger, stream, watchOver } = await setUp();
+    const watch = watchOver();
+    await watch.start();
+    await watch.declare();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
+    stream.head = 3;
+    await watch.settled();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(2);
+    expect(await ledger.readMark(RESTORE_MARK)).toBe(2);
+    // And a stop after it moves nothing more.
+    await watch.flush();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(2);
+  });
+
+  it("settles a restore a running instance counted, and nothing one found but did not count", async () => {
+    const { checkpointStore, watchOver } = await setUp({ marks: false });
+    const one = watchOver();
+    const other = watchOver();
+    await one.check(at(0), { active: true });
+    await other.check(at(0), { active: true });
+    await checkpointStore.set(RESTORE_GENERATION, 0);
+    await one.check(at(1));
+    await one.settled();
+    const handled = await checkpointStore.get(RESTORE_HANDLED);
+    expect(handled).not.toBe(0);
+    await other.check(at(1));
+    await checkpointStore.set(RESTORE_HANDLED, 0);
+    await other.settled();
+    expect(await checkpointStore.get(RESTORE_HANDLED)).toBe(0);
   });
 });

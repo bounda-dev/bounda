@@ -662,6 +662,40 @@ describe("a database restored while the app was stopped", () => {
     expect(failed()).toHaveLength(logged);
   });
 
+  it.each([
+    ["committed", 1],
+    ["an intention", 0],
+  ] as const)(
+    "declares at a freeze the restore a forgetting the ledger holds as %s and the database lost tells",
+    async (kind, found) => {
+      const paths = files();
+      const store = createNodeSqliteAdapter(paths.storage);
+      const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
+      const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: ledgerAdapter } } };
+      const { app } = await start({ adapter: store.adapter, runtime });
+      await register(app, "c-1");
+      const ledger = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+      await ledger.append([
+        {
+          personId: "c-1",
+          categories: null,
+          eventId: "019a6b1e-0000-7000-8000-0000000000c1",
+          forgottenAt: START.toISOString(),
+          reason: "requested",
+          ...(kind === "committed" ? {} : { committed: false as const }),
+        },
+      ]);
+      await ledger.close?.();
+      await app.freezeTenant(DEFAULT_TENANT);
+      expect((await app.status()).restoresFound).toBe(found);
+      expect(
+        (await app.events.read({ limit: 100 })).filter(
+          (event) => event.type === "PersonalDataForgotten",
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
   it("is declared without a ledger by bounda restored, which every running instance learns", async () => {
     const path = files().storage;
     const one = createNodeSqliteAdapter(path);
