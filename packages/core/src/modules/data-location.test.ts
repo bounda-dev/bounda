@@ -9,7 +9,20 @@ describe("isDataLocation", () => {
   });
 
   it("knows nothing else, nor a country in upper case", () => {
-    for (const value of ["DE", "EU", "uk", "el", "", "toString", "__proto__", 1, null, undefined]) {
+    for (const value of [
+      "DE",
+      "EU",
+      "uk",
+      "el",
+      "",
+      "toString",
+      "__proto__",
+      1,
+      null,
+      undefined,
+      ["eu"],
+      { toString: () => "global" },
+    ]) {
       expect(isDataLocation(value), String(value)).toBe(false);
     }
   });
