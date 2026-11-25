@@ -124,6 +124,7 @@ jobs:
       packages: ${{ steps.list.outputs.packages }}
       mutation: ${{ steps.list.outputs.mutation }}
       sharded: ${{ steps.list.outputs.sharded }}
+      shard_counts: ${{ steps.list.outputs.shard_counts }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -166,7 +167,10 @@ jobs:
             done
           done | jq -sc .)
           echo "mutation=$mutation" >> "$GITHUB_OUTPUT"
-          echo "sharded=$(echo "$mutation" | jq -c '[.[] | select(.shards > 1) | .package] | unique')" >> "$GITHUB_OUTPUT"
+          {
+            echo "sharded=$(echo "$mutation" | jq -c '[.[] | select(.shards > 1) | .package] | unique')"
+            echo "shard_counts=$shard_counts"
+          } >> "$GITHUB_OUTPUT"
 
   # People run Bounda on Windows too, so the packages a project uses there are tested there
   # whenever one changes. Each step runs even if an earlier test step failed, so one run shows
@@ -226,96 +230,15 @@ jobs:
       - run: DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib node -e "" 2>&1 | grep -q GuardMalloc
       - run: pnpm --filter @bounda-dev/sqlite exec vitest run src/close-once.test.ts
 
-  # The timeout fits a full run of a job, not just an incremental one: GitHub evicts a cache nobody
-  # has read for a week, and a job the timeout cancels saves none, since Stryker writes its
-  # incremental file at the end. A package whose full run would not fit is split into shards, each
-  # mutating the files a hash of their path gives it (.github/scripts/mutation-shard.ts), so a file
-  # keeps its shard and each shard its own cache; each shard holds the break threshold on its own.
-  # It starts alongside `check` rather than after it: mutation is the longest job, and waiting
-  # would add `check`'s whole run to every pull request's.
-  mutation:
-    name: Mutation (${{ matrix.package }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
+  # A package whose full mutation run would not fit one job is split into shards. The plan, made
+  # once here from the package's last report, gives each shard the files whose mutants add up to
+  # an even share of the run (.github/scripts/mutation-plan.ts), and hands every shard that same
+  # report as its incremental file: each reuses what it can of the whole package, and no file is
+  # mutated twice or never.
+  mutation-plan:
+    name: Mutation plan (${{ matrix.package }})
     needs: changes
-    if: needs.changes.outputs.mutation != '[]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.changes.outputs.mutation) }}
-    env:
-      # Stryker runs the tests once per mutant: PostgreSQL's and the libSQL server's keep one
-      # container for all of them.
-      BOUNDA_PG_REUSE: "1"
-      BOUNDA_LIBSQL_REUSE: "1"
-      SHARD: ${{ matrix.shards > 1 && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
-      # As in the check job.
-      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
-    steps:
-      # As in the check job.
-      - name: Log in to Docker Hub
-        if: env.DOCKERHUB_LOGIN == 'true'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: ./.github/actions/setup
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: packages/${{ matrix.package }}/.stryker-tmp/incremental${{ env.SHARD }}.json
-          key: stryker-${{ matrix.package }}${{ env.SHARD }}-${{ github.sha }}
-          restore-keys: stryker-${{ matrix.package }}${{ env.SHARD }}-
-      - run: pnpm build
-      - shell: bash
-        env:
-          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
-        run: |
-          args=()
-          if [ "${{ matrix.shards }}" -gt 1 ]; then
-            # A shard's report is merged with the others' by the mutation-report job, which sends
-            # the whole to the dashboard.
-            files=$(node .github/scripts/mutation-shard.ts "${{ matrix.package }}" "${{ matrix.shard }}" "${{ matrix.shards }}")
-            args=(--mutate "$files" --incrementalFile ".stryker-tmp/incremental${SHARD}.json" --reporters clear-text,progress,html,json)
-          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
-            args=(--reporters clear-text,progress,html,dashboard)
-          fi
-          # Vitest adds a job summary on every run Stryker starts, one per mutant, past what GitHub
-          # takes; the step below writes the one that matters.
-          env -u GITHUB_STEP_SUMMARY pnpm --filter "./packages/${{ matrix.package }}" test:mutation "${args[@]}" 2>&1 | tee mutation.log
-      - if: always()
-        shell: bash
-        run: |
-          {
-            echo "## Mutation testing: ${{ matrix.package }}${SHARD}"
-            echo
-            echo '```text'
-            awk '/^-*\|/,/^-*\|$/ { if (n++ < 60) print substr($0, 1, 200) }' mutation.log
-            grep -E "Final mutation score" mutation.log | sed 's/.*INFO MutationTestReportHelper//' | head -n 1 || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - if: always()
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: packages/${{ matrix.package }}/.stryker-tmp/incremental${{ env.SHARD }}.json
-          key: stryker-${{ matrix.package }}${{ env.SHARD }}-${{ github.sha }}
-      - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: mutation-${{ matrix.package }}${{ env.SHARD }}
-          path: |
-            packages/${{ matrix.package }}/reports/mutation/mutation.html
-            packages/${{ matrix.package }}/reports/mutation/mutation.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # The shards of a package add up to the report of a whole run: its score in the summary, and on
-  # main the whole report on the dashboard, as the dashboard reporter sends one. It runs once the
-  # shards ran, whether or not they passed.
-  mutation-report:
-    name: Mutation report (${{ matrix.package }})
-    needs: [changes, mutation]
-    if: ${{ !cancelled() && needs.changes.outputs.sharded != '[]' && (needs.mutation.result == 'success' || needs.mutation.result == 'failure') }}
+    if: needs.changes.outputs.sharded != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -327,18 +250,179 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
+          restore-keys: stryker-${{ matrix.package }}-
+      - shell: bash
+        env:
+          PACKAGE: ${{ matrix.package }}
+          SHARDS: ${{ fromJSON(needs.changes.outputs.shard_counts)[matrix.package] }}
+        run: |
+          mkdir -p plan
+          incremental="packages/$PACKAGE/.stryker-tmp/incremental.json"
+          node .github/scripts/mutation-plan.ts "$PACKAGE" "$SHARDS" "$incremental" > plan/plan.json 2> plan.log
+          if [ -f "$incremental" ]; then cp "$incremental" plan/incremental.json; fi
+          {
+            echo "## Mutation plan: $PACKAGE"
+            echo
+            echo '```text'
+            cat plan.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-plan-${{ matrix.package }}
+          path: plan/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  # The timeout fits a full run of a job, not just an incremental one: GitHub evicts a cache nobody
+  # has read for a week, and a job the timeout cancels saves none, since Stryker writes its
+  # incremental file at the end. A shard's report carries the whole package, its own files run and
+  # the rest as the incremental file had them, so each shard holds the break threshold on about
+  # the package's score. It starts alongside `check` rather than after it: mutation is the
+  # longest job, and waiting would add `check`'s whole run to every pull request's.
+  mutation:
+    name: Mutation (${{ matrix.package }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
+    needs: [changes, mutation-plan]
+    if: ${{ !cancelled() && needs.changes.outputs.mutation != '[]' && needs.mutation-plan.result != 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.mutation) }}
+    env:
+      # Stryker runs the tests once per mutant: PostgreSQL's and the libSQL server's keep one
+      # container for all of them.
+      BOUNDA_PG_REUSE: "1"
+      BOUNDA_LIBSQL_REUSE: "1"
+      PACKAGE: ${{ matrix.package }}
+      SHARD: ${{ matrix.shards > 1 && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
+      # As in the test job.
+      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+    steps:
+      # As in the test job.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_LOGIN == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
+      - if: matrix.shards == 1
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
+          restore-keys: stryker-${{ matrix.package }}-
+      - if: matrix.shards > 1
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mutation-plan-${{ matrix.package }}
+          path: plan
+      - run: pnpm build
+      - shell: bash
+        env:
+          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+        run: |
+          args=()
+          if [ "${{ matrix.shards }}" -gt 1 ]; then
+            if [ -f plan/incremental.json ]; then
+              mkdir -p "packages/$PACKAGE/.stryker-tmp"
+              cp plan/incremental.json "packages/$PACKAGE/.stryker-tmp/incremental.json"
+            fi
+            mkdir -p "packages/$PACKAGE/reports/mutation"
+            jq '.[${{ matrix.shard }} - 1]' plan/plan.json > "packages/$PACKAGE/reports/mutation/files.json"
+            files=$(jq -r 'join(",")' "packages/$PACKAGE/reports/mutation/files.json")
+            # Without --mutate, Stryker would mutate the whole package.
+            if [ -z "$files" ]; then
+              echo "::error::The plan gave shard ${{ matrix.shard }} no file"
+              exit 1
+            fi
+            # A shard's report is merged with the others' by the mutation-report job, which sends
+            # the whole to the dashboard.
+            args=(--mutate "$files" --reporters clear-text,progress,html,json)
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
+            args=(--reporters clear-text,progress,html,dashboard)
+          fi
+          # Vitest adds a job summary on every run Stryker starts, one per mutant, past what GitHub
+          # takes; the step below writes the one that matters.
+          env -u GITHUB_STEP_SUMMARY pnpm --filter "./packages/$PACKAGE" test:mutation "${args[@]}" 2>&1 | tee mutation.log
+      - if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Mutation testing: ${PACKAGE}${SHARD}"
+            echo
+            echo '```text'
+            awk '/^-*\|/,/^-*\|$/ { if (n++ < 60) print substr($0, 1, 200) }' mutation.log
+            grep -E "Final mutation score" mutation.log | sed 's/.*INFO MutationTestReportHelper//' | head -n 1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # A sharded package's cache is the merged report, which the mutation-report job saves.
+      - if: always() && matrix.shards == 1
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-${{ matrix.package }}${{ env.SHARD }}
+          path: |
+            packages/${{ matrix.package }}/reports/mutation/mutation.html
+            packages/${{ matrix.package }}/reports/mutation/mutation.json
+            packages/${{ matrix.package }}/reports/mutation/files.json
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14
+
+  # The shards of a package add up to the report of a whole run: its score in the summary, the
+  # package's next incremental file in the cache, and on main the whole report on the dashboard,
+  # as the dashboard reporter sends one. It runs once the shards ran, whether or not they passed;
+  # a shard that left no report keeps its files' results from the report the plan started from.
+  mutation-report:
+    name: Mutation report (${{ matrix.package }})
+    needs: [changes, mutation]
+    if: ${{ !cancelled() && needs.changes.outputs.sharded != '[]' && (needs.mutation.result == 'success' || needs.mutation.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.sharded) }}
+    env:
+      PACKAGE: ${{ matrix.package }}
+      SHARDS: ${{ fromJSON(needs.changes.outputs.shard_counts)[matrix.package] }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: mutation-${{ matrix.package }}-*
+          name: mutation-plan-${{ matrix.package }}
+          path: plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: mutation-${{ matrix.package }}-*-of-*
           path: shards
       - shell: bash
         env:
           STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
         run: |
-          mapfile -t reports < <(find shards -name mutation.json | sort)
-          node .github/scripts/mutation-report.ts merged.json "${reports[@]}" | tee score.txt
+          directories=()
+          for shard in $(seq 1 "$SHARDS"); do directories+=("shards/mutation-$PACKAGE-$shard-of-$SHARDS"); done
+          incremental="packages/$PACKAGE/.stryker-tmp/incremental.json"
+          mkdir -p "$(dirname "$incremental")"
+          node .github/scripts/mutation-report.ts "$PACKAGE" "$incremental" plan/incremental.json "${directories[@]}" | tee score.txt
           {
-            echo "## Mutation testing: ${{ matrix.package }}"
+            echo "## Mutation testing: $PACKAGE"
             echo
             echo '```text'
             cat score.txt
@@ -348,17 +432,21 @@ jobs:
           if [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
             curl --fail-with-body --silent --show-error -X PUT \
               -H "X-Api-Key: $STRYKER_DASHBOARD_API_KEY" -H "Content-Type: application/json" \
-              --data-binary @merged.json \
-              "https://dashboard.stryker-mutator.io/api/reports/github.com/${GITHUB_REPOSITORY}/main?module=${{ matrix.package }}" \
-              || echo "::warning::The Stryker dashboard did not take the ${{ matrix.package }} report"
+              --data-binary @"$incremental" \
+              "https://dashboard.stryker-mutator.io/api/reports/github.com/${GITHUB_REPOSITORY}/main?module=$PACKAGE" \
+              || echo "::warning::The Stryker dashboard did not take the $PACKAGE report"
           fi
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
 
   # The one check branch protection and a merge queue need to require: it fails when any job above
   # failed or was cancelled, and passes when the rest succeeded or were skipped because the change
   # does not reach them.
   passed:
     name: CI passed
-    needs: [check, test, test-report, docs, changes, windows, guard-malloc, mutation, mutation-report]
+    needs: [check, test, test-report, docs, changes, windows, guard-malloc, mutation-plan, mutation, mutation-report]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
