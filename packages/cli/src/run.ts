@@ -1182,7 +1182,8 @@ const prunedLine = ({ tenant, before, unapplied }: PrunedTenantForgetLedger): st
     : `${tenant}: removed the entries before ${before}`;
 
 // Each tenant through its own configuration, as a configuration that is a function of the tenant
-// may point each at a database of its own; one that fails leaves the others to go on.
+// may point each at a database and a ledger of its own; one that fails, or whose stores cannot be
+// listed, leaves the others to go on.
 const runPruneLedger = async (
   options: PruneLedgerOptions,
   cwd: string,
@@ -1201,9 +1202,13 @@ const runPruneLedger = async (
     });
   let config: Config;
   let tenant: string | undefined;
+  let project: Awaited<ReturnType<typeof projectFor>>;
+  let listed: readonly string[] = [];
   try {
-    ({ config, tenant } = await projectFor(options.tenant));
+    project = await projectFor(options.tenant);
+    ({ config, tenant } = project);
     resolveErrorText({ env: process.env });
+    if (options.allTenants) listed = await project.tenants();
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
     return EXIT_FAILURE;
@@ -1218,18 +1223,32 @@ const runPruneLedger = async (
       );
       return EXIT_OK;
     }
-    const tenants = await listForgetLedgerTenants({ config, env: process.env, ...named });
-    if (tenants.length === 0) {
-      line(stdout, "the forget ledger holds no tenant's entries");
+    const { tenants, unreached } = await listForgetLedgerTenants({
+      config: project.projectConfig,
+      env: process.env,
+      tenants: listed,
+      ...named,
+    });
+    // Each tenant once, though its stores could not be listed and it could not be pruned.
+    const left = new Set<string>();
+    for (const { tenant: each, error } of unreached) {
+      left.add(each);
+      const { errorName, errorMessage } = errorFields({ error, errorText });
+      line(
+        stderr,
+        `error: the stores ${each}'s configuration names could not be listed: ${errorMessage ?? errorName}`,
+      );
+    }
+    if (tenants.length === 0 && left.size === 0) {
+      line(stdout, "the forget ledgers hold no tenant's entries");
       return EXIT_OK;
     }
-    let left = 0;
     for (const each of tenants) {
-      let project: Awaited<ReturnType<typeof projectFor>>;
+      let own: Awaited<ReturnType<typeof projectFor>>;
       try {
-        project = await projectFor(each);
+        own = await projectFor(each);
       } catch (error) {
-        left += 1;
+        left.add(each);
         line(
           stderr,
           `error: ${each} could not be pruned: ${error instanceof Error ? error.message : String(error)}`,
@@ -1241,20 +1260,23 @@ const runPruneLedger = async (
           stdout,
           prunedLine(
             await pruneTenantForgetLedger({
-              config: project.config,
+              config: own.config,
               env: process.env,
               tenant: each,
             }),
           ),
         );
       } catch (error) {
-        left += 1;
+        left.add(each);
         const { errorName, errorMessage } = errorFields({ error, errorText });
         line(stderr, `error: ${each} could not be pruned: ${errorMessage ?? errorName}`);
       }
     }
-    if (left === 0) return EXIT_OK;
-    line(stderr, `${left} tenant(s) not pruned: run again once what failed is fixed`);
+    if (left.size === 0) return EXIT_OK;
+    line(
+      stderr,
+      `${left.size} tenant(s) not pruned or listed: run again once what failed is fixed`,
+    );
     return EXIT_FAILURE;
   } catch (error) {
     return failed(stderr, error, errorText);
@@ -1572,7 +1594,7 @@ export const runCli: RunCliFunction = async ({
       )
       .option(
         "--all-tenants",
-        "every tenant whose entries the ledger's store holds, each through its own configuration",
+        "every tenant whose entries a ledger's store the configuration names holds, each through its own configuration",
         false,
       ),
   ).action(async (options: PruneLedgerOptions) => {

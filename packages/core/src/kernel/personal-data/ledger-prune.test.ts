@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { ForgetLedgerEntry, LedgerDisclosure } from "../../adapter/storage/forget-ledger.ts";
+import type {
+  ForgetLedgerEntry,
+  LedgerDisclosure,
+  LedgerRestriction,
+} from "../../adapter/storage/forget-ledger.ts";
+import type { HeldPersonalKey } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredDisclosure } from "../../adapter/storage/recipient-store.ts";
 import type { TenantFence } from "../../adapter/storage/tenant-fence.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import { createMemoryForgetLedgers } from "../../memory/forget-ledger.ts";
-import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
+import {
+  BOUNDA_AGGREGATE,
+  PROCESSING_RESTRICTED_EVENT,
+  PROCESSING_RESTRICTION_LIFTED_EVENT,
+} from "../../modules/bounda-events.ts";
+import { RESTORE_GENERATION } from "../shared/restores.ts";
 import { type AppliedStorage, pruneAsApplied } from "./ledger-prune.ts";
 import { FORGET_LEDGER_CURSOR, FORGET_LEDGER_REREAD_MS } from "./reconciliation.ts";
 
@@ -49,6 +59,10 @@ interface DatabaseArgs {
   readonly fence?: TenantFence;
   readonly disclosures?: readonly StoredDisclosure[];
   readonly events?: readonly StoredEvent[];
+  // The keys `p-1` holds.
+  readonly keys?: readonly HeldPersonalKey[];
+  readonly generation?: number;
+  readonly position?: number;
 }
 
 interface Stream {
@@ -62,10 +76,14 @@ const database = ({
   fence = OPEN,
   disclosures = [],
   events = [],
+  keys = [],
+  generation = 0,
+  position = 0,
 }: DatabaseArgs = {}): AppliedStorage =>
   ({
     checkpointStore: {
-      get: async (name: string) => (name === FORGET_LEDGER_CURSOR ? cursor : 0),
+      get: async (name: string) =>
+        name === FORGET_LEDGER_CURSOR ? cursor : name === RESTORE_GENERATION ? generation : 0,
     },
     eventStore: {
       // Each entry's event is the person's of the same suffix: `e-1` is `p-1`'s.
@@ -79,6 +97,10 @@ const database = ({
         const own = aggregateType === BOUNDA_AGGREGATE && aggregateId === "p-1" ? events : [];
         return { events: own, version: own.length };
       },
+      lastPosition: async () => position,
+    },
+    personalKeys: {
+      list: async (person: string) => (person === "p-1" ? keys : []),
     },
     recipients: {
       disclosures: async (person: string) => disclosures.filter((held) => held.person === person),
@@ -437,5 +459,107 @@ describe("pruning a forget ledger with no app running", () => {
         }),
       ).toEqual(expected);
     }
+  });
+});
+
+const key = (
+  fingerprint: string,
+  category = "default",
+  retainedSince: string | null = null,
+): HeldPersonalKey => ({
+  category,
+  key: { key: "wrapped", fingerprint, kid: null },
+  retainedSince,
+  lastActiveAt: null,
+});
+
+// `p-1`'s intention whose commit the database lacks, older than keepFor, and an entry younger.
+const pruneIntention = async (
+  intention: { readonly [Key in keyof ForgetLedgerEntry]?: ForgetLedgerEntry[Key] | undefined },
+  args: DatabaseArgs,
+): Promise<unknown> => {
+  const ledger = await ledgerWith([
+    entry("1", 3, { committed: false, fingerprints: ["f-1"], ...intention } as ForgetLedgerEntry),
+    entry("2", -1),
+  ]);
+  const { withStorage } = opening(database(args));
+  return pruneAsApplied({
+    ledger,
+    forgotten: unknown,
+    withStorage,
+    keepForMs: KEEP_FOR_MS,
+    now: NOW,
+  });
+};
+
+const REMOVED = { before: CUTOFF, unapplied: false };
+const KEPT = { before: at(3), unapplied: true };
+
+describe("pruning intentions nothing applies, with no app running", () => {
+  it("removes a forgetting's intention when the person holds no key it covers and names", async () => {
+    for (const [intention, keys, expected] of [
+      [{}, [], REMOVED],
+      [{}, [key("f-1")], KEPT],
+      [{}, [key("f-2")], REMOVED],
+      [{ fingerprints: ["f-2", "f-1"] }, [key("f-1")], KEPT],
+      [{ fingerprints: undefined }, [key("f-2")], KEPT],
+      [{ categories: ["billing"] }, [key("f-1", "contact")], REMOVED],
+      [{ categories: ["contact"] }, [key("f-1", "contact")], KEPT],
+      // An objection ends what an earlier forgetting kept, as the app's categories say.
+      [{ categories: ["contact"] }, [key("f-1", "contact", at(10))], KEPT],
+      [{ categories: null }, [key("f-1", "contact", at(10))], KEPT],
+      [{ categories: [] }, [key("f-1")], REMOVED],
+      // Whether the retention would forget them now is the app's to say.
+      [{ reason: "retention" }, [key("f-1")], KEPT],
+    ] as const) {
+      expect(await pruneIntention(intention, { keys })).toEqual(expected);
+    }
+  });
+
+  it("keeps a committed entry the database lacks, though the person holds no key it names", async () => {
+    expect(await pruneIntention({ committed: undefined }, {})).toEqual(KEPT);
+  });
+
+  it("keeps an intention written where the database stood further than it stands now", async () => {
+    const reached = { generation: 2, position: 10 };
+    for (const [generation, position, expected] of [
+      [2, 9, KEPT],
+      [1, 50, KEPT],
+      [2, 10, REMOVED],
+      [2, 11, REMOVED],
+      [3, 0, REMOVED],
+    ] as const) {
+      expect(await pruneIntention({ reached }, { generation, position })).toEqual(expected);
+    }
+  });
+
+  it("removes a change of restrictions' intention the database holds a later change after", async () => {
+    const change = (type: string, id: string, timestamp: string) =>
+      ({ type, id, timestamp }) as unknown as StoredEvent;
+    const restriction = {
+      type: PROCESSING_RESTRICTED_EVENT,
+      payload: {},
+    } as unknown as LedgerRestriction;
+    for (const [events, expected] of [
+      [[], KEPT],
+      [[change(PROCESSING_RESTRICTION_LIFTED_EVENT, "e-later", at(2))], REMOVED],
+      [[change(PROCESSING_RESTRICTION_LIFTED_EVENT, "e-0", at(3))], KEPT],
+      [[change(PROCESSING_RESTRICTION_LIFTED_EVENT, "e-9", at(3))], REMOVED],
+      [[change(PROCESSING_RESTRICTION_LIFTED_EVENT, "e-earlier", at(4))], KEPT],
+      [[change("CustomerRegistered", "e-later", at(2))], KEPT],
+    ] as const) {
+      expect(await pruneIntention({ restriction, fingerprints: undefined }, { events })).toEqual(
+        expected,
+      );
+    }
+  });
+
+  it("keeps a redaction's intention, whose effect the app's aggregates decide", async () => {
+    expect(
+      await pruneIntention(
+        { redaction: { events: [] }, fingerprints: undefined },
+        { generation: 1 },
+      ),
+    ).toEqual(KEPT);
   });
 });

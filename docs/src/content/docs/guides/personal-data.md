@@ -3132,10 +3132,44 @@ the database's reconciliation has read past it, or the database holds what it re
 database has yet to apply stays, as one a copy restored while the app was stopped lacks, so that
 copy is still forgotten again at its next start, after which the next prune removes it; the command
 says when it kept one. A forgotten tenant's ledger is pruned past `keepFor` alone, as its app does.
-It runs safely beside the tenant's running instances. `--tenant`
-names one tenant, and with `--all-tenants`, whose configuration names the ledger's store; each
-tenant listed is pruned through its own configuration. `pruneTenantForgetLedger` and
-`listForgetLedgerTenants` from `@bounda-dev/core` do the same in code (see the
+It runs safely beside the tenant's running instances.
+
+An intention whose commit never happened, a forgetting that failed and was asked again, goes too
+once nothing can apply it, by the checks the reconciliation makes: the database stands where the
+intention was written or further, so it tells no restore, and the person holds no key it covers
+and names, kept past a forgetting or not, or, for a change of restrictions, the database holds a
+later change. Two kinds stay until an app of the tenant reads past them, since only the app can
+tell whether they still apply: a redaction's, and the retention's of keys the person still holds.
+
+`--tenant` names one tenant. `--all-tenants` prunes every tenant whose entries a ledger's store
+the configuration names holds, each through its own configuration: starting from `--tenant`, or
+the default tenant, it lists that tenant's ledger and its tenant key store, then does the same
+for every tenant they name, until none is new, reading each store once. A configuration that is
+a function of the tenant and gives each tenant a ledger of its own is covered that way, through
+the tenant key store they share. One that gives each tenant both stores of its own, so that no
+store lists the others, names its tenants in a `tenants` export of `bounda.config.ts`, a list or a
+function that resolves to one:
+
+```ts
+export const tenants = async () => (await listCustomers()).map(({ slug }) => slug);
+
+export default defineConfig(({ tenant }) => ({
+  storage: postgresql({ url: process.env.DATABASE_URL, schema: tenant }),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: sqlite({ path: `./keys/${tenant}.db` }),
+      forgetLedger: { store: sqlite({ path: `./ledger/${tenant}.db` }), keepFor: "35d" },
+    },
+  },
+}));
+```
+
+Two adapters of one kind with the same options are one store; a store of your own is one per
+definition, so define it outside the function, or each tenant's resolution reads it again. A
+tenant whose configuration or stores cannot be read is named on stderr, and the others are
+pruned. `pruneTenantForgetLedger` and `listForgetLedgerTenants` from `@bounda-dev/core`, with
+`projectConfig` and `tenants()` from `loadProject`, do the same in code (see the
 [CLI](/reference/cli/#bounda-forget-ledger-prune)).
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or
