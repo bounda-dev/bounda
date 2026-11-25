@@ -1,15 +1,24 @@
 import { createRequire } from "node:module";
 
-interface NativeDatabase {
+export interface NativeStatement {
+  get(): unknown;
+}
+
+export interface NativeDatabase {
   readonly db: unknown;
   readonly open: boolean;
-  prepare(sql: string): unknown;
+  prepare(sql: string): NativeStatement;
   exec(sql: string): unknown;
   close(): void;
 }
 
-interface NativeDatabaseModule {
+export interface NativeDatabaseModule {
+  new (path: string, options: { readonly encryptionKey?: string }): NativeDatabase;
   readonly prototype: NativeDatabase;
+}
+
+export interface LibsqlNativeFunction {
+  (): NativeDatabaseModule | null;
 }
 
 export interface CloseConnectionsOnceFunction {
@@ -25,6 +34,21 @@ export const CONNECTION_HOLDER = Symbol("bounda.connectionHolder");
 
 let patched = false;
 let closeLeftOpen = (): void => undefined;
+
+let native: NativeDatabaseModule | null | undefined;
+
+// libSQL's native module, the copy @libsql/client loads; `null` where it cannot be found, say in a
+// bundle.
+export const libsqlNative: LibsqlNativeFunction = () => {
+  if (native !== undefined) return native;
+  try {
+    const client = createRequire(import.meta.url).resolve("@libsql/client");
+    native = createRequire(client)("libsql") as NativeDatabaseModule;
+  } catch {
+    native = null;
+  }
+  return native;
+};
 
 // Closes the connections still open, each once, as the patch does when the process exits.
 export const closeConnectionsLeftOpen: CloseConnectionsLeftOpenFunction = () => closeLeftOpen();
@@ -43,13 +67,9 @@ export const closeConnectionsLeftOpen: CloseConnectionsLeftOpenFunction = () => 
 export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
   if (patched) return;
   patched = true;
-  let prototype: NativeDatabase;
-  try {
-    const client = createRequire(import.meta.url).resolve("@libsql/client");
-    ({ prototype } = createRequire(client)("libsql") as NativeDatabaseModule);
-  } catch {
-    return;
-  }
+  const module = libsqlNative();
+  if (module === null) return;
+  const { prototype } = module;
   const { prepare, exec, close } = prototype;
   const closeHolding = (database: NativeDatabase): void => {
     try {
@@ -85,7 +105,7 @@ export const closeConnectionsOnce: CloseConnectionsOnceFunction = () => {
     unclosed.set(database.db, new WeakRef(database));
     abandoned.register(database, database.db, database);
   };
-  prototype.prepare = function (this: NativeDatabase, sql: string): unknown {
+  prototype.prepare = function (this: NativeDatabase, sql: string): NativeStatement {
     track(this);
     return prepare.call(this, sql);
   };

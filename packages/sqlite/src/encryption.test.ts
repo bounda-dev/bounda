@@ -645,7 +645,7 @@ describe("a libSQL file left in the clear while another process held it", () => 
 // An app started on `paths` in a process of its own whose young generation outgrows what the app
 // allocates, so nothing it lets go of is collected while it runs: what it holds on the file is
 // what it never closed. Once `booted`, `proceed` has it run until idle and resolves to where its
-// file stands.
+// file stands; `stop` ends it, whatever it was doing.
 const bootedElsewhere = (paths: TestAppPaths) => {
   const child = spawn(
     process.execPath,
@@ -677,6 +677,10 @@ const bootedElsewhere = (paths: TestAppPaths) => {
       child.stdin.end("go\n");
       return { state: await next(), code: await exited };
     },
+    stop: async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await exited;
+    },
   };
 };
 
@@ -702,11 +706,15 @@ describe("a libSQL file in the clear held by another process that wrote to it", 
     );
     const app = bootedElsewhere(paths);
     try {
-      expect(await app.booted).toBe("booted");
+      try {
+        expect(await app.booted).toBe("booted");
+      } finally {
+        await letGo();
+      }
+      expect(await app.proceed()).toEqual({ state: "current", code: 0 });
     } finally {
-      await letGo();
+      await app.stop();
     }
-    expect(await app.proceed()).toEqual({ state: "current", code: 0 });
     expect(await readsInTheClear(paths.store)).toBe(false);
   });
 });

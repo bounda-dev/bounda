@@ -281,6 +281,12 @@ const listeningGroups = async (port: number): Promise<readonly number[]> => {
   const { stdout } = await run("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-g", "-Fg"]).catch(
     (error: { readonly code?: unknown }) => {
       if (error.code === 1) return { stdout: "" };
+      if (error.code === "ENOENT") {
+        throw new Error(
+          "this test needs lsof, which tells the server it starts from another process on its port",
+          { cause: error },
+        );
+      }
       throw error;
     },
   );

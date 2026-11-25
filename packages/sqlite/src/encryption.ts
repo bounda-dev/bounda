@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { ConfigurationError, type Logger } from "@bounda-dev/core";
 import type {
@@ -10,6 +9,7 @@ import type {
 } from "@bounda-dev/core/adapter";
 import { SQLITE_BUSY_TIMEOUT_MS } from "@bounda-dev/core/adapter/sqlite";
 import { type Client, createClient } from "@libsql/client";
+import { libsqlNative, type NativeDatabase } from "./close-once.ts";
 
 // Names the key a file was being encrypted from while the encryption runs: `null` in the clear.
 const MARK_SUFFIX = ".bounda-encrypting";
@@ -23,36 +23,12 @@ const quoted = (text: string): string => `'${text.replaceAll("'", "''")}'`;
 const isNotADatabase = (error: unknown): boolean =>
   error instanceof Error && Reflect.get(error, "code") === "SQLITE_NOTADB";
 
-interface NativeDatabase {
-  prepare(sql: string): { get(): unknown };
-  close(): void;
-}
-
-type NativeDatabaseClass = new (
-  path: string,
-  options: { readonly encryptionKey?: string },
-) => NativeDatabase;
-
-let native: NativeDatabaseClass | null | undefined;
-
-// libSQL's native module, the copy @libsql/client loads; `null` where it cannot be found, say in a
-// bundle.
-const nativeDatabase = (): NativeDatabaseClass | null => {
-  if (native !== undefined) return native;
-  try {
-    const client = createRequire(import.meta.url).resolve("@libsql/client");
-    native = createRequire(client)("libsql") as NativeDatabaseClass;
-  } catch {
-    native = null;
-  }
-  return native;
-};
-
 // Whether the file's own pages read under `key`, `null` in the clear, through a connection that
-// takes no lock and leaves the WAL alone. `undefined` when it cannot tell: the file holds no page of
-// its own yet, the native module is out of reach, or the read failed otherwise.
+// takes no lock and leaves the WAL alone. `undefined` when it cannot tell: the native module is out
+// of reach, the read failed otherwise, or the file holds no page yet, which no file with pages in a
+// WAL is, since switching to WAL writes page 1 to the file under its key.
 const readsUnder = (path: string, key: string | null): boolean | undefined => {
-  const Database = nativeDatabase();
+  const Database = libsqlNative();
   if (Database === null || !existsSync(path) || statSync(path).size === 0) return undefined;
   let probe: NativeDatabase | undefined;
   try {
