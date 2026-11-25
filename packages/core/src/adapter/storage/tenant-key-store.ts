@@ -42,6 +42,20 @@ export interface TenantForgetting {
 }
 
 /**
+ * A declaration of the app's recipients that a start could not write to the tenant's database,
+ * frozen then: each `from` renamed to its `to`, in order, then `ports` declared with what the
+ * stream held through `position` presumed theirs, as of `at`. `id` names it once written, so it is
+ * written once.
+ */
+export interface PendingRecipientDeclaration {
+  readonly id: string;
+  readonly renames: readonly { readonly from: string; readonly to: string }[];
+  readonly ports: readonly { readonly port: string; readonly categories: readonly string[] }[];
+  readonly position: number;
+  readonly at: string;
+}
+
+/**
  * Everything the tenant key store keeps of one tenant: the database its keys belong to, by the
  * random id that database was given, the versions of its key, the one in force first, and, once
  * it is forgotten, the forgetting, with no version left.
@@ -59,6 +73,13 @@ export interface TenantKeyRecord {
    * version is put in force or retired, and no file is given a key, until `unfreezeTenant`.
    */
   readonly frozenAt?: string;
+  /**
+   * The declarations of the app's recipients that starts on the frozen tenant could not write to
+   * its database, oldest first: every instance reads the tenant's recipients as if they were
+   * written, until the thaw, or the tenant's forgetting, writes them and removes them. Absent when
+   * there is none.
+   */
+  readonly pendingRecipients?: readonly PendingRecipientDeclaration[];
 }
 
 export interface VersionedTenantKeyRecord extends TenantKeyRecord {

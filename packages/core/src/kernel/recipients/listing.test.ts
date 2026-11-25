@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
+import type { EventStore } from "../../adapter/storage/event-store.ts";
 import type { Disclosure } from "../../adapter/storage/recipient-store.ts";
 import { testMetadata } from "../../adapter/testing/fixtures.ts";
 import { memory } from "../../memory/index.ts";
+import { BOUNDA_AGGREGATE, PERSONAL_DATA_FORGOTTEN_EVENT } from "../../modules/bounda-events.ts";
 import { buildPersonalCategories } from "../personal-data/categories.ts";
 import type { RecipientRuntime, RecipientsRuntime } from "./build.ts";
-import { recipientStatuses, recipientsOf } from "./listing.ts";
+import { recipientStatuses, recipientsOf, recipientsOfPage } from "./listing.ts";
 
 const categories = buildPersonalCategories({
   module: {
@@ -239,6 +241,163 @@ describe("recipientsOf", () => {
       lastDisclosedAt: null,
       declared: true,
     });
+  });
+});
+
+describe("recipientsOfPage", () => {
+  const append = async (
+    aggregateType: string,
+    aggregateId: string,
+    type: string,
+    payload: unknown,
+    person: string | null,
+  ) => {
+    const { version } = await storage.eventStore.load({ aggregateType, aggregateId });
+    await storage.eventStore.append({
+      aggregateType,
+      aggregateId,
+      expectedVersion: version,
+      events: [
+        {
+          id: `${aggregateId}-${type}-${version + 1}`,
+          aggregateType,
+          aggregateId,
+          version: version + 1,
+          type,
+          payload,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          metadata: testMetadata,
+          person,
+        },
+      ],
+    });
+  };
+
+  // Counts each read of the event store the page makes.
+  const counting = (eventStore: EventStore) => {
+    const reads = new Map<string, number>();
+    const counted = new Proxy(eventStore, {
+      get: (target, name, receiver) => {
+        const value = Reflect.get(target, name, receiver) as unknown;
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          reads.set(String(name), (reads.get(String(name)) ?? 0) + 1);
+          return (value as (...given: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    });
+    return { counted, reads };
+  };
+
+  it("lists each person as recipientsOf does, in two reads of the event store however many persons the page holds", async () => {
+    const persons = Array.from(
+      { length: 120 },
+      (_, index) => `c-${String(index).padStart(3, "0")}`,
+    );
+    for (const person of persons) {
+      await key(person, "contact");
+      await key(person, "invoices");
+      await append("customer", person, "CustomerRegistered", {}, person);
+    }
+    await storage.recipients.declare(
+      [{ port: "customer.crm", categories: ["invoices", "contact"] }],
+      100,
+      "2026-01-02T00:00:00.000Z",
+    );
+    // A person whose data came after the declaration, and one a forgetting told to forget a part.
+    await append("customer", "c-late", "CustomerRegistered", {}, "c-late");
+    await key("c-late", "contact");
+    await append(
+      BOUNDA_AGGREGATE,
+      "c-001",
+      PERSONAL_DATA_FORGOTTEN_EVENT,
+      {
+        personId: "c-001",
+        categories: ["invoices"],
+        expired: [],
+        retained: [],
+        recipients: [
+          { port: "customer.crm", categories: ["invoices"], retained: [], presumed: true },
+        ],
+      },
+      "c-001",
+    );
+    const page = [...persons, "c-late", "c-none"];
+    const { counted, reads } = counting(storage.eventStore);
+    const listed = await recipientsOfPage({
+      storage: { ...storage, eventStore: counted },
+      recipients: runtime,
+      categories,
+      persons: page,
+      keys: await storage.personalKeys.listMany(page),
+    });
+    expect(Object.fromEntries(reads)).toEqual({ firstPositions: 1, loadMany: 1 });
+    for (const person of page) {
+      expect(listed.get(person)).toEqual(
+        await recipientsOf({ storage, recipients: runtime, categories, personId: person }),
+      );
+    }
+    const statuses = (person: string) =>
+      listed
+        .get(person)
+        ?.map(({ port, status, categories: names }) => [
+          port,
+          status,
+          names.map(({ name }) => name),
+        ]);
+    expect(statuses("c-000")).toEqual([
+      ["customer.crm", "presumed", ["contact", "invoices"]],
+      ["customer.mailer", "declared", ["contact"]],
+    ]);
+    expect(statuses("c-001")).toEqual([
+      ["customer.crm", "presumed", ["contact"]],
+      ["customer.crm", "declared", ["invoices"]],
+      ["customer.mailer", "declared", ["contact"]],
+    ]);
+    expect(statuses("c-late")).toEqual([
+      ["customer.crm", "declared", ["contact"]],
+      ["customer.mailer", "declared", ["contact"]],
+    ]);
+    expect(listed.get("c-none")).toEqual([]);
+  });
+
+  it("reads no event for a page when no recipient was declared late", async () => {
+    await storage.recipients.declare(
+      [{ port: "customer.crm", categories: ["contact"] }],
+      0,
+      "2026-01-02T00:00:00.000Z",
+    );
+    await key("c-1", "contact");
+    await append("customer", "c-1", "CustomerRegistered", {}, "c-1");
+    const { counted, reads } = counting(storage.eventStore);
+    await recipientsOfPage({
+      storage: { ...storage, eventStore: counted },
+      recipients: runtime,
+      categories,
+      persons: ["c-1"],
+      keys: await storage.personalKeys.listMany(["c-1"]),
+    });
+    expect(reads.size).toBe(0);
+  });
+
+  it("loads no stream when no person of the page came before a recipient declared late", async () => {
+    await storage.recipients.declare(
+      [{ port: "customer.crm", categories: ["contact"] }],
+      1,
+      "2026-01-02T00:00:00.000Z",
+    );
+    await append("customer", "c-0", "CustomerRegistered", {}, null);
+    await append("customer", "c-1", "CustomerRegistered", {}, "c-1");
+    await key("c-1", "contact");
+    const { counted, reads } = counting(storage.eventStore);
+    await recipientsOfPage({
+      storage: { ...storage, eventStore: counted },
+      recipients: runtime,
+      categories,
+      persons: ["c-1", "c-2"],
+      keys: await storage.personalKeys.listMany(["c-1", "c-2"]),
+    });
+    expect(Object.fromEntries(reads)).toEqual({ firstPositions: 1 });
   });
 });
 

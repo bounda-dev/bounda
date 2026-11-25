@@ -155,7 +155,7 @@ describe("upcastEvent", () => {
 });
 
 describe("withUpcasting", () => {
-  it("upcasts what load, readOne, readAll and readByPerson return and leaves writes and positions alone", async () => {
+  it("upcasts what load, loadMany, readOne, readAll and readByPerson return and leaves writes and positions alone", async () => {
     const raw = (await memory().createStorage()).eventStore;
     const store = withUpcasting({ eventStore: raw, aggregates });
     const appended = await store.append({
@@ -195,6 +195,12 @@ describe("withUpcasting", () => {
         event.payload,
       ]),
     ).toEqual([[1, { money: { amount: 10, currency: "EUR" } }]]);
+    expect(await store.firstPositions(["c-1", "c-2"])).toEqual(new Map([["c-1", 1]]));
+    expect(
+      [...(await store.loadMany({ aggregateType: "order", aggregateIds: ["o-1", "o-9"] }))].map(
+        ([id, events]) => [id, events.map((event) => event.payload)],
+      ),
+    ).toEqual([["o-1", [{ money: { amount: 10, currency: "EUR" } }, { method: "card" }]]]);
     expect(await store.lastPosition()).toBe(2);
     await store.reseal([{ position: 2, payload: { method: "cash" }, person: "c-2" }]);
     expect((await raw.readOne({ ...stream, eventId: "e2" }))?.payload).toEqual({ method: "cash" });

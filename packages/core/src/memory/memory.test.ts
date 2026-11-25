@@ -232,7 +232,7 @@ describe("memory adapter", () => {
     expect(heard).toEqual([2, 3]);
   });
 
-  it("reads a person's events in position order, and only once every position before them is settled", async () => {
+  it("reads a person's events and their first position in position order, and only once every position before them is settled", async () => {
     const storage = await memory().createStorage();
     const placed = (aggregateId: string, version: number, person: string | null) =>
       pendingEvent({ aggregateId, version, person });
@@ -256,6 +256,7 @@ describe("memory adapter", () => {
     const read = () =>
       storage.eventStore.readByPerson({ person: "c-1", afterPosition: 0, limit: 10 });
     expect(await read()).toEqual([]);
+    expect(await storage.eventStore.firstPositions(["c-1"])).toEqual(new Map());
     committing.resolve();
     await transaction;
     expect((await read()).map((event) => [event.position, event.aggregateId])).toEqual([
@@ -263,6 +264,7 @@ describe("memory adapter", () => {
       [2, "2"],
       [4, "2"],
     ]);
+    expect(await storage.eventStore.firstPositions(["c-1"])).toEqual(new Map([["c-1", 1]]));
   });
 
   it("gives back the positions of a transaction that fails: the tail when nothing came after, a gap readers skip otherwise", async () => {
