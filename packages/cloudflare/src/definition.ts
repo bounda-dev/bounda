@@ -112,23 +112,21 @@ export const cloudflareStorageOf: CloudflareStorageOfFunction = (config) => {
       );
     }
   }
-  if (jurisdiction !== undefined) {
-    const personalData: unknown = (config as Partial<Config>).runtime?.personalData;
-    checkKeptIn({
-      where: jurisdiction,
-      path: "runtime.personalData.tenantKeys",
-      source: valueAt(personalData, "tenantKeys"),
-      keeper: "durableObjectTenantKeys",
-      define: "defineTenantKeyStore",
-    });
-    checkKeptIn({
-      where: jurisdiction,
-      path: "runtime.personalData.forgetLedger.store",
-      source: valueAt(valueAt(personalData, "forgetLedger"), "store"),
-      keeper: "durableObjectForgetLedger",
-      define: "defineForgetLedger",
-    });
-  }
+  const personalData: unknown = (config as Partial<Config>).runtime?.personalData;
+  checkKeptIn({
+    where: jurisdiction,
+    path: "runtime.personalData.tenantKeys",
+    source: valueAt(personalData, "tenantKeys"),
+    keeper: "durableObjectTenantKeys",
+    define: "defineTenantKeyStore",
+  });
+  checkKeptIn({
+    where: jurisdiction,
+    path: "runtime.personalData.forgetLedger.store",
+    source: valueAt(valueAt(personalData, "forgetLedger"), "store"),
+    keeper: "durableObjectForgetLedger",
+    define: "defineForgetLedger",
+  });
   return storage;
 };
 
@@ -136,7 +134,7 @@ const valueAt = (holder: unknown, key: string): unknown =>
   typeof holder === "object" && holder !== null ? Reflect.get(holder, key) : undefined;
 
 interface CheckKeptInArgs {
-  readonly where: DurableObjectJurisdiction;
+  readonly where: DurableObjectJurisdiction | undefined;
   readonly path: string;
   readonly source: unknown;
   readonly keeper: string;

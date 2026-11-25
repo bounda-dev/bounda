@@ -673,6 +673,45 @@ describe("cloudflare() with a jurisdiction", () => {
     );
   });
 
+  it("tells a store of your own without a location how to declare the jurisdiction", () => {
+    expect(
+      refusal({
+        storage: eu,
+        runtime: {
+          personalData: {
+            keyWrapper,
+            forgetLedger: {
+              store: defineForgetLedger(() => {
+                throw new Error("never opened");
+              }),
+            },
+          },
+        },
+      }),
+    ).toBe(
+      'runtime.personalData.forgetLedger.store declares no location, and storage keeps the app\'s in "eu": every store is kept where the storage is, or elsewhere under a safeguard, so use durableObjectForgetLedger({ storage }), which keeps it in the same jurisdiction, durableObjectForgetLedger({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through defineForgetLedger(create, { location: "eu" })',
+    );
+  });
+
+  it("refuses a safeguard on a keeper store when cloudflare() names no jurisdiction, in the Worker too", () => {
+    expect(() =>
+      cloudflareStorageOf({
+        storage: cloudflare(),
+        runtime: {
+          personalData: {
+            tenantKeys: kvTenantKeys({
+              binding: "TENANT_KEYS",
+              location: "global",
+              safeguard: "standard-contractual-clauses",
+            }),
+          },
+        },
+      }),
+    ).toThrow(
+      'runtime.personalData.tenantKeys keeps its data in "global" under a safeguard, and storage declares no location, so nothing tells whether that is a transfer: declare where storage keeps the app\'s data',
+    );
+  });
+
   it("refuses a store of your own that declares a safeguard and no location", () => {
     expect(
       refusal({
