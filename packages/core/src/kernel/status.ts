@@ -7,7 +7,7 @@ import type {
 } from "../adapter/storage/subscriber-failure-store.ts";
 import type { ResolvedConfig } from "../config/types.ts";
 import type { Logger } from "../contracts/logger.ts";
-import type { CountryCode, RecipientKind, TransferSafeguard } from "../modules/recipient.ts";
+import type { CountryCode, RecipientKind, RecipientTransfer } from "../modules/recipient.ts";
 import type { AppLag, PersonalDataBackfillLag } from "./app.ts";
 import type { DeadLetterRetention, DeadLetterRetentionStatus } from "./dead-letters/retention.ts";
 import type {
@@ -195,7 +195,10 @@ export interface RecipientStatus {
     readonly name: string;
     readonly kind: RecipientKind;
     readonly country: CountryCode;
-    readonly safeguard: TransferSafeguard | null;
+    /**
+     * The transfer when the country is outside the European Economic Area; `null` inside it.
+     */
+    readonly transfer: RecipientTransfer | null;
     readonly categories: readonly string[];
   } | null;
   readonly persons: number;

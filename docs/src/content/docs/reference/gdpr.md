@@ -151,8 +151,8 @@ and the recipients with `recipientsOf`. Left to the app:
 **Articles 13 and 14, the information to give.** The privacy notice is the controller's. What the
 app declares is most of what it has to say, and is in one place: the purposes and basis of each
 category, with the condition of its special data or the authority of its criminal data, its
-retention, its sources (14(2)(f)), the recipients with their country and the safeguard of a
-transfer, and the automated decisions with their logic. `bounda personal-data inventory --json`
+retention, its sources (14(2)(f)), the recipients with their country and the safeguard, article
+and legal regime of a transfer, and the automated decisions with their logic. `bounda personal-data inventory --json`
 prints all of it, for a notice to be written from or checked against. The identity and contact
 details of the controller and of its data protection officer, the legitimate interests pursued, and
 whether giving the data is a requirement of a contract or of the law are not in the code, and the
@@ -168,7 +168,7 @@ answers every item of article 15(1) from what the app declares, nothing written 
 | confirmation that data is processed, and the data | every record that names the person, with the category of each field, and `held` per category |
 | (a) the purposes | each category's `purposes`, with its `basis` and, for special or criminal data, its `special` condition or `criminal` authority |
 | (b) the categories of data | `categories`, with the special categories of data each holds |
-| (c) the recipients, and 15(2) the safeguards of a transfer | `recipients`, as `recipientsOf` lists them, and `transfers`, the stores kept out of `storage`'s jurisdiction with their safeguard |
+| (c) the recipients, and 15(2) the safeguards of a transfer | `recipients`, as `recipientsOf` lists them, each `transfer` with its safeguard, article and legal regime, and `transfers`, the stores kept out of `storage`'s jurisdiction with their regime and safeguard |
 | (d) how long it is kept | each category's `retention`, `keptUntil` and `restrictedUntil` |
 | (e) rectification, erasure, restriction and objection | `rights` |
 | (f) the complaint to a supervisory authority | `rights`, `complaint` |
@@ -473,12 +473,12 @@ special categories of data and the criminal data they hold, with their condition
 purposes and those the GDPR has rules for, their sources and retention, and the exemptions of 17(3)
 that keep them past erasure; the automated decisions; every event, command, process state and
 read model that holds personal data, whose, how it is kept and where its copies go; the recipients,
-with their country and safeguard; what the runtime keeps about persons and for how long, the dead
+with their country and the regime, safeguard and article of a transfer; what the runtime keeps about persons and for how long, the dead
 letters, the subscribers' last failures and the remembered answers among it, with what an export
 holds back of them under 15(4); the keys,
 the master key, the tenant key store and the forget ledger; where each database and store keeps them, as its
-`location` declares it, and the safeguard of each one kept out of `storage`'s, so the record names
-every transfer to a third country, 30(1)(e);
+`location` declares it, and the regime, safeguard and article of each one kept out of `storage`'s,
+so the record names every transfer to a third country, 30(1)(e);
 and the fields marked `notPersonal`. `--markdown` writes it as a document and
 `--json` as data; it exits `1` while anything keeps it from being complete, a store of personal data that
 declares no location among it, so a CI step fails on it. See [The record of processing
@@ -564,8 +564,8 @@ Economic Area its `safeguard`: `adequacy` (article 45), `standard-contractual-cl
 inside the area, which counts the Åland Islands and the outermost regions of France apart from
 their ISO codes, nor on `adequacy` for a country the European Commission has adopted no adequacy
 decision for (`ADEQUATE_COUNTRIES`). The export and `recipientsOf` tell the person where their data
-went and on what it rests, with the article, 15(2), and the record of processing lists every
-transfer. A tenant's export sums the recipients of every person in it, once under each identity a
+went, by the legal regime it went to, and on what it rests, with the article, 15(2), and the record
+of processing lists every transfer the same way. A tenant's export sums the recipients of every person in it, once under each identity a
 disclosure was recorded with, for the controller it is handed back to, 28(3)(g).
 
 Every database and store declares where it keeps its data, a country in lower case or an area such
@@ -584,10 +584,10 @@ under `storage`'s legal regime, and `adequacy` where no adequacy decision covers
 compared by that regime (`regimeOf`): every location in the European Economic Area is one, each
 other country its own, the Durable Object jurisdictions `"us"`, `"fedramp"` and `"fedramp-high"`
 the United States, and `"global"`, where Workers KV keeps what it holds, none; a location Bounda
-does not know is refused rather than guessed. The record of processing states each one's location and the safeguard of each
-transfer, 30(1)(e), and lists every store of personal data, and the key wrapper, that declares no
-location as a finding; each person's export lists the transfers in `transfers`, 15(2), and so does
-the header of a tenant's export, 28(3)(g).
+does not know is refused rather than guessed. The record of processing states each one's location and, of each
+transfer, the regime it goes to, its safeguard and its article, 30(1)(e), and lists every store of personal data, and the key wrapper, that declares no
+location as a finding; each person's export lists the transfers in `transfers`, each with its
+location and regime, 15(2), and so does the header of a tenant's export, 28(3)(g).
 `create-bounda` writes `"eu"` in every project. See [Data
 location](/reference/configuration/#data-location).
 

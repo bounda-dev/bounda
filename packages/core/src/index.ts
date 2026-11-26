@@ -135,13 +135,14 @@ export type {
 } from "./kernel/personal-data/ledger-prune.ts";
 export { pruneTenantForgetLedger } from "./kernel/personal-data/ledger-prune.ts";
 export type {
+  ForgetLedgerStore,
   ForgetLedgerTenants,
   ListForgetLedgerTenantsArgs,
   ListForgetLedgerTenantsFunction,
-  UnreachedTenant,
 } from "./kernel/personal-data/ledger-tenants.ts";
 export { listForgetLedgerTenants } from "./kernel/personal-data/ledger-tenants.ts";
 export type {
+  ListTenantsUnderPreviousMasterArgs,
   ListTenantsUnderPreviousMasterFunction,
   RewrappedTenantKeys,
   RewrapTenantKeysArgs,
@@ -196,6 +197,7 @@ export {
 } from "./kernel/personal-data/tenant-export-json.ts";
 export type { TenantKeyStatus } from "./kernel/personal-data/tenant-keys.ts";
 export { DEFAULT_TENANT } from "./kernel/personal-data/tenant-keys.ts";
+export type { UnreachedTenant } from "./kernel/personal-data/tenant-reach.ts";
 export {
   UNWRAPPED_KEY_TTL_MS,
   UNWRAPPED_KEYS_KEPT,

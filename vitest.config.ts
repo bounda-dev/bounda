@@ -1,9 +1,11 @@
 import { defineConfig } from "vitest/config";
+import { BalancedShards } from "./vitest.sequencer.ts";
 
 export default defineConfig({
   test: {
     projects: ["packages/*", "examples/*", ".github/scripts"],
     passWithNoTests: true,
+    sequence: { sequencer: BalancedShards },
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**"],

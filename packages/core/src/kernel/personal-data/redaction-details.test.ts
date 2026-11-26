@@ -399,6 +399,39 @@ describe("redact, in detail", () => {
     );
   });
 
+  it("refuses an event the store no longer holds when it commits, as it refused it before", async () => {
+    const base = memory();
+    // The events a transaction no longer finds, as after a restore under the running app.
+    const vanished = new Set<string>();
+    const adapter: Adapter = {
+      ...base,
+      createStorage: async () => {
+        const storage = await base.createStorage();
+        return {
+          ...storage,
+          transact: (work) =>
+            storage.transact((transaction) =>
+              work({
+                ...transaction,
+                eventStore: {
+                  ...transaction.eventStore,
+                  readOne: async (args) =>
+                    vanished.has(args.eventId) ? null : transaction.eventStore.readOne(args),
+                },
+              }),
+            ),
+        };
+      },
+    };
+    const { app, register, target, redactions } = await setUp(undefined, adapter);
+    const registered = await register("ana", "ana@old.example");
+    vanished.add(registered.id);
+    await expect(app.redact("ana", { events: [target(registered, ["email"])] })).rejects.toThrow(
+      `redact cannot reach the event ${registered.id}: the store holds no such event`,
+    );
+    expect(await redactions()).toEqual([]);
+  });
+
   it("answers a redaction with nothing left as a command with no events, at the stream's version", async () => {
     const { app, register, target } = await setUp();
     const registered = await register("ana", "ana@old.example");

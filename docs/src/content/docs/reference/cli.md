@@ -292,7 +292,7 @@ retention
 dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
 subscriber failure retention: 30d, next purge when a failure is resolved
 recipients
-  customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 812 persons disclosed to it
+  customer.mailer  Mailchimp, processor, US, transferred to US under standard-contractual-clauses (article 46(2)(c)): contact; 812 persons disclosed to it
     2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer
 ```
 
@@ -544,8 +544,11 @@ recipient, what the runtime keeps about persons and for how long, and the fields
 project it reads modules that import the Workers runtime, without running them. Where each holder
 and record is kept names the database's adapter, and the jurisdiction it keeps the data in when it
 declares one, such as `postgresql, in eu`, or `cloudflare, in eu` for [Durable Objects in the
-EU](/adapters/cloudflare/#data-location), and the safeguard of one kept out of `storage`'s
-jurisdiction, `tenant-keys, in ch, transferred under adequacy (article 45)`: see [data
+EU](/adapters/cloudflare/#data-location), and the transfer of one kept out of `storage`'s
+jurisdiction, by the legal regime it goes to, its safeguard and the safeguard's article, `tenant-keys, in fedramp,
+transferred to US under binding-corporate-rules (article 47)`; each recipient out of the European
+Economic Area says the same, `Mailchimp, processor in US, transferred to US under
+standard-contractual-clauses (article 46(2)(c))`: see [data
 location](/reference/configuration/#data-location) and [stores in another
 jurisdiction](/reference/configuration/#stores-in-another-jurisdiction). See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
@@ -629,13 +632,14 @@ bounda recipients c-42 --actor ops-ana
 recipients
   customer.crm  Brevo, third-party, FR: contact, invoices; 37 persons disclosed to it
     being told what was recorded before it was declared
-  customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 812 persons disclosed to it
+  customer.mailer  Mailchimp, processor, US, transferred to US under standard-contractual-clauses (article 46(2)(c)): contact; 812 persons disclosed to it
     2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer
   order.sms  no longer declared, 4 persons disclosed to it
 ```
 
 Each line names the port, its recipient as the port declares it now, with its kind, country, the
-safeguard of a transfer out of the European Economic Area and the categories it receives, and how
+transfer out of the European Economic Area, by the legal regime it goes to, its safeguard and the
+article it rests on, and the categories it receives, and how
 many persons the store recorded as disclosed to it; under it, whether the worker is still telling
 it, presumed, what was recorded before it was declared, and how many of its notices wait as failed
 [dead letters](#bounda-dead-letters). A port the app no longer declares says so: its notices wait as
@@ -783,9 +787,9 @@ call was refused or failed.
 
 [Hands a tenant back](/guides/personal-data/#handing-a-tenant-back) to its controller, as
 article 28(3)(g) asks of a processor at the end of its service: every person, recipient of their
-data with its country and the safeguard of a transfer, event, scheduled command, dead letter,
-subscriber failure, remembered answer, read-model row and forget ledger entry, with the stores kept
-in another jurisdiction, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
+data with its country and the transfer, its legal regime, safeguard and article, event, scheduled
+command, dead letter, subscriber failure, remembered answer, read-model row and forget ledger
+entry, with the stores kept in another jurisdiction and the regime of each, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
 time whatever the tenant holds. It boots the project for that tenant, unless `--tenant` names
 another, which it refuses, and refuses a tenant not [frozen](#bounda-freeze-tenant-and-bounda-unfreeze-tenant)
 in every store. Recorded in the access log, `started` and then how it ended.
@@ -894,10 +898,17 @@ tenant key 4Hq8Vd0eN1xZ7cRm in force; the worker replaces every key that seals p
 ```
 
 `rewrap-master` serves a [rotation of the master key](/guides/personal-data/#rotating-the-master-key):
-it rewraps under the master key in force the key of every tenant the tenant key store holds,
-whether their apps run or not, and names each one it rewrapped. It exits with `2` while any tenant
-is left under a previous master key, naming it and why, so a deploy keeps the previous keys until
-it passes:
+it rewraps under the master key in force the key of every tenant every tenant key store the
+configuration names holds, whether their apps run or not, and names each one it rewrapped. A
+configuration that is a function of the tenant may give tenants stores of their own, so it reaches
+them as `forget-ledger prune --all-tenants` does: from `--tenant`, or `default`, the tenants each
+reached tenant's tenant key store and forget ledger list, and those the `tenants` export of
+`bounda.config.ts` names, until none is new, reading each store once; each key is rewrapped under
+the key wrapper of its tenant's own configuration. There is no flag for one store alone: the
+previous master keys can go only once no store holds a key under them. It refuses a `tenants`
+export that is not a list of tenant names. It exits with `2` while any
+tenant's key could not be rewrapped, or any tenant's configuration or stores could not be listed,
+naming each and why, so a deploy keeps the previous keys until it passes:
 
 ```bash
 bounda tenant-key rewrap-master
@@ -962,26 +973,39 @@ bounda forget-ledger prune --all-tenants
 For each tenant, it removes the entries older than `keepFor` that the tenant's database no longer
 needs: those its reconciliation has read past, those whose forgetting, change of restrictions,
 redaction or disclosure the database holds, and intentions whose commit never happened that
-nothing can apply, by the checks the reconciliation makes: the database stands where the intention
-was written or further, and the person holds no key it covers and names, or, for a change of
-restrictions, the database holds a later one. It stops at the oldest entry older than `keepFor` the
-database has yet to apply, as one a copy restored while the app was stopped lacks, and keeps it and
-every later one, so that copy is forgotten again at its next start; run it again after. A forgotten
-tenant's ledger is pruned past `keepFor` alone, as its app does. It opens the tenant's database as
-an app of the tenant does, through the tenant's keys, only when an entry older than `keepFor` is
-there, and creates no table in a database without them. Running instances of the tenant may run
-beside it. It prints one line per tenant:
+nothing can apply, decided as the reconciliation decides them, with the registry: the database
+stands where the intention was written or further, and the person holds no key it covers and
+names, as the app's categories read them, or, for a forgetting for inactivity, the retention would
+not forget them now; for a change of restrictions, the database holds a later one; for a
+redaction, no field it names holds a value the person's keys still open. It stops at the oldest
+entry older than `keepFor` the database has yet to apply, as one a copy restored while the app was
+stopped lacks, and keeps it and every later one, so that copy is forgotten again at its next start;
+run it again after. A forgotten tenant's ledger is pruned past `keepFor` alone, as its app does. It
+opens the tenant's database as an app of the tenant does, through the tenant's keys, only when an
+entry older than `keepFor` is there, and creates no table in a database without them. Running
+instances of the tenant may run beside it.
+
+With `--all-tenants` it also prunes a tenant's entries in a store its configuration no longer
+names, as one it named before its ledger moved, which no app of the tenant reads: there an entry
+goes only once the database holds what it records or nothing can apply it, whatever its
+reconciliation read of its own ledger. It prints one line per tenant and store:
 
 ```
 acme: removed the entries before 2026-10-26T03:00:00.000Z
 globex: removed the entries before 2026-09-14T08:12:40.511Z; kept from then on those older than keepFor its database has not applied: an app of the tenant applies them when it starts
+initech: removed the entries before 2026-10-26T03:00:00.000Z from a store its configuration no longer names
 ```
+
+An entry kept in a store the configuration no longer names that the ledger it names lacks, or
+holds from before what its reconciliation reads again, no app ever applies: the command names the
+tenant on standard error and fails, until the entry is applied again by hand, as
+[`bounda forget --from`](#bounda-forgotten-and-bounda-forget---from) does for a forgetting.
 
 | Option | Meaning |
 | --- | --- |
-| `--all-tenants` | Every tenant whose entries a ledger's store the configuration names holds, each through its own configuration: from `--tenant`, or `default`, the tenants each reached tenant's ledger and tenant key store list, and those the `tenants` export of `bounda.config.ts` names, until none is new |
+| `--all-tenants` | Every tenant whose entries a ledger's store the configuration names holds, each through its own configuration, in every store that holds them: from `--tenant`, or `default`, the tenants each reached tenant's ledger and tenant key store list, and those the `tenants` export of `bounda.config.ts` names, until none is new |
 | `--tenant <name>` | The tenant to prune, as [which tenant](#which-tenant) says |
-| `--root <dir>`, `--config <file>` | As every command that loads the project takes them |
+| `--root <dir>`, `--config <file>`, `--registry <file>` | As every command that loads the project takes them |
 | `--error-text` | Print the message of the error it fails on, as [error text](#error-text) says |
 
 It refuses a configuration without `runtime.personalData.forgetLedger` or its `keepFor`, a ledger
@@ -991,7 +1015,8 @@ only its host opens, as a Durable Object's, and, for `--all-tenants`, a ledger o
 `tenants` and a `tenants` export that is not a list of tenant names. With `--all-tenants`, a tenant
 whose configuration or stores cannot be read is named on standard error, as a tenant that could
 not be pruned is, and the others are pruned all the same. Exit codes: `0` done, `1` bad
-arguments, `2` refused, or a tenant could not be listed or pruned.
+arguments, `2` refused, a tenant could not be listed or pruned, or a store its configuration no
+longer names keeps an entry no app applies.
 
 ## Programmatic use
 
@@ -1023,10 +1048,11 @@ or `app.as(actor).deadLetters`, `bounda personal-data export` is
 is `readTenantExport(createReadStream(file))`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
-`rewrapTenantKeys({ config, env })` for `rewrap-master`. `bounda forget-ledger prune` is
-`pruneTenantForgetLedger({ config, env, tenant })` from `@bounda-dev/core`, on the configuration
-`loadProject` resolves for the tenant, and `--all-tenants` runs it for each tenant
-`listForgetLedgerTenants({ config: projectConfig, env, tenants: await tenants() })` lists, with
-`projectConfig` and `tenants` from `loadProject`. The
+`rewrapTenantKeys({ config: projectConfig, env, tenants: await tenants() })` for `rewrap-master`. `bounda forget-ledger prune` is
+`pruneTenantForgetLedger({ config, registry, env, tenant })` from `@bounda-dev/core`, on the
+configuration and registry `loadProject` resolves for the tenant, and `--all-tenants` runs it for
+each tenant `listForgetLedgerTenants({ config: projectConfig, env, tenants: await tenants() })`
+lists, in each of the `stores` that hold its entries, given as `store` unless the store's `named`
+holds the tenant, with `projectConfig` and `tenants` from `loadProject`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.

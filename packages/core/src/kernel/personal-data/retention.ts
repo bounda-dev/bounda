@@ -29,7 +29,7 @@ import { formatRetention, type PersonalCategories, type PersonalCategory } from 
 import { type ForgetScope, forgetWithin, logForgotten, STALE_INTENTION } from "./forget.ts";
 import { createPause, holdAfter } from "./hold.ts";
 import type { ForgetIntentions } from "./intention.ts";
-import type { RetentionDueFunction } from "./reconciliation.ts";
+import { NEVER_DUE, type RetentionDueFunction } from "./reconciliation.ts";
 import { transactRetrying } from "./transact.ts";
 
 export const RETENTION_SUBSCRIBER: "retention" = "retention";
@@ -142,6 +142,15 @@ export const retentionDueOf: RetentionDueOfFunction =
     const through = await checkpoints.get(RETENTION_SUBSCRIBER);
     return rowIsCurrent(stores.eventStore, personId, through, batchSize);
   };
+
+export interface AppRetentionDueFunction {
+  (args: RetentionDueArgs): RetentionDueFunction;
+}
+
+// What a forgetting the retention made is committed again under: never due for an app that forgets
+// nobody for inactivity.
+export const appRetentionDue: AppRetentionDueFunction = (args) =>
+  retains(args.categories) ? retentionDueOf(args) : NEVER_DUE;
 
 export interface CreateRetentionSubscriberArgs {
   readonly persons: PersonStore;

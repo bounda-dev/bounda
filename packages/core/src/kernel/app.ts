@@ -110,7 +110,6 @@ import {
   type ForgetAgainEntry,
   type ForgetLedgerReconciliation,
   forgetAgain,
-  NEVER_DUE,
 } from "./personal-data/reconciliation.ts";
 import { type Redactions, redactPersonalData, settleRedaction } from "./personal-data/redact.ts";
 import { createPersonalDataReseal } from "./personal-data/reseal.ts";
@@ -121,10 +120,10 @@ import {
 } from "./personal-data/restricted-persons.ts";
 import { restrictProcessing, unrestrictProcessing } from "./personal-data/restriction.ts";
 import {
+  appRetentionDue,
   createRetentionSubscriber,
   createRetentionSweep,
   retains,
-  retentionDueOf,
 } from "./personal-data/retention.ts";
 import { createKeyRotation } from "./personal-data/rotation.ts";
 import {
@@ -1561,13 +1560,11 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       concurrencyRetries,
       onRedacted: watching?.onRedacted,
     };
-    const retentionDue = recordsActivity
-      ? retentionDueOf({
-          categories: personalCategories,
-          batchSize: config.runtime.dispatcher.batchSize,
-          checkpoints: written.checkpointStore,
-        })
-      : NEVER_DUE;
+    const retentionDue = appRetentionDue({
+      categories: personalCategories,
+      batchSize: config.runtime.dispatcher.batchSize,
+      checkpoints: written.checkpointStore,
+    });
     const reconciling =
       forgetLedger === null
         ? null

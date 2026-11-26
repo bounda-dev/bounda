@@ -6,10 +6,12 @@ import {
   DEFAULT_TENANT,
   type EncryptedFileStatus,
   FILE_ENCRYPTION_RETRY_MS,
+  type ForgetLedgerStore,
   type ForgetLedgerTenants,
   type ForgetTenantOptions,
   type FrozenTenantStatus,
   type ListForgetLedgerTenantsArgs,
+  type ListTenantsUnderPreviousMasterArgs,
   type Logger,
   listForgetLedgerTenants,
   listTenantsUnderPreviousMaster,
@@ -18,7 +20,9 @@ import {
   type PersonalCategoryName,
   type PrunedTenantForgetLedger,
   pruneTenantForgetLedger,
+  type Registry,
   type RewrappedTenantKeys,
+  type RewrapTenantKeysArgs,
   type RotateTenantKeyOptions,
   rewrapTenantKeys,
   TENANT_CHECK_INTERVAL_MS,
@@ -76,6 +80,7 @@ import {
   configForTenant,
   defineConfig,
   defineTenantKeyStore,
+  type ForgetLedgerSource,
   masterKey,
   type ProjectConfig,
   type ProjectTenants,
@@ -395,8 +400,10 @@ describe("pruning a forget ledger with no app running", () => {
   it("prunes one tenant from its configuration, saying where it stopped, and lists the store's tenants", () => {
     expectTypeOf(pruneTenantForgetLedger).parameter(0).toEqualTypeOf<{
       readonly config: Config;
+      readonly registry: Registry;
       readonly env?: AppEnv;
       readonly tenant?: string;
+      readonly store?: ForgetLedgerSource;
       readonly now?: Date;
     }>();
     expectTypeOf(pruneTenantForgetLedger).returns.toEqualTypeOf<
@@ -406,6 +413,8 @@ describe("pruning a forget ledger with no app running", () => {
       readonly tenant: string;
       readonly before: string;
       readonly unapplied: boolean;
+      readonly named: boolean;
+      readonly stranded: boolean;
     }>();
     expectTypeOf(listForgetLedgerTenants).parameter(0).toEqualTypeOf<{
       readonly config: ProjectConfig;
@@ -416,8 +425,16 @@ describe("pruning a forget ledger with no app running", () => {
     expectTypeOf(listForgetLedgerTenants).returns.toEqualTypeOf<Promise<ForgetLedgerTenants>>();
     expectTypeOf<ForgetLedgerTenants>().toEqualTypeOf<{
       readonly tenants: readonly string[];
+      readonly stores: readonly ForgetLedgerStore[];
       readonly unreached: readonly UnreachedTenant[];
     }>();
+    expectTypeOf<ForgetLedgerStore>().toEqualTypeOf<{
+      readonly store: ForgetLedgerSource;
+      readonly tenants: readonly string[];
+      readonly named: readonly string[];
+    }>();
+    // What `loadProject` hands is what the prune takes.
+    expectTypeOf<LoadedProject["registry"]>().toExtend<Registry>();
     expectTypeOf<UnreachedTenant>().toEqualTypeOf<{
       readonly tenant: string;
       readonly error: unknown;
@@ -441,13 +458,26 @@ describe("pruning a forget ledger with no app running", () => {
 describe("rotating the master key across tenants", () => {
   it("rewraps every tenant of the store from the configuration, naming those left", () => {
     expectTypeOf(rewrapTenantKeys).parameter(0).toEqualTypeOf<{
-      readonly config: Config;
+      readonly config: ProjectConfig;
       readonly env: Readonly<Record<string, string | undefined>>;
+      readonly tenant?: string;
+      readonly tenants?: readonly string[];
     }>();
+    // What loadProject hands over, and one tenant's configuration alike.
+    expectTypeOf<LoadedProject["projectConfig"]>().toExtend<RewrapTenantKeysArgs["config"]>();
+    expectTypeOf<Config>().toExtend<RewrapTenantKeysArgs["config"]>();
     expectTypeOf(rewrapTenantKeys).returns.toEqualTypeOf<Promise<RewrappedTenantKeys>>();
     expectTypeOf<RewrappedTenantKeys>().toEqualTypeOf<{
       readonly rewrapped: readonly string[];
       readonly left: readonly { readonly tenant: string; readonly error: unknown }[];
+      readonly unreached: readonly UnreachedTenant[];
+    }>();
+    expectTypeOf(listTenantsUnderPreviousMaster)
+      .parameter(0)
+      .toEqualTypeOf<ListTenantsUnderPreviousMasterArgs>();
+    expectTypeOf<ListTenantsUnderPreviousMasterArgs>().toEqualTypeOf<{
+      readonly config: Config;
+      readonly env: Readonly<Record<string, string | undefined>>;
     }>();
     expectTypeOf(listTenantsUnderPreviousMaster).returns.toEqualTypeOf<
       Promise<readonly string[]>

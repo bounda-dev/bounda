@@ -2,7 +2,7 @@ import type { z } from "zod";
 import { type AdapterDefinition, isAdapterDefinition } from "../../adapter/adapter-definition.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ResolvedConfig } from "../../config/types.ts";
-import type { DataLocation } from "../../modules/data-location.ts";
+import type { DataLocation, LegalRegime } from "../../modules/data-location.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type {
   AutomatedDecision,
@@ -12,17 +12,18 @@ import type {
   SpecialCategoryData,
   SpecificPurpose,
 } from "../../modules/personal-data.ts";
-import {
-  type RecipientKind,
-  type StoreSafeguard,
-  TRANSFER_ARTICLES,
-  type TransferSafeguard,
+import type {
+  CountryCode,
+  RecipientKind,
+  RecipientTransfer,
+  StoreSafeguard,
 } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import { schemaArgs } from "../aggregate/build-aggregates.ts";
 import { buildPortReturns, portsByCategory } from "../ports/returns.ts";
 import { processStateArgs } from "../process/deadlines.ts";
+import { recipientTransferOf } from "../recipients/transfer.ts";
 import { buildPersonalCategories, formatRetention } from "./categories.ts";
 import {
   classifySchema,
@@ -33,6 +34,7 @@ import {
 import { EXEMPTION_ARTICLES, type ExportedErasureExemption } from "./export.ts";
 import { looksPersonal, looksSpecial } from "./looks-personal.ts";
 import { fieldCategory, personalMarksOf } from "./marks.ts";
+import { storeTransfer } from "./transfers.ts";
 
 /**
  * What holds personal data: an event's payload, a command's, a process's state, or a read
@@ -103,6 +105,10 @@ export interface InventoryHolder {
 export interface InventoryTransfer {
   readonly safeguard: StoreSafeguard;
   readonly article: string;
+  /**
+   * The legal regime the store is under, as `regimeOf` names its location.
+   */
+  readonly regime: LegalRegime;
 }
 
 export interface InventoryCategory {
@@ -159,11 +165,11 @@ export interface InventoryRecipient {
   readonly port: string;
   readonly name: string;
   readonly kind: RecipientKind;
-  readonly country: string;
+  readonly country: CountryCode;
   /**
-   * `null` inside the European Economic Area.
+   * The transfer when the country is outside the European Economic Area; `null` inside it.
    */
-  readonly safeguard: TransferSafeguard | null;
+  readonly transfer: RecipientTransfer | null;
   readonly categories: readonly string[];
 }
 
@@ -347,13 +353,16 @@ interface KeptIn {
   readonly transfer: InventoryTransfer | null;
 }
 
-// `resolveConfig` lets a store declare a safeguard only when kept out of `storage`'s legal regime.
-const transferOf = (store: {
+// `resolveConfig` lets a store declare a safeguard only beside a location out of `storage`'s legal
+// regime.
+const transferOf = ({
+  location,
+  safeguard,
+}: {
+  readonly location?: DataLocation | undefined;
   readonly safeguard?: StoreSafeguard | undefined;
 }): InventoryTransfer | null =>
-  store.safeguard === undefined
-    ? null
-    : { safeguard: store.safeguard, article: TRANSFER_ARTICLES[store.safeguard] };
+  location === undefined || safeguard === undefined ? null : storeTransfer(location, safeguard);
 
 const keptIn = (definition: AdapterDefinition): KeptIn => ({
   database: definition.name,
@@ -478,7 +487,7 @@ const recipientsOf = (registry: Registry): InventoryRecipient[] =>
           name: recipient.name.trim(),
           kind: recipient.kind,
           country: recipient.country,
-          safeguard: recipient.safeguard ?? null,
+          transfer: recipientTransferOf(recipient.country, recipient.safeguard ?? null),
           categories: [...recipient.categories],
         };
       }),

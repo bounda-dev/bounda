@@ -409,8 +409,9 @@ export default defineConfig({
   only together with a `safeguard`, and that location is `"global"`, anywhere in the world:
   `kvTenantKeys({ binding, location: "global", safeguard: "standard-contractual-clauses" })`. Any
   other location is refused, and so is `adequacy`, which no decision gives for anywhere.
-- `bounda personal-data inventory` states the transfer next to the store, `tenant-keys, in us,
-  transferred under adequacy (article 45)`, and each person's export lists it in `transfers`.
+- `bounda personal-data inventory` states the transfer next to the store, by the legal regime it
+  goes to, `tenant-keys, in us, transferred to US under adequacy (article 45)`, and each
+  person's export lists it in `transfers`, with its `location` and its `regime`.
 
 `create-bounda` writes `jurisdiction: "eu"`: Bounda's defaults favour personal data staying in
 the European Union, and an object placed elsewhere cannot be moved later. Take it out for an

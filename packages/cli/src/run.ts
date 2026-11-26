@@ -1121,6 +1121,9 @@ const runMigrate = async (
   }
 };
 
+// Every tenant key store the configuration can name, as a configuration that is a function of the
+// tenant may give each tenant one of its own: the previous master keys can go only once none holds
+// a key under them.
 const runRewrapMaster = async (
   options: ProjectOptions,
   cwd: string,
@@ -1131,40 +1134,58 @@ const runRewrapMaster = async (
   standInWorkersRuntime();
   const logger = logTo(stderr);
   let config: Config;
+  let project: Awaited<ReturnType<typeof loadProject>>;
+  let listed: readonly string[];
   try {
-    ({ config } = await loadProject({
+    project = await loadProject({
       root: rootOf(options, cwd),
       configPath: options.config,
       registry: NO_REGISTRY,
       logger,
       ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
-    }));
+    });
+    ({ config } = project);
     resolveErrorText({ env: process.env });
+    listed = await project.tenants();
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
     return EXIT_FAILURE;
   }
   const errorText = resolveErrorText(errorTextArgs(options, config));
+  const { tenant } = project;
   try {
-    const { rewrapped, left } = await rewrapTenantKeys({ config, env: process.env });
-    for (const tenant of rewrapped) line(stdout, `rewrapped ${tenant}`);
-    if (left.length === 0) {
+    const { rewrapped, left, unreached } = await rewrapTenantKeys({
+      config: project.projectConfig,
+      env: process.env,
+      tenants: listed,
+      ...(tenant === undefined ? {} : { tenant }),
+    });
+    for (const each of rewrapped) line(stdout, `rewrapped ${each}`);
+    // Each tenant once, though its stores could not be listed and its key could not be rewrapped.
+    const pending = new Set<string>();
+    for (const { tenant: each, error } of unreached) {
+      pending.add(each);
+      const { errorName, errorMessage } = errorFields({ error, errorText });
+      line(
+        stderr,
+        `error: the stores ${each}'s configuration names could not be listed: ${errorMessage ?? errorName}`,
+      );
+    }
+    for (const { tenant: each, error } of left) {
+      pending.add(each);
+      const { errorName, errorMessage } = errorFields({ error, errorText });
+      line(stderr, `error: ${each}'s key could not be rewrapped: ${errorMessage ?? errorName}`);
+    }
+    if (pending.size === 0) {
       line(
         stdout,
         `${rewrapped.length} tenant key(s) rewrapped; none is left under a previous master key: remove them`,
       );
       return EXIT_OK;
     }
-    for (const { tenant, error } of left) {
-      const { errorName, errorMessage } = errorFields({ error, errorText });
-      line(
-        stderr,
-        `error: ${tenant} is still under a previous master key: ${errorMessage ?? errorName}`,
-      );
-    }
     line(
       stderr,
-      `${left.length} tenant key(s) left under a previous master key: keep the previous master keys until none is`,
+      `${pending.size} tenant(s) not rewrapped or listed: keep the previous master keys until none is, and run again once what failed is fixed`,
     );
     return EXIT_FAILURE;
   } catch (error) {
@@ -1176,14 +1197,24 @@ interface PruneLedgerOptions extends ProjectOptions {
   readonly allTenants: boolean;
 }
 
-const prunedLine = ({ tenant, before, unapplied }: PrunedTenantForgetLedger): string =>
-  unapplied
-    ? `${tenant}: removed the entries before ${before}; kept from then on those older than keepFor its database has not applied: an app of the tenant applies them when it starts`
-    : `${tenant}: removed the entries before ${before}`;
+const KEPT = "kept from then on those older than keepFor its database has not applied";
+
+const prunedLine = ({
+  tenant,
+  before,
+  unapplied,
+  named,
+  stranded,
+}: PrunedTenantForgetLedger): string => {
+  const removed = `${tenant}: removed the entries before ${before}${named ? "" : " from a store its configuration no longer names"}`;
+  if (!unapplied) return removed;
+  if (stranded) return `${removed}; ${KEPT}`;
+  return `${removed}; ${KEPT}: an app of the tenant applies them when it starts${named ? "" : ", from the ledger its configuration names"}`;
+};
 
 // Each tenant through its own configuration, as a configuration that is a function of the tenant
-// may point each at a database and a ledger of its own; one that fails, or whose stores cannot be
-// listed, leaves the others to go on.
+// may point each at a database and a ledger of its own, in every store that holds its entries; one
+// that fails, or whose stores cannot be listed, leaves the others to go on.
 const runPruneLedger = async (
   options: PruneLedgerOptions,
   cwd: string,
@@ -1196,7 +1227,7 @@ const runPruneLedger = async (
     loadProject({
       root: rootOf(options, cwd),
       configPath: options.config,
-      registry: NO_REGISTRY,
+      registryPath: options.registry,
       logger,
       ...(tenant === undefined ? {} : { tenant }),
     });
@@ -1215,15 +1246,16 @@ const runPruneLedger = async (
   }
   const errorText = resolveErrorText(errorTextArgs(options, config));
   const named = tenant === undefined ? {} : { tenant };
+  const { registry } = project;
   try {
     if (!options.allTenants) {
       line(
         stdout,
-        prunedLine(await pruneTenantForgetLedger({ config, env: process.env, ...named })),
+        prunedLine(await pruneTenantForgetLedger({ config, registry, env: process.env, ...named })),
       );
       return EXIT_OK;
     }
-    const { tenants, unreached } = await listForgetLedgerTenants({
+    const { tenants, stores, unreached } = await listForgetLedgerTenants({
       config: project.projectConfig,
       env: process.env,
       tenants: listed,
@@ -1231,6 +1263,7 @@ const runPruneLedger = async (
     });
     // Each tenant once, though its stores could not be listed and it could not be pruned.
     const left = new Set<string>();
+    const stranded = new Set<string>();
     for (const { tenant: each, error } of unreached) {
       left.add(each);
       const { errorName, errorMessage } = errorFields({ error, errorText });
@@ -1255,28 +1288,44 @@ const runPruneLedger = async (
         );
         continue;
       }
-      try {
-        line(
-          stdout,
-          prunedLine(
-            await pruneTenantForgetLedger({
-              config: own.config,
-              env: process.env,
-              tenant: each,
-            }),
-          ),
-        );
-      } catch (error) {
-        left.add(each);
-        const { errorName, errorMessage } = errorFields({ error, errorText });
-        line(stderr, `error: ${each} could not be pruned: ${errorMessage ?? errorName}`);
+      for (const { store, named } of stores.filter(({ tenants: held }) => held.includes(each))) {
+        try {
+          const pruned = await pruneTenantForgetLedger({
+            config: own.config,
+            registry: own.registry,
+            env: process.env,
+            tenant: each,
+            // The store the tenant's configuration names, as it resolves it now.
+            ...(named.includes(each) ? {} : { store }),
+          });
+          line(stdout, prunedLine(pruned));
+          if (pruned.stranded) {
+            stranded.add(each);
+            line(
+              stderr,
+              `error: ${each}'s database has not applied entries a store its configuration no longer names keeps, which no app of the tenant reads: apply them again by hand, as bounda forget --from does for forgettings`,
+            );
+          }
+        } catch (error) {
+          left.add(each);
+          const { errorName, errorMessage } = errorFields({ error, errorText });
+          line(stderr, `error: ${each} could not be pruned: ${errorMessage ?? errorName}`);
+        }
       }
     }
-    if (left.size === 0) return EXIT_OK;
-    line(
-      stderr,
-      `${left.size} tenant(s) not pruned or listed: run again once what failed is fixed`,
-    );
+    if (left.size === 0 && stranded.size === 0) return EXIT_OK;
+    if (left.size > 0) {
+      line(
+        stderr,
+        `${left.size} tenant(s) not pruned or listed: run again once what failed is fixed`,
+      );
+    }
+    if (stranded.size > 0) {
+      line(
+        stderr,
+        `${stranded.size} tenant(s) hold entries no app reads: apply them again by hand`,
+      );
+    }
     return EXIT_FAILURE;
   } catch (error) {
     return failed(stderr, error, errorText);
@@ -1594,7 +1643,7 @@ export const runCli: RunCliFunction = async ({
       )
       .option(
         "--all-tenants",
-        "every tenant whose entries a ledger's store the configuration names holds, each through its own configuration",
+        "every tenant whose entries a ledger's store the configuration names holds, each through its own configuration, in every store that holds them",
         false,
       ),
   ).action(async (options: PruneLedgerOptions) => {
@@ -1704,7 +1753,7 @@ export const runCli: RunCliFunction = async ({
     tenantKey
       .command("rewrap-master")
       .description(
-        "rewrap under the master key in force the key of every tenant the tenant key store holds, their apps running or not: once none is left under a previous master key, remove those",
+        "rewrap under the master key in force the key of every tenant every tenant key store the configuration names holds, each through its own configuration, their apps running or not: once none is left under a previous master key, remove those",
       ),
   ).action(async (options: ProjectOptions) => {
     exitCode = await runRewrapMaster(options, cwd, stdout, stderr);
