@@ -22,7 +22,12 @@ import { type BoundaApp, createApp } from "../app.ts";
 import { isSealed } from "../personal-data/crypto.ts";
 import { createEphemeralKeys } from "../personal-data/ephemeral-keys.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
-import { pruneAsApplied, reconciliationRulesOf } from "../personal-data/ledger-prune.ts";
+import {
+  pruneAsApplied,
+  readFromOf,
+  reconciliationRulesOf,
+  strandedEntries,
+} from "../personal-data/ledger-prune.ts";
 import {
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_GRACE_MS,
@@ -79,6 +84,10 @@ import {
 // moves to another store now and then, its entries with it: the store it left keeps them, which
 // no app reads, and the prune removes there only what the database holds or nothing applies,
 // whatever its cursor read, so what that store would prove of the database, read again, stays.
+// It also moves without its entries, its marks alone, and the operator then applies again, through
+// an instance, what the store it left keeps that no app applies (`bounda forget-ledger apply`):
+// what it applies the database holds after, and nothing a look reads is among it, so what the
+// reconciliation counts of a restore stays the reconciliation's.
 
 const registry = {
   aggregates: {
@@ -139,6 +148,9 @@ type InstanceAction =
   | { readonly kind: "touch"; readonly instance: Instance; readonly person: number }
   // A pass whose every commit fails, as one whose retention forgets in a database that refuses.
   | { readonly kind: "retainUncommitted"; readonly instance: Instance }
+  // The operator applies again by hand, through the instance, what the store the ledger left keeps
+  // that no app applies (`bounda forget-ledger apply`).
+  | { readonly kind: "applyStranded"; readonly instance: Instance }
   | { readonly kind: "pass"; readonly instance: Instance };
 
 // What happens beside the instances, as the operator's prune does.
@@ -152,6 +164,9 @@ type Action =
   | { readonly kind: "age" }
   // The ledger moves to another store, its entries with it, and the store it left keeps them.
   | { readonly kind: "move" }
+  // It moves without its entries, its marks alone: the store it left keeps them, and no app reads
+  // them there.
+  | { readonly kind: "moveBare" }
   | { readonly kind: "backUp"; readonly slot: number }
   | {
       readonly kind: "restore";
@@ -510,6 +525,11 @@ const createModelLedger = (
     // Every entry the ledger holds, or, on KV, what a read shows of them now.
     entries: async (shownOnly = false): Promise<readonly ForgetLedgerEntry[]> =>
       kind === "sql" ? inner.read({ limit: Number.MAX_SAFE_INTEGER }) : entriesOf(shownOnly),
+    // Removes every entry, the marks left as they were: what a ledger moved without its entries
+    // reads in the store it moved to. Workers KV moves with its entries.
+    dropEntries: async (): Promise<void> => {
+      if (kind === "sql") await inner.prune?.({ before: "9999-12-31T23:59:59.999Z" });
+    },
     mode: (): LedgerMode => mode,
     upSince: (): number => upSince,
     // The committed entries that landed by `at`.
@@ -1276,6 +1296,39 @@ const createWorld = (
         committedBy(live);
         return;
       }
+      case "applyStranded": {
+        if (live === null || live === undefined) return;
+        const storage = await adapter.createStorage();
+        let listed: readonly ForgetLedgerEntry[];
+        try {
+          listed = await strandedEntries({
+            storage,
+            rules: () => rules,
+            now: new Date(now),
+            ledger: former,
+            named: ledger.ledger,
+            readFrom: readFromOf(rowOf(db, FORGET_LEDGER_CURSOR)),
+            limit: Number.POSITIVE_INFINITY,
+          });
+        } catch {
+          // The ledger is down.
+          return;
+        } finally {
+          await storage.close();
+        }
+        const applied = await live.app.applyAgain(listed).catch(() => null);
+        const held = new Set(snapshotOf(db).events.map(({ id }) => id));
+        for (const { eventId, outcome } of applied ?? []) {
+          if (outcome === "applied" && !held.has(eventId)) {
+            violations.push(`${eventId} was applied again by hand, but the database lacks it`);
+          }
+          if (outcome === "reconciled") {
+            violations.push(`${eventId} was listed though the reconciliation reads it`);
+          }
+        }
+        committedBy(live);
+        return;
+      }
       case "retainUncommitted": {
         failNextCommit();
         try {
@@ -1339,8 +1392,10 @@ const createWorld = (
         elapse(RETENTION_MS);
         return;
       case "move":
+      case "moveBare":
         await former.clear();
         await former.append(await ledger.entries());
+        if (action.kind === "moveBare") await ledger.dropEntries();
         return;
       case "backUp":
         // Nothing to copy before the first start creates the tables.
@@ -1607,6 +1662,10 @@ const instanceAction: fc.Arbitrary<InstanceAction> = fc.oneof(
     weight: 1,
     arbitrary: instance.map((at) => ({ kind: "retainUncommitted" as const, instance: at })),
   },
+  {
+    weight: 1,
+    arbitrary: instance.map((at) => ({ kind: "applyStranded" as const, instance: at })),
+  },
   { weight: 4, arbitrary: instance.map((at) => ({ kind: "pass" as const, instance: at })) },
 );
 
@@ -1623,6 +1682,7 @@ const actionOf = (): fc.Arbitrary<Action> =>
     { weight: 3, arbitrary: fc.constant({ kind: "tick" as const }) },
     { weight: 1, arbitrary: fc.constant({ kind: "age" as const }) },
     { weight: 1, arbitrary: fc.constant({ kind: "move" as const }) },
+    { weight: 1, arbitrary: fc.constant({ kind: "moveBare" as const }) },
     { weight: 2, arbitrary: fc.constant({ kind: "prune" as const }) },
     {
       weight: 4,

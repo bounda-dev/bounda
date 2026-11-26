@@ -401,6 +401,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             scopes: [scopes["forget-ledger"]],
           }),
         close: release,
+        adapter: { name, options },
       });
     },
   };

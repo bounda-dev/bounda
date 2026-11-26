@@ -83,12 +83,14 @@ const setUp = async ({
   pageSize = 2,
   visibilityDelayMs,
   logger = silentLogger,
+  forgotten,
 }: {
   readonly entries: readonly ForgetLedgerEntry[];
   readonly persons?: readonly string[];
   readonly pageSize?: number;
   readonly visibilityDelayMs?: number;
   readonly logger?: Logger;
+  readonly forgotten?: (personId: string) => void;
 }) => {
   const storage = await memory().createStorage();
   await keyed(storage, persons);
@@ -108,6 +110,7 @@ const setUp = async ({
     reconcileEveryMs: EVERY,
     keepForMs: null,
     pageSize,
+    ...(forgotten === undefined ? {} : { forgotten }),
   });
   return { storage, reconciliation, reads };
 };
@@ -979,12 +982,31 @@ describe("what the reconciliation commits again", () => {
       safeguard: null,
       category: "default",
     };
-    const { reconciliation } = await setUp({
+    const told: unknown[] = [];
+    const logger: Logger = {
+      ...silentLogger,
+      info: (message, fields) => told.push([message, fields]),
+    };
+    const { reconciliation, storage } = await setUp({
       entries: [{ ...entry("c-1", "d-1", at(0)), committed: false, disclosure }],
       persons: ["c-1"],
+      logger,
     });
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(reconciliation.undone()).toBe(0);
+    expect(await storage.recipients.disclosures("c-1")).toEqual([
+      expect.objectContaining({ ...disclosure, person: "c-1" }),
+    ]);
+    expect(told).toEqual([
+      [
+        "disclosure recorded again from the forget ledger",
+        { personId: "c-1", port: "customer.mailer" },
+      ],
+    ]);
+    // Held now, it is recorded, and told, no more.
+    told.length = 0;
+    await reconciliation.reconcile(NOW);
+    expect(told).toEqual([]);
   });
 
   it("counts one restore undone from entries written where the database had gone further, whatever they are", async () => {
@@ -1114,12 +1136,16 @@ describe("what the reconciliation commits again", () => {
       [true, 1],
       [false, 0],
     ] as const) {
+      const told: string[] = [];
       const { reconciliation } = await setUp({
         entries: [restriction("r-1", committed)],
         persons: ["c-1"],
+        forgotten: (personId) => told.push(personId),
       });
       expect(await reconciliation.reconcile(NOW)).toBe(1);
       expect(reconciliation.undone()).toBe(undone);
+      // A restriction forgets nobody.
+      expect(told).toEqual([]);
     }
   });
 

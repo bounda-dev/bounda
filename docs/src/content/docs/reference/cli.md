@@ -735,7 +735,9 @@ or of the person as a whole, under its own id, time and reason, unless the datab
 only while the person holds a key in force the line covers and names, as a reconciliation would;
 with a forget ledger configured, it records each in the ledger first. A line may also be a bare
 person's id, forgotten as a whole, as a request, whenever they hold a key; blank lines are skipped.
-It prints each person it forgot and how many of those listed:
+A line that records a change of restrictions, a redaction or a disclosure, as a forget ledger
+keeps one, is refused: [`bounda forget-ledger apply`](#bounda-forget-ledger-stranded-and-bounda-forget-ledger-apply)
+applies those. It prints each person it forgot and how many of those listed:
 
 ```
 forgot again c-42
@@ -988,7 +990,10 @@ instances of the tenant may run beside it.
 With `--all-tenants` it also prunes a tenant's entries in a store its configuration no longer
 names, as one it named before its ledger moved, which no app of the tenant reads: there an entry
 goes only once the database holds what it records or nothing can apply it, whatever its
-reconciliation read of its own ledger. It prints one line per tenant and store:
+reconciliation read of its own ledger. It visits each store once and prunes there every tenant it
+holds: two adapters of one kind with the same options are one store, and so are ledgers that give
+one `storeId`, as an adapter's do, so a configuration that defines its ledger anew for each tenant
+over one database is visited once, not once per tenant. It prints one line per tenant and store:
 
 ```
 acme: removed the entries before 2026-10-26T03:00:00.000Z
@@ -996,10 +1001,10 @@ globex: removed the entries before 2026-09-14T08:12:40.511Z; kept from then on t
 initech: removed the entries before 2026-10-26T03:00:00.000Z from a store its configuration no longer names
 ```
 
-An entry kept in a store the configuration no longer names that the ledger it names lacks, or
-holds from before what its reconciliation reads again, no app ever applies: the command names the
-tenant on standard error and fails, until the entry is applied again by hand, as
-[`bounda forget --from`](#bounda-forgotten-and-bounda-forget---from) does for a forgetting.
+An entry kept in a store the configuration no longer names that something would still apply, and
+that the ledger it names lacks, or holds from before what its reconciliation reads again, no app
+ever applies: the command names the tenant on standard error and fails, until the entry is applied
+again with [`bounda forget-ledger apply`](#bounda-forget-ledger-stranded-and-bounda-forget-ledger-apply).
 
 | Option | Meaning |
 | --- | --- |
@@ -1017,6 +1022,65 @@ whose configuration or stores cannot be read is named on standard error, as a te
 not be pruned is, and the others are pruned all the same. Exit codes: `0` done, `1` bad
 arguments, `2` refused, a tenant could not be listed or pruned, or a store its configuration no
 longer names keeps an entry no app applies.
+
+## `bounda forget-ledger stranded` and `bounda forget-ledger apply`
+
+Apply again, by hand, the entries of a tenant no app applies, as a store its configuration no
+longer names keeps after its ledger moved, which `bounda forget-ledger prune --all-tenants` names:
+
+```bash
+bounda forget-ledger stranded --tenant acme > stranded.jsonl
+bounda forget-ledger apply --tenant acme --from stranded.jsonl --actor ops-ana
+```
+
+`bounda forget-ledger stranded` prints, one line of JSON each, the entry as a forget ledger keeps
+it, every entry of the tenant its database lacks, that something would still apply, decided as the
+reconciliation decides it with the registry, and that no reconciliation reads: in a store reached
+as `--all-tenants` reaches them, from the tenant, the default tenant and those the `tenants`
+export names, that its configuration no longer names, unless the ledger it names holds it where
+its reconciliation reads; or in that ledger, from before there. A forgetting for inactivity is left
+to the retention. The count goes to standard error, so standard output is the list alone:
+
+```
+2 entries of acme no app applies
+```
+
+`bounda forget-ledger apply --from <file>` boots the tenant's app and applies each line again, in
+the order given, as the reconciliation applies it: a forgetting, a change of restrictions, a
+redaction or a disclosure, under its own id and time, decided by the same checks in the
+transaction that applies it, and recorded first in the forget ledger the configuration names. One
+command takes every kind because their order matters: a change of restrictions applies only while
+no later one is held. It prints a line per entry and a count:
+
+```
+applied again: the forgetting 019a3f2c-… of c-42
+held already: the restriction 019a3f2d-… of c-42
+left to the reconciliation, which reads it in the ledger: the forgetting 019a3f30-… of c-7
+refused, nothing of it applies to the database as it stands: the redaction 019a3f31-… of c-9
+applied again 1 of 4 listed; 1 held already, 1 left to the reconciliation, 1 refused as applying nothing
+```
+
+An entry the database holds is held already, so the same list applies again safely; one the ledger
+the configuration names holds where its reconciliation reads is left to the reconciliation, which
+counts the restore its loss tells; one nothing applies any more, a forgetting of a person who holds
+no key it names, a change of restrictions a later one followed, a redaction whose fields open for
+no one, a disclosure whose category was forgotten since, is refused. A copy taken between an
+entry's time and when it was applied again lacks it, and its cursor read past it: after restoring
+such a copy, apply the same list again.
+
+| Option | Applies to | Meaning |
+| --- | --- | --- |
+| `--from <file>` | `apply` | What `bounda forget-ledger stranded` printed |
+| `--actor <id>` | `apply` | Who acts, named in each event appended and its log line |
+| `--tenant <name>` | both | The tenant, as [which tenant](#which-tenant) says |
+| `--root`, `--config`, `--registry`, `--error-text` | both | As for `bounda rebuild` |
+
+`stranded` refuses a configuration without `runtime.personalData.forgetLedger`, and both a storage
+only its host opens, as a Durable Object's; without a ledger, `apply` applies each entry with
+nothing to record it in, as `bounda forget --from` does. Exit codes: `0` done, `1` bad arguments, `2` the project could not be
+loaded, the listing or the apply failed, a tenant's stores could not be listed, so a store only it
+names may hold more, or the file could not be read or has a line that is not a forget ledger's
+entry, in which case nothing is applied.
 
 ## Programmatic use
 
@@ -1053,6 +1117,8 @@ and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
 configuration and registry `loadProject` resolves for the tenant, and `--all-tenants` runs it for
 each tenant `listForgetLedgerTenants({ config: projectConfig, env, tenants: await tenants() })`
 lists, in each of the `stores` that hold its entries, given as `store` unless the store's `named`
-holds the tenant, with `projectConfig` and `tenants` from `loadProject`. The
+holds the tenant, with `projectConfig` and `tenants` from `loadProject`. `bounda forget-ledger
+stranded` is `listStrandedForgetLedgerEntries({ config: projectConfig, registry, env, tenant,
+tenants })`, and `bounda forget-ledger apply` is `app.applyAgain(entries, { actor })`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.
