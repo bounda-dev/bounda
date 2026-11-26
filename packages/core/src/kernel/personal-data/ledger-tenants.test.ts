@@ -336,4 +336,27 @@ describe("the tenants of every forget ledger's store the configuration names", (
     });
     expect(seen).toEqual([`a.db ${DEFAULT_TENANT}`, "b.db b"]);
   });
+
+  it("tells an adapter whose options JSON cannot write by itself", async () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    const seen: string[] = [];
+    const odd = (): Adapter => {
+      const { adapter } = createNodeSqliteAdapter(":memory:");
+      return {
+        ...adapter,
+        options: circular,
+        createForgetLedger: async (args) => {
+          seen.push(args.tenant);
+          return adapter.createForgetLedger(args);
+        },
+      };
+    };
+    const config: ProjectConfig = () => configOf(odd());
+    expect(await listForgetLedgerTenants({ config, tenants: ["b"] })).toEqual({
+      tenants: [],
+      unreached: [],
+    });
+    expect(seen).toEqual([DEFAULT_TENANT, "b"]);
+  });
 });

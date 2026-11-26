@@ -64,17 +64,23 @@ export interface ListForgetLedgerTenantsFunction {
 // One database is one store, whichever tenant's configuration names it: an adapter of the same kind
 // with the same options, as `sharesStorage` reads it, or the same definition. Every memory adapter
 // is a store of its own.
-const storeOf = (source: ForgetLedgerSource | TenantKeySource): unknown =>
-  source.kind === "bounda-adapter" && source.name !== "memory"
-    ? `${source.name}:${JSON.stringify(source.options)}`
-    : source;
+const storeOf = (source: ForgetLedgerSource | TenantKeySource): unknown => {
+  if (source.kind !== "bounda-adapter" || source.name === "memory") return source;
+  try {
+    return `${source.name}:${JSON.stringify(source.options)}`;
+  } catch {
+    // Options JSON cannot write, such as a client of your own, tell the adapter by itself.
+    return source;
+  }
+};
 
 /**
  * Every tenant whose entries a forget ledger's store the configuration can name holds: what
  * `bounda forget-ledger prune --all-tenants` prunes, each through its own configuration. It starts
  * from `tenant` and those `tenants` names, and reaches every tenant the forget ledger's store and
  * the tenant key store of each reached tenant's configuration list, until none is new, reading
- * each store once: an adapter of one kind with the same options is one store, and so is one
+ * each store once, opened as an app opens it, which creates its table where it is missing: an
+ * adapter of one kind with the same options is one store, and so is one
  * definition, which a function of the tenant that defines a store inside it makes anew for every
  * tenant. A configuration that gives each tenant both stores of its own names its tenants in
  * `tenants`. Rejects as `pruneTenantForgetLedger` does when the starting tenant has nothing to

@@ -3151,7 +3151,7 @@ store lists the others, names its tenants in a `tenants` export of `bounda.confi
 function that resolves to one:
 
 ```ts
-export const tenants = async () => (await listCustomers()).map(({ slug }) => slug);
+export const tenants = () => (process.env.TENANTS ?? "").split(",").filter(Boolean);
 
 export default defineConfig(({ tenant }) => ({
   storage: postgresql({ url: process.env.DATABASE_URL, schema: tenant }),
@@ -3166,7 +3166,8 @@ export default defineConfig(({ tenant }) => ({
 ```
 
 Two adapters of one kind with the same options are one store; a store of your own is one per
-definition, so define it outside the function, or each tenant's resolution reads it again. A
+definition, so define it outside the function, or each tenant's resolution reads it again. Each
+store is opened as an app opens it, which creates its table where it is missing. A
 tenant whose configuration or stores cannot be read is named on stderr, and the others are
 pruned. `pruneTenantForgetLedger` and `listForgetLedgerTenants` from `@bounda-dev/core`, with
 `projectConfig` and `tenants()` from `loadProject`, do the same in code (see the
