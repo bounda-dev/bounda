@@ -519,7 +519,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // Counts what the marks tell, past every restore this instance knows of, and raises the
   // generation the count moved to.
   const countTold = async (stored: Seen, evidence: number): Promise<Restored> => {
-    const past = Math.max(stored.restores, seen?.restores ?? 0, declaring);
+    const past = Math.max(stored.restores, (seen as Seen).restores, declaring);
     const restored = await count(stored, past, evidence);
     await raise((seen as Seen).generation);
     return restored;
@@ -653,7 +653,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     if (reading !== null) await raiseReading();
     if (uncounted > 0) await raiseCount(uncounted, uncountedAt);
     // Every mark raised before this instance started shows by now.
-    if (!judged && mark !== null && startedAt !== null && at >= startedAt + delayMs) {
+    if (!judged && mark !== null && at >= (startedAt as number) + delayMs) {
       const found = await judge(stored);
       if (found !== null) {
         witness = null;
