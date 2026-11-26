@@ -41,10 +41,11 @@ import {
 import { expectRedacted } from "../../testing/expect-redacted.ts";
 import { type Adapter, isAdapter } from "../adapter.ts";
 import type { AdapterDefinition } from "../adapter-definition.ts";
-import type {
-  ForgetLedger,
-  ForgetLedgerEntry,
-  ForgetLedgerMark,
+import {
+  byForgetLedgerOrder,
+  type ForgetLedger,
+  type ForgetLedgerEntry,
+  type ForgetLedgerMark,
 } from "../storage/forget-ledger.ts";
 import type { InspectedStore } from "../storage/inspection.ts";
 import type { Table } from "../storage/table.ts";
@@ -572,15 +573,23 @@ const faultyLedger = (source: ForgetLedgerSource) => {
   return { definition, state, opened };
 };
 
-// How long a read of `laggingLedger`'s marks may lag a write, as Workers KV's.
+// How long a read of `laggingLedger` may lag a write, as Workers KV's.
 const LAG_MS = 60_000;
 
 /**
- * A ledger whose marks a read shows only `LAG_MS` after they were raised, as Workers KV's: every
- * value kept with each time it was raised, its entries those of the store's own ledger.
+ * A ledger whose writes a read shows only `LAG_MS` after they landed, as Workers KV's: every value
+ * of a mark kept with each time it was raised, and an entry shown as its intention until its
+ * committed copy shows, the entries kept by the store's own ledger.
  */
 const laggingLedger = (source: ForgetLedgerSource, clock: Clock) => {
   const marks = new Map<string, { readonly mark: ForgetLedgerMark; readonly landed: number }[]>();
+  // When each entry's intention, and its committed copy, first landed; one not here, written
+  // outside the app, shows at once.
+  const landed = new Map<string, number>();
+  const landingOf = (eventId: string, committed: boolean): string =>
+    `${eventId}\u0000${committed ? "committed" : "intended"}`;
+  const shows = (key: string): boolean =>
+    (landed.get(key) ?? Number.NEGATIVE_INFINITY) <= clock.now().getTime() - LAG_MS;
   const byValue = (a: ForgetLedgerMark, b: ForgetLedgerMark): number =>
     b.value - a.value || Date.parse(a.raisedAt) - Date.parse(b.raisedAt);
   return defineForgetLedger(async (args) => {
@@ -594,9 +603,32 @@ const laggingLedger = (source: ForgetLedgerSource, clock: Clock) => {
       marks.set(key, kept);
       return kept;
     };
+    // What a read shows of an entry the store holds: its committed copy, else its intention, or
+    // nothing yet.
+    const shownAs = (entry: ForgetLedgerEntry): ForgetLedgerEntry | null => {
+      if (entry.committed !== false && shows(landingOf(entry.eventId, true))) return entry;
+      const intended = landingOf(entry.eventId, false);
+      if (!landed.has(intended) && entry.committed !== false) return null;
+      return shows(intended) ? { ...entry, committed: false } : null;
+    };
     return {
       ...inner,
       visibilityDelayMs: LAG_MS,
+      append: async (entries) => {
+        await inner.append(entries);
+        for (const { eventId, committed } of entries) {
+          const key = landingOf(eventId, committed !== false);
+          if (!landed.has(key)) landed.set(key, clock.now().getTime());
+        }
+      },
+      read: async ({ after, limit }) =>
+        (await inner.read({ limit: Number.MAX_SAFE_INTEGER }))
+          .flatMap((entry) => {
+            const shown = shownAs(entry);
+            return shown === null ? [] : [shown];
+          })
+          .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
+          .slice(0, limit),
       readMark: async (name) =>
         raised(name)
           .filter(({ landed }) => landed <= clock.now().getTime() - LAG_MS)
@@ -1989,6 +2021,38 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         clock.advance(LAG_MS);
         await next.app.runUntilIdle();
         expect((await next.app.status()).restoresFound).toBe(2);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts, on a ledger whose reads lag, a restore that lost a forgetting its reads did not show yet, though the person was forgotten again before they did",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const ledger = laggingLedger(target.forgetLedger, clock);
+        const first = await start(target.storage, ledger, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        clock.advance(LAG_MS);
+        await first.app.runUntilIdle();
+        await target.backUp();
+        // Committed, and lost with the copy; the instance is gone before it looks again.
+        await first.app.forget("ana");
+
+        const storage = await target.restore();
+        clock.advance(1);
+        const restored = await start(storage, ledger, BEFORE_ROTATION, clock);
+        // Forgotten again before the reads show the first forgetting, which then reads as applied
+        // to nobody.
+        await restored.app.forget("ana");
+        await restored.app.stop();
+        clock.advance(LAG_MS);
+        const next = await start(storage, ledger, BEFORE_ROTATION, clock);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(1);
+        clock.advance(LAG_MS);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(1);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

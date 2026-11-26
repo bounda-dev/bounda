@@ -3007,8 +3007,8 @@ The Worker exports the keeper's class, `createBoundaKeeper({ config })`, bound a
 [Cloudflare](/adapters/cloudflare/#tenant-keys)). An app whose `cloudflare()` names no jurisdiction
 may keep the ledger in a KV namespace instead, `kvForgetLedger({ binding })`: every object keeps
 its entries under its tenant, its name or, for one reached through an id without a name, the id,
-and since KV may take up to a minute to list a key it just wrote, an object that starts reads the
-ledger once more a minute later, and wakes for it.
+and since KV may take up to a minute to list a key it just wrote, an object that starts, or finds
+a restore, reads the ledger once more a minute later, and wakes for it.
 Anything else is a ledger of your own through `defineForgetLedger`, which receives the host's
 environment, the tenant (`default` for an app that names none) and `keepForMs` when the app
 starts, and keeps its tenant's entries apart from every other's: it keeps every field of an entry, the
@@ -3349,7 +3349,16 @@ it and above it tells the restore however far the generation moved since, to thi
 it is gone, to whichever looks next. A mark raised before the latest restore counted is what that
 restore left behind and tells no other, so a higher one that shows after a count adds nothing; and
 a restore counted while the reads did not show one counted a moment before, which took the same
-number, is counted past it then, in `bounda status` too. This takes one instance at a time, as a
+number, is counted past it then, in `bounda status` too. The ledger's entries show late as well: a
+committed forgetting the reads of a start, or of a restore found while the app runs, do not show
+yet is applied by the reconciliation a minute later, counted as that restore's when written before
+it; and one written since the latest restore counted that the database lacks is a restore however
+the database stands, so neither a later forgetting of the same person nor the generation's moves
+since hide it. A start lets go of the values raised more than a minute before
+it but the highest, once it compared them and the ledger took the generation it read, and an
+instance that compared every mark does the same once a minute: a mark holds the values of the
+last few minutes however long the object runs and however often it restarts, which is all a read
+lists. This takes one instance at a time, as a
 Durable Object is, whose clocks agree to within the time a restart takes. A ledger that reads what was written, in
 a SQL database or `durableObjectForgetLedger`, tells it all at start. Without a ledger, run, after
 restoring:

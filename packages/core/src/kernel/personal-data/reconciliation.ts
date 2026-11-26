@@ -13,7 +13,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { discloseAgain } from "../recipients/again.ts";
 import { startedBy } from "../shared/causation.ts";
-import { RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
+import { RESTORE_COVERED, RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
   endsKeptOf,
@@ -398,7 +398,8 @@ export interface ForgetLedgerReconciliation {
   /**
    * After the database went back to a copy: due at once, since the copy may hold persons
    * forgotten after it was taken, and without the grace for young entries, which the copy cannot
-   * be committing; when `first`, clears the hold the copy brought back. Never rejects.
+   * be committing, and on a ledger whose reads lag once more `visibilityDelayMs` after; when
+   * `first`, clears the hold the copy brought back. Never rejects.
    */
   restored(first: boolean): Promise<void>;
   // Commits again at once whatever the ledger holds that the database does not, young entries
@@ -413,6 +414,8 @@ export interface ForgetLedgerReconciliation {
   // The highest generation an entry `undone` counts was written at: the restore declared for them
   // moves the generation past it, though the mark reads lower, or they would tell it again.
   past(): number;
+  // Takes `count` of what `undone` counted as declared; on a ledger whose reads lag, reads the
+  // ledger once more `visibilityDelayMs` later, for what else that restore lost.
   declared(count: number): void;
 }
 
@@ -493,7 +496,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   let periodicAt: number = clock.now().getTime() + reconcileEveryMs;
   // The last hold this instance set, for when the store cannot say.
   let local: Hold | null = null;
-  let settled = ledger.visibilityDelayMs === undefined || ledger.visibilityDelayMs <= 0;
+  const lagging = (ledger.visibilityDelayMs ?? 0) > 0;
+  let settled = !lagging;
 
   const advance = async (row: string, to: number): Promise<void> => {
     for (;;) {
@@ -572,17 +576,23 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     return true;
   };
 
-  // A committed entry whose event the database lacks, though nothing is left to commit again: the
-  // database went back when this read committed an earlier entry of the person again, which may
-  // have left nothing for this one, or when the entry was written where the database still stands,
-  // which a restore counted since moves past.
+  // A committed entry whose event the database lacks, though nothing is left to commit again. On a
+  // ledger whose reads lag, a read may show an entry only after the restore that lost it was
+  // counted, or once a later forgetting of the person, or the generation's moves, hid what else
+  // tells it: one written since the latest restore counted is lost, and one written before is that
+  // restore's, or one before. Elsewhere, the database went back when this read committed an earlier
+  // entry of the person again, which may have left nothing for this one, or when the entry was
+  // written where the database still stands, which a restore counted since moves past.
   const lost = async (
     entry: ForgetLedgerEntry,
     appliedHere: ReadonlySet<string>,
+    covered: number | null,
   ): Promise<boolean> => {
     const { reached } = entry;
     if (entry.committed === false) return false;
-    if (!appliedHere.has(entry.personId)) {
+    if (covered !== null) {
+      if (Date.parse(entry.forgottenAt) < covered) return false;
+    } else if (!appliedHere.has(entry.personId)) {
       if (reached === undefined) return false;
       if ((await checkpointStore.get(RESTORE_GENERATION)) > reached.generation) return false;
     }
@@ -601,10 +611,11 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     at: number,
     graced = !restoredSince,
   ): Promise<{ forgotten: number; intended: number; young: number | null }> => {
-    const [cursor, restores, reconciledThrough] = await Promise.all([
+    const [cursor, restores, reconciledThrough, covered] = await Promise.all([
       checkpointStore.get(FORGET_LEDGER_CURSOR),
       checkpointStore.get(RESTORES_FOUND),
       checkpointStore.get(FORGET_LEDGER_RECONCILED),
+      lagging ? checkpointStore.get(RESTORE_COVERED) : null,
     ]);
     // A restore counted, here or by another instance or a start that stopped since, that no
     // reconciliation read the ledger through after: what it lost tells no other.
@@ -623,10 +634,14 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     let reachedPast = 0;
     // Whom this read committed an entry of again: the database lacked it when the read began.
     const appliedHere = new Set<string>();
+    // On a ledger whose reads lag, an entry written before the latest restore counted, which a
+    // read may show only after it, is that restore's, or one before.
+    const coveredBy = (entry: ForgetLedgerEntry): boolean =>
+      covered !== null && Date.parse(entry.forgottenAt) < covered;
     const applied = (entry: ForgetLedgerEntry): void => {
       forgotten += 1;
       if (entry.committed === false) intended += 1;
-      else if (!counted) undone += 1;
+      else if (!counted && !coveredBy(entry)) undone += 1;
     };
     const ended = () => {
       if (wentBack && !counted) {
@@ -661,7 +676,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         if (await appliedAgain(entry)) {
           applied(entry);
           appliedHere.add(entry.personId);
-        } else if (await lost(entry, appliedHere)) {
+        } else if (await lost(entry, appliedHere, covered)) {
           wentBack = true;
           reachedPast = Math.max(reachedPast, entry.reached?.generation ?? 0);
         }
@@ -850,6 +865,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     declared: (count) => {
       undone = Math.max(0, undone - count);
       if (undone === 0) past = 0;
+      // The restore those entries told may have lost others the read did not show yet.
+      if (!lagging) return;
+      const again = clock.now().getTime() + (ledger.visibilityDelayMs as number);
+      dueAt = dueAt === null ? again : Math.min(dueAt, again);
     },
     restored: async (first) => {
       done = false;
@@ -857,6 +876,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       undone = 0;
       past = 0;
       dueAt = clock.now().getTime();
+      // What was written in the last delay may show only then: read once more after it.
+      settled = !lagging;
       // A hold the copy brought back is not waited for: what it held was failing before the copy.
       local = null;
       if (!first) return;
