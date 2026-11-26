@@ -1,6 +1,11 @@
 import { globSync, readFileSync } from "node:fs";
 import { join, matchesGlob } from "node:path";
 
+export interface SourceFile {
+  readonly path: string;
+  readonly source: string;
+}
+
 export interface MutateFilesFunction {
   (directory: string): readonly string[];
 }

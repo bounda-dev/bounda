@@ -368,14 +368,25 @@ jobs:
               exit 1
             fi
             # A shard's report is merged with the others' by the mutation-report job, which sends
-            # the whole to the dashboard.
-            args=(--mutate "$files" --reporters clear-text,progress,html,json)
+            # the whole to the dashboard. Stryker runs only the tests related to the files it
+            # mutates, and a shard may hold none any test reaches, such as files of types only.
+            args=(--mutate "$files" --allowEmpty --reporters clear-text,progress,html,json)
           elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
             args=(--reporters clear-text,progress,html,dashboard)
           fi
           # Vitest adds a job summary on every run Stryker starts, one per mutant, past what GitHub
           # takes; the step below writes the one that matters.
           env -u GITHUB_STEP_SUMMARY pnpm --filter "./packages/$PACKAGE" test:mutation "${args[@]}" 2>&1 | tee mutation.log
+          # Stryker writes no report when the files it mutates hold no mutant. An empty one tells the
+          # merge the shard ran, so it records those files and the next plan weighs them at nothing.
+          report="packages/$PACKAGE/reports/mutation/mutation.json"
+          if [ "${{ matrix.shards }}" -gt 1 ] && [ ! -f "$report" ]; then
+            if [ -f plan/incremental.json ]; then
+              jq '.files = {} | .testFiles = {}' plan/incremental.json > "$report"
+            else
+              echo '{"schemaVersion":"1.0","thresholds":{"high":80,"low":60},"files":{}}' > "$report"
+            fi
+          fi
       - if: always()
         shell: bash
         run: |

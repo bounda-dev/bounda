@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type PlanShardsArgs, planShards, type SourceFile } from "./plan.ts";
+import type { SourceFile } from "./files.ts";
+import { type PlanShardsArgs, planShards } from "./plan.ts";
 import type { MutantResult, Report } from "./report.ts";
 
 const mutants = (count: number, fields: Partial<MutantResult> = {}): readonly MutantResult[] =>
@@ -210,6 +211,47 @@ describe("planShards", () => {
       shards: 1,
     });
     expect(plan[0]?.mutants).toBeCloseTo(5);
+  });
+
+  it("weighs a file the report holds with no mutant at nothing", () => {
+    const report: Report = {
+      files: {
+        "types.ts": { source: "x".repeat(4000), mutants: [] },
+        "a.ts": { source: "a", mutants: mutants(10) },
+        "b.ts": { source: "b", mutants: mutants(10) },
+      },
+    };
+    const plan = planShards({
+      files: [file("types.ts", "x".repeat(4000)), file("a.ts", "a"), file("b.ts", "b")],
+      report,
+      testSource: () => undefined,
+      shards: 2,
+    });
+    expect(plan.map(({ files: paths }) => paths)).toEqual([["a.ts", "types.ts"], ["b.ts"]]);
+    expect(plan.map(({ mutants: count }) => count)).toEqual([0, 0]);
+  });
+
+  it("gives no shard only files without mutants while files with them are as many as shards", () => {
+    const empty = ["e-1.ts", "e-2.ts", "e-3.ts", "e-4.ts"];
+    const report: Report = {
+      files: {
+        ...Object.fromEntries(empty.map((path) => [path, { source: path, mutants: [] }])),
+        "a.ts": { source: "old", mutants: mutants(10, { duration: 1000 }) },
+        "b.ts": { source: "b.ts", mutants: mutants(2) },
+        "c.ts": { source: "c.ts", mutants: mutants(1) },
+      },
+    };
+    const plan = planShards({
+      files: [...empty, "a.ts", "b.ts", "c.ts"].map((path) =>
+        file(path, path === "a.ts" ? "new" : path),
+      ),
+      report,
+      testSource: () => undefined,
+      shards: 3,
+    });
+    for (const { files: paths } of plan) {
+      expect(paths.some((path) => !empty.includes(path))).toBe(true);
+    }
   });
 
   it("plans the same way for the same input, whatever the files' order", () => {
