@@ -1,3 +1,4 @@
+import { relative } from "node:path";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 
 // A run that stops at its first failure, as Stryker's run of each mutant does, reaches its verdict
@@ -24,5 +25,39 @@ export class CheapestFirst extends BaseSequencer {
       const [failedB, costB] = ranks.get(b) ?? [1, 0];
       return failedA - failedB || costA - costB;
     });
+  }
+}
+
+// Vitest shards by a hash of each file's path, which put the suite's two longest files, of about
+// two minutes each, in the same shard. Shards balanced by each file's duration in the last whole
+// run, read from the results cache the CI restores, the longest first, each to the lightest shard,
+// finish together. Every shard computes the same split, so all of them must read the same cache:
+// a file read differently would run twice or never. A file without a duration weighs the mean.
+export class BalancedShards extends BaseSequencer {
+  override async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
+    const { shard } = this.ctx.config;
+    if (shard === undefined) return files;
+    const keyOf = (file: TestSpecification): string =>
+      `${file.project.name}:${file.pool}:${relative(this.ctx.config.root, file.moduleId)}`;
+    const known = files.flatMap((file) => {
+      const duration = this.ctx.cache.getTestSpecificationResult(file)?.duration;
+      return duration === undefined ? [] : [duration];
+    });
+    const mean = known.length === 0 ? 1 : known.reduce((sum, d) => sum + d, 0) / known.length;
+    const weighed = files
+      .map((file) => ({
+        file,
+        key: keyOf(file),
+        duration: this.ctx.cache.getTestSpecificationResult(file)?.duration ?? mean,
+      }))
+      .sort((a, b) => b.duration - a.duration || (a.key < b.key ? -1 : 1));
+    const loads = Array.from({ length: shard.count }, () => 0);
+    const mine: TestSpecification[] = [];
+    for (const { file, duration } of weighed) {
+      const lightest = loads.indexOf(Math.min(...loads));
+      loads[lightest] = (loads[lightest] ?? 0) + duration;
+      if (lightest === shard.index - 1) mine.push(file);
+    }
+    return mine;
   }
 }
