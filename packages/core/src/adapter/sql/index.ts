@@ -39,6 +39,7 @@ export {
   forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
   forgetLedgerMarksTableFor,
+  forgetLedgerMarkTimeStatement,
   forgetLedgerReachedStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,

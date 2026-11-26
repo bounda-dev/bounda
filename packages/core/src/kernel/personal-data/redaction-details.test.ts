@@ -269,7 +269,7 @@ const setUp = async (batchSize?: number, adapter: Adapter = memory()) => {
       for (const entry of appended) entries.set(entry.eventId, entry);
     },
     read: async ({ limit }) => [...entries.values()].slice(0, limit),
-    readMark: async () => 0,
+    readMark: async () => [],
     raiseMark: async () => undefined,
     clear: async () => true,
     fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },

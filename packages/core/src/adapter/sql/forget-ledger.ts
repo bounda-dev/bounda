@@ -85,7 +85,13 @@ export const forgetLedgerLatestSchema: ForgetLedgerLatestSchemaFunction = (table
     PRIMARY KEY ("tenant", "event_id")
   )`,
       orderIndexStatement(table),
-      forgetLedgerMarksStatement(table),
+      `CREATE TABLE IF NOT EXISTS ${forgetLedgerMarksTableFor(table)} (
+    "tenant" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "value" BIGINT NOT NULL,
+    "raised_at" TEXT NOT NULL DEFAULT '${EPOCH}',
+    PRIMARY KEY ("tenant", "name")
+  )`,
       forgetLedgerFenceStatement(table),
     ],
   };
@@ -116,6 +122,23 @@ export const forgetLedgerMarksStatement: ForgetLedgerMarksStatementFunction = (t
     "value" BIGINT NOT NULL,
     PRIMARY KEY ("tenant", "name")
   )`;
+
+export interface ForgetLedgerMarkTimeStatementFunction {
+  (table: string, dialect: Pick<SqlDialect, "name">): string;
+}
+
+// What a mark raised before the ledger kept the time reads as raised at.
+const EPOCH = "1970-01-01T00:00:00.000Z";
+
+/**
+ * The twelfth version: each mark keeps when its value was first raised, beside the ledger's own
+ * `table`, quoted. A mark raised before reads as raised at the epoch.
+ */
+export const forgetLedgerMarkTimeStatement: ForgetLedgerMarkTimeStatementFunction = (
+  table,
+  { name },
+) =>
+  `ALTER TABLE ${forgetLedgerMarksTableFor(table)} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"raised_at" TEXT NOT NULL DEFAULT '${EPOCH}'`;
 
 export interface ForgetLedgerFenceTableForFunction {
   (table: string): string;
@@ -441,17 +464,17 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
     },
     readMark: async (name) => {
       await prepared();
-      const [row] = await db.all(
-        `SELECT "value" FROM ${marks} WHERE "tenant" = ${p(1)} AND "name" = ${p(2)}`,
+      const rows = await db.all(
+        `SELECT "value", "raised_at" FROM ${marks} WHERE "tenant" = ${p(1)} AND "name" = ${p(2)}`,
         [tenant, name],
       );
-      return Number(row?.value ?? 0);
+      return rows.map((row) => ({ value: Number(row.value), raisedAt: String(row.raised_at) }));
     },
-    raiseMark: async (name, value) => {
+    raiseMark: async (name, { value, raisedAt }) => {
       await prepared();
       await fenced.run(
-        `INSERT INTO ${marks} ("tenant", "name", "value") VALUES (${p(1)}, ${p(2)}, ${p(3)}) ON CONFLICT ("tenant", "name") DO UPDATE SET "value" = EXCLUDED."value" WHERE ${marks}."value" < EXCLUDED."value"`,
-        [tenant, name, value],
+        `INSERT INTO ${marks} ("tenant", "name", "value", "raised_at") VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}) ON CONFLICT ("tenant", "name") DO UPDATE SET "value" = EXCLUDED."value", "raised_at" = EXCLUDED."raised_at" WHERE ${marks}."value" < EXCLUDED."value"`,
+        [tenant, name, value, raisedAt],
       );
     },
     clear: async () => {

@@ -80,6 +80,7 @@ export type {
   CreateForgetLedgerArgs,
   ForgetLedger,
   ForgetLedgerEntry,
+  ForgetLedgerMark,
   ForgetLedgerPosition,
   ForgottenReasonOfFunction,
   LedgerDisclosure,

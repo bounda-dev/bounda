@@ -1089,7 +1089,7 @@ describe("expectForgotten given an app built with a witness", () => {
     await app.runUntilIdle();
     await app.forget(ana.customerId);
     const kept = await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT });
-    await kept.raiseMark(RESTORE_MARK, 3);
+    await kept.raiseMark(RESTORE_MARK, { value: 3, raisedAt: "2026-01-01T00:00:00.000Z" });
     await app.forgetTenant("default", { despiteLegalObligations: true });
     // Its recipients not told yet, the ledger keeps what a restored copy would need.
     await expectTenantForgotten(witness);

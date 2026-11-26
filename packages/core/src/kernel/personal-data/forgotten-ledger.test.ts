@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   ForgetLedgerEntry,
+  ForgetLedgerMark,
   PruneForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
 import type { TenantFence } from "../../adapter/storage/tenant-fence.ts";
@@ -17,7 +18,7 @@ const later = (ms: number): Date => new Date(AT.getTime() + ms);
 // A ledger that holds nothing, for what these cases do not read.
 const unread = {
   read: async () => [],
-  readMark: async () => 0,
+  readMark: async () => [],
   fence: {
     read: async (): Promise<TenantFence> => ({ state: "open" }),
     set: async (fence: TenantFence) => fence,
@@ -234,7 +235,7 @@ describe("the forget ledger of a forgotten tenant", () => {
   it("says the ledger is cleared only once it holds no entry and no mark, reading one entry at most", async () => {
     const limits: number[] = [];
     let entries: readonly ForgetLedgerEntry[] = [];
-    let mark = 0;
+    let mark: readonly ForgetLedgerMark[] = [];
     const ledger = createForgottenLedger({
       ledger: {
         clear: async () => true,
@@ -251,9 +252,9 @@ describe("the forget ledger of a forgotten tenant", () => {
       logger: createRecordingLogger().logger,
     });
     expect(await ledger.cleared()).toBe(true);
-    mark = 3;
+    mark = [{ value: 3, raisedAt: "2026-01-01T00:00:00.000Z" }];
     expect(await ledger.cleared()).toBe(false);
-    mark = 0;
+    mark = [];
     entries = [
       {
         personId: "c-1",

@@ -372,7 +372,7 @@ describe("the forget ledger", () => {
       return {
         append: (entries) => inner.append(entries),
         readMark: (name) => inner.readMark(name),
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
         read: async (args) => {
@@ -421,7 +421,7 @@ describe("the forget ledger", () => {
       return {
         append: (entries) => inner.append(entries),
         readMark: (name) => inner.readMark(name),
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
         read: async (args) => {
@@ -472,7 +472,7 @@ describe("the forget ledger", () => {
       read: async () => {
         throw new Error("ledger is down");
       },
-      readMark: async () => 0,
+      readMark: async () => [],
       raiseMark: async () => undefined,
       clear: async () => true,
       fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -507,7 +507,7 @@ describe("the forget ledger", () => {
       return {
         append: (entries) => inner.append(entries),
         readMark: (name) => inner.readMark(name),
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
         read: async (args) => {
@@ -584,7 +584,7 @@ describe("the forget ledger", () => {
     const watching = defineForgetLedger(async () => {
       const inner = await opened(ledgerAdapter);
       return {
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -642,7 +642,7 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -766,7 +766,7 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -810,7 +810,7 @@ describe("the forget ledger", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -853,7 +853,7 @@ describe("the forget ledger", () => {
       return {
         append: (entries) => inner.append(entries),
         readMark: (name) => inner.readMark(name),
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
         read: async (args) => {
@@ -900,7 +900,7 @@ describe("the forget ledger", () => {
       return {
         append: (entries) => inner.append(entries),
         readMark: (name) => inner.readMark(name),
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
         read: async (args) => {
@@ -1000,7 +1000,7 @@ describe("the forget ledger", () => {
     const down = new Error("ledger is down");
     let closed = 0;
     const broken = defineForgetLedger(async () => ({
-      readMark: async () => 0,
+      readMark: async () => [],
       raiseMark: async () => undefined,
       clear: async () => true,
       fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -1028,7 +1028,7 @@ describe("the forget ledger", () => {
       return {
         append: (entries) => inner.append(entries),
         readMark: (name) => inner.readMark(name),
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
         read: async (args) => {
@@ -1248,7 +1248,7 @@ describe("the intention a forgetting records first", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -1289,7 +1289,7 @@ describe("the intention a forgetting records first", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -1328,7 +1328,7 @@ describe("the intention a forgetting records first", () => {
       const inner = await opened(ledgerAdapter);
       return {
         read: (args) => inner.read(args),
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },

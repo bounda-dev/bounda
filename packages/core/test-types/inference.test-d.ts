@@ -205,6 +205,7 @@ import {
 import {
   type Adapter,
   type ForgetLedger,
+  type ForgetLedgerMark,
   forgottenReasonOf,
   type SchemaScopeName,
   type SchemaVersion,
@@ -2240,10 +2241,19 @@ describe("operations", () => {
     >();
     expectTypeOf<RestoredOptions>().toEqualTypeOf<{ readonly again?: boolean }>();
     expectTypeOf<RestoreDeclaration>().toEqualTypeOf<{ readonly counted: boolean }>();
-    expectTypeOf<ForgetLedger["readMark"]>().toEqualTypeOf<(name: string) => Promise<number>>();
-    expectTypeOf<ForgetLedger["raiseMark"]>().toEqualTypeOf<
-      (name: string, value: number) => Promise<void>
+    expectTypeOf<ForgetLedger["readMark"]>().toEqualTypeOf<
+      (name: string) => Promise<readonly ForgetLedgerMark[]>
     >();
+    expectTypeOf<ForgetLedger["raiseMark"]>().toEqualTypeOf<
+      (name: string, mark: ForgetLedgerMark) => Promise<void>
+    >();
+    expectTypeOf<ForgetLedger["pruneMarks"]>().toEqualTypeOf<
+      ((name: string, before: string) => Promise<void>) | undefined
+    >();
+    expectTypeOf<ForgetLedgerMark>().toEqualTypeOf<{
+      readonly value: number;
+      readonly raisedAt: string;
+    }>();
   });
 
   it("clears a forgotten tenant's ledger, which every ledger can", () => {
@@ -2252,7 +2262,7 @@ describe("operations", () => {
     const _cannotClear: ForgetLedger = {
       append: async () => undefined,
       read: async () => [],
-      readMark: async () => 0,
+      readMark: async () => [],
       raiseMark: async () => undefined,
     };
   });

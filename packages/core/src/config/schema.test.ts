@@ -31,7 +31,7 @@ const tenantKeys = defineTenantKeyStore(() => createMemoryTenantKeyStore());
 const forgetLedger = defineForgetLedger(() => ({
   append: async () => {},
   read: async () => [],
-  readMark: async () => 0,
+  readMark: async () => [],
   raiseMark: async () => undefined,
   clear: async () => true,
   fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },

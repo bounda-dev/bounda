@@ -363,9 +363,10 @@ describe("forgetTenant", () => {
       app.commands as unknown as Record<string, (payload: object) => Promise<unknown>>
     ).count?.({ counterId: "k-1" });
     await app.stop();
-    expect(
-      await (await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT })).readMark(RESTORE_MARK),
-    ).toBeGreaterThan(0);
+    const [raised] = await (await ledgers.createForgetLedger({ tenant: DEFAULT_TENANT })).readMark(
+      RESTORE_MARK,
+    );
+    expect(raised?.value).toBeGreaterThan(0);
   });
 
   it("leaves the skeleton: the event of the forgetting, ids, types and the fields no schema marks", async () => {
@@ -763,7 +764,7 @@ describe("a forgotten tenant's writes from an instance that has not heard of it"
       .then((storage) => storage.eventStore.readAll({ afterPosition: 0, limit: 100 }));
     await other.app.runUntilIdle();
     expect(await ledger.read({ limit: 10 })).toEqual([]);
-    expect(await ledger.readMark(RESTORE_MARK)).toBe(0);
+    expect(await ledger.readMark(RESTORE_MARK)).toEqual([]);
     expect(
       await adapter
         .createStorage()
