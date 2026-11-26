@@ -122,9 +122,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       packages: ${{ steps.list.outputs.packages }}
-      mutation: ${{ steps.list.outputs.mutation }}
-      sharded: ${{ steps.list.outputs.sharded }}
-      shard_counts: ${{ steps.list.outputs.shard_counts }}
+      mutated: ${{ steps.list.outputs.mutated }}
+      planned: ${{ steps.list.outputs.planned }}
+      max_shards: ${{ steps.list.outputs.max_shards }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -154,22 +154,16 @@ jobs:
           packages=$(printf '%s\n' $selected | sed '/^$/d' | jq -R . | jq -sc .)
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
           echo "Mutation testing for: $packages"
-          # The packages whose mutants are too many for one job, and the shards each runs in.
-          shard_counts='{"core": 8, "cli": 2, "postgresql": 3}'
+          # The packages whose full mutation run is too long for one job, and the most shards each
+          # may take; the plan takes as few as its changes need.
+          max_shards='{"core": 8, "cli": 2, "postgresql": 3}'
           # The merge queue skips mutation testing: the pull request ran it on the same changes, and
           # main runs it again once they land.
-          if [ "${{ github.event_name }}" = "merge_group" ]; then mutated=""; else mutated="$selected"; fi
-          mutation=$(for package in $mutated; do
-            shards=$(jq -r --arg package "$package" '.[$package] // 1' <<<"$shard_counts")
-            for shard in $(seq 1 "$shards"); do
-              jq -nc --arg package "$package" --argjson shard "$shard" --argjson shards "$shards" \
-                '{package: $package, shard: $shard, shards: $shards}'
-            done
-          done | jq -sc .)
-          echo "mutation=$mutation" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "merge_group" ]; then mutated="[]"; else mutated="$packages"; fi
           {
-            echo "sharded=$(echo "$mutation" | jq -c '[.[] | select(.shards > 1) | .package] | unique')"
-            echo "shard_counts=$shard_counts"
+            echo "mutated=$mutated"
+            echo "planned=$(jq -c --argjson max "$max_shards" '[.[] | select($max[.] != null)]' <<<"$mutated")"
+            echo "max_shards=$max_shards"
           } >> "$GITHUB_OUTPUT"
 
   # People run Bounda on Windows too, so the packages a project uses there are tested there
@@ -231,20 +225,22 @@ jobs:
       - run: pnpm --filter @bounda-dev/sqlite exec vitest run src/close-once.test.ts
 
   # A package whose full mutation run would not fit one job is split into shards. The plan, made
-  # once here from the package's last report, gives each shard the files whose mutants add up to
-  # an even share of the run's time, predicts in the job summary how long each shard will take
-  # (.github/scripts/mutation-plan.ts), and hands every shard that same report as its incremental
-  # file: each reuses what it can of the whole package, and no file is mutated twice or never.
+  # once here from the package's last report, takes the fewest shards, up to the package's most,
+  # whose slowest should finish within MUTATION_TARGET_MINUTES, gives each the files whose mutants
+  # add up to an even share of the run's time, predicts in the job summary how long each will
+  # take (.github/scripts/mutation-plan.ts), and hands every shard that same report as its
+  # incremental file: each reuses what it can of the whole package, and no file is mutated twice
+  # or never.
   mutation-plan:
     name: Mutation plan (${{ matrix.package }})
     needs: changes
-    if: needs.changes.outputs.sharded != '[]'
+    if: needs.changes.outputs.planned != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJSON(needs.changes.outputs.sharded) }}
+        package: ${{ fromJSON(needs.changes.outputs.planned) }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -258,7 +254,10 @@ jobs:
       - shell: bash
         env:
           PACKAGE: ${{ matrix.package }}
-          SHARDS: ${{ fromJSON(needs.changes.outputs.shard_counts)[matrix.package] }}
+          MAX_SHARDS: ${{ fromJSON(needs.changes.outputs.max_shards)[matrix.package] }}
+          # A shard held is a runner the repository's other jobs wait for: past this, more shards
+          # finish sooner but cost every other pull request its wait.
+          MUTATION_TARGET_MINUTES: 10
           # The mutation job's timeout-minutes.
           MUTATION_TIMEOUT_MINUTES: 60
         run: |
@@ -278,7 +277,7 @@ jobs:
               echo "::warning::No $PACKAGE report in the cache or on the dashboard: the shards test every mutant"
             fi
           fi
-          node .github/scripts/mutation-plan.ts "$PACKAGE" "$SHARDS" "$incremental" > plan/plan.json 2>> plan.log
+          node .github/scripts/mutation-plan.ts "$PACKAGE" "$MAX_SHARDS" "$MUTATION_TARGET_MINUTES" "$incremental" > plan/plan.json 2>> plan.log
           # A file is the smallest unit a shard takes: one whose mutants alone near the mutation
           # job's timeout needs splitting in the source, not more shards.
           awk -v package="$PACKAGE" -v limit="$MUTATION_TIMEOUT_MINUTES" '/^Shard / && $(NF-1) > limit * 0.8 {
@@ -301,6 +300,37 @@ jobs:
           overwrite: true
           retention-days: 1
 
+  # The mutation jobs: one for each package without a plan, one for each shard a plan took.
+  mutation-matrix:
+    name: Mutation matrix
+    needs: [changes, mutation-plan]
+    if: ${{ !cancelled() && needs.changes.outputs.mutated != '[]' && needs.mutation-plan.result != 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - if: needs.changes.outputs.planned != '[]'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: mutation-plan-*
+          path: plans
+      - id: matrix
+        shell: bash
+        env:
+          MUTATED: ${{ needs.changes.outputs.mutated }}
+        run: |
+          include=$(for package in $(jq -r '.[]' <<<"$MUTATED"); do
+            plan="plans/mutation-plan-$package/plan.json"
+            if [ -f "$plan" ]; then
+              jq -c --arg package "$package" \
+                'length as $shards | range($shards) | {package: $package, shard: (. + 1), shards: $shards, planned: true}' "$plan"
+            else
+              jq -nc --arg package "$package" '{package: $package, shard: 1, shards: 1, planned: false}'
+            fi
+          done | jq -sc .)
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
   # The timeout fits a full run of a job, not just an incremental one: GitHub evicts a cache nobody
   # has read for a week, and a job the timeout cancels saves none, since Stryker writes its
   # incremental file at the end. A shard's report carries the whole package, its own files run and
@@ -309,22 +339,22 @@ jobs:
   # longest job, and waiting would add `check`'s whole run to every pull request's.
   mutation:
     name: Mutation (${{ matrix.package }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
-    needs: [changes, mutation-plan]
-    if: ${{ !cancelled() && needs.changes.outputs.mutation != '[]' && needs.mutation-plan.result != 'failure' }}
+    needs: mutation-matrix
+    if: ${{ !cancelled() && needs.mutation-matrix.result == 'success' }}
     runs-on: ubuntu-latest
     # The plan job's MUTATION_TIMEOUT_MINUTES follows it.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.changes.outputs.mutation) }}
+        include: ${{ fromJSON(needs.mutation-matrix.outputs.include) }}
     env:
       # Stryker runs the tests once per mutant: PostgreSQL's and the libSQL server's keep one
       # container for all of them.
       BOUNDA_PG_REUSE: "1"
       BOUNDA_LIBSQL_REUSE: "1"
       PACKAGE: ${{ matrix.package }}
-      SHARD: ${{ matrix.shards > 1 && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
+      SHARD: ${{ matrix.planned && format('-{0}-of-{1}', matrix.shard, matrix.shards) || '' }}
       # As in the test job.
       DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
     steps:
@@ -337,13 +367,13 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: ./.github/actions/setup
-      - if: matrix.shards == 1
+      - if: ${{ !matrix.planned }}
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
           key: stryker-${{ matrix.package }}-${{ github.sha }}
           restore-keys: stryker-${{ matrix.package }}-
-      - if: matrix.shards > 1
+      - if: matrix.planned
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: mutation-plan-${{ matrix.package }}
@@ -354,7 +384,7 @@ jobs:
           STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
         run: |
           args=()
-          if [ "${{ matrix.shards }}" -gt 1 ]; then
+          if [ "${{ matrix.planned }}" = "true" ]; then
             if [ -f plan/incremental.json ]; then
               mkdir -p "packages/$PACKAGE/.stryker-tmp"
               cp plan/incremental.json "packages/$PACKAGE/.stryker-tmp/incremental.json"
@@ -380,7 +410,7 @@ jobs:
           # Stryker writes no report when the files it mutates hold no mutant. An empty one tells the
           # merge the shard ran, so it records those files and the next plan weighs them at nothing.
           report="packages/$PACKAGE/reports/mutation/mutation.json"
-          if [ "${{ matrix.shards }}" -gt 1 ] && [ ! -f "$report" ]; then
+          if [ "${{ matrix.planned }}" = "true" ] && [ ! -f "$report" ]; then
             if [ -f plan/incremental.json ]; then
               jq '.files = {} | .testFiles = {}' plan/incremental.json > "$report"
             else
@@ -398,8 +428,8 @@ jobs:
             grep -E "Final mutation score" mutation.log | sed 's/.*INFO MutationTestReportHelper//' | head -n 1 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      # A sharded package's cache is the merged report, which the mutation-report job saves.
-      - if: always() && matrix.shards == 1
+      # A planned package's cache is the merged report, which the mutation-report job saves.
+      - if: always() && !matrix.planned
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: packages/${{ matrix.package }}/.stryker-tmp/incremental.json
@@ -423,16 +453,15 @@ jobs:
   mutation-report:
     name: Mutation report (${{ matrix.package }})
     needs: [changes, mutation]
-    if: ${{ !cancelled() && needs.changes.outputs.sharded != '[]' && (needs.mutation.result == 'success' || needs.mutation.result == 'failure') }}
+    if: ${{ !cancelled() && needs.changes.outputs.planned != '[]' && (needs.mutation.result == 'success' || needs.mutation.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJSON(needs.changes.outputs.sharded) }}
+        package: ${{ fromJSON(needs.changes.outputs.planned) }}
     env:
       PACKAGE: ${{ matrix.package }}
-      SHARDS: ${{ fromJSON(needs.changes.outputs.shard_counts)[matrix.package] }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -451,7 +480,8 @@ jobs:
           STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
         run: |
           directories=()
-          for shard in $(seq 1 "$SHARDS"); do directories+=("shards/mutation-$PACKAGE-$shard-of-$SHARDS"); done
+          shards=$(jq length plan/plan.json)
+          for shard in $(seq 1 "$shards"); do directories+=("shards/mutation-$PACKAGE-$shard-of-$shards"); done
           incremental="packages/$PACKAGE/.stryker-tmp/incremental.json"
           mkdir -p "$(dirname "$incremental")"
           node .github/scripts/mutation-report.ts "$PACKAGE" "$incremental" plan/incremental.json "${directories[@]}" | tee score.txt
@@ -480,7 +510,7 @@ jobs:
   # does not reach them.
   passed:
     name: CI passed
-    needs: [check, test, test-report, docs, changes, windows, guard-malloc, mutation-plan, mutation, mutation-report]
+    needs: [check, test, test-report, docs, changes, windows, guard-malloc, mutation-plan, mutation-matrix, mutation, mutation-report]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
