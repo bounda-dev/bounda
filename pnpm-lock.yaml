@@ -251,6 +251,9 @@ catalogs:
     lefthook:
       specifier: 2.2.2
       version: 2.2.2
+    pkg-pr-new:
+      specifier: 0.0.94
+      version: 0.0.94
     postgres:
       specifier: 3.4.9
       version: 3.4.9
@@ -344,6 +347,9 @@ importers:
       lefthook:
         specifier: 'catalog:'
         version: 2.2.2
+      pkg-pr-new:
+        specifier: 'catalog:'
+        version: 0.0.94
       publint:
         specifier: 'catalog:'
         version: 0.3.25
@@ -5033,6 +5039,10 @@ packages:
   picomatch@4.0.7:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
+
+  pkg-pr-new@0.0.94:
+    resolution: {integrity: sha512-+s3ZZl1Vt3wHfsIRH+chHG6/3wsu1N+Z5jitNYAPc0GGCYR8xmju34UShzTAMosi4WAYFCXvp80LZZc/fXSdpQ==}
+    hasBin: true
 
   pkg-types@2.4.0:
     resolution: {integrity: sha512-07Fys7iVx0X6TcviMOgogM1Lk33ZyqOezMnU79S+kffWqwolG/5W9V8EgQSeYCIfFTYVgssRbnH630Oa2+soBA==}
@@ -10604,6 +10614,8 @@ snapshots:
   picomatch@2.3.2: {}
 
   picomatch@4.0.7: {}
+
+  pkg-pr-new@0.0.94: {}
 
   pkg-types@2.4.0:
     dependencies:
