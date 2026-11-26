@@ -12,6 +12,7 @@ import {
   RESTORE_COUNT_MARK,
   RESTORE_COVERED,
   RESTORE_DECLARING,
+  RESTORE_DECLARING_AT,
   RESTORE_GENERATION,
   RESTORE_HANDLED,
   RESTORE_MARK,
@@ -1458,6 +1459,7 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     return {
       checkpointStore,
       ledger,
+      logger,
       entries,
       errors,
       stream,
@@ -1682,9 +1684,16 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
   });
 
   it("judges a ledger that lets nothing go, and says when one cannot", async () => {
-    const { time, watchWith, errors } = await setUpLagging();
+    const { checkpointStore, ledger, logger, time, watchWith, errors } = await setUpLagging();
     time.now = 10 * LAG;
-    const keeping = watchWith({ pruneMarks: undefined });
+    const { pruneMarks: _, ...keepingAll } = ledger;
+    const keeping = createRestoreWatch({
+      checkpoints: checkpointStore,
+      events: { lastPosition: async () => 0, readAll: async () => [] },
+      marks: keepingAll,
+      clock: { now: () => at(time.now) },
+      logger,
+    });
     await keeping.start();
     time.now += LAG;
     expect(await keeping.check(at(time.now))).toBeNull();
@@ -1830,6 +1839,25 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     time.now += LAG;
     expect(await watch.check(at(time.now))).toBeNull();
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
+  });
+
+  it("raises a declaration's count at the time it was counted when the next start finishes it", async () => {
+    const { checkpointStore, time, watchOver, valuesOf } = await setUpLagging();
+    time.now = 10 * LAG;
+    const declaring = watchOver();
+    await declaring.start();
+    time.now += 1;
+    expect(await declaring.declare()).toEqual({ first: true, counted: true });
+    // Gone before it settled: the next start finishes the declaration.
+    time.now += 1;
+    const next = watchOver();
+    expect(await next.start()).toEqual({ first: true });
+    await next.settled();
+    expect(await checkpointStore.get(RESTORE_DECLARING_AT)).toBe(0);
+    time.now += LAG;
+    expect(await next.check(at(time.now))).toBeNull();
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+    expect(valuesOf(RESTORE_COUNT_MARK)).toEqual([1]);
   });
 
   it("takes a value counted again at the very time of the last recount as that recount's", async () => {

@@ -3263,7 +3263,8 @@ it and above it tells the restore however far the generation moved since, to thi
 it is gone, to whichever looks next. A mark raised before the latest restore counted is what that
 restore left behind and tells no other, so a higher one that shows after a count adds nothing; and
 a restore counted while the reads did not show one counted a moment before, which took the same
-number, is counted past it then, in `bounda status` too. A ledger that reads what was written, in
+number, is counted past it then, in `bounda status` too. This takes one instance at a time, as a
+Durable Object is, whose clocks agree to within the time a restart takes. A ledger that reads what was written, in
 a SQL database or `durableObjectForgetLedger`, tells it all at start. Without a ledger, run, after
 restoring:
 

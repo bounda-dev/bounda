@@ -38,6 +38,12 @@ export const RESTORE_UNCLAIMED = "runtime:restore-unclaimed";
 export const RESTORE_DECLARING = "runtime:restore-declaring";
 
 /**
+ * When the declaration under way was counted: finished again, it raises its count in the forget
+ * ledger at that time, so a ledger that keeps each time a value was raised reads it once.
+ */
+export const RESTORE_DECLARING_AT = "runtime:restore-declaring-at";
+
+/**
  * The database as the last restore an instance counted left it once handled, as one hash of its
  * count of restores and of its newest event and that event's position, in one row so two instances
  * settling at once leave one or the other: an operator's declaration that finds the database
@@ -268,8 +274,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   let countMark = 0;
   let uncounted = 0;
   let uncountedAt = 0;
-  // The counts this instance raised, as the ledger keeps them, which its reads may not show yet.
-  const ownCounts: ForgetLedgerMark[] = [];
+  // The counts this instance raised before its judgment, which its reads may not show then.
+  let ownCounts: ForgetLedgerMark[] = [];
   // Whether a mark that could not be read was said, until it can be again.
   let unreadableSaid = false;
   // Whether a restore this instance counted left the generation below a mark it could not read,
@@ -340,7 +346,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // it keeps the time it was counted at: two times for one value are two restores.
   const raiseCount = async (value: number, at = clock.now().getTime()): Promise<void> => {
     if (marks === null) return;
-    if (!ownCounts.some((own) => own.value === value && timeOf(own) === at)) {
+    if (!judged && !ownCounts.some((own) => own.value === value && timeOf(own) === at)) {
       ownCounts.push({ value, raisedAt: iso(at) });
     }
     try {
@@ -356,7 +362,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   };
 
   // A restore counted, by this instance or another, tells every mark raised before it: what a
-  // look on a ledger whose reads lag compares with the database starts after it.
+  // look on a ledger whose reads lag compares with the database starts after it. The instances'
+  // clocks agree to within the time a restart takes.
   const cover = async (): Promise<void> => {
     if (lagging) await advance(RESTORE_COVERED, clock.now().getTime());
   };
@@ -469,7 +476,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     const generation = raised ?? (await raiseFirst(stored));
     await checkpoints.compareAndSet(RESTORES_FOUND, stored.restores, target);
     await cover();
-    await raiseCount(target);
+    const countedAt = await checkpoints.get(RESTORE_DECLARING_AT);
+    await raiseCount(target, countedAt > 0 ? countedAt : undefined);
     await advance(RESTORE_GENERATION, generation);
     seen = await read();
     movedAt = Number.NEGATIVE_INFINITY;
@@ -544,7 +552,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     }
     judged = true;
     await recount();
-    await pruneBefore([RESTORE_MARK, RESTORE_COUNT_MARK], startedAt as number);
+    ownCounts = [];
+    await pruneBefore(
+      [RESTORE_MARK, RESTORE_COUNT_MARK, RESTORE_RECOUNTED_MARK],
+      startedAt as number,
+    );
     return null;
   };
 
@@ -779,6 +791,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
           await countedInPlace(foundAtStart);
         }
         await checkpoints.compareAndSet(RESTORE_DECLARING, declaring, 0);
+        await checkpoints.compareAndSet(
+          RESTORE_DECLARING_AT,
+          await checkpoints.get(RESTORE_DECLARING_AT),
+          0,
+        );
         // What handling the restore committed, as the forgettings it applied again, is past the
         // copy: one taken before it holds less.
         const last = await events.lastPosition();
@@ -833,6 +850,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         await advance(RESTORE_GENERATION, generation);
         // Another declaration under way took the row first: this one finishes it.
         if (!(await checkpoints.compareAndSet(RESTORE_DECLARING, declared, target))) continue;
+        await checkpoints.compareAndSet(
+          RESTORE_DECLARING_AT,
+          await checkpoints.get(RESTORE_DECLARING_AT),
+          clock.now().getTime(),
+        );
         return finish(stored, target, generation);
       }
     },

@@ -209,8 +209,9 @@ export interface ForgetLedger {
    */
   readMark(name: string): Promise<readonly ForgetLedgerMark[]>;
   /**
-   * Raises the mark `name` to `mark.value`, at `mark.raisedAt`: a mark never goes down, and a
-   * value raised again keeps the time it was first raised with.
+   * Raises the mark `name` to `mark.value`, at `mark.raisedAt`: a mark never goes down. A ledger
+   * that keeps the highest value alone keeps the time it was first raised with; one whose reads
+   * lag keeps each time it was raised.
    */
   raiseMark(name: string, mark: ForgetLedgerMark): Promise<void>;
   /**
