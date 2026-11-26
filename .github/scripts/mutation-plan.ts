@@ -1,7 +1,8 @@
 // Splits a package's `mutate` files among its mutation shards and prints, as JSON, the files of
 // each: `node .github/scripts/mutation-plan.ts <package> <shards> <incremental.json>`. The
 // incremental file, the package's last report, need not exist; without it the files spread by
-// size. Every shard reads the same plan, made once, so no file is mutated twice or never.
+// size. Every shard reads the same plan, made once, so no file is mutated twice or never. Each
+// shard's line on stderr predicts the time its job will take.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mutateFiles } from "./mutation/files.ts";
@@ -26,9 +27,9 @@ const plan = planShards({
   testSource: (path) => read(join(directory, path)),
   shards,
 });
-for (const [index, { files, cost }] of plan.entries()) {
+for (const [index, { files, mutants, minutes }] of plan.entries()) {
   process.stderr.write(
-    `Shard ${index + 1}/${shards}: ${files.length} files, ${cost.toFixed(1)} mutants to run\n`,
+    `Shard ${index + 1}/${shards}: ${files.length} files, ${Math.round(mutants)} mutants to run, about ${Math.ceil(minutes)} minutes\n`,
   );
 }
 process.stdout.write(`${JSON.stringify(plan.map(({ files }) => files))}\n`);

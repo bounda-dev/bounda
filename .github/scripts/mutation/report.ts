@@ -5,10 +5,22 @@ export interface Position {
   readonly column: number;
 }
 
+export interface Location {
+  readonly start: Position;
+  readonly end: Position;
+}
+
 export interface MutantResult {
   readonly status: string;
+  readonly mutatorName?: string;
+  readonly replacement?: string;
+  readonly location?: Location;
   readonly coveredBy?: readonly string[];
   readonly killedBy?: readonly string[];
+  // Milliseconds the mutant's run took, written only when the mutant ran: a mutant an incremental
+  // run reuses comes without it.
+  readonly duration?: number;
+  readonly testsCompleted?: number;
   readonly [field: string]: unknown;
 }
 
