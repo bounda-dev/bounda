@@ -25,7 +25,11 @@ A project that serves several tenants, each its own database, exports a function
 instead: `defineConfig(({ tenant }) => ({ storage: postgresql({ url, schema: tenant }) }))`.
 `boot()`, the CLI and the React Router host call it with the tenant they serve, `BOUNDA_TENANT` or
 `--tenant` naming it, `default` without either; `configForTenant({ config, tenant })` does the same
-for code of your own. See [tenants](/guides/personal-data/#tenants).
+for code of your own. See [tenants](/guides/personal-data/#tenants). Such a project may also
+export `tenants`, a list of the tenants it serves or a function that resolves to one, which
+commands that go through every tenant reach beside those its stores list, as
+[`bounda forget-ledger prune --all-tenants`](/guides/personal-data/#keeping-the-ledger-short)
+does; `loadProject` hands it as `tenants()`.
 
 **Durations** are a number of milliseconds or a string: a number followed by `ms`, `s`, `m`, `h`
 or `d` (`"250ms"`, `"1.5s"`, `"7d"`). A duration read from the environment is a `string`, which the

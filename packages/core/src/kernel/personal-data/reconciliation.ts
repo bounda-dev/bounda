@@ -3,6 +3,7 @@ import type {
   ForgetLedger,
   ForgetLedgerEntry,
   ForgetLedgerPosition,
+  LedgerReached,
 } from "../../adapter/storage/forget-ledger.ts";
 import { type Hold, isReleasedBy } from "../../adapter/storage/hold.ts";
 import type { HeldPersonalKey } from "../../adapter/storage/personal-key-store.ts";
@@ -23,7 +24,12 @@ import {
   STALE_INTENTION,
 } from "./forget.ts";
 import { holdAfter } from "./hold.ts";
-import { coveredBy, type ForgetIntention, type ForgetIntentions } from "./intention.ts";
+import {
+  coveredBy,
+  type EndsKeptFunction,
+  type ForgetIntention,
+  type ForgetIntentions,
+} from "./intention.ts";
 import { type Redactions, redactIntended } from "./redact.ts";
 import { restrictAgain } from "./restriction.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
@@ -155,6 +161,75 @@ export interface ForgetAgainFunction {
 
 type DueStores = Pick<StorageTransaction, "eventStore" | "personalKeys" | "persons">;
 
+export interface EntryCoverage {
+  readonly scope: ForgetScope;
+  readonly ends: EndsKeptFunction;
+}
+
+export interface CoverageOfFunction {
+  (
+    entry: Pick<ForgetAgainEntry, "categories" | "reason">,
+    categories: PersonalCategories | null,
+  ): EntryCoverage | null;
+}
+
+// What the forgetting an entry records covers, as the app's categories read it, `null` when it
+// covers none of them. Without them, as with no app running, everything it could cover: a category
+// the app no longer has, and a key an earlier forgetting kept, count, which only ever finds more.
+export const coverageOf: CoverageOfFunction = (
+  { categories: asked = null, reason },
+  categories,
+) => {
+  const known =
+    categories === null
+      ? asked
+      : (asked?.filter((category) => categories.of(category) !== undefined) ?? null);
+  if (known !== null && known.length === 0) return null;
+  return {
+    scope: known === null ? { kind: "whole" } : { kind: "categories", categories: known },
+    ends: categories === null ? () => true : endsKeptOf(categories, reason),
+  };
+};
+
+export interface NamedKeysOfFunction {
+  (
+    coverage: EntryCoverage,
+    held: readonly HeldPersonalKey[],
+    fingerprints: readonly string[] | undefined,
+  ): readonly HeldPersonalKey[];
+}
+
+// The keys the person holds that the coverage takes and the entry names, any for an entry that
+// names none: one given to the person after the entry was written is not named.
+export const namedKeysOf: NamedKeysOfFunction = ({ scope, ends }, held, fingerprints) =>
+  coveredBy(scope, held, ends).filter(
+    ({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint),
+  );
+
+export interface DatabaseStand {
+  readonly generation: number;
+  readonly position: number;
+}
+
+export interface StandOfFunction {
+  (storage: Pick<Storage, "checkpointStore" | "eventStore">): Promise<DatabaseStand>;
+}
+
+// Where the database stands: its restore generation, which only goes up, and its newest event.
+export const standOf: StandOfFunction = async ({ checkpointStore, eventStore }) => ({
+  generation: await checkpointStore.get(RESTORE_GENERATION),
+  position: await eventStore.lastPosition(),
+});
+
+export interface StandsShortOfFunction {
+  (stand: DatabaseStand, reached: LedgerReached): boolean;
+}
+
+// Whether the database stands short of where an entry says it reached: it went back since.
+export const standsShortOf: StandsShortOfFunction = (stand, reached) =>
+  stand.generation < reached.generation ||
+  (stand.generation === reached.generation && stand.position < reached.position);
+
 /**
  * Commits the forgetting again, of the categories the entry asked for, when the store does not
  * hold the event the entry names, the person still holds a key in force it covers and names, and,
@@ -187,10 +262,9 @@ export const forgetAgain: ForgetAgainFunction = async ({
   ) {
     return null;
   }
-  const known = asked?.filter((category) => categories.of(category) !== undefined) ?? null;
-  if (known !== null && known.length === 0) return null;
-  const asScope: ForgetScope =
-    known === null ? { kind: "whole" } : { kind: "categories", categories: known };
+  const coverage = coverageOf(entry, categories);
+  if (coverage === null) return null;
+  const { scope: asScope } = coverage;
   // The keys in force the entry covers and names, `null` when it is not due.
   const dueKeys = async (stores: DueStores): Promise<readonly HeldPersonalKey[] | null> => {
     if (eventId !== undefined) {
@@ -201,20 +275,15 @@ export const forgetAgain: ForgetAgainFunction = async ({
       });
       if (applied !== null) return null;
     }
-    const covered = coveredBy(
-      asScope,
-      await stores.personalKeys.list(personId),
-      endsKeptOf(categories, reason),
-    ).filter(({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint));
+    const covered = namedKeysOf(coverage, await stores.personalKeys.list(personId), fingerprints);
     if (covered.length === 0) return null;
     if (reason !== "retention") return covered;
-    return (await retentionDue(stores, personId, clock.now(), known === null ? null : covered))
-      ? covered
-      : null;
+    const keys = asScope.kind === "whole" ? null : covered;
+    return (await retentionDue(stores, personId, clock.now(), keys)) ? covered : null;
   };
   // A category's retention destroys the keys it found due, whatever their category's basis.
   const scopeOf = (covered: readonly HeldPersonalKey[]): ForgetScope =>
-    reason === "retention" && known !== null
+    reason === "retention" && asScope.kind !== "whole"
       ? { kind: "keys", fingerprints: covered.map(({ key }) => key.fingerprint) }
       : asScope;
   const due = await dueKeys(storage);
@@ -603,13 +672,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   const behind = async (page: readonly ForgetLedgerEntry[]): Promise<number | null> => {
     const told = page.flatMap(({ reached }) => (reached === undefined ? [] : [reached]));
     if (told.length === 0) return null;
-    const generation = await checkpointStore.get(RESTORE_GENERATION);
-    const position = await storage.eventStore.lastPosition();
-    const ahead = told.filter(
-      (reached) =>
-        generation < reached.generation ||
-        (generation === reached.generation && position < reached.position),
-    );
+    const stand = await standOf(storage);
+    const ahead = told.filter((reached) => standsShortOf(stand, reached));
     return ahead.length === 0 ? null : Math.max(...ahead.map((reached) => reached.generation));
   };
 

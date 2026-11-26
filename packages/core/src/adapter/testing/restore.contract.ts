@@ -40,7 +40,7 @@ import {
 import { expectRedacted } from "../../testing/expect-redacted.ts";
 import { type Adapter, isAdapter } from "../adapter.ts";
 import type { AdapterDefinition } from "../adapter-definition.ts";
-import type { ForgetLedger } from "../storage/forget-ledger.ts";
+import type { ForgetLedger, ForgetLedgerEntry } from "../storage/forget-ledger.ts";
 import type { InspectedStore } from "../storage/inspection.ts";
 import type { Table } from "../storage/table.ts";
 
@@ -923,6 +923,96 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       "keeps, pruning beside the app, what a copy restored under it lacks, until its next pass applies it",
       async (context) => {
         await pruneScenario("hot", (reason) => context.skip(reason));
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "prunes, with no app running, the intentions nothing can apply, and keeps those a key or a restore still needs",
+      async (context) => {
+        const target = await create();
+        const ledger = await ledgerOf(target.forgetLedger);
+        stops.push(async () => ledger.close?.());
+        if (ledger.prune === undefined)
+          return context.skip("the ledger expires its entries on its own");
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        for (const person of ["ana", "bob", "cy"]) await write(first, person);
+        await first.app.forget("bob");
+        await first.app.restrict("cy", { ground: "objection-pending" });
+        await first.app.runUntilIdle();
+        const bobKeys = (await ledger.read({ limit: 100 })).find(
+          ({ personId }) => personId === "bob",
+        )?.fingerprints;
+        expect(bobKeys?.length).toBeGreaterThan(0);
+        const minutes = (minute: number): string =>
+          new Date(START.getTime() + minute * 60_000).toISOString();
+        const intention = (personId: string, minute: number): ForgetLedgerEntry => ({
+          personId,
+          categories: null,
+          eventId: `019a6b1e-0000-7000-8000-0000000000${String(60 + minute).padStart(2, "0")}`,
+          forgottenAt: minutes(minute),
+          reason: "requested",
+          committed: false,
+        });
+        await ledger.append([
+          // A forgetting whose commit never happened, of keys bob no longer holds.
+          {
+            ...intention("bob", -6),
+            fingerprints: bobKeys ?? [],
+            reached: { generation: 0, position: 0 },
+          },
+          // A restriction of cy's that never committed, which a later change superseded.
+          {
+            ...intention("cy", -5),
+            restriction: {
+              type: "ProcessingRestricted",
+              payload: {
+                personId: "cy",
+                ground: "accuracy-contested",
+                categories: null,
+                restrictions: [
+                  { ground: "accuracy-contested", categories: null, since: minutes(-5) },
+                ],
+              },
+            },
+          },
+          // A forgetting of any key of ana's, who holds them still.
+          intention("ana", -4),
+        ]);
+        const config: Config = {
+          storage: target.storage,
+          runtime: {
+            personalData: {
+              keyWrapper: BEFORE_ROTATION,
+              tenantKeys,
+              forgetLedger: { store: target.forgetLedger, keepFor: "1d" },
+            },
+          },
+        };
+        const later = new Date(START.getTime() + 2 * 24 * 60 * 60_000);
+        expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+          tenant: DEFAULT_TENANT,
+          before: minutes(-4),
+          unapplied: true,
+        });
+        expect((await ledger.read({ limit: 1 }))[0]?.personId).toBe("ana");
+
+        // Once ana holds no key, an intention written where the database has not reached stays.
+        await first.app.forget("ana");
+        await first.app.runUntilIdle();
+        await ledger.append([
+          {
+            ...intention("bob", -3),
+            reached: { generation: Number.MAX_SAFE_INTEGER, position: 0 },
+          },
+        ]);
+        expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+          tenant: DEFAULT_TENANT,
+          before: minutes(-3),
+          unapplied: true,
+        });
+        expect((await ledger.read({ limit: 1 }))[0]?.forgottenAt).toBe(minutes(-3));
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

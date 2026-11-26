@@ -129,16 +129,18 @@ export type {
 } from "./kernel/personal-data/inventory.ts";
 export { personalDataInventory } from "./kernel/personal-data/inventory.ts";
 export type {
-  ListForgetLedgerTenantsArgs,
-  ListForgetLedgerTenantsFunction,
   PrunedTenantForgetLedger,
   PruneTenantForgetLedgerArgs,
   PruneTenantForgetLedgerFunction,
 } from "./kernel/personal-data/ledger-prune.ts";
-export {
-  listForgetLedgerTenants,
-  pruneTenantForgetLedger,
-} from "./kernel/personal-data/ledger-prune.ts";
+export { pruneTenantForgetLedger } from "./kernel/personal-data/ledger-prune.ts";
+export type {
+  ForgetLedgerTenants,
+  ListForgetLedgerTenantsArgs,
+  ListForgetLedgerTenantsFunction,
+  UnreachedTenant,
+} from "./kernel/personal-data/ledger-tenants.ts";
+export { listForgetLedgerTenants } from "./kernel/personal-data/ledger-tenants.ts";
 export type {
   ListTenantsUnderPreviousMasterFunction,
   RewrappedTenantKeys,

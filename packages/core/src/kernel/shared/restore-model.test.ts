@@ -56,7 +56,8 @@ import {
 // An operator prunes the ledger with no app (`bounda forget-ledger prune`), at any moment, with a
 // `keepFor` of nothing, so only what the database has applied bounds it: what the ledger proves of
 // the database must read the same after a prune as before, and a prune removes only entries the
-// database holds the event of or will not read again.
+// database holds the event of or will not read again, and intentions nothing can apply: the person
+// holds no key they name, and the database stands where they were written or further.
 
 const registry = {
   aggregates: {
@@ -107,6 +108,8 @@ type InstanceAction =
   | { readonly kind: "write"; readonly instance: Instance }
   | { readonly kind: "forget"; readonly instance: Instance; readonly person: number }
   | { readonly kind: "forgetUncommitted"; readonly instance: Instance; readonly person: number }
+  // A forgetting whose commit failed, asked again: the first intention stays, which nothing applies.
+  | { readonly kind: "forgetRetried"; readonly instance: Instance; readonly person: number }
   | { readonly kind: "pass"; readonly instance: Instance };
 
 // What happens beside the instances, as the operator's prune does.
@@ -544,6 +547,28 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     }
   };
 
+  // An intention whose commit the database lacks that nothing applies: the person holds no key it
+  // names, kept past a forgetting or not, and the database stands where it was written or further.
+  const inapplicable = (entry: ForgetLedgerEntry): boolean => {
+    if (entry.committed !== false) return false;
+    const { reached } = entry;
+    const now = snapshotOf(db);
+    const last = now.events.at(-1)?.position ?? 0;
+    if (
+      reached !== undefined &&
+      (reached.generation > now.generation ||
+        (reached.generation === now.generation && reached.position > last))
+    ) {
+      return false;
+    }
+    const keys = (
+      db
+        .prepare(`SELECT "fingerprint" FROM "bounda_personal_keys" WHERE "person" = ?`)
+        .all(entry.personId) as { fingerprint: string }[]
+    ).map(({ fingerprint }) => fingerprint);
+    return !keys.some((fingerprint) => entry.fingerprints?.includes(fingerprint) ?? true);
+  };
+
   // A prune nothing runs beside: it changes nothing a look reads.
   const pruneAlone = async (): Promise<void> => {
     const entries = await ledger.entries();
@@ -553,7 +578,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     await prune();
     const left = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     for (const entry of entries) {
-      if (left.has(entry.eventId) || held.has(entry.eventId)) continue;
+      if (left.has(entry.eventId) || held.has(entry.eventId) || inapplicable(entry)) continue;
       if (cursor === 0 || Date.parse(entry.forgottenAt) >= cursor - FORGET_LEDGER_REREAD_MS) {
         violations.push(`the prune removed ${entry.eventId}, which the database has yet to apply`);
       }
@@ -600,18 +625,24 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
         return;
       }
       case "forget":
-      case "forgetUncommitted": {
+      case "forgetUncommitted":
+      case "forgetRetried": {
         if (live === null || live === undefined) return;
         const holding = holdingNow();
         const person = holding[action.person % Math.max(1, holding.length)];
         if (person === undefined) return;
-        if (action.kind === "forgetUncommitted") failNextCommit();
+        if (action.kind !== "forget") failNextCommit();
         try {
           await live.app.forget(person);
         } catch {
           // The commit failed, or the ledger is down; the intention may be there.
         } finally {
           commitAgain();
+        }
+        if (action.kind === "forgetRetried") {
+          await live.app.forget(person).catch(() => {
+            // The ledger is down.
+          });
         }
         live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
         return;
@@ -834,6 +865,14 @@ const instanceAction: fc.Arbitrary<InstanceAction> = fc.oneof(
       person,
     })),
   },
+  {
+    weight: 2,
+    arbitrary: fc.record({ instance, person: fc.nat(8) }).map(({ instance: at, person }) => ({
+      kind: "forgetRetried" as const,
+      instance: at,
+      person,
+    })),
+  },
   { weight: 4, arbitrary: instance.map((at) => ({ kind: "pass" as const, instance: at })) },
 );
 
@@ -934,7 +973,7 @@ const by = <Kind extends InstanceAction["kind"]>(
   instance: Instance,
   person = 0,
 ): InstanceAction =>
-  (kind === "forget" || kind === "forgetUncommitted"
+  (kind === "forget" || kind === "forgetUncommitted" || kind === "forgetRetried"
     ? { kind, instance, person }
     : { kind, instance }) as InstanceAction;
 
@@ -1132,6 +1171,65 @@ describe("pruning the ledger with no app, against the model", () => {
         await world.run(step);
       }
       expect(await world.entries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([1, 1]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+describe("pruning intentions nothing applies with no app, against the model", () => {
+  it("keeps an intention while its person holds a key it names, and removes it once they hold none", async () => {
+    const world = createWorld("sql");
+    try {
+      for (const step of [
+        by("start", 0),
+        by("write", 0),
+        by("forgetUncommitted", 0),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect((await world.entries()).map(({ committed }) => committed)).toEqual([false]);
+      for (const step of [
+        by("forgetRetried", 0),
+        by("stop", 0),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([0, 0]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("keeps an intention written past a copy restored while no instance ran, whose person the copy never held", async () => {
+    const world = createWorld("sql");
+    try {
+      for (const step of [
+        by("start", 0),
+        by("write", 0),
+        { kind: "backUp", slot: 0 } as const,
+        by("write", 0),
+        by("forgetUncommitted", 0, 1),
+        by("stop", 0),
+        restore(0, ["pass", "pass"]),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([
+        expect.objectContaining({ personId: "p2", committed: false }),
+      ]);
       const { violations, counted, expected } = await world.settle();
       expect(violations).toEqual([]);
       expect([counted, expected]).toEqual([1, 1]);

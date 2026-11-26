@@ -145,6 +145,16 @@ export interface TenantConfigArgs {
 export type ProjectConfig = Config | ((args: TenantConfigArgs) => Config);
 
 /**
+ * What `bounda.config.ts` may export as `tenants`: the tenants it serves, or a function that
+ * resolves to them, for a configuration that is a function of the tenant. A command that goes
+ * through every tenant, as `bounda forget-ledger prune --all-tenants`, reaches these beside those
+ * its stores list: what a configuration that gives each tenant stores of its own needs.
+ */
+export type ProjectTenants =
+  | readonly string[]
+  | (() => readonly string[] | Promise<readonly string[]>);
+
+/**
  * Runtime settings for personal data. App-wide only: a person's events span aggregates, so their
  * inactivity is one clock, not one per aggregate.
  */
