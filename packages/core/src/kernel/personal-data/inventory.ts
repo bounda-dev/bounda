@@ -14,6 +14,7 @@ import type {
 } from "../../modules/personal-data.ts";
 import type {
   CountryCode,
+  PartialAdequacy,
   RecipientKind,
   RecipientTransfer,
   StoreSafeguard,
@@ -109,6 +110,12 @@ export interface InventoryTransfer {
    * The legal regime the store is under, as `regimeOf` names its location.
    */
   readonly regime: LegalRegime;
+  /**
+   * The decision of `PARTIAL_ADEQUACY` the store rests on, whose `condition` you verify of the
+   * provider keeping it; `null` unless the safeguard is `adequacy` under the regime of a country
+   * of `PARTIAL_ADEQUACY`.
+   */
+  readonly partialAdequacy: PartialAdequacy | null;
 }
 
 export interface InventoryCategory {

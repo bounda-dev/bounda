@@ -26,6 +26,7 @@ import type {
   PersonRecipient,
   RecipientDeclaration,
 } from "../../modules/recipient.ts";
+import { PARTIAL_ADEQUACY } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { createTestApp } from "../../testing/index.ts";
@@ -38,6 +39,7 @@ import type { TenantExportPart } from "../personal-data/tenant-export.ts";
 import { defineTenantKeyStore } from "../personal-data/tenant-key-source.ts";
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { RESTORE_MARK } from "../shared/restores.ts";
+import type { RecipientStatus } from "../status.ts";
 import { installFakeTelemetry } from "../telemetry-fake.ts";
 import { readPart } from "../test-support.ts";
 import {
@@ -1509,7 +1511,12 @@ describe("recipients of personal data", () => {
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        transfer: {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
         status: "disclosed",
         categories: [{ name: "contact", basis: "consent" }],
         firstDisclosedAt: START.toISOString(),
@@ -1550,7 +1557,12 @@ describe("recipients of personal data", () => {
       expect.objectContaining({
         port: "customer.mailer",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        transfer: {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
         status: "disclosed",
       }),
     ]);
@@ -2089,6 +2101,59 @@ describe("recipient declarations", () => {
       module({ ...MAILCHIMP, country: "IN", safeguard: "adequacy" }),
       'Port customer.mailer: recipient.country IN has no adequacy decision of the European Commission, so the transfer rests on another safeguard: one of "standard-contractual-clauses", "binding-corporate-rules", "code-of-conduct", "certification", "derogation"',
     );
+  });
+
+  it("holds adequacy in a country of a partial decision to the decision's adequacyScope", async () => {
+    const OTHERS =
+      '"standard-contractual-clauses", "binding-corporate-rules", "code-of-conduct", "certification", "derogation"';
+    const US =
+      "Port customer.mailer: recipient.country US has an adequacy decision, Commission Implementing Decision (EU) 2023/1795, for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone";
+    const USE =
+      ': once you verified the recipient is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other, declare adequacyScope: "data-privacy-framework" beside the safeguard, or rest the transfer on another safeguard: one of';
+    await failing(module({ ...MAILCHIMP, safeguard: "adequacy" }), `${US}${USE} ${OTHERS}`);
+    await failing(
+      module({ ...MAILCHIMP, safeguard: "adequacy", adequacyScope: "pipeda" }),
+      `${US}, and recipient.adequacyScope "pipeda" is not its scope${USE} ${OTHERS}`,
+    );
+    await failing(
+      module({ ...MAILCHIMP, country: "CA", safeguard: "adequacy" }),
+      `Port customer.mailer: recipient.country CA has an adequacy decision, Commission Decision 2002/2/EC, for recipients subject to the Personal Information Protection and Electronic Documents Act (PIPEDA) alone: once you verified the recipient is subject to PIPEDA for the data, as a private-sector organisation is for personal information it collects, uses or discloses in the course of commercial activities, declare adequacyScope: "pipeda" beside the safeguard, or rest the transfer on another safeguard: one of ${OTHERS}`,
+    );
+    await failing(
+      module({ ...MAILCHIMP, adequacyScope: "data-privacy-framework" }),
+      'Port customer.mailer: recipient.adequacyScope "data-privacy-framework" names part of a partial adequacy decision, so it goes beside safeguard: "adequacy" alone: remove it',
+    );
+    await failing(
+      module({ ...BREVO, adequacyScope: "data-privacy-framework" }),
+      'Port customer.mailer: recipient.adequacyScope "data-privacy-framework" names part of a partial adequacy decision, so it goes beside safeguard: "adequacy" alone: remove it',
+    );
+    await failing(
+      module({ ...MAILCHIMP, country: "CH", safeguard: "adequacy", adequacyScope: "pipeda" }),
+      'Port customer.mailer: recipient.adequacyScope "pipeda" names part of a partial adequacy decision, and the decision for CH covers every recipient there: remove it',
+    );
+    for (const [country, scope] of [
+      ["US", "data-privacy-framework"],
+      ["CA", "pipeda"],
+    ] as const) {
+      const registry = registryWith({ told: [] });
+      const customer = registry.aggregates.customer as unknown as {
+        recipients: Record<string, unknown>;
+      };
+      customer.recipients.mailer = module({
+        ...MAILCHIMP,
+        country,
+        safeguard: "adequacy",
+        adequacyScope: scope,
+      });
+      const { app } = await createTestApp({ registry });
+      const statuses = (await app.status()).recipients as readonly RecipientStatus[];
+      expect(statuses.find(({ port }) => port === "customer.mailer")?.declared?.transfer).toEqual({
+        safeguard: "adequacy",
+        article: "45",
+        regime: country,
+        partialAdequacy: PARTIAL_ADEQUACY[country],
+      });
+    }
   });
 
   it("refuses a recipient without one of its handlers, or with a malformed former key", async () => {

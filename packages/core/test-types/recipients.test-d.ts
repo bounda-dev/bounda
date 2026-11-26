@@ -35,7 +35,30 @@ describe("recipients", () => {
     void ({ ...inside, safeguard: "adequacy" } as const satisfies Port.Recipient);
     // @ts-expect-error an outermost region of the EU is within it too
     void ({ ...inside, country: "RE", safeguard: "adequacy" } as const satisfies Port.Recipient);
+    const dpf = {
+      ...outside,
+      safeguard: "adequacy",
+      adequacyScope: "data-privacy-framework",
+    } as const;
+    void (dpf satisfies Port.Recipient);
+    void ({ ...dpf, country: "CA", adequacyScope: "pipeda" } as const satisfies Port.Recipient);
+    void ({ ...inside, country: "CH", safeguard: "adequacy" } as const satisfies Port.Recipient);
+    void ({
+      ...outside,
+      safeguard: "standard-contractual-clauses",
+    } as const satisfies Port.Recipient);
+    // @ts-expect-error the decision for the United States covers organisations on the Data Privacy Framework List alone
     void ({ ...outside, safeguard: "adequacy" } as const satisfies Port.Recipient);
+    // @ts-expect-error the decision for Canada covers recipients subject to PIPEDA alone
+    void ({ ...inside, country: "CA", safeguard: "adequacy" } as const satisfies Port.Recipient);
+    // @ts-expect-error each country's decision has its own scope
+    void ({ ...dpf, adequacyScope: "pipeda" } as const satisfies Port.Recipient);
+    // @ts-expect-error a decision for the whole country takes none
+    void ({ ...dpf, country: "CH" } as const satisfies Port.Recipient);
+    // @ts-expect-error an adequacyScope goes beside adequacy alone
+    void ({ ...dpf, safeguard: "certification" } as const satisfies Port.Recipient);
+    // @ts-expect-error and never inside the EEA
+    void ({ ...inside, adequacyScope: "pipeda" } as const satisfies Port.Recipient);
     void ({ ...inside, country: "IN", safeguard: "derogation" } as const satisfies Port.Recipient);
     // @ts-expect-error no adequacy decision covers India
     void ({ ...inside, country: "IN", safeguard: "adequacy" } as const satisfies Port.Recipient);

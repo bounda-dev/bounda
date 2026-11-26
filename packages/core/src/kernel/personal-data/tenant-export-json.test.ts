@@ -31,7 +31,12 @@ const recipient: TenantExportPart = {
     name: "CRM",
     kind: "processor",
     country: "US",
-    transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+    transfer: {
+      safeguard: "standard-contractual-clauses",
+      article: "46(2)(c)",
+      regime: "US",
+      partialAdequacy: null,
+    },
     status: "disclosed",
     categories: [{ name: "contact", basis: "contract" }],
     firstDisclosedAt: "2026-01-01T00:00:00.000Z",
@@ -293,15 +298,15 @@ describe("readTenantExport", () => {
     // One written before a freeze cut it, which its header does not say.
     const earlier = { kind: "header", header: { ...header.header, version: 1 } };
     await expect(read(bytes(linesOf(earlier, end())))).rejects.toThrow(
-      "The tenant export is in format bounda.tenant-export version 1, not bounda.tenant-export version 4",
+      "The tenant export is in format bounda.tenant-export version 1, not bounda.tenant-export version 5",
     );
     // One whose transfers do not name the legal regime they go to.
-    const unnamed = { kind: "header", header: { ...header.header, version: 3 } };
+    const unnamed = { kind: "header", header: { ...header.header, version: 4 } };
     await expect(read(bytes(linesOf(unnamed, end())))).rejects.toThrow(
-      "The tenant export is in format bounda.tenant-export version 3, not bounda.tenant-export version 4",
+      "The tenant export is in format bounda.tenant-export version 4, not bounda.tenant-export version 5",
     );
     const foreign = { kind: "header", header: { ...header.header, format: "other" } };
-    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 4");
+    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 5");
   });
 
   it("hands each part out as it reads it, before it knows the rest", async () => {

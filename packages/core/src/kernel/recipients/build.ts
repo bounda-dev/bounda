@@ -4,6 +4,8 @@ import {
   COUNTRY_CODES,
   type CountryCode,
   EEA_COUNTRIES,
+  PARTIAL_ADEQUACY,
+  type PartialAdequacy,
   RECIPIENT_HANDLERS,
   RECIPIENT_KINDS,
   type RecipientHandlerName,
@@ -68,6 +70,7 @@ export interface BuildRecipientsFunction {
 const COUNTRIES: ReadonlySet<unknown> = new Set(COUNTRY_CODES);
 const EEA: ReadonlySet<string> = new Set(EEA_COUNTRIES);
 const ADEQUATE: ReadonlySet<string> = new Set(ADEQUATE_COUNTRIES);
+const PARTIAL: ReadonlyMap<unknown, PartialAdequacy> = new Map(Object.entries(PARTIAL_ADEQUACY));
 const PORT_KEY = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -87,7 +90,7 @@ const checked = (
   const declared: unknown = module.recipient;
   if (!isRecord(declared)) fail("recipient must be an object: { name, kind, country, categories }");
   const recipient = declared as Readonly<Record<string, unknown>>;
-  const { name, kind, country, safeguard, formerly } = recipient;
+  const { name, kind, country, safeguard, adequacyScope, formerly } = recipient;
   if (typeof name !== "string" || name.trim() === "") {
     fail("recipient.name must name who receives the data");
   }
@@ -109,6 +112,19 @@ const checked = (
   if (safeguard === "adequacy" && !ADEQUATE.has(country as string)) {
     fail(
       `recipient.country ${country} has no adequacy decision of the European Commission, so the transfer rests on another safeguard: one of ${listed(TRANSFER_SAFEGUARDS.filter((known) => known !== "adequacy"))}`,
+    );
+  }
+  const partial = PARTIAL.get(country);
+  if (safeguard === "adequacy" && partial !== undefined && adequacyScope !== partial.scope) {
+    fail(
+      `recipient.country ${country} has an adequacy decision, ${partial.decision}, for ${partial.covers} alone${adequacyScope === undefined ? "" : `, and recipient.adequacyScope ${JSON.stringify(adequacyScope)} is not its scope`}: once you verified the recipient is ${partial.condition}, declare adequacyScope: ${JSON.stringify(partial.scope)} beside the safeguard, or rest the transfer on another safeguard: one of ${listed(TRANSFER_SAFEGUARDS.filter((known) => known !== "adequacy"))}`,
+    );
+  }
+  if (adequacyScope !== undefined && (safeguard !== "adequacy" || partial === undefined)) {
+    fail(
+      safeguard === "adequacy"
+        ? `recipient.adequacyScope ${JSON.stringify(adequacyScope)} names part of a partial adequacy decision, and the decision for ${country} covers every recipient there: remove it`
+        : `recipient.adequacyScope ${JSON.stringify(adequacyScope)} names part of a partial adequacy decision, so it goes beside safeguard: "adequacy" alone: remove it`,
     );
   }
   const named = recipient.categories;
@@ -158,7 +174,8 @@ const checked = (
 /**
  * Checks every recipient the registry declares. Throws `ConfigurationError` for a declaration
  * without a name, a kind, an ISO country, the safeguard a country outside the European Economic
- * Area takes, or categories the app has; for a handler missing; for a port that declares one and
+ * Area takes, the `adequacyScope` a partial adequacy decision takes and only it, or categories the
+ * app has; for a handler missing; for a port that declares one and
  * has no implementation; and for a former key that is a port now or that two ports claim.
  */
 export const buildRecipients: BuildRecipientsFunction = ({ registry, categories, ports }) => {

@@ -12,7 +12,7 @@ import type {
   SpecialCategoryData,
   SpecificPurpose,
 } from "../../modules/personal-data.ts";
-import type { PersonRecipient, StoreSafeguard } from "../../modules/recipient.ts";
+import type { PartialAdequacy, PersonRecipient, StoreSafeguard } from "../../modules/recipient.ts";
 
 /**
  * The marked fields of a stored payload, as a handler reads them: a field forgotten is `null`,
@@ -162,6 +162,12 @@ export interface ExportedTransfer {
    * The legal regime the store is under, as `regimeOf` names `location`.
    */
   readonly regime: LegalRegime;
+  /**
+   * The decision of `PARTIAL_ADEQUACY` the store rests on, whose `condition` the provider keeping
+   * it meets; `null` unless the safeguard is `adequacy` under the regime of a country of
+   * `PARTIAL_ADEQUACY`.
+   */
+  readonly partialAdequacy: PartialAdequacy | null;
 }
 
 /**

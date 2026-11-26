@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ADEQUATE_COUNTRIES, COUNTRY_CODES } from "../../../packages/core/src/modules/recipient.ts";
+import {
+  ADEQUATE_COUNTRIES,
+  COUNTRY_CODES,
+  PARTIAL_ADEQUACY,
+} from "../../../packages/core/src/modules/recipient.ts";
 import { countryName, nameIndex, readEntry } from "./entry.ts";
-import { ALIASES, ORGANISATIONS, SCOPES } from "./expected.ts";
+import { ALIASES, DECISIONS, ORGANISATIONS, OTHER_ACTS, SCOPES } from "./expected.ts";
 
 const index = nameIndex({
   countries: COUNTRY_CODES,
@@ -56,11 +60,25 @@ describe("what the check expects", () => {
     expect([...codesOf(namesIn(list ?? ""))].sort()).toEqual([...ADEQUATE_COUNTRIES].sort());
   });
 
-  it("is what the reference and the JSDoc call partial decisions", () => {
+  it("is what PARTIAL_ADEQUACY, the reference and the JSDoc call partial decisions", () => {
+    expect(partial).toEqual(Object.keys(PARTIAL_ADEQUACY).sort());
     for (const source of [configuration, recipient]) {
-      const list = /The decisions for (.+?) cover some organisations alone/.exec(source)?.[1];
+      const list = /The decisions for (.+?) cover some recipients alone/.exec(source)?.[1];
       expect(list).toBeDefined();
       expect(codesOf(namesIn(list ?? ""))).toEqual(partial);
+    }
+  });
+
+  it("names one decision of its own for every entry, none of them an act of OTHER_ACTS", () => {
+    const celexes = Object.values(DECISIONS);
+    expect(Object.keys(DECISIONS).sort()).toEqual([...ADEQUATE_COUNTRIES, ...ORGANISATIONS].sort());
+    expect(new Set(celexes).size).toBe(celexes.length);
+    for (const celex of [...celexes, ...Object.keys(OTHER_ACTS)]) {
+      expect(celex).toMatch(/^3\d{4}D\d{4}$/);
+    }
+    expect(celexes.filter((celex) => Object.hasOwn(OTHER_ACTS, celex))).toEqual([]);
+    for (const [country, { celex }] of Object.entries(PARTIAL_ADEQUACY)) {
+      expect(DECISIONS[country as keyof typeof DECISIONS]).toBe(celex);
     }
   });
 });

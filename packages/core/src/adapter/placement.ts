@@ -5,9 +5,16 @@ import {
   isAdequate,
   isDataLocation,
   type LegalRegime,
+  partialAdequacyOf,
   regimeOf,
 } from "../modules/data-location.ts";
-import { STORE_SAFEGUARDS, type StoreSafeguard, TRANSFER_ARTICLES } from "../modules/recipient.ts";
+import {
+  type AdequacyScope,
+  PARTIAL_ADEQUACY,
+  STORE_SAFEGUARDS,
+  type StoreSafeguard,
+  TRANSFER_ARTICLES,
+} from "../modules/recipient.ts";
 
 const AREAS = DATA_AREAS.map((area) => JSON.stringify(area)).join(", ");
 
@@ -46,6 +53,21 @@ const safeguardOf = (path: string, holder: object): StoreSafeguard | undefined =
   );
 };
 
+const PARTIAL = Object.entries(PARTIAL_ADEQUACY);
+const SCOPES = PARTIAL.map(
+  ([country, { scope, decision }]) => `"${scope}" (${country}, ${decision})`,
+).join(", ");
+
+const adequacyScopeOf = (path: string, holder: object): AdequacyScope | undefined => {
+  const scope: unknown = Reflect.get(holder, "adequacyScope");
+  if (scope === undefined || PARTIAL.some(([, known]) => known.scope === scope)) {
+    return scope as AdequacyScope | undefined;
+  }
+  throw new ConfigurationError(
+    `${path} declares the adequacyScope ${JSON.stringify(scope)}, which is none of ${SCOPES}`,
+  );
+};
+
 const regimeText = (regime: LegalRegime): string =>
   regime === "EEA"
     ? "in the European Economic Area"
@@ -59,7 +81,7 @@ export interface CheckPlacementArgs {
    */
   readonly path: string;
   /**
-   * The store's definition, whose `location` and `safeguard` are judged.
+   * The store's definition, whose `location`, `safeguard` and `adequacyScope` are judged.
    */
   readonly holder: object;
   /**
@@ -82,12 +104,20 @@ export interface CheckPlacementFunction {
  * wrapper: a location or a safeguard Bounda does not know, a safeguard without a location or under
  * a `storage` that declares none, a store that declares no location under one that does, a store
  * under another legal regime than `storage`'s (`regimeOf`) without a safeguard, a safeguard where
- * keeping the data is no transfer, an `adequacy` for a regime with no adequacy decision, and a
- * `storage` in `"global"`, which is in no jurisdiction to keep the app's data in.
+ * keeping the data is no transfer, an `adequacy` for a regime with no adequacy decision, an
+ * `adequacy` without the `adequacyScope` its regime's partial decision (`PARTIAL_ADEQUACY`) asks
+ * for, an `adequacyScope` anywhere else, and a `storage` in `"global"`, which is in no jurisdiction
+ * to keep the app's data in.
  */
 export const checkPlacement: CheckPlacementFunction = ({ path, holder, where, fix }) => {
   const location = locationOf(path, holder);
   const safeguard = safeguardOf(path, holder);
+  const scope = adequacyScopeOf(path, holder);
+  if (scope !== undefined && safeguard !== "adequacy") {
+    throw new ConfigurationError(
+      `${path} declares the adequacyScope ${JSON.stringify(scope)} without the safeguard "adequacy": an adequacyScope says which part of a partial adequacy decision allows keeping the data, so declare it beside safeguard: "adequacy", or remove it`,
+    );
+  }
   if (safeguard !== undefined && location === undefined) {
     throw new ConfigurationError(
       `${path} declares a safeguard and no location: a safeguard allows keeping data in a location, so declare where it keeps its data beside it`,
@@ -112,7 +142,7 @@ export const checkPlacement: CheckPlacementFunction = ({ path, holder, where, fi
   if (regime === home) {
     if (safeguard === undefined) return;
     throw new ConfigurationError(
-      `${path} keeps its data in ${JSON.stringify(location)} under a safeguard, and storage keeps the app's in ${JSON.stringify(where)}, both ${regimeText(home)}, so keeping it there is no transfer: remove its safeguard`,
+      `${path} keeps its data in ${JSON.stringify(location)} under a safeguard, and storage keeps the app's in ${JSON.stringify(where)}, both ${regimeText(home)}, so keeping it there is no transfer: remove its safeguard${scope === undefined ? "" : " and its adequacyScope"}`,
     );
   }
   if (safeguard === undefined) {
@@ -120,11 +150,23 @@ export const checkPlacement: CheckPlacementFunction = ({ path, holder, where, fi
       `${path} keeps its data in ${JSON.stringify(location)}, ${regimeText(regime)}, and storage keeps the app's in ${JSON.stringify(where)}, ${regimeText(home)}: keeping it there is a transfer, which a safeguard must allow, so declare its safeguard beside its location, one of ${SAFEGUARDS}, or keep it where the storage is and ${fix(where)}`,
     );
   }
-  if (safeguard === "adequacy" && !isAdequate(regime)) {
+  if (safeguard !== "adequacy") return;
+  if (!isAdequate(regime)) {
     throw new ConfigurationError(
       `${path} keeps its data in ${JSON.stringify(location)} under the safeguard "adequacy", and no adequacy decision of the European Commission covers data kept ${regimeText(regime)}: declare one of ${BUT_ADEQUACY}`,
     );
   }
+  const partial = partialAdequacyOf(regime);
+  if (partial === null) {
+    if (scope === undefined) return;
+    throw new ConfigurationError(
+      `${path} keeps its data in ${JSON.stringify(location)} under the safeguard "adequacy" with the adequacyScope ${JSON.stringify(scope)}, and the adequacy decision for data kept ${regimeText(regime)} covers every recipient there: remove its adequacyScope`,
+    );
+  }
+  if (scope === partial.scope) return;
+  throw new ConfigurationError(
+    `${path} keeps its data in ${JSON.stringify(location)} under the safeguard "adequacy"${scope === undefined ? "" : ` with the adequacyScope ${JSON.stringify(scope)}`}, and the adequacy decision for data kept ${regimeText(regime)}, ${partial.decision}, is for ${partial.covers} alone: once you verified the provider keeping it is ${partial.condition}, declare adequacyScope: ${JSON.stringify(partial.scope)} beside the safeguard, or declare one of ${BUT_ADEQUACY}`,
+  );
 };
 
 const globalStorage = (): ConfigurationError =>

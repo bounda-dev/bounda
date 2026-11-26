@@ -28,6 +28,7 @@ sqlite({ url: "libsql://my-app-me.turso.io", authToken: process.env.TURSO_AUTH_T
 | `tablePrefix` | `bounda_` | Put in front of every table Bounda creates |
 | `location` | | Where the database keeps its data, a country in lower case such as `"de"` or an area such as `"eu"`: where the host runs for a file or memory, where the server is for a URL. See [data location](/reference/configuration/#data-location) |
 | `safeguard` | | What allows keeping the data in `location`, under another legal regime than `storage`'s, such as `"adequacy"`, for a read model or store kept apart. See [stores in another jurisdiction](/reference/configuration/#stores-in-another-jurisdiction) |
+| `adequacyScope` | | Beside `safeguard: "adequacy"` in Canada or the United States, whose adequacy decisions cover some providers alone: `"pipeda"` or `"data-privacy-framework"`, saying the provider is in the decision's scope. See [partial adequacy decisions](/reference/configuration/#partial-adequacy-decisions) |
 
 ## How it stores things
 

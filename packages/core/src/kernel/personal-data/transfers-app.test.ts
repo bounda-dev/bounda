@@ -93,6 +93,7 @@ describe("a person's export", () => {
         safeguard: "adequacy",
         article: "45",
         regime: "CH",
+        partialAdequacy: null,
       },
       {
         store: "master-key",
@@ -101,6 +102,7 @@ describe("a person's export", () => {
         safeguard: "standard-contractual-clauses",
         article: "46(2)(c)",
         regime: "US",
+        partialAdequacy: null,
       },
       {
         store: "tenant-keys",
@@ -109,6 +111,7 @@ describe("a person's export", () => {
         safeguard: "adequacy",
         article: "45",
         regime: "CH",
+        partialAdequacy: null,
       },
       {
         store: "forget-ledger",
@@ -118,6 +121,7 @@ describe("a person's export", () => {
         safeguard: "binding-corporate-rules",
         article: "47",
         regime: "US",
+        partialAdequacy: null,
       },
     ];
     expect((await app.exportPersonalData("ana")).transfers).toEqual(transfers);

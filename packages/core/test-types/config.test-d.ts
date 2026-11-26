@@ -1,4 +1,6 @@
 import type {
+  AdequacyScope,
+  AdequacyScopeOf,
   AdequateCountry,
   AdequateLocation,
   AppStatus,
@@ -13,6 +15,10 @@ import type {
   IsAdequateFunction,
   IsDataLocationFunction,
   LegalRegime,
+  PartialAdequacy,
+  PartialAdequacyOfFunction,
+  PartiallyAdequateCountry,
+  PartiallyAdequateLocation,
   PersonalDataExport,
   PersonalDataExportHeader,
   PersonalDataForgottenReason,
@@ -37,6 +43,8 @@ import {
   type InventoryRecordName,
   isAdequate,
   isDataLocation,
+  PARTIAL_ADEQUACY,
+  partialAdequacyOf,
   regimeOf,
   resolveErrorText,
   STORE_SAFEGUARDS,
@@ -623,12 +631,36 @@ describe("runtimeText", () => {
 
 describe("location", () => {
   it("lets every adapter declare the jurisdiction it keeps its data in, which the record states", () => {
+    type Partial<Location, Scope> =
+      | {
+          readonly location: Location;
+          readonly safeguard: "adequacy";
+          readonly adequacyScope: Scope;
+        }
+      | {
+          readonly location: Location;
+          readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
+          readonly adequacyScope?: never;
+        };
     expectTypeOf<DataLocationOptions>().toEqualTypeOf<
-      | { readonly location?: DataLocation; readonly safeguard?: never }
-      | { readonly location: AdequateLocation; readonly safeguard: StoreSafeguard }
+      | {
+          readonly location?: DataLocation;
+          readonly safeguard?: never;
+          readonly adequacyScope?: never;
+        }
+      | {
+          readonly location: Exclude<AdequateLocation, "ca" | "us" | "fedramp" | "fedramp-high">;
+          readonly safeguard: StoreSafeguard;
+          readonly adequacyScope?: never;
+        }
+      | Partial<"ca", "pipeda">
+      | Partial<"us", "data-privacy-framework">
+      | Partial<"fedramp", "data-privacy-framework">
+      | Partial<"fedramp-high", "data-privacy-framework">
       | {
           readonly location: Exclude<DataLocation, AdequateLocation>;
           readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
+          readonly adequacyScope?: never;
         }
     >();
     expectTypeOf<AdapterDefinition["location"]>().toEqualTypeOf<DataLocation | undefined>();
@@ -679,13 +711,81 @@ describe("location", () => {
   });
 
   it("takes adequacy only where an adequacy decision covers the location", () => {
-    memory({ location: "fedramp", safeguard: "adequacy" });
+    memory({ location: "fedramp", safeguard: "adequacy", adequacyScope: "data-privacy-framework" });
     memory({ location: "in", safeguard: "standard-contractual-clauses" });
     memory({ location: "global", safeguard: "certification" });
     // @ts-expect-error no adequacy decision covers India
     memory({ location: "in", safeguard: "adequacy" });
     // @ts-expect-error nor anywhere in the world
     memory({ location: "global", safeguard: "adequacy" });
+  });
+
+  it("takes adequacy where a decision covers some providers alone only beside its adequacyScope", () => {
+    expectTypeOf<PartiallyAdequateCountry>().toEqualTypeOf<"CA" | "US">();
+    expectTypeOf<PartiallyAdequateCountry>().toExtend<AdequateCountry>();
+    expectTypeOf<AdequacyScope>().toEqualTypeOf<"pipeda" | "data-privacy-framework">();
+    expectTypeOf<AdequacyScope<"US">>().toEqualTypeOf<"data-privacy-framework">();
+    expectTypeOf<PartiallyAdequateLocation>().toEqualTypeOf<
+      "ca" | "us" | "fedramp" | "fedramp-high"
+    >();
+    expectTypeOf<AdequacyScopeOf<"fedramp-high">>().toEqualTypeOf<"data-privacy-framework">();
+    expectTypeOf<AdequacyScopeOf<"ca">>().toEqualTypeOf<"pipeda">();
+    expectTypeOf(PARTIAL_ADEQUACY.US).toExtend<PartialAdequacy>();
+    expectTypeOf(PARTIAL_ADEQUACY.US.scope).toEqualTypeOf<"data-privacy-framework">();
+    expectTypeOf(partialAdequacyOf).toEqualTypeOf<PartialAdequacyOfFunction>();
+    expectTypeOf(partialAdequacyOf).returns.toEqualTypeOf<PartialAdequacy | null>();
+    expectTypeOf<PartialAdequacy>().toEqualTypeOf<{
+      readonly scope: string;
+      readonly decision: string;
+      readonly celex: string;
+      readonly covers: string;
+      readonly condition: string;
+    }>();
+    memory({ location: "us", safeguard: "adequacy", adequacyScope: "data-privacy-framework" });
+    memory({ location: "ca", safeguard: "adequacy", adequacyScope: "pipeda" });
+    memory({ location: "us", safeguard: "standard-contractual-clauses" });
+    masterKey({
+      from: "BOUNDA_MASTER_KEY",
+      location: "fedramp-high",
+      safeguard: "adequacy",
+      adequacyScope: "data-privacy-framework",
+    });
+    defineTenantKeyStore(() => ({}) as never, {
+      location: "ca",
+      safeguard: "adequacy",
+      adequacyScope: "pipeda",
+    });
+    // @ts-expect-error the decision for the United States covers organisations on the Data Privacy Framework List alone
+    memory({ location: "us", safeguard: "adequacy" });
+    // @ts-expect-error so does it for data kept in a FedRAMP jurisdiction
+    memory({ location: "fedramp", safeguard: "adequacy" });
+    // @ts-expect-error the decision for Canada covers recipients subject to PIPEDA alone
+    memory({ location: "ca", safeguard: "adequacy" });
+    // @ts-expect-error each country's decision has its own scope
+    memory({ location: "us", safeguard: "adequacy", adequacyScope: "pipeda" });
+    // @ts-expect-error a decision for the whole country takes none
+    memory({ location: "ch", safeguard: "adequacy", adequacyScope: "pipeda" });
+    // @ts-expect-error an adequacyScope goes beside adequacy alone
+    memory({ location: "us", safeguard: "certification", adequacyScope: "data-privacy-framework" });
+    // @ts-expect-error and beside a safeguard
+    memory({ location: "us", adequacyScope: "data-privacy-framework" });
+    defineForgetLedger(() => ({}) as ForgetLedger, {
+      location: "us",
+      safeguard: "adequacy",
+      // @ts-expect-error a scope Bounda does not know
+      adequacyScope: "privacy-shield",
+    });
+    expectTypeOf<AdapterDefinition["adequacyScope"]>().toEqualTypeOf<AdequacyScope | undefined>();
+    expectTypeOf<Placement["adequacyScope"]>().toEqualTypeOf<AdequacyScope | undefined>();
+    expectTypeOf<TenantKeyStoreDefinition["adequacyScope"]>().toEqualTypeOf<
+      AdequacyScope | undefined
+    >();
+    expectTypeOf<ForgetLedgerDefinition["adequacyScope"]>().toEqualTypeOf<
+      AdequacyScope | undefined
+    >();
+    expectTypeOf<KeyWrapperDefinition["adequacyScope"]>().toEqualTypeOf<
+      AdequacyScope | undefined
+    >();
   });
 
   it("lets a store be kept in another location than storage's under a safeguard of articles 45 to 47", () => {
@@ -737,6 +837,7 @@ describe("location", () => {
       readonly safeguard: StoreSafeguard;
       readonly article: string;
       readonly regime: LegalRegime;
+      readonly partialAdequacy: PartialAdequacy | null;
     }>();
     expectTypeOf<ExportedTransfer>().toEqualTypeOf<{
       readonly store: "read-model" | "master-key" | "tenant-keys" | "forget-ledger";
@@ -745,12 +846,14 @@ describe("location", () => {
       readonly safeguard: StoreSafeguard;
       readonly article: string;
       readonly regime: LegalRegime;
+      readonly partialAdequacy: PartialAdequacy | null;
     }>();
     // A recipient's transfer says the same of the country it goes to, with any safeguard.
     expectTypeOf<RecipientTransfer>().toEqualTypeOf<{
       readonly safeguard: TransferSafeguard;
       readonly article: string;
       readonly regime: LegalRegime;
+      readonly partialAdequacy: PartialAdequacy | null;
     }>();
     expectTypeOf<InventoryRecipient>().toEqualTypeOf<{
       readonly port: string;

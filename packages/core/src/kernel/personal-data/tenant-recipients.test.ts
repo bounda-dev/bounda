@@ -24,7 +24,12 @@ const listed = (recipient: Partial<PersonRecipient> = {}): PersonRecipient => ({
   name: "Postmark",
   kind: "processor",
   country: "US",
-  transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+  transfer: {
+    safeguard: "standard-contractual-clauses",
+    article: "46(2)(c)",
+    regime: "US",
+    partialAdequacy: null,
+  },
   status: "disclosed",
   categories: [{ name: "default", basis: null }],
   firstDisclosedAt: "2026-01-02T00:00:00.000Z",
@@ -89,13 +94,21 @@ describe("tallyRecipients", () => {
       [
         listed({ status: "declared", firstDisclosedAt: null, lastDisclosedAt: null }),
         listed({ transfer: null, country: "DE" }),
-        listed({ transfer: { safeguard: "adequacy", article: "45", regime: "CH" }, country: "CH" }),
+        listed({
+          transfer: { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
+          country: "CH",
+        }),
         listed({ kind: "third-party" }),
         listed({ country: "CA" }),
         listed(),
         listed({ transfer: null }),
         listed({
-          transfer: { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+          transfer: {
+            safeguard: "binding-corporate-rules",
+            article: "47",
+            regime: "US",
+            partialAdequacy: null,
+          },
         }),
         listed({ name: "Brevo" }),
         listed({ name: "Postmark EU", country: "AU" }),
@@ -144,7 +157,7 @@ describe("tallyRecipients", () => {
       {
         ...listed({
           country: "CH",
-          transfer: { safeguard: "adequacy", article: "45", regime: "CH" },
+          transfer: { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
         }),
         status: "declared",
         categories: [

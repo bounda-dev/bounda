@@ -6,6 +6,7 @@ import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { ProcessStateArgs } from "../../modules/process.ts";
+import { PARTIAL_ADEQUACY } from "../../modules/recipient.ts";
 import type { Registry } from "../../modules/registry.ts";
 import type { FieldsArgs } from "../../modules/view.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
@@ -298,7 +299,12 @@ describe("personalDataInventory", () => {
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        transfer: {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
         categories: ["contact"],
       },
     ]);
@@ -371,7 +377,7 @@ describe("personalDataInventory", () => {
     expect(apart.holders.find(({ name }) => name === "customer.onboarding")?.location).toBeNull();
   });
 
-  it("names the transfer of every store kept out of the storage's location, with its safeguard and regime", () => {
+  it("names the transfer of every store kept out of the storage's location, with its safeguard, regime and partial decision", () => {
     const inventory = personalDataInventory({
       registry,
       config: {
@@ -392,7 +398,8 @@ describe("personalDataInventory", () => {
             forgetLedger: {
               store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf("t"), {
                 location: "fedramp",
-                safeguard: "binding-corporate-rules",
+                safeguard: "adequacy",
+                adequacyScope: "data-privacy-framework",
               }),
             },
           },
@@ -405,7 +412,11 @@ describe("personalDataInventory", () => {
       ["customer.CustomerRegistered", "eu", null],
       ["customer.remindCustomer", "eu", null],
       ["customer.onboarding", "eu", null],
-      ["customers", "ch", { safeguard: "adequacy", article: "45", regime: "CH" }],
+      [
+        "customers",
+        "ch",
+        { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
+      ],
     ]);
     expect(
       inventory.records.map(({ name, location, transfer }) => [name, location, transfer]),
@@ -420,13 +431,27 @@ describe("personalDataInventory", () => {
       [
         "master-key",
         "us",
-        { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
       ],
-      ["tenant-keys", "ch", { safeguard: "adequacy", article: "45", regime: "CH" }],
+      [
+        "tenant-keys",
+        "ch",
+        { safeguard: "adequacy", article: "45", regime: "CH", partialAdequacy: null },
+      ],
       [
         "forget-ledger",
         "fedramp",
-        { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+        {
+          safeguard: "adequacy",
+          article: "45",
+          regime: "US",
+          partialAdequacy: PARTIAL_ADEQUACY.US,
+        },
       ],
       ["access-log", null, null],
       ["host-log", null, null],

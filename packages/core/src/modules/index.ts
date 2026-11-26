@@ -68,15 +68,24 @@ export type {
   RejectionCodeOf,
 } from "./command.ts";
 export type {
+  AdequacyScopeOf,
   AdequateLocation,
   DataArea,
   DataLocation,
   IsAdequateFunction,
   IsDataLocationFunction,
   LegalRegime,
+  PartialAdequacyOfFunction,
+  PartiallyAdequateLocation,
   RegimeOfFunction,
 } from "./data-location.ts";
-export { DATA_AREAS, isAdequate, isDataLocation, regimeOf } from "./data-location.ts";
+export {
+  DATA_AREAS,
+  isAdequate,
+  isDataLocation,
+  partialAdequacyOf,
+  regimeOf,
+} from "./data-location.ts";
 export type {
   EventBeginArgs,
   EventBuilders,
@@ -209,11 +218,14 @@ export type {
   RepositoryDataOf,
 } from "./query.ts";
 export type {
+  AdequacyScope,
   AdequateCountry,
   CountryCode,
   EeaCountry,
   NotifiedRecipient,
   NotifiesRecipient,
+  PartialAdequacy,
+  PartiallyAdequateCountry,
   PersonRecipient,
   RecipientDeclaration,
   RecipientForgottenArgs,
@@ -234,6 +246,7 @@ export {
   ADEQUATE_COUNTRIES,
   COUNTRY_CODES,
   EEA_COUNTRIES,
+  PARTIAL_ADEQUACY,
   RECIPIENT_HANDLERS,
   RECIPIENT_KINDS,
   STORE_SAFEGUARDS,

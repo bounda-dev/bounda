@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from "../../config/types.ts";
-import { type DataLocation, regimeOf } from "../../modules/data-location.ts";
+import { type DataLocation, partialAdequacyOf, regimeOf } from "../../modules/data-location.ts";
 import { type StoreSafeguard, TRANSFER_ARTICLES } from "../../modules/recipient.ts";
 import type { ExportedTransfer } from "./export.ts";
 import type { InventoryTransfer } from "./inventory.ts";
@@ -18,11 +18,16 @@ export interface StoreTransferFunction {
   (location: DataLocation, safeguard: StoreSafeguard): InventoryTransfer;
 }
 
-export const storeTransfer: StoreTransferFunction = (location, safeguard) => ({
-  safeguard,
-  article: TRANSFER_ARTICLES[safeguard],
-  regime: regimeOf(location),
-});
+// `checkPlacement` holds a store on `adequacy` there to the decision's `adequacyScope`.
+export const storeTransfer: StoreTransferFunction = (location, safeguard) => {
+  const regime = regimeOf(location);
+  return {
+    safeguard,
+    article: TRANSFER_ARTICLES[safeguard],
+    regime,
+    partialAdequacy: safeguard === "adequacy" ? partialAdequacyOf(regime) : null,
+  };
+};
 
 interface Placed {
   readonly location?: DataLocation | undefined;

@@ -149,7 +149,7 @@ const placed = (
   location: string | null,
   transfer: InventoryTransfer | null,
 ): string =>
-  `${location === null ? database : `${database}, in ${location}`}${transfer === null ? "" : `, ${formatTransfer(transfer)}`}`;
+  `${location === null ? database : `${database}, in ${location}`}${transfer === null ? "" : `, ${formatTransfer(transfer, "provider")}`}`;
 
 // A condition with its point of article 9(2), from (a) to (j) in the order the article gives them.
 const conditionOf = ({ condition }: SpecialCategoryData): string =>
@@ -246,7 +246,7 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
   if (inventory.recipients.length === 0) lines.push("  none declared");
   for (const recipient of inventory.recipients) {
     lines.push(
-      `  ${recipient.port}  ${recipient.name}, ${recipient.kind} in ${recipient.country}${recipient.transfer === null ? "" : `, ${formatTransfer(recipient.transfer)}`}: ${recipient.categories.join(", ")}`,
+      `  ${recipient.port}  ${recipient.name}, ${recipient.kind} in ${recipient.country}${recipient.transfer === null ? "" : `, ${formatTransfer(recipient.transfer, "recipient")}`}: ${recipient.categories.join(", ")}`,
     );
   }
   lines.push("", "Kept by the runtime");
@@ -388,7 +388,9 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
           recipient.name,
           recipient.kind,
           recipient.country,
-          recipient.transfer === null ? "inside the EEA" : formatTransfer(recipient.transfer),
+          recipient.transfer === null
+            ? "inside the EEA"
+            : formatTransfer(recipient.transfer, "recipient"),
           recipient.categories.join(", "),
         ]),
       ),

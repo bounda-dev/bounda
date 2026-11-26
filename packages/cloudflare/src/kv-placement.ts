@@ -45,9 +45,17 @@ export interface KvPlacementOfFunction {
 }
 
 // A Worker's code is not always type-checked: the safeguard is passed on for `checkLocations` to
-// judge, but any location other than "global", or one without its safeguard, would claim a place
-// KV does not keep to.
-export const kvPlacementOf: KvPlacementOfFunction = ({ location, safeguard }, path) => {
+// judge, but any location other than "global", one without its safeguard, or an adequacyScope,
+// would claim a place KV does not keep to.
+export const kvPlacementOf: KvPlacementOfFunction = (options, path) => {
+  const { location, safeguard } = options;
+  if (Reflect.get(options, "adequacyScope") !== undefined) {
+    throw runtimeText(
+      new ConfigurationError(
+        `${path} is kept in Workers KV, which keeps and caches what it holds anywhere in the world, where no adequacy decision covers it: it takes no adequacyScope`,
+      ),
+    );
+  }
   if (location === undefined && safeguard === undefined) return {};
   if (location !== "global" || safeguard === undefined) {
     throw runtimeText(
