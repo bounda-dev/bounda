@@ -29,6 +29,33 @@ const keysById = (report: Report): ReadonlyMap<string, string> =>
     ),
   );
 
+const mutantKey = ({ mutatorName, replacement, location }: MutantResult): string =>
+  [
+    mutatorName,
+    replacement,
+    location?.start.line,
+    location?.start.column,
+    location?.end.line,
+    location?.end.column,
+  ].join("\u0000");
+
+// Stryker writes a mutant's duration only when it tests the mutant, so a mutant a shard reused
+// takes the one the previous report kept. Without that, the plan would soon know no mutant's time.
+const withDurations = (result: FileResult, earlier: FileResult | undefined): FileResult => {
+  const durations = new Map(
+    (earlier?.mutants ?? []).flatMap((mutant): [string, number][] =>
+      mutant.duration === undefined ? [] : [[mutantKey(mutant), mutant.duration]],
+    ),
+  );
+  return {
+    ...result,
+    mutants: result.mutants.map((mutant): MutantResult => {
+      const duration = mutant.duration ?? durations.get(mutantKey(mutant));
+      return duration === undefined ? mutant : { ...mutant, duration };
+    }),
+  };
+};
+
 // Test ids are only unique within one report: each shard numbers the same tests its own way, so
 // the merged report numbers them anew and maps every mutant's `coveredBy` and `killedBy` onto
 // those numbers. Without that, a merged report read as an incremental file would credit a kill to
@@ -82,9 +109,14 @@ export const mergeReports: MergeReportsFunction = ({ shards, previous, keep }) =
   const files: Record<string, FileResult> = {};
   for (const path of keep) {
     // A shard that mutated the file and left no result for it found no mutant there.
-    const report = shards.find(({ files: owned }) => owned.has(path))?.report ?? previous;
+    const shard = shards.find(({ files: owned }) => owned.has(path))?.report;
+    const report = shard ?? previous;
     const result = report?.files[path];
-    if (report !== undefined && result !== undefined) files[path] = renumber(report, result);
+    if (report === undefined || result === undefined) continue;
+    files[path] = renumber(
+      report,
+      shard === undefined ? result : withDurations(result, previous?.files[path]),
+    );
   }
   return { ...first, files, testFiles };
 };

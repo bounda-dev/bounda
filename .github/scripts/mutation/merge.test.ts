@@ -95,6 +95,49 @@ describe("mergeReports", () => {
     expect(merged.files["two.ts"]?.mutants[0]?.killedBy).toEqual([first?.id]);
   });
 
+  it("keeps the duration of a mutant a shard reused from the previous report", () => {
+    const at = (line: number) => ({ start: { line, column: 1 }, end: { line, column: 5 } });
+    const mutant = { status: "Killed", mutatorName: "BooleanLiteral", replacement: "false" };
+    const previous: Report = {
+      files: {
+        "one.ts": {
+          source: "one",
+          mutants: [
+            { ...mutant, location: at(1), duration: 300 },
+            { ...mutant, location: at(2), duration: 400 },
+            { ...mutant, location: at(3), duration: 500 },
+          ],
+        },
+      },
+    };
+    const merged = mergeReports({
+      shards: [
+        {
+          report: {
+            files: {
+              "one.ts": {
+                source: "one",
+                mutants: [
+                  { ...mutant, location: at(1) },
+                  { ...mutant, location: at(2), duration: 700 },
+                  { ...mutant, location: at(4) },
+                ],
+              },
+            },
+          },
+          files: new Set(["one.ts"]),
+        },
+      ],
+      previous,
+      keep: ["one.ts"],
+    });
+    expect(merged.files["one.ts"]?.mutants.map(({ duration }) => duration)).toEqual([
+      300,
+      700,
+      undefined,
+    ]);
+  });
+
   it("leaves out a file the shard that mutated it has no result for", () => {
     const merged = mergeReports({
       shards: [{ report: shardOne, files: new Set(["one.ts", "three.ts"]) }],
