@@ -3373,7 +3373,9 @@ number. The ledger's entries show late as well: a committed forgetting the reads
 start, or of a restore found while the app runs, do not show yet is applied by the reconciliation a
 minute later, as that restore's when written by the time it was counted, and as another when
 written after, however the database stands, so neither a later forgetting of the same person nor
-the generation's moves since hide it. A declaration made before the reads show every mark raised
+the generation's moves since hide it; an intention written before the instance started is also
+compared with where its first reconciliation found the database, so events the instance appended
+before its reads showed the intention do not hide the ones the copy lost. A declaration made before the reads show every mark raised
 before the start, that would count nothing, waits until they do: a restore counted after the copy
 was taken tells a copy of the moment the last restore was handled from a declaration made again,
 and is counted then. A start lets go of the values raised more than a minute before
