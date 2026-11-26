@@ -554,16 +554,22 @@ describe("pruning a tenant's entries in a store its configuration no longer name
     const directory = await mkdtemp(join(tmpdir(), "bounda-prune-"));
     try {
       const path = join(directory, "ledger.db");
-      const { adapter: first } = createNodeSqliteAdapter(path);
-      const { adapter: second } = createNodeSqliteAdapter(path);
-      expect(
-        await pruneTenantForgetLedger({
-          registry,
-          config: configOf(memory(), first, "30d"),
-          store: second,
-          now: LATER,
-        }),
-      ).toMatchObject({ named: true });
+      const first = createNodeSqliteAdapter(path);
+      const second = createNodeSqliteAdapter(path);
+      try {
+        expect(
+          await pruneTenantForgetLedger({
+            registry,
+            config: configOf(memory(), first.adapter, "30d"),
+            store: second.adapter,
+            now: LATER,
+          }),
+        ).toMatchObject({ named: true });
+      } finally {
+        // An open file cannot be removed on Windows.
+        first.db.close();
+        second.db.close();
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

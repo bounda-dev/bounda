@@ -1121,6 +1121,9 @@ const runMigrate = async (
   }
 };
 
+// Every tenant key store the configuration can name, as a configuration that is a function of the
+// tenant may give each tenant one of its own: the previous master keys can go only once none holds
+// a key under them.
 const runRewrapMaster = async (
   options: ProjectOptions,
   cwd: string,
@@ -1131,40 +1134,58 @@ const runRewrapMaster = async (
   standInWorkersRuntime();
   const logger = logTo(stderr);
   let config: Config;
+  let project: Awaited<ReturnType<typeof loadProject>>;
+  let listed: readonly string[];
   try {
-    ({ config } = await loadProject({
+    project = await loadProject({
       root: rootOf(options, cwd),
       configPath: options.config,
       registry: NO_REGISTRY,
       logger,
       ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
-    }));
+    });
+    ({ config } = project);
     resolveErrorText({ env: process.env });
+    listed = await project.tenants();
   } catch (error) {
     line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
     return EXIT_FAILURE;
   }
   const errorText = resolveErrorText(errorTextArgs(options, config));
+  const { tenant } = project;
   try {
-    const { rewrapped, left } = await rewrapTenantKeys({ config, env: process.env });
-    for (const tenant of rewrapped) line(stdout, `rewrapped ${tenant}`);
-    if (left.length === 0) {
+    const { rewrapped, left, unreached } = await rewrapTenantKeys({
+      config: project.projectConfig,
+      env: process.env,
+      tenants: listed,
+      ...(tenant === undefined ? {} : { tenant }),
+    });
+    for (const each of rewrapped) line(stdout, `rewrapped ${each}`);
+    // Each tenant once, though its stores could not be listed and its key could not be rewrapped.
+    const pending = new Set<string>();
+    for (const { tenant: each, error } of unreached) {
+      pending.add(each);
+      const { errorName, errorMessage } = errorFields({ error, errorText });
+      line(
+        stderr,
+        `error: the stores ${each}'s configuration names could not be listed: ${errorMessage ?? errorName}`,
+      );
+    }
+    for (const { tenant: each, error } of left) {
+      pending.add(each);
+      const { errorName, errorMessage } = errorFields({ error, errorText });
+      line(stderr, `error: ${each}'s key could not be rewrapped: ${errorMessage ?? errorName}`);
+    }
+    if (pending.size === 0) {
       line(
         stdout,
         `${rewrapped.length} tenant key(s) rewrapped; none is left under a previous master key: remove them`,
       );
       return EXIT_OK;
     }
-    for (const { tenant, error } of left) {
-      const { errorName, errorMessage } = errorFields({ error, errorText });
-      line(
-        stderr,
-        `error: ${tenant} is still under a previous master key: ${errorMessage ?? errorName}`,
-      );
-    }
     line(
       stderr,
-      `${left.length} tenant key(s) left under a previous master key: keep the previous master keys until none is`,
+      `${pending.size} tenant(s) not rewrapped or listed: keep the previous master keys until none is, and run again once what failed is fixed`,
     );
     return EXIT_FAILURE;
   } catch (error) {
@@ -1732,7 +1753,7 @@ export const runCli: RunCliFunction = async ({
     tenantKey
       .command("rewrap-master")
       .description(
-        "rewrap under the master key in force the key of every tenant the tenant key store holds, their apps running or not: once none is left under a previous master key, remove those",
+        "rewrap under the master key in force the key of every tenant every tenant key store the configuration names holds, each through its own configuration, their apps running or not: once none is left under a previous master key, remove those",
       ),
   ).action(async (options: ProjectOptions) => {
     exitCode = await runRewrapMaster(options, cwd, stdout, stderr);

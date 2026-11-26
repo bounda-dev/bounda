@@ -2353,11 +2353,18 @@ nothing in any database. Each running app rewraps its own tenant's record on the
 pass, and `status` shows how many versions are left. A tenant whose app does not run, a Durable
 Object that sleeps or a tenant no process serves, is reached from the tenant key store itself:
 
-- In Node, `bounda tenant-key rewrap-master` rewraps every tenant the store holds, their apps
-  running or not, over each record's revision, so it runs safely beside the apps. It exits with
-  `2` while any tenant is left under a previous master key, naming each; `rewrapTenantKeys({
-  config, env })` from `@bounda-dev/core` does the same in code, and
-  `listTenantsUnderPreviousMaster` names those left.
+- In Node, `bounda tenant-key rewrap-master` rewraps every tenant every tenant key store the
+  configuration names holds, their apps running or not, over each record's revision, so it runs
+  safely beside the apps. A configuration that is a function of the tenant may give tenants
+  stores of their own: it reaches every store as
+  [`forget-ledger prune --all-tenants`](#keeping-the-ledger-short) does, through the tenants each
+  store lists and those the `tenants` export of `bounda.config.ts` names, which a configuration
+  that gives each tenant a store nothing else lists must export, and rewraps each key under its
+  tenant's own key wrapper. It exits with `2` while any tenant's key could not be rewrapped or any
+  tenant's stores could not be listed, naming each; `rewrapTenantKeys({ config: projectConfig,
+  env, tenants: await tenants() })` from `@bounda-dev/core`, with `projectConfig` and `tenants`
+  from `loadProject`, does the same in code, and `listTenantsUnderPreviousMaster` names those left
+  in the one store a tenant's configuration names.
 - On Cloudflare each tenant's record is written by its own object alone, which KV needs: the
   `scheduled` of `createWorker` wakes every object still under a previous master key, which
   rewraps its own (see [Cloudflare](/adapters/cloudflare/#rotating-the-master-key)).
