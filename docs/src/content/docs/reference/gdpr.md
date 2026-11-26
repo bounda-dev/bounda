@@ -252,6 +252,39 @@ categories })` erases those categories alone, and `bounda forget <person>` does 
 terminal. `expectForgotten` checks in a test that no value of theirs is left readable in any table,
 log or span.
 
+**What a forgetting leaves of its recipients.** A forgetting removes the record of which of the
+person's data went to which recipient, of what it erases; its `PersonalDataForgotten` keeps which
+ports it told, as the proof that article 19 was honoured. A processor that hands a tenant back owes
+the controller where the data it processed went, 28(3)(g), and the controller's own record of
+processing names the recipients and the transfers, 30(1)(d) and (e), whether the persons are still
+there or not. So, in the transaction of the forgetting, Bounda adds to a count kept by recipient,
+under the identity the recipient had, its port, name, kind, country and safeguard, and under whether
+the data was recorded as disclosed or presumed: one for each category the forgetting took the person
+off that recipient for, and one for the person once nothing of theirs is left with it.
+[`exportTenant`](/guides/personal-data/#handing-a-tenant-back) hands the counts back as
+`forgottenRecipient` parts.
+
+The count names no person and holds no time, so it is anonymous data, outside the GDPR once the
+person is gone (recital 26), and an erasure under article 17 leaves nothing of theirs in it:
+
+- A count of 1, joined to the only `PersonalDataForgotten` that told that port, tells no more than
+  that event already does, which Bounda keeps to prove the erasure and whom it told, article 5(2),
+  but the recipient's identity then: a fact about the recipient, kept in the record of processing
+  anyway.
+- The earliest and the latest disclosure are left out. Over a set of persons each is one person's
+  own time, never an aggregate, and joined to that event, or to the recipient's own records, it
+  would say when that person's data went where, which the forgetting erased. A threshold that hid
+  them below some count would still keep them, and the count rises one forgetting at a time.
+- A person is counted when a forgetting takes them off a recipient, and only then: forgotten again
+  with nothing left, they count no more. A copy restored from before a forgetting holds the counts
+  from before it, and counts the person as the forgetting commits again there.
+- A port the app no longer declares is counted for what was recorded as disclosed to it, under the
+  identity recorded then; presumed to hold data it was never recorded to receive, it has no
+  identity left to count under, and only the forgetting's event names it.
+
+The forget ledger keeps each first disclosure of a person to a recipient, with the person, only to
+tell the recipient after a restore, and only until it is pruned past `keepFor`.
+
 **Exceptions, 17(3).** A category an [exemption](/guides/personal-data/#categories) applies to
 outlives the forgetting while its retention runs, restricted to what the exemption serves, and is
 forgotten when that ends; the export's `rights` leave it out of erasure, and the export and the
@@ -455,7 +488,8 @@ person, recipient of their data, event, scheduled command, dead letter, subscrib
 remembered answer, read-model row and forget ledger entry, every value opened and nothing held
 back, with the stores kept in another jurisdiction and, for each recipient, its country and the
 safeguard of a transfer, so the controller knows where the data went and on what each transfer
-rested, as JSON Lines that
+rested, and, for each recipient that persons since forgotten were listed with, how many and of
+which categories, never whom (see [Erasure](#erasure-article-17)), as JSON Lines that
 `readTenantExport` checks are whole, of a tenant [frozen](/guides/personal-data/#freezing-a-tenant)
 in every store, so what it returns is one consistent cut that no write changed while it was read; [`forgetTenant`](/guides/personal-data/#forgetting-a-tenant)
 then deletes it, in every copy of what was sealed. The export is recorded in the access log. The
@@ -565,8 +599,9 @@ inside the area, which counts the Åland Islands and the outermost regions of Fr
 their ISO codes, nor on `adequacy` for a country the European Commission has adopted no adequacy
 decision for (`ADEQUATE_COUNTRIES`). The export and `recipientsOf` tell the person where their data
 went, by the legal regime it went to, and on what it rests, with the article, 15(2), and the record
-of processing lists every transfer the same way. A tenant's export sums the recipients of every person in it, once under each identity a
-disclosure was recorded with, for the controller it is handed back to, 28(3)(g).
+of processing lists every transfer the same way. A tenant's export sums the recipients of every
+person in it, once under each identity a disclosure was recorded with, and counts under the same
+identities those of persons forgotten before, for the controller it is handed back to, 28(3)(g).
 
 Every database and store declares where it keeps its data, a country in lower case or an area such
 as the EU (`DataLocation`): `location: "eu"` on

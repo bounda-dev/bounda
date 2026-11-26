@@ -39,6 +39,7 @@ import {
   type ReadModelsRuntime,
 } from "./read-model/build-read-models.ts";
 import { openReadModelSealing } from "./read-model/sealing.ts";
+import { buildRecipients, NO_RECIPIENTS } from "./recipients/build.ts";
 import { createRecipientNotices } from "./recipients/notices.ts";
 import { createScheduledCommandWorker, type ScheduledCommandWorker } from "./scheduler/worker.ts";
 import { ignoredRetries } from "./shared/pending-retries.ts";
@@ -105,7 +106,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     ...overrides,
   });
   const ids = createSequentialIdGenerator();
-  const { byAggregate } = await createPorts({
+  const ports = await createPorts({
     registry,
     config: config.ports,
     env: {},
@@ -113,7 +114,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     logger,
     clock,
   });
-  const aggregates = buildAggregates({ registry, ports: byAggregate, config });
+  const aggregates = buildAggregates({ registry, ports: ports.byAggregate, config });
   const loader = createAggregateLoader({
     snapshotStore: storage.snapshotStore,
     logger,
@@ -155,6 +156,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     module: registry.personalData,
     retention: config.runtime.personalData.retention,
   });
+  const recipients = buildRecipients({ registry, categories: personalCategories, ports });
   const intentions = createForgetIntentions({ ledger: null, ids, clock, logger });
   const policyExecutor = createPolicyExecutor({
     tracer: tracer,
@@ -162,6 +164,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     pipeline,
     config,
     personalCategories,
+    recipients,
     ids,
     clock,
     logger,
@@ -177,6 +180,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     storage,
     config,
     personalCategories,
+    recipients,
     ids,
     clock,
     pendingRetries: ignoredRetries,
@@ -193,7 +197,7 @@ export const createReactiveHarness: CreateReactiveHarnessFunction = async ({
     processes,
     notices: createRecipientNotices({
       tracer: tracer,
-      recipients: { all: [], byPort: {}, byOwner: {} },
+      recipients: NO_RECIPIENTS,
       storage,
       config,
       clock,

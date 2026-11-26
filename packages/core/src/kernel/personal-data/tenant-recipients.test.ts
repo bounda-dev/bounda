@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { ForgottenRecipient } from "../../adapter/storage/recipient-store.ts";
 import type { PersonRecipient } from "../../modules/recipient.ts";
 import type { RecipientRuntime } from "../recipients/build.ts";
 import { buildPersonalCategories } from "./categories.ts";
-import { tallyRecipients } from "./tenant-recipients.ts";
+import { forgottenRecipients, tallyRecipients } from "./tenant-recipients.ts";
 
 const categories = buildPersonalCategories({
   module: {
@@ -167,5 +168,144 @@ describe("tallyRecipients", () => {
         persons: 0,
       },
     ]);
+  });
+});
+
+const counted = (overrides: Partial<ForgottenRecipient> = {}): ForgottenRecipient => ({
+  port: "customer.mailer",
+  recipient: "Postmark",
+  kind: "processor",
+  country: "US",
+  safeguard: "standard-contractual-clauses",
+  status: "disclosed",
+  category: null,
+  persons: 1,
+  ...overrides,
+});
+
+const mailer = { port: "customer.mailer" } as RecipientRuntime;
+
+const forgottenOf = (
+  rows: readonly ForgottenRecipient[],
+  byPort: Readonly<Record<string, RecipientRuntime>> = { "customer.mailer": mailer },
+) => forgottenRecipients({ recipients: { byPort }, categories, counted: rows });
+
+describe("forgottenRecipients", () => {
+  const postmark = {
+    port: "customer.mailer",
+    name: "Postmark",
+    kind: "processor",
+    country: "US",
+    transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+    status: "disclosed",
+    declared: true,
+  } as const;
+
+  it("lists nothing when nobody was forgotten", () => {
+    expect(forgottenOf([])).toEqual([]);
+  });
+
+  it("puts the counts of one identity and status together, each category with its basis", () => {
+    expect(
+      forgottenOf([
+        counted({ category: "invoices", persons: 2 }),
+        counted({ persons: 3 }),
+        counted({ category: "default", persons: 4 }),
+        counted({ category: "gone" }),
+      ]),
+    ).toEqual([
+      {
+        ...postmark,
+        persons: 3,
+        categories: [
+          { name: "default", basis: null, persons: 4 },
+          // A category the app no longer has keeps its count, with no basis to name.
+          { name: "gone", basis: null, persons: 1 },
+          { name: "invoices", basis: "legal-obligation", persons: 2 },
+        ],
+      },
+    ]);
+  });
+
+  it("counts no person whole for a recipient only categories were forgotten of", () => {
+    expect(forgottenOf([counted({ category: "invoices" })])).toEqual([
+      {
+        ...postmark,
+        persons: 0,
+        categories: [{ name: "invoices", basis: "legal-obligation", persons: 1 }],
+      },
+    ]);
+  });
+
+  it("sums under the port a former key names now, and tells one no longer declared", () => {
+    expect(
+      forgottenOf(
+        [
+          counted(),
+          counted({ port: "customer.newsletter", persons: 2 }),
+          counted({ port: "customer.gone" }),
+        ],
+        { "customer.mailer": mailer, "customer.newsletter": mailer },
+      ),
+    ).toEqual([
+      { ...postmark, port: "customer.gone", declared: false, persons: 1, categories: [] },
+      { ...postmark, persons: 3, categories: [] },
+    ]);
+  });
+
+  it("orders them by port, status, name and identity, each identity apart", () => {
+    const listed = forgottenOf([
+      counted({ country: "FR", safeguard: null }),
+      counted({ status: "presumed" }),
+      counted({ safeguard: "binding-corporate-rules" }),
+      counted({ recipient: "Brevo" }),
+      counted({ port: "customer.crm" }),
+      counted(),
+      counted({ kind: "third-party" }),
+    ]);
+    expect(
+      listed.map(({ port, name, kind, country, transfer, status }) => [
+        port,
+        status,
+        name,
+        kind,
+        country,
+        transfer?.safeguard ?? null,
+      ]),
+    ).toEqual([
+      ["customer.crm", "disclosed", "Postmark", "processor", "US", "standard-contractual-clauses"],
+      ["customer.mailer", "disclosed", "Brevo", "processor", "US", "standard-contractual-clauses"],
+      ["customer.mailer", "disclosed", "Postmark", "processor", "FR", null],
+      ["customer.mailer", "disclosed", "Postmark", "processor", "US", "binding-corporate-rules"],
+      [
+        "customer.mailer",
+        "disclosed",
+        "Postmark",
+        "processor",
+        "US",
+        "standard-contractual-clauses",
+      ],
+      [
+        "customer.mailer",
+        "disclosed",
+        "Postmark",
+        "third-party",
+        "US",
+        "standard-contractual-clauses",
+      ],
+      [
+        "customer.mailer",
+        "presumed",
+        "Postmark",
+        "processor",
+        "US",
+        "standard-contractual-clauses",
+      ],
+    ]);
+    expect(
+      listed.find(({ transfer }) => transfer?.safeguard === "binding-corporate-rules"),
+    ).toMatchObject({
+      transfer: { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+    });
   });
 });

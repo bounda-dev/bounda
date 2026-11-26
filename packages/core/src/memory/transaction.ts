@@ -336,6 +336,8 @@ const trackedRecipients = (kept: KeptRecipientStore, undos: Undos): RecipientSto
     rename: through(store.rename),
     caughtUp: through(store.caughtUp),
     summary: store.summary,
+    countForgotten: through(store.countForgotten),
+    forgottenCounts: store.forgottenCounts,
     received: store.received,
     personsOf: store.personsOf,
   };

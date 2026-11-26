@@ -15,6 +15,7 @@ import { ConcurrencyError, ValidationError } from "../../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import type { ForgetOptions, PersonalDataModule } from "../../modules/personal-data.ts";
+import { NO_RECIPIENTS } from "../recipients/build.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import { forgetIntended, forgetPersonalData, forgetWithin, STALE_INTENTION } from "./forget.ts";
@@ -93,6 +94,7 @@ const setup = async (storage?: Storage, module?: PersonalDataModule) => {
   const clock = createFixedClock();
   const forget = (personId: string, options?: ForgetOptions) =>
     forgetPersonalData({
+      recipients: NO_RECIPIENTS,
       storage: live,
       intentions: withoutLedger({ ids, clock }),
       ids,
@@ -586,6 +588,7 @@ describe("forgetIntended", () => {
     };
     const { intentions, recorded, ids, clock } = recordingIntentions();
     const forgotten = await forgetIntended({
+      recipients: NO_RECIPIENTS,
       storage: racing,
       intentions,
       ids,
@@ -625,6 +628,7 @@ describe("forgetIntended", () => {
     };
     const { intentions, recorded, ids, clock } = recordingIntentions();
     const forgotten = await forgetIntended({
+      recipients: NO_RECIPIENTS,
       storage: racing,
       intentions,
       ids,
@@ -667,6 +671,7 @@ describe("forgetIntended", () => {
       ],
     });
     const dispatch = await forgetPersonalData({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: {
         intend: async () => intended,
@@ -694,6 +699,7 @@ describe("forgetIntended", () => {
       storage.transact((transaction) => {
         const { readOne } = transaction.eventStore;
         return forgetWithin({
+          recipients: NO_RECIPIENTS,
           transaction: {
             ...transaction,
             eventStore: {

@@ -12,6 +12,7 @@ import { ForgetLedgerUnavailableError, ValidationError } from "../../contracts/e
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
+import { NO_RECIPIENTS } from "../recipients/build.ts";
 import { RESTORE_COVERED, RESTORE_GENERATION } from "../shared/restores.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
 import { buildPersonalCategories } from "./categories.ts";
@@ -93,6 +94,7 @@ const setUp = async ({
   await keyed(storage, persons);
   const { ledger, reads } = recordingLedger(entries, visibilityDelayMs);
   const reconciliation = createForgetLedgerReconciliation({
+    recipients: NO_RECIPIENTS,
     intentions: withoutLedger({ ids: createSequentialIdGenerator(), clock: createFixedClock(NOW) }),
     retentionDue: NEVER_DUE,
     ledger,
@@ -327,6 +329,7 @@ describe("the forget ledger's reconciliation", () => {
     const inner = await memory().createForgetLedger({ tenant: DEFAULT_TENANT });
     await inner.append([entry("c-1", "e-1", at(0))]);
     const reconciliation = createForgetLedgerReconciliation({
+      recipients: NO_RECIPIENTS,
       intentions: withoutLedger({
         ids: createSequentialIdGenerator(),
         clock: createFixedClock(NOW),
@@ -382,6 +385,7 @@ describe("the forget ledger's reconciliation", () => {
     const errors: unknown[] = [];
     let reads = 0;
     const reconciliation = createForgetLedgerReconciliation({
+      recipients: NO_RECIPIENTS,
       intentions: withoutLedger({
         ids: createSequentialIdGenerator(),
         clock: createFixedClock(NOW),
@@ -441,6 +445,7 @@ describe("the forget ledger's reconciliation", () => {
     const errors: unknown[] = [];
     const create = () =>
       createForgetLedgerReconciliation({
+        recipients: NO_RECIPIENTS,
         intentions: withoutLedger({
           ids: createSequentialIdGenerator(),
           clock: createFixedClock(NOW),
@@ -474,6 +479,7 @@ describe("the forget ledger's reconciliation", () => {
     const storage = await memory().createStorage();
     const asked: string[] = [];
     const reconciliation = createForgetLedgerReconciliation({
+      recipients: NO_RECIPIENTS,
       intentions: withoutLedger({
         ids: createSequentialIdGenerator(),
         clock: createFixedClock(NOW),
@@ -514,6 +520,7 @@ describe("the forget ledger's reconciliation", () => {
     await storage.checkpointStore.set(FORGET_LEDGER_HELD_UNTIL, NOW.getTime() + 60_000);
     const told: string[] = [];
     const reconciliation = createForgetLedgerReconciliation({
+      recipients: NO_RECIPIENTS,
       intentions: withoutLedger({
         ids: createSequentialIdGenerator(),
         clock: createFixedClock(NOW),
@@ -567,6 +574,7 @@ describe("the forget ledger's periodic reconciliation", () => {
     const { ledger, reads } = recordingLedger([]);
     let left = failures;
     const reconciliation = createForgetLedgerReconciliation({
+      recipients: NO_RECIPIENTS,
       intentions: withoutLedger({
         ids: createSequentialIdGenerator(),
         clock: createFixedClock(NOW),
@@ -796,6 +804,7 @@ describe("what the reconciliation commits again", () => {
       await keyed(storage, ["c-1"]);
       const clock = createFixedClock(NOW);
       const reconciliation = createForgetLedgerReconciliation({
+        recipients: NO_RECIPIENTS,
         ledger: recordingLedger([{ ...named(["f-c-1"]), reason: "retention" }]).ledger,
         intentions: withoutLedger({ ids: createSequentialIdGenerator(), clock }),
         retentionDue: async (_, personId, now) => {
@@ -1139,6 +1148,7 @@ describe("forgetAgain", () => {
     const ids = createSequentialIdGenerator();
     const clock = createFixedClock(NOW);
     const refused = forgetAgain({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: withoutLedger({ ids, clock }),
       ids,
@@ -1168,6 +1178,7 @@ describe("forgetAgain", () => {
     const clock = createFixedClock(NOW);
     const run = (entry: ForgetAgainEntry) =>
       forgetAgain({
+        recipients: NO_RECIPIENTS,
         storage: counted,
         intentions: withoutLedger({ ids, clock }),
         ids,
@@ -1217,6 +1228,7 @@ describe("forgetAgain", () => {
     const clock = createFixedClock(NOW);
     const run = (entry: ForgetAgainEntry) =>
       forgetAgain({
+        recipients: NO_RECIPIENTS,
         storage,
         intentions: withoutLedger({ ids, clock }),
         ids,
@@ -1276,6 +1288,7 @@ describe("forgetAgain", () => {
     const clock = createFixedClock(NOW);
     const run = (asked: readonly string[] | null) =>
       forgetAgain({
+        recipients: NO_RECIPIENTS,
         storage,
         intentions: withoutLedger({ ids, clock }),
         ids,
@@ -1341,6 +1354,7 @@ describe("forgetAgain", () => {
     const clock = createFixedClock(NOW);
     const run = (entry: ForgetAgainEntry) =>
       forgetAgain({
+        recipients: NO_RECIPIENTS,
         storage,
         intentions: withoutLedger({ ids, clock }),
         ids,
@@ -1428,6 +1442,7 @@ describe("forgetAgain", () => {
     });
     const run = (entry: ForgetAgainEntry) =>
       forgetAgain({
+        recipients: NO_RECIPIENTS,
         storage,
         intentions,
         ids,
@@ -1574,6 +1589,7 @@ describe("forgetAgain", () => {
     const { storage, recorded, intentions, ids, clock } = await ledgered();
     await keyed(storage, ["c-1"]);
     const reconciliation = createForgetLedgerReconciliation({
+      recipients: NO_RECIPIENTS,
       ledger: recordingLedger([{ ...entry("c-1", "e-1", at(3)), fingerprints: ["f-c-1"] }]).ledger,
       intentions,
       retentionDue: NEVER_DUE,
@@ -1677,6 +1693,7 @@ describe("the reconciliation's status and restores", () => {
     const storage = await memory().createStorage();
     const logged: unknown[][] = [];
     const reconciliation = createForgetLedgerReconciliation({
+      recipients: NO_RECIPIENTS,
       ledger: recordingLedger([]).ledger,
       intentions: withoutLedger({
         ids: createSequentialIdGenerator(),

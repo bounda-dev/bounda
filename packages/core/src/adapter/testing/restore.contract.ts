@@ -662,6 +662,53 @@ const laggingLedger = (source: ForgetLedgerSource, clock: Clock) => {
  */
 // The adapter the app opened: a file its adapter encrypts under the tenant's keys opens only
 // through them, as the app holds them.
+const ignored = async (): Promise<void> => undefined;
+
+// The registry with a mailer out of the EEA that a policy hands every customer's email to.
+const withMailer = (base: typeof registry): Registry =>
+  ({
+    ...base,
+    aggregates: {
+      customer: {
+        ...base.aggregates.customer,
+        ports: { mailer: { memory: { default: { send: ignored } } } },
+        recipients: {
+          mailer: {
+            recipient: {
+              name: "Mailchimp",
+              kind: "processor",
+              country: "US",
+              safeguard: "standard-contractual-clauses",
+              categories: ["default"],
+            },
+            onPersonalDataForgotten: ignored,
+            onProcessingRestricted: ignored,
+            onProcessingRestrictionLiftAnnounced: ignored,
+            onProcessingRestrictionLifted: ignored,
+            onPersonalDataRedacted: ignored,
+            onTenantForgotten: ignored,
+          },
+        },
+        policies: {
+          ...base.aggregates.customer?.policies,
+          mailOnCustomerRegistered: {
+            module: {
+              handler: async ({
+                event,
+                mailer,
+              }: {
+                event: { payload: { email: string | null } };
+                mailer: { send(args: { readonly to: string | null }): Promise<void> };
+              }) => {
+                await mailer.send({ to: event.payload.email });
+              },
+            },
+          },
+        },
+      },
+    },
+  }) as unknown as Registry;
+
 const openedAs = (definition: AdapterDefinition | undefined): Adapter => {
   if (definition === undefined || !isAdapter(definition)) {
     throw new Error("The app holds no adapter there");
@@ -1589,6 +1636,63 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         expect(await restored.app.forgetAgain([{ personId: "ana" }])).toEqual(["ana"]);
         await restored.app.runUntilIdle();
         await expectForgottenIn(restored, "ana");
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts once, in a copy restored from before a forgetting, the recipient it took the person off, as it commits again",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const options = { registry: withMailer(registry) };
+        const counted = async ({ app }: Started) => {
+          const stores = await openedAs(app.config.storage).createStorage();
+          try {
+            return await stores.recipients.forgottenCounts();
+          } finally {
+            await stores.close();
+          }
+        };
+        const first = await start(
+          target.storage,
+          target.forgetLedger,
+          BEFORE_ROTATION,
+          clock,
+          options,
+        );
+        for (const person of ["ana", "bob"]) await write(first, person);
+        await target.backUp();
+        await first.app.forget("ana");
+        await first.app.runUntilIdle();
+        const mailchimp = {
+          port: "customer.mailer",
+          recipient: "Mailchimp",
+          kind: "processor",
+          country: "US",
+          safeguard: "standard-contractual-clauses",
+          status: "disclosed",
+          persons: 1,
+        };
+        const expected = [
+          { ...mailchimp, category: null },
+          { ...mailchimp, category: "default" },
+        ];
+        expect(await counted(first)).toEqual(expect.arrayContaining(expected));
+        expect(await counted(first)).toHaveLength(2);
+        await first.app.stop();
+
+        const restored = await start(
+          await target.restore(),
+          target.forgetLedger,
+          BEFORE_ROTATION,
+          clock,
+          options,
+        );
+        await restored.app.runUntilIdle();
+        await expectForgottenIn(restored, "ana");
+        expect(await counted(restored)).toEqual(expect.arrayContaining(expected));
+        expect(await counted(restored)).toHaveLength(2);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

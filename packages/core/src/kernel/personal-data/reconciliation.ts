@@ -12,6 +12,7 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { discloseAgain } from "../recipients/again.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
 import { startedBy } from "../shared/causation.ts";
 import { RESTORE_COVERED, RESTORE_GENERATION } from "../shared/restores.ts";
 import type { PersonalCategories } from "./categories.ts";
@@ -137,6 +138,7 @@ export interface ForgetAgainArgs {
   readonly clock: Clock;
   readonly concurrencyRetries: number;
   readonly categories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly batchSize: number;
   readonly entry: ForgetAgainEntry;
   readonly retentionDue: RetentionDueFunction;
@@ -270,6 +272,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
   clock,
   concurrencyRetries,
   categories,
+  recipients,
   batchSize,
   entry,
   retentionDue,
@@ -328,6 +331,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
           intention,
           context: startedBy(correlationId, actor),
           categories,
+          recipients,
           scope: scopeOf(covered),
           batchSize,
           checked: complete,
@@ -419,6 +423,7 @@ export interface CreateForgetLedgerReconciliationArgs {
   readonly intentions: ForgetIntentions;
   readonly retentionDue: RetentionDueFunction;
   readonly categories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly batchSize: number;
   /**
    * The store as written.
@@ -471,6 +476,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   logger,
   concurrencyRetries,
   categories,
+  recipients,
   batchSize,
   reconcileEveryMs,
   keepForMs,
@@ -565,6 +571,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       clock,
       concurrencyRetries,
       categories,
+      recipients,
       batchSize,
       entry,
       retentionDue,

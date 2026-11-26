@@ -443,6 +443,7 @@ describe("sqlite adapter on a file", () => {
       ["storage", 9],
       ["storage", 10],
       ["storage", 11],
+      ["storage", 12],
     ]);
   });
 
@@ -479,6 +480,7 @@ describe("sqlite adapter on a file", () => {
       "app_dead_letters",
       "app_disclosures",
       "app_events",
+      "app_forgotten_recipients",
       "app_idempotency_keys",
       "app_inbox",
       "app_index_keys",
