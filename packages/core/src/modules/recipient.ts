@@ -82,11 +82,14 @@ export const STORE_SAFEGUARDS: readonly StoreSafeguard[] = [
 ];
 
 /**
- * The countries of the European Economic Area, by their ISO 3166-1 alpha-2 code: a transfer to one
- * of them needs no safeguard.
+ * The countries of the European Economic Area, by their ISO 3166-1 alpha-2 code, and the parts of
+ * them ISO 3166-1 codes apart where the GDPR applies as in the rest of the country: the Åland
+ * Islands (`AX`, Finland) and the outermost regions of France (`GF`, `GP`, `MF`, `MQ`, `RE`, `YT`).
+ * A transfer to one of them needs no safeguard.
  */
 export const EEA_COUNTRIES = [
   "AT",
+  "AX",
   "BE",
   "BG",
   "CY",
@@ -97,6 +100,8 @@ export const EEA_COUNTRIES = [
   "ES",
   "FI",
   "FR",
+  "GF",
+  "GP",
   "GR",
   "HR",
   "HU",
@@ -107,15 +112,19 @@ export const EEA_COUNTRIES = [
   "LT",
   "LU",
   "LV",
+  "MF",
+  "MQ",
   "MT",
   "NL",
   "NO",
   "PL",
   "PT",
+  "RE",
   "RO",
   "SE",
   "SI",
   "SK",
+  "YT",
 ] as const;
 
 /**
@@ -374,6 +383,32 @@ export const COUNTRY_CODES = [
 ] as const;
 
 /**
+ * The countries with an adequacy decision of the European Commission under article 45 of the GDPR,
+ * as of November 2026, by their ISO 3166-1 alpha-2 code. Only these take the `adequacy` safeguard.
+ * The decisions for Canada and the United States cover some organisations alone (commercial ones
+ * under PIPEDA; those certified under the EU-US Data Privacy Framework): you answer for the
+ * recipient or the provider being one.
+ */
+export const ADEQUATE_COUNTRIES = [
+  "AD",
+  "AR",
+  "BR",
+  "CA",
+  "CH",
+  "FO",
+  "GB",
+  "GG",
+  "IL",
+  "IM",
+  "JE",
+  "JP",
+  "KR",
+  "NZ",
+  "US",
+  "UY",
+] as const;
+
+/**
  * A country by its ISO 3166-1 alpha-2 code.
  */
 export type CountryCode = (typeof COUNTRY_CODES)[number];
@@ -382,6 +417,11 @@ export type CountryCode = (typeof COUNTRY_CODES)[number];
  * A country of the European Economic Area.
  */
 export type EeaCountry = (typeof EEA_COUNTRIES)[number];
+
+/**
+ * A country with an adequacy decision of the European Commission.
+ */
+export type AdequateCountry = (typeof ADEQUATE_COUNTRIES)[number];
 
 interface RecipientIdentity<Category extends string> {
   /**
@@ -404,15 +444,17 @@ interface RecipientIdentity<Category extends string> {
 /**
  * What a port module exports as `recipient` when the port sends personal data out: who receives
  * it, where, and which categories. A country outside the European Economic Area takes the
- * safeguard its transfer rests on; one inside takes none.
+ * safeguard its transfer rests on, `adequacy` only when it is one of `ADEQUATE_COUNTRIES`; one
+ * inside takes none.
  */
 export type RecipientDeclaration<Category extends string = PersonalCategoryName> =
   RecipientIdentity<Category> &
     (
       | { readonly country: EeaCountry; readonly safeguard?: never }
+      | { readonly country: AdequateCountry; readonly safeguard: TransferSafeguard }
       | {
-          readonly country: Exclude<CountryCode, EeaCountry>;
-          readonly safeguard: TransferSafeguard;
+          readonly country: Exclude<CountryCode, EeaCountry | AdequateCountry>;
+          readonly safeguard: Exclude<TransferSafeguard, "adequacy">;
         }
     );
 

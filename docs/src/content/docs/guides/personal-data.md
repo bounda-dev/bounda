@@ -1597,8 +1597,10 @@ with purposes of its own (article 4(10)); its `country`, as an ISO 3166-1 alpha-
 [categories](#categories) of personal data the port sends it. A country outside the European
 Economic Area takes the `safeguard` its transfer rests on: `adequacy` (article 45),
 `standard-contractual-clauses` (article 46(2)(c)), `binding-corporate-rules` (article 47),
-`code-of-conduct`, `certification` (article 46(2)(e) and (f)) or `derogation` (article 49); one
-inside takes none. A port of a read model may declare one too, for what its queries hand it.
+`code-of-conduct`, `certification` (article 46(2)(e) and (f)) or `derogation` (article 49), and
+`adequacy` only for a country of `ADEQUATE_COUNTRIES`, those with an adequacy decision; one inside,
+the Åland Islands (`AX`) and the outermost regions of France (`GF`, `GP`, `MF`, `MQ`, `RE`, `YT`)
+included, takes none. A port of a read model may declare one too, for what its queries hand it.
 
 Five of the six handlers tell the recipient of one event of the person's stream `bounda:<personId>`:
 a [forgetting](#forgetting-a-person), a [restriction](#restricting-processing), the announcement of
@@ -2557,9 +2559,11 @@ which the caller or the reaction's retry sees; the person's data is not touched.
 
 ### Stores in another jurisdiction
 
-Every store is kept where `storage` declares the app's data is, unless a safeguard of chapter V of
-the GDPR allows keeping it elsewhere: the keys in a country with an adequacy decision and the data
-in the EU, say. The store declares its `location` and its `safeguard`, with the vocabulary a
+Every store is kept under the legal regime of where `storage` declares the app's data is, unless a
+safeguard of chapter V of the GDPR allows keeping it under another: the keys in a country with an
+adequacy decision and the data in the EU, say. A store in `"de"` under a `storage` in `"eu"` needs
+none, since both are in the European Economic Area; see how
+[locations are compared](/reference/configuration/#data-location). The store declares its `location` and its `safeguard`, with the vocabulary a
 [recipient](#recipients) uses, one of articles 45 to 47:
 
 ```ts
@@ -2581,11 +2585,12 @@ export default defineConfig({
 });
 ```
 
-- A store kept elsewhere without a safeguard is refused when the app starts, with a
-  `ConfigurationError` that names it, its location and the safeguards it may declare. So is a
-  safeguard where `storage` is, which is no transfer, a safeguard on `storage` itself or under a
-  `storage` that declares no location, and a `derogation`, which article 49 allows for occasional
-  transfers alone, never for a store that keeps data as long as the app runs.
+- A store kept under another regime without a safeguard is refused when the app starts, with a
+  `ConfigurationError` that names it, its location and regime and the safeguards it may declare.
+  So is a safeguard under `storage`'s regime, which is no transfer, a safeguard on `storage` itself
+  or under a `storage` that declares no location, `adequacy` for a location no adequacy decision
+  covers, and a `derogation`, which article 49 allows for occasional transfers alone, never for a
+  store that keeps data as long as the app runs.
 - The [record of processing](#the-record-of-processing-activities) names each transfer next to the
   store, `in ch, transferred under adequacy (article 45)`, and every person's
   [export](#exporting-a-persons-data) lists it in `transfers`, as does the tenant's when it is

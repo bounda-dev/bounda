@@ -3,6 +3,7 @@ import { type AdapterDefinition, placementOf } from "../../adapter/adapter-defin
 import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError, ForgetLedgerTimeoutError } from "../../contracts/errors.ts";
+import type { DataLocation } from "../../modules/data-location.ts";
 import type { StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import type { StoreDefinitionOptions } from "./tenant-key-source.ts";
@@ -36,7 +37,7 @@ export interface ForgetLedgerDefinition {
    * Where the ledger keeps its entries, when it declares it, as an adapter's `location` does, such
    * as `"eu"`.
    */
-  readonly location?: string;
+  readonly location?: DataLocation;
   /**
    * What allows keeping them in another `location` than `storage`'s, as an adapter's `safeguard`
    * does.

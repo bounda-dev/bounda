@@ -1,4 +1,5 @@
 import type { Config } from "../config/types.ts";
+import type { AdequateLocation, DataLocation } from "../modules/data-location.ts";
 import type { StoreSafeguard } from "../modules/recipient.ts";
 
 /**
@@ -14,9 +15,10 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
    * Where the database keeps its data, as its `location` option, or `cloudflare({ jurisdiction })`,
    * declares it, such as `"eu"`. The record of processing (`personalDataInventory`) states it next
    * to every holder and record kept there, and under a storage that declares one, every other
-   * store must declare the same, or another with a `safeguard`.
+   * store must declare one under the same legal regime (`regimeOf`), or another with a
+   * `safeguard`.
    */
-  readonly location?: string;
+  readonly location?: DataLocation;
   /**
    * What allows a read model's database to keep its data in another `location` than `storage`'s,
    * as its `safeguard` option declares it.
@@ -39,26 +41,32 @@ export interface AdapterDefinition<Name extends string = string, Options = unkno
 export type DataLocationOptions =
   | {
       /**
-       * The jurisdiction it is kept in, such as `"eu"`, written the same way across the app; you
-       * answer for it, as Bounda cannot see where a database or a host runs. The record of
-       * processing states it next to everything kept there, and lists each store that declares
-       * none as a finding. Declared on `storage`, it is the app's: the app refuses to start on a
-       * read model, tenant key store, forget ledger or key wrapper that declares none, or another
-       * without a `safeguard`.
+       * Where it is kept: a country in lower case, such as `"de"`, or an area, such as `"eu"`
+       * (`DataLocation`); you answer for it, as Bounda cannot see where a database or a host runs.
+       * The record of processing states it next to everything kept there, and lists each store
+       * that declares none as a finding. Declared on `storage`, it is the app's: the app refuses to
+       * start on a read model, tenant key store, forget ledger or key wrapper that declares none,
+       * or one under another legal regime (`regimeOf`) without a `safeguard`, and on a location it
+       * does not know.
        */
-      readonly location?: string;
+      readonly location?: DataLocation;
       readonly safeguard?: never;
     }
   | {
-      readonly location: string;
+      readonly location: AdequateLocation;
       /**
-       * What allows keeping it in `location`, another jurisdiction than `storage`'s, under
+       * What allows keeping it in `location`, under another legal regime than `storage`'s, under
        * articles 45 to 47 of the GDPR. The record of processing and each person's export tell of
-       * the transfer and its safeguard. The app refuses to start on one declared where `storage`
-       * keeps the app's data, which is no transfer, on `storage` itself, or under a `storage` that
-       * declares no location.
+       * the transfer and its safeguard. The app refuses to start on one declared where keeping the
+       * data is no transfer, as in `"de"` under a `storage` in `"eu"`, on `storage` itself, under a
+       * `storage` that declares no location, and on `adequacy` for a location no adequacy decision
+       * covers.
        */
       readonly safeguard: StoreSafeguard;
+    }
+  | {
+      readonly location: Exclude<DataLocation, AdequateLocation>;
+      readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
     };
 
 /**
@@ -66,7 +74,7 @@ export type DataLocationOptions =
  * keeping it there, as `AdapterDefinition` carries them.
  */
 export interface Placement {
-  readonly location?: string;
+  readonly location?: DataLocation;
   readonly safeguard?: StoreSafeguard;
 }
 
@@ -75,7 +83,7 @@ export interface Placement {
  */
 export interface PlacementOfFunction {
   (options: {
-    readonly location?: string | undefined;
+    readonly location?: DataLocation | undefined;
     readonly safeguard?: StoreSafeguard | undefined;
   }): Placement;
 }

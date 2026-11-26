@@ -33,6 +33,12 @@ describe("recipients", () => {
     void (outside satisfies Port.Recipient);
     // @ts-expect-error one within it takes none
     void ({ ...inside, safeguard: "adequacy" } as const satisfies Port.Recipient);
+    // @ts-expect-error an outermost region of the EU is within it too
+    void ({ ...inside, country: "RE", safeguard: "adequacy" } as const satisfies Port.Recipient);
+    void ({ ...outside, safeguard: "adequacy" } as const satisfies Port.Recipient);
+    void ({ ...inside, country: "IN", safeguard: "derogation" } as const satisfies Port.Recipient);
+    // @ts-expect-error no adequacy decision covers India
+    void ({ ...inside, country: "IN", safeguard: "adequacy" } as const satisfies Port.Recipient);
     // @ts-expect-error a category the app does not declare
     void ({ ...inside, categories: ["marketing"] } as const satisfies Port.Recipient);
     // @ts-expect-error a kind the GDPR does not name

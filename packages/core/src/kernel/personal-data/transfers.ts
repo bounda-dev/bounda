@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from "../../config/types.ts";
+import type { DataLocation } from "../../modules/data-location.ts";
 import { type StoreSafeguard, TRANSFER_ARTICLES } from "../../modules/recipient.ts";
 import type { ExportedTransfer } from "./export.ts";
 
@@ -13,7 +14,7 @@ export interface StoreTransfersFunction {
 }
 
 interface Placed {
-  readonly location?: string | undefined;
+  readonly location?: DataLocation | undefined;
   readonly safeguard?: StoreSafeguard | undefined;
 }
 

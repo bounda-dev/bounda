@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
 import type {
+  AdequateLocation,
   BoundaClient,
   CreateAppArgs,
+  DataLocation,
   DeadLetter,
   DispatchResult,
   Registry,
@@ -24,6 +26,7 @@ import {
   type DurableObjectKeeperOptions,
   durableObjectForgetLedger,
   durableObjectTenantKeys,
+  type KvPlacementOptions,
   kvForgetLedger,
   kvTenantKeys,
   type RpcOutcome,
@@ -124,6 +127,16 @@ describe("the env implementations receive on Cloudflare", () => {
   });
 });
 
+describe("jurisdiction", () => {
+  it("is a location core maps to its legal regime, every Durable Object jurisdiction included", () => {
+    expectTypeOf<DurableObjectJurisdiction>().toExtend<DataLocation>();
+    expectTypeOf<DurableObjectJurisdiction>().toExtend<AdequateLocation>();
+    expectTypeOf(cloudflare({ jurisdiction: "fedramp-high" }).location).toEqualTypeOf<
+      DataLocation | undefined
+    >();
+  });
+});
+
 describe("the keeper", () => {
   it("gives tenant key stores and forget ledgers of the app's storage, and a class to bind", () => {
     const storage = cloudflare({ jurisdiction: "eu" });
@@ -169,6 +182,21 @@ describe("the keeper", () => {
       // @ts-expect-error Workers KV holds to no jurisdiction: a location takes its safeguard
       kvForgetLedger({ binding: "LEDGER", location: "global" });
     void kvWithoutSafeguard;
+    const kvInJurisdiction = () =>
+      // @ts-expect-error Workers KV keeps what it holds anywhere: its only location is "global"
+      kvTenantKeys({ binding: "KEYS", location: "eu", safeguard: "certification" });
+    void kvInJurisdiction;
+    const kvAdequate = () =>
+      // @ts-expect-error no adequacy decision covers anywhere in the world
+      kvTenantKeys({ binding: "KEYS", location: "global", safeguard: "adequacy" });
+    void kvAdequate;
+    expectTypeOf<KvPlacementOptions>().toEqualTypeOf<
+      | { readonly location?: never; readonly safeguard?: never }
+      | {
+          readonly location: "global";
+          readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
+        }
+    >();
     const elsewhere = () =>
       // @ts-expect-error the keeper shares the jurisdiction of the app's cloudflare(), not another adapter's
       durableObjectTenantKeys({ storage: { kind: "bounda-adapter", name: "sqlite", options: {} } });

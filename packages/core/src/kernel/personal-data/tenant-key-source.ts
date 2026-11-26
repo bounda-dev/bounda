@@ -6,6 +6,7 @@ import {
 } from "../../adapter/adapter-definition.ts";
 import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
+import type { DataLocation } from "../../modules/data-location.ts";
 import type { StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { sharesStorage } from "./forget-ledger.ts";
@@ -29,7 +30,7 @@ export interface TenantKeyStoreDefinition {
    * Where the store keeps the keys, when it declares it, as an adapter's `location` does, such as
    * `"eu"`.
    */
-  readonly location?: string;
+  readonly location?: DataLocation;
   /**
    * What allows keeping them in another `location` than `storage`'s, as an adapter's `safeguard`
    * does.
@@ -38,11 +39,11 @@ export interface TenantKeyStoreDefinition {
 }
 
 /**
- * Options of `defineTenantKeyStore` and `defineForgetLedger`: the jurisdiction the store keeps
- * what it holds in, written as an adapter's `location` is, such as `"eu"`, which you answer for,
- * and the `safeguard` that allows keeping it in another jurisdiction than `storage`'s. The record
+ * Options of `defineTenantKeyStore` and `defineForgetLedger`: where the store keeps what it
+ * holds, a `DataLocation` as an adapter's `location` is, such as `"eu"`, which you answer for, and
+ * the `safeguard` that allows keeping it under another legal regime than `storage`'s. The record
  * of processing states both, and an app whose storage declares a location refuses a store that
- * declares none, or another without a safeguard.
+ * declares none, or one under another regime without a safeguard.
  */
 export type StoreDefinitionOptions = DataLocationOptions;
 

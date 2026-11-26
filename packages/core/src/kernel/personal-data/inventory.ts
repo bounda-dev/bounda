@@ -2,6 +2,7 @@ import type { z } from "zod";
 import { type AdapterDefinition, isAdapterDefinition } from "../../adapter/adapter-definition.ts";
 import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ResolvedConfig } from "../../config/types.ts";
+import type { DataLocation } from "../../modules/data-location.ts";
 import { capitalize } from "../../modules/naming.ts";
 import type {
   AutomatedDecision,
@@ -87,16 +88,16 @@ export interface InventoryHolder {
    * Where that database keeps them, as its adapter's `location` declares it; `null` when it
    * declares none.
    */
-  readonly location: string | null;
+  readonly location: DataLocation | null;
   /**
-   * The safeguard that allows keeping them there, out of the jurisdiction `storage` declares;
+   * The safeguard that allows keeping them there, under another legal regime than `storage`'s;
    * `null` when they are kept where `storage` is.
    */
   readonly transfer: InventoryTransfer | null;
 }
 
 /**
- * The safeguard of chapter V of the GDPR a store kept in another jurisdiction than `storage`
+ * The safeguard of chapter V of the GDPR a store kept under another legal regime than `storage`'s
  * declares, with the article it rests on: the transfer article 30(1)(e) asks the record to name.
  */
 export interface InventoryTransfer {
@@ -203,9 +204,9 @@ export interface InventoryRecord {
    * Where it is kept, as the `location` of its adapter or store declares it; `null` when it
    * declares none, and for the access log and the host log, which the app keeps where it chooses.
    */
-  readonly location: string | null;
+  readonly location: DataLocation | null;
   /**
-   * The safeguard that allows keeping it there, out of the jurisdiction `storage` declares;
+   * The safeguard that allows keeping it there, under another legal regime than `storage`'s;
    * `null` when it is kept where `storage` is.
    */
   readonly transfer: InventoryTransfer | null;
@@ -342,11 +343,11 @@ const review = (
 
 interface KeptIn {
   readonly database: string;
-  readonly location: string | null;
+  readonly location: DataLocation | null;
   readonly transfer: InventoryTransfer | null;
 }
 
-// `resolveConfig` lets a store declare a safeguard only when kept out of `storage`'s jurisdiction.
+// `resolveConfig` lets a store declare a safeguard only when kept out of `storage`'s legal regime.
 const transferOf = (store: {
   readonly safeguard?: StoreSafeguard | undefined;
 }): InventoryTransfer | null =>

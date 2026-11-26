@@ -560,13 +560,16 @@ for one, 35(3)(b), and for a data protection officer when it is the controller's
 A recipient declares its `country`, as an ISO 3166-1 alpha-2 code, and one outside the European
 Economic Area its `safeguard`: `adequacy` (article 45), `standard-contractual-clauses` (46(2)(c)),
 `binding-corporate-rules` (47), `code-of-conduct` or `certification` (46(2)(e) and (f)), or
-`derogation` (49). The app does not start on a transfer without one. The export and
-`recipientsOf` tell the person where their data went and on what it rests, with the article, 15(2),
-and the record of processing lists every transfer. A tenant's export sums the recipients of every
-person in it, once under each identity a disclosure was recorded with, for the controller it is
-handed back to, 28(3)(g).
+`derogation` (49). The app does not start on a transfer without one, on a safeguard for a country
+inside the area, which counts the Åland Islands and the outermost regions of France apart from
+their ISO codes, nor on `adequacy` for a country the European Commission has adopted no adequacy
+decision for (`ADEQUATE_COUNTRIES`). The export and `recipientsOf` tell the person where their data
+went and on what it rests, with the article, 15(2), and the record of processing lists every
+transfer. A tenant's export sums the recipients of every person in it, once under each identity a
+disclosure was recorded with, for the controller it is handed back to, 28(3)(g).
 
-Every database and store declares the jurisdiction it keeps its data in: `location: "eu"` on
+Every database and store declares where it keeps its data, a country in lower case or an area such
+as the EU (`DataLocation`): `location: "eu"` on
 `sqlite()`, `postgresql()` and `memory()`, the `jurisdiction` on `cloudflare()`, and the `location`
 of `defineTenantKeyStore` and `defineForgetLedger` for stores of your own; `masterKey` and
 `defineKeyWrapper` declare where the master key is. The location `storage` declares is the app's:
@@ -577,7 +580,11 @@ protects data from a transfer only while its keys stay where the data is (EDPB r
 01/2020). A store kept elsewhere declares its safeguard as a recipient does, one of articles 45 to
 47; a `derogation` of article 49 covers occasional transfers alone (EDPB guidelines 2/2018), never a
 store that keeps data for as long as the app runs, and is refused, as is a safeguard on a store kept
-where `storage` is. The record of processing states each one's location and the safeguard of each
+under `storage`'s legal regime, and `adequacy` where no adequacy decision covers. Locations are
+compared by that regime (`regimeOf`): every location in the European Economic Area is one, each
+other country its own, the Durable Object jurisdictions `"us"`, `"fedramp"` and `"fedramp-high"`
+the United States, and `"global"`, where Workers KV keeps what it holds, none; a location Bounda
+does not know is refused rather than guessed. The record of processing states each one's location and the safeguard of each
 transfer, 30(1)(e), and lists every store of personal data, and the key wrapper, that declares no
 location as a finding; each person's export lists the transfers in `transfers`, 15(2), and so does
 the header of a tenant's export, 28(3)(g).
@@ -590,8 +597,8 @@ forget ledger with them, unless `durableObjectTenantKeys` or `durableObjectForge
 another `jurisdiction` with a `safeguard`. Every way Bounda reaches an object follows it, an object
 or a keeper created elsewhere refuses to start, so no tenant has part of its data outside where it
 is declared. A tenant key store or forget ledger in Workers KV, whose pairs Cloudflare does not hold
-to a jurisdiction, declares none, and is refused under one, unless it declares where it may keep
-them, never that jurisdiction, with a safeguard. See [Data location](/adapters/cloudflare/#data-location).
+to a jurisdiction, declares none, and is refused under one, unless it declares `"global"` with a
+safeguard other than `adequacy`. See [Data location](/adapters/cloudflare/#data-location).
 
 Left to the controller: the safeguard itself, the clauses signed and the transfer impact
 assessment, and the truth of every `location` but the one Cloudflare holds an object to. Bounda
@@ -599,9 +606,9 @@ cannot see where a PostgreSQL server, a SQLite file or a process runs, so a decl
 taken at its word, and the processes of a Node app must run where its storage is. Backups, logs and
 the access log `app/audit.ts` are where the app puts them; on Cloudflare, an object checks its
 own jurisdiction, but Bounda cannot see where a Worker's secrets are kept, so the master key's
-location is the controller's to keep true. Locations are compared as written: two names are two
-jurisdictions, even both in one country. On Cloudflare, the jurisdiction holds the objects, not the
-Worker that serves each request near it.
+location is the controller's to keep true. So is being within the scope of the adequacy decisions
+for Canada and the United States, which cover some organisations alone. On Cloudflare, the
+jurisdiction holds the objects, not the Worker that serves each request near it.
 
 ## Remedies (articles 77 to 82)
 

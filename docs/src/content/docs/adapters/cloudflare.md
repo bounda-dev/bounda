@@ -320,7 +320,8 @@ global stream.
 
 `cloudflare({ jurisdiction })` names the
 [jurisdiction](https://developers.cloudflare.com/durable-objects/reference/data-location/) every
-tenant's object is created in, such as `"eu"`: Cloudflare then runs it and keeps its SQLite only
+tenant's object is created in, `"eu"`, `"us"`, `"fedramp"` or `"fedramp-high"`, any other refused
+with a `ConfigurationError`: Cloudflare then runs it and keeps its SQLite only
 there, whichever part of the world its requests come from. It is the one place that says so, and
 everything that reaches an object follows it: `createWorker`, the React Router hosts, and, for a
 Worker of your own, `tenantStub({ config, env, tenant })`, or `boundaNamespace({ config, env })`
@@ -337,9 +338,11 @@ configuration names none, refuses to start with a `ConfigurationError`.
 - A read model that `readModels` puts on `cloudflare()` lives in the tenant's object, so its
   `cloudflare()` names the same jurisdiction as `storage`, or none when `storage` names none. The
   app refuses to start on one that names another, and so does `bounda personal-data inventory`.
-- The jurisdiction is the app's [location](/reference/configuration/#data-location): a read model
-  on another adapter, such as a PostgreSQL server or a Turso database, declares the same with
-  `location: "eu"`, and so does the key wrapper, `masterKey({ from, location: "eu" })` or a KMS
+- The jurisdiction is the app's [location](/reference/configuration/#data-location), compared with
+  every other by the legal regime it is under: `"eu"` the European Economic Area, `"us"`,
+  `"fedramp"` and `"fedramp-high"` the United States. A read model on another adapter, such as a
+  PostgreSQL server or a Turso database, declares the same with `location: "eu"`, or another under
+  the same regime, such as `"de"`, and so does the key wrapper, `masterKey({ from, location: "eu" })` or a KMS
   through `defineKeyWrapper`, or the app refuses to start on it, and so does the record of
   processing. The object checks its own jurisdiction, but Bounda cannot see where Cloudflare
   keeps a Worker's secrets: where the master key in `BOUNDA_MASTER_KEY` is kept is yours to
@@ -349,7 +352,7 @@ configuration names none, refuses to start with a `ConfigurationError`.
 - The jurisdiction holds the objects, not the Worker in front of them, which runs near each
   request. [Tenant keys](#tenant-keys) and the [forget ledger](#the-forget-ledger), wrapped keys
   and the ids of persons, are held to it too: with a jurisdiction, the app refuses to start on a
-  tenant key store or a forget ledger whose `location` is not that jurisdiction, unless it
+  tenant key store or a forget ledger whose `location` is under another legal regime, unless it
   declares a [safeguard](#keepers-in-another-jurisdiction) for the one it names, and so does
   `bounda personal-data inventory`. The keeper's, `durableObjectTenantKeys({ storage })` and
   `durableObjectForgetLedger({ storage })`, are in it. Workers KV is not: its
@@ -390,13 +393,14 @@ export default defineConfig({
   store's calls outside that store's, so a tenant whose key and ledger are kept apart has a keeper
   in each, both through the one `KEEPER` binding. The types take a `safeguard` only beside a
   `jurisdiction`; without one, the keepers are in `storage`'s.
-- The app refuses to start on a keeper elsewhere without a safeguard, and on one that names
-  `storage`'s jurisdiction with a safeguard, which is no transfer. Choose before the first keeper
-  exists, as for the objects: a tenant whose key is reached in a new jurisdiction finds none.
-- Workers KV holds to no jurisdiction, so `kvTenantKeys` and `kvForgetLedger` take a `location` only
-  together with a `safeguard`, `kvTenantKeys({ binding, location: "global", safeguard:
-  "standard-contractual-clauses" })`, where KV may keep and cache what it holds, as you answer for;
-  the app refuses one that names `storage`'s jurisdiction, which KV does not keep to.
+- The app refuses to start on a keeper under another legal regime without a safeguard, and on one
+  under `storage`'s with a safeguard, which is no transfer: keepers in `"fedramp"` under objects in
+  `"us"` take none, since both are in the United States. Choose before the first keeper exists, as
+  for the objects: a tenant whose key is reached in a new jurisdiction finds none.
+- Workers KV holds to no jurisdiction, so `kvTenantKeys` and `kvForgetLedger` take a `location`
+  only together with a `safeguard`, and that location is `"global"`, anywhere in the world:
+  `kvTenantKeys({ binding, location: "global", safeguard: "standard-contractual-clauses" })`. Any
+  other location is refused, and so is `adequacy`, which no decision gives for anywhere.
 - `bounda personal-data inventory` states the transfer next to the store, `tenant-keys, in us,
   transferred under adequacy (article 45)`, and each person's export lists it in `transfers`.
 

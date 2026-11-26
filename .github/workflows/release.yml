@@ -20,9 +20,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Pushes made with GITHUB_TOKEN start no workflow, so the version pull request would get no
+      # CI. A GitHub App's token pushes as the App, and CI runs on it like on any pull request.
+      # Without the App configured, the job falls back to GITHUB_TOKEN.
+      - id: app
+        if: vars.RELEASE_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
+          token: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/setup
         with:
           registry-url: https://registry.npmjs.org
@@ -32,4 +44,4 @@ jobs:
           publish-script: pnpm release
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}

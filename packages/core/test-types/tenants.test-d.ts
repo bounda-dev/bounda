@@ -2,6 +2,7 @@ import {
   type AppStatus,
   type BoundaClient,
   type BoundaError,
+  type DataLocation,
   DEFAULT_TENANT,
   type EncryptedFileStatus,
   FILE_ENCRYPTION_RETRY_MS,
@@ -271,7 +272,7 @@ describe("the tenant in the configuration", () => {
       location: "eu",
     });
     expectTypeOf(located).toEqualTypeOf<TenantKeyStoreDefinition>();
-    expectTypeOf(located.location).toEqualTypeOf<string | undefined>();
+    expectTypeOf(located.location).toEqualTypeOf<DataLocation | undefined>();
     expectTypeOf<Parameters<typeof defineTenantKeyStore>[1]>().toEqualTypeOf<
       StoreDefinitionOptions | undefined
     >();
