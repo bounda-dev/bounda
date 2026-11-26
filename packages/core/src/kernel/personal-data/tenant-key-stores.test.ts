@@ -615,7 +615,11 @@ describe("the walk across stores", () => {
         opened[name] += 1;
         return {
           ...store,
-          get: async (tenant) => (tenant === "gone" ? null : store.get(tenant)),
+          get: async (tenant) => {
+            // Only a tenant's name is ever asked for.
+            if (typeof tenant !== "string") throw new Error("not a tenant");
+            return tenant === "gone" ? null : store.get(tenant);
+          },
         };
       });
     const [oneKeys, twoKeys] = [opening(one, "one"), opening(two, "two")];
