@@ -73,6 +73,38 @@ describe("formatTenantKeysStatus", () => {
   });
 });
 
+describe("formatTenantKeysStatus on forgotten tenants' copies", () => {
+  it("fails on each copy of a forgotten tenant's key holding a version or a file key, and on none holding neither", () => {
+    const copy = (versions: readonly string[], files: readonly string[]) => ({
+      tenant: "acme",
+      namedBy: "hooli",
+      named: "forgotten" as const,
+      lost: { versions, files },
+    });
+    const status = (stale: ReturnType<typeof copy>[]) =>
+      formatTenantKeysStatus(
+        { stores: 2, underPreviousMaster: [], stale, failed: [], unreached: [] },
+        "omit",
+      );
+    expect(status([copy([], [])]).err).toEqual([]);
+    expect(status([copy(["t-1"], []), copy([], ["f-1", "f-2"]), copy([], [])])).toEqual({
+      out: [
+        "2 tenant key store(s) read",
+        "no tenant's key read is under a previous master key",
+        `acme: a copy of its key ${where}, though it is forgotten: remove it with bounda tenant-key remove-stale acme`,
+        `acme: a copy of its key ${where}, though it is forgotten: remove it with bounda tenant-key remove-stale acme`,
+        `acme: a copy of its key ${where}, though it is forgotten: remove it with bounda tenant-key remove-stale acme`,
+      ],
+      err: [
+        "error: 2 copy(ies) of forgotten tenants' keys left: remove them with bounda tenant-key remove-stale",
+      ],
+    });
+    expect(formatStale({ ...copy([], ["f-1", "f-2"]), named: "differs" })).toContain(
+      "holding file keys f-1, f-2, which",
+    );
+  });
+});
+
 describe("formatKeyCopiesLeft and formatRemovedCopy", () => {
   it("names each copy left and each store not listed, and each copy removed", () => {
     const error = new Error("store unavailable");

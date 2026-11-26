@@ -2439,9 +2439,42 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       expect(keyless.stdout).toContain(
         `${forgotten}: a copy of its key ${where}, though it is forgotten`,
       );
+
+      // A tenant the tenants export names whose configuration cannot load: its stores are unread.
+      process.env.MOVED_REACH = "broken-reach";
+      const unread = await cli(["forget-tenant", held, ...movedConfig, "--yes"], fixture);
+      expect(unread.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(unread.stderr)).toBe(
+        `error: the stores broken-reach's configuration names could not be listed: Error\n1 copy(ies) of tenant ${held}'s key not removed or tenant(s) not read: run bounda forget-tenant ${held} --yes again once what failed is fixed\n`,
+      );
+      delete process.env.MOVED_REACH;
+      const reread = await cli(["forget-tenant", held, ...movedConfig, "--yes"], fixture);
+      expect(besidesLogs(reread.stderr)).toBe("");
+      expect(reread.code).toBe(EXIT_OK);
+
+      // The store a starting tenant's configuration names is down: nothing can be read.
+      process.env.MOVED_DOWN = "1";
+      for (const command of ["status", "remove-stale"]) {
+        const down = await cli(["tenant-key", command, ...movedConfig, "--tenant", held], fixture);
+        expect(down.code).toBe(EXIT_FAILURE);
+        expect(down.stdout).toBe("");
+        expect(besidesLogs(down.stderr)).toBe(
+          "error: Error; its message may quote personal data: run again with --error-text to print it\n",
+        );
+      }
+      for (const command of ["status", "remove-stale"]) {
+        const missing = await cli(
+          ["tenant-key", command, "--config", "nowhere.config.ts"],
+          fixture,
+        );
+        expect(missing.code).toBe(EXIT_FAILURE);
+        expect(missing.stdout).toBe("");
+        expect(besidesLogs(missing.stderr)).toMatch(/^error: .*nowhere\.config\.ts[^\n]*\n$/);
+      }
     } finally {
-      delete process.env.MOVED_MASTER;
-      delete process.env.MOVED_TENANTS;
+      for (const name of ["MOVED_MASTER", "MOVED_TENANTS", "MOVED_REACH", "MOVED_DOWN"]) {
+        delete process.env[name];
+      }
     }
   });
 

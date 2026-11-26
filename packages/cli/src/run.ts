@@ -1170,7 +1170,6 @@ const loadKeyProject = async (
       logger: logTo(stderr),
       ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
     });
-    resolveErrorText({ env: process.env });
     return {
       config: project.projectConfig,
       tenant: project.tenant,
@@ -1253,17 +1252,7 @@ const runTenantKeyStatus = async (
     const { out, err } = formatTenantKeysStatus(inspection, project.errorText);
     for (const each of out) line(stdout, each);
     for (const each of err) line(stderr, each);
-    // A copy holding no key of a forgotten tenant, a forgetting's own record, opens nothing.
-    const forgottenCopies = inspection.stale.filter(
-      ({ named, lost }) => named === "forgotten" && lost.versions.length + lost.files.length > 0,
-    );
-    if (forgottenCopies.length > 0) {
-      line(
-        stderr,
-        `error: ${forgottenCopies.length} copy(ies) of forgotten tenants' keys left: remove them with bounda tenant-key remove-stale`,
-      );
-    }
-    return err.length + forgottenCopies.length === 0 ? EXIT_OK : EXIT_FAILURE;
+    return err.length === 0 ? EXIT_OK : EXIT_FAILURE;
   } catch (error) {
     return failed(stderr, error, project.errorText);
   }

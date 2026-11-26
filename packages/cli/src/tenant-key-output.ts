@@ -73,6 +73,11 @@ export const formatTenantKeysStatus: FormatTenantKeysStatusFunction = (
   errorText,
 ) => {
   const unread = new Set([...failed, ...unreached].map(({ tenant }) => tenant)).size;
+  // A copy holding no key of a forgotten tenant, a forgetting's own record, opens nothing.
+  const forgottenCopies = stale.filter(
+    ({ named, lost }) =>
+      named === "forgotten" && (lost.versions.length > 0 || lost.files.length > 0),
+  ).length;
   return {
     out: [
       `${stores} tenant key store(s) read`,
@@ -88,6 +93,11 @@ export const formatTenantKeysStatus: FormatTenantKeysStatusFunction = (
         ? []
         : [
             `${unread} tenant(s) not read: what their stores hold is unknown, so keep the previous master keys`,
+          ]),
+      ...(forgottenCopies === 0
+        ? []
+        : [
+            `error: ${forgottenCopies} copy(ies) of forgotten tenants' keys left: remove them with bounda tenant-key remove-stale`,
           ]),
     ],
   };
