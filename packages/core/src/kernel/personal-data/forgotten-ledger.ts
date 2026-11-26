@@ -92,6 +92,7 @@ export const createForgottenLedger: CreateForgottenLedgerFunction = ({
       return null;
     },
     cleared: async () =>
-      (await ledger.read({ limit: 1 })).length === 0 && (await ledger.readMark(RESTORE_MARK)) === 0,
+      (await ledger.read({ limit: 1 })).length === 0 &&
+      (await ledger.readMark(RESTORE_MARK)).length === 0,
   };
 };

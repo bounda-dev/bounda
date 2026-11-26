@@ -984,11 +984,22 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         ledgerStore === undefined
           ? null
           : {
-              readMark: async (name) => (tenantForgotten() ? 0 : ledgerStore.readMark(name)),
-              raiseMark: async (name, value) => {
-                if (!tenantForgotten()) await ledgerStore.raiseMark(name, value);
+              readMark: async (name) => (tenantForgotten() ? [] : ledgerStore.readMark(name)),
+              raiseMark: async (name, mark) => {
+                if (!tenantForgotten()) await ledgerStore.raiseMark(name, mark);
               },
+              ...(ledgerStore.pruneMarks === undefined
+                ? {}
+                : {
+                    pruneMarks: async (name: string, before: string) => {
+                      if (!tenantForgotten()) await ledgerStore.pruneMarks?.(name, before);
+                    },
+                  }),
+              ...(ledgerStore.visibilityDelayMs === undefined
+                ? {}
+                : { visibilityDelayMs: ledgerStore.visibilityDelayMs }),
             },
+      clock,
       logger,
     });
     const copies =

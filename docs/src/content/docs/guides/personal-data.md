@@ -3004,8 +3004,12 @@ database stood when it was written, which it may drop once the entry is committe
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
 time; its optional `tenants` lists, in code-unit order, every tenant whose entries its store holds,
-which [`bounda forget-ledger prune --all-tenants`](#keeping-the-ledger-short) reads; its `readMark` and `raiseMark` keep numbers that only go up, which the runtime uses to tell
-a copy [restored while the app was stopped](#restores); its `clear` removes every entry and mark of
+which [`bounda forget-ledger prune --all-tenants`](#keeping-the-ledger-short) reads; its `readMark` and `raiseMark` keep marks, numbers that only go up, each value with the time
+the runtime raised it at, which the runtime uses to tell a copy [restored while the app was
+stopped](#restores): one whose reads show every write keeps the highest value with the time it was
+first raised, and one whose reads lag, with `visibilityDelayMs`, keeps every value with each time
+it was raised, highest first, until its `pruneMarks` removes those raised before a time but the
+highest of them; its `clear` removes every entry and mark of
 its tenant, which the runtime calls once the tenant is [forgotten](#forgetting-a-tenant) and every
 recipient told, and resolves `false` when it removed part only, so the runtime calls it again at
 its next pass, and leaves its fence as it is; its `fence`, a `TenantFenceStore`, is the tenant's
@@ -3154,10 +3158,45 @@ the database's reconciliation has read past it, or the database holds what it re
 database has yet to apply stays, as one a copy restored while the app was stopped lacks, so that
 copy is still forgotten again at its next start, after which the next prune removes it; the command
 says when it kept one. A forgotten tenant's ledger is pruned past `keepFor` alone, as its app does.
-It runs safely beside the tenant's running instances. `--tenant`
-names one tenant, and with `--all-tenants`, whose configuration names the ledger's store; each
-tenant listed is pruned through its own configuration. `pruneTenantForgetLedger` and
-`listForgetLedgerTenants` from `@bounda-dev/core` do the same in code (see the
+It runs safely beside the tenant's running instances.
+
+An intention whose commit never happened, a forgetting that failed and was asked again, goes too
+once nothing can apply it, by the checks the reconciliation makes: the database stands where the
+intention was written or further, so it tells no restore, and the person holds no key it covers
+and names, kept past a forgetting or not, or, for a change of restrictions, the database holds a
+later change. Two kinds stay until an app of the tenant reads past them, since only the app can
+tell whether they still apply: a redaction's, and the retention's of keys the person still holds.
+
+`--tenant` names one tenant. `--all-tenants` prunes every tenant whose entries a ledger's store
+the configuration names holds, each through its own configuration: starting from `--tenant`, or
+the default tenant, it lists that tenant's ledger and its tenant key store, then does the same
+for every tenant they name, until none is new, reading each store once. A configuration that is
+a function of the tenant and gives each tenant a ledger of its own is covered that way, through
+the tenant key store they share. One that gives each tenant both stores of its own, so that no
+store lists the others, names its tenants in a `tenants` export of `bounda.config.ts`, a list or a
+function that resolves to one:
+
+```ts
+export const tenants = () => (process.env.TENANTS ?? "").split(",").filter(Boolean);
+
+export default defineConfig(({ tenant }) => ({
+  storage: postgresql({ url: process.env.DATABASE_URL, schema: tenant }),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: sqlite({ path: `./keys/${tenant}.db` }),
+      forgetLedger: { store: sqlite({ path: `./ledger/${tenant}.db` }), keepFor: "35d" },
+    },
+  },
+}));
+```
+
+Two adapters of one kind with the same options are one store; a store of your own is one per
+definition, so define it outside the function, or each tenant's resolution reads it again. Each
+store is opened as an app opens it, which creates its table where it is missing. A
+tenant whose configuration or stores cannot be read is named on stderr, and the others are
+pruned. `pruneTenantForgetLedger` and `listForgetLedgerTenants` from `@bounda-dev/core`, with
+`projectConfig` and `tenants()` from `loadProject`, do the same in code (see the
 [CLI](/reference/cli/#bounda-forget-ledger-prune)).
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or
@@ -3232,7 +3271,7 @@ and `bounda status` counts the restores found. How it is found depends on when t
 | The copy was restored | Found by | What is guaranteed |
 | --- | --- | --- |
 | under the running app | every instance, on its next pass, before it delivers an event or claims a scheduled command, or within five seconds in the `web` role; with a strict ledger, also after every query and export | Any copy taken before the last write the instances saw, before the newest event an instance read or committed, or, with a forget ledger, before the last mark the ledger holds, which an instance that stops after the copy came back raises past what it saw. A copy taken after all of them differs from the database in nothing but waits, which the jobs read again anyway. |
-| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, before a commit the ledger holds and the copy does not, however young, or before the newest event an intention in the ledger saw. A copy goes unseen only when nothing reached the ledger after it was taken, no move of the counter, no commit and no intention written past it: that takes a crash within five seconds of the writes the copy lacks, or a ledger down from them until the app stopped. What the ledger holds of them as intentions is applied again all the same, and `bounda restored` counts the restore. |
+| while the app was stopped, with a forget ledger | the first instance to start, before it serves anything; on Workers KV, when its reads show the marks already, and otherwise once they do, a minute later | Any copy taken before the last mark the ledger holds, which follows every move of the counter and a stop after any write, before a commit the ledger holds and the copy does not, however young, or before the newest event an intention in the ledger saw. A copy goes unseen only when nothing reached the ledger after it was taken, no move of the counter, no commit and no intention written past it: that takes a crash within five seconds of the writes the copy lacks, or a ledger down from them until the app stopped. What the ledger holds of them as intentions is applied again all the same, and `bounda restored` counts the restore. |
 | while the app was stopped, without a ledger | `bounda restored`, which you run after restoring, or the first instance to start after `bounda restore`, which counts the restore in the copy it puts back | What you declare, or what `bounda restore` counted: the database alone cannot tell a copy from itself. |
 
 Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
@@ -3270,12 +3309,21 @@ again on the next look, so a ledger down for a while tells a copy taken before a
 back. A forgetting never depends on the mark: what
 a restore that goes unseen leaves is waits, which end on their own within an hour.
 
-On Workers KV, `kvForgetLedger`, a read may lag a write by up to a minute in another location.
-Each raise of a mark is a key of its own, so a mark never goes down, but in that minute a mark
-raised before a count and one raised after read the same: a look there may miss a copy of the last
-minute, unless a forgetting tells it, or count a restore twice when an older mark shows after it
-counted. A ledger that reads what was written, in a SQL database or `durableObjectForgetLedger`,
-has neither. Without a ledger, run, after restoring:
+On Workers KV, `kvForgetLedger`, a read may show a write up to a minute late, its
+`visibilityDelayMs`, so every value raised keeps the time it was raised at, and the database keeps
+when the last restore was counted. A start compares the database with what its reads show of the
+marks raised since then, and counts the restore at once when they tell it; once its reads show
+every mark raised before it started, a minute later, it compares them all, and counts then a restore
+they tell that nothing counted, waking for it as for the ledger's entries. Each start raises the
+generation it read, at the time it started, before the generation moves on: a mark raised before
+it and above it tells the restore however far the generation moved since, to this instance or, if
+it is gone, to whichever looks next. A mark raised before the latest restore counted is what that
+restore left behind and tells no other, so a higher one that shows after a count adds nothing; and
+a restore counted while the reads did not show one counted a moment before, which took the same
+number, is counted past it then, in `bounda status` too. This takes one instance at a time, as a
+Durable Object is, whose clocks agree to within the time a restart takes. A ledger that reads what was written, in
+a SQL database or `durableObjectForgetLedger`, tells it all at start. Without a ledger, run, after
+restoring:
 
 ```bash
 bounda restored

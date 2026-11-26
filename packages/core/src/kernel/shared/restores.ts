@@ -1,7 +1,12 @@
 import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
-import type { ForgetLedger, LedgerReached } from "../../adapter/storage/forget-ledger.ts";
+import type {
+  ForgetLedger,
+  ForgetLedgerMark,
+  LedgerReached,
+} from "../../adapter/storage/forget-ledger.ts";
 import { isFenceError } from "../../adapter/storage/tenant-fence.ts";
+import type { Clock } from "../../contracts/clock.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { eventMark } from "../read-model/stream-marks.ts";
 
@@ -33,6 +38,12 @@ export const RESTORE_UNCLAIMED = "runtime:restore-unclaimed";
 export const RESTORE_DECLARING = "runtime:restore-declaring";
 
 /**
+ * When the declaration under way was counted: finished again, it raises its count in the forget
+ * ledger at that time, so a ledger that keeps each time a value was raised reads it once.
+ */
+export const RESTORE_DECLARING_AT = "runtime:restore-declaring-at";
+
+/**
  * The database as the last restore an instance counted left it once handled, as one hash of its
  * count of restores and of its newest event and that event's position, in one row so two instances
  * settling at once leave one or the other: an operator's declaration that finds the database
@@ -51,6 +62,18 @@ export const RESTORE_MARK = "restore:generation";
  * held, and a restore counted after it still counts past every restore found before.
  */
 export const RESTORE_COUNT_MARK = "restore:count";
+
+/**
+ * The forget ledger's mark raised, on a ledger whose reads lag, to the count of restores a recount
+ * moved to, at the time it did: what it counted of the values counted more than once before then.
+ */
+export const RESTORE_RECOUNTED_MARK = "restore:recounted";
+
+/**
+ * The time of the latest restore counted, on a database whose forget ledger's reads lag: a mark
+ * raised before it is what that restore, or one before, left behind, and tells no other.
+ */
+export const RESTORE_COVERED = "runtime:restore-covered";
 
 // Also how often the forget ledger's mark follows it at most: Workers KV takes one write a second
 // to a key.
@@ -166,7 +189,11 @@ export interface CreateRestoreWatchArgs {
    * The forget ledger, outside the database; `null` without one, and a copy restored while the
    * app was stopped is then found only when declared.
    */
-  readonly marks: Pick<ForgetLedger, "readMark" | "raiseMark"> | null;
+  readonly marks: Pick<
+    ForgetLedger,
+    "readMark" | "raiseMark" | "pruneMarks" | "visibilityDelayMs"
+  > | null;
+  readonly clock: Pick<Clock, "now">;
   readonly logger: Logger;
 }
 
@@ -178,6 +205,33 @@ interface Seen {
   readonly generation: number;
   readonly restores: number;
 }
+
+const iso = (at: number): string => new Date(at).toISOString();
+
+const timeOf = ({ raisedAt }: ForgetLedgerMark): number => Date.parse(raisedAt);
+
+const highestOf = (points: readonly ForgetLedgerMark[]): number =>
+  points.reduce((highest, { value }) => Math.max(highest, value), 0);
+
+// A value raised before a lower one: the database held it, then less.
+const dropped = (points: readonly ForgetLedgerMark[]): boolean => {
+  let highest = 0;
+  let before = 0;
+  let at = Number.NEGATIVE_INFINITY;
+  for (const point of [...points].sort((a, b) => timeOf(a) - timeOf(b))) {
+    if (timeOf(point) > at) {
+      before = highest;
+      at = timeOf(point);
+    }
+    if (point.value < before) return true;
+    highest = Math.max(highest, point.value);
+  }
+  return false;
+};
+
+// The values raised from `from` on.
+const since = (points: readonly ForgetLedgerMark[], from: number): readonly ForgetLedgerMark[] =>
+  points.filter((point) => timeOf(point) >= from);
 
 /**
  * A generation that went back, a count of restores that changed, or the newest event this
@@ -193,6 +247,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   checkpoints,
   events,
   marks,
+  clock,
   logger,
 }) => {
   let seen: Seen | null = null;
@@ -218,11 +273,29 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // could not take, raised again on the next check.
   let countMark = 0;
   let uncounted = 0;
+  let uncountedAt = 0;
+  // The counts this instance raised before its judgment, which its reads may not show then.
+  let ownCounts: ForgetLedgerMark[] = [];
   // Whether a mark that could not be read was said, until it can be again.
   let unreadableSaid = false;
   // Whether a restore this instance counted left the generation below a mark it could not read,
   // to be moved past it, counting nothing, once it can.
   let lifting = false;
+  // On a ledger whose reads lag, a mark raised before this instance started may show only that
+  // long after it. The start raises the generation it read, at its time: once the reads show every
+  // mark raised before, a value raised before a lower one tells a restore however far the
+  // generation moved since, and until then only the marks raised since are compared.
+  const delayMs = marks?.visibilityDelayMs ?? 0;
+  const lagging = delayMs > 0;
+  let startedAt: number | null = null;
+  let judged = !lagging;
+  // The generation the start read, until the ledger takes it: the generation stays where it is
+  // meanwhile, so a look compares the database as the start found it.
+  let reading: Seen | null = null;
+  // When the highest value the ledger did not take was raised, as it is raised again.
+  let unraisedAt = 0;
+  // The marks the last read showed.
+  let shown: readonly ForgetLedgerMark[] = [];
 
   const eventAt = async (position: number): Promise<WatchedEvent | null> => {
     if (position === 0) return null;
@@ -241,6 +314,26 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     witness = await eventAt(last);
   };
 
+  const raiseAt = (name: string, value: number, at: number): Promise<void> =>
+    (marks as NonNullable<typeof marks>).raiseMark(name, { value, raisedAt: iso(at) });
+
+  // Lets go of what no later look compares; a ledger that keeps the highest value alone has
+  // nothing to let go.
+  const pruneBefore = async (names: readonly string[], at: number): Promise<void> => {
+    const prune = (marks as NonNullable<typeof marks>).pruneMarks;
+    if (prune === undefined) return;
+    try {
+      for (const name of names) await prune.call(marks, name, iso(at));
+    } catch (error) {
+      logger.error("the forget ledger's marks could not be pruned", { error });
+    }
+  };
+
+  // Until the marks raised before this instance started are judged, a ledger whose reads lag
+  // compares only the ones raised since with the database.
+  const comparable = (points: readonly ForgetLedgerMark[]): number =>
+    highestOf(judged ? points : since(points, startedAt as number));
+
   const read = async (): Promise<Seen> => {
     const [generation, restores] = await Promise.all([
       checkpoints.get(RESTORE_GENERATION),
@@ -249,16 +342,30 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     return { generation, restores };
   };
 
-  // The count of restores goes to the ledger too, which a copy does not take back.
-  const raiseCount = async (value: number): Promise<void> => {
+  // The count of restores goes to the ledger too, which a copy does not take back. Raised again,
+  // it keeps the time it was counted at: two times for one value are two restores.
+  const raiseCount = async (value: number, at = clock.now().getTime()): Promise<void> => {
     if (marks === null) return;
+    if (!judged && !ownCounts.some((own) => own.value === value && timeOf(own) === at)) {
+      ownCounts.push({ value, raisedAt: iso(at) });
+    }
     try {
-      await marks.raiseMark(RESTORE_COUNT_MARK, value);
+      await raiseAt(RESTORE_COUNT_MARK, value, at);
       if (value >= uncounted) uncounted = 0;
     } catch (error) {
+      if (value > uncounted) uncountedAt = at;
       uncounted = Math.max(uncounted, value);
       logger.error("the forget ledger's count of restores could not be raised", { error });
+      return;
     }
+    if (lagging && judged) await pruneBefore([RESTORE_COUNT_MARK], at - delayMs);
+  };
+
+  // A restore counted, by this instance or another, tells every mark raised before it: what a
+  // look on a ledger whose reads lag compares with the database starts after it. The instances'
+  // clocks agree to within the time a restart takes.
+  const cover = async (): Promise<void> => {
+    if (lagging) await advance(RESTORE_COVERED, clock.now().getTime());
   };
 
   // Counts the restore unless another instance did first, past every restore the ledger counted,
@@ -267,7 +374,9 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     const counted = Math.max(past, countMark) + 1;
     const first = await checkpoints.compareAndSet(RESTORES_FOUND, stored.restores, counted);
     const restores = first ? counted : await checkpoints.get(RESTORES_FOUND);
-    await raiseCount(restores);
+    await cover();
+    // Raised by the instance that counted it: once more, at another time, it would read as another.
+    if (first || !lagging) await raiseCount(restores);
     const generation = Math.max(stored.generation, floor) + 1;
     const moved = await checkpoints.compareAndSet(
       RESTORE_GENERATION,
@@ -288,7 +397,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       unclaimed === stored.restores &&
       (await checkpoints.compareAndSet(RESTORE_UNCLAIMED, unclaimed, 0));
     handling ||= taken;
-    if (taken) await countedInPlace(stored.restores);
+    if (taken) {
+      await cover();
+      await countedInPlace(stored.restores);
+    }
     return taken;
   };
 
@@ -315,7 +427,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // Not behind the mark: a database that went back to a copy holds a generation lower than the
   // mark, which only ever follows the generation up.
   const current = async (stored: Seen): Promise<boolean> =>
-    marks === null || stored.generation >= (await marks.readMark(RESTORE_MARK));
+    marks === null || stored.generation >= comparable(await marks.readMark(RESTORE_MARK));
 
   // The database exactly where handling the last restore left it: a copy of it taken later holds
   // more, and one taken before holds less or stands behind the mark.
@@ -342,15 +454,16 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   const raiseFirst = async (stored: Seen, past = 0): Promise<number> => {
     const floor = Math.max(stored.generation, seen?.generation ?? 0, past);
     if (marks === null) return floor + 1;
-    const [mark, counted] = await Promise.all([
+    const [points, counted] = await Promise.all([
       marks.readMark(RESTORE_MARK),
       marks.readMark(RESTORE_COUNT_MARK),
     ]);
-    countMark = Math.max(countMark, counted);
+    countMark = Math.max(countMark, highestOf(counted));
     unmarked = false;
-    const generation = Math.max(floor, mark) + 1;
+    // Past every mark, judged or not: moving further than needed counts nothing.
+    const generation = Math.max(floor, highestOf(points)) + 1;
     try {
-      await marks.raiseMark(RESTORE_MARK, generation);
+      await raiseAt(RESTORE_MARK, generation, clock.now().getTime());
     } catch (error) {
       if (!isFenceError(error)) throw error;
     }
@@ -362,7 +475,9 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   const finish = async (stored: Seen, target: number, raised?: number): Promise<Declared> => {
     const generation = raised ?? (await raiseFirst(stored));
     await checkpoints.compareAndSet(RESTORES_FOUND, stored.restores, target);
-    await raiseCount(target);
+    await cover();
+    const countedAt = await checkpoints.get(RESTORE_DECLARING_AT);
+    await raiseCount(target, countedAt > 0 ? countedAt : undefined);
     await advance(RESTORE_GENERATION, generation);
     seen = await read();
     movedAt = Number.NEGATIVE_INFINITY;
@@ -374,14 +489,108 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     return { first: true, counted: true };
   };
 
-  const raise = async (generation: number): Promise<void> => {
+  // Raised again, a value keeps the time it was first raised at: later, it would read as the
+  // database holding less than what was raised before.
+  const raise = async (generation: number, at = clock.now().getTime()): Promise<void> => {
     if (marks === null) return;
     try {
-      await marks.raiseMark(RESTORE_MARK, generation);
+      await raiseAt(RESTORE_MARK, generation, at);
       if (generation >= unraised) unraised = 0;
     } catch (error) {
+      if (generation > unraised) unraisedAt = at;
       unraised = Math.max(unraised, generation);
       logger.error("the forget ledger's mark could not be raised", { error });
+      return;
+    }
+    // Once judged, a value raised supersedes every lower one raised before it; of those older than
+    // a read may lag, the highest stays, which a start reads at once.
+    if (lagging && judged) await pruneBefore([RESTORE_MARK], at - delayMs);
+  };
+
+  const raiseReading = async (): Promise<void> => {
+    try {
+      await raiseAt(RESTORE_MARK, (reading as Seen).generation, startedAt as number);
+      reading = null;
+    } catch (error) {
+      logger.error("the forget ledger's mark could not be raised", { error });
+    }
+  };
+
+  // Of the marks raised since the latest restore counted, what tells a restore nobody counted: a
+  // value above the generation the database holds, or one raised before a lower one. Resolves the
+  // highest, which the count moves the generation past.
+  const unexplained = async (stored: Seen): Promise<number | null> => {
+    const raised = since(shown, await checkpoints.get(RESTORE_COVERED));
+    return highestOf(raised) > stored.generation || dropped(raised) ? highestOf(raised) : null;
+  };
+
+  // Counts what the marks tell, past every restore this instance knows of, and raises the
+  // generation the count moved to.
+  const countTold = async (stored: Seen, evidence: number): Promise<Restored> => {
+    const past = Math.max(stored.restores, (seen as Seen).restores, declaring);
+    const restored = await count(stored, past, evidence);
+    await raise((seen as Seen).generation);
+    return restored;
+  };
+
+  // Counted as found at start, from what the reads show already.
+  const atOnce = async (stored: Seen): Promise<Restored | null> => {
+    const evidence = await unexplained(stored);
+    return evidence === null ? null : countTold(stored, evidence);
+  };
+
+  // Once the reads show every mark raised before this instance started, they are compared with the
+  // database, the start's reading among them; then the generation goes past every one, counting
+  // nothing more.
+  const judge = async (stored: Seen): Promise<Restored | null> => {
+    const evidence = await unexplained(stored);
+    if (evidence !== null) return countTold(stored, evidence);
+    const highest = highestOf(shown);
+    if (stored.generation < highest) {
+      await advance(RESTORE_GENERATION, highest + 1);
+      await raise(highest + 1);
+    }
+    judged = true;
+    await recount();
+    ownCounts = [];
+    await pruneBefore(
+      [RESTORE_MARK, RESTORE_COUNT_MARK, RESTORE_RECOUNTED_MARK],
+      startedAt as number,
+    );
+    return null;
+  };
+
+  // A restore counted while the reads did not show one counted a moment before took the same
+  // value: each value counted again since the last recount is a restore more, which the database's
+  // count goes past. Every count raised before it shows by now, or is this instance's own.
+  const recount = async (): Promise<void> => {
+    const ledger = marks as NonNullable<typeof marks>;
+    const [counted, recounted] = await Promise.all([
+      ledger.readMark(RESTORE_COUNT_MARK),
+      ledger.readMark(RESTORE_RECOUNTED_MARK),
+    ]);
+    const counts = [
+      ...counted,
+      ...ownCounts.filter(
+        (own) =>
+          !counted.some(({ value, raisedAt }) => value === own.value && raisedAt === own.raisedAt),
+      ),
+    ].sort((a, b) => timeOf(a) - timeOf(b));
+    const since = Math.max(...recounted.map(timeOf), Number.NEGATIVE_INFINITY);
+    const again = counts.filter(
+      (count, index) =>
+        timeOf(count) > since && counts.slice(0, index).some(({ value }) => value === count.value),
+    ).length;
+    if (again === 0) return;
+    const target = highestOf(counts) + again;
+    await advance(RESTORES_FOUND, target);
+    seen = { ...(seen as Seen), restores: await checkpoints.get(RESTORES_FOUND) };
+    const at = clock.now().getTime();
+    await raiseCount(target, at);
+    try {
+      await raiseAt(RESTORE_RECOUNTED_MARK, target, at);
+    } catch (error) {
+      logger.error("the forget ledger's recount of restores could not be raised", { error });
     }
   };
 
@@ -391,14 +600,15 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   const markNow = async (): Promise<number | null> => {
     if (marks === null) return null;
     try {
-      const [mark, counted] = await Promise.all([
+      const [points, counted] = await Promise.all([
         marks.readMark(RESTORE_MARK),
         marks.readMark(RESTORE_COUNT_MARK),
       ]);
-      countMark = Math.max(countMark, counted);
+      countMark = Math.max(countMark, highestOf(counted));
       unmarked = false;
       unreadableSaid = false;
-      return mark;
+      shown = points;
+      return comparable(points);
     } catch (error) {
       if (!unreadableSaid) logger.error("the forget ledger's mark could not be read", { error });
       unreadableSaid = true;
@@ -445,13 +655,36 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     const joined = joinedActive;
     joinedActive = false;
     const mark = await markNow();
-    const [stored, last, gone] = await Promise.all([read(), events.lastPosition(), witnessGone()]);
+    const [initial, last, gone] = await Promise.all([read(), events.lastPosition(), witnessGone()]);
+    let stored = initial;
     pending ||= active || joined || (head !== null && last !== head);
     head = last;
     // What the database reached stays what it reached: raised late, the mark still tells a copy
     // from before.
-    if (unraised > 0) await raise(unraised);
-    if (uncounted > 0) await raiseCount(uncounted);
+    if (unraised > 0) await raise(unraised, unraisedAt);
+    if (reading !== null) await raiseReading();
+    if (uncounted > 0) await raiseCount(uncounted, uncountedAt);
+    // Every mark raised before this instance started shows by now.
+    if (!judged && mark !== null && at >= (startedAt as number) + delayMs) {
+      const found = await judge(stored);
+      if (found !== null) {
+        witness = null;
+        await watchHead(last);
+        return found;
+      }
+      // As the judgment left it, moved past every mark raised before and counting what it learnt.
+      stored = await read();
+    } else if (judged && lagging && mark !== null) {
+      // A value raised before a lower one since: the database went back and the look that read it
+      // counted nothing.
+      const evidence = await unexplained(stored);
+      if (evidence !== null) {
+        const restored = await countTold(stored, evidence);
+        witness = null;
+        await watchHead(last);
+        return restored;
+      }
+    }
     const lifted = lifting && mark !== null;
     if (lifted) await lift(mark);
     // Behind the mark, whatever this instance read: a copy from before what an instance, a stop or
@@ -488,7 +721,9 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     seen = current;
     if (restored !== null) witness = null;
     await watchHead(last);
-    if (pending && !unmarked && at - movedAt >= GENERATION_INTERVAL_MS) await move(current, at);
+    if (pending && !unmarked && reading === null && at - movedAt >= GENERATION_INTERVAL_MS) {
+      await move(current, at);
+    }
     return restored;
   };
 
@@ -502,6 +737,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   return {
     start: async () => {
       try {
+        startedAt = clock.now().getTime();
         const mark = await markNow();
         const stored = await read();
         head = await events.lastPosition();
@@ -525,10 +761,18 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
 
         // A mark that cannot be read is compared on a later check.
         const restored =
-          (mark === null ? null : await compareWithMark(stored, declaring, mark)) ??
+          (mark === null
+            ? null
+            : lagging
+              ? await atOnce(stored)
+              : await compareWithMark(stored, declaring, mark)) ??
           (foundAtStart > 0 ? { first: true } : null);
-        // A mark only goes up: past a restore it is already higher.
-        if (mark !== null) await raise(stored.generation);
+        // A mark only goes up: past a restore it is already higher. On a ledger whose reads lag,
+        // what the start read is raised at its time, whatever the start counted.
+        if (lagging) {
+          reading = stored;
+          await raiseReading();
+        } else if (mark !== null) await raise(stored.generation);
         return restored;
       } catch (error) {
         logged("the database could not be compared with the forget ledger's mark")(error);
@@ -547,10 +791,17 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
           await countedInPlace(foundAtStart);
         }
         await checkpoints.compareAndSet(RESTORE_DECLARING, declaring, 0);
+        await checkpoints.compareAndSet(
+          RESTORE_DECLARING_AT,
+          await checkpoints.get(RESTORE_DECLARING_AT),
+          0,
+        );
         // What handling the restore committed, as the forgettings it applied again, is past the
         // copy: one taken before it holds less.
         const last = await events.lastPosition();
-        if (seen !== null && !unmarked && last !== head) await move(seen, movedAt);
+        if (seen !== null && !unmarked && reading === null && last !== head) {
+          await move(seen, movedAt);
+        }
         head = last;
         await watchHead(last);
         await recordHandled();
@@ -599,6 +850,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         await advance(RESTORE_GENERATION, generation);
         // Another declaration under way took the row first: this one finishes it.
         if (!(await checkpoints.compareAndSet(RESTORE_DECLARING, declared, target))) continue;
+        await checkpoints.compareAndSet(
+          RESTORE_DECLARING_AT,
+          await checkpoints.get(RESTORE_DECLARING_AT),
+          clock.now().getTime(),
+        );
         return finish(stored, target, generation);
       }
     },
@@ -626,7 +882,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         // Behind a mark this instance never compared: moved, it could pass it, and the next look
         // would find nothing.
         if (mark !== null && stored.generation < mark) return;
-        if (pending || (head !== null && last !== head)) {
+        // Not moved before the ledger took what the start read: the next look compares it.
+        if (reading === null && (pending || (head !== null && last !== head))) {
           await move(seen, Number.NEGATIVE_INFINITY);
         } else await raise(seen.generation);
       } catch (error) {
@@ -639,7 +896,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         checkpoints.get(RESTORE_GENERATION),
         events.lastPosition(),
       ]);
-      await marks?.raiseMark(RESTORE_MARK, generation);
+      if (marks !== null) await raiseAt(RESTORE_MARK, generation, clock.now().getTime());
       return { generation, position };
     },
     saw: (event) => {

@@ -143,7 +143,7 @@ const ledgerOf = (entries: readonly ForgetLedgerEntry[]): ForgetLedger => ({
           (entry.forgottenAt === after.forgottenAt && entry.eventId > after.eventId),
       )
       .slice(0, limit),
-  readMark: async () => 0,
+  readMark: async () => [],
   raiseMark: async () => undefined,
   clear: async () => true,
   fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },

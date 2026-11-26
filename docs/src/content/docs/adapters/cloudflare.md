@@ -274,8 +274,13 @@ intention has a key of its own, which its committed copy removes once it landed,
 at what another wrote: KV may not show it yet where an object runs, and an intention written there
 after its committed copy still reads committed. An intention whose put was given up for the
 ledger's timeout and landed after its committed copy is removed by the next read that lists both,
-behind the fence, as any write. Each raise of a mark writes a key of its own, and removes the lower
-ones the listing shows below the highest, so a mark never goes down, whatever the raise read. A
+behind the fence, as any write. Each raise of a mark writes a key of its own, its value and the
+time it was raised at, so a mark never goes down whatever the raise read, and the runtime tells a
+value raised before the object started, which a listing may show a minute late, from one raised
+since: a restore of the object's storage is counted at its start when the listing shows the marks
+that tell it, and otherwise a minute later, never twice (see
+[restores](/guides/personal-data/#restores)). Once it compared them, the object removes the values
+raised more than a minute before its latest but the highest of them. A
 forgotten tenant's object deletes its keys once its recipients are told and a minute has passed
 since the forgetting, waking for it, so every key written before is listed; KV deletes one key a
 call, so each wake deletes a batch within the operations one invocation may make, and a larger

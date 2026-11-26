@@ -389,7 +389,7 @@ const ledgerProblems = async ({ running }: Scope): Promise<string[]> => {
           "the forget ledger still holds entries of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears them",
         );
       }
-      if ((await ledger.readMark(RESTORE_MARK)) > 0) {
+      if ((await ledger.readMark(RESTORE_MARK)).length > 0) {
         problems.add(
           "the forget ledger still holds a mark of the tenant though every recipient was told: run the app's worker, app.runUntilIdle() in a test, which clears it",
         );

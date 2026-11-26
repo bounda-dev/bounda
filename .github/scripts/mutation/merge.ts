@@ -1,3 +1,4 @@
+import type { SourceFile } from "./files.ts";
 import type { FileResult, MutantResult, Report, TestDefinition, TestFile } from "./report.ts";
 
 export interface ShardReport {
@@ -12,7 +13,7 @@ export interface MergeReportsArgs {
   // The report the shards started from: it gives the files of a shard that left no report.
   readonly previous: Report | undefined;
   // The files the package mutates now; any other is gone.
-  readonly keep: readonly string[];
+  readonly keep: readonly SourceFile[];
 }
 
 export interface MergeReportsFunction {
@@ -28,6 +29,33 @@ const keysById = (report: Report): ReadonlyMap<string, string> =>
       tests.map((test): [string, string] => [test.id, keyOf(path, test)]),
     ),
   );
+
+const mutantKey = ({ mutatorName, replacement, location }: MutantResult): string =>
+  [
+    mutatorName,
+    replacement,
+    location?.start.line,
+    location?.start.column,
+    location?.end.line,
+    location?.end.column,
+  ].join("\u0000");
+
+// Stryker writes a mutant's duration only when it tests the mutant, so a mutant a shard reused
+// takes the one the previous report kept. Without that, the plan would soon know no mutant's time.
+const withDurations = (result: FileResult, earlier: FileResult | undefined): FileResult => {
+  const durations = new Map(
+    (earlier?.mutants ?? []).flatMap((mutant): [string, number][] =>
+      mutant.duration === undefined ? [] : [[mutantKey(mutant), mutant.duration]],
+    ),
+  );
+  return {
+    ...result,
+    mutants: result.mutants.map((mutant): MutantResult => {
+      const duration = mutant.duration ?? durations.get(mutantKey(mutant));
+      return duration === undefined ? mutant : { ...mutant, duration };
+    }),
+  };
+};
 
 // Test ids are only unique within one report: each shard numbers the same tests its own way, so
 // the merged report numbers them anew and maps every mutant's `coveredBy` and `killedBy` onto
@@ -80,11 +108,19 @@ export const mergeReports: MergeReportsFunction = ({ shards, previous, keep }) =
   };
 
   const files: Record<string, FileResult> = {};
-  for (const path of keep) {
-    // A shard that mutated the file and left no result for it found no mutant there.
-    const report = shards.find(({ files: owned }) => owned.has(path))?.report ?? previous;
+  for (const { path, source } of keep) {
+    const shard = shards.find(({ files: owned }) => owned.has(path))?.report;
+    const report = shard ?? previous;
     const result = report?.files[path];
-    if (report !== undefined && result !== undefined) files[path] = renumber(report, result);
+    if (report !== undefined && result !== undefined) {
+      files[path] = renumber(
+        report,
+        shard === undefined ? result : withDurations(result, previous?.files[path]),
+      );
+    }
+    // Stryker leaves out a file it found no mutant in. Kept with none, the next plan knows the
+    // file costs nothing instead of taking it for a new one.
+    else if (shard !== undefined) files[path] = { language: "typescript", source, mutants: [] };
   }
   return { ...first, files, testFiles };
 };

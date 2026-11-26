@@ -115,7 +115,21 @@ export type LoadProjectArgs<R extends Registry = AppRegistry> = Pick<
 >;
 
 export interface LoadedProject<R extends Registry = AppRegistry> {
+  /**
+   * The configuration of `tenant`.
+   */
   readonly config: Config;
+  /**
+   * What `bounda.config.ts` exports, a configuration or a function of the tenant, before it is
+   * resolved for `tenant`: what a command that goes through every tenant resolves for each.
+   */
+  readonly projectConfig: ProjectConfig;
+  /**
+   * Resolves the tenants the `tenants` export of `bounda.config.ts` names, none without one.
+   * Rejects with `ConfigurationError` for an export that is neither a list of tenant names nor a
+   * function that resolves to one.
+   */
+  readonly tenants: () => Promise<readonly string[]>;
   readonly registry: R;
   /**
    * The tenant `tenant` or `BOUNDA_TENANT` names, `undefined` when neither does: the app then
@@ -161,6 +175,17 @@ const importExport = async <T>(
 
 const CONFIG = "the configuration (default export)";
 
+const tenantsOf = async (exported: unknown, source: string): Promise<readonly string[]> => {
+  if (exported === undefined) return [];
+  const listed: unknown = typeof exported === "function" ? await exported() : exported;
+  if (!Array.isArray(listed) || listed.some((tenant) => typeof tenant !== "string")) {
+    throw new ConfigurationError(
+      `${source} must export tenants as a list of tenant names, or a function that resolves to one`,
+    );
+  }
+  return listed.map((tenant: string) => tenantIdOf(tenant));
+};
+
 const tenantOfEnv = (): string | undefined => {
   const named = process.env.BOUNDA_TENANT?.trim();
   return named === undefined || named === "" ? undefined : named;
@@ -197,16 +222,23 @@ export const loadProject: LoadProjectFunction = async <R extends Registry = AppR
   const configFile = resolve(root, configPath);
   const registryFile = resolve(root, registryPath);
   const tenant = named ?? tenantOfEnv();
+  const source = importConfig === undefined ? configFile : "The imported configuration module";
+  let exported: unknown;
   const project =
     config ??
     (await importExport<ProjectConfig>(
       importConfig ?? importFile(configFile, CONFIG),
-      importConfig === undefined ? configFile : "The imported configuration module",
+      source,
       CONFIG,
-      (module) => module.default as ProjectConfig | undefined,
+      (module) => {
+        exported = module.tenants;
+        return module.default as ProjectConfig | undefined;
+      },
     ));
   return {
     config: configForTenant({ config: project, tenant: tenantIdOf(tenant) }),
+    projectConfig: project,
+    tenants: () => tenantsOf(exported, source),
     tenant,
     registry:
       registry ??

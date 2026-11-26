@@ -40,7 +40,7 @@ describe("the forget ledger's outbox", () => {
           appended.push(entries);
         },
         read: async () => [],
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -177,7 +177,7 @@ describe("the forget ledger's outbox", () => {
           appended.push(entries);
         },
         read: async () => [],
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -256,7 +256,7 @@ describe("a forget ledger's source", () => {
     const definition = defineForgetLedger(() => ({
       append: async () => {},
       read: async () => [],
-      readMark: async () => 0,
+      readMark: async () => [],
       raiseMark: async () => undefined,
       clear: async () => true,
       fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -281,7 +281,7 @@ describe("a forget ledger's source", () => {
       return {
         append: async () => {},
         read: async () => [],
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -390,10 +390,13 @@ describe("the forget ledger bound by its timeout", () => {
         visibilityDelayMs: 60_000,
         readMark: async (name) => {
           calls.push(`readMark ${name}`);
-          return 7;
+          return [{ value: 7, raisedAt: "2026-01-01T00:00:00.000Z" }];
         },
-        raiseMark: async (name, value) => {
+        raiseMark: async (name, { value }) => {
           calls.push(`raiseMark ${name} ${value}`);
+        },
+        pruneMarks: async (name, before) => {
+          calls.push(`pruneMarks ${name} ${before}`);
         },
         clear: async () => {
           calls.push("clear");
@@ -429,8 +432,11 @@ describe("the forget ledger bound by its timeout", () => {
     await ledger.append([entry]);
     expect(await ledger.read({ limit: 3 })).toEqual([entry]);
     await ledger.prune?.({ before: "t" });
-    expect(await ledger.readMark("m")).toBe(7);
-    await ledger.raiseMark("m", 8);
+    expect(await ledger.readMark("m")).toEqual([
+      { value: 7, raisedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    await ledger.raiseMark("m", { value: 8, raisedAt: "2026-01-01T00:00:00.000Z" });
+    await ledger.pruneMarks?.("m", "t");
     await ledger.clear();
     await ledger.close?.();
     expect(calls).toEqual([
@@ -439,6 +445,7 @@ describe("the forget ledger bound by its timeout", () => {
       "prune t",
       "readMark m",
       "raiseMark m 8",
+      "pruneMarks m t",
       "clear",
       "close",
     ]);
@@ -449,7 +456,7 @@ describe("the forget ledger bound by its timeout", () => {
       ledger: {
         append: async () => {},
         read: async () => [],
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -459,6 +466,7 @@ describe("the forget ledger bound by its timeout", () => {
     });
     expect(bare).not.toHaveProperty("visibilityDelayMs");
     expect(bare).not.toHaveProperty("prune");
+    expect(bare).not.toHaveProperty("pruneMarks");
     expect(bare).not.toHaveProperty("close");
   });
 
@@ -470,6 +478,7 @@ describe("the forget ledger bound by its timeout", () => {
       ledger: {
         readMark: never,
         raiseMark: never,
+        pruneMarks: never,
         clear: never,
         fence: { read: never, set: never },
         append: () =>
@@ -495,9 +504,14 @@ describe("the forget ledger bound by its timeout", () => {
     const pruning = ledger.prune?.({ before: "t" });
     clock.advance(500);
     await expect(pruning).rejects.toMatchObject({ operation: "prune", timeoutMs: 500 });
-    const marking = [ledger.readMark("m"), ledger.raiseMark("m", 1), ledger.clear()];
+    const marking = [
+      ledger.readMark("m"),
+      ledger.raiseMark("m", { value: 1, raisedAt: "2026-01-01T00:00:00.000Z" }),
+      ledger.pruneMarks?.("m", "t"),
+      ledger.clear(),
+    ];
     clock.advance(500);
-    for (const [index, operation] of ["readMark", "raiseMark", "clear"].entries()) {
+    for (const [index, operation] of ["readMark", "raiseMark", "pruneMarks", "clear"].entries()) {
       await expect(marking[index]).rejects.toEqual(new ForgetLedgerTimeoutError(operation, 500));
     }
   });

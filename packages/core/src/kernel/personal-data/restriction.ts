@@ -709,9 +709,27 @@ const RESTRICTION_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 // In the ledger's order: by time, then by id.
-const isLater = (event: StoredEvent, entry: ForgetLedgerEntry): boolean =>
+const isLater = (
+  event: StoredEvent,
+  entry: Pick<ForgetLedgerEntry, "eventId" | "forgottenAt">,
+): boolean =>
   event.timestamp > entry.forgottenAt ||
   (event.timestamp === entry.forgottenAt && event.id > entry.eventId);
+
+export interface RestrictionSettledFunction {
+  (
+    events: readonly StoredEvent[],
+    entry: Pick<ForgetLedgerEntry, "eventId" | "forgottenAt">,
+  ): boolean;
+}
+
+// Whether the person's events hold the change of restrictions the entry records, or one after it:
+// either way nothing commits the entry again while they do.
+export const restrictionSettled: RestrictionSettledFunction = (events, entry) =>
+  events.some(
+    (event) =>
+      RESTRICTION_TYPES.has(event.type) && (event.id === entry.eventId || isLater(event, entry)),
+  );
 
 /**
  * Commits again a change of restrictions the ledger holds and the store does not, with its id and
@@ -736,14 +754,7 @@ export const restrictAgain: RestrictAgainFunction = ({
         aggregateType: BOUNDA_AGGREGATE,
         aggregateId: personId,
       });
-      if (
-        events.some(
-          (event) =>
-            RESTRICTION_TYPES.has(event.type) && (event.id === eventId || isLater(event, entry)),
-        )
-      ) {
-        return null;
-      }
+      if (restrictionSettled(events, entry)) return null;
       if (restriction.type !== PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT) {
         const held = processingRestrictionsOf(await transaction.persons.restrictions(personId));
         if (sameAs(held, restriction.payload.restrictions)) return null;

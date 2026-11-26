@@ -167,12 +167,12 @@ export const boundForgetLedger: BoundForgetLedgerFunction = ({ ledger, timeoutMs
       cancel();
     }
   };
-  const { prune, close } = ledger;
+  const { prune, pruneMarks, close } = ledger;
   return {
     append: (entries) => bound("append", () => ledger.append(entries)),
     read: (args) => bound("read", () => ledger.read(args)),
     readMark: (name) => bound("readMark", () => ledger.readMark(name)),
-    raiseMark: (name, value) => bound("raiseMark", () => ledger.raiseMark(name, value)),
+    raiseMark: (name, mark) => bound("raiseMark", () => ledger.raiseMark(name, mark)),
     clear: () => bound("clear", () => ledger.clear()),
     fence: {
       read: () => bound("fence.read", () => ledger.fence.read()),
@@ -184,6 +184,12 @@ export const boundForgetLedger: BoundForgetLedgerFunction = ({ ledger, timeoutMs
     ...(prune === undefined
       ? {}
       : { prune: (args) => bound("prune", () => prune.call(ledger, args)) }),
+    ...(pruneMarks === undefined
+      ? {}
+      : {
+          pruneMarks: (name, before) =>
+            bound("pruneMarks", () => pruneMarks.call(ledger, name, before)),
+        }),
     ...(close === undefined ? {} : { close: () => close.call(ledger) }),
     late: () => late > 0,
   };

@@ -42,7 +42,7 @@ const recordingLedger = (append: (entries: readonly ForgetLedgerEntry[]) => Prom
     ledger: {
       append,
       read: async () => [],
-      readMark: async () => 0,
+      readMark: async () => [],
       raiseMark: async () => undefined,
       clear: async () => true,
       fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -262,7 +262,7 @@ describe("the intentions of forgetting", () => {
     let late = true;
     let appends = 0;
     const ledger: BoundedForgetLedger = {
-      readMark: async () => 0,
+      readMark: async () => [],
       raiseMark: async () => undefined,
       clear: async () => true,
       fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },

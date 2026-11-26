@@ -5,6 +5,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EphemeralKeys } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
+import type { ForgetLedgerMark } from "../../adapter/storage/forget-ledger.ts";
 import type { RuntimeConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { RestoreUnreconciledError } from "../../contracts/errors.ts";
@@ -25,7 +26,12 @@ import { ROTATION_CHECK_INTERVAL_MS } from "../personal-data/rotation.ts";
 import type { TenantExportPart } from "../personal-data/tenant-export.ts";
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { advanceUntilWaiting } from "../test-support.ts";
-import { GENERATION_INTERVAL_MS, RESTORE_DECLARING, RESTORES_FOUND } from "./restores.ts";
+import {
+  GENERATION_INTERVAL_MS,
+  RESTORE_DECLARING,
+  RESTORE_MARK,
+  RESTORES_FOUND,
+} from "./restores.ts";
 
 const START = new Date("2026-04-01T00:00:00.000Z");
 
@@ -500,8 +506,8 @@ describe("a database restored while the app was stopped", () => {
       return {
         append: (entries) => inner.append(entries),
         read: (args) => inner.read(args),
-        readMark: async () => 0,
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        readMark: async () => [],
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
       };
@@ -520,6 +526,67 @@ describe("a database restored while the app was stopped", () => {
     expect(restarts(logger).map(({ fields }) => fields)).toEqual([{ first: true }]);
     expect((await after.app.status()).restoresFound).toBe(1);
     expect((await after.app.getLag()).forgetLedger).toEqual({ reconciled: true });
+  });
+
+  it("is found once the reads of a ledger that lags show the mark, and the ledger keeps few of its values", async () => {
+    const LAG = 60_000;
+    const paths = files();
+    const store = createNodeSqliteAdapter(paths.storage);
+    const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
+    // As Workers KV: every value raised kept with its time, a read showing those raised `LAG` ago.
+    const raised = new Map<string, ForgetLedgerMark[]>();
+    const pruned: string[] = [];
+    let now = (): number => START.getTime();
+    const lagging = defineForgetLedger(async () => {
+      const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
+      const kept = (name: string) => {
+        const values = raised.get(name) ?? [];
+        raised.set(name, values);
+        return values;
+      };
+      return {
+        ...inner,
+        visibilityDelayMs: LAG,
+        readMark: async (name) =>
+          kept(name)
+            .filter(({ raisedAt }) => Date.parse(raisedAt) <= now() - LAG)
+            .sort((a, b) => b.value - a.value),
+        raiseMark: async (name, mark) => {
+          kept(name).push(mark);
+        },
+        pruneMarks: async (name, before) => {
+          pruned.push(name);
+          const older = kept(name).filter(({ raisedAt }) => raisedAt < before);
+          const highest = Math.max(...older.map(({ value }) => value));
+          raised.set(
+            name,
+            kept(name).filter(({ value, raisedAt }) => raisedAt >= before || value === highest),
+          );
+        },
+      };
+    });
+    const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: lagging } } };
+    const before = await start({ adapter: store.adapter, runtime });
+    now = () => before.clock.now().getTime();
+    before.clock.advance(LAG);
+    await before.app.runUntilIdle();
+    const copy = copyOf(store.db);
+    await register(before.app, "c-1");
+    before.clock.advance(GENERATION_INTERVAL_MS);
+    await before.app.runUntilIdle();
+    await before.app.stop();
+    restore(store.db, copy);
+    const after = await start({
+      adapter: store.adapter,
+      runtime,
+      now: new Date(before.clock.now().getTime() + 1),
+    });
+    now = () => after.clock.now().getTime();
+    expect((await after.app.status()).restoresFound).toBe(0);
+    after.clock.advance(LAG);
+    await after.app.runUntilIdle();
+    expect((await after.app.status()).restoresFound).toBe(1);
+    expect(pruned).toContain(RESTORE_MARK);
   });
 
   const forgettingsOf = async (app: BoundaApp<Registry>, person: string) =>
@@ -542,8 +609,8 @@ describe("a database restored while the app was stopped", () => {
           await inner.append(entries);
         },
         read: (args) => inner.read(args),
-        readMark: async () => 0,
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        readMark: async () => [],
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
       };
@@ -659,7 +726,7 @@ describe("a database restored while the app was stopped", () => {
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
       const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
-      return { ...inner, readMark: async () => 0 };
+      return { ...inner, readMark: async () => [] };
     });
     let counting = false;
     // Another instance counts the restore right after this one's start read the count.
@@ -705,7 +772,7 @@ describe("a database restored while the app was stopped", () => {
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
       const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
-      return { ...inner, readMark: async () => 0 };
+      return { ...inner, readMark: async () => [] };
     });
     const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
     const before = await start({ adapter: store.adapter, runtime });
@@ -783,7 +850,7 @@ describe("a database restored while the app was stopped", () => {
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
       const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
-      return { ...inner, readMark: async () => 0 };
+      return { ...inner, readMark: async () => [] };
     });
     let failing = false;
     // Counting the restore fails while `failing`, before it changes anything.

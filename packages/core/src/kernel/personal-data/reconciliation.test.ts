@@ -62,7 +62,7 @@ const recordingLedger = (entries: readonly ForgetLedgerEntry[], visibilityDelayM
   const inner = memory();
   const ledger: ForgetLedger = {
     ...(visibilityDelayMs === undefined ? {} : { visibilityDelayMs }),
-    readMark: async () => 0,
+    readMark: async () => [],
     raiseMark: async () => undefined,
     clear: async () => true,
     fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -264,7 +264,7 @@ describe("the forget ledger's reconciliation", () => {
       }),
       retentionDue: NEVER_DUE,
       ledger: {
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -319,7 +319,7 @@ describe("the forget ledger's reconciliation", () => {
       }),
       retentionDue: NEVER_DUE,
       ledger: {
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },
@@ -1284,7 +1284,7 @@ describe("forgetAgain", () => {
       ledger: {
         store: boundForgetLedger({
           ledger: {
-            readMark: async () => 0,
+            readMark: async () => [],
             raiseMark: async () => undefined,
             clear: async () => true,
             fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },

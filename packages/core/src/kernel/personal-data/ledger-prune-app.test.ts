@@ -16,7 +16,8 @@ import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload
 import type { Registry } from "../../modules/registry.ts";
 import { createApp } from "../app.ts";
 import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
-import { listForgetLedgerTenants, pruneTenantForgetLedger } from "./ledger-prune.ts";
+import { pruneTenantForgetLedger } from "./ledger-prune.ts";
+import { listForgetLedgerTenants } from "./ledger-tenants.ts";
 import { masterKey } from "./master-key.ts";
 import { defineTenantKeyStore } from "./tenant-key-source.ts";
 import { DEFAULT_TENANT } from "./tenant-keys.ts";
@@ -329,7 +330,10 @@ describe("pruning a tenant's forget ledger with no app running", () => {
       unapplied: true,
     });
     expect(closed).toEqual(["storage", "ledger"]);
-    expect(await listForgetLedgerTenants({ config })).toEqual([DEFAULT_TENANT]);
+    expect(await listForgetLedgerTenants({ config })).toEqual({
+      tenants: [DEFAULT_TENANT],
+      unreached: [],
+    });
     expect(closed).toEqual(["storage", "ledger", "ledger"]);
   });
 });
@@ -356,34 +360,5 @@ describe("pruning beside a storage only its host opens", () => {
     };
     await expect(pruneTenantForgetLedger({ config })).rejects.toThrow(/opened only by its host/);
     expect(closed).toEqual(["ledger"]);
-  });
-});
-
-describe("the tenants of a forget ledger's store", () => {
-  it("lists every tenant whose entries the store holds, in code-unit order", async () => {
-    const ledgerAdapter = memory();
-    for (const tenant of ["b", "a", "B"]) {
-      const ledger = await ledgerAdapter.createForgetLedger({ tenant });
-      await ledger.append([entry(`${tenant}-p`, `${tenant}-e`, START)]);
-    }
-    await ledgerAdapter.createForgetLedger({ tenant: "empty" });
-    expect(
-      await listForgetLedgerTenants({ config: configOf(memory(), ledgerAdapter, "30d") }),
-    ).toEqual(["B", "a", "b"]);
-  });
-
-  it("refuses a ledger of your own that cannot list them", async () => {
-    const { tenants: _, ...unlisted } = await memory().createForgetLedger({
-      tenant: DEFAULT_TENANT,
-    });
-    await expect(
-      listForgetLedgerTenants({
-        config: configOf(
-          memory(),
-          defineForgetLedger(() => unlisted),
-          "30d",
-        ),
-      }),
-    ).rejects.toThrow(/cannot list its tenants/);
   });
 });

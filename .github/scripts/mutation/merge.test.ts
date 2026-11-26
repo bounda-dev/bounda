@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { SourceFile } from "./files.ts";
 import { mergeReports } from "./merge.ts";
 import type { Report } from "./report.ts";
 
@@ -22,6 +23,9 @@ const renumbered = {
     ],
   },
 };
+
+const sources = (...paths: readonly string[]): readonly SourceFile[] =>
+  paths.map((path) => ({ path, source: path }));
 
 const shardOne: Report = {
   schemaVersion: "1.0",
@@ -55,7 +59,7 @@ describe("mergeReports", () => {
         { report: shardTwo, files: new Set(["two.ts"]) },
       ],
       previous: undefined,
-      keep: ["one.ts", "two.ts"],
+      keep: sources("one.ts", "two.ts"),
     });
     expect(merged.files["one.ts"]?.source).toBe("one");
     expect(merged.files["two.ts"]?.source).toBe("two");
@@ -69,7 +73,7 @@ describe("mergeReports", () => {
         { report: shardTwo, files: new Set(["two.ts"]) },
       ],
       previous: undefined,
-      keep: ["one.ts", "two.ts"],
+      keep: sources("one.ts", "two.ts"),
     });
     const nameOf = new Map(
       merged.testFiles?.["a.test.ts"]?.tests.map(({ id, name }) => [id, name]),
@@ -88,18 +92,77 @@ describe("mergeReports", () => {
     const merged = mergeReports({
       shards: [{ report: shardOne, files: new Set(["one.ts"]) }],
       previous,
-      keep: ["one.ts", "two.ts"],
+      keep: sources("one.ts", "two.ts"),
     });
     expect(merged.files["two.ts"]?.source).toBe("previous");
     const first = merged.testFiles?.["a.test.ts"]?.tests.find(({ name }) => name === "first");
     expect(merged.files["two.ts"]?.mutants[0]?.killedBy).toEqual([first?.id]);
   });
 
-  it("leaves out a file the shard that mutated it has no result for", () => {
+  it("keeps the duration of a mutant a shard reused from the previous report", () => {
+    const at = (line: number) => ({ start: { line, column: 1 }, end: { line, column: 5 } });
+    const mutant = { status: "Killed", mutatorName: "BooleanLiteral", replacement: "false" };
+    const previous: Report = {
+      files: {
+        "one.ts": {
+          source: "one",
+          mutants: [
+            { ...mutant, location: at(1), duration: 300 },
+            { ...mutant, location: at(2), duration: 400 },
+            { ...mutant, location: at(3), duration: 500 },
+          ],
+        },
+      },
+    };
+    const merged = mergeReports({
+      shards: [
+        {
+          report: {
+            files: {
+              "one.ts": {
+                source: "one",
+                mutants: [
+                  { ...mutant, location: at(1) },
+                  { ...mutant, location: at(2), duration: 700 },
+                  { ...mutant, location: at(4) },
+                ],
+              },
+            },
+          },
+          files: new Set(["one.ts"]),
+        },
+      ],
+      previous,
+      keep: sources("one.ts"),
+    });
+    expect(merged.files["one.ts"]?.mutants.map(({ duration }) => duration)).toEqual([
+      300,
+      700,
+      undefined,
+    ]);
+  });
+
+  it("keeps with no mutant a file the shard that mutated it has no result for", () => {
     const merged = mergeReports({
       shards: [{ report: shardOne, files: new Set(["one.ts", "three.ts"]) }],
-      previous: { files: { "three.ts": { source: "three", mutants: [] } } },
-      keep: ["one.ts", "three.ts"],
+      previous: {
+        files: { "three.ts": { source: "old", mutants: [{ status: "Survived" }] } },
+      },
+      keep: sources("one.ts", "three.ts"),
+    });
+    expect(Object.keys(merged.files)).toEqual(["one.ts", "three.ts"]);
+    expect(merged.files["three.ts"]).toEqual({
+      language: "typescript",
+      source: "three.ts",
+      mutants: [],
+    });
+  });
+
+  it("leaves out a file no shard mutated and the previous report lacks", () => {
+    const merged = mergeReports({
+      shards: [{ report: shardOne, files: new Set(["one.ts"]) }],
+      previous: undefined,
+      keep: sources("one.ts", "three.ts"),
     });
     expect(Object.keys(merged.files)).toEqual(["one.ts"]);
   });
@@ -118,7 +181,7 @@ describe("mergeReports", () => {
         },
       ],
       previous: undefined,
-      keep: ["one.ts"],
+      keep: sources("one.ts"),
     });
     expect(Object.keys(merged.files)).toEqual(["one.ts"]);
     expect(merged.files["one.ts"]?.mutants[0]?.killedBy).toEqual([]);

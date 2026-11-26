@@ -10,7 +10,7 @@ describe("a forget ledger bounded in time", () => {
       ledger: {
         append: async () => undefined,
         read: async () => [],
-        readMark: async () => 0,
+        readMark: async () => [],
         raiseMark: async () => undefined,
         clear: async () => true,
         fence: { read: () => never, set: () => never },

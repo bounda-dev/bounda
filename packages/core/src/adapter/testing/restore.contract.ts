@@ -40,7 +40,11 @@ import {
 import { expectRedacted } from "../../testing/expect-redacted.ts";
 import { type Adapter, isAdapter } from "../adapter.ts";
 import type { AdapterDefinition } from "../adapter-definition.ts";
-import type { ForgetLedger } from "../storage/forget-ledger.ts";
+import type {
+  ForgetLedger,
+  ForgetLedgerEntry,
+  ForgetLedgerMark,
+} from "../storage/forget-ledger.ts";
 import type { InspectedStore } from "../storage/inspection.ts";
 import type { Table } from "../storage/table.ts";
 
@@ -557,14 +561,63 @@ const faultyLedger = (source: ForgetLedgerSource) => {
         down();
         return inner.readMark(name);
       },
-      raiseMark: async (name, value) => {
+      raiseMark: async (name, mark) => {
         down();
         if (state.marksFailing) throw new Error("the ledger's marks are down");
-        return inner.raiseMark(name, value);
+        return inner.raiseMark(name, mark);
       },
     };
   });
   return { definition, state, opened };
+};
+
+// How long a read of `laggingLedger`'s marks may lag a write, as Workers KV's.
+const LAG_MS = 60_000;
+
+/**
+ * A ledger whose marks a read shows only `LAG_MS` after they were raised, as Workers KV's: every
+ * value kept with each time it was raised, its entries those of the store's own ledger.
+ */
+const laggingLedger = (source: ForgetLedgerSource, clock: Clock) => {
+  const marks = new Map<string, { readonly mark: ForgetLedgerMark; readonly landed: number }[]>();
+  const byValue = (a: ForgetLedgerMark, b: ForgetLedgerMark): number =>
+    b.value - a.value || Date.parse(a.raisedAt) - Date.parse(b.raisedAt);
+  return defineForgetLedger(async (args) => {
+    const inner: ForgetLedger =
+      source.kind === "bounda-forget-ledger"
+        ? await source.create(args)
+        : await source.createForgetLedger({ tenant: args.tenant, keepForMs: args.keepForMs });
+    const raised = (name: string) => {
+      const key = `${args.tenant}\u0000${name}`;
+      const kept = marks.get(key) ?? [];
+      marks.set(key, kept);
+      return kept;
+    };
+    return {
+      ...inner,
+      visibilityDelayMs: LAG_MS,
+      readMark: async (name) =>
+        raised(name)
+          .filter(({ landed }) => landed <= clock.now().getTime() - LAG_MS)
+          .map(({ mark }) => mark)
+          .sort(byValue),
+      raiseMark: async (name, mark) => {
+        const kept = raised(name);
+        const same = ({ mark: held }: { readonly mark: ForgetLedgerMark }) =>
+          held.value === mark.value && held.raisedAt === mark.raisedAt;
+        if (!kept.some(same)) kept.push({ mark, landed: clock.now().getTime() });
+      },
+      pruneMarks: async (name, before) => {
+        const kept = raised(name);
+        const [highest] = kept
+          .map(({ mark }) => mark)
+          .filter(({ raisedAt }) => raisedAt < before)
+          .sort(byValue);
+        const left = kept.filter(({ mark }) => mark === highest || mark.raisedAt >= before);
+        kept.splice(0, kept.length, ...left);
+      },
+    };
+  });
 };
 
 /**
@@ -923,6 +976,96 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       "keeps, pruning beside the app, what a copy restored under it lacks, until its next pass applies it",
       async (context) => {
         await pruneScenario("hot", (reason) => context.skip(reason));
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "prunes, with no app running, the intentions nothing can apply, and keeps those a key or a restore still needs",
+      async (context) => {
+        const target = await create();
+        const ledger = await ledgerOf(target.forgetLedger);
+        stops.push(async () => ledger.close?.());
+        if (ledger.prune === undefined)
+          return context.skip("the ledger expires its entries on its own");
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        for (const person of ["ana", "bob", "cy"]) await write(first, person);
+        await first.app.forget("bob");
+        await first.app.restrict("cy", { ground: "objection-pending" });
+        await first.app.runUntilIdle();
+        const bobKeys = (await ledger.read({ limit: 100 })).find(
+          ({ personId }) => personId === "bob",
+        )?.fingerprints;
+        expect(bobKeys?.length).toBeGreaterThan(0);
+        const minutes = (minute: number): string =>
+          new Date(START.getTime() + minute * 60_000).toISOString();
+        const intention = (personId: string, minute: number): ForgetLedgerEntry => ({
+          personId,
+          categories: null,
+          eventId: `019a6b1e-0000-7000-8000-0000000000${String(60 + minute).padStart(2, "0")}`,
+          forgottenAt: minutes(minute),
+          reason: "requested",
+          committed: false,
+        });
+        await ledger.append([
+          // A forgetting whose commit never happened, of keys bob no longer holds.
+          {
+            ...intention("bob", -6),
+            fingerprints: bobKeys ?? [],
+            reached: { generation: 0, position: 0 },
+          },
+          // A restriction of cy's that never committed, which a later change superseded.
+          {
+            ...intention("cy", -5),
+            restriction: {
+              type: "ProcessingRestricted",
+              payload: {
+                personId: "cy",
+                ground: "accuracy-contested",
+                categories: null,
+                restrictions: [
+                  { ground: "accuracy-contested", categories: null, since: minutes(-5) },
+                ],
+              },
+            },
+          },
+          // A forgetting of any key of ana's, who holds them still.
+          intention("ana", -4),
+        ]);
+        const config: Config = {
+          storage: target.storage,
+          runtime: {
+            personalData: {
+              keyWrapper: BEFORE_ROTATION,
+              tenantKeys,
+              forgetLedger: { store: target.forgetLedger, keepFor: "1d" },
+            },
+          },
+        };
+        const later = new Date(START.getTime() + 2 * 24 * 60 * 60_000);
+        expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+          tenant: DEFAULT_TENANT,
+          before: minutes(-4),
+          unapplied: true,
+        });
+        expect((await ledger.read({ limit: 1 }))[0]?.personId).toBe("ana");
+
+        // Once ana holds no key, an intention written where the database has not reached stays.
+        await first.app.forget("ana");
+        await first.app.runUntilIdle();
+        await ledger.append([
+          {
+            ...intention("bob", -3),
+            reached: { generation: Number.MAX_SAFE_INTEGER, position: 0 },
+          },
+        ]);
+        expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+          tenant: DEFAULT_TENANT,
+          before: minutes(-3),
+          unapplied: true,
+        });
+        expect((await ledger.read({ limit: 1 }))[0]?.forgottenAt).toBe(minutes(-3));
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -1578,6 +1721,112 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
 
         const restored = await start(await target.restore(), definition, BEFORE_ROTATION, clock);
         expect((await restored.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts, on a ledger whose reads lag, a copy restored right after the mark passed it, once the reads show the mark, and once only",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const ledger = laggingLedger(target.forgetLedger, clock);
+        const first = await start(target.storage, ledger, BEFORE_ROTATION, clock);
+        // Its reads show every mark raised before it started: the generation moves from here.
+        clock.advance(LAG_MS);
+        await first.app.runUntilIdle();
+        await target.backUp();
+        await write(first, "ana");
+        clock.advance(GENERATION_INTERVAL_MS);
+        await first.app.runUntilIdle();
+        await first.app.stop();
+
+        const storage = await target.restore();
+        clock.advance(1);
+        const restored = await start(storage, ledger, BEFORE_ROTATION, clock);
+        // Found at start only by an adapter that counts it where it puts the copy back.
+        expect((await restored.app.status()).restoresFound).toBeLessThanOrEqual(1);
+        // It writes and looks while its reads cannot show the mark, and passes nothing it lacks.
+        await write(restored, "bob");
+        clock.advance(GENERATION_INTERVAL_MS);
+        await restored.app.runUntilIdle();
+        clock.advance(LAG_MS);
+        await restored.app.runUntilIdle();
+        expect((await restored.app.status()).restoresFound).toBe(1);
+        clock.advance(LAG_MS);
+        await restored.app.runUntilIdle();
+        await restored.app.stop();
+        const next = await start(storage, ledger, BEFORE_ROTATION, clock);
+        clock.advance(LAG_MS);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts once, on a ledger whose reads lag, a copy found at start behind a mark its reads show, when a higher one raised before shows later",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const ledger = laggingLedger(target.forgetLedger, clock);
+        const first = await start(target.storage, ledger, BEFORE_ROTATION, clock);
+        clock.advance(LAG_MS);
+        await first.app.runUntilIdle();
+        await target.backUp();
+        await write(first, "ana");
+        clock.advance(GENERATION_INTERVAL_MS);
+        await first.app.runUntilIdle();
+        // That mark shows by the restore; the ones raised after it do not.
+        clock.advance(LAG_MS);
+        for (const person of ["bob", "cy"]) {
+          await write(first, person);
+          clock.advance(GENERATION_INTERVAL_MS);
+          await first.app.runUntilIdle();
+        }
+        await first.app.stop();
+
+        const storage = await target.restore();
+        clock.advance(1);
+        const restored = await start(storage, ledger, BEFORE_ROTATION, clock);
+        expect((await restored.app.status()).restoresFound).toBe(1);
+        clock.advance(LAG_MS);
+        await restored.app.runUntilIdle();
+        expect((await restored.app.status()).restoresFound).toBe(1);
+        await restored.app.stop();
+        const next = await start(storage, ledger, BEFORE_ROTATION, clock);
+        clock.advance(LAG_MS);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(1);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts, on a ledger whose reads lag, a restore declared past one declared a moment before that its reads do not show",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const ledger = laggingLedger(target.forgetLedger, clock);
+        const first = await start(target.storage, ledger, BEFORE_ROTATION, clock);
+        await target.backUp();
+        await first.app.restored();
+        await first.app.stop();
+
+        const storage = await target.restore();
+        clock.advance(1);
+        const restored = await start(storage, ledger, BEFORE_ROTATION, clock);
+        // An adapter that counts the restore where it puts the copy back counts past the database;
+        // a declaration then counts nothing more.
+        await restored.app.restored();
+        clock.advance(LAG_MS);
+        await restored.app.runUntilIdle();
+        expect((await restored.app.status()).restoresFound).toBe(2);
+        await restored.app.stop();
+        const next = await start(storage, ledger, BEFORE_ROTATION, clock);
+        clock.advance(LAG_MS);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(2);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );

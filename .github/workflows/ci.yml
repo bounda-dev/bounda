@@ -232,9 +232,9 @@ jobs:
 
   # A package whose full mutation run would not fit one job is split into shards. The plan, made
   # once here from the package's last report, gives each shard the files whose mutants add up to
-  # an even share of the run (.github/scripts/mutation-plan.ts), and hands every shard that same
-  # report as its incremental file: each reuses what it can of the whole package, and no file is
-  # mutated twice or never.
+  # an even share of the run's time, predicts in the job summary how long each shard will take
+  # (.github/scripts/mutation-plan.ts), and hands every shard that same report as its incremental
+  # file: each reuses what it can of the whole package, and no file is mutated twice or never.
   mutation-plan:
     name: Mutation plan (${{ matrix.package }})
     needs: changes
@@ -259,10 +259,32 @@ jobs:
         env:
           PACKAGE: ${{ matrix.package }}
           SHARDS: ${{ fromJSON(needs.changes.outputs.shard_counts)[matrix.package] }}
+          # The mutation job's timeout-minutes.
+          MUTATION_TIMEOUT_MINUTES: 60
         run: |
           mkdir -p plan
           incremental="packages/$PACKAGE/.stryker-tmp/incremental.json"
-          node .github/scripts/mutation-plan.ts "$PACKAGE" "$SHARDS" "$incremental" > plan/plan.json 2> plan.log
+          # Without a cache, as before main's first one lands, the report main last sent to the
+          # dashboard serves: with no report at all, the shards test every mutant, a full run whose
+          # shards the plan can only spread by size.
+          if [ ! -f "$incremental" ]; then
+            mkdir -p "$(dirname "$incremental")"
+            if curl --fail --silent --show-error --location --max-time 300 --retry 2 --output "$incremental" \
+              "https://dashboard.stryker-mutator.io/api/reports/github.com/${GITHUB_REPOSITORY}/main?module=$PACKAGE" \
+              && jq -e '.files | type == "object"' "$incremental" > /dev/null; then
+              echo "No cached $PACKAGE report: planned from the dashboard's" >> plan.log
+            else
+              rm -f "$incremental"
+              echo "::warning::No $PACKAGE report in the cache or on the dashboard: the shards test every mutant"
+            fi
+          fi
+          node .github/scripts/mutation-plan.ts "$PACKAGE" "$SHARDS" "$incremental" > plan/plan.json 2>> plan.log
+          # A file is the smallest unit a shard takes: one whose mutants alone near the mutation
+          # job's timeout needs splitting in the source, not more shards.
+          awk -v package="$PACKAGE" -v limit="$MUTATION_TIMEOUT_MINUTES" '/^Shard / && $(NF-1) > limit * 0.8 {
+            sub(":", "", $2)
+            print "::warning::Shard " $2 " of " package " is predicted to take " $(NF-1) " of its " limit " minutes"
+          }' plan.log
           if [ -f "$incremental" ]; then cp "$incremental" plan/incremental.json; fi
           {
             echo "## Mutation plan: $PACKAGE"
@@ -290,6 +312,7 @@ jobs:
     needs: [changes, mutation-plan]
     if: ${{ !cancelled() && needs.changes.outputs.mutation != '[]' && needs.mutation-plan.result != 'failure' }}
     runs-on: ubuntu-latest
+    # The plan job's MUTATION_TIMEOUT_MINUTES follows it.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -345,14 +368,25 @@ jobs:
               exit 1
             fi
             # A shard's report is merged with the others' by the mutation-report job, which sends
-            # the whole to the dashboard.
-            args=(--mutate "$files" --reporters clear-text,progress,html,json)
+            # the whole to the dashboard. Stryker runs only the tests related to the files it
+            # mutates, and a shard may hold none any test reaches, such as files of types only.
+            args=(--mutate "$files" --allowEmpty --reporters clear-text,progress,html,json)
           elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${STRYKER_DASHBOARD_API_KEY:-}" ]; then
             args=(--reporters clear-text,progress,html,dashboard)
           fi
           # Vitest adds a job summary on every run Stryker starts, one per mutant, past what GitHub
           # takes; the step below writes the one that matters.
           env -u GITHUB_STEP_SUMMARY pnpm --filter "./packages/$PACKAGE" test:mutation "${args[@]}" 2>&1 | tee mutation.log
+          # Stryker writes no report when the files it mutates hold no mutant. An empty one tells the
+          # merge the shard ran, so it records those files and the next plan weighs them at nothing.
+          report="packages/$PACKAGE/reports/mutation/mutation.json"
+          if [ "${{ matrix.shards }}" -gt 1 ] && [ ! -f "$report" ]; then
+            if [ -f plan/incremental.json ]; then
+              jq '.files = {} | .testFiles = {}' plan/incremental.json > "$report"
+            else
+              echo '{"schemaVersion":"1.0","thresholds":{"high":80,"low":60},"files":{}}' > "$report"
+            fi
+          fi
       - if: always()
         shell: bash
         run: |

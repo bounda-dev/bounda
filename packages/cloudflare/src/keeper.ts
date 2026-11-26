@@ -3,6 +3,7 @@ import { ConfigurationError } from "@bounda-dev/core";
 import type {
   ForgetLedger,
   ForgetLedgerEntry,
+  ForgetLedgerMark,
   ListTenantKeysArgs,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
@@ -55,8 +56,8 @@ export interface BoundaKeeperMethods {
     args: ReadForgetLedgerArgs,
   ): Promise<RpcOutcome<readonly ForgetLedgerEntry[]>>;
   pruneLedger(tenant: string, args: PruneForgetLedgerArgs): Promise<RpcOutcome<null>>;
-  readLedgerMark(tenant: string, name: string): Promise<RpcOutcome<number>>;
-  raiseLedgerMark(tenant: string, name: string, value: number): Promise<RpcOutcome<null>>;
+  readLedgerMark(tenant: string, name: string): Promise<RpcOutcome<readonly ForgetLedgerMark[]>>;
+  raiseLedgerMark(tenant: string, name: string, mark: ForgetLedgerMark): Promise<RpcOutcome<null>>;
   /**
    * Removes every entry and mark of the tenant's ledger, its alarm with them; how long it keeps an
    * entry stays as `retainLedger` set it.
@@ -297,13 +298,17 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
       });
     }
 
-    readLedgerMark(tenant: string, name: string): Promise<RpcOutcome<number>> {
+    readLedgerMark(tenant: string, name: string): Promise<RpcOutcome<readonly ForgetLedgerMark[]>> {
       return settle(async () => (await this.#forgetLedger(tenant)).readMark(name));
     }
 
-    raiseLedgerMark(tenant: string, name: string, value: number): Promise<RpcOutcome<null>> {
+    raiseLedgerMark(
+      tenant: string,
+      name: string,
+      mark: ForgetLedgerMark,
+    ): Promise<RpcOutcome<null>> {
       return settle(async () => {
-        await (await this.#forgetLedger(tenant)).raiseMark(name, value);
+        await (await this.#forgetLedger(tenant)).raiseMark(name, mark);
         return null;
       });
     }

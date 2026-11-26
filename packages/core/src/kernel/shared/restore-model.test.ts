@@ -5,6 +5,7 @@ import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type {
   ForgetLedger,
   ForgetLedgerEntry,
+  ForgetLedgerMark,
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
@@ -26,6 +27,7 @@ import {
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import {
   GENERATION_INTERVAL_MS,
+  RESTORE_COVERED,
   RESTORE_GENERATION,
   RESTORE_MARK,
   RESTORES_FOUND,
@@ -56,7 +58,8 @@ import {
 // An operator prunes the ledger with no app (`bounda forget-ledger prune`), at any moment, with a
 // `keepFor` of nothing, so only what the database has applied bounds it: what the ledger proves of
 // the database must read the same after a prune as before, and a prune removes only entries the
-// database holds the event of or will not read again.
+// database holds the event of or will not read again, and intentions nothing can apply: the person
+// holds no key they name, and the database stands where they were written or further.
 
 const registry = {
   aggregates: {
@@ -107,6 +110,8 @@ type InstanceAction =
   | { readonly kind: "write"; readonly instance: Instance }
   | { readonly kind: "forget"; readonly instance: Instance; readonly person: number }
   | { readonly kind: "forgetUncommitted"; readonly instance: Instance; readonly person: number }
+  // A forgetting whose commit failed, asked again: the first intention stays, which nothing applies.
+  | { readonly kind: "forgetRetried"; readonly instance: Instance; readonly person: number }
   | { readonly kind: "pass"; readonly instance: Instance };
 
 // What happens beside the instances, as the operator's prune does.
@@ -131,6 +136,21 @@ type Action =
 // The world: one database, one ledger, two instances.
 
 type Rows = ReadonlyMap<string, readonly Record<string, SQLInputValue>[]>;
+
+// `all` compares the highest value with the database, `whole` and `shown` on KV every value raised
+// since the latest restore counted, and what the reads show of them.
+type MarkView = "all" | "whole" | "shown" | "none";
+
+// A value raised before a lower one, at a later time.
+const droppedIn = (points: readonly ForgetLedgerMark[]): boolean => {
+  const byTime = [...points].sort((a, b) => Date.parse(a.raisedAt) - Date.parse(b.raisedAt));
+  return byTime.some((later) =>
+    byTime.some(
+      (earlier) =>
+        Date.parse(earlier.raisedAt) < Date.parse(later.raisedAt) && earlier.value > later.value,
+    ),
+  );
+};
 
 interface EventRow {
   readonly id: string;
@@ -211,11 +231,26 @@ const snapshotOf = (db: DatabaseSync): Snapshot => ({
   ),
 });
 
+// How long a read of the KV ledger may lag a write: a few ticks, so lags end within a trace.
+const KV_DELAY_MS = 2 * GENERATION_INTERVAL_MS;
+
+// A value raised under a mark, when, and when it landed in the store.
+interface RaisedMark extends ForgetLedgerMark {
+  readonly landed: number;
+}
+
 // A ledger as a remote store is: down, down for committed copies alone, or taking writes it lands
 // only later, as a call given up for its timeout does. A mark only ever goes up, whoever raises it.
-const createModelLedger = (kind: "sql" | "kv", gate: () => Promise<void>) => {
+// Workers KV keeps every value raised under a mark, and a read shows those that landed at least
+// `KV_DELAY_MS` ago, the most a read may lag, and none younger.
+const createModelLedger = (kind: "sql" | "kv", gate: () => Promise<void>, now: () => number) => {
   const inner = createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT);
-  const marks = new Map<string, number>();
+  const marks = new Map<string, RaisedMark[]>();
+  const shown = (raised: RaisedMark): boolean => raised.landed <= now() - KV_DELAY_MS;
+  const highestOf = (name: string, filter: (raised: RaisedMark) => boolean = () => true): number =>
+    (marks.get(name) ?? [])
+      .filter(filter)
+      .reduce((highest, { value }) => Math.max(highest, value), 0);
   let mode: LedgerMode = "up";
   let dropped: (() => Promise<void>)[] = [];
   const refuse = (): never => {
@@ -234,9 +269,11 @@ const createModelLedger = (kind: "sql" | "kv", gate: () => Promise<void>) => {
     await gate();
     if (mode === "down" || mode === "dropping") refuse();
   };
+  const byValue = (a: ForgetLedgerMark, b: ForgetLedgerMark): number =>
+    b.value - a.value || Date.parse(a.raisedAt) - Date.parse(b.raisedAt);
   const ledger: ForgetLedger = {
-    // Workers KV lists a key within a minute: the app reads the ledger once more after it.
-    ...(kind === "kv" ? { visibilityDelayMs: 60_000 } : {}),
+    // Workers KV lists a key within the delay: the app reads the ledger once more after it.
+    ...(kind === "kv" ? { visibilityDelayMs: KV_DELAY_MS } : {}),
     append: (entries) =>
       mode === "commitsDown" && entries.some(({ committed }) => committed !== false)
         ? gate().then(refuse)
@@ -247,12 +284,39 @@ const createModelLedger = (kind: "sql" | "kv", gate: () => Promise<void>) => {
     },
     readMark: async (name) => {
       await reading();
-      return marks.get(name) ?? 0;
+      const raised = marks.get(name) ?? [];
+      if (kind === "sql") {
+        const [highest] = [...raised].sort(byValue);
+        return highest === undefined ? [] : [{ value: highest.value, raisedAt: highest.raisedAt }];
+      }
+      return raised
+        .filter(shown)
+        .map(({ value, raisedAt }) => ({ value, raisedAt }))
+        .sort(byValue);
     },
-    raiseMark: (name, value) =>
+    raiseMark: (name, { value, raisedAt }) =>
       write(async () => {
-        marks.set(name, Math.max(marks.get(name) ?? 0, value));
+        const raised = marks.get(name) ?? [];
+        marks.set(name, raised);
+        if (raised.some((kept) => kept.value === value && kept.raisedAt === raisedAt)) return;
+        // A ledger that reads what was written keeps the highest value, raised first.
+        if (kind === "sql" && value <= highestOf(name)) return;
+        if (kind === "sql") raised.length = 0;
+        raised.push({ value, raisedAt, landed: now() });
       }),
+    ...(kind === "kv"
+      ? {
+          pruneMarks: async (name: string, before: string) => {
+            await reading();
+            const raised = marks.get(name) ?? [];
+            const [highest] = raised.filter((kept) => kept.raisedAt < before).sort(byValue);
+            marks.set(
+              name,
+              raised.filter((kept) => kept === highest || kept.raisedAt >= before),
+            );
+          },
+        }
+      : {}),
     clear: () => inner.clear(),
     fence: inner.fence,
     // Workers KV expires its keys on its own: only the SQL ledger is pruned.
@@ -265,8 +329,22 @@ const createModelLedger = (kind: "sql" | "kv", gate: () => Promise<void>) => {
   };
   return {
     ledger,
-    mark: (): number => marks.get(RESTORE_MARK) ?? 0,
-    marks: (): readonly (readonly [string, number])[] => [...marks].sort(),
+    mark: (): number => highestOf(RESTORE_MARK),
+    // What every read shows of the mark, raised from `after` on, or all that was.
+    pointsFrom: (after: number, shownOnly: boolean): readonly ForgetLedgerMark[] =>
+      (marks.get(RESTORE_MARK) ?? []).filter(
+        (raised) => (!shownOnly || shown(raised)) && Date.parse(raised.raisedAt) >= after,
+      ),
+    marks: (): readonly (readonly [string, readonly ForgetLedgerMark[]])[] =>
+      [...marks]
+        .map(
+          ([name, raised]) =>
+            [
+              name,
+              raised.map(({ value, raisedAt }) => ({ value, raisedAt })).sort(byValue),
+            ] as const,
+        )
+        .sort(([a], [b]) => (a < b ? -1 : 1)),
     entries: (): Promise<readonly ForgetLedgerEntry[]> =>
       inner.read({ limit: Number.MAX_SAFE_INTEGER }),
     mode: (): LedgerMode => mode,
@@ -291,6 +369,10 @@ interface Live {
   readonly app: BoundaApp<Registry>;
   readonly clock: FixedClock;
   readonly prefix: string;
+  readonly startedAt: number;
+  // On KV, whether the marks raised before it started proved more than its reads showed then: what
+  // it counts once they show every one.
+  owed: boolean;
   memory: Memory;
 }
 
@@ -316,7 +398,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
   };
   const { adapter, db } = createNodeSqliteAdapter(":memory:");
   const keys = createEphemeralKeys();
-  const ledger = createModelLedger(kind, gate);
+  const ledger = createModelLedger(kind, gate, () => now);
   const definition = defineForgetLedger(() => ledger.ledger);
   const instances: (Live | null)[] = [null, null];
   const backups = new Map<number, Copy>();
@@ -391,10 +473,21 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     );
 
   // What the ledger proves of the database as it now stands, for a look that reads it.
-  const ledgerProves = async (entries: boolean): Promise<boolean> => {
+  // What the mark proves of the database: past its generation, on a ledger that reads what was
+  // written. On KV, of what was raised since the latest restore counted, a value past it or one
+  // raised before a lower one, the database having held it and then less; what every read shows
+  // of it, and nothing before the instance's reads show every mark raised before it started.
+  const markProves = (view: MarkView, generation: number): boolean => {
+    if (kind === "sql" || view === "all") return ledger.mark() > generation;
+    if (view === "none") return false;
+    const points = ledger.pointsFrom(rowOf(db, RESTORE_COVERED), view === "shown");
+    return points.some(({ value }) => value > generation) || droppedIn(points);
+  };
+
+  const ledgerProves = async (entries: boolean, view: MarkView = "shown"): Promise<boolean> => {
     if (ledger.mode() === "down" || ledger.mode() === "dropping") return false;
     const current = snapshotOf(db);
-    if (ledger.mark() > current.generation) return true;
+    if (markProves(view, current.generation)) return true;
     if (!entries) return false;
     const held = new Set(current.events.map(({ id }) => id));
     const last = current.events.at(-1)?.position ?? 0;
@@ -422,13 +515,24 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     return false;
   };
 
-  // Where the database stood once the last restore counted was handled: its newest event.
-  let handled: EventRow | null | undefined;
-  const headNow = (): EventRow | null => snapshotOf(db).events.at(-1) ?? null;
+  // Where the database stood once the last restore counted was handled: its newest event, and the
+  // restores it counted, which a copy taken before holds fewer of.
+  interface Handled {
+    readonly head: EventRow | null;
+    readonly restores: number;
+  }
+  let handled: Handled | undefined;
+  const headNow = (): Handled => {
+    const snapshot = snapshotOf(db);
+    return { head: snapshot.events.at(-1) ?? null, restores: snapshot.restores };
+  };
   const standsWhereHandled = (): boolean => {
-    const head = headNow();
+    const { head, restores } = headNow();
     return (
-      handled !== undefined && head?.id === handled?.id && head?.position === handled?.position
+      handled !== undefined &&
+      head?.id === handled.head?.id &&
+      head?.position === handled.head?.position &&
+      restores === handled.restores
     );
   };
 
@@ -438,6 +542,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     trace.push(`    proved by ${why}`);
     open = [];
     settledAfter = true;
+    for (const live of instances) if (live !== null) live.owed = false;
   };
   // Whether the look under way counted, so where it leaves the database is where handling it left it.
   let settledAfter = false;
@@ -456,14 +561,25 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     ) {
       return `what instance ${instance} remembers`;
     }
+    if (kindOfLook === "pass" && live?.owed === true && viewOf(live) === "shown") {
+      return "the marks raised before its start, once its reads show them";
+    }
+    // On KV, what a stop left is a mark, which the reads show as the ledger's.
     if (
+      kind === "sql" &&
       (ledger.mode() === "up" || ledger.mode() === "commitsDown") &&
       open.some(({ carried }) => carried)
     ) {
       return "what a stop left in the ledger";
     }
-    return (await ledgerProves(kindOfLook === "start")) ? "the ledger" : null;
+    const view = kindOfLook === "start" ? "shown" : viewOf(live ?? null);
+    return (await ledgerProves(kindOfLook === "start", view)) ? "the ledger" : null;
   };
+
+  // What a running instance compares of the mark: on KV, nothing before its reads show every mark
+  // raised before it started.
+  const viewOf = (live: Live | null): MarkView =>
+    live !== null && now >= live.startedAt + KV_DELAY_MS ? "shown" : "none";
 
   const looked = (proof: string | null): void => {
     unlooked = null;
@@ -472,9 +588,21 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
 
   const startInstance = async (instance: Instance): Promise<void> => {
     if (instances[instance] !== null) return;
+    // A Durable Object, the one app a KV ledger serves, runs once at a time.
+    if (kind === "kv" && instances.some((live) => live !== null)) return;
     started += 1;
     const prefix = `i${instance}s${started}-`;
+    const startedAt = now;
     const proof = await proofFor(instance, "start");
+    // What the whole of the marks raised since the latest restore counted proves, the reads may not
+    // show yet: the start compares them once they do.
+    const owed =
+      kind === "kv" &&
+      proof === null &&
+      open.length > 0 &&
+      ledger.mode() !== "down" &&
+      ledger.mode() !== "dropping" &&
+      markProves("whole", snapshotOf(db).generation);
     const clock = createFixedClock(new Date(now));
     const app = await createApp<Registry>({
       registry,
@@ -494,7 +622,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
       clock,
       logger: logger(),
     });
-    const live: Live = { app, clock, prefix, memory: memoryOf(null) };
+    const live: Live = { app, clock, prefix, startedAt, owed, memory: memoryOf(null) };
     instances[instance] = live;
     looked(proof);
     if (settledAfter) handled = headNow();
@@ -544,21 +672,43 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     }
   };
 
+  // An intention whose commit the database lacks that nothing applies: the person holds no key it
+  // names, kept past a forgetting or not, and the database stands where it was written or further.
+  const inapplicable = (entry: ForgetLedgerEntry): boolean => {
+    if (entry.committed !== false) return false;
+    const { reached } = entry;
+    const now = snapshotOf(db);
+    const last = now.events.at(-1)?.position ?? 0;
+    if (
+      reached !== undefined &&
+      (reached.generation > now.generation ||
+        (reached.generation === now.generation && reached.position > last))
+    ) {
+      return false;
+    }
+    const keys = (
+      db
+        .prepare(`SELECT "fingerprint" FROM "bounda_personal_keys" WHERE "person" = ?`)
+        .all(entry.personId) as { fingerprint: string }[]
+    ).map(({ fingerprint }) => fingerprint);
+    return !keys.some((fingerprint) => entry.fingerprints?.includes(fingerprint) ?? true);
+  };
+
   // A prune nothing runs beside: it changes nothing a look reads.
   const pruneAlone = async (): Promise<void> => {
     const entries = await ledger.entries();
-    const proves = await ledgerProves(true);
+    const proves = await ledgerProves(true, "all");
     const cursor = rowOf(db, FORGET_LEDGER_CURSOR);
     const held = new Set(snapshotOf(db).events.map(({ id }) => id));
     await prune();
     const left = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     for (const entry of entries) {
-      if (left.has(entry.eventId) || held.has(entry.eventId)) continue;
+      if (left.has(entry.eventId) || held.has(entry.eventId) || inapplicable(entry)) continue;
       if (cursor === 0 || Date.parse(entry.forgottenAt) >= cursor - FORGET_LEDGER_REREAD_MS) {
         violations.push(`the prune removed ${entry.eventId}, which the database has yet to apply`);
       }
     }
-    if ((await ledgerProves(true)) !== proves) {
+    if ((await ledgerProves(true, "all")) !== proves) {
       violations.push(`the prune changed what the ledger proves from ${proves}`);
     }
   };
@@ -600,18 +750,24 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
         return;
       }
       case "forget":
-      case "forgetUncommitted": {
+      case "forgetUncommitted":
+      case "forgetRetried": {
         if (live === null || live === undefined) return;
         const holding = holdingNow();
         const person = holding[action.person % Math.max(1, holding.length)];
         if (person === undefined) return;
-        if (action.kind === "forgetUncommitted") failNextCommit();
+        if (action.kind !== "forget") failNextCommit();
         try {
           await live.app.forget(person);
         } catch {
           // The commit failed, or the ledger is down; the intention may be there.
         } finally {
           commitAgain();
+        }
+        if (action.kind === "forgetRetried") {
+          await live.app.forget(person).catch(() => {
+            // The ledger is down.
+          });
         }
         live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
         return;
@@ -630,8 +786,15 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
   // is every restore found.
   let answered = true;
 
+  // Every action takes a moment: what each instance raises reads as raised after what came before.
+  const elapse = (milliseconds: number): void => {
+    now += milliseconds;
+    for (const live of instances) live?.clock.advance(milliseconds);
+  };
+
   const run = async (action: Action): Promise<void> => {
     if (action.kind === "ledger" && action.mode !== "up") answered = false;
+    elapse(1);
     await step(action);
     trace.push(state());
   };
@@ -640,8 +803,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     trace.push(describeAction(action));
     switch (action.kind) {
       case "tick":
-        now += GENERATION_INTERVAL_MS;
-        for (const live of instances) live?.clock.advance(GENERATION_INTERVAL_MS);
+        elapse(GENERATION_INTERVAL_MS);
         return;
       case "backUp":
         // Nothing to copy before the first start creates the tables.
@@ -694,7 +856,9 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
         const live = instances[action.instance];
         if (live == null) return;
         unlooked = null;
-        const provable = open.some(({ carried }) => carried) || (await ledgerProves(true));
+        const provable =
+          (kind === "sql" && open.some(({ carried }) => carried)) ||
+          (await ledgerProves(true, transient ? "none" : viewOf(live)));
         const stands = standsWhereHandled();
         try {
           const first = await live.app.restored();
@@ -771,9 +935,11 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     now += FORGET_LEDGER_GRACE_MS + 60_000;
     await startInstance(0);
     trace.push(state());
-    const live = instances[0];
-    live?.clock.advance(1);
-    await pass(0);
+    // Once every read shows what was raised before it started, as many passes as it counts.
+    for (const _ of [1, 2, 3]) {
+      elapse(KV_DELAY_MS + 1);
+      await pass(0);
+    }
     await instanceAction({ kind: "stop", instance: 0 });
     trace.push(state());
     return {
@@ -830,6 +996,14 @@ const instanceAction: fc.Arbitrary<InstanceAction> = fc.oneof(
     weight: 1,
     arbitrary: fc.record({ instance, person: fc.nat(8) }).map(({ instance: at, person }) => ({
       kind: "forgetUncommitted" as const,
+      instance: at,
+      person,
+    })),
+  },
+  {
+    weight: 2,
+    arbitrary: fc.record({ instance, person: fc.nat(8) }).map(({ instance: at, person }) => ({
+      kind: "forgetRetried" as const,
       instance: at,
       person,
     })),
@@ -891,7 +1065,7 @@ const runModel = async (
 };
 
 // Each run draws new traces. A failure prints its seed and its shrunk trace: `BOUNDA_MODEL_SEED`
-// runs that seed again, `BOUNDA_MODEL_REPLAY='{"kind":"sql","actions":[…]}'` the trace alone, with
+// runs that seed again, `BOUNDA_MODEL_REPLAY='{"kind":"kv","actions":[…]}'` the trace alone, with
 // `BOUNDA_MODEL_LOG=1` for what the instances logged; pin it in `COUNTEREXAMPLES` once fixed.
 // `BOUNDA_MODEL_RUNS` and `BOUNDA_MODEL_LENGTH` search wider.
 const RUNS = Number(process.env.BOUNDA_MODEL_RUNS ?? 60);
@@ -934,7 +1108,7 @@ const by = <Kind extends InstanceAction["kind"]>(
   instance: Instance,
   person = 0,
 ): InstanceAction =>
-  (kind === "forget" || kind === "forgetUncommitted"
+  (kind === "forget" || kind === "forgetUncommitted" || kind === "forgetRetried"
     ? { kind, instance, person }
     : { kind, instance }) as InstanceAction;
 
@@ -1056,6 +1230,71 @@ const COUNTEREXAMPLES: readonly {
     ],
     counted: 1,
   },
+  {
+    name: "counts on KV a copy restored right after the mark passed it, once the reads show the mark, though the database wrote since",
+    kind: "kv",
+    actions: [
+      { kind: "tick" },
+      { kind: "tick" },
+      { kind: "tick" },
+      by("pass", 0),
+      { kind: "backUp", slot: 0 },
+      by("write", 0),
+      { kind: "tick" },
+      by("pass", 0),
+      by("crash", 0),
+      restore(0, ["pass", "pass"]),
+      by("start", 0),
+      by("write", 0),
+      { kind: "tick" },
+      by("pass", 0),
+      { kind: "tick" },
+      by("pass", 0),
+    ],
+    counted: 1,
+  },
+  {
+    name: "counts on KV once a copy found at start behind a mark the reads showed, when a higher one raised before shows later",
+    kind: "kv",
+    actions: [
+      { kind: "tick" },
+      { kind: "tick" },
+      { kind: "tick" },
+      by("pass", 0),
+      { kind: "backUp", slot: 1 },
+      by("write", 0),
+      { kind: "tick" },
+      by("pass", 0),
+      { kind: "tick" },
+      { kind: "tick" },
+      { kind: "tick" },
+      by("write", 0),
+      { kind: "tick" },
+      by("pass", 0),
+      by("write", 0),
+      { kind: "tick" },
+      by("pass", 0),
+      by("crash", 0),
+      restore(1, ["pass", "pass"]),
+      by("start", 0),
+      { kind: "tick" },
+      { kind: "tick" },
+      { kind: "tick" },
+      by("pass", 0),
+    ],
+    counted: 1,
+  },
+  {
+    name: "counts on KV a declaration after one the reads do not show yet past it, in the database's count too",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 1 },
+      { kind: "declare", instance: 0 },
+      restore(1, ["crash", "pass"]),
+      { kind: "declare", instance: 0 },
+    ],
+    counted: 2,
+  },
 ];
 
 describe("restore counting, the counterexamples its model found", () => {
@@ -1074,9 +1313,10 @@ describe("restore counting, the counterexamples its model found", () => {
   // until the instance is gone, restored; and a commit that failed. Each leaves the same database
   // and the same ledger, and one went back where the other did not: neither is counted.
   it("confirms a copy taken before a commit the ledger never saw is a commit that failed, to every look", async () => {
+    // As many actions each, so both take as long.
     const betweens: readonly (readonly Action[])[] = [
       [{ kind: "ledger", mode: "commitsDown" }, by("forget", 0)],
-      [by("forgetUncommitted", 0)],
+      [{ kind: "ledger", mode: "up" }, by("forgetUncommitted", 0)],
     ];
     const worlds = await Promise.all(
       betweens.map(async (between) => {
@@ -1132,6 +1372,65 @@ describe("pruning the ledger with no app, against the model", () => {
         await world.run(step);
       }
       expect(await world.entries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([1, 1]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
+describe("pruning intentions nothing applies with no app, against the model", () => {
+  it("keeps an intention while its person holds a key it names, and removes it once they hold none", async () => {
+    const world = createWorld("sql");
+    try {
+      for (const step of [
+        by("start", 0),
+        by("write", 0),
+        by("forgetUncommitted", 0),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect((await world.entries()).map(({ committed }) => committed)).toEqual([false]);
+      for (const step of [
+        by("forgetRetried", 0),
+        by("stop", 0),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([0, 0]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("keeps an intention written past a copy restored while no instance ran, whose person the copy never held", async () => {
+    const world = createWorld("sql");
+    try {
+      for (const step of [
+        by("start", 0),
+        by("write", 0),
+        { kind: "backUp", slot: 0 } as const,
+        by("write", 0),
+        by("forgetUncommitted", 0, 1),
+        by("stop", 0),
+        restore(0, ["pass", "pass"]),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([
+        expect.objectContaining({ personId: "p2", committed: false }),
+      ]);
       const { violations, counted, expected } = await world.settle();
       expect(violations).toEqual([]);
       expect([counted, expected]).toEqual([1, 1]);

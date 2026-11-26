@@ -1245,7 +1245,7 @@ describe("bounda forget-ledger prune", () => {
     expect(pruned.stdout).toMatch(new RegExp(`^${gone}: removed the entries before \\S+Z$`, "m"));
     expect(besidesLogs(pruned.stderr)).toMatch(
       new RegExp(
-        `^error: ${unkept} could not be pruned: Pruning the forget ledger needs runtime\\.personalData\\.forgetLedger\\.keepFor: without it, entries are kept until their tenant is forgotten\\nerror: ${unloadable} could not be pruned: ${unloadable} has no database\\n2 tenant\\(s\\) not pruned: run again once what failed is fixed\\n$`,
+        `^error: the stores ${unloadable}'s configuration names could not be listed: Error\\nerror: ${unkept} could not be pruned: Pruning the forget ledger needs runtime\\.personalData\\.forgetLedger\\.keepFor: without it, entries are kept until their tenant is forgotten\\nerror: ${unloadable} could not be pruned: ${unloadable} has no database\\n2 tenant\\(s\\) not pruned or listed: run again once what failed is fixed\\n$`,
       ),
     );
     expect(await goneLedger.read({ limit: 10 })).toEqual([]);
@@ -1265,7 +1265,102 @@ describe("bounda forget-ledger prune", () => {
     }
     const none = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
     expect(none.code).toBe(EXIT_OK);
-    expect(none.stdout).toBe("the forget ledger holds no tenant's entries\n");
+    expect(none.stdout).toBe("the forget ledgers hold no tenant's entries\n");
+  });
+
+  it("prunes the tenants of every ledger's store the configuration names, those its tenants export names included", async () => {
+    const ledgers = ["--config", "prune-ledgers.config.ts"];
+    const [a, b, unlistable] = [tenantOf("a"), tenantOf("b"), tenantOf("unlistable")];
+    const ownLedgerOf = async (tenant: string): Promise<ForgetLedger> => {
+      const loaded = await loadProject<typeof fixtureRegistry>({
+        root: fixture,
+        configPath: "prune-ledgers.config.ts",
+        tenant,
+        logger: silentLogger,
+      });
+      const store = loaded.config.runtime?.personalData?.forgetLedger?.store;
+      if (store?.kind !== "bounda-adapter") throw new Error("the fixture's ledgers are adapters");
+      return store.createForgetLedger({ tenant });
+    };
+    for (const tenant of [a, b]) {
+      const ledger = await ownLedgerOf(tenant);
+      await ledger.append([ledgerEntry(`p-${tenant}`, `e-${tenant}`)]);
+      // Forgotten, so its database is never opened, and its entries go past keepFor.
+      await ledger.fence.set({ state: "forgotten", tenant, since: old });
+    }
+    // Each ledger is a store of its own, which only the tenants export reaches.
+    const unnamed = await cli(["forget-ledger", "prune", "--all-tenants", ...ledgers], fixture);
+    expect(besidesLogs(unnamed.stderr)).toBe("");
+    expect(unnamed.stdout).toBe("the forget ledgers hold no tenant's entries\n");
+
+    process.env.PRUNE_TENANTS = [a, b, unlistable].join(",");
+    try {
+      const pruned = await cli(["forget-ledger", "prune", "--all-tenants", ...ledgers], fixture);
+      expect(pruned.code).toBe(EXIT_FAILURE);
+      expect(pruned.stdout).toMatch(new RegExp(`^${a}: removed the entries before \\S+Z$`, "m"));
+      expect(pruned.stdout).toMatch(new RegExp(`^${b}: removed the entries before \\S+Z$`, "m"));
+      expect(besidesLogs(pruned.stderr)).toBe(
+        `error: the stores ${unlistable}'s configuration names could not be listed: The forget ledger cannot list its tenants: give it tenants(), or prune each tenant by name\n1 tenant(s) not pruned or listed: run again once what failed is fixed\n`,
+      );
+      for (const tenant of [a, b])
+        expect(await (await ownLedgerOf(tenant)).read({ limit: 10 })).toEqual([]);
+
+      // A tenant only it names that cannot be listed is not pruned, though no ledger holds entries.
+      process.env.PRUNE_TENANTS = unlistable;
+      const unlisted = await cli(["forget-ledger", "prune", "--all-tenants", ...ledgers], fixture);
+      expect(unlisted.code).toBe(EXIT_FAILURE);
+      expect(unlisted.stdout).toBe("");
+      expect(besidesLogs(unlisted.stderr)).toBe(
+        `error: the stores ${unlistable}'s configuration names could not be listed: The forget ledger cannot list its tenants: give it tenants(), or prune each tenant by name\n1 tenant(s) not pruned or listed: run again once what failed is fixed\n`,
+      );
+
+      process.env.PRUNE_TENANTS = [a, b].join(",");
+      const again = await cli(["forget-ledger", "prune", "--all-tenants", ...ledgers], fixture);
+      expect(besidesLogs(again.stderr)).toBe("");
+      expect(again.code).toBe(EXIT_OK);
+      expect(again.stdout).toBe("the forget ledgers hold no tenant's entries\n");
+    } finally {
+      delete process.env.PRUNE_TENANTS;
+    }
+  });
+
+  it("names a tenant listed whose configuration then fails to load", async () => {
+    const once = tenantOf("once");
+    const loaded = await loadProject<typeof fixtureRegistry>({
+      root: fixture,
+      configPath: "prune-ledgers.config.ts",
+      tenant: `holder-${once}`,
+      logger: silentLogger,
+    });
+    const store = loaded.config.runtime?.personalData?.forgetLedger?.store;
+    if (store?.kind !== "bounda-adapter") throw new Error("the fixture's ledgers are adapters");
+    // In the store of another tenant, which only the tenants export names.
+    await (await store.createForgetLedger({ tenant: once })).append([ledgerEntry("p-1", "e-1")]);
+    process.env.PRUNE_TENANTS = `holder-${once}`;
+    try {
+      const pruned = await cli(
+        ["forget-ledger", "prune", "--all-tenants", "--config", "prune-ledgers.config.ts"],
+        fixture,
+      );
+      expect(pruned.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(pruned.stderr)).toBe(
+        `error: ${once} could not be pruned: ${once} is gone\n1 tenant(s) not pruned or listed: run again once what failed is fixed\n`,
+      );
+    } finally {
+      delete process.env.PRUNE_TENANTS;
+    }
+  });
+
+  it("refuses a tenants export that names no tenants, for --all-tenants alone", async () => {
+    const unlisted = ["--config", "prune-ledgers-unlisted.config.ts"];
+    const all = await cli(["forget-ledger", "prune", "--all-tenants", ...unlisted], fixture);
+    expect(all.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(all.stderr)).toMatch(
+      /^error: \S+prune-ledgers-unlisted\.config\.ts must export tenants as a list of tenant names, or a function that resolves to one\n$/,
+    );
+    const one = await cli(["forget-ledger", "prune", ...unlisted], fixture);
+    expect(besidesLogs(one.stderr)).toBe("");
+    expect(one.code).toBe(EXIT_OK);
   });
 
   it("says why it prunes nothing for a project without a forget ledger, or a ledger without entries", async () => {
@@ -1301,7 +1396,7 @@ describe("bounda forget-ledger prune", () => {
     for (const text of [
       "prune a SQL forget ledger past keepFor with no app of the tenant running, keeping what the tenant's database has not applied yet",
       "--all-tenants",
-      "every tenant whose entries the ledger's store holds, each through its own configuration",
+      "every tenant whose entries a ledger's store the configuration names holds, each through its own configuration",
       "--tenant <name>",
       "--error-text",
     ]) {
