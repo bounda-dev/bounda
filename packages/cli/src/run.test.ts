@@ -1896,7 +1896,7 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     expect(lines.at(-1)).toMatchObject({ kind: "end", counts: { persons: 2 } });
     expect(besidesLogs(printed.stderr)).toMatch(
       new RegExp(
-        `^exported tenant ${tenant} to standard output: 2 persons, 0 recipients, \\d+ events, 0 scheduled commands, 0 dead letters, 0 subscriber failures, 0 remembered answers, \\d+ read model rows, 0 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant\n$`,
+        `^exported tenant ${tenant} to standard output: 2 persons, 0 recipients, 0 recipients of forgotten persons, \\d+ events, 0 scheduled commands, 0 dead letters, 0 subscriber failures, 0 remembered answers, \\d+ read model rows, 0 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant\n$`,
       ),
     );
     expect(

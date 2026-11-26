@@ -799,7 +799,7 @@ bounda export-tenant acme --output acme.jsonl --actor ops-ana
 ```
 
 ```
-exported tenant acme to /srv/acme.jsonl: 1204 persons, 3 recipients, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant
+exported tenant acme to /srv/acme.jsonl: 1204 persons, 3 recipients, 2 recipients of forgotten persons, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries; check it with bounda check-tenant-export before forgetting the tenant
 ```
 
 Without `--output` the lines go to standard output, written as fast as it takes them, and the
@@ -828,7 +828,7 @@ bounda check-tenant-export acme.jsonl
 ```
 
 ```
-/srv/acme.jsonl is a whole export of tenant acme up to position 98112: 1204 persons, 3 recipients, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries
+/srv/acme.jsonl is a whole export of tenant acme up to position 98112: 1204 persons, 3 recipients, 2 recipients of forgotten persons, 98112 events, 3 scheduled commands, 0 dead letters, 0 subscriber failures, 12 remembered answers, 40211 read model rows, 37 forget ledger entries
 ```
 
 Exit codes: `0` whole, `2` the file cannot be read or is not a whole export, with the first thing

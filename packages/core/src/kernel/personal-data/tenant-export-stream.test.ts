@@ -323,7 +323,7 @@ describe("streamTenantExport", () => {
       kind: "header",
       header: {
         format: "bounda.tenant-export",
-        version: 4,
+        version: 5,
         tenant: "acme",
         exportId: "x-1",
         exportedAt: "2026-01-01T00:00:00.000Z",
@@ -1176,6 +1176,7 @@ describe("streamTenantExport", () => {
       counts: {
         persons: 1,
         recipients: 0,
+        forgottenRecipients: 0,
         events: 1,
         scheduledCommands: 0,
         deadLetters: 0,
@@ -1264,6 +1265,7 @@ describe("recordedTenantExport", () => {
   const counts = (records: number): TenantExportCounts => ({
     persons: records,
     recipients: 0,
+    forgottenRecipients: 0,
     events: 1,
     scheduledCommands: 0,
     deadLetters: 0,
@@ -1279,7 +1281,7 @@ describe("recordedTenantExport", () => {
   ): StreamedTenantExport => ({
     header: {
       format: "bounda.tenant-export",
-      version: 4,
+      version: 5,
       tenant: "acme",
       exportId: "x-1",
       exportedAt: "2026-01-01T00:00:00.000Z",
