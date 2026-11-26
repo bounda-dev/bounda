@@ -1453,8 +1453,8 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     // Each error said, with the error it names.
     const errors = () =>
       entries
-        .filter(({ level, fields }) => level === "error" && fields?.errorName === "Error")
-        .map(({ message }) => message);
+        .filter(({ level }) => level === "error")
+        .map(({ message, fields }) => `${message}: ${String(fields?.errorName)}`);
     return {
       checkpointStore,
       ledger,
@@ -1538,8 +1538,12 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     expect(raised[0]).toEqual({ value: 0, raisedAt: startedAt });
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
     // At start, at the check and at the stop; then no more.
-    expect(logged.filter(({ level }) => level === "error").map(({ message }) => message)).toEqual(
-      Array.from({ length: 3 }, () => "the forget ledger's mark could not be raised"),
+    expect(
+      logged
+        .filter(({ level }) => level === "error")
+        .map(({ message, fields }) => `${message}: ${String(fields?.errorName)}`),
+    ).toEqual(
+      Array.from({ length: 3 }, () => "the forget ledger's mark could not be raised: Error"),
     );
   });
 
@@ -1689,7 +1693,7 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     await failing.start();
     time.now += LAG;
     expect(await failing.check(at(time.now))).toBeNull();
-    expect(errors()).toEqual(["the forget ledger's marks could not be pruned"]);
+    expect(errors()).toEqual(["the forget ledger's marks could not be pruned: Error"]);
   });
 
   it("raises again, at the time first asked, a generation and a count the ledger did not take", async () => {
@@ -1712,7 +1716,7 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     time.now += LAG + 1;
     const countedAt = at(time.now).toISOString();
     expect(await watch.check(at(time.now))).toEqual({ first: true });
-    expect(errors()).toContain("the forget ledger's count of restores could not be raised");
+    expect(errors()).toContain("the forget ledger's count of restores could not be raised: Error");
     refusing = false;
     time.now += 1;
     await watch.check(at(time.now));
@@ -1923,7 +1927,9 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     time.now += LAG;
     expect(await watch.check(at(time.now))).toBeNull();
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
-    expect(errors()).toEqual(["the forget ledger's recount of restores could not be raised"]);
+    expect(errors()).toEqual([
+      "the forget ledger's recount of restores could not be raised: Error",
+    ]);
   });
 
   it("lets go, once judged, of the values raised before it started but the highest, and of each value it raises past", async () => {
