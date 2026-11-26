@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ConfigurationError } from "../contracts/errors.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { defineKeyWrapper } from "../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
@@ -207,7 +208,9 @@ describe("checkLocations", () => {
     expect(() =>
       resolveConfig(kept({ tenantKeys: memory({ location: "eu", safeguard: "adequacy" }) })),
     ).toThrow(
-      'runtime.personalData.tenantKeys keeps its data in "eu" under a safeguard, and storage keeps the app\'s in "eu", both in the European Economic Area, so keeping it there is no transfer: remove its safeguard',
+      new ConfigurationError(
+        'runtime.personalData.tenantKeys keeps its data in "eu" under a safeguard, and storage keeps the app\'s in "eu", both in the European Economic Area, so keeping it there is no transfer: remove its safeguard',
+      ),
     );
     expect(() =>
       resolveConfig(
