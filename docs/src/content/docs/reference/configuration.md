@@ -29,7 +29,8 @@ for code of your own. See [tenants](/guides/personal-data/#tenants). Such a proj
 export `tenants`, a list of the tenants it serves or a function that resolves to one, which
 commands that go through every tenant reach beside those its stores list, as
 [`bounda forget-ledger prune --all-tenants`](/guides/personal-data/#keeping-the-ledger-short)
-does; `loadProject` hands it as `tenants()`.
+and [`bounda tenant-key rewrap-master`](/guides/personal-data/#rotating-the-master-key) do;
+`loadProject` hands it as `tenants()`.
 
 **Durations** are a number of milliseconds or a string: a number followed by `ms`, `s`, `m`, `h`
 or `d` (`"250ms"`, `"1.5s"`, `"7d"`). A duration read from the environment is a `string`, which the

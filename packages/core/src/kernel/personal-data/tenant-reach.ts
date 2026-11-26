@@ -1,0 +1,179 @@
+import { isAdapter } from "../../adapter/adapter.ts";
+import type { AdapterDefinition } from "../../adapter/adapter-definition.ts";
+import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
+import { configForTenant } from "../../config/define-config.ts";
+import { resolveConfig } from "../../config/schema.ts";
+import type { Config, ProjectConfig, ResolvedConfig } from "../../config/types.ts";
+import type { AppEnv } from "../../register/index.ts";
+import { tenantIdOf } from "../tenant.ts";
+import { type ForgetLedgerSource, openForgetLedger } from "./forget-ledger.ts";
+import { keySourcesOf } from "./key-hierarchy.ts";
+import { openTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
+
+// How many tenants a page of a tenant key store lists.
+const PAGE = 500;
+
+export interface UnreachedTenant {
+  readonly tenant: string;
+  /**
+   * Why its configuration, its forget ledger's store or its tenant key store could not be read.
+   */
+  readonly error: unknown;
+}
+
+export interface OpenedForgetLedger {
+  readonly ledger: ForgetLedger;
+  readonly source: ForgetLedgerSource;
+}
+
+export interface ReachedKeyStore {
+  readonly source: TenantKeySource;
+  // The storage of the configuration it was read through, which opening it checks it against.
+  readonly storage: AdapterDefinition;
+  readonly tenants: readonly string[];
+}
+
+export interface ReachTenantsArgs {
+  readonly config: ProjectConfig;
+  readonly env: AppEnv;
+  readonly first: string;
+  readonly firstConfig: Config;
+  // The first tenant's forget ledger, opened as the caller requires it; closed once read.
+  readonly firstLedger?: OpenedForgetLedger;
+  readonly tenants: readonly string[];
+  // The tenants a forget ledger's store lists: the caller decides what one that cannot list means.
+  readonly listLedger: (ledger: ForgetLedger) => Promise<readonly string[]>;
+}
+
+export interface ReachedTenants {
+  // Every tenant reached whose configuration resolved, though its stores could not be read.
+  readonly configs: ReadonlyMap<string, ResolvedConfig>;
+  readonly inLedgers: ReadonlySet<string>;
+  // In the order read: the first tenant's first.
+  readonly keyStores: readonly ReachedKeyStore[];
+  readonly unreached: readonly UnreachedTenant[];
+}
+
+export interface ReachTenantsFunction {
+  (args: ReachTenantsArgs): Promise<ReachedTenants>;
+}
+
+// One database is one store, whichever tenant's configuration names it: an adapter of the same kind
+// with the same options, as `sharesStorage` reads it, or the same definition. Every memory adapter
+// is a store of its own.
+const storeOf = (source: ForgetLedgerSource | TenantKeySource): unknown => {
+  if (source.kind !== "bounda-adapter" || source.name === "memory") return source;
+  try {
+    return `${source.name}:${JSON.stringify(source.options)}`;
+  } catch {
+    // Options JSON cannot write, such as a client of your own, tell the adapter by itself.
+    return source;
+  }
+};
+
+const firstRead = (read: Set<unknown>, source: ForgetLedgerSource | TenantKeySource): boolean => {
+  const store = storeOf(source);
+  if (read.has(store)) return false;
+  read.add(store);
+  return true;
+};
+
+// Each store is read once, by identity, and a database that holds a forget ledger and tenant keys
+// is read as both, since each lists other tenants. What fails for the first tenant rejects; any
+// other tenant's failure is in `unreached`.
+export const reachTenants: ReachTenantsFunction = async ({
+  config,
+  env,
+  first,
+  firstConfig,
+  firstLedger,
+  tenants,
+  listLedger,
+}) => {
+  const reached = new Set<string>([first]);
+  const queue: string[] = [];
+  const reach = (tenant: string): void => {
+    if (reached.has(tenant)) return;
+    reached.add(tenant);
+    queue.push(tenant);
+  };
+  const ledgersRead = new Set<unknown>();
+  const keysRead = new Set<unknown>();
+  const configs = new Map<string, ResolvedConfig>();
+  const inLedgers = new Set<string>();
+  const keyStores: ReachedKeyStore[] = [];
+
+  const readLedger = async (ledger: ForgetLedger): Promise<void> => {
+    try {
+      for (const each of await listLedger(ledger)) {
+        inLedgers.add(each);
+        reach(each);
+      }
+    } finally {
+      await ledger.close?.();
+    }
+  };
+  const readTenantKeys = async ({ storage, runtime }: ResolvedConfig): Promise<void> => {
+    const source = isAdapter(storage)
+      ? keySourcesOf({ storage, personalData: runtime.personalData }).tenantKeys
+      : runtime.personalData.tenantKeys;
+    if (source === null || !firstRead(keysRead, source)) return;
+    const store = await openTenantKeyStore({ source, storage, env });
+    const listed: string[] = [];
+    try {
+      let cursor: string | null = null;
+      do {
+        const page = await store.list({ cursor, limit: PAGE });
+        for (const each of page.tenants) {
+          listed.push(each);
+          reach(each);
+        }
+        cursor = page.cursor;
+      } while (cursor !== null);
+    } finally {
+      await store.close?.();
+    }
+    keyStores.push({ source, storage, tenants: listed });
+  };
+  const visit = async (tenant: string, tenantConfig: Config): Promise<void> => {
+    const resolved = resolveConfig(tenantConfig);
+    configs.set(tenant, resolved);
+    await readTenantKeys(resolved);
+    const { forgetLedger } = resolved.runtime.personalData;
+    if (forgetLedger === null || !firstRead(ledgersRead, forgetLedger.store)) return;
+    await readLedger(
+      await openForgetLedger({
+        source: forgetLedger.store,
+        storage: resolved.storage,
+        env,
+        tenant,
+        keepForMs: forgetLedger.keepForMs ?? undefined,
+      }),
+    );
+  };
+
+  if (firstLedger === undefined) {
+    await visit(first, firstConfig);
+  } else {
+    ledgersRead.add(storeOf(firstLedger.source));
+    try {
+      await visit(first, firstConfig);
+    } catch (error) {
+      await firstLedger.ledger.close?.();
+      throw error;
+    }
+    await readLedger(firstLedger.ledger);
+  }
+  for (const tenant of tenants) reach(tenantIdOf(tenant));
+
+  const unreached: UnreachedTenant[] = [];
+  // An array's iterator reads its length at every step, so this goes on through what `reach` adds.
+  for (const tenant of queue) {
+    try {
+      await visit(tenant, configForTenant({ config, tenant }));
+    } catch (error) {
+      unreached.push({ tenant, error });
+    }
+  }
+  return { configs, inLedgers, keyStores, unreached };
+};
