@@ -400,6 +400,8 @@ export interface ForgetLedgerReconciliation {
   // The highest generation an entry `undone` counts was written at: the restore declared for them
   // moves the generation past it, though the mark reads lower, or they would tell it again.
   past(): number;
+  // Takes `count` of what `undone` counted as declared; on a ledger whose reads lag, reads the
+  // ledger once more `visibilityDelayMs` later, for what else that restore lost.
   declared(count: number): void;
 }
 
@@ -849,6 +851,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     declared: (count) => {
       undone = Math.max(0, undone - count);
       if (undone === 0) past = 0;
+      // The restore those entries told may have lost others the read did not show yet.
+      if (!lagging) return;
+      const again = clock.now().getTime() + (ledger.visibilityDelayMs as number);
+      dueAt = dueAt === null ? again : Math.min(dueAt, again);
     },
     restored: async (first) => {
       done = false;

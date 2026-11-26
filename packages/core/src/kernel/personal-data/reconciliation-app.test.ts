@@ -629,7 +629,12 @@ describe("the forget ledger", () => {
     clock.advance(60_000);
     await app.runUntilIdle();
     expect(await forgotten()).toEqual([["c-1", "requested"]]);
+    // The restore that entry told may have lost others the read did not show yet.
+    expect(await app.nextDueAt()).toEqual(new Date(START.getTime() + 120_000));
+    clock.advance(60_000);
+    await app.runUntilIdle();
     expect(await app.nextDueAt()).toBeNull();
+    expect((await app.status()).restoresFound).toBe(1);
   });
 
   it("copies a forgetting from the stream once the ledger takes it, when it refused its intention", async () => {

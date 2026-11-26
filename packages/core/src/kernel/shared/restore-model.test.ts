@@ -787,7 +787,7 @@ const createWorld = (
   let restoredAt = Number.NEGATIVE_INFINITY;
   const appliedInTime = async (live: Live): Promise<void> => {
     const anchor = live.anchor;
-    if (interleaving || ledger.mode() !== "up" || ledger.upSince() > anchor) return;
+    if (interleaving || ledger.mode() !== "up" || ledger.upSince() >= anchor) return;
     if (restoredAt > anchor || now < anchor + (kind === "kv" ? KV_DELAY_MS : 0)) return;
     const held = new Set(snapshotOf(db).events.map(({ id }) => id));
     for (const entry of await ledger.committedBy(anchor)) {

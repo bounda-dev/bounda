@@ -114,7 +114,7 @@ const costOf = ({ raised, listed }: Awaited<ReturnType<typeof run>>) => {
   const [first] = generation;
   const last = generation.at(-1);
   const within = (from: number, to: number) =>
-    Math.max(...generation.filter(({ at }) => at >= from && at < to).map(({ keys }) => keys));
+    Math.max(0, ...generation.filter(({ at }) => at >= from && at < to).map(({ keys }) => keys));
   const tenMinutes = 10 * 60_000;
   return {
     first: within(first?.at ?? 0, (first?.at ?? 0) + tenMinutes),
@@ -135,6 +135,7 @@ describe("what reading the KV ledger's marks costs", () => {
   it("lists a bounded number of keys however long a busy object runs", async () => {
     const result = await run({ tenant: "marks-busy", minutes: 30, restartEveryMs: null });
     const cost = costOf(result);
+    expect(Math.min(cost.first, cost.last)).toBeGreaterThan(0);
     expect(cost.overBound).toEqual([]);
     expect(cost.last).toBeLessThanOrEqual(cost.first);
     // Every look lists the generation's mark and the count's; what lists the generation's alone is
@@ -152,6 +153,7 @@ describe("what reading the KV ledger's marks costs", () => {
       restartEveryMs: KV_LIST_DELAY_MS / 2,
     });
     const cost = costOf(result);
+    expect(Math.min(cost.first, cost.last)).toBeGreaterThan(0);
     expect(cost.overBound).toEqual([]);
     expect(cost.last).toBeLessThanOrEqual(cost.first);
   }, 120_000);

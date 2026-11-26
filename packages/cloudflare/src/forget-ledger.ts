@@ -491,11 +491,11 @@ const isKvNamespace = (value: unknown): value is KVNamespace =>
  * A forget ledger in a Workers KV namespace, for `runtime.personalData.forgetLedger.store` of an app on
  * Cloudflare: outside the Durable Object, so restoring the object's storage to an earlier time
  * leaves it whole. Every object keeps its entries under its tenant: its name, or the id itself for
- * one reached through an id without a name. KV lists a new key within
- * about a minute, so an object that starts, or finds a restore, reads the ledger once more after
- * `KV_LIST_DELAY_MS`: a forgetting made in the last minute before a restore is applied by then. A binding missing
- * from the object's `env` fails its start with `ConfigurationError`, and so does opening it
- * outside a Worker. KV holds its keys to no
+ * one reached through an id without a name. KV lists a new key within about a minute, so an object
+ * that starts, or finds a restore, reads the ledger once more after `KV_LIST_DELAY_MS`: a
+ * forgetting made in the last minute before a restore is applied by then. A binding missing from
+ * the object's `env` fails its start with `ConfigurationError`, and so does opening it outside a
+ * Worker. KV holds its keys to no
  * jurisdiction, so an app whose `cloudflare()` names one refuses it with `ConfigurationError`,
  * unless it declares where it may keep them under a `safeguard`: use `durableObjectForgetLedger`
  * there otherwise.
