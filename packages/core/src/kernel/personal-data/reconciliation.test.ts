@@ -286,6 +286,23 @@ describe("the forget ledger's reconciliation", () => {
     }
   });
 
+  it("keeps a reconciliation due sooner than the read a declared restore asks a delay later", async () => {
+    const { reconciliation } = await setUp({
+      entries: [
+        entry("c-1", "e-1", at(1)),
+        // Younger than the grace: due again once it comes of age.
+        intended("c-2", "e-2", new Date(NOW.getTime() - 1_000).toISOString()),
+      ],
+      persons: ["c-1", "c-2"],
+      visibilityDelayMs: 10 * FORGET_LEDGER_GRACE_MS,
+    });
+    await reconciliation.reconcile(NOW);
+    reconciliation.declared(1);
+    expect(reconciliation.nextDueAt()).toEqual(
+      new Date(NOW.getTime() - 1_000 + FORGET_LEDGER_GRACE_MS),
+    );
+  });
+
   it("tells, on a ledger whose reads lag, a committed entry it applies again as undone only when written since the latest restore counted", async () => {
     for (const [covered, undone] of [
       [Date.parse(at(1)), 1],

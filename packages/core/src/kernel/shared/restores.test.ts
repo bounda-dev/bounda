@@ -2017,10 +2017,15 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     raisedBefore(RESTORE_MARK, 0, 3 * LAG);
     raisedBefore(RESTORE_MARK, 1, 2 * LAG);
     let unreadable = true;
+    const pruned: string[] = [];
     const blind = watchWith({
       readMark: async (name) => {
         if (unreadable) throw new Error("down");
         return ledger.readMark(name);
+      },
+      pruneMarks: async (name, before) => {
+        pruned.push(name);
+        return ledger.pruneMarks?.(name, before);
       },
     });
     expect(await blind.start()).toBeNull();
@@ -2028,6 +2033,7 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     time.now += GENERATION_INTERVAL_MS;
     await blind.check(at(time.now));
     expect(valuesOf(RESTORE_MARK)).toEqual([0, 1, 1]);
+    expect(pruned).toEqual([]);
   });
 
   it("lets go at start of the values raised a delay before, once judged of those raised before it started, and then once a delay of those older, but the highest", async () => {
@@ -2052,7 +2058,8 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     // Within a delay of the last prune, a raise lets nothing go: it costs one write.
     expect(valuesOf(RESTORE_MARK)).toEqual([2, 3, 0, 4]);
     stream.head += 1;
-    time.now += LAG;
+    // A delay after the judgment's prune, to the millisecond.
+    time.now += LAG - GENERATION_INTERVAL_MS;
     await watch.check(at(time.now), { active: true });
     // Of those older than a read may lag, the highest stays.
     expect(valuesOf(RESTORE_MARK)).toEqual([3, 4, 5]);
