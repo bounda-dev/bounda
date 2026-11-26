@@ -88,7 +88,8 @@ export interface TenantKeyStoresArgs {
  */
 export interface TenantKeysInspection {
   /**
-   * How many tenant key stores were read.
+   * How many tenant key stores were read, each store told apart as `rewrapTenantKeys` tells them:
+   * one store two configurations build as two definitions counts twice.
    */
   readonly stores: number;
   /**

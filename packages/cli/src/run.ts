@@ -843,7 +843,7 @@ const runForgetTenant = (
       if (left.length === 0) return EXIT_OK;
       line(
         stderr,
-        `${left.length} store(s) may still hold a copy of tenant ${forgotten.tenant}'s key: run bounda forget-tenant ${forgotten.tenant} --yes again once what failed is fixed`,
+        `${left.length} copy(ies) of tenant ${forgotten.tenant}'s key not removed or tenant(s) not read: run bounda forget-tenant ${forgotten.tenant} --yes again once what failed is fixed`,
       );
       return EXIT_FAILURE;
     },
@@ -1253,7 +1253,10 @@ const runTenantKeyStatus = async (
     const { out, err } = formatTenantKeysStatus(inspection, project.errorText);
     for (const each of out) line(stdout, each);
     for (const each of err) line(stderr, each);
-    const forgottenCopies = inspection.stale.filter(({ named }) => named === "forgotten");
+    // A copy holding no key of a forgotten tenant, a forgetting's own record, opens nothing.
+    const forgottenCopies = inspection.stale.filter(
+      ({ named, lost }) => named === "forgotten" && lost.versions.length + lost.files.length > 0,
+    );
     if (forgottenCopies.length > 0) {
       line(
         stderr,

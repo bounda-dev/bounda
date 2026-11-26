@@ -2430,6 +2430,15 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       expect(besidesLogs(despite.stderr)).toContain(
         `error: ${only}'s copy ${where} was not removed`,
       );
+
+      // A copy of the forgetting alone, holding no key, opens nothing: named, but not a breach.
+      await (await firstKeysOf(forgotten)).put(forgotten, { ...live, keys: [] }, null);
+      const keyless = await cli(["tenant-key", "status", ...movedConfig], fixture);
+      expect(besidesLogs(keyless.stderr)).toBe("");
+      expect(keyless.code).toBe(EXIT_OK);
+      expect(keyless.stdout).toContain(
+        `${forgotten}: a copy of its key ${where}, though it is forgotten`,
+      );
     } finally {
       delete process.env.MOVED_MASTER;
       delete process.env.MOVED_TENANTS;

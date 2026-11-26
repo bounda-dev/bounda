@@ -106,6 +106,47 @@ describe("the tenant key store in keeper objects", () => {
     expect(store.oneWriterPerTenant).toBeUndefined();
   });
 
+  it("removes a tenant's record from its keeper and the directory, the record gone though the directory fails to unlist it", async () => {
+    const listed = (tenant: string) =>
+      runInDurableObject(keeper("directory"), (_object, state) =>
+        state.storage.sql
+          .exec(`SELECT "tenant" FROM "bounda_keeper_tenants" WHERE "tenant" = ?`, tenant)
+          .toArray(),
+      );
+    const tenant = `${fresh()}gone`;
+    const store = await durableObjectTenantKeys({ storage }).create({ env });
+    await store.put(tenant, record("s-1"), null);
+    expect(await store.remove(tenant, 2)).toBe(false);
+    expect(await store.remove(tenant, 1)).toBe(true);
+    expect(await store.get(tenant)).toBeNull();
+    expect(await listed(tenant)).toEqual([]);
+
+    const directoryId = env.KEEPER.idFromName("directory");
+    const real = env.KEEPER.get(directoryId);
+    const failing = {
+      idFromName: (name: string) => env.KEEPER.idFromName(name),
+      get: (id: DurableObjectId) =>
+        id.equals(directoryId)
+          ? {
+              registerTenant: (name: string) => real.registerTenant(name),
+              listTenants: (args: { cursor: string | null; limit: number }) =>
+                real.listTenants(args),
+              unregisterTenant: async () => {
+                throw new Error("directory unavailable");
+              },
+            }
+          : env.KEEPER.get(id),
+    };
+    const unlisting = await durableObjectTenantKeys({ storage }).create({
+      env: { ...env, KEEPER: failing as unknown as typeof env.KEEPER },
+    });
+    const kept = `${fresh()}kept`;
+    await unlisting.put(kept, record("s-1"), null);
+    expect(await unlisting.remove(kept, 1)).toBe(true);
+    expect(await unlisting.get(kept)).toBeNull();
+    expect(await listed(kept)).toEqual([{ tenant: kept }]);
+  });
+
   it("lists a tenant whose first record was refused, and none whose record it never asked for", async () => {
     const prefix = fresh();
     const store = await durableObjectTenantKeys({ storage }).create({ env });

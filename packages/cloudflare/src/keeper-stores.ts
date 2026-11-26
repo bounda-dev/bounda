@@ -177,8 +177,8 @@ export const durableObjectTenantKeys: DurableObjectTenantKeysFunction = (options
       },
       remove: async (tenant, expected) => {
         if (!(await unwrap(keeperOf(tenant).removeTenantKeys(tenant, expected)))) return false;
-        // Listed while its record exists; a tenant listed without one is read as none.
-        await unwrap(directory.unregisterTenant(tenant));
+        // The record is gone either way, and a tenant listed without one reads as none.
+        await unwrap(directory.unregisterTenant(tenant)).catch(() => undefined);
         return true;
       },
       list: (args) => unwrap(directory.listTenants(args)),
