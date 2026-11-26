@@ -3,6 +3,7 @@ import {
   byForgetLedgerOrder,
   type ForgetLedger,
   type ForgetLedgerEntry,
+  type ForgetLedgerMark,
 } from "../adapter/storage/forget-ledger.ts";
 import { createMemoryTenantFence, type MemoryTenantFence } from "./tenant-fence.ts";
 
@@ -23,7 +24,7 @@ export interface CreateMemoryForgetLedgersFunction {
  */
 export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () => {
   const byTenant = new Map<string, Map<string, ForgetLedgerEntry>>();
-  const marks = new Map<string, number>();
+  const marks = new Map<string, ForgetLedgerMark>();
   const fences = new Map<string, MemoryTenantFence>();
   return {
     rows: () =>
@@ -63,11 +64,14 @@ export const createMemoryForgetLedgers: CreateMemoryForgetLedgersFunction = () =
             .filter(([, held]) => held.size > 0)
             .map(([held]) => held)
             .sort(byCodeUnit),
-        readMark: async (name) => marks.get(`${tenant}\u0000${name}`) ?? 0,
-        raiseMark: (name, value) =>
+        readMark: async (name) => {
+          const mark = marks.get(`${tenant}\u0000${name}`);
+          return mark === undefined ? [] : [{ ...mark }];
+        },
+        raiseMark: (name, raised) =>
           fence.write(async () => {
             const mark = `${tenant}\u0000${name}`;
-            marks.set(mark, Math.max(marks.get(mark) ?? 0, value));
+            if ((marks.get(mark)?.value ?? 0) < raised.value) marks.set(mark, { ...raised });
           }),
         clear: async () => {
           entries.clear();

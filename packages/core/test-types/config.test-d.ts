@@ -32,6 +32,7 @@ import type {
   DataLocationOptions,
   ForgetLedger,
   ForgetLedgerEntry,
+  ForgetLedgerMark,
   LedgerDisclosure,
   LedgerReached,
   LedgerRedaction,
@@ -470,11 +471,15 @@ describe("defineConfig", () => {
         },
         readMark: async (name) => {
           expectTypeOf(name).toEqualTypeOf<string>();
-          return 0;
+          return [{ value: 0, raisedAt: "2026-01-01T00:00:00.000Z" }];
         },
-        raiseMark: async (name, value) => {
+        raiseMark: async (name, mark) => {
           expectTypeOf(name).toEqualTypeOf<string>();
-          expectTypeOf(value).toEqualTypeOf<number>();
+          expectTypeOf(mark).toEqualTypeOf<ForgetLedgerMark>();
+        },
+        pruneMarks: async (name, before) => {
+          expectTypeOf(name).toEqualTypeOf<string>();
+          expectTypeOf(before).toEqualTypeOf<string>();
         },
         clear: async () => true,
         fence: {

@@ -1868,10 +1868,10 @@ describe("a forgotten tenant's recipients and its forget ledger", () => {
     ]);
     // Every recipient told: no copy restored from now on needs the ledger's disclosures.
     expect(await ledger.read({ limit: 10 })).toEqual([]);
-    expect(await ledger.readMark(RESTORE_MARK)).toBe(0);
+    expect(await ledger.readMark(RESTORE_MARK)).toEqual([]);
     // Nor does a forgotten tenant's start or stop raise a mark the clear would have to remove.
     await after.stop();
-    expect(await ledger.readMark(RESTORE_MARK)).toBe(0);
+    expect(await ledger.readMark(RESTORE_MARK)).toEqual([]);
   });
 
   it("presumes every declared recipient holds the tenant's data when the ledger cannot be read", async () => {

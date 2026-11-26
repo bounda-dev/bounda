@@ -136,6 +136,15 @@ export interface ForgetLedgerPosition {
   readonly eventId: string;
 }
 
+/**
+ * A value raised under one of the ledger's marks, and when: `raisedAt` as
+ * `Date.prototype.toISOString` writes it, the clock of the instance that raised it.
+ */
+export interface ForgetLedgerMark {
+  readonly value: number;
+  readonly raisedAt: string;
+}
+
 export interface ReadForgetLedgerArgs {
   /**
    * Read the entries past this position; from the first when omitted.
@@ -190,15 +199,26 @@ export interface ForgetLedger {
    */
   tenants?(): Promise<readonly string[]>;
   /**
-   * The highest value raised under `name` for this ledger's store, `0` for none. What the runtime
-   * keeps of the database outside it: a copy restored while the app was stopped holds less than
-   * the ledger says the database reached.
+   * The values raised under `name` for this ledger's store, highest first, each with when it was
+   * raised; none for a mark never raised. What the runtime keeps of the database outside it: a
+   * copy restored while the app was stopped holds less than the ledger says the database reached.
+   * A ledger whose reads show every write keeps the highest value alone, with the time it was
+   * first raised. One whose reads lag, with `visibilityDelayMs`, keeps every value with each time
+   * it was raised, until `pruneMarks` lets them go: what tells the runtime a value raised before it
+   * started, which a read may show late, from one raised since.
    */
-  readMark(name: string): Promise<number>;
+  readMark(name: string): Promise<readonly ForgetLedgerMark[]>;
   /**
-   * Raises the mark `name` to `value`, unless it is already that high: a mark never goes down.
+   * Raises the mark `name` to `mark.value`, at `mark.raisedAt`: a mark never goes down, and a
+   * value raised again keeps the time it was first raised with.
    */
-  raiseMark(name: string, value: number): Promise<void>;
+  raiseMark(name: string, mark: ForgetLedgerMark): Promise<void>;
+  /**
+   * Removes the values of the mark `name` raised before `before`, but the highest of them: what
+   * the runtime calls on a ledger whose reads lag once it has compared them with the database. A
+   * ledger that keeps the highest value alone leaves it out.
+   */
+  pruneMarks?(name: string, before: string): Promise<void>;
   /**
    * Removes the entries and marks of this ledger's store, other stores' left as they were, and
    * resolves `true` once it removed every one it found, `false` when it removed part only, to be
@@ -211,7 +231,7 @@ export interface ForgetLedger {
   /**
    * The fence of this ledger's store, as `TenantFenceStore` describes it: `append` and `raiseMark`
    * reject with its error, writing nothing, once it is raised, whatever instance calls them, and
-   * one under way when it is raised ends before `set` resolves. `read`, `readMark`, `prune` and
+   * one under way when it is raised ends before `set` resolves. `read`, `readMark`, `pruneMarks`, `prune` and
    * `clear` go on. A ledger several instances write must check it in the same atomic step as the
    * write; one only the tenant's own object writes, as KV is, may check it in that object.
    */

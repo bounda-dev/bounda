@@ -11,6 +11,8 @@ import {
   forgetLedgerFenceStatement,
   forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
+  forgetLedgerMarksTableFor,
+  forgetLedgerMarkTimeStatement,
   forgetLedgerReachedStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
@@ -423,6 +425,13 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
       migrate: async (tx) => {
         if ((await columnsOf(tx, table)).has("reached")) return;
         await tx.run(forgetLedgerReachedStatement(table, sqliteDialect), []);
+      },
+    },
+    {
+      version: 12,
+      migrate: async (tx) => {
+        if ((await columnsOf(tx, forgetLedgerMarksTableFor(table))).has("raised_at")) return;
+        await tx.run(forgetLedgerMarkTimeStatement(table, sqliteDialect), []);
       },
     },
   ],

@@ -191,20 +191,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 0, latest: 5 },
-        { scope: "forget-ledger", version: 0, latest: 11 },
+        { scope: "forget-ledger", version: 0, latest: 12 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 5, latest: 5 },
-        { scope: "forget-ledger", version: 0, latest: 11 },
+        { scope: "forget-ledger", version: 0, latest: 12 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
         { scope: "storage", version: STORAGE_LATEST[dialect], latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 5, latest: 5 },
-        { scope: "forget-ledger", version: 11, latest: 11 },
+        { scope: "forget-ledger", version: 12, latest: 12 },
         { scope: "tenant-keys", version: 1, latest: 1 },
       ]);
       const shape = await shapeOf(target, dialect);
@@ -565,6 +565,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 9 },
         { scope: "forget-ledger", version: 10 },
         { scope: "forget-ledger", version: 11 },
+        { scope: "forget-ledger", version: 12 },
       ]);
     });
 
@@ -610,11 +611,16 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
           "e-2",
           "e-3",
         ]);
+        const epoch = "1970-01-01T00:00:00.000Z";
         expect([
           await ledger.readMark("restore"),
           await ledger.readMark("reconciled"),
           await ledger.readMark("flushed"),
-        ]).toEqual([5, 3, 7]);
+        ]).toEqual([
+          [{ value: 5, raisedAt: epoch }],
+          [{ value: 3, raisedAt: epoch }],
+          [{ value: 7, raisedAt: epoch }],
+        ]);
         expect(await ledger.fence.read()).toEqual({
           state: "frozen",
           tenant: DEFAULT_TENANT,
@@ -695,7 +701,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at", "committed") VALUES ('t-1', 'e-1', 'p-1', '2026-01-01T00:00:01.000Z', 0)`,
       );
       await target.execute(
-        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 11`,
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" >= 11`,
       );
       const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
       try {
@@ -722,6 +728,40 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
             committed: false,
           },
           { ...copied, reached: intention.reached },
+        ]);
+      } finally {
+        await ledger.close?.();
+      }
+    });
+
+    it("reads a mark raised before the twelfth version as raised at the epoch, and keeps when each value was first raised after", async () => {
+      const target = await create();
+      const table = quoteIdentifier(
+        storageTableNameFor({ prefix: target.prefix, table: "forgetLedger" }),
+      );
+      const marks = forgetLedgerMarksTableFor(table);
+      const migrated = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        await migrated.read({ limit: 1 });
+      } finally {
+        await migrated.close?.();
+      }
+      await target.execute(`ALTER TABLE ${marks} DROP COLUMN "raised_at"`);
+      await target.execute(
+        `INSERT INTO ${marks} ("tenant", "name", "value") VALUES ('t-1', 'restore', 4)`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 12`,
+      );
+      const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        expect(await ledger.readMark("restore")).toEqual([
+          { value: 4, raisedAt: "1970-01-01T00:00:00.000Z" },
+        ]);
+        await ledger.raiseMark("restore", { value: 5, raisedAt: "2026-01-01T00:00:05.000Z" });
+        await ledger.raiseMark("restore", { value: 5, raisedAt: "2026-01-01T00:00:06.000Z" });
+        expect(await ledger.readMark("restore")).toEqual([
+          { value: 5, raisedAt: "2026-01-01T00:00:05.000Z" },
         ]);
       } finally {
         await ledger.close?.();

@@ -500,8 +500,8 @@ describe("a database restored while the app was stopped", () => {
       return {
         append: (entries) => inner.append(entries),
         read: (args) => inner.read(args),
-        readMark: async () => 0,
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        readMark: async () => [],
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
       };
@@ -542,8 +542,8 @@ describe("a database restored while the app was stopped", () => {
           await inner.append(entries);
         },
         read: (args) => inner.read(args),
-        readMark: async () => 0,
-        raiseMark: (name, value) => inner.raiseMark(name, value),
+        readMark: async () => [],
+        raiseMark: (name, mark) => inner.raiseMark(name, mark),
         clear: () => inner.clear(),
         fence: inner.fence,
       };
@@ -659,7 +659,7 @@ describe("a database restored while the app was stopped", () => {
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
       const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
-      return { ...inner, readMark: async () => 0 };
+      return { ...inner, readMark: async () => [] };
     });
     let counting = false;
     // Another instance counts the restore right after this one's start read the count.
@@ -705,7 +705,7 @@ describe("a database restored while the app was stopped", () => {
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
       const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
-      return { ...inner, readMark: async () => 0 };
+      return { ...inner, readMark: async () => [] };
     });
     const runtime: RuntimeConfig = { personalData: { forgetLedger: { store: stale } } };
     const before = await start({ adapter: store.adapter, runtime });
@@ -783,7 +783,7 @@ describe("a database restored while the app was stopped", () => {
     const ledgerAdapter = createNodeSqliteAdapter(paths.ledger).adapter;
     const stale = defineForgetLedger(async () => {
       const inner = await ledgerAdapter.createForgetLedger({ tenant: DEFAULT_TENANT });
-      return { ...inner, readMark: async () => 0 };
+      return { ...inner, readMark: async () => [] };
     });
     let failing = false;
     // Counting the restore fails while `failing`, before it changes anything.

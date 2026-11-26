@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { ForgetLedger, ForgetLedgerEntry } from "../storage/forget-ledger.ts";
+import type {
+  ForgetLedger,
+  ForgetLedgerEntry,
+  ForgetLedgerMark,
+} from "../storage/forget-ledger.ts";
 import type { TenantFence } from "../storage/tenant-fence.ts";
 
 export interface ForgetLedgerContractArgs {
@@ -33,6 +37,15 @@ const FROZEN: TenantFence = {
   since: new Date(Date.UTC(2026, 10, 7, 13)).toISOString(),
 };
 const FORGOTTEN: TenantFence = { ...FROZEN, state: "forgotten" };
+
+// A value raised under a mark some seconds into the day.
+const mark = (value: number, second: number): ForgetLedgerMark => ({
+  value,
+  raisedAt: new Date(Date.UTC(2026, 10, 7, 12, 0, second)).toISOString(),
+});
+
+const highest = async (ledger: ForgetLedger, name: string): Promise<number> =>
+  (await ledger.readMark(name))[0]?.value ?? 0;
 const LATER = new Date(Date.UTC(2026, 10, 7, 14)).toISOString();
 
 const readAll = async (ledger: ForgetLedger, limit = 2): Promise<ForgetLedgerEntry[]> => {
@@ -337,7 +350,7 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.tenants?.()).toEqual([]);
       const others = await Promise.all(["tenant-B", "tenant-a b", "tenant-ä"].map(ledgerFor));
       // A mark, a fence and a ledger opened hold no entry.
-      await others[0]?.raiseMark("restore:generation", 1);
+      await others[0]?.raiseMark("restore:generation", mark(1, 1));
       await others[1]?.fence.set(FROZEN);
       expect(await ledger.tenants?.()).toEqual([]);
       await others[1]?.fence.set({ state: "open" });
@@ -369,29 +382,69 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
 
     it("raises a mark only upward, keeps it apart from the entries, and each tenant's apart", async () => {
       const other = await ledgerFor("tenant-b");
-      expect(await ledger.readMark("restore:generation")).toBe(0);
-      await ledger.raiseMark("restore:generation", 7);
-      await ledger.raiseMark("restore:generation", 5);
-      expect(await ledger.readMark("restore:generation")).toBe(7);
-      await ledger.raiseMark("restore:generation", 9);
-      expect(await ledger.readMark("restore:generation")).toBe(9);
-      expect(await ledger.readMark("another")).toBe(0);
-      expect(await other.readMark("restore:generation")).toBe(0);
+      expect(await ledger.readMark("restore:generation")).toEqual([]);
+      await ledger.raiseMark("restore:generation", mark(7, 1));
+      await ledger.raiseMark("restore:generation", mark(5, 2));
+      expect(await highest(ledger, "restore:generation")).toBe(7);
+      await ledger.raiseMark("restore:generation", mark(9, 3));
+      // Raised again, a value keeps the time it was first raised at.
+      await ledger.raiseMark("restore:generation", mark(9, 4));
+      expect((await ledger.readMark("restore:generation"))[0]).toEqual(mark(9, 3));
+      expect(await ledger.readMark("another")).toEqual([]);
+      expect(await other.readMark("restore:generation")).toEqual([]);
       expect(await ledger.read({ limit: 10 })).toEqual([]);
+    });
+
+    it("keeps the highest value alone, with the time it was first raised, when its reads show every write", async (context) => {
+      if (ledger.visibilityDelayMs !== undefined) context.skip("the ledger's reads lag");
+      await ledger.raiseMark("restore:generation", mark(7, 1));
+      await ledger.raiseMark("restore:generation", mark(9, 3));
+      await ledger.raiseMark("restore:generation", mark(5, 4));
+      await ledger.raiseMark("restore:generation", mark(9, 5));
+      expect(await ledger.readMark("restore:generation")).toEqual([mark(9, 3)]);
+    });
+
+    it("keeps every value with each time it was raised, the highest first, until pruned, when its reads lag", async (context) => {
+      if (ledger.visibilityDelayMs === undefined)
+        context.skip("the ledger's reads show every write");
+      const other = await ledgerFor("tenant-b");
+      await ledger.raiseMark("restore:generation", mark(7, 1));
+      await ledger.raiseMark("restore:generation", mark(9, 3));
+      await ledger.raiseMark("restore:generation", mark(5, 2));
+      await ledger.raiseMark("restore:generation", mark(9, 4));
+      await other.raiseMark("restore:generation", mark(1, 1));
+      expect(await ledger.readMark("restore:generation")).toEqual([
+        mark(9, 3),
+        mark(9, 4),
+        mark(7, 1),
+        mark(5, 2),
+      ]);
+      // Of the values raised before, the highest stays.
+      await ledger.pruneMarks?.("restore:generation", mark(0, 3).raisedAt);
+      expect(await ledger.readMark("restore:generation")).toEqual([
+        mark(9, 3),
+        mark(9, 4),
+        mark(7, 1),
+      ]);
+      // Behind a fence, what was compared still goes.
+      await ledger.fence.set(FROZEN);
+      await ledger.pruneMarks?.("restore:generation", mark(0, 9).raisedAt);
+      expect(await ledger.readMark("restore:generation")).toEqual([mark(9, 3)]);
+      expect(await other.readMark("restore:generation")).toEqual([mark(1, 1)]);
     });
 
     it("keeps the highest of the marks the instances of one store raise at once, whatever each read before", async () => {
       const elsewhere = await ledgerFor("tenant-a");
-      await ledger.raiseMark("restore:generation", 4);
+      await ledger.raiseMark("restore:generation", mark(4, 1));
       await Promise.all([
-        ledger.raiseMark("restore:generation", 9),
-        elsewhere.raiseMark("restore:generation", 6),
-        ledger.raiseMark("restore:generation", 5),
+        ledger.raiseMark("restore:generation", mark(9, 2)),
+        elsewhere.raiseMark("restore:generation", mark(6, 2)),
+        ledger.raiseMark("restore:generation", mark(5, 2)),
       ]);
-      expect(await ledger.readMark("restore:generation")).toBe(9);
-      await elsewhere.raiseMark("restore:generation", 7);
-      expect(await elsewhere.readMark("restore:generation")).toBe(9);
-      expect(await ledger.readMark("restore:count")).toBe(0);
+      expect(await highest(ledger, "restore:generation")).toBe(9);
+      await elsewhere.raiseMark("restore:generation", mark(7, 3));
+      expect(await highest(elsewhere, "restore:generation")).toBe(9);
+      expect(await ledger.readMark("restore:count")).toEqual([]);
     });
 
     it("reads committed, alone, an entry whose intention lands after its committed copy, as a call given up for its timeout may", async () => {
@@ -407,22 +460,22 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       const entries = [1, 2, 3].map((minute) => entry(`c-${minute}`, `e-${minute}`, minute));
       await ledger.append(entries);
       await other.append(entries);
-      await ledger.raiseMark("restore:generation", 7);
-      await ledger.raiseMark("another", 3);
-      await other.raiseMark("restore:generation", 5);
+      await ledger.raiseMark("restore:generation", mark(7, 1));
+      await ledger.raiseMark("another", mark(3, 1));
+      await other.raiseMark("restore:generation", mark(5, 1));
       // Called again while it removed part only, as the runtime does.
       while (!(await ledger.clear()));
       expect(await ledger.read({ limit: 10 })).toEqual([]);
-      expect(await ledger.readMark("restore:generation")).toBe(0);
-      expect(await ledger.readMark("another")).toBe(0);
+      expect(await ledger.readMark("restore:generation")).toEqual([]);
+      expect(await ledger.readMark("another")).toEqual([]);
       expect(await other.read({ limit: 10 })).toEqual(entries);
-      expect(await other.readMark("restore:generation")).toBe(5);
+      expect(await other.readMark("restore:generation")).toEqual([mark(5, 1)]);
       expect(await ledger.clear()).toBe(true);
       expect(await ledger.read({ limit: 10 })).toEqual([]);
       await ledger.append([entries[0] as ForgetLedgerEntry]);
-      await ledger.raiseMark("restore:generation", 2);
+      await ledger.raiseMark("restore:generation", mark(2, 2));
       expect(await ledger.read({ limit: 10 })).toEqual(entries.slice(0, 1));
-      expect(await ledger.readMark("restore:generation")).toBe(2);
+      expect(await ledger.readMark("restore:generation")).toEqual([mark(2, 2)]);
       // Reopened, as a restart opens it again.
       expect(await (await ledgerFor("tenant-a")).read({ limit: 10 })).toEqual(entries.slice(0, 1));
     });
@@ -431,7 +484,7 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       const other = await ledgerFor("tenant-b");
       const kept = entry("c-1", "e-1", 1);
       await ledger.append([kept]);
-      await ledger.raiseMark("restore:generation", 2);
+      await ledger.raiseMark("restore:generation", mark(2, 1));
       expect(await ledger.fence.read()).toEqual({ state: "open" });
       expect(await ledger.fence.set(FROZEN)).toEqual(FROZEN);
       // Reopened, as another instance opens it.
@@ -443,12 +496,12 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
           tenant: "acme",
           frozenAt: FROZEN.since,
         });
-        await expect(fenced.raiseMark("restore:generation", 5)).rejects.toMatchObject({
+        await expect(fenced.raiseMark("restore:generation", mark(5, 2))).rejects.toMatchObject({
           code: "TENANT_FROZEN",
         });
       }
       expect(await ledger.read({ limit: 10 })).toEqual([kept]);
-      expect(await ledger.readMark("restore:generation")).toBe(2);
+      expect(await ledger.readMark("restore:generation")).toEqual([mark(2, 1)]);
       // Frozen again, it keeps the first time.
       expect(await ledger.fence.set({ ...FROZEN, since: LATER })).toEqual(FROZEN);
       // Another store's fence is its own.
@@ -458,19 +511,19 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       expect(await ledger.read({ limit: 10 })).toEqual(ledger.prune === undefined ? [kept] : []);
       expect(await ledger.fence.set({ state: "open" })).toEqual({ state: "open" });
       await again.append([entry("c-2", "e-2", 2)]);
-      await again.raiseMark("restore:generation", 5);
+      await again.raiseMark("restore:generation", mark(5, 3));
       expect((await ledger.read({ limit: 10 })).map(({ eventId }) => eventId)).toContain("e-2");
-      expect(await ledger.readMark("restore:generation")).toBe(5);
+      expect(await highest(ledger, "restore:generation")).toBe(5);
     });
 
     it("keeps the fence of a forgotten tenant for good, past a clear", async () => {
       await ledger.append([entry("c-1", "e-1", 1)]);
-      await ledger.raiseMark("restore:generation", 2);
+      await ledger.raiseMark("restore:generation", mark(2, 1));
       await ledger.fence.set(FROZEN);
       expect(await ledger.fence.set(FORGOTTEN)).toEqual(FORGOTTEN);
       while (!(await ledger.clear()));
       expect(await ledger.read({ limit: 10 })).toEqual([]);
-      expect(await ledger.readMark("restore:generation")).toBe(0);
+      expect(await ledger.readMark("restore:generation")).toEqual([]);
       expect(await ledger.fence.set({ state: "open" })).toEqual(FORGOTTEN);
       expect(await ledger.fence.set(FROZEN)).toEqual(FORGOTTEN);
       const again = await ledgerFor("tenant-a");
@@ -480,11 +533,11 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
         tenant: "acme",
         forgottenAt: FORGOTTEN.since,
       });
-      await expect(again.raiseMark("restore:generation", 3)).rejects.toMatchObject({
+      await expect(again.raiseMark("restore:generation", mark(3, 2))).rejects.toMatchObject({
         code: "TENANT_FORGOTTEN",
       });
       expect(await ledger.read({ limit: 10 })).toEqual([]);
-      expect(await ledger.readMark("restore:generation")).toBe(0);
+      expect(await ledger.readMark("restore:generation")).toEqual([]);
     });
   });
 };

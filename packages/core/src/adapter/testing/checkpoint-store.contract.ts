@@ -137,9 +137,15 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
       // A stream whose head the test moves, as appends do.
       const stream = { head: 0 };
       const events = { lastPosition: async () => stream.head, readAll: async () => [] };
-      const watchOver = () =>
-        createRestoreWatch({ checkpoints: store, events, marks: null, logger: silentLogger });
       const at = (ms: number) => new Date(start + ms);
+      const watchOver = () =>
+        createRestoreWatch({
+          checkpoints: store,
+          events,
+          marks: null,
+          clock: { now: () => at(0) },
+          logger: silentLogger,
+        });
 
       it("tells every instance that the database went back to an earlier copy, and one that it was first", async () => {
         const one = watchOver();

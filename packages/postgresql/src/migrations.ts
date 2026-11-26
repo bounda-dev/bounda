@@ -8,6 +8,7 @@ import {
   forgetLedgerFenceStatement,
   forgetLedgerLatestSchema,
   forgetLedgerMarksStatement,
+  forgetLedgerMarkTimeStatement,
   forgetLedgerReachedStatement,
   forgetLedgerReasonStatements,
   forgetLedgerRedactionStatement,
@@ -455,6 +456,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
     {
       version: 11,
       migrate: (tx) => tx.run(forgetLedgerReachedStatement(table, postgresqlDialect), []),
+    },
+    {
+      version: 12,
+      migrate: (tx) => tx.run(forgetLedgerMarkTimeStatement(table, postgresqlDialect), []),
     },
   ],
 });

@@ -1304,7 +1304,7 @@ describe("the retention and the forget ledger", () => {
       ledger: {
         store: boundForgetLedger({
           ledger: {
-            readMark: async () => 0,
+            readMark: async () => [],
             raiseMark: async () => undefined,
             clear: async () => true,
             fence: { read: async () => ({ state: "open" }), set: async (fence) => fence },

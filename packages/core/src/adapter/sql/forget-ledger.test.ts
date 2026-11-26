@@ -331,7 +331,10 @@ describe("the SQL forget ledger", () => {
       ensureSchema: async () => {},
       close: async () => {},
     });
-    await locked.raiseMark("restore:generation", 2);
+    await locked.raiseMark("restore:generation", {
+      value: 2,
+      raisedAt: "2026-01-01T00:00:00.000Z",
+    });
     expect(statements[0]).toEqual([
       "SELECT pg_advisory_xact_lock_shared(hashtext($1), hashtext($2))",
       ["bounda:s.t", "acme"],

@@ -80,6 +80,9 @@ const apart = (store: TenantKeyStore, prefix: string): TenantKeyStore => ({
   },
 });
 
+// When a mark the tests raise was raised.
+const MARKED_AT = "2026-01-01T00:00:00.000Z";
+
 describe("the tenant key store in keeper objects", () => {
   tenantKeyStoreContract({
     create: async () => apart(await durableObjectTenantKeys({ storage }).create({ env }), fresh()),
@@ -307,7 +310,7 @@ describe("the forget ledger in keeper objects", () => {
     // Kept for good once keepFor is gone: no alarm, and one that fires removes nothing.
     await keptFor.append([entry("e-older", at(now - 120_000))]);
     const forGood = await durableObjectForgetLedger({ storage }).create({ env, tenant });
-    expect(await forGood.readMark("m")).toBe(0);
+    expect(await forGood.readMark("m")).toEqual([]);
     expect(await alarm()).toBeNull();
     await runInDurableObject(own, (object) => object.alarm());
     expect(await forGood.read({ limit: 10 })).toEqual([entry("e-older", at(now - 120_000))]);
@@ -457,7 +460,9 @@ describe("a keeper object", () => {
       mismatched,
     );
     expect(await other.readLedgerMark(tenant, "m")).toEqual(mismatched);
-    expect(await other.raiseLedgerMark(tenant, "m", 1)).toEqual(mismatched);
+    expect(await other.raiseLedgerMark(tenant, "m", { value: 1, raisedAt: MARKED_AT })).toEqual(
+      mismatched,
+    );
     expect(await keeper("directory").getTenantKeys(tenant)).toEqual(refusal(`"directory"`));
     const unnamed = env.KEEPER.get(env.KEEPER.newUniqueId());
     expect(await unnamed.getTenantKeys(tenant)).toEqual(refusal("no tenant"));
@@ -497,8 +502,14 @@ describe("a keeper object", () => {
       ok: true,
       value: [entry("e-2", "2026-02-01T00:00:00.000Z")],
     });
-    expect(await own.raiseLedgerMark(tenant, "m", 3)).toEqual({ ok: true, value: null });
-    expect(await own.readLedgerMark(tenant, "m")).toEqual({ ok: true, value: 3 });
+    expect(await own.raiseLedgerMark(tenant, "m", { value: 3, raisedAt: MARKED_AT })).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(await own.readLedgerMark(tenant, "m")).toEqual({
+      ok: true,
+      value: [{ value: 3, raisedAt: MARKED_AT }],
+    });
   });
 
   it("clears the tenant's ledger, its marks and its alarm, and keeps how long it keeps entries", async () => {
@@ -515,11 +526,11 @@ describe("a keeper object", () => {
     const now = Date.now();
     await own.retainLedger(tenant, 60_000);
     await own.appendLedger(tenant, [entry("e-1", new Date(now).toISOString())]);
-    await own.raiseLedgerMark(tenant, "m", 3);
+    await own.raiseLedgerMark(tenant, "m", { value: 3, raisedAt: MARKED_AT });
     expect(await alarm()).toBe(now + 60_000);
     expect(await own.clearLedger(tenant)).toEqual({ ok: true, value: null });
     expect(await own.readLedger(tenant, { limit: 10 })).toEqual({ ok: true, value: [] });
-    expect(await own.readLedgerMark(tenant, "m")).toEqual({ ok: true, value: 0 });
+    expect(await own.readLedgerMark(tenant, "m")).toEqual({ ok: true, value: [] });
     expect(await alarm()).toBeNull();
     // An entry appended after still expires on its own.
     await own.appendLedger(tenant, [entry("e-2", new Date(now).toISOString())]);
@@ -935,7 +946,7 @@ describe("a Durable Object whose keys and ledger the keeper holds", () => {
     await store.forgetTenant(tenant);
     await runInDurableObject(stub, (instance) => instance.alarm());
     expect(await ledger.read({ limit: 10 })).toEqual([]);
-    expect(await ledger.readMark("restore:generation")).toBe(0);
+    expect(await ledger.readMark("restore:generation")).toEqual([]);
   });
 
   it("forgets again at the next start whoever was forgotten after its storage was copied", async () => {

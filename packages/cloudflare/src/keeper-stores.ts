@@ -229,9 +229,9 @@ export const durableObjectForgetLedger: DurableObjectForgetLedgerFunction = (opt
         await retain();
         return unwrap(own.readLedgerMark(tenant, name));
       },
-      raiseMark: async (name, value) => {
+      raiseMark: async (name, mark) => {
         await retain();
-        await unwrap(own.raiseLedgerMark(tenant, name, value));
+        await unwrap(own.raiseLedgerMark(tenant, name, mark));
       },
       clear: async () => {
         await retain();

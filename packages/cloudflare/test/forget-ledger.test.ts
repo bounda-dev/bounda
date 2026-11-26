@@ -118,6 +118,10 @@ const countingNamespace = () => {
   return { namespace, keys, expirations, deleted, pages: () => pages };
 };
 
+// A time some seconds into the year, as a mark keeps it.
+const secondAt = (seconds: number): string =>
+  new Date(Date.UTC(2026, 0, 1) + seconds * 1_000).toISOString();
+
 const minute = (index: number): string =>
   new Date(Date.UTC(2026, 10, 7) + index * 60_000).toISOString();
 
@@ -135,8 +139,8 @@ describe("the KV forget ledger's listing", () => {
     }));
     await ledger.append(entries);
     await other.append(entries.slice(0, 1));
-    await ledger.raiseMark("restore:generation", 4);
-    await other.raiseMark("restore:generation", 2);
+    await ledger.raiseMark("restore:generation", { value: 4, raisedAt: secondAt(4) });
+    await other.raiseMark("restore:generation", { value: 2, raisedAt: secondAt(2) });
     // KV deletes one key a call: a clear deletes a batch within what an invocation may make.
     const rounds: boolean[] = [];
     const listed = pages();
@@ -152,7 +156,7 @@ describe("the KV forget ledger's listing", () => {
     expect(deleted).toHaveLength(entries.length + 1);
     // A cursor that counts keys would skip a page if listing went on past deletes.
     expect([...keys.keys()].sort()).toEqual([
-      `bounda/forget-ledger-marks/q/restore:generation/${Number.MAX_SAFE_INTEGER - 2}`,
+      `bounda/forget-ledger-marks/q/restore:generation/${Number.MAX_SAFE_INTEGER - 2}/${String(Date.parse(secondAt(2))).padStart(16, "0")}`,
       `q/${String(8_640_000_000_000_000 - Date.parse(minute(0)))}:e-0000`,
     ]);
   });
@@ -196,7 +200,9 @@ describe("the KV forget ledger's listing", () => {
     expect(await raising).toEqual(frozen);
     expect(keys.get("bounda/forget-ledger-fences/p/")).toBeNull();
     expect([...keys.keys()].filter((name) => name.startsWith("p/"))).toHaveLength(1);
-    await expect(ledger.raiseMark("restore:generation", 3)).rejects.toMatchObject({
+    await expect(
+      ledger.raiseMark("restore:generation", { value: 3, raisedAt: secondAt(3) }),
+    ).rejects.toMatchObject({
       code: "TENANT_FROZEN",
     });
     // A clear leaves the fence, under its own prefix.
@@ -513,7 +519,7 @@ describe("the KV forget ledger's listing", () => {
         reason: "requested" as const,
       })),
     );
-    await ledger.raiseMark("restore:generation", 1);
+    await ledger.raiseMark("restore:generation", { value: 1, raisedAt: secondAt(1) });
     expect(await ledger.clear()).toBe(true);
     expect(keys.size).toBe(0);
   });
@@ -1012,18 +1018,37 @@ describe("the KV forget ledger's writes of one entry", () => {
     expect([...keys.keys()]).toEqual([expect.stringMatching(/~e-1$/)]);
   });
 
-  it("never lowers a mark, whatever a raise read, and keeps the highest alone", async () => {
-    const { namespace, keys } = countingNamespace();
+  it("never lowers a mark, whatever a raise read, and keeps each value with each time it was raised", async () => {
+    const { namespace } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
     const elsewhere = createKvForgetLedger({ namespace, prefix: "p/" });
-    for (let value = 1; value <= 30; value += 1)
-      await ledger.raiseMark("restore:generation", value);
-    // Raised from a reading that lags, as another location's may.
-    await elsewhere.raiseMark("restore:generation", 7);
-    expect(await ledger.readMark("restore:generation")).toBe(30);
-    expect(await elsewhere.readMark("restore:generation")).toBe(30);
-    expect(await ledger.readMark("restore:count")).toBe(0);
-    expect([...keys.keys()].filter((name) => name.includes("restore:generation/"))).toHaveLength(1);
+    await ledger.raiseMark("restore:generation", { value: 3, raisedAt: secondAt(1) });
+    await ledger.raiseMark("restore:generation", { value: 30, raisedAt: secondAt(2) });
+    // Raised from a reading that lags, as another location's may, and the same value again.
+    await elsewhere.raiseMark("restore:generation", { value: 7, raisedAt: secondAt(3) });
+    await elsewhere.raiseMark("restore:generation", { value: 30, raisedAt: secondAt(4) });
+    const raised = [
+      { value: 30, raisedAt: secondAt(2) },
+      { value: 30, raisedAt: secondAt(4) },
+      { value: 7, raisedAt: secondAt(3) },
+      { value: 3, raisedAt: secondAt(1) },
+    ];
+    expect(await ledger.readMark("restore:generation")).toEqual(raised);
+    expect(await elsewhere.readMark("restore:generation")).toEqual(raised);
+    expect(await ledger.readMark("restore:count")).toEqual([]);
+  });
+
+  it("reads a value raised before marks kept the time as raised at the epoch", async () => {
+    const { namespace, keys } = countingNamespace();
+    const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
+    keys.set(
+      `bounda/forget-ledger-marks/p/restore:generation/${Number.MAX_SAFE_INTEGER - 5}`,
+      null,
+    );
+    keys.set("bounda/forget-ledger-marks/p/restore:generation/not-a-value", null);
+    expect(await ledger.readMark("restore:generation")).toEqual([
+      { value: 5, raisedAt: "1970-01-01T00:00:00.000Z" },
+    ]);
   });
 
   it("leaves an intention written where the committed copy went before, with one of its own", async () => {
@@ -1067,18 +1092,27 @@ describe("the KV forget ledger's writes of one entry", () => {
     expect([...keys.keys()].filter((name) => name.includes("~"))).toEqual([]);
   });
 
-  it("removes at most twenty of the values below the one it raises", async () => {
-    const { namespace, keys } = countingNamespace();
+  it("prunes the values raised before a time but the highest, at most five hundred a call, and keeps every raise", async () => {
+    const { namespace } = countingNamespace();
     const ledger = createKvForgetLedger({ namespace, prefix: "p/" });
-    for (let value = 1; value <= 25; value += 1) {
-      keys.set(
-        `bounda/forget-ledger-marks/p/restore:generation/${Number.MAX_SAFE_INTEGER - value}`,
-        null,
-      );
+    // The highest raised first, then lower ones, through more than one page of keys.
+    await ledger.raiseMark("restore:generation", { value: 2_000, raisedAt: secondAt(0) });
+    for (let value = 1; value <= 1_100; value += 1) {
+      await ledger.raiseMark("restore:generation", { value, raisedAt: secondAt(value) });
     }
-    await ledger.raiseMark("restore:generation", 30);
-    expect(await ledger.readMark("restore:generation")).toBe(30);
-    expect([...keys.keys()].filter((name) => name.includes("restore:generation/"))).toHaveLength(6);
+    await ledger.pruneMarks?.("restore:generation", secondAt(1_001));
+    expect(await ledger.readMark("restore:generation")).toHaveLength(601);
+    await ledger.pruneMarks?.("restore:generation", secondAt(1_001));
+    const left = await ledger.readMark("restore:generation");
+    expect(left.map(({ value }) => value)).toEqual([
+      2_000,
+      ...Array.from({ length: 100 }, (_, index) => 1_100 - index),
+    ]);
+    await ledger.fence.set({ state: "frozen", tenant: "acme", since: secondAt(0) });
+    await ledger.pruneMarks?.("restore:generation", secondAt(1_101));
+    expect(await ledger.readMark("restore:generation")).toEqual([
+      { value: 2_000, raisedAt: secondAt(0) },
+    ]);
   });
 
   it("holds each entry once on a page, its committed copy over its intention", async () => {
