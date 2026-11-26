@@ -108,6 +108,8 @@ describe("parseLedgerEntries", () => {
       { ...base, restriction: restricted, redaction },
       { ...base, disclosure, redaction },
       { ...base, restriction: { ...restricted, type: "PersonalDataForgotten" } },
+      // A lift's payload under a type no change of restrictions has.
+      { ...base, restriction: { ...lifted, type: "PersonalDataForgotten" } },
       { ...base, restriction: { ...restricted, payload: { ...payload, personId: "c-2" } } },
       { ...base, restriction: { ...restricted, payload: "restricted" } },
       { ...base, restriction: { ...restricted, payload: { ...payload, ground: "none" } } },
