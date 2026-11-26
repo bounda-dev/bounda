@@ -22,6 +22,16 @@ export interface PlanShardsFunction {
   (args: PlanShardsArgs): readonly Shard[];
 }
 
+export interface PlanFewestShardsArgs extends Omit<PlanShardsArgs, "shards"> {
+  readonly maxShards: number;
+  // The most minutes a shard should take, which maxShards shards may not be enough for.
+  readonly targetMinutes: number;
+}
+
+export interface PlanFewestShardsFunction {
+  (args: PlanFewestShardsArgs): readonly Shard[];
+}
+
 // Measured on GitHub's ubuntu-latest runners over fifteen `core` shards, full and incremental runs:
 // a job took SETUP_MINUTES (checkout, build, Stryker's initial test run) and then its mutants'
 // durations, each plus MUTANT_OVERHEAD_MS, spread over RUNNER_PARALLELISM.
@@ -107,9 +117,12 @@ const runTimeOf = (
 };
 
 interface Cost {
+  readonly path: string;
   readonly ms: number;
   readonly mutants: number;
 }
+
+const minutesOf = (ms: number): number => SETUP_MINUTES + ms / 60_000 / RUNNER_PARALLELISM;
 
 interface Load {
   readonly files: string[];
@@ -117,13 +130,16 @@ interface Load {
   mutants: number;
 }
 
-// A shard's cost is the time Stryker will take on the mutants it runs again, which an incremental
+// A file's cost is the time Stryker will take on the mutants it runs again, which an incremental
 // run reads from what changed since the report: every mutant of a file whose source changed or
 // that the report lacks, and those a changed test file covers. Mutants differ in cost by orders
 // of magnitude, as a file covered by whole-app tests runs them for each mutant, so the files are
-// weighed by time, not count. They go to the shards heaviest first, each to the lightest shard, so
-// a pull request's work spreads out instead of landing wherever a file happens to hash.
-export const planShards: PlanShardsFunction = ({ files, report, testSource, shards }) => {
+// weighed by time, not count. Sorted heaviest first.
+const costsOf = ({
+  files,
+  report,
+  testSource,
+}: Omit<PlanShardsArgs, "shards">): readonly Cost[] => {
   const changedTests = new Set<string>();
   for (const [path, testFile] of Object.entries(report?.testFiles ?? {})) {
     if (testFile.source !== undefined && testSource(path) === testFile.source) continue;
@@ -155,7 +171,7 @@ export const planShards: PlanShardsFunction = ({ files, report, testSource, shar
     const result = report?.files[path];
     if (result === undefined) {
       const mutants = source.length * mutantsPerCharacter;
-      return { ms: mutants * msPerMutant, mutants };
+      return { path, ms: mutants * msPerMutant, mutants };
     }
     let ms = 0;
     let mutants = 0;
@@ -171,12 +187,15 @@ export const planShards: PlanShardsFunction = ({ files, report, testSource, shar
         ms += REUSED_MUTANT_MS;
       }
     }
-    return { ms, mutants };
+    return { path, ms, mutants };
   };
 
-  const costs = files
-    .map((file) => ({ path: file.path, ...costOf(file) }))
-    .sort((a, b) => b.ms - a.ms || (a.path < b.path ? -1 : 1));
+  return files.map(costOf).sort((a, b) => b.ms - a.ms || (a.path < b.path ? -1 : 1));
+};
+
+// The files go to the shards heaviest first, each to the lightest shard, so a pull request's work
+// spreads out instead of landing wherever a file happens to hash.
+const pack = (costs: readonly Cost[], shards: number): readonly Shard[] => {
   const plan = Array.from({ length: shards }, (): Load => ({ files: [], ms: 0, mutants: 0 }));
   for (const { path, ms, mutants } of costs) {
     const lightest = plan.reduce((best, shard) => (shard.ms < best.ms ? shard : best));
@@ -187,6 +206,27 @@ export const planShards: PlanShardsFunction = ({ files, report, testSource, shar
   return plan.map(({ files: paths, ms, mutants }) => ({
     files: paths.sort(),
     mutants,
-    minutes: SETUP_MINUTES + ms / 60_000 / RUNNER_PARALLELISM,
+    minutes: minutesOf(ms),
   }));
+};
+
+export const planShards: PlanShardsFunction = ({ shards, ...args }) => pack(costsOf(args), shards);
+
+// Every shard is a runner held, with its own setup, out of the few a repository runs at once: a
+// pull request takes as many as bring its slowest shard under the target, so a small change
+// leaves the rest to the jobs of other pull requests. No shard beats the heaviest file alone,
+// so a file over the target takes no more shards than it needs to stand alone.
+export const planFewestShards: PlanFewestShardsFunction = ({
+  maxShards,
+  targetMinutes,
+  ...args
+}) => {
+  const costs = costsOf(args);
+  const reachable = Math.max(targetMinutes, minutesOf(costs[0]?.ms ?? 0));
+  for (let shards = 1; ; shards += 1) {
+    const plan = pack(costs, shards);
+    if (shards >= maxShards || Math.max(...plan.map(({ minutes }) => minutes)) <= reachable) {
+      return plan;
+    }
+  }
 };
