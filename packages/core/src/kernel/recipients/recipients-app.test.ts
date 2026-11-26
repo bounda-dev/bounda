@@ -1569,6 +1569,104 @@ describe("recipients of personal data", () => {
     expect(parts.at(-1)).toMatchObject({ kind: "end", counts: { persons: 2, recipients: 3 } });
   });
 
+  // What the tenant export says of the recipients forgotten persons were listed with.
+  const forgottenIn = async (app: BoundaApp) => {
+    await app.freezeTenant("default");
+    const parts: TenantExportPart[] = [];
+    for await (const part of await app.exportTenant("default")) parts.push(part);
+    await app.unfreezeTenant("default");
+    return parts.flatMap((part) =>
+      part.kind === "forgottenRecipient" ? [part.forgottenRecipient] : [],
+    );
+  };
+
+  const MAILER = {
+    port: "customer.mailer",
+    name: "Mailchimp",
+    kind: "processor",
+    country: "US",
+    transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+    declared: true,
+  } as const;
+
+  const CRM = {
+    port: "customer.crm",
+    name: "Brevo",
+    kind: "third-party",
+    country: "FR",
+    transfer: null,
+    declared: true,
+  } as const;
+
+  it("counts a person forgotten in part under the categories forgotten, and whole once nothing a recipient held of them is left", async () => {
+    const { app, commands, register } = await start();
+    await register("c-1", "1 Main St");
+    await commands.syncCustomer?.({ customerId: "c-1" });
+    await register("c-2");
+    await app.forget("c-1", { categories: ["contact"] });
+    await app.runUntilIdle();
+    const contact = { name: "contact", basis: "consent", persons: 1 };
+    // The CRM still holds the invoices, which a legal obligation keeps past the whole forgetting.
+    const partly = [
+      { ...CRM, status: "disclosed", persons: 0, categories: [contact] },
+      { ...MAILER, status: "disclosed", persons: 1, categories: [contact] },
+    ];
+    expect(await forgottenIn(app)).toEqual(partly);
+    await app.forget("c-1");
+    await app.runUntilIdle();
+    expect(await forgottenIn(app)).toEqual(partly);
+    expect((await app.recipientsOf("c-1")).map(({ port, status }) => [port, status])).toEqual([
+      ["customer.crm", "disclosed"],
+    ]);
+    await app.forget("c-2");
+    await app.runUntilIdle();
+    expect(await forgottenIn(app)).toEqual([
+      partly[0],
+      { ...MAILER, status: "disclosed", persons: 2, categories: [{ ...contact, persons: 2 }] },
+    ]);
+  });
+
+  it("counts the recipients a retention took a person off, as a forgetting asked for does", async () => {
+    const { app, clock, register } = await start();
+    await register("c-1");
+    clock.set(new Date(START.getTime() + 731 * 24 * 60 * 60_000));
+    await app.runUntilIdle();
+    expect(
+      (await app.events.read({ limit: 100 }))
+        .filter(({ type }) => type === "PersonalDataForgotten")
+        .map(({ payload }) => (payload as { reason: string }).reason),
+    ).toEqual(["retention"]);
+    expect(await forgottenIn(app)).toEqual([
+      {
+        ...MAILER,
+        status: "disclosed",
+        persons: 1,
+        categories: [{ name: "contact", basis: "consent", persons: 1 }],
+      },
+    ]);
+  });
+
+  it("counts a recipient presumed to hold a forgotten person's data as presumed, under the identity it has as they are forgotten", async () => {
+    const adapter = memory();
+    const told: Notice[] = [];
+    const before = await start({
+      told,
+      adapter,
+      registry: registryWith({ told, mailer: null, crm: null }),
+    });
+    await before.register("c-1");
+    await before.app.stop();
+    const after = await start({ told, adapter });
+    await after.app.forget("c-1");
+    await after.app.runUntilIdle();
+    const contact = [{ name: "contact", basis: "consent", persons: 1 }];
+    expect(await forgottenIn(after.app)).toEqual([
+      { ...CRM, status: "presumed", persons: 1, categories: contact },
+      { ...MAILER, status: "presumed", persons: 1, categories: contact },
+    ]);
+    await after.app.stop();
+  });
+
   it("records recipientsOf in the access log, and refuses an empty id", async () => {
     const { app, register, accesses } = await start();
     await register("c-1");

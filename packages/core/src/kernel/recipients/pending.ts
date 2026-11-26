@@ -3,6 +3,8 @@ import type { ClaimKey } from "../../adapter/storage/inbox-ledger.ts";
 import {
   type DeclaredRecipient,
   disclosureKey,
+  type ForgottenRecipient,
+  forgottenKey,
   type RecipientStore,
   type StoredDisclosure,
 } from "../../adapter/storage/recipient-store.ts";
@@ -259,6 +261,23 @@ const disclosuresAfter = (
   );
 };
 
+const forgottenAfter = (
+  stored: readonly ForgottenRecipient[],
+  rename: (port: string) => string,
+): ForgottenRecipient[] => {
+  const merged = new Map<string, ForgottenRecipient>();
+  for (const counted of stored) {
+    const moved = { ...counted, port: rename(counted.port) };
+    const key = forgottenKey(moved);
+    const held = merged.get(key);
+    merged.set(
+      key,
+      held === undefined ? moved : { ...held, persons: held.persons + moved.persons },
+    );
+  }
+  return [...merged.values()];
+};
+
 export interface PendingRecipientsStoreFunction {
   (
     store: RecipientStore,
@@ -312,6 +331,11 @@ export const pendingRecipientsStore: PendingRecipientsStoreFunction = (store, pe
               disclosuresAfter(held, renamedBy(declarations)),
             ]),
           ),
+      ),
+    forgottenCounts: () =>
+      reading(
+        () => store.forgottenCounts(),
+        (stored, declarations) => forgottenAfter(stored, renamedBy(declarations)),
       ),
     received: () =>
       reading(

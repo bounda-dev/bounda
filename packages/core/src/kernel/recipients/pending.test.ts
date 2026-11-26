@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Storage } from "../../adapter/adapter.ts";
-import type { Disclosure, RecipientStore } from "../../adapter/storage/recipient-store.ts";
+import {
+  type Disclosure,
+  type ForgottenRecipient,
+  forgottenKey,
+  type RecipientStore,
+} from "../../adapter/storage/recipient-store.ts";
 import type { PendingRecipientDeclaration } from "../../adapter/storage/tenant-key-store.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { memory } from "../../memory/index.ts";
@@ -32,6 +37,17 @@ const disclosure = (
   country: "US",
   safeguard: null,
   category,
+});
+
+const forgotten = (port: string, category: string | null, persons: number): ForgottenRecipient => ({
+  port,
+  recipient: "Mailchimp",
+  kind: "processor",
+  country: "US",
+  safeguard: null,
+  status: "disclosed",
+  category,
+  persons,
 });
 
 const PENDING: PendingRecipientDeclaration = {
@@ -94,6 +110,14 @@ const stores = async (): Promise<readonly [RecipientStore, RecipientStore]> => {
       [disclosure("p-2", "customer.newsletter", "contact")],
       "2026-03-01T12:00:00.000Z",
     );
+    // Forgotten persons under the former ports and the new one, summed once renamed.
+    await store.countForgotten([
+      forgotten("customer.mailer", null, 2),
+      forgotten("customer.mailer", "contact", 3),
+      forgotten("customer.gone", null, 1),
+      forgotten("customer.newsletter", null, 4),
+      forgotten("customer.crm", "contact", 5),
+    ]);
   }
   return pair;
 };
@@ -106,6 +130,9 @@ const readAll = async (store: RecipientStore) => ({
   many: [...(await store.disclosuresOfMany(["p-1", "p-2", "p-3", "p-4"]))],
   received: [...(await store.received())],
   summary: await store.summary(),
+  forgotten: [...(await store.forgottenCounts())].sort((a, b) =>
+    forgottenKey(a) < forgottenKey(b) ? -1 : 1,
+  ),
   persons: await Promise.all(
     ["customer.newsletter", "customer.mailer", "customer.gone", "customer.crm"].map((port) =>
       store.personsOf({ port, after: null, limit: 10 }),
@@ -125,6 +152,20 @@ describe("the recipients a pending declaration reads", () => {
       "customer.crm",
       "customer.newsletter",
     ]);
+    expect(
+      (await written.forgottenCounts()).map(({ port, category, persons }) => [
+        port,
+        category,
+        persons,
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["customer.newsletter", null, 7],
+        ["customer.newsletter", "contact", 3],
+        ["customer.crm", "contact", 5],
+      ]),
+    );
+    expect(await written.forgottenCounts()).toHaveLength(3);
   });
 
   it("are those the store holds once each of several is written, in order, a rename of one renaming what an earlier declared", async () => {

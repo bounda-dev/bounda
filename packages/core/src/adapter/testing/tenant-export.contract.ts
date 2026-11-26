@@ -202,6 +202,68 @@ const countingReads = (adapter: Adapter, reads: Reads): Adapter => ({
   },
 });
 
+const ignored = async (): Promise<void> => undefined;
+
+// The member registry with a mailer out of the EEA that a policy hands every note to.
+const withMailer = (mailed: (string | null)[]): Registry =>
+  ({
+    ...registry,
+    aggregates: {
+      member: {
+        ...registry.aggregates.member,
+        ports: {
+          mailer: {
+            memory: {
+              default: {
+                send: async ({ note }: { readonly note: string | null }) => {
+                  mailed.push(note);
+                },
+              },
+            },
+          },
+        },
+        recipients: {
+          mailer: {
+            recipient: {
+              name: "Mailchimp",
+              kind: "processor",
+              country: "US",
+              safeguard: "standard-contractual-clauses",
+              categories: ["default"],
+            },
+            onPersonalDataForgotten: ignored,
+            onProcessingRestricted: ignored,
+            onProcessingRestrictionLiftAnnounced: ignored,
+            onProcessingRestrictionLifted: ignored,
+            onPersonalDataRedacted: ignored,
+            onTenantForgotten: ignored,
+          },
+        },
+        policies: {
+          mailOnMemberNoted: {
+            module: {
+              handler: async ({
+                event,
+                mailer,
+              }: {
+                event: { payload: { note: string | null } };
+                mailer: { send(args: { readonly note: string | null }): Promise<void> };
+              }) => {
+                await mailer.send({ note: event.payload.note });
+              },
+            },
+          },
+        },
+      },
+    },
+  }) as unknown as Registry;
+
+async function* toIterable(
+  parts: readonly TenantExportPart[],
+): AsyncGenerator<TenantExportPart, void, undefined> {
+  yield* parts;
+}
+
 const collect = async (parts: AsyncIterable<TenantExportPart>): Promise<TenantExportPart[]> => {
   const collected: TenantExportPart[] = [];
   for await (const part of parts) collected.push(part);
@@ -300,7 +362,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       const header = parts[0]?.kind === "header" ? parts[0].header : undefined;
       expect(header).toEqual({
         format: "bounda.tenant-export",
-        version: 5,
+        version: 6,
         tenant: DEFAULT_TENANT,
         exportId: expect.any(String),
         exportedAt: "2026-03-01T00:00:00.000Z",
@@ -411,6 +473,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
         counts: {
           persons: persons.length,
           recipients: 0,
+          forgottenRecipients: 0,
           events: events.length,
           scheduledCommands: 1,
           deadLetters: 1,
@@ -573,6 +636,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
             exportId: header?.exportId,
             persons: 0,
             recipients: 0,
+            forgottenRecipients: 0,
             events: 0,
             scheduledCommands: 0,
             deadLetters: 0,
@@ -692,6 +756,73 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
         forgetLedgerCleared: true,
       });
       expect(await ledgerEntries()).toEqual([]);
+    });
+
+    it("hands back how many forgotten persons each recipient was listed with, and of what, never whom or when", async () => {
+      const mailed: (string | null)[] = [];
+      const app = await createApp({
+        registry: withMailer(mailed),
+        config: {
+          storage: await create(),
+          runtime: {
+            personalData: {
+              keyWrapper: masterKey({ from: "EXPORT_KEY" }),
+              tenantKeys: defineTenantKeyStore(() => createMemoryTenantKeyStore()),
+            },
+          },
+        },
+        clock: createFixedClock(new Date("2026-03-01T00:00:00.000Z")),
+        env: { EXPORT_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) },
+      });
+      stops.push(() => app.stop());
+      const commands = app.commands as unknown as Readonly<Record<string, Dispatch>>;
+      for (const memberId of ["ana", "bob", "carl"]) {
+        await commands.noteMember?.({ memberId, note: `${memberId}'s own` });
+      }
+      await app.runUntilIdle();
+      expect(mailed).toEqual(["ana's own", "bob's own", "carl's own"]);
+      await app.forget("ana");
+      await app.forget("carl");
+      // Forgotten again, Carl has nothing left to take off a recipient, and is counted once.
+      await app.forget("carl");
+      await app.runUntilIdle();
+      await app.freezeTenant(DEFAULT_TENANT);
+      const parts = await collect(await app.exportTenant(DEFAULT_TENANT));
+      const mailchimp = {
+        port: "member.mailer",
+        name: "Mailchimp",
+        kind: "processor",
+        country: "US",
+        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        status: "disclosed",
+        declared: true,
+      };
+      expect(of(parts, "recipient").map(({ recipient }) => recipient)).toEqual([
+        expect.objectContaining({ ...mailchimp, persons: 1 }),
+      ]);
+      const forgotten = of(parts, "forgottenRecipient").map(
+        ({ forgottenRecipient }) => forgottenRecipient,
+      );
+      expect(forgotten).toEqual([
+        {
+          ...mailchimp,
+          persons: 2,
+          categories: [{ name: "default", basis: null, persons: 2 }],
+        },
+      ]);
+      // Nothing in it names a forgotten person or when their data went.
+      const text = JSON.stringify(forgotten);
+      expect(["ana", "carl", "2026-"].filter((held) => text.includes(held))).toEqual([]);
+      expect(parts.at(-1)).toMatchObject({
+        kind: "end",
+        counts: { recipients: 1, forgottenRecipients: 1 },
+      });
+      // Read back whole, as a check before forgetting the tenant reads it.
+      const read: TenantExportPart[] = [];
+      for await (const part of readTenantExport(tenantExportJsonLines(toIterable(parts)))) {
+        read.push(part);
+      }
+      expect(read).toEqual(parts);
     });
 
     it("hands back a tenant that holds nothing as a header and an end", async () => {
