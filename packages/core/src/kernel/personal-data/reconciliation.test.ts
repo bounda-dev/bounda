@@ -1029,6 +1029,22 @@ describe("what the reconciliation commits again", () => {
     expect(reconciliation.undone()).toBe(1);
   });
 
+  it("tells an entry written before the instance started, read only later, from where its first reconciliation found the database, though it wrote since", async () => {
+    const entries: ForgetLedgerEntry[] = [];
+    const { reconciliation, storage } = await setUp({ entries });
+    expect(await reconciliation.reconcile(NOW)).toBe(0);
+    expect(reconciliation.undone()).toBe(0);
+    // Its writes take the positions back the copy lost.
+    await threeEvents(storage);
+    entries.push({
+      ...entry("c-1", "e-1", at(0)),
+      committed: false,
+      reached: { position: 2, generation: 0 },
+    });
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.undone()).toBe(1);
+  });
+
   it("keeps the highest generation of the entries that told a restore, until it is declared or found", async () => {
     const entries: ForgetLedgerEntry[] = [
       { ...entry("c-1", "e-1", at(0)), committed: false, reached: { position: 9, generation: 5 } },

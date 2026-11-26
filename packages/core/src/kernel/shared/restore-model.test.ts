@@ -2725,6 +2725,25 @@ const COUNTEREXAMPLES: readonly {
     ] as Action[],
     counted: 2,
   },
+  {
+    name: "counts on KV a restore an intention its start could not show yet tells, though the instance wrote the positions back before it shows",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "write", instance: 0 },
+      { kind: "forgetUncommitted", instance: 0, person: 0 },
+      { kind: "restore", slot: 0, round: ["crash", "pass"] },
+      { kind: "start", instance: 0 },
+      { kind: "age" },
+      { kind: "write", instance: 0 },
+      {
+        kind: "together",
+        first: { kind: "pass", instance: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+    ] as Action[],
+    counted: 1,
+  },
 ];
 
 describe("restore counting, the counterexamples its model found", () => {

@@ -493,6 +493,11 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   let local: Hold | null = null;
   const lagging = (ledger.visibilityDelayMs ?? 0) > 0;
   let settled = !lagging;
+  // When this instance started, and where its first reconciliation found the database: an entry
+  // written before then is compared with it too, as the instance's own writes since may take the
+  // positions back that a copy lost, and a read of a ledger that lags shows the entry only after.
+  const startedAt = clock.now().getTime();
+  let startStand: DatabaseStand | null = null;
 
   const advance = async (row: string, to: number): Promise<void> => {
     for (;;) {
@@ -600,6 +605,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       checkpointStore.get(FORGET_LEDGER_CURSOR),
       checkpointStore.get(RESTORE_COVERED),
     ]);
+    startStand ??= await standOf(storage);
     let after: ForgetLedgerPosition | undefined =
       cursor === 0
         ? undefined
@@ -670,13 +676,20 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     page: readonly ForgetLedgerEntry[],
     covered: number,
   ): Promise<number | null> => {
-    const told = page.flatMap((entry) =>
-      entry.reached === undefined || !since(entry, covered) ? [] : [entry.reached],
+    const told = page.filter(
+      (entry): entry is ForgetLedgerEntry & { readonly reached: LedgerReached } =>
+        entry.reached !== undefined && since(entry, covered),
     );
     if (told.length === 0) return null;
     const stand = await standOf(storage);
-    const ahead = told.filter((reached) => standsShortOf(stand, reached));
-    return ahead.length === 0 ? null : Math.max(...ahead.map((reached) => reached.generation));
+    const ahead = told.filter(
+      ({ reached, forgottenAt }) =>
+        standsShortOf(stand, reached) ||
+        (startStand !== null &&
+          Date.parse(forgottenAt) < startedAt &&
+          standsShortOf(startStand, reached)),
+    );
+    return ahead.length === 0 ? null : Math.max(...ahead.map(({ reached }) => reached.generation));
   };
 
   // No row reads as a hold that ended long ago, after no failure.
