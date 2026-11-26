@@ -14,6 +14,7 @@ const [name = "", output = "", previousPath = "", ...shardDirectories] = process
 if (name === "" || output === "" || previousPath === "") {
   throw new Error("usage: mutation-report.ts <package> <merged.json> <previous.json> <shard>...");
 }
+const packageDirectory = join("packages", name);
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 const shards = shardDirectories
   .filter((directory) => existsSync(join(directory, "mutation.json")))
@@ -24,7 +25,10 @@ const shards = shardDirectories
 const merged = mergeReports({
   shards,
   previous: existsSync(previousPath) ? readJson<Report>(previousPath) : undefined,
-  keep: mutateFiles(join("packages", name)),
+  keep: mutateFiles(packageDirectory).map((path) => ({
+    path,
+    source: readFileSync(join(packageDirectory, path), "utf8"),
+  })),
 });
 writeFileSync(output, JSON.stringify(merged));
 

@@ -1,9 +1,5 @@
+import type { SourceFile } from "./files.ts";
 import type { Report } from "./report.ts";
-
-export interface SourceFile {
-  readonly path: string;
-  readonly source: string;
-}
 
 export interface PlanShardsArgs {
   readonly files: readonly SourceFile[];

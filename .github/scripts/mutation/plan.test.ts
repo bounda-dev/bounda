@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { planShards, type SourceFile } from "./plan.ts";
+import type { SourceFile } from "./files.ts";
+import { planShards } from "./plan.ts";
 import type { MutantResult, Report } from "./report.ts";
 
 const mutants = (count: number, fields: Partial<MutantResult> = {}): readonly MutantResult[] =>
@@ -117,6 +118,24 @@ describe("planShards", () => {
       shards: 1,
     });
     expect(plan[0]?.cost).toBeCloseTo(10 * 0.01 + 5);
+  });
+
+  it("weighs a file the report holds with no mutant at nothing", () => {
+    const report: Report = {
+      files: {
+        "types.ts": { source: "x".repeat(4000), mutants: [] },
+        "a.ts": { source: "a", mutants: mutants(10) },
+        "b.ts": { source: "b", mutants: mutants(10) },
+      },
+    };
+    const plan = planShards({
+      files: [file("types.ts", "x".repeat(4000)), file("a.ts", "a"), file("b.ts", "b")],
+      report,
+      testSource: () => undefined,
+      shards: 2,
+    });
+    expect(plan.map(({ files: paths }) => paths)).toEqual([["a.ts", "types.ts"], ["b.ts"]]);
+    expect(plan[0]?.cost).toBeCloseTo(10 * 0.01);
   });
 
   it("plans the same way for the same input, whatever the files' order", () => {
