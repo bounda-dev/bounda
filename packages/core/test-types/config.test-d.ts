@@ -54,6 +54,7 @@ import type {
   ForgetLedgerEntry,
   ForgetLedgerMark,
   LedgerDisclosure,
+  LedgerDisclosureOfFunction,
   LedgerReached,
   LedgerRedaction,
   LedgerRestriction,
@@ -569,7 +570,10 @@ describe("defineConfig", () => {
       readonly transfer: RecipientTransfer | null;
       readonly category: string;
     }>();
-    expectTypeOf(ledgerDisclosureOf).toEqualTypeOf<(stored: unknown) => LedgerDisclosure | null>();
+    expectTypeOf(ledgerDisclosureOf).toEqualTypeOf<LedgerDisclosureOfFunction>();
+    expectTypeOf<LedgerDisclosureOfFunction>().toEqualTypeOf<
+      (stored: unknown) => LedgerDisclosure | null
+    >();
     expectTypeOf<LedgerRedaction>().toEqualTypeOf<{
       readonly events: readonly RedactedEvent[];
     }>();

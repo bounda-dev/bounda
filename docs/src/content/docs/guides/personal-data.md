@@ -2982,9 +2982,9 @@ export default defineConfig({
 ```
 
 Its `store` takes any adapter pointed at another database, where it creates its table,
-`bounda_forget_ledger`, and the two of its marks and its fence beside it (see [what an adapter
-creates](/adapters/#what-an-adapter-creates)), with the adapter's `tablePrefix`, the first time it
-is used: a SQLite file
+`bounda_forget_ledger`, the two of its marks and its fence beside it, and `bounda_migrations`, which
+versions them (see [what an adapter creates](/adapters/#what-an-adapter-creates)), with the
+adapter's `tablePrefix`, the first time it is used: a SQLite file
 on another disk or volume for an app on one machine, `postgresql({ url })` on another server, or a
 schema of the same server backed up apart. A plain file of the app's own making would be the same
 thing with less: the SQLite file already is one, written atomically. An adapter that points at the
@@ -3031,7 +3031,9 @@ after which it reads committed whatever is appended again, and an intention's `r
 database stood when it was written, which it may drop once the entry is committed, and a
 disclosure's `transfer` as it was appended, never derived again, which `ledgerDisclosureOf` from
 `@bounda-dev/core/adapter` reads back, with the transfer of one stored before disclosures kept it
-derived from its country and safeguard; its `read` returns
+derived from its country and safeguard, and `null` for one it cannot read, which must never be read
+as an entry without a disclosure, a forgetting of the person as a whole: a ledger in a database fails
+the read, and one in Workers KV, whose value may not show yet, leaves the entry out; its `read` returns
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
 time; its optional `tenants` lists, in code-unit order, every tenant whose entries its store holds,

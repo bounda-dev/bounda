@@ -211,8 +211,9 @@ export class Keeper extends createBoundaKeeper({ config }) {}
 
 `KEEPER` is the binding both stores reach unless `binding` names another. An object whose `env`
 lacks it fails to start with a `ConfigurationError` that names it. Each tenant's record is a row in
-its keeper's SQLite, written under compare-and-set, beside the forget ledger's entries, in the
-tables of a tenant key store and a forget ledger [an adapter creates](/adapters/#what-an-adapter-creates);
+its keeper's SQLite, written under compare-and-set, beside the entries of `durableObjectForgetLedger`
+when the app keeps its ledger there, in the tables of a tenant key store and a forget ledger [an
+adapter creates](/adapters/#what-an-adapter-creates);
 one more keeper, the directory, lists the tenants with a record in `bounda_keeper_tenants`, which a
 [rotation of the master key](#rotating-the-master-key) goes through.
 Restoring a tenant's object leaves its keeper as it was. A keeper checks where it was created as a
