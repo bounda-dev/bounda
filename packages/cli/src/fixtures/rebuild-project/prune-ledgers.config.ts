@@ -2,9 +2,10 @@ import { defineConfig, type ProjectTenants } from "@bounda-dev/core/config";
 import { type MemoryAdapter, memory } from "@bounda-dev/core/memory";
 
 // One store and one forget ledger per tenant, kept for the process; the tenants are those
-// PRUNE_TENANTS names, and a tenant whose name starts with "unlistable" has a ledger whose store
-// cannot list its tenants.
+// PRUNE_TENANTS names, a tenant whose name starts with "unlistable" has a ledger whose store cannot
+// list its tenants, and one whose name starts with "once" has a configuration only the first time.
 const stores = new Map<string, MemoryAdapter>();
+const resolved = new Set<string>();
 const ledgers = new Map<string, MemoryAdapter>();
 
 const kept = (made: Map<string, MemoryAdapter>, tenant: string): MemoryAdapter => {
@@ -21,6 +22,8 @@ export const tenants: ProjectTenants = async () =>
   (process.env.PRUNE_TENANTS ?? "").split(",").filter((tenant) => tenant !== "");
 
 export default defineConfig(({ tenant }) => {
+  if (tenant.startsWith("once") && resolved.has(tenant)) throw new Error(`${tenant} is gone`);
+  resolved.add(tenant);
   const ledger = ledgerOf(tenant);
   return {
     storage: kept(stores, tenant),

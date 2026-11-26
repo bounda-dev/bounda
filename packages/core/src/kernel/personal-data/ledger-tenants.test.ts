@@ -263,4 +263,77 @@ describe("the tenants of every forget ledger's store the configuration names", (
       unreached: [],
     });
   });
+
+  it("resolves each tenant's configuration once, the starting one's too, and no other", async () => {
+    const called: string[] = [];
+    const ledgers = new Map([
+      [DEFAULT_TENANT, await ledgerHolding(DEFAULT_TENANT, "zeta")],
+      ["zeta", await ledgerHolding("alpha", DEFAULT_TENANT)],
+    ]);
+    const config: ProjectConfig = ({ tenant }) => {
+      called.push(tenant);
+      return configOf(ledgers.get(tenant) ?? memory());
+    };
+    expect(await listForgetLedgerTenants({ config, tenants: ["zeta"] })).toEqual({
+      tenants: ["alpha", DEFAULT_TENANT, "zeta"],
+      unreached: [],
+    });
+    expect(called).toEqual([DEFAULT_TENANT, "zeta", "alpha"]);
+    called.length = 0;
+    expect((await listForgetLedgerTenants({ config })).tenants).toEqual([
+      "alpha",
+      DEFAULT_TENANT,
+      "zeta",
+    ]);
+    expect(called).toEqual([DEFAULT_TENANT, "zeta", "alpha"]);
+  });
+
+  it("names once a tenant it cannot read, however many stores list it", async () => {
+    const broken = new Error("no configuration for broken");
+    const listing = await ledgerHolding("broken");
+    const config: ProjectConfig = ({ tenant }) => {
+      if (tenant === "broken") throw broken;
+      return configOf(listing);
+    };
+    expect(await listForgetLedgerTenants({ config, tenants: ["broken"] })).toEqual({
+      tenants: ["broken"],
+      unreached: [{ tenant: "broken", error: broken }],
+    });
+  });
+
+  it("reads a store several reached tenants name once, with the tenant's keepFor", async () => {
+    const opened: { readonly tenant: string; readonly keepForMs: number | undefined }[] = [];
+    const shared = defineForgetLedger(async ({ tenant, keepForMs }) => {
+      opened.push({ tenant, keepForMs });
+      return memory().createForgetLedger({ tenant });
+    });
+    const config: ProjectConfig = ({ tenant }) =>
+      tenant === DEFAULT_TENANT ? configOf(memory()) : configOf(shared);
+    await listForgetLedgerTenants({ config, tenants: ["b", "c"] });
+    expect(opened).toEqual([{ tenant: "b", keepForMs: 30 * 24 * 60 * 60_000 }]);
+  });
+
+  it("reads two databases of one kind apart, and a storage without a tenant key store", async () => {
+    const seen: string[] = [];
+    const sqliteAt = (path: string): Adapter => {
+      const { adapter } = createNodeSqliteAdapter(":memory:");
+      return {
+        ...adapter,
+        options: { path },
+        createForgetLedger: async (args) => {
+          seen.push(`${path} ${args.tenant}`);
+          return adapter.createForgetLedger(args);
+        },
+      };
+    };
+    // A storage that brings no tenant key store of its own, as memory() does.
+    const { ephemeralKeys: _, ...storage } = memory();
+    const config: ProjectConfig = ({ tenant }) =>
+      configOf(sqliteAt(tenant === DEFAULT_TENANT ? "a.db" : "b.db"), undefined, storage);
+    expect(await listForgetLedgerTenants({ config, tenants: ["b"] })).toEqual({
+      tenants: [],
+      unreached: [],
+    });
+    expect(seen).toEqual([`a.db ${DEFAULT_TENANT}`, "b.db b"]);
+  });
 });

@@ -1305,11 +1305,47 @@ describe("bounda forget-ledger prune", () => {
       for (const tenant of [a, b])
         expect(await (await ownLedgerOf(tenant)).read({ limit: 10 })).toEqual([]);
 
+      // A tenant only it names that cannot be listed is not pruned, though no ledger holds entries.
+      process.env.PRUNE_TENANTS = unlistable;
+      const unlisted = await cli(["forget-ledger", "prune", "--all-tenants", ...ledgers], fixture);
+      expect(unlisted.code).toBe(EXIT_FAILURE);
+      expect(unlisted.stdout).toBe("");
+      expect(besidesLogs(unlisted.stderr)).toBe(
+        `error: the stores ${unlistable}'s configuration names could not be listed: The forget ledger cannot list its tenants: give it tenants(), or prune each tenant by name\n1 tenant(s) not pruned or listed: run again once what failed is fixed\n`,
+      );
+
       process.env.PRUNE_TENANTS = [a, b].join(",");
       const again = await cli(["forget-ledger", "prune", "--all-tenants", ...ledgers], fixture);
       expect(besidesLogs(again.stderr)).toBe("");
       expect(again.code).toBe(EXIT_OK);
       expect(again.stdout).toBe("the forget ledgers hold no tenant's entries\n");
+    } finally {
+      delete process.env.PRUNE_TENANTS;
+    }
+  });
+
+  it("names a tenant listed whose configuration then fails to load", async () => {
+    const once = tenantOf("once");
+    const loaded = await loadProject<typeof fixtureRegistry>({
+      root: fixture,
+      configPath: "prune-ledgers.config.ts",
+      tenant: `holder-${once}`,
+      logger: silentLogger,
+    });
+    const store = loaded.config.runtime?.personalData?.forgetLedger?.store;
+    if (store?.kind !== "bounda-adapter") throw new Error("the fixture's ledgers are adapters");
+    // In the store of another tenant, which only the tenants export names.
+    await (await store.createForgetLedger({ tenant: once })).append([ledgerEntry("p-1", "e-1")]);
+    process.env.PRUNE_TENANTS = `holder-${once}`;
+    try {
+      const pruned = await cli(
+        ["forget-ledger", "prune", "--all-tenants", "--config", "prune-ledgers.config.ts"],
+        fixture,
+      );
+      expect(pruned.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(pruned.stderr)).toBe(
+        `error: ${once} could not be pruned: ${once} is gone\n1 tenant(s) not pruned or listed: run again once what failed is fixed\n`,
+      );
     } finally {
       delete process.env.PRUNE_TENANTS;
     }
