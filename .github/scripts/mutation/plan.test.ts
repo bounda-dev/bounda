@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SourceFile } from "./files.ts";
-import { type PlanShardsArgs, planShards } from "./plan.ts";
+import { type PlanShardsArgs, planFewestShards, planShards } from "./plan.ts";
 import type { MutantResult, Report } from "./report.ts";
 
 const mutants = (count: number, fields: Partial<MutantResult> = {}): readonly MutantResult[] =>
@@ -260,5 +260,49 @@ describe("planShards", () => {
     expect(planShards({ ...args, files })).toEqual(
       planShards({ ...args, files: [...files].reverse() }),
     );
+  });
+});
+
+describe("planFewestShards", () => {
+  // Files whose sources changed, each running `count` mutants of ten seconds.
+  const changed = (counts: Readonly<Record<string, number>>) => ({
+    files: Object.keys(counts).map((path) => file(path, "new")),
+    report: {
+      files: Object.fromEntries(
+        Object.entries(counts).map(([path, count]) => [
+          path,
+          { source: "old", mutants: mutants(count, { duration: 10_000 }) },
+        ]),
+      ),
+    },
+    testSource: () => undefined,
+  });
+  const even = changed({ "a.ts": 100, "b.ts": 100, "c.ts": 100, "d.ts": 100 });
+  const slowest = (plan: readonly { readonly minutes: number }[]): number =>
+    Math.max(...plan.map(({ minutes }) => minutes));
+
+  it("takes one shard when the whole run fits the target", () => {
+    const plan = planFewestShards({ ...even, maxShards: 8, targetMinutes: 60 });
+    expect(plan).toHaveLength(1);
+  });
+
+  it("takes the fewest shards whose slowest fits the target", () => {
+    const two = slowest(planShards({ ...even, shards: 2 }));
+    const four = slowest(planShards({ ...even, shards: 4 }));
+    expect(planFewestShards({ ...even, maxShards: 8, targetMinutes: two })).toHaveLength(2);
+    expect(planFewestShards({ ...even, maxShards: 8, targetMinutes: four })).toHaveLength(4);
+  });
+
+  it("takes no more than the most shards allowed", () => {
+    expect(planFewestShards({ ...even, maxShards: 3, targetMinutes: 0 })).toHaveLength(3);
+  });
+
+  it("stops adding shards once a file over the target stands alone", () => {
+    const plan = planFewestShards({
+      ...changed({ "big.ts": 400, "a.ts": 10, "b.ts": 10, "c.ts": 10 }),
+      maxShards: 8,
+      targetMinutes: 0,
+    });
+    expect(plan.map(({ files }) => files)).toEqual([["big.ts"], ["a.ts", "b.ts", "c.ts"]]);
   });
 });
