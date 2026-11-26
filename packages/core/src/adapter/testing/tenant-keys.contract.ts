@@ -1,4 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type { ProjectConfig } from "../../config/types.ts";
+import { createFixedClock } from "../../contracts/clock.ts";
+import { toBase64 } from "../../kernel/personal-data/crypto.ts";
+import { buildKeyWrapper } from "../../kernel/personal-data/key-wrapper.ts";
+import { masterKey } from "../../kernel/personal-data/master-key.ts";
+import { rewrapTenantKeys } from "../../kernel/personal-data/master-rotation.ts";
+import { defineTenantKeyStore } from "../../kernel/personal-data/tenant-key-source.ts";
+import { openTenantKeys } from "../../kernel/personal-data/tenant-keys.ts";
+import { memory } from "../../memory/index.ts";
+import { createMemoryTenancyStore } from "../../memory/tenancy-store.ts";
 import type { Storage } from "../adapter.ts";
 import { DEFAULT_PERSONAL_CATEGORY } from "../storage/personal-key-store.ts";
 import type { TenantKeyRecord, TenantKeyStore } from "../storage/tenant-key-store.ts";
@@ -26,6 +36,16 @@ const version = (kid: string) => ({
   key: `wrapped-${kid}`,
   wrappedBy: "master-1",
   createdAt: "2026-01-01T00:00:00.000Z",
+});
+
+// The store as the configuration hands it over, which a rewrap closes once done with it.
+const unclosed = (store: TenantKeyStore): TenantKeyStore => ({
+  get: (tenant) => store.get(tenant),
+  put: (tenant, record, expected) => store.put(tenant, record, expected),
+  list: (args) => store.list(args),
+  ...(store.oneWriterPerTenant === undefined
+    ? {}
+    : { oneWriterPerTenant: store.oneWriterPerTenant }),
 });
 
 const record = (keys: readonly string[], store = "store-1"): TenantKeyRecord => ({
@@ -141,6 +161,62 @@ export const tenantKeyStoreContract: TenantKeyStoreContractFunction = ({
         expect((await store.list({ cursor: null, limit: 10 })).cursor).toBeNull();
       } finally {
         await store.close?.();
+      }
+    });
+
+    it("has every record rewrapped under the master key in force, whichever store a tenant's configuration names", async () => {
+      const [one, two] = [await create(), await create()];
+      try {
+        const env = {
+          FIRST: toBase64(crypto.getRandomValues(new Uint8Array(32))),
+          SECOND: toBase64(crypto.getRandomValues(new Uint8Array(32))),
+        };
+        const first = await buildKeyWrapper({ definition: masterKey({ from: "FIRST" }), env });
+        const placed = [
+          [one, "acme"],
+          [two, "globex"],
+        ] as const;
+        for (const [store, tenant] of placed) {
+          await openTenantKeys({
+            tenant,
+            store,
+            tenancy: createMemoryTenancyStore(),
+            master: first,
+            clock: createFixedClock(),
+            holdsTenantWrapped: async () => false,
+          });
+        }
+        const keyWrapper = masterKey({ from: "SECOND", previous: ["FIRST"] });
+        const [oneKeys, twoKeys] = [
+          defineTenantKeyStore(() => unclosed(one)),
+          defineTenantKeyStore(() => unclosed(two)),
+        ];
+        // globex's store is reached through the tenants it names alone.
+        const config: ProjectConfig = ({ tenant }) => ({
+          storage: memory(),
+          runtime: {
+            personalData: { keyWrapper, tenantKeys: tenant === "globex" ? twoKeys : oneKeys },
+          },
+        });
+        const rewrapping = rewrapTenantKeys({ config, env, tenants: ["globex"] });
+        if (one.oneWriterPerTenant === true) {
+          await expect(rewrapping).rejects.toThrow(
+            "The tenant key store is written by each tenant's own writer alone",
+          );
+          return;
+        }
+        expect(await rewrapping).toEqual({
+          rewrapped: ["acme", "globex"],
+          left: [],
+          unreached: [],
+        });
+        const { kid } = await buildKeyWrapper({ definition: keyWrapper, env });
+        for (const [store, tenant] of placed) {
+          expect((await store.get(tenant))?.keys.map(({ wrappedBy }) => wrappedBy)).toEqual([kid]);
+        }
+      } finally {
+        await one.close?.();
+        await two.close?.();
       }
     });
 

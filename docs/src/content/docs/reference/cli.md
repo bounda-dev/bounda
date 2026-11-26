@@ -894,10 +894,17 @@ tenant key 4Hq8Vd0eN1xZ7cRm in force; the worker replaces every key that seals p
 ```
 
 `rewrap-master` serves a [rotation of the master key](/guides/personal-data/#rotating-the-master-key):
-it rewraps under the master key in force the key of every tenant the tenant key store holds,
-whether their apps run or not, and names each one it rewrapped. It exits with `2` while any tenant
-is left under a previous master key, naming it and why, so a deploy keeps the previous keys until
-it passes:
+it rewraps under the master key in force the key of every tenant every tenant key store the
+configuration names holds, whether their apps run or not, and names each one it rewrapped. A
+configuration that is a function of the tenant may give tenants stores of their own, so it reaches
+them as `forget-ledger prune --all-tenants` does: from `--tenant`, or `default`, the tenants each
+reached tenant's tenant key store and forget ledger list, and those the `tenants` export of
+`bounda.config.ts` names, until none is new, reading each store once; each key is rewrapped under
+the key wrapper of its tenant's own configuration. There is no flag for one store alone: the
+previous master keys can go only once no store holds a key under them. It refuses a `tenants`
+export that is not a list of tenant names. It exits with `2` while any
+tenant's key could not be rewrapped, or any tenant's configuration or stores could not be listed,
+naming each and why, so a deploy keeps the previous keys until it passes:
 
 ```bash
 bounda tenant-key rewrap-master
@@ -1023,7 +1030,7 @@ or `app.as(actor).deadLetters`, `bounda personal-data export` is
 is `readTenantExport(createReadStream(file))`, `bounda forget-tenant` is
 `app.as(actor).forgetTenant(tenant, options)`, and `bounda tenant-key` is `app.rotateTenantKey(options)`
 and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
-`rewrapTenantKeys({ config, env })` for `rewrap-master`. `bounda forget-ledger prune` is
+`rewrapTenantKeys({ config: projectConfig, env, tenants: await tenants() })` for `rewrap-master`. `bounda forget-ledger prune` is
 `pruneTenantForgetLedger({ config, env, tenant })` from `@bounda-dev/core`, on the configuration
 `loadProject` resolves for the tenant, and `--all-tenants` runs it for each tenant
 `listForgetLedgerTenants({ config: projectConfig, env, tenants: await tenants() })` lists, with

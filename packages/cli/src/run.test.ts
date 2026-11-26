@@ -2078,7 +2078,7 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       const left = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
       expect(left.code).toBe(EXIT_FAILURE);
       expect(besidesLogs(left.stderr)).toMatch(
-        /^error: rewrap-3-\d+ is still under a previous master key: Tenant rewrap-3-\d+'s key is wrapped under the master key \S+, which is neither the key wrapper's key nor one of its previous ones\n1 tenant key\(s\) left under a previous master key: keep the previous master keys until none is\n$/,
+        /^error: rewrap-3-\d+'s key could not be rewrapped: Tenant rewrap-3-\d+'s key is wrapped under the master key \S+, which is neither the key wrapper's key nor one of its previous ones\n1 tenant\(s\) not rewrapped or listed: keep the previous master keys until none is, and run again once what failed is fixed\n$/,
       );
       process.env.REWRAP_PREVIOUS = "REWRAP_A";
       await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
@@ -2100,6 +2100,88 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     }
   });
 
+  it("rewraps the keys in every tenant key store the configuration names, those its tenants export reaches included", async () => {
+    const key = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
+    process.env.REWRAP_A = key();
+    process.env.REWRAP_B = key();
+    const rewrap = ["--config", "rewrap-stores.config.ts"];
+    try {
+      const joinUnder = async (tenant: string) => {
+        const project = await loadProject<typeof fixtureRegistry>({
+          root: fixture,
+          configPath: "rewrap-stores.config.ts",
+          tenant,
+          logger: silentLogger,
+        });
+        const app = await createApp({ ...project, env: process.env, logger: silentLogger });
+        await app.commands.join({ memberId: "m-1", name: "Ana" });
+        await app.stop();
+      };
+      const [shared, own, broken] = [tenantOf("shared"), tenantOf("own"), tenantOf("broken")];
+      for (const tenant of [shared, own]) await joinUnder(tenant);
+      process.env.REWRAP_FROM = "REWRAP_B";
+      process.env.REWRAP_PREVIOUS = "REWRAP_A";
+      // A store of its own, which nothing lists: only the tenants export reaches it.
+      const unnamed = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(besidesLogs(unnamed.stderr)).toBe("");
+      expect(unnamed.stdout).toContain(`rewrapped ${shared}\n`);
+      expect(unnamed.stdout).not.toContain(own);
+
+      process.env.REWRAP_TENANTS = [own, broken].join(",");
+      const named = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(named.code).toBe(EXIT_FAILURE);
+      expect(named.stdout).toBe(`rewrapped ${own}\n`);
+      expect(besidesLogs(named.stderr)).toBe(
+        `error: the stores ${broken}'s configuration names could not be listed: Error\n1 tenant(s) not rewrapped or listed: keep the previous master keys until none is, and run again once what failed is fixed\n`,
+      );
+
+      process.env.REWRAP_TENANTS = own;
+      const again = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(besidesLogs(again.stderr)).toBe("");
+      expect(again.code).toBe(EXIT_OK);
+      expect(again.stdout).toBe(
+        "0 tenant key(s) rewrapped; none is left under a previous master key: remove them\n",
+      );
+      // The previous master key can go: the tenant with a store of its own opens under the one in
+      // force alone.
+      delete process.env.REWRAP_PREVIOUS;
+      const status = await cli(["status", ...rewrap, "--tenant", own, "--json"], fixture);
+      expect(JSON.parse(status.stdout).tenant).toMatchObject({ master: { pending: 0 } });
+
+      // Started from a tenant the option names: its store of its own is read without the export.
+      delete process.env.REWRAP_TENANTS;
+      process.env.REWRAP_PREVIOUS = "REWRAP_A";
+      process.env.REWRAP_FROM = "REWRAP_A";
+      const started = tenantOf("own-started");
+      await joinUnder(started);
+      process.env.REWRAP_FROM = "REWRAP_B";
+      const fromTenant = await cli(
+        ["tenant-key", "rewrap-master", ...rewrap, "--tenant", started],
+        fixture,
+      );
+      expect(besidesLogs(fromTenant.stderr)).toBe("");
+      expect(fromTenant.stdout).toContain(`rewrapped ${started}\n`);
+
+      // Started from a tenant the option names, whose configuration cannot load.
+      const unloadable = await cli(
+        ["tenant-key", "rewrap-master", ...rewrap, "--tenant", broken],
+        fixture,
+      );
+      expect(unloadable.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(unloadable.stderr)).toBe(`error: ${broken} has no configuration\n`);
+    } finally {
+      for (const name of [
+        "REWRAP_A",
+        "REWRAP_B",
+        "REWRAP_FROM",
+        "REWRAP_PREVIOUS",
+        "REWRAP_TENANTS",
+      ]) {
+        delete process.env[name];
+      }
+    }
+  });
+
   it("says why it rewraps nothing for a project without keys, or one it cannot load", async () => {
     const plain = await cli(["tenant-key", "rewrap-master"], fixture);
     expect(plain.code).toBe(EXIT_FAILURE);
@@ -2112,6 +2194,16 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     );
     expect(missing.code).toBe(EXIT_FAILURE);
     expect(besidesLogs(missing.stderr)).toMatch(/^error: .*nowhere\.config\.ts/);
+    process.env.BOUNDA_ERROR_TEXT = "loud";
+    try {
+      const loud = await cli(["tenant-key", "rewrap-master"], fixture);
+      expect(loud.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(loud.stderr)).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
   });
 
   it("documents its options in its help", async () => {
@@ -2177,7 +2269,7 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       ],
       [
         "rewrap-master",
-        "rewrap under the master key in force the key of every tenant the tenant key store holds, their apps running or not: once none is left under a previous master key, remove those",
+        "rewrap under the master key in force the key of every tenant every tenant key store the configuration names holds, each through its own configuration, their apps running or not: once none is left under a previous master key, remove those",
       ],
     ] as const) {
       const help = await cli(["tenant-key", command, "--help"], fixture);

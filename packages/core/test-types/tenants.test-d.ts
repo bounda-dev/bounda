@@ -10,6 +10,7 @@ import {
   type ForgetTenantOptions,
   type FrozenTenantStatus,
   type ListForgetLedgerTenantsArgs,
+  type ListTenantsUnderPreviousMasterArgs,
   type Logger,
   listForgetLedgerTenants,
   listTenantsUnderPreviousMaster,
@@ -19,6 +20,7 @@ import {
   type PrunedTenantForgetLedger,
   pruneTenantForgetLedger,
   type RewrappedTenantKeys,
+  type RewrapTenantKeysArgs,
   type RotateTenantKeyOptions,
   rewrapTenantKeys,
   TENANT_CHECK_INTERVAL_MS,
@@ -441,13 +443,26 @@ describe("pruning a forget ledger with no app running", () => {
 describe("rotating the master key across tenants", () => {
   it("rewraps every tenant of the store from the configuration, naming those left", () => {
     expectTypeOf(rewrapTenantKeys).parameter(0).toEqualTypeOf<{
-      readonly config: Config;
+      readonly config: ProjectConfig;
       readonly env: Readonly<Record<string, string | undefined>>;
+      readonly tenant?: string;
+      readonly tenants?: readonly string[];
     }>();
+    // What loadProject hands over, and one tenant's configuration alike.
+    expectTypeOf<LoadedProject["projectConfig"]>().toExtend<RewrapTenantKeysArgs["config"]>();
+    expectTypeOf<Config>().toExtend<RewrapTenantKeysArgs["config"]>();
     expectTypeOf(rewrapTenantKeys).returns.toEqualTypeOf<Promise<RewrappedTenantKeys>>();
     expectTypeOf<RewrappedTenantKeys>().toEqualTypeOf<{
       readonly rewrapped: readonly string[];
       readonly left: readonly { readonly tenant: string; readonly error: unknown }[];
+      readonly unreached: readonly UnreachedTenant[];
+    }>();
+    expectTypeOf(listTenantsUnderPreviousMaster)
+      .parameter(0)
+      .toEqualTypeOf<ListTenantsUnderPreviousMasterArgs>();
+    expectTypeOf<ListTenantsUnderPreviousMasterArgs>().toEqualTypeOf<{
+      readonly config: Config;
+      readonly env: Readonly<Record<string, string | undefined>>;
     }>();
     expectTypeOf(listTenantsUnderPreviousMaster).returns.toEqualTypeOf<
       Promise<readonly string[]>

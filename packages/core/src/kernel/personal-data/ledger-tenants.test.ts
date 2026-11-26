@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
@@ -335,6 +338,34 @@ describe("the tenants of every forget ledger's store the configuration names", (
       unreached: [],
     });
     expect(seen).toEqual([`a.db ${DEFAULT_TENANT}`, "b.db b"]);
+  });
+
+  it("reads a database that holds both a forget ledger and tenant keys as both", async () => {
+    const both = join(mkdtempSync(join(tmpdir(), "bounda-ledger-tenants-")), "both.db");
+    const bothAdapter = (): Adapter => createNodeSqliteAdapter(both).adapter;
+    const keys = await bothAdapter().createTenantKeyStore();
+    await keys.put("acme", { store: "s-1", keys: [], forgotten: null }, null);
+    await keys.close?.();
+    const ledger = await bothAdapter().createForgetLedger({ tenant: "zeta" });
+    await ledger.append([
+      {
+        personId: "p",
+        categories: null,
+        eventId: "e",
+        forgottenAt: START.toISOString(),
+        reason: "requested",
+      },
+    ]);
+    await ledger.close?.();
+    // Only acme's configuration names that database's ledger, and only its keys list acme.
+    const config: ProjectConfig = ({ tenant }) =>
+      tenant === "acme"
+        ? configOf(bothAdapter(), bothAdapter())
+        : configOf(memory(), bothAdapter());
+    expect(await listForgetLedgerTenants({ config })).toEqual({
+      tenants: ["zeta"],
+      unreached: [],
+    });
   });
 
   it("tells an adapter whose options JSON cannot write by itself", async () => {
