@@ -298,7 +298,7 @@ describe("personalDataInventory", () => {
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        safeguard: "standard-contractual-clauses",
+        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
         categories: ["contact"],
       },
     ]);
@@ -371,7 +371,7 @@ describe("personalDataInventory", () => {
     expect(apart.holders.find(({ name }) => name === "customer.onboarding")?.location).toBeNull();
   });
 
-  it("names the transfer of every store kept out of the storage's location, with its safeguard", () => {
+  it("names the transfer of every store kept out of the storage's location, with its safeguard and regime", () => {
     const inventory = personalDataInventory({
       registry,
       config: {
@@ -391,7 +391,7 @@ describe("personalDataInventory", () => {
             }),
             forgetLedger: {
               store: defineForgetLedger(() => createMemoryForgetLedgers().ledgerOf("t"), {
-                location: "us",
+                location: "fedramp",
                 safeguard: "binding-corporate-rules",
               }),
             },
@@ -405,7 +405,7 @@ describe("personalDataInventory", () => {
       ["customer.CustomerRegistered", "eu", null],
       ["customer.remindCustomer", "eu", null],
       ["customer.onboarding", "eu", null],
-      ["customers", "ch", { safeguard: "adequacy", article: "45" }],
+      ["customers", "ch", { safeguard: "adequacy", article: "45", regime: "CH" }],
     ]);
     expect(
       inventory.records.map(({ name, location, transfer }) => [name, location, transfer]),
@@ -417,9 +417,17 @@ describe("personalDataInventory", () => {
       ["dead-letters", "eu", null],
       ["subscriber-failures", "eu", null],
       ["disclosures", "eu", null],
-      ["master-key", "us", { safeguard: "standard-contractual-clauses", article: "46(2)(c)" }],
-      ["tenant-keys", "ch", { safeguard: "adequacy", article: "45" }],
-      ["forget-ledger", "us", { safeguard: "binding-corporate-rules", article: "47" }],
+      [
+        "master-key",
+        "us",
+        { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+      ],
+      ["tenant-keys", "ch", { safeguard: "adequacy", article: "45", regime: "CH" }],
+      [
+        "forget-ledger",
+        "fedramp",
+        { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+      ],
       ["access-log", null, null],
       ["host-log", null, null],
     ]);

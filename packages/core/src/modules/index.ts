@@ -226,6 +226,7 @@ export type {
   RecipientRedactedArgs,
   RecipientRestrictedArgs,
   RecipientTenantForgottenArgs,
+  RecipientTransfer,
   StoreSafeguard,
   TransferSafeguard,
 } from "./recipient.ts";

@@ -1509,7 +1509,7 @@ describe("recipients of personal data", () => {
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
         status: "disclosed",
         categories: [{ name: "contact", basis: "consent" }],
         firstDisclosedAt: START.toISOString(),
@@ -1550,7 +1550,7 @@ describe("recipients of personal data", () => {
       expect.objectContaining({
         port: "customer.mailer",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
         status: "disclosed",
       }),
     ]);

@@ -145,10 +145,11 @@ export default defineConfig({
   Area under a `storage` outside it; never for `"global"`. The decisions for Canada and the United
   States cover some organisations alone, commercial ones under PIPEDA and those certified under the
   EU-US Data Privacy Framework: that the provider is one is yours to keep true.
-- The record of processing names each transfer, its safeguard and its article, next to everything
-  kept there, as article 30(1)(e) asks, and each person's
+- The record of processing names each transfer, the legal regime it goes to, its safeguard and its
+  article, next to everything kept there, as article 30(1)(e) asks, and each person's
   [export](/guides/personal-data/#exporting-a-persons-data) lists it in `transfers`, as article
-  15(2) asks.
+  15(2) asks, each with its `location`, `safeguard`, `article` and `regime`, the regime `regimeOf`
+  names: a store in `"fedramp"` is under `"US"`.
 - The safeguard itself, the clauses signed and the transfer impact assessment are yours: Bounda
   states what you declare. On Cloudflare, the keeper takes a
   [`jurisdiction`](/adapters/cloudflare/#data-location) of its own.

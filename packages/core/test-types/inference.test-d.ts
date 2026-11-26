@@ -138,6 +138,7 @@ import type {
   ReadOutcome,
   RecipientKind,
   RecipientStatus,
+  RecipientTransfer,
   RecordHostRejection,
   RedactedEvent,
   RedactedFields,
@@ -1290,7 +1291,7 @@ describe("personal data", () => {
       readonly name: string;
       readonly kind: RecipientKind;
       readonly country: CountryCode;
-      readonly transfer: { readonly safeguard: TransferSafeguard; readonly article: string } | null;
+      readonly transfer: RecipientTransfer | null;
       readonly status: "disclosed" | "presumed" | "declared";
       readonly categories: readonly {
         readonly name: PersonalCategoryName;

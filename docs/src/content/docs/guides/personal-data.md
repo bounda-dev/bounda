@@ -768,14 +768,15 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   ],
   recipients: [
     { port: "customer.mailer", name: "Mailchimp", kind: "processor", country: "US",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
       status: "disclosed",
       categories: [{ name: "profile", basis: "contract" }],
       firstDisclosedAt: "2026-02-01T09:00:00.000Z", lastDisclosedAt: "2026-02-20T09:00:00.000Z",
       declared: true },
   ],
   transfers: [
-    { store: "tenant-keys", readModel: null, location: "ch", safeguard: "adequacy", article: "45" },
+    { store: "tenant-keys", readModel: null, location: "ch", safeguard: "adequacy", article: "45",
+      regime: "CH" },
   ],
   redactions: [
     { eventId, at: "2026-02-21T09:00:00.000Z", events: [{ id, fields: ["phone"] }] },
@@ -878,13 +879,16 @@ error's text or a rejection's message may quote any of their data.
 
 `recipients` are the [recipients](#recipients) of their data, as `recipientsOf` lists them: each
 one disclosed data of theirs, presumed to hold it, or declared for a category of theirs, with the
-categories concerned and their basis, its country and the safeguard of a transfer out of the
-European Economic Area with the article it rests on, as article 15(1)(c) asks.
+categories concerned and their basis, its country and, for a transfer out of the European Economic
+Area, its safeguard, the article it rests on and the legal regime the data goes to, as article
+15(1)(c) asks.
 
 `transfers` are the stores the app keeps out of the jurisdiction `storage` declares, each under the
 safeguard that allows it, as article 15(2) asks: a read model that holds personal data
 (`read-model`, with its name), the master key, the tenant's key, or the forget ledger, with its
-`location`, its `safeguard` and the `article` it rests on. It is empty while every store is kept
+`location`, its `safeguard`, the `article` it rests on and the `regime`, the legal regime the store
+is under as [`regimeOf`](/reference/configuration/#data-location) names its location: a store in
+`"fedramp"` is under `"US"`. It is empty while every store is kept
 where `storage` is. See [stores in another jurisdiction](#stores-in-another-jurisdiction).
 
 `redactions` are the [redactions](#correcting-a-persons-data) of their data, in the order they
@@ -1689,7 +1693,8 @@ person may ask (article 19): those disclosed data of theirs, with the identity t
 then and when it was first and last recorded; those presumed to hold it; and those declared for a
 category the person has data of that received none yet and may (article 15(1)(c) asks for those
 too). Each one with its `port`, `name`, `kind`, `country`, `transfer`, the `safeguard` of one out of
-the European Economic Area and the `article` it rests on, or `null`, its `status`, `disclosed`, `presumed` or `declared`, the
+the European Economic Area, the `article` it rests on and the `regime` the data goes to, or `null`,
+its `status`, `disclosed`, `presumed` or `declared`, the
 `categories` concerned with their basis, and `declared`, `false` for a port the app no longer
 declares. The [export](#exporting-a-persons-data) lists the same as `recipients`. Each call is
 recorded in the access log, as `recipientsOf`. From the command line:
@@ -2055,10 +2060,12 @@ database. The record lists:
   scheduled commands and dead letters for a command, the read model's table, each in the database
   its adapter names, and the jurisdiction that database keeps it in, as its
   [`location`](/reference/configuration/#data-location) declares it, or
-  [a Durable Object jurisdiction](/adapters/cloudflare/#data-location), with the safeguard of the
-  transfer when it is kept out of `storage`'s;
-- each [recipient](#recipients): its port, name, kind, country, the safeguard of a transfer out
-  of the European Economic Area, and the categories it receives;
+  [a Durable Object jurisdiction](/adapters/cloudflare/#data-location), with the transfer when it
+  is kept out of `storage`'s: the legal regime it goes to, its safeguard and the article it rests
+  on;
+- each [recipient](#recipients): its port, name, kind, country, the transfer when it is out of the
+  European Economic Area, with the regime, the safeguard and its article, and the categories it
+  receives;
 - what the runtime keeps about persons besides those fields: their keys, their activity and
   restrictions, its own events about them, [remembered answers](#remembered-answers) for as long as
   `runtime.commands.idempotencyKeyLifetime` keeps them, dead letters until an operator resolves
@@ -2073,7 +2080,7 @@ database. The record lists:
   `keepFor` and no longer than until its tenant is [forgotten](#forgetting-a-tenant) and every
   recipient told, and the [access log](#who-opened-what) and the [host
   log](#refused-requests) when `app/audit.ts` exists, each with where it is kept and, out of
-  `storage`'s jurisdiction, the safeguard of the transfer;
+  `storage`'s jurisdiction, the transfer, its regime, safeguard and article;
 - whether a [master key](#a-master-key), a [tenant key store](#the-tenant-key-store) and a forget
   ledger are configured;
 - the fields marked `notPersonal`.
@@ -2592,7 +2599,8 @@ export default defineConfig({
   covers, and a `derogation`, which article 49 allows for occasional transfers alone, never for a
   store that keeps data as long as the app runs.
 - The [record of processing](#the-record-of-processing-activities) names each transfer next to the
-  store, `in ch, transferred under adequacy (article 45)`, and every person's
+  store by the legal regime it goes to, `in fedramp, transferred to US under binding-corporate-rules
+  (article 47)`, and every person's
   [export](#exporting-a-persons-data) lists it in `transfers`, as does the tenant's when it is
   [handed back](#handing-a-tenant-back).
 - On Cloudflare the keeper takes a `jurisdiction` and a `safeguard` of its own: see [keepers in
@@ -2706,7 +2714,7 @@ then hands out, in this order:
 
 | Part | What it holds |
 | --- | --- |
-| `header` | `format` (`"bounda.tenant-export"`) and `version` (`3`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`4`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
 | `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
 | `recipient` | each recipient of the tenant's data, the `person` parts' recipients summed: one per port, identity it had then and status, with its `country` and `transfer`, the categories concerned, the earliest and latest disclosure, and how many `persons` list it so; and each recipient the app declares that no person lists under its identity now, `declared`, for none |
 | `event` | every event of the stream up to the header's `position`, as the handlers read it today: upcast, its whole `payload` opened, with its `metadata` and the `person` it names; `categories` names the category of each field marked `personal`, `restricted` the fields the controller may only keep, and `redacted` the fields a [redaction](#correcting-a-persons-data) sealed for good |
@@ -2730,10 +2738,10 @@ the data, not the means to open it.
 
 Where the tenant's data went, and on what each transfer rests, is in two places. The header's
 `transfers` are the stores the app keeps out of the jurisdiction `storage` declares, each with its
-`location`, `safeguard` and `article` (see [stores in another
+`location`, `regime`, `safeguard` and `article` (see [stores in another
 jurisdiction](#stores-in-another-jurisdiction)). The `recipient` parts are every recipient the
 data went to, may hold it or may receive it, each with its `country` and, out of the European
-Economic Area, the `safeguard` of the transfer and its `article`: a recipient that moved, or changed
+Economic Area, the `transfer`: its `safeguard`, `article` and `regime`. A recipient that moved, or changed
 its safeguard, comes once under each identity its disclosures were recorded with, so each transfer
 is told under what allowed it then. Each person's part says which of them hold their data. A
 [forgetting](#forgetting-a-person) removes the disclosures it forgot, so they count in no

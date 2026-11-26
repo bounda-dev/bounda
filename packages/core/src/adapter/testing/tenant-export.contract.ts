@@ -300,7 +300,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       const header = parts[0]?.kind === "header" ? parts[0].header : undefined;
       expect(header).toEqual({
         format: "bounda.tenant-export",
-        version: 3,
+        version: 4,
         tenant: DEFAULT_TENANT,
         exportId: expect.any(String),
         exportedAt: "2026-03-01T00:00:00.000Z",

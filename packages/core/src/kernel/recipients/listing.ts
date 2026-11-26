@@ -5,17 +5,17 @@ import type {
 } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredDisclosure } from "../../adapter/storage/recipient-store.ts";
 import type { PersonalCategoryName } from "../../modules/personal-data.ts";
-import {
-  type CountryCode,
-  type PersonRecipient,
-  type RecipientKind,
-  TRANSFER_ARTICLES,
-  type TransferSafeguard,
+import type {
+  CountryCode,
+  PersonRecipient,
+  RecipientKind,
+  TransferSafeguard,
 } from "../../modules/recipient.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { RecipientStatus } from "../status.ts";
 import { presumedOf, presumedOfMany } from "./addressing.ts";
 import type { RecipientsRuntime } from "./build.ts";
+import { recipientTransferOf } from "./transfer.ts";
 
 export interface RecipientsOfArgs {
   readonly storage: Pick<StorageTransaction, "recipients" | "eventStore"> & {
@@ -144,10 +144,7 @@ const recipientsFrom = ({
     name: identity.name,
     kind: identity.kind,
     country: identity.country,
-    transfer:
-      identity.safeguard === null
-        ? null
-        : { safeguard: identity.safeguard, article: TRANSFER_ARTICLES[identity.safeguard] },
+    transfer: recipientTransferOf(identity.country, identity.safeguard),
     status,
     categories: [...new Set(names)].sort().map((name) => ({
       name: name as PersonalCategoryName,
@@ -271,7 +268,7 @@ export const recipientStatuses: RecipientStatusesFunction = async ({ storage, re
                 name: recipient.recipient,
                 kind: recipient.kind,
                 country: recipient.country,
-                safeguard: recipient.safeguard,
+                transfer: recipientTransferOf(recipient.country, recipient.safeguard),
                 categories: recipient.categories,
               },
         persons: summary.find((each) => each.port === port)?.persons ?? 0,

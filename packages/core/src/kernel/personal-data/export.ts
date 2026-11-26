@@ -1,7 +1,7 @@
 import type { DeadLetterKind } from "../../adapter/storage/dead-letter-store.ts";
 import type { DispatchOutcome } from "../../adapter/storage/idempotency-store.ts";
 import type { ExportAccess } from "../../modules/audit.ts";
-import type { DataLocation } from "../../modules/data-location.ts";
+import type { DataLocation, LegalRegime } from "../../modules/data-location.ts";
 import type {
   AutomatedDecision,
   CriminalOffenceData,
@@ -158,6 +158,10 @@ export interface ExportedTransfer {
    * The article of the GDPR the safeguard rests on.
    */
   readonly article: string;
+  /**
+   * The legal regime the store is under, as `regimeOf` names `location`.
+   */
+  readonly regime: LegalRegime;
 }
 
 /**

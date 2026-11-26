@@ -292,7 +292,7 @@ retention
 dead letter retention: 30d, next purge 2026-11-20T08:00:00.000Z
 subscriber failure retention: 30d, next purge when a failure is resolved
 recipients
-  customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 812 persons disclosed to it
+  customer.mailer  Mailchimp, processor, US, transferred to US under standard-contractual-clauses (article 46(2)(c)): contact; 812 persons disclosed to it
     2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer
 ```
 
@@ -544,8 +544,11 @@ recipient, what the runtime keeps about persons and for how long, and the fields
 project it reads modules that import the Workers runtime, without running them. Where each holder
 and record is kept names the database's adapter, and the jurisdiction it keeps the data in when it
 declares one, such as `postgresql, in eu`, or `cloudflare, in eu` for [Durable Objects in the
-EU](/adapters/cloudflare/#data-location), and the safeguard of one kept out of `storage`'s
-jurisdiction, `tenant-keys, in ch, transferred under adequacy (article 45)`: see [data
+EU](/adapters/cloudflare/#data-location), and the transfer of one kept out of `storage`'s
+jurisdiction, by the legal regime it goes to, its safeguard and the safeguard's article, `tenant-keys, in fedramp,
+transferred to US under binding-corporate-rules (article 47)`; each recipient out of the European
+Economic Area says the same, `Mailchimp, processor in US, transferred to US under
+standard-contractual-clauses (article 46(2)(c))`: see [data
 location](/reference/configuration/#data-location) and [stores in another
 jurisdiction](/reference/configuration/#stores-in-another-jurisdiction). See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
@@ -629,13 +632,14 @@ bounda recipients c-42 --actor ops-ana
 recipients
   customer.crm  Brevo, third-party, FR: contact, invoices; 37 persons disclosed to it
     being told what was recorded before it was declared
-  customer.mailer  Mailchimp, processor, US on standard-contractual-clauses: contact; 812 persons disclosed to it
+  customer.mailer  Mailchimp, processor, US, transferred to US under standard-contractual-clauses (article 46(2)(c)): contact; 812 persons disclosed to it
     2 notices failed: bounda dead-letters list --kind recipient --handler customer.mailer
   order.sms  no longer declared, 4 persons disclosed to it
 ```
 
 Each line names the port, its recipient as the port declares it now, with its kind, country, the
-safeguard of a transfer out of the European Economic Area and the categories it receives, and how
+transfer out of the European Economic Area, by the legal regime it goes to, its safeguard and the
+article it rests on, and the categories it receives, and how
 many persons the store recorded as disclosed to it; under it, whether the worker is still telling
 it, presumed, what was recorded before it was declared, and how many of its notices wait as failed
 [dead letters](#bounda-dead-letters). A port the app no longer declares says so: its notices wait as
@@ -783,9 +787,9 @@ call was refused or failed.
 
 [Hands a tenant back](/guides/personal-data/#handing-a-tenant-back) to its controller, as
 article 28(3)(g) asks of a processor at the end of its service: every person, recipient of their
-data with its country and the safeguard of a transfer, event, scheduled command, dead letter,
-subscriber failure, remembered answer, read-model row and forget ledger entry, with the stores kept
-in another jurisdiction, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
+data with its country and the transfer, its legal regime, safeguard and article, event, scheduled
+command, dead letter, subscriber failure, remembered answer, read-model row and forget ledger
+entry, with the stores kept in another jurisdiction and the regime of each, every value opened, as [JSON Lines](https://jsonlines.org/), read and written a page at a
 time whatever the tenant holds. It boots the project for that tenant, unless `--tenant` names
 another, which it refuses, and refuses a tenant not [frozen](#bounda-freeze-tenant-and-bounda-unfreeze-tenant)
 in every store. Recorded in the access log, `started` and then how it ended.

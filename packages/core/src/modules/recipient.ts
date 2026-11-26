@@ -6,6 +6,7 @@ import type {
   ProcessingRestrictionLiftedEvent,
   TenantForgottenEvent,
 } from "./bounda-events.ts";
+import type { LegalRegime } from "./data-location.ts";
 import type { LegalBasis, PersonalCategoryName } from "./personal-data.ts";
 
 /**
@@ -62,6 +63,17 @@ export const TRANSFER_ARTICLES: Readonly<Record<TransferSafeguard, string>> = {
   certification: "46(2)(f)",
   derogation: "49",
 };
+
+/**
+ * A transfer of personal data to a recipient outside the European Economic Area: the safeguard it
+ * rests on, the article of the GDPR that safeguard rests on, and the legal regime the data goes to,
+ * as `regimeOf` names the recipient's country.
+ */
+export interface RecipientTransfer {
+  readonly safeguard: TransferSafeguard;
+  readonly article: string;
+  readonly regime: LegalRegime;
+}
 
 /**
  * What allows a store, such as the tenant key store or a read model's database, to keep data in
@@ -619,10 +631,9 @@ export interface PersonRecipient {
   readonly kind: RecipientKind;
   readonly country: CountryCode;
   /**
-   * Whether the country is outside the European Economic Area, and on what safeguard the transfer
-   * rests then, with the article of the GDPR it rests on; `null` inside it.
+   * The transfer when the country is outside the European Economic Area; `null` inside it.
    */
-  readonly transfer: { readonly safeguard: TransferSafeguard; readonly article: string } | null;
+  readonly transfer: RecipientTransfer | null;
   /**
    * `disclosed` when a run handed the port data of the person, `presumed` when it cannot be ruled
    * out, as for a recipient declared after the data already existed, and `declared` when the port
