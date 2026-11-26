@@ -815,6 +815,10 @@ describe("forgetTenant in an app given the project", () => {
     });
     expect(await old.get(DEFAULT_TENANT)).toBeNull();
     expect((await current.get(DEFAULT_TENANT))?.forgotten?.eventId).toBe(first.eventId);
+    // Logged once: the second forgetting left nothing.
+    expect(
+      entries.filter(({ message }) => message === "copies of the forgotten tenant's key left"),
+    ).toHaveLength(1);
     await app.stop();
 
     // A copy put back by hand meets an app started on the forgotten tenant.

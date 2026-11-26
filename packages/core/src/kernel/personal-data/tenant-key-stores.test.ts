@@ -10,6 +10,7 @@ import { ConfigurationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import { toBase64 } from "./crypto.ts";
+import { defineForgetLedger } from "./forget-ledger.ts";
 import { buildKeyWrapper } from "./key-wrapper.ts";
 import { masterKey } from "./master-key.ts";
 import { defineTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
@@ -592,6 +593,152 @@ describe("removeKeyCopiesOf", () => {
       removed: [],
       refused: [],
       unreached: [{ tenant: "acme", error: new Error("no tenants") }],
+    });
+  });
+});
+
+describe("the walk across stores", () => {
+  it("reaches through forget ledgers, opens each store once, orders by tenant across stores, and passes over records gone and tenants unreached", async () => {
+    const first = await buildKeyWrapper({ definition: masterKey({ from: "FIRST" }), env });
+    const { kid } = await buildKeyWrapper({ definition: masterKey({ from: "SECOND" }), env });
+    const [one, two] = [createMemoryTenantKeyStore(), createMemoryTenantKeyStore()];
+    await put(one, "zed", record([version("z-1", first.kid)]));
+    await put(one, "zoe", record([version("o-1", kid)]));
+    await put(one, "lost", record([version("l-1", kid)]));
+    await put(one, "gone", record([version("x-1", kid)]));
+    await put(two, "amy", record([version("a-1", first.kid)]));
+    await put(two, "abe", record([version("b-1", kid)]));
+    await put(two, "zoe", record([version("o-1", kid)]));
+    const opened = { one: 0, two: 0 };
+    const opening = (store: TenantKeyStore, name: keyof typeof opened) =>
+      defineTenantKeyStore(() => {
+        opened[name] += 1;
+        return {
+          ...store,
+          get: async (tenant) => (tenant === "gone" ? null : store.get(tenant)),
+        };
+      });
+    const [oneKeys, twoKeys] = [opening(one, "one"), opening(two, "two")];
+    // The default tenant's ledger lists amy, and ghost, whom only it names; amy's lists none.
+    const listing = await memory().createForgetLedger({ tenant: "default" });
+    const { tenants: _, ...unlisting } = await memory().createForgetLedger({ tenant: "amy" });
+    const keyWrapper = masterKey({ from: "SECOND", previous: ["FIRST"] });
+    const config: ProjectConfig = ({ tenant }) => {
+      if (!["default", "zed", "zoe", "gone", "amy", "abe"].includes(tenant)) {
+        throw new Error(`no configuration for ${tenant}`);
+      }
+      return {
+        storage: memory(),
+        runtime: {
+          personalData: {
+            keyWrapper,
+            tenantKeys: tenant === "zoe" || tenant === "amy" ? twoKeys : oneKeys,
+            ...(tenant === "default"
+              ? {
+                  forgetLedger: {
+                    store: defineForgetLedger(() => ({
+                      ...listing,
+                      tenants: async () => ["amy", "ghost"],
+                    })),
+                  },
+                }
+              : tenant === "amy"
+                ? { forgetLedger: { store: defineForgetLedger(() => unlisting) } }
+                : {}),
+          },
+        },
+      };
+    };
+    const inspection = await inspectTenantKeys({ config, env });
+    expect(inspection.underPreviousMaster).toEqual(["amy", "zed"]);
+    expect(inspection.stale.map(({ tenant, namedBy, named }) => [tenant, namedBy, named])).toEqual([
+      ["abe", "zoe", "lacks"],
+      ["zoe", "default", "holds"],
+    ]);
+    expect(inspection.failed).toEqual([]);
+    expect(inspection.unreached.map(({ tenant }) => tenant)).toEqual(["lost", "ghost"]);
+    expect(opened).toEqual({ one: 2, two: 2 });
+
+    const { removed, refused } = await removeStaleTenantKeys({ config, env });
+    expect(removed.map(({ tenant }) => tenant)).toEqual(["zoe"]);
+    expect(refused.map(({ tenant }) => tenant)).toEqual(["abe"]);
+    expect(await one.get("zoe")).toBeNull();
+  });
+
+  it("names every version and file key a copy would lose, and gives up after so many tries", async () => {
+    const [old, current] = [createMemoryTenantKeyStore(), createMemoryTenantKeyStore()];
+    await put(
+      old,
+      "acme",
+      record([version("t-1"), version("t-0")], { files: [fileKey("f-1"), fileKey("f-2")] }),
+    );
+    await put(current, "acme", record([version("t-2")]));
+    const { refused } = await removeStaleTenantKeys({
+      config: placed(sourceOf(old), { acme: sourceOf(current) }),
+      env,
+    });
+    expect(String(refused[0]?.error)).toContain(
+      "holds versions t-1, t-0 and file keys f-1, f-2, which the store",
+    );
+
+    await put(current, "globex", record([version("g-1")]));
+    await put(old, "globex", record([version("g-1")]));
+    let puts = 0;
+    const stuck: TenantKeyStore = {
+      ...old,
+      put: async () => {
+        puts += 1;
+        return false;
+      },
+    };
+    await removeStaleTenantKeys({
+      config: placed(
+        defineTenantKeyStore(() => stuck),
+        { globex: sourceOf(current) },
+      ),
+      env,
+      only: ["globex"],
+    });
+    expect(puts).toBe(5);
+  });
+
+  it("reads the named record again when it went between its two readings, and finds the copy the only one", async () => {
+    const [old, current] = [createMemoryTenantKeyStore(), createMemoryTenantKeyStore()];
+    await put(old, "acme", record([version("t-1")]));
+    await put(current, "acme", record([version("t-1")]));
+    let gets = 0;
+    // Removed right after its first reading, as a move back would.
+    const leaving: TenantKeyStore = {
+      ...current,
+      get: async (tenant) => {
+        gets += 1;
+        const held = await current.get(tenant);
+        if (gets === 1 && held !== null) await current.remove(tenant, held.revision);
+        return held;
+      },
+    };
+    const { removed, refused } = await removeStaleTenantKeys({
+      config: placed(sourceOf(old), { acme: defineTenantKeyStore(() => leaving) }),
+      env,
+    });
+    expect(removed).toEqual([]);
+    expect(refused.map(({ error }) => String(error))).toEqual([
+      "ConfigurationError: The copy of tenant acme's key in the tenant key store default's configuration names is the only one: the store acme's own configuration names holds no record of it, so removing it would leave its data nothing to open with",
+    ]);
+    expect(await old.get("acme")).not.toBeNull();
+  });
+
+  it("reaches no tenant beside those the stores list for a project without a tenants export", async () => {
+    const current = createMemoryTenantKeyStore();
+    await put(current, "acme", forgotten());
+    const config: ProjectConfig = ({ tenant }) => {
+      if (tenant !== "acme") throw new Error(`no configuration for ${tenant}`);
+      return { storage: memory(), runtime: { personalData: { tenantKeys: sourceOf(current) } } };
+    };
+    expect(await removeKeyCopiesOf({ project: { config }, env, tenant: "acme" })).toEqual({
+      removed: [],
+      refused: [],
+      unreached: [],
     });
   });
 });
