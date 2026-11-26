@@ -1,0 +1,29 @@
+name: Adequacy decisions
+
+# ADEQUATE_COUNTRIES in @bounda-dev/core is the European Commission's list of adequacy decisions
+# as Bounda last read it. This fails when the Commission's page lists another country or
+# organisation, drops one, or writes other words after a name, which is where a decision's scope
+# shows (.github/scripts/adequacy). On a drift, update ADEQUATE_COUNTRIES and its JSDoc, the list
+# in docs/src/content/docs/reference/configuration.md, and ORGANISATIONS, SCOPES or ALIASES in
+# .github/scripts/adequacy/expected.ts, with a changeset for core. A page it cannot read fails too,
+# with its own message: fix the reader in .github/scripts/adequacy/page.ts.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ADEQUATE_COUNTRIES matches the European Commission's list
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+      - run: node .github/scripts/adequacy-check.ts

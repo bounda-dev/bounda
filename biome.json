@@ -15,7 +15,8 @@
       "!**/.react-router",
       "!**/.vitest",
       "!**/coverage",
-      "!**/public"
+      "!**/public",
+      "!.github/scripts/adequacy/fixtures"
     ]
   },
   "formatter": {
