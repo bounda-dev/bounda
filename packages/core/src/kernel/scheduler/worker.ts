@@ -717,16 +717,18 @@ export const createScheduledCommandWorker: CreateScheduledCommandWorkerFunction 
       if (paused?.() === true) return 0;
       const restored = await restores?.check(clock.now(), { active: worked });
       let reconciledAtOnce = 0;
-      // Whether this pass handled a restore, which it then settles: one a caller outside the pass
-      // declared is settled by that caller once handled.
+      // Whether this pass declared a restore the ledger tells, which it then settles: one a caller
+      // outside the pass declared is settled by that caller once handled.
       let settling = false;
       if (restored !== undefined && restored !== null && restored !== handled) {
         handled = restored;
-        settling = true;
         await restart(restored.first);
         // Before anything is claimed: the scheduled commands of whom the copy brought back go
         // with their forgetting.
         reconciledAtOnce = (await reconciliation?.sweep(clock.now())) ?? 0;
+        // Handled once reconciled, as when found outside a pass: what the pass does next, a
+        // retention's forgetting among it, comes after.
+        await restores?.settled();
       }
       const claimedAt = clock.now();
       const due = await claimDue(claimedAt);

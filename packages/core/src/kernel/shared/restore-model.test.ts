@@ -26,6 +26,7 @@ import { pruneAsApplied, reconciliationRulesOf } from "../personal-data/ledger-p
 import {
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_GRACE_MS,
+  FORGET_LEDGER_LAST_RUN,
   FORGET_LEDGER_REREAD_MS,
 } from "../personal-data/reconciliation.ts";
 import { appRetentionDue } from "../personal-data/retention.ts";
@@ -45,22 +46,28 @@ import {
 // what the model says it must.
 //
 // What is true: a restore puts back a copy; it goes back when the copy lacks an event the database
-// held, or holds a lower generation or count. Restores the app touched nothing in between are one
-// going back, which is all it can ever tell. What is observable: the database, the ledger (marks,
-// committed entries, intentions with where the database stood) and what each running instance read
-// or committed. A going back is proved, at a look that reads it, by:
-//   - the ledger's mark above the database's generation, which a pass and a start read;
-//   - a committed entry whose event the database lacks, of a person it still holds or written where
-//     the database still stands, which a start reads;
-//   - an entry written where the database had gone further than it now stands, which a start reads;
+// held, a restore it handled, or holds a lower generation. Restores the app touched nothing in
+// between are one going back, which is all it can ever tell. What is observable: the database, the
+// ledger (marks, counts, committed entries, intentions with where the database stood) and what each
+// running instance read or committed. A going back is proved, at a look that reads it, by:
+//   - the ledger's mark above the database's generation, or its count above the database's, which a
+//     pass and a start read; on KV, of those raised since the latest restore counted, which a copy
+//     brings back as it held it, also a mark raised before a lower one, and no recount;
+//   - an entry written after the latest restore counted, committed and whose event the database
+//     lacks, or written where the database had gone further than it now stands, which a start
+//     reads, and a pass whose reconciliation reads the ledger through; one written by then is what
+//     that restore lost, however late the ledger shows or takes it;
 //   - what an instance running when the copy came back read or committed past it, which its own
-//     next pass reads, or its stop leaves in the ledger when the ledger takes it: a generation past
-//     the copy's, a count past it, or its newest event gone while the count stayed as it read it.
+//     next pass reads, or its stop leaves in the ledger as a mark: a generation past the copy's, a
+//     count past it, the same count counted later, or its newest event gone while the count stayed
+//     as it read it.
 // Each look must count, once, a going back it proves; one nothing proves reads the same as a
 // database that never went back, and counts nothing. An operator's declaration counts unless the
 // database stands where handling the last restore left it and nothing proves another; the operator
-// then says `again` for a copy. The runtime's count is how many restores an instance handled first,
-// and, while the ledger took every count, the count the database holds.
+// then says `again` for a copy. On KV, one that would count nothing before the reads show every
+// mark raised before the start waits until they do, the model's time going on. The runtime's count
+// is how many restores an instance handled first, and, while the ledger took every count, the
+// count the database holds.
 //
 // An operator prunes the ledger with no app (`bounda forget-ledger prune`), at any moment, with a
 // `keepFor` of nothing, so only what the database has applied bounds it: what the ledger proves of
@@ -185,13 +192,32 @@ interface Snapshot {
   readonly events: readonly EventRow[];
   readonly generation: number;
   readonly restores: number;
+  // When the database says the latest restore was counted.
+  readonly covered: number;
   // Who the database holds a key for, unforgotten.
   readonly holding: ReadonlySet<string>;
+}
+
+// What the runtime counted in the database's line of copies, as the model keeps it, apart from the
+// rows the runtime writes: the restores it handled first, each by when it was counted, when it last
+// counted one, and where handling the last one left the database. A copy brings back its own.
+interface Lineage {
+  readonly counts: readonly number[];
+  readonly covered: number;
+  readonly handled: Handled | undefined;
+}
+
+// Where the database stood once the last restore counted was handled: its newest event, and the
+// restores handled, which a copy taken before holds fewer of.
+interface Handled {
+  readonly head: EventRow | null;
+  readonly counts: readonly number[];
 }
 
 interface Copy {
   readonly rows: Rows;
   readonly snapshot: Snapshot;
+  readonly lineage: Lineage;
 }
 
 const tablesOf = (db: DatabaseSync): readonly string[] =>
@@ -244,6 +270,7 @@ const snapshotOf = (db: DatabaseSync): Snapshot => ({
     .all() as unknown as EventRow[],
   generation: rowOf(db, RESTORE_GENERATION),
   restores: rowOf(db, RESTORES_FOUND),
+  covered: rowOf(db, RESTORE_COVERED),
   holding: new Set(
     (
       db
@@ -444,9 +471,26 @@ const createModelLedger = (
   return {
     ledger,
     mark: (): number => highestOf(RESTORE_MARK),
+    // When the highest value of the mark was first raised.
+    markRaisedAt: (): number => {
+      const [highest] = [...raisedUnder(RESTORE_MARK)].sort(byMarkValue);
+      return highest === undefined ? 0 : Date.parse(highest.raisedAt);
+    },
     // What a read shows now of the mark, raised from `after` on, or all that was.
     pointsFrom: (after: number, shownOnly: boolean): readonly ForgetLedgerMark[] =>
       raisedUnder(RESTORE_MARK, shownOnly).filter((raised) => Date.parse(raised.raisedAt) >= after),
+    // The highest count of restores raised from `after` on, of what a read shows now or of all,
+    // a recount's aside; a ledger that reads what was written keeps the highest alone.
+    countFrom: (after: number, shownOnly: boolean): number => {
+      const recounted = raisedUnder(RESTORE_RECOUNTED_MARK, shownOnly);
+      return raisedUnder(RESTORE_COUNT_MARK, shownOnly)
+        .filter(
+          ({ value, raisedAt }) =>
+            Date.parse(raisedAt) >= after &&
+            !recounted.some((recount) => recount.value === value && recount.raisedAt === raisedAt),
+        )
+        .reduce((highest, { value }) => Math.max(highest, value), 0);
+    },
     marks: (): readonly (readonly [string, readonly ForgetLedgerMark[]])[] =>
       [RESTORE_MARK, RESTORE_COUNT_MARK, RESTORE_RECOUNTED_MARK].flatMap((name) => {
         const raised = raisedUnder(name);
@@ -480,6 +524,7 @@ const createModelLedger = (
 interface Memory {
   readonly generation: number;
   readonly restores: number;
+  readonly covered: number;
   readonly witness: EventRow | null;
 }
 
@@ -567,23 +612,28 @@ const createWorld = (
     readonly copy: Snapshot;
     // The instances running when it happened that read or committed what the copy lacks.
     readonly remembered: Set<Live>;
-    // Whether one of them stopped since, leaving what it remembered in the ledger.
-    carried: boolean;
-    carrying: boolean;
   }
   let open: Episode[] = [];
   // The restores since the app last touched the database: the database the first replaced, and
   // the going back they make, if any.
-  let unlooked: { replaced: Snapshot; episode: Episode | null } | null = null;
+  let unlooked: {
+    replaced: Snapshot;
+    counts: readonly number[];
+    episode: Episode | null;
+  } | null = null;
   let expected = 0;
   // How many times the database truly went back, as the model sees it.
   let goingBacks = 0;
+  let lineage: Lineage = { counts: [], covered: 0, handled: undefined };
 
   const logger = (instance: Instance): Logger => {
     const at =
       (level: string) =>
       (message: string, fields?: LogFields): void => {
-        if (message === RESTARTED && fields?.first === true) firsts += 1;
+        if (message === RESTARTED && fields?.first === true) {
+          firsts += 1;
+          lineage = { ...lineage, counts: [...lineage.counts, firsts], covered: now };
+        }
         const live = instances[instance];
         if (message === RESTARTED && live != null) live.anchor = now;
         if (process.env.BOUNDA_MODEL_LOG === "1") {
@@ -595,32 +645,51 @@ const createWorld = (
     return { ...silentLogger, warn: at("warn"), error: at("error") };
   };
 
-  const memoryOf = (prefix: string | null): Memory => {
+  // What an instance read at a look.
+  const memoryOf = (): Memory => {
     const snapshot = snapshotOf(db);
-    const own =
-      prefix === null
-        ? snapshot.events.at(-1)
-        : snapshot.events.filter(({ id }) => id.startsWith(prefix)).at(-1);
     return {
       generation: snapshot.generation,
       restores: snapshot.restores,
-      witness: own ?? snapshot.events.at(-1) ?? null,
+      covered: snapshot.covered,
+      witness: snapshot.events.at(-1) ?? null,
     };
+  };
+
+  // The newest event an instance committed is what it watches from then on, unless it watches a
+  // newer one; one that committed nothing watches what it read.
+  const committedBy = (live: Live): void => {
+    const own = snapshotOf(db)
+      .events.filter(({ id }) => id.startsWith(live.prefix))
+      .at(-1);
+    const { witness } = live.memory;
+    if (own !== undefined && (witness === null || own.position > witness.position)) {
+      live.memory = { ...live.memory, witness: own };
+    }
   };
 
   // What a running instance read or committed that the copy lacks.
   // A count past what it read was moved by another instance, which counted a restore of a copy
   // without its newest event as well as one taken after: the event lost tells it nothing more.
+  // The same count, counted later than the copy says, is a count the copy lacks.
   const remembers = (memory: Memory, copy: Snapshot): boolean => {
     if (memory.generation > copy.generation || memory.restores > copy.restores) return true;
+    if (memory.restores === copy.restores && memory.covered > copy.covered) return true;
     const { witness } = memory;
     if (witness === null || memory.restores < copy.restores) return false;
     return copy.events.find(({ position }) => position === witness.position)?.id !== witness.id;
   };
 
-  const wentBack = (replaced: Snapshot, copy: Snapshot): boolean =>
+  // A copy lacks a restore the database it replaced handled, whatever value its count took: on KV a
+  // count the reads did not show takes a value already counted.
+  const wentBack = (
+    replaced: Snapshot,
+    replacedCounts: readonly number[],
+    copy: Snapshot,
+    copyCounts: readonly number[],
+  ): boolean =>
     copy.generation < replaced.generation ||
-    copy.restores < replaced.restores ||
+    replacedCounts.some((count) => !copyCounts.includes(count)) ||
     replaced.events.some(
       ({ id, position }) => copy.events.find((event) => event.position === position)?.id !== id,
     );
@@ -630,73 +699,77 @@ const createWorld = (
   // written. On KV, of what was raised since the latest restore counted, a value past it or one
   // raised before a lower one, the database having held it and then less; what every read shows
   // of it, and nothing before the instance's reads show every mark raised before it started.
-  const markProves = (view: MarkView, generation: number): boolean => {
-    if (kind === "sql" || view === "all") return ledger.mark() > generation;
+  // A count of restores past the one the database holds, raised since the latest restore counted,
+  // proves it too: a copy from before that count.
+  const markProves = (view: MarkView, { generation, restores }: Snapshot): boolean => {
+    if (view === "all") return ledger.mark() > generation || ledger.countFrom(0, false) > restores;
+    if (kind === "sql") {
+      // A value raised before the latest restore counted is what it left behind, though a count
+      // that could not read it did not move past it.
+      const behind = ledger.mark() > generation && ledger.markRaisedAt() >= lineage.covered;
+      return behind || ledger.countFrom(lineage.covered, false) > restores;
+    }
     if (view === "none") return false;
-    const points = ledger.pointsFrom(rowOf(db, RESTORE_COVERED), view === "shown");
-    return points.some(({ value }) => value > generation) || droppedIn(points);
+    const shownOnly = view === "shown";
+    const points = ledger.pointsFrom(lineage.covered, shownOnly);
+    return (
+      points.some(({ value }) => value > generation) ||
+      droppedIn(points) ||
+      ledger.countFrom(lineage.covered, shownOnly) > restores
+    );
   };
 
   // Of the entries, on KV, what a read shows now, or every one.
+  const readable = (): boolean => ledger.mode() === "up" || ledger.mode() === "commitsDown";
+
   const ledgerProves = async (
     entries: "whole" | "shown" | "none",
     view: MarkView = "shown",
   ): Promise<boolean> => {
-    if (ledger.mode() === "down" || ledger.mode() === "dropping") return false;
+    if (!readable()) return false;
     const current = snapshotOf(db);
-    if (markProves(view, current.generation)) return true;
-    return entries !== "none" && (await entriesProve(await ledger.entries(entries === "shown")));
+    if (markProves(view, current)) return true;
+    return (
+      entries !== "none" &&
+      (await entriesProve(readFromCursor(await ledger.entries(entries === "shown"))))
+    );
   };
 
-  // What a look that reads these entries proves of the database as it now stands.
+  // What a reconciliation reads of the ledger: from a while before the time of the last entry the
+  // database applied, its cursor, which a copy brings back as it held it.
+  const readFromCursor = (entries: readonly ForgetLedgerEntry[]): readonly ForgetLedgerEntry[] => {
+    const cursor = rowOf(db, FORGET_LEDGER_CURSOR);
+    return cursor === 0
+      ? entries
+      : entries.filter(
+          ({ forgottenAt }) => Date.parse(forgottenAt) >= cursor - FORGET_LEDGER_REREAD_MS,
+        );
+  };
+
+  // What a look that reads these entries proves of the database as it now stands: of those
+  // written after the latest restore counted, a committed one whose event the database lacks, or
+  // one written where the database had gone further than it now stands. One written by then is what
+  // that restore lost, or one before, as a read that shows it only after the count tells: the
+  // database holding it since, and losing it again, leaves nothing a look reads but what tells that
+  // going back otherwise.
   const entriesProve = async (entries: readonly ForgetLedgerEntry[]): Promise<boolean> => {
     const current = snapshotOf(db);
     const held = new Set(current.events.map(({ id }) => id));
     const last = current.events.at(-1)?.position ?? 0;
-    // A redaction is committed again while it would seal a value; a forgetting while the person
-    // holds a key, and, for one the retention made, while the retention would forget them now.
-    const again = async (entry: ForgetLedgerEntry): Promise<boolean> => {
-      if (entry.redaction !== undefined) {
-        return entry.redaction.events.some((target) => seals(entry.personId, target));
-      }
-      if (!current.holding.has(entry.personId)) return false;
-      return entry.reason !== "retention" || (await dueNow(entry.personId));
-    };
-    for (const entry of entries) {
-      const reached = entry.reached;
-      // A committed entry whose event the database lacks, that a reconciliation commits again or
-      // that was written where the database still stands, or on KV since the latest restore
-      // counted: one a restore counted since lost is that restore's.
-      if (
-        entry.committed !== false &&
-        !held.has(entry.eventId) &&
-        ((reached !== undefined && reached.generation >= current.generation) ||
-          (kind === "kv" && Date.parse(entry.forgottenAt) >= rowOf(db, RESTORE_COVERED)) ||
-          (await again(entry)))
-      ) {
-        return true;
-      }
-      if (
+    return entries.some(({ forgottenAt, committed, eventId, reached }) => {
+      if (Date.parse(forgottenAt) <= lineage.covered) return false;
+      if (committed !== false && !held.has(eventId)) return true;
+      return (
         reached !== undefined &&
         (reached.generation > current.generation ||
           (reached.generation === current.generation && reached.position > last))
-      ) {
-        return true;
-      }
-    }
-    return false;
+      );
+    });
   };
 
-  // Where the database stood once the last restore counted was handled: its newest event, and the
-  // restores it counted, which a copy taken before holds fewer of.
-  interface Handled {
-    readonly head: EventRow | null;
-    readonly restores: number;
-  }
-  let handled: Handled | undefined;
   const headNow = (): Handled => {
     const snapshot = snapshotOf(db);
-    return { head: snapshot.events.at(-1) ?? null, restores: snapshot.restores };
+    return { head: snapshot.events.at(-1) ?? null, counts: lineage.counts };
   };
   // Where a pass that counted a restore left the database once it handled it: its retention runs
   // after, and what it forgets anew, of which neither the database nor the ledger held anything
@@ -711,16 +784,18 @@ const createWorld = (
     const last = handling.at(-1);
     return {
       head: last === undefined ? null : { id: last.id, position: last.position },
-      restores: snapshotOf(db).restores,
+      counts: lineage.counts,
     };
   };
   const standsWhereHandled = (): boolean => {
-    const { head, restores } = headNow();
+    const { head, counts } = headNow();
+    const { handled } = lineage;
     return (
       handled !== undefined &&
       head?.id === handled.head?.id &&
       head?.position === handled.head?.position &&
-      restores === handled.restores
+      counts.length === handled.counts.length &&
+      counts.every((count, index) => handled.counts[index] === count)
     );
   };
 
@@ -749,16 +824,8 @@ const createWorld = (
     ) {
       return `what instance ${instance} remembers`;
     }
-    if (kindOfLook === "pass" && live?.owed === true && viewOf(live) === "shown") {
+    if (kindOfLook === "pass" && live?.owed === true && viewOf(live) === "shown" && readable()) {
       return "what was written before its start, once its reads show it";
-    }
-    // On KV, what a stop left is a mark, which the reads show as the ledger's.
-    if (
-      kind === "sql" &&
-      (ledger.mode() === "up" || ledger.mode() === "commitsDown") &&
-      open.some(({ carried }) => carried)
-    ) {
-      return "what a stop left in the ledger";
     }
     const view = kindOfLook === "start" ? "shown" : viewOf(live ?? null);
     return (await ledgerProves(kindOfLook === "start" ? "shown" : "none", view))
@@ -787,9 +854,20 @@ const createWorld = (
   };
 
   const startInstance = async (instance: Instance): Promise<void> => {
-    if (instances[instance] !== null) return;
-    // A Durable Object, the one app a KV ledger serves, runs once at a time.
-    if (kind === "kv" && instances.some((live) => live !== null)) return;
+    if (instances[instance] !== null || starting.has(instance)) return;
+    // A Durable Object, the one app a KV ledger serves, runs once at a time, a start under way too.
+    if (kind === "kv" && (instances.some((live) => live !== null) || starting.size > 0)) return;
+    starting.add(instance);
+    try {
+      await startingInstance(instance);
+    } finally {
+      starting.delete(instance);
+    }
+  };
+  // The instances whose start is under way.
+  const starting = new Set<Instance>();
+
+  const startingInstance = async (instance: Instance): Promise<void> => {
     started += 1;
     const prefix = `i${instance}s${started}-`;
     const startedAt = now;
@@ -815,45 +893,52 @@ const createWorld = (
       startedAt,
       owed,
       anchor: startedAt,
-      memory: memoryOf(null),
+      memory: memoryOf(),
     };
     instances[instance] = live;
     looked(proof);
-    if (settledAfter) handled = headNow();
+    if (settledAfter) lineage = { ...lineage, handled: headNow() };
     settledAfter = false;
-    live.memory = memoryOf(null);
+    live.memory = memoryOf();
   };
 
   const pass = async (instance: Instance): Promise<void> => {
     const live = instances[instance];
     if (live === null || live === undefined) return;
     const passProof = await proofFor(instance, "pass");
-    // A pass whose reconciliation reads the ledger through at last, the start's having failed, is
-    // a look that reads the entries, as the start's would have.
-    const reading =
-      kind === "kv" &&
-      passProof === null &&
-      (await live.app.getLag()).forgetLedger?.reconciled === false &&
-      (await ledgerProves("shown", "none"));
+    // A pass whose reconciliation reads the ledger through, after a restore it found, on a round,
+    // or at last after the start's failed, is a look that reads the entries, as a start's is.
+    const reading = passProof === null && (await ledgerProves("shown", "none"));
     const held = new Set(snapshotOf(db).events.map(({ id }) => id));
     const recorded = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     await live.app.runUntilIdle();
-    const readThrough = reading && (await live.app.getLag()).forgetLedger?.reconciled === true;
-    looked(passProof ?? (readThrough ? "the entries its reconciliation read at last" : null));
-    if (settledAfter) handled = handledBy(held, recorded);
+    const readThrough =
+      reading &&
+      (await live.app.getLag()).forgetLedger?.reconciled === true &&
+      rowOf(db, FORGET_LEDGER_LAST_RUN) >= now;
+    looked(passProof ?? (readThrough ? "the entries its reconciliation read" : null));
+    // A restore the pass found it handles before its retention runs; one the entries its round
+    // of reconciliation read tell, after.
+    if (settledAfter) {
+      lineage = {
+        ...lineage,
+        handled: passProof === null ? headNow() : handledBy(held, recorded),
+      };
+    }
     settledAfter = false;
-    live.memory = memoryOf(null);
+    live.memory = memoryOf();
     await appliedInTime(live);
   };
 
   // Every committed forgetting that landed by the instance's start, or by a restore it found, is
   // applied once its reads show it, a delay later on KV: the database holds its event, or the
-  // person no key it names. Only while the ledger answered throughout, and the database went back
-  // to no copy since, which an instance may not tell.
+  // person no key it names. Only while the ledger answered and the database took every commit
+  // throughout, and the database went back to no copy since, which an instance may not tell.
   let restoredAt = Number.NEGATIVE_INFINITY;
   const appliedInTime = async (live: Live): Promise<void> => {
     const anchor = live.anchor;
-    if (interleaving || ledger.mode() !== "up" || ledger.upSince() >= anchor) return;
+    if (interleaving || refusing || refusedAt >= anchor) return;
+    if (ledger.mode() !== "up" || ledger.upSince() >= anchor) return;
     if (restoredAt > anchor || now < anchor + (kind === "kv" ? KV_DELAY_MS : 0)) return;
     const held = new Set(snapshotOf(db).events.map(({ id }) => id));
     for (const entry of await ledger.committedBy(anchor)) {
@@ -883,7 +968,13 @@ const createWorld = (
 
   const holdingNow = (): readonly string[] => [...snapshotOf(db).holding].sort();
 
+  // While a commit is refused, nothing can be applied, and a reconciliation that failed for it
+  // waits out its hold.
+  let refusing = false;
+  let refusedAt = Number.NEGATIVE_INFINITY;
   const failNextCommit = (): void => {
+    refusing = true;
+    refusedAt = now;
     db.exec(
       `CREATE TEMP TRIGGER IF NOT EXISTS "model_fail_commit" BEFORE INSERT ON main."bounda_events" BEGIN SELECT RAISE(ABORT, 'the commit failed'); END`,
     );
@@ -893,6 +984,7 @@ const createWorld = (
     if (!(error instanceof Error && error.message.includes("the commit failed"))) throw error;
   };
   const commitAgain = (): void => {
+    refusing = false;
     db.exec(`DROP TRIGGER IF EXISTS temp."model_fail_commit"`);
   };
 
@@ -1043,12 +1135,7 @@ const createWorld = (
       case "stop":
         if (live === null || live === undefined) return;
         instances[action.instance] = null;
-        // What it remembers goes to the ledger, unless the ledger takes nothing now.
-        for (const episode of open) {
-          if (!episode.remembered.has(live)) continue;
-          if (ledger.mode() === "up" || ledger.mode() === "commitsDown") episode.carried = true;
-          if (ledger.mode() === "dropping") episode.carrying = true;
-        }
+        // What it remembers goes to the ledger as a mark, which proves a copy behind it.
         await live.app.stop();
         return;
       case "crash":
@@ -1060,7 +1147,7 @@ const createWorld = (
         await live.app.commands
           .registerCustomer?.({ customerId: `p${persons}`, email: `p${persons}@example.com` })
           .catch(refusedCommit);
-        live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
+        committedBy(live);
         return;
       }
       case "forget":
@@ -1083,7 +1170,7 @@ const createWorld = (
             // The ledger is down.
           });
         }
-        live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
+        committedBy(live);
         return;
       }
       case "redactUncommitted":
@@ -1122,7 +1209,7 @@ const createWorld = (
             // The ledger is down.
           });
         }
-        live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
+        committedBy(live);
         return;
       }
       case "touch": {
@@ -1133,7 +1220,7 @@ const createWorld = (
         await live.app.commands
           .registerCustomer?.({ customerId: person, email: `${person}@example.com` })
           .catch(refusedCommit);
-        live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
+        committedBy(live);
         return;
       }
       case "retainUncommitted": {
@@ -1149,6 +1236,23 @@ const createWorld = (
   };
 
   const describeAction = (action: Action): string => JSON.stringify(action);
+
+  // What the operator waits for, as long as it takes, the model's time going on meanwhile.
+  const waited = async <T>(work: Promise<T>): Promise<T> => {
+    let done = false;
+    const tracked = work.finally(() => {
+      done = true;
+    });
+    tracked.catch(() => undefined);
+    for (let waits = 0; waits < 100; waits += 1) {
+      for (let turns = 0; turns < 10 && !done; turns += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (done) break;
+      elapse(1_000);
+    }
+    return tracked;
+  };
 
   const state = (): string => {
     const now = snapshotOf(db);
@@ -1188,15 +1292,17 @@ const createWorld = (
       case "backUp":
         // Nothing to copy before the first start creates the tables.
         if (tablesOf(db).length === 0) return;
-        backups.set(action.slot, { rows: rowsOf(db), snapshot: snapshotOf(db) });
+        backups.set(action.slot, { rows: rowsOf(db), snapshot: snapshotOf(db), lineage });
         return;
       case "restore": {
         const copy = backups.get(action.slot);
         if (copy === undefined) return;
         const replaced = unlooked?.replaced ?? snapshotOf(db);
+        const replacedCounts = unlooked?.counts ?? lineage.counts;
         putBack(db, copy.rows);
+        lineage = copy.lineage;
         restoredAt = now;
-        const goes = wentBack(replaced, copy.snapshot);
+        const goes = wentBack(replaced, replacedCounts, copy.snapshot, copy.lineage.counts);
         // Restores nothing looked at in between are one going back, from what the first replaced.
         // What a stop in between left in the ledger tells this going back as well.
         const before = unlooked?.episode ?? undefined;
@@ -1211,13 +1317,11 @@ const createWorld = (
                 (live): live is Live => live !== null && remembers(live.memory, copy.snapshot),
               ),
             ),
-            carried: before?.carried ?? false,
-            carrying: before?.carrying ?? false,
           };
           open.push(episode);
           if (before === undefined) goingBacks += 1;
         } else if (before !== undefined) goingBacks -= 1;
-        unlooked = { replaced, episode };
+        unlooked = { replaced, counts: replacedCounts, episode };
         // Every instance running looks, stops or is gone before anything else happens.
         together = true;
         try {
@@ -1243,12 +1347,16 @@ const createWorld = (
         const live = instances[action.instance];
         if (live == null) return;
         unlooked = null;
-        const provable =
-          (kind === "sql" && open.some(({ carried }) => carried)) ||
-          (await ledgerProves("shown", transient ? "none" : viewOf(live)));
+        // A declaration reads the database and the marks. On KV, one that would count nothing
+        // before its reads show every mark raised before its start waits until they do.
         const stands = standsWhereHandled();
+        const unjudged = kind === "kv" && (transient || now < live.startedAt + KV_DELAY_MS);
+        const provable = await ledgerProves(
+          "none",
+          unjudged ? (stands ? "whole" : "none") : viewOf(live),
+        );
         try {
-          const first = await live.app.restored();
+          const first = await waited(live.app.restored());
           // A declaration made again where handling the last restore left the database, and a
           // copy taken right then, are the same: it counts nothing, and only the operator knows a
           // copy, and says `again`.
@@ -1265,10 +1373,11 @@ const createWorld = (
           }
           if (counted) {
             open = [];
-            handled = headNow();
-            live.memory = memoryOf(null);
+            lineage = { ...lineage, handled: headNow() };
             trace.push("    declared");
           }
+          // What it read, as one that waited looked.
+          if (counted || (unjudged && stands)) live.memory = memoryOf();
         } catch {
           trace.push("    declaration refused");
         }
@@ -1277,7 +1386,6 @@ const createWorld = (
       }
       case "release":
         await ledger.release();
-        for (const episode of open) episode.carried ||= episode.carrying;
         return;
       case "prune":
         return pruneAlone();
@@ -1290,6 +1398,20 @@ const createWorld = (
         ) {
           await instanceAction(first);
           await instanceAction(second);
+          return;
+        }
+        // A start reads the database once: beside another instance's commit, what it read is
+        // either, so it goes first.
+        if (first.kind === "start" || second.kind === "start") {
+          together = true;
+          try {
+            for (const each of second.kind === "start" ? [second, first] : [first, second]) {
+              await beside(each);
+            }
+          } finally {
+            together = false;
+          }
+          countedAsProved();
           return;
         }
         together = true;
@@ -1556,6 +1678,10 @@ const COUNTEREXAMPLES: readonly {
   // On KV, how long each write takes to show; the whole delay when left out.
   readonly lags?: readonly number[];
   readonly counted: number;
+  // The count the database holds, when it is not every restore counted: a ledger that keeps the
+  // highest count alone, which could not be read as an instance counted, let two restores take one
+  // number.
+  readonly stored?: number;
 }[] = [
   {
     name: "counts a restore under the running app whose only witness stops before it looks again",
@@ -1848,17 +1974,520 @@ const COUNTEREXAMPLES: readonly {
     ] as Action[],
     counted: 1,
   },
+  {
+    name: "counts once on SQL a restore that lost a forgetting whose commit the ledger took only after the restore was counted and reconciled",
+    kind: "sql",
+    actions: [
+      { kind: "ledger", mode: "dropping" },
+      { kind: "write", instance: 0 },
+      { kind: "backUp", slot: 0 },
+      { kind: "forget", instance: 0, person: 0 },
+      { kind: "ledger", mode: "commitsDown" },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "pass", instance: 0 },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts on KV a restore that lost a forgetting written after the latest restore counted, which no reconciliation had read through yet",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "write", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "backUp", slot: 1 },
+      { kind: "write", instance: 0 },
+      {
+        kind: "together",
+        first: { kind: "prune" },
+        second: { kind: "forget", instance: 0, person: 0 },
+      },
+      { kind: "ledger", mode: "down" },
+      { kind: "restore", slot: 1, round: ["stop", "pass"] },
+      {
+        kind: "together",
+        first: { kind: "forgetRetried", instance: 0, person: 0 },
+        second: { kind: "stop", instance: 0 },
+      },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "tells on KV nothing more by an intention written, before the latest restore counted, where the database had gone further than it stands",
+    kind: "kv",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      { kind: "forget", instance: 0, person: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "forgetRetried", instance: 0, person: 0 },
+      { kind: "restore", slot: 1, round: ["stop", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "pass", instance: 0 },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "counts once a restore one instance counted while the ledger could not be read, with the number a declaration the copy lacks took, which another instance joins",
+    kind: "sql",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "declare", instance: 1 },
+      { kind: "write", instance: 0 },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "start", instance: 1 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "pass", instance: 0 },
+      },
+    ] as Action[],
+    counted: 2,
+    stored: 1,
+  },
+  {
+    name: "counts a copy holding the count an instance read, counted earlier than the count it read",
+    kind: "sql",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "write", instance: 0 },
+      { kind: "declare", instance: 1 },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "backUp", slot: 1 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "touch", instance: 0, person: 0 },
+    ] as Action[],
+    counted: 3,
+    stored: 2,
+  },
+  {
+    name: "counts on KV a declaration on a copy of where handling a restore left the database, made before the reads show the restore counted since, once they show it",
+    kind: "kv",
+    actions: [
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      { kind: "write", instance: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "crash", instance: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "forgetUncommitted", instance: 0, person: 0 },
+    ] as Action[],
+    counted: 3,
+  },
+  {
+    name: "counts nothing on KV for a declaration made again before the reads show the recount it waits for, which leaves the database where handling the last restore left it",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["stop", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 0 },
+    ] as Action[],
+    lags: [0, 0, 3],
+    counted: 2,
+  },
+  {
+    name: "counts on KV a copy of where handling a declaration left the database, restored after another declaration took the same number",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 1 },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 0 },
+      { kind: "restore", slot: 1, round: ["stop", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+    ] as Action[],
+    counted: 3,
+  },
+  {
+    name: "counts every copy that lacks a restore the database handled, whatever number its count took",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 1 },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "backUp", slot: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "restore", slot: 0, round: ["stop", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "start", instance: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+    ] as Action[],
+    counted: 5,
+  },
+  {
+    name: "proves nothing by what a stop raised past a generation a later copy holds again",
+    kind: "sql",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "start", instance: 1 },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      { kind: "write", instance: 1 },
+      { kind: "restore", slot: 0, round: ["crash", "stop"] },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "start", instance: 0 },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "proves nothing by an event the instance neither read nor committed",
+    kind: "sql",
+    actions: [
+      { kind: "backUp", slot: 1 },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 1 },
+        second: { kind: "forgetRetried", instance: 0, person: 0 },
+      },
+      { kind: "together", first: { kind: "write", instance: 0 }, second: { kind: "prune" } },
+      {
+        kind: "together",
+        first: { kind: "forgetUncommitted", instance: 1, person: 0 },
+        second: { kind: "prune" },
+      },
+      { kind: "restore", slot: 1, round: ["crash", "pass"] },
+      { kind: "write", instance: 0 },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "proves nothing by what was written before a start while the ledger cannot be read",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["crash", "pass"] },
+      { kind: "start", instance: 0 },
+      { kind: "age" },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "tick" },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "counts a restore that lost a retention's forgetting written after the latest restore counted, nothing left to apply of it",
+    kind: "sql",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      {
+        kind: "together",
+        first: { kind: "pass", instance: 1 },
+        second: { kind: "forgetUncommitted", instance: 0, person: 0 },
+      },
+      { kind: "age" },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "restore", slot: 1, round: ["crash", "pass"] },
+      { kind: "start", instance: 1 },
+      { kind: "backUp", slot: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "restore", slot: 0, round: ["pass", "crash"] },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "proves nothing by a forgetting written before the latest restore counted, which the database lacks again",
+    kind: "sql",
+    actions: [
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "backUp", slot: 1 },
+      {
+        kind: "together",
+        first: { kind: "forgetRetried", instance: 0, person: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "crash", instance: 0 },
+      { kind: "backUp", slot: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "start", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "crash", instance: 0 },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts on KV a copy that lost the generation a declaration's wait moved, from what the instance read then",
+    kind: "kv",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "pass", instance: 0 },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "counts a restore a pass finds by the forgetting its reconciliation reads, written after the latest restore counted",
+    kind: "sql",
+    actions: [
+      { kind: "declare", instance: 1 },
+      { kind: "backUp", slot: 0 },
+      {
+        kind: "together",
+        first: { kind: "redactRetried", instance: 0, person: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "forget", instance: 0, person: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "tick" },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "counts on KV a copy from before a declaration, which holds no restore though the ledger shows one counted",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "restore", slot: 0, round: ["crash", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 0 },
+    ] as Action[],
+    lags: [3, 0],
+    counted: 2,
+  },
+  {
+    name: "moves on KV a copy taken before a recount to the count the recount moved to, counting no restore",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 0 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["crash", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 0 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "release" },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "counts a restore an instance joined as another's, by an intention written past the copy after that count, which its reconciliation reads before the generation moves",
+    kind: "sql",
+    actions: [
+      { kind: "declare", instance: 1 },
+      { kind: "backUp", slot: 1 },
+      { kind: "write", instance: 0 },
+      { kind: "redactUncommitted", instance: 0, person: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "proves nothing by entries that land in the ledger later than a reconciliation reads again before its cursor",
+    kind: "sql",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "backUp", slot: 0 },
+      { kind: "redactRetried", instance: 0, person: 0 },
+      { kind: "restore", slot: 0, round: ["stop", "pass"] },
+      { kind: "start", instance: 0 },
+      { kind: "age" },
+      { kind: "ledger", mode: "up" },
+      {
+        kind: "together",
+        first: { kind: "pass", instance: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "write", instance: 0 },
+    ] as Action[],
+    counted: 0,
+  },
+  {
+    name: "counts once a restore that a mark raised before it was counted, which the ledger took only after, tells again",
+    kind: "sql",
+    actions: [
+      {
+        kind: "together",
+        first: { kind: "write", instance: 0 },
+        second: { kind: "forget", instance: 0, person: 0 },
+      },
+      { kind: "backUp", slot: 0 },
+      {
+        kind: "together",
+        first: { kind: "pass", instance: 0 },
+        second: { kind: "start", instance: 0 },
+      },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "restore", slot: 0, round: ["stop", "pass"] },
+      { kind: "start", instance: 1 },
+      {
+        kind: "together",
+        first: { kind: "pass", instance: 0 },
+        second: { kind: "start", instance: 0 },
+      },
+      { kind: "write", instance: 1 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "ledger", mode: "up" },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "starts one instance at a time on KV, two starts asked at once included",
+    kind: "kv",
+    actions: [
+      { kind: "crash", instance: 0 },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 1 },
+        second: { kind: "start", instance: 0 },
+      },
+      { kind: "declare", instance: 0 },
+      {
+        kind: "together",
+        first: { kind: "stop", instance: 1 },
+        second: { kind: "pass", instance: 0 },
+      },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "forgetRetried", instance: 0, person: 0 },
+      },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts on KV past a recount a count its reads did not show, though it took a number below the recount's",
+    kind: "kv",
+    actions: [
+      { kind: "stop", instance: 0 },
+      { kind: "backUp", slot: 0 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "forget", instance: 0, person: 0 },
+      },
+    ] as Action[],
+    counted: 4,
+  },
+  {
+    name: "counts no copy by a count the ledger raised before the latest restore the database counted, which a count that took a number already counted left behind",
+    kind: "sql",
+    actions: [
+      { kind: "backUp", slot: 1 },
+      { kind: "declare", instance: 0 },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "declare", instance: 0 },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "restore", slot: 1, round: ["crash", "pass"] },
+      { kind: "start", instance: 0 },
+      {
+        kind: "together",
+        first: { kind: "write", instance: 0 },
+        second: { kind: "stop", instance: 0 },
+      },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "pass", instance: 0 },
+      },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      {
+        kind: "together",
+        first: { kind: "write", instance: 0 },
+        second: { kind: "forget", instance: 0, person: 0 },
+      },
+    ] as Action[],
+    counted: 3,
+    stored: 1,
+  },
+  {
+    name: "takes as read at a start what the database held when it began, beside another instance's commit",
+    kind: "sql",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 1 },
+        second: { kind: "redactRetried", instance: 0, person: 0 },
+      },
+      { kind: "restore", slot: 1, round: ["crash", "pass"] },
+      { kind: "forgetUncommitted", instance: 0, person: 0 },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts a declaration once a retention forgot anew before a round of reconciliation found the restore by the entries it read",
+    kind: "sql",
+    actions: [
+      { kind: "start", instance: 1 },
+      { kind: "write", instance: 0 },
+      { kind: "backUp", slot: 0 },
+      { kind: "forget", instance: 1, person: 0 },
+      { kind: "age" },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "ledger", mode: "up" },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "waits out a reconciliation's hold after the database refused a commit before it applies what the ledger holds",
+    kind: "kv",
+    actions: [
+      {
+        kind: "together",
+        first: { kind: "write", instance: 0 },
+        second: { kind: "pass", instance: 0 },
+      },
+      { kind: "backUp", slot: 0 },
+      { kind: "redactRetried", instance: 0, person: 0 },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "age" },
+      { kind: "retainUncommitted", instance: 0 },
+      { kind: "declare", instance: 0 },
+    ] as Action[],
+    counted: 1,
+  },
 ];
 
 describe("restore counting, the counterexamples its model found", () => {
-  for (const { name, kind, actions, lags, counted } of COUNTEREXAMPLES) {
+  for (const { name, kind, actions, lags, counted, stored = counted } of COUNTEREXAMPLES) {
     it(name, async () => {
       const result = await runModel(kind, actions, undefined, lags);
       const trace = result.trace.join("\n");
       expect(result.violations, trace).toEqual([]);
       expect(result.expected, trace).toBe(counted);
       expect(result.counted, trace).toBe(counted);
-      expect(result.stored, trace).toBe(counted);
+      expect(result.stored, trace).toBe(stored);
     });
   }
 
@@ -2092,5 +2721,6 @@ describe.runIf(process.env.BOUNDA_MODEL_REPLAY !== undefined)("a counterexample 
     const result = await runModel(kind, actions, undefined, lags);
     expect(result.violations, result.trace.join("\n")).toEqual([]);
     expect(result.counted, result.trace.join("\n")).toBe(result.expected);
+    if (result.answered) expect(result.stored, result.trace.join("\n")).toBe(result.counted);
   });
 });

@@ -13,7 +13,7 @@ import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { discloseAgain } from "../recipients/again.ts";
 import { startedBy } from "../shared/causation.ts";
-import { RESTORE_COVERED, RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
+import { RESTORE_COVERED, RESTORE_GENERATION } from "../shared/restores.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
   endsKeptOf,
@@ -60,13 +60,6 @@ export const FORGET_LEDGER_ATTEMPTS = "forget-ledger:attempts";
  * reconciliation, or finished one at start: the others leave it until `reconcileEvery` after.
  */
 export const FORGET_LEDGER_LAST_RUN = "forget-ledger:last-run";
-
-/**
- * The checkpoint row that keeps the count of restores the database held when a reconciliation
- * last read the ledger through: below the count, a restore was counted that no reconciliation has
- * applied the ledger to yet, and the committed entries the database lacks are that restore's.
- */
-export const FORGET_LEDGER_RECONCILED = "forget-ledger:reconciled";
 
 // How many entries a reconciliation reads at once: a store that lists from its newest entry, as
 // KV does, lists again for every page.
@@ -407,9 +400,10 @@ export interface ForgetLedgerReconciliation {
   // ledger takes no entry more, so the database holds every intention it recorded. Rejects when
   // the ledger cannot be read through.
   drain(now: Date): Promise<number>;
-  // How many committed entries the reconciliations applied again while no restore was known, the
-  // database having lost them, and reads of entries written where the database had gone further
-  // than it now stands, until `declared` takes them: a restore nothing else found.
+  // How many committed entries written after the latest restore counted the reconciliations
+  // applied again, the database having lost them, and reads of such entries lost or written where
+  // the database had gone further than it now stands, until `declared` takes them: a restore
+  // nothing else found.
   undone(): number;
   // The highest generation an entry `undone` counts was written at: the restore declared for them
   // moves the generation past it, though the mark reads lower, or they would tell it again.
@@ -576,26 +570,16 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     return true;
   };
 
-  // A committed entry whose event the database lacks, though nothing is left to commit again. On a
-  // ledger whose reads lag, a read may show an entry only after the restore that lost it was
-  // counted, or once a later forgetting of the person, or the generation's moves, hid what else
-  // tells it: one written since the latest restore counted is lost, and one written before is that
-  // restore's, or one before. Elsewhere, the database went back when this read committed an earlier
-  // entry of the person again, which may have left nothing for this one, or when the entry was
-  // written where the database still stands, which a restore counted since moves past.
-  const lost = async (
-    entry: ForgetLedgerEntry,
-    appliedHere: ReadonlySet<string>,
-    covered: number | null,
-  ): Promise<boolean> => {
-    const { reached } = entry;
-    if (entry.committed === false) return false;
-    if (covered !== null) {
-      if (Date.parse(entry.forgottenAt) < covered) return false;
-    } else if (!appliedHere.has(entry.personId)) {
-      if (reached === undefined) return false;
-      if ((await checkpointStore.get(RESTORE_GENERATION)) > reached.generation) return false;
-    }
+  // An entry written by the time the latest restore was counted, `covered`, is what that restore
+  // lost, or one before, however late a read shows it: it tells no other.
+  const since = (entry: ForgetLedgerEntry, covered: number): boolean =>
+    Date.parse(entry.forgottenAt) > covered;
+
+  // A committed entry whose event the database lacks, though nothing is left to commit again,
+  // written since the latest restore counted: an earlier forgetting of the person, applied again,
+  // may have left nothing for it.
+  const lost = async (entry: ForgetLedgerEntry, covered: number): Promise<boolean> => {
+    if (entry.committed === false || !since(entry, covered)) return false;
     const held = await storage.eventStore.readOne({
       aggregateType: BOUNDA_AGGREGATE,
       aggregateId: entry.personId,
@@ -611,15 +595,10 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     at: number,
     graced = !restoredSince,
   ): Promise<{ forgotten: number; intended: number; young: number | null }> => {
-    const [cursor, restores, reconciledThrough, covered] = await Promise.all([
+    const [cursor, covered] = await Promise.all([
       checkpointStore.get(FORGET_LEDGER_CURSOR),
-      checkpointStore.get(RESTORES_FOUND),
-      checkpointStore.get(FORGET_LEDGER_RECONCILED),
-      lagging ? checkpointStore.get(RESTORE_COVERED) : null,
+      checkpointStore.get(RESTORE_COVERED),
     ]);
-    // A restore counted, here or by another instance or a start that stopped since, that no
-    // reconciliation read the ledger through after: what it lost tells no other.
-    const counted = restoredSince || reconciledThrough < restores;
     let after: ForgetLedgerPosition | undefined =
       cursor === 0
         ? undefined
@@ -632,19 +611,13 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     // highest generation of those.
     let wentBack = false;
     let reachedPast = 0;
-    // Whom this read committed an entry of again: the database lacked it when the read began.
-    const appliedHere = new Set<string>();
-    // On a ledger whose reads lag, an entry written before the latest restore counted, which a
-    // read may show only after it, is that restore's, or one before.
-    const coveredBy = (entry: ForgetLedgerEntry): boolean =>
-      covered !== null && Date.parse(entry.forgottenAt) < covered;
     const applied = (entry: ForgetLedgerEntry): void => {
       forgotten += 1;
       if (entry.committed === false) intended += 1;
-      else if (!counted && !coveredBy(entry)) undone += 1;
+      else if (since(entry, covered)) undone += 1;
     };
     const ended = () => {
-      if (wentBack && !counted) {
+      if (wentBack) {
         undone += 1;
         past = Math.max(past, reachedPast);
       }
@@ -659,7 +632,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         ...(after === undefined ? {} : { after }),
         limit: pageSize,
       });
-      const ahead = await behind(page);
+      const ahead = await behind(page, covered);
       if (ahead !== null) {
         wentBack = true;
         reachedPast = Math.max(reachedPast, ahead);
@@ -673,10 +646,8 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
           youngest = time;
           continue;
         }
-        if (await appliedAgain(entry)) {
-          applied(entry);
-          appliedHere.add(entry.personId);
-        } else if (await lost(entry, appliedHere, covered)) {
+        if (await appliedAgain(entry)) applied(entry);
+        else if (await lost(entry, covered)) {
           wentBack = true;
           reachedPast = Math.max(reachedPast, entry.reached?.generation ?? 0);
         }
@@ -686,20 +657,21 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         const time = Date.parse(last.forgottenAt);
         if (Number.isFinite(time)) await advance(FORGET_LEDGER_CURSOR, time);
       }
-      if (page.length < pageSize) {
-        await advance(FORGET_LEDGER_RECONCILED, restores);
-        return ended();
-      }
+      if (page.length < pageSize) return ended();
       after = last;
     }
   };
 
   // Read after the page, so on a database that never went back each entry was written where the
-  // database stood at most, and each raised the mark to its generation before it was written, which
-  // a restore counted moves the generation past: the highest generation of the entries written
-  // further than the database stands.
-  const behind = async (page: readonly ForgetLedgerEntry[]): Promise<number | null> => {
-    const told = page.flatMap(({ reached }) => (reached === undefined ? [] : [reached]));
+  // database stood at most: the highest generation of the entries written since the latest restore
+  // counted further than the database stands.
+  const behind = async (
+    page: readonly ForgetLedgerEntry[],
+    covered: number,
+  ): Promise<number | null> => {
+    const told = page.flatMap((entry) =>
+      entry.reached === undefined || !since(entry, covered) ? [] : [entry.reached],
+    );
     if (told.length === 0) return null;
     const stand = await standOf(storage);
     const ahead = told.filter((reached) => standsShortOf(stand, reached));

@@ -143,7 +143,7 @@ export const checkpointStoreContract: CheckpointStoreContractFunction = ({ creat
           checkpoints: store,
           events,
           marks: null,
-          clock: { now: () => at(0) },
+          clock: { now: () => at(0), after: () => () => undefined },
           logger: silentLogger,
         });
 

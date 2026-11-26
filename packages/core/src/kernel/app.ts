@@ -2806,7 +2806,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       restored: async ({ again = false } = {}): Promise<RestoreDeclaration> => {
         const declared = await restores.declare({ again });
         // Counted nothing: the restore it would declare was handled already.
-        if (declared.counted) await restartFound(declared);
+        if (declared.counted) await restartFound(declared.found ?? declared);
         return { counted: declared.counted };
       },
     });

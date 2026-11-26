@@ -3305,11 +3305,12 @@ and `bounda status` counts the restores found. How it is found depends on when t
 
 Under the running app, every instance moves a counter in `bounda_checkpoints` one forward after
 it wrote, at most every five seconds, and remembers what it read: a copy holds less, and the
-first instance to see it counts the restore in another row, which every other instance then sees
-changed. An idle instance writes nothing, so neither does its watch. Every instance also watches
-the newest event it read, or committed as a forgetting, at its position: events are only ever
-appended, so a copy that lost it is found at once, even one taken in the five seconds before the
-counter moved. A pass that finds a restore reconciles the ledger before the dispatcher delivers
+first instance to see it counts the restore in another row, with the time it counted it, which
+every other instance then sees changed, even when the count, made while the ledger could not say
+the latest, took a number already counted. An idle instance writes nothing, so neither does its
+watch. Every instance also watches the newest event it read, or committed as a forgetting, at its
+position: events are only ever appended, so a copy that lost it is found at once, even one taken
+in the five seconds before the counter moved. A pass that finds a restore reconciles the ledger before the dispatcher delivers
 anything or the worker claims anything, so a scheduled command of someone the copy brought back
 never runs. [Backups and restores](/guides/backups/) has the steps for each engine. With a forget ledger the
 counter is also raised in the ledger, as a mark outside the database, which is how a start tells
@@ -3318,24 +3319,29 @@ copy another instance told the ledger of is found by one that saw nothing of wha
 no move of the counter passes a mark nobody compared. An instance that stops after the copy came
 back, before it looked again, counts nothing but raises the mark past what it saw, for the next
 look to count. The count of restores goes to the ledger as well: a copy brings back the count it
-held, and the next restore still counts past every one found before. A committed forgetting,
-restriction or redaction the ledger holds that the database does not is a restore too, whatever
-the counter says, found by the reconciliation that applies it again, at a start, on a round or
-before a freeze, at once however young it is; so is one nothing is left to apply again, when the
-same reconciliation forgot that person by an earlier entry, or when it was written where the
-database still stands. A restore counted that no reconciliation has read the ledger through after,
-because the ledger could not be read then, is the restore its lost entries tell, whichever instance
-reconciles next. An intention whose
+held, and the next restore still counts past every one found before; a database holding fewer
+restores than the ledger counted since the latest restore it counted is a copy from before that
+count, a restore. A committed forgetting,
+restriction or redaction the ledger holds that the database does not, written after the latest
+restore counted, is a restore too, whatever the counter says, found by the reconciliation that
+applies it again, at a start, on a round or before a freeze, at once however young it is, or that
+finds nothing left to apply, when the same reconciliation forgot that person by an earlier entry.
+One written by the time the latest restore was counted is what that restore lost, or one before,
+however late a read shows it or the ledger takes it, as a write given up for its timeout and landed
+later is, and tells no other: the database keeps the time of the latest restore counted, which a
+copy brings back as it held it. An intention whose
 commit never came is applied again and is no restore: a process that stopped, or a transaction
 that failed, between the intention and the commit leaves no count behind. An intention keeps where
 the database stood when it was written, its newest event and its restore generation, after
 raising the ledger's mark to that generation: a database at a lower generation, or at the same
 one with an older newest event, went back since, a restore whether the intention committed or
-not, and the restore counted moves the generation past the intention's, so it tells that restore
-once. A commit the ledger does not take as it returns, or while a call to it hangs, is
+not, unless the intention was written by the time the latest restore was counted, which it tells
+already. A commit the ledger does not take as it returns, or while a call to it hangs, is
 appended again before every look for a restore and at stop, and a mark it did not take is raised
 again on the next look, so a ledger down for a while tells a copy taken before as soon as it is
-back. A forgetting never depends on the mark: what
+back. A mark raised before the latest restore counted, which that count could not read, or which
+landed only after it, is what that restore left behind: the generation goes past it, counting
+nothing. A forgetting never depends on the mark: what
 a restore that goes unseen leaves is waits, which end on their own within an hour.
 
 On Workers KV, `kvForgetLedger`, a read may show a write up to a minute late, its
@@ -3349,12 +3355,17 @@ it and above it tells the restore however far the generation moved since, to thi
 it is gone, to whichever looks next. A mark raised before the latest restore counted is what that
 restore left behind and tells no other, so a higher one that shows after a count adds nothing; and
 a restore counted while the reads did not show one counted a moment before, which took the same
-number, is counted past it then, in `bounda status` too. The ledger's entries show late as well: a
-committed forgetting the reads of a start, or of a restore found while the app runs, do not show
-yet is applied by the reconciliation a minute later, counted as that restore's when written before
-it; and one written since the latest restore counted that the database lacks is a restore however
-the database stands, so neither a later forgetting of the same person nor the generation's moves
-since hide it. A start lets go of the values raised more than a minute before
+number or a lower one, is counted past it then, in `bounda status` too, leaving the database where handling the
+last restore left it; and a count of restores raised since then past the one the database holds,
+other than such a recount, tells a copy from before that count though its generation took the same
+number. The ledger's entries show late as well: a committed forgetting the reads of a
+start, or of a restore found while the app runs, do not show yet is applied by the reconciliation a
+minute later, as that restore's when written by the time it was counted, and as another when
+written after, however the database stands, so neither a later forgetting of the same person nor
+the generation's moves since hide it. A declaration made before the reads show every mark raised
+before the start, that would count nothing, waits until they do: a restore counted after the copy
+was taken tells a copy of the moment the last restore was handled from a declaration made again,
+and is counted then. A start lets go of the values raised more than a minute before
 it but the highest, once it compared them and the ledger took the generation it read, and an
 instance that compared every mark does the same once a minute: a mark holds the values of the
 last few minutes however long the object runs and however often it restarts, which is all a read
@@ -3368,7 +3379,9 @@ bounda restored
 ```
 
 `app.restored()` is the same in code. It counts the restore, so running instances learn of it
-too, clears the waits, and reconciles the ledger at once when there is one. It counts each restore
+too, clears the waits, and reconciles the ledger at once when there is one. On Workers KV, made
+within a minute of the start where it would count nothing, it resolves only once the reads show
+every mark raised before the start, as above. It counts each restore
 once: it raises the ledger's mark before it counts, so a ledger that refuses fails it with nothing
 counted; one that failed after it counted is finished, not counted again, by running it again or by
 the next start. Run again while the database stands exactly where handling the last restore left
@@ -3384,12 +3397,17 @@ after the later of the two.
 
 Restore counting is tested against a model of the database, the ledger, backups taken and restored
 at any point, crashes and stops, two instances at once, a ledger down or late, and `bounda
-restored`: across thousands of interleavings, every restore that what the database, the ledger and
-the running instances hold proves is counted, once, and nothing else is. Where it counts nothing,
-the model shows a world without the restore that every look reads the same: a copy taken between an
-intention and its commit, the ledger down from the commit until the instance was gone, is a commit
-that failed; and an instance whose newest event a copy lost, while another instance counted a
-restore since it last read, cannot tell that count from one of this copy, and takes it as such.
+restored`: across tens of thousands of interleavings of up to forty steps, every restore that what
+the database, the ledger and the running instances hold proves is counted, once, and nothing else
+is. Where it counts nothing, the model shows a world without the restore that every look reads the
+same: a copy taken between an intention and its commit, the ledger down from the commit until the
+instance was gone, is a commit that failed; and an instance whose newest event a copy lost, while
+another instance counted a restore since it last read, cannot tell that count from one of this
+copy, and takes it as such. Each restore is handled once even when an instance counts one while the
+ledger cannot be read and has not read a count made a moment before, but its count then takes that
+count's number: on a ledger that keeps the highest count alone, a SQL or Durable Object one,
+`bounda status` counts one restore fewer from then on; on Workers KV, which keeps every count, it is
+counted past it once the reads show both.
 
 ### Old backups
 
