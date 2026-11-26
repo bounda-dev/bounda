@@ -70,8 +70,34 @@ describe("the tenants of a forget ledger's store", () => {
     await ledgerAdapter.createForgetLedger({ tenant: "empty" });
     expect(await listForgetLedgerTenants({ config: configOf(ledgerAdapter) })).toEqual({
       tenants: ["B", "a", "b"],
+      stores: [
+        { store: ledgerAdapter, tenants: ["B", "a", "b"], named: ["B", "a", "b", DEFAULT_TENANT] },
+      ],
       unreached: [],
     });
+  });
+
+  it("names each store's tenants in code-unit order, however its ledger lists them", async () => {
+    const ledger = await memory().createForgetLedger({ tenant: DEFAULT_TENANT });
+    const store = defineForgetLedger(() => ({ ...ledger, tenants: async () => ["b", "B", "a"] }));
+    expect((await listForgetLedgerTenants({ config: configOf(store) })).stores).toEqual([
+      { store, tenants: ["B", "a", "b"], named: ["B", "a", "b", DEFAULT_TENANT] },
+    ]);
+  });
+
+  it("names, of each store, the tenants whose configuration names it: one definition made anew for each tenant is its tenant's alone", async () => {
+    const shared = await ledgerHolding("a", "b");
+    // A function of the tenant, which defines the store anew whenever it is called.
+    const config: ProjectConfig = () =>
+      configOf(
+        defineForgetLedger(({ tenant: asked }) => shared.createForgetLedger({ tenant: asked })),
+      );
+    const { stores } = await listForgetLedgerTenants({ config });
+    expect(stores.map(({ tenants, named }) => ({ tenants, named }))).toEqual([
+      { tenants: ["a", "b"], named: [DEFAULT_TENANT] },
+      { tenants: ["a", "b"], named: ["a"] },
+      { tenants: ["a", "b"], named: ["b"] },
+    ]);
   });
 
   it("refuses a ledger of your own that cannot list them", async () => {
@@ -107,6 +133,10 @@ describe("the tenants of every forget ledger's store the configuration names", (
       configOf(ledgers.get(tenant) ?? memory(), tenantKeys);
     expect(await listForgetLedgerTenants({ config })).toEqual({
       tenants: ["acme", "globex", "stray"],
+      stores: [
+        { store: ledgers.get("acme"), tenants: ["acme"], named: ["acme"] },
+        { store: ledgers.get("globex"), tenants: ["globex", "stray"], named: ["globex"] },
+      ],
       unreached: [],
     });
     // One store, read once, whichever tenants name it.
@@ -138,6 +168,11 @@ describe("the tenants of every forget ledger's store the configuration names", (
     const config: ProjectConfig = ({ tenant }) => configOf(ledgers.get(tenant) ?? memory());
     expect(await listForgetLedgerTenants({ config })).toEqual({
       tenants: ["acme", "globex", "initech"],
+      stores: [
+        { store: ledgers.get(DEFAULT_TENANT), tenants: ["acme"], named: [DEFAULT_TENANT] },
+        { store: ledgers.get("acme"), tenants: ["acme", "globex"], named: ["acme"] },
+        { store: ledgers.get("globex"), tenants: ["initech"], named: ["globex"] },
+      ],
       unreached: [],
     });
   });
@@ -148,9 +183,14 @@ describe("the tenants of every forget ledger's store the configuration names", (
       ["acme", await ledgerHolding("acme")],
     ]);
     const config: ProjectConfig = ({ tenant }) => configOf(ledgers.get(tenant) ?? memory());
-    expect(await listForgetLedgerTenants({ config })).toEqual({ tenants: [], unreached: [] });
+    expect(await listForgetLedgerTenants({ config })).toEqual({
+      tenants: [],
+      stores: [],
+      unreached: [],
+    });
     expect(await listForgetLedgerTenants({ config, tenants: ["acme"] })).toEqual({
       tenants: ["acme"],
+      stores: [{ store: ledgers.get("acme"), tenants: ["acme"], named: ["acme"] }],
       unreached: [],
     });
   });
@@ -260,6 +300,7 @@ describe("the tenants of every forget ledger's store the configuration names", (
           : configOf(memory());
     expect(await listForgetLedgerTenants({ config, tenants: ["none", "kv"] })).toEqual({
       tenants: [],
+      stores: [],
       unreached: [],
     });
   });
@@ -276,6 +317,14 @@ describe("the tenants of every forget ledger's store the configuration names", (
     };
     expect(await listForgetLedgerTenants({ config, tenants: ["zeta"] })).toEqual({
       tenants: ["alpha", DEFAULT_TENANT, "zeta"],
+      stores: [
+        {
+          store: ledgers.get(DEFAULT_TENANT),
+          tenants: [DEFAULT_TENANT, "zeta"],
+          named: [DEFAULT_TENANT],
+        },
+        { store: ledgers.get("zeta"), tenants: ["alpha", DEFAULT_TENANT], named: ["zeta"] },
+      ],
       unreached: [],
     });
     expect(called).toEqual([DEFAULT_TENANT, "zeta", "alpha"]);
@@ -297,6 +346,7 @@ describe("the tenants of every forget ledger's store the configuration names", (
     };
     expect(await listForgetLedgerTenants({ config, tenants: ["broken"] })).toEqual({
       tenants: ["broken"],
+      stores: [{ store: listing, tenants: ["broken"], named: [DEFAULT_TENANT] }],
       unreached: [{ tenant: "broken", error: broken }],
     });
   });
@@ -332,6 +382,7 @@ describe("the tenants of every forget ledger's store the configuration names", (
       configOf(sqliteAt(tenant === DEFAULT_TENANT ? "a.db" : "b.db"), undefined, storage);
     expect(await listForgetLedgerTenants({ config, tenants: ["b"] })).toEqual({
       tenants: [],
+      stores: [],
       unreached: [],
     });
     expect(seen).toEqual([`a.db ${DEFAULT_TENANT}`, "b.db b"]);
@@ -355,6 +406,7 @@ describe("the tenants of every forget ledger's store the configuration names", (
     const config: ProjectConfig = () => configOf(odd());
     expect(await listForgetLedgerTenants({ config, tenants: ["b"] })).toEqual({
       tenants: [],
+      stores: [],
       unreached: [],
     });
     expect(seen).toEqual([DEFAULT_TENANT, "b"]);

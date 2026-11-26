@@ -6,7 +6,7 @@ import { ConfigurationError, ForgetLedgerTimeoutError } from "../../contracts/er
 import type { DataLocation } from "../../modules/data-location.ts";
 import type { StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
-import type { StoreDefinitionOptions } from "./tenant-key-source.ts";
+import type { StoreDefinitionOptions, TenantKeySource } from "./tenant-key-source.ts";
 
 export interface CreateForgetLedgerFromEnvArgs {
   /**
@@ -104,6 +104,23 @@ export const sharesStorage: SharesStorageFunction = (source, storage) =>
   (source.name !== "memory" &&
     source.name === storage.name &&
     JSON.stringify(source.options) === JSON.stringify(storage.options));
+
+export interface StoreOfFunction {
+  (source: ForgetLedgerSource | TenantKeySource): unknown;
+}
+
+// One database is one store, whichever tenant's configuration names it: an adapter of the same kind
+// with the same options, as `sharesStorage` reads it, or the same definition. Every memory adapter
+// is a store of its own.
+export const storeOf: StoreOfFunction = (source) => {
+  if (source.kind !== "bounda-adapter" || source.name === "memory") return source;
+  try {
+    return `${source.name}:${JSON.stringify(source.options)}`;
+  } catch {
+    // Options JSON cannot write, such as a client of your own, tell the adapter by itself.
+    return source;
+  }
+};
 
 /**
  * Refuses a ledger adapter that points at the storage's own database.

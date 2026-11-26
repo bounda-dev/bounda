@@ -5,10 +5,10 @@ import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ProjectConfig } from "../../config/types.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { tenantIdOf } from "../tenant.ts";
-import { type ForgetLedgerSource, openForgetLedger } from "./forget-ledger.ts";
+import { type ForgetLedgerSource, openForgetLedger, storeOf } from "./forget-ledger.ts";
 import { keySourcesOf } from "./key-hierarchy.ts";
 import { prunable, refused } from "./ledger-prune.ts";
-import { openTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
+import { openTenantKeyStore } from "./tenant-key-source.ts";
 
 // How many tenants a page of a tenant key store lists.
 const PAGE = 500;
@@ -44,12 +44,35 @@ export interface UnreachedTenant {
   readonly error: unknown;
 }
 
+export interface ForgetLedgerStore {
+  /**
+   * The store, as the configuration of the first tenant reached that names it gives it: what
+   * `pruneTenantForgetLedger` takes as `store`.
+   */
+  readonly store: ForgetLedgerSource;
+  /**
+   * The tenants whose entries it holds, in code-unit order.
+   */
+  readonly tenants: readonly string[];
+  /**
+   * The tenants reached whose configuration names it, in code-unit order: a tenant it holds that
+   * is not here named it before its ledger moved. A definition is one store by object, so one a
+   * function of the tenant makes anew is named by its own tenant alone.
+   */
+  readonly named: readonly string[];
+}
+
 export interface ForgetLedgerTenants {
   /**
    * Every tenant whose entries a forget ledger's store the configuration names holds, in code-unit
    * order.
    */
   readonly tenants: readonly string[];
+  /**
+   * Every store read that holds a tenant's entries, in the order read: a tenant's entries in one
+   * its configuration no longer names, as one it named before the ledger moved, are pruned there.
+   */
+  readonly stores: readonly ForgetLedgerStore[];
   /**
    * The tenants reached whose stores could not be listed: a store only they name may hold tenants
    * `tenants` lacks.
@@ -60,19 +83,6 @@ export interface ForgetLedgerTenants {
 export interface ListForgetLedgerTenantsFunction {
   (args: ListForgetLedgerTenantsArgs): Promise<ForgetLedgerTenants>;
 }
-
-// One database is one store, whichever tenant's configuration names it: an adapter of the same kind
-// with the same options, as `sharesStorage` reads it, or the same definition. Every memory adapter
-// is a store of its own.
-const storeOf = (source: ForgetLedgerSource | TenantKeySource): unknown => {
-  if (source.kind !== "bounda-adapter" || source.name === "memory") return source;
-  try {
-    return `${source.name}:${JSON.stringify(source.options)}`;
-  } catch {
-    // Options JSON cannot write, such as a client of your own, tell the adapter by itself.
-    return source;
-  }
-};
 
 /**
  * Every tenant whose entries a forget ledger's store the configuration can name holds: what
@@ -102,7 +112,23 @@ export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
   };
   const read = new Set<unknown>();
   const found = new Set<string>();
-  const listLedger = async (ledger: ForgetLedger): Promise<void> => {
+  const held: {
+    readonly store: ForgetLedgerSource;
+    readonly tenants: readonly string[];
+    readonly namedBy: ReadonlySet<string>;
+  }[] = [];
+  // The tenants whose configuration names each store, by store, filled as they are reached.
+  const naming = new Map<unknown, Set<string>>();
+  const name = (store: ForgetLedgerSource, tenant: string): ReadonlySet<string> => {
+    const namedBy = naming.get(storeOf(store)) ?? new Set<string>();
+    naming.set(storeOf(store), namedBy.add(tenant));
+    return namedBy;
+  };
+  const listLedger = async (
+    store: ForgetLedgerSource,
+    ledger: ForgetLedger,
+    namedBy: ReadonlySet<string>,
+  ): Promise<void> => {
     try {
       // A ledger that expires its entries on its own has nothing to prune.
       if (ledger.tenants === undefined && ledger.prune !== undefined) {
@@ -110,10 +136,12 @@ export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
           "The forget ledger cannot list its tenants: give it tenants(), or prune each tenant by name",
         );
       }
-      for (const each of (await ledger.tenants?.()) ?? []) {
+      const tenants = (await ledger.tenants?.()) ?? [];
+      for (const each of tenants) {
         found.add(each);
         reach(each);
       }
+      if (tenants.length > 0) held.push({ store, tenants: [...tenants].sort(byCodeUnit), namedBy });
     } finally {
       await ledger.close?.();
     }
@@ -144,7 +172,7 @@ export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
   const { ledger, source } = await prunable({ config: firstConfig, env, tenant: first });
   reached.add(first);
   read.add(storeOf(source));
-  await listLedger(ledger);
+  await listLedger(source, ledger, name(source, first));
   await listTenantKeys(firstConfig);
   for (const tenant of listed) reach(tenantIdOf(tenant));
 
@@ -154,22 +182,32 @@ export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
       const tenantConfig = configForTenant({ config, tenant });
       const { storage, runtime } = resolveConfig(tenantConfig);
       const { forgetLedger } = runtime.personalData;
-      if (forgetLedger !== null && !read.has(storeOf(forgetLedger.store))) {
-        read.add(storeOf(forgetLedger.store));
-        await listLedger(
-          await openForgetLedger({
-            source: forgetLedger.store,
-            storage,
-            env,
-            tenant,
-            keepForMs: forgetLedger.keepForMs ?? undefined,
-          }),
-        );
+      if (forgetLedger !== null) {
+        const namedBy = name(forgetLedger.store, tenant);
+        if (!read.has(storeOf(forgetLedger.store))) {
+          read.add(storeOf(forgetLedger.store));
+          await listLedger(
+            forgetLedger.store,
+            await openForgetLedger({
+              source: forgetLedger.store,
+              storage,
+              env,
+              tenant,
+              keepForMs: forgetLedger.keepForMs ?? undefined,
+            }),
+            namedBy,
+          );
+        }
       }
       await listTenantKeys(tenantConfig);
     } catch (error) {
       unreached.push({ tenant, error });
     }
   }
-  return { tenants: [...found].sort(byCodeUnit), unreached };
+  const stores = held.map(({ store, tenants, namedBy }) => ({
+    store,
+    tenants,
+    named: [...namedBy].sort(byCodeUnit),
+  }));
+  return { tenants: [...found].sort(byCodeUnit), stores, unreached };
 };

@@ -135,6 +135,7 @@ export type {
 } from "./kernel/personal-data/ledger-prune.ts";
 export { pruneTenantForgetLedger } from "./kernel/personal-data/ledger-prune.ts";
 export type {
+  ForgetLedgerStore,
   ForgetLedgerTenants,
   ListForgetLedgerTenantsArgs,
   ListForgetLedgerTenantsFunction,

@@ -6,6 +6,7 @@ import {
   DEFAULT_TENANT,
   type EncryptedFileStatus,
   FILE_ENCRYPTION_RETRY_MS,
+  type ForgetLedgerStore,
   type ForgetLedgerTenants,
   type ForgetTenantOptions,
   type FrozenTenantStatus,
@@ -18,6 +19,7 @@ import {
   type PersonalCategoryName,
   type PrunedTenantForgetLedger,
   pruneTenantForgetLedger,
+  type Registry,
   type RewrappedTenantKeys,
   type RotateTenantKeyOptions,
   rewrapTenantKeys,
@@ -76,6 +78,7 @@ import {
   configForTenant,
   defineConfig,
   defineTenantKeyStore,
+  type ForgetLedgerSource,
   masterKey,
   type ProjectConfig,
   type ProjectTenants,
@@ -395,8 +398,10 @@ describe("pruning a forget ledger with no app running", () => {
   it("prunes one tenant from its configuration, saying where it stopped, and lists the store's tenants", () => {
     expectTypeOf(pruneTenantForgetLedger).parameter(0).toEqualTypeOf<{
       readonly config: Config;
+      readonly registry: Registry;
       readonly env?: AppEnv;
       readonly tenant?: string;
+      readonly store?: ForgetLedgerSource;
       readonly now?: Date;
     }>();
     expectTypeOf(pruneTenantForgetLedger).returns.toEqualTypeOf<
@@ -406,6 +411,8 @@ describe("pruning a forget ledger with no app running", () => {
       readonly tenant: string;
       readonly before: string;
       readonly unapplied: boolean;
+      readonly named: boolean;
+      readonly stranded: boolean;
     }>();
     expectTypeOf(listForgetLedgerTenants).parameter(0).toEqualTypeOf<{
       readonly config: ProjectConfig;
@@ -416,8 +423,16 @@ describe("pruning a forget ledger with no app running", () => {
     expectTypeOf(listForgetLedgerTenants).returns.toEqualTypeOf<Promise<ForgetLedgerTenants>>();
     expectTypeOf<ForgetLedgerTenants>().toEqualTypeOf<{
       readonly tenants: readonly string[];
+      readonly stores: readonly ForgetLedgerStore[];
       readonly unreached: readonly UnreachedTenant[];
     }>();
+    expectTypeOf<ForgetLedgerStore>().toEqualTypeOf<{
+      readonly store: ForgetLedgerSource;
+      readonly tenants: readonly string[];
+      readonly named: readonly string[];
+    }>();
+    // What `loadProject` hands is what the prune takes.
+    expectTypeOf<LoadedProject["registry"]>().toExtend<Registry>();
     expectTypeOf<UnreachedTenant>().toEqualTypeOf<{
       readonly tenant: string;
       readonly error: unknown;

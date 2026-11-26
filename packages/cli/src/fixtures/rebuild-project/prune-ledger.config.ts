@@ -2,10 +2,11 @@ import { defineConfig } from "@bounda-dev/core/config";
 import { type MemoryAdapter, memory } from "@bounda-dev/core/memory";
 
 // One store per tenant, and one forget ledger for all of them, kept for the process; a tenant whose
-// name starts with "unloadable" has no configuration, and one whose name starts with "unkept" no
-// keepFor.
+// name starts with "unloadable" has no configuration, one whose name starts with "unkept" no
+// keepFor, and one whose name starts with "moved" a ledger of its own since its ledger moved.
 const stores = new Map<string, MemoryAdapter>();
 export const ledger: MemoryAdapter = memory();
+export const moved: MemoryAdapter = memory();
 
 const storeOf = (tenant: string): MemoryAdapter => {
   const known = stores.get(tenant);
@@ -24,7 +25,7 @@ export default defineConfig(({ tenant }) => {
       personalData: {
         forgetLedger: tenant.startsWith("unkept")
           ? { store: ledger }
-          : { store: ledger, keepFor: "30d" },
+          : { store: tenant.startsWith("moved") ? moved : ledger, keepFor: "30d" },
       },
     },
   };
