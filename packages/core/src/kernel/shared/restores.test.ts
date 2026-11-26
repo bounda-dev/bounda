@@ -1794,6 +1794,40 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(6);
   });
 
+  it("counts past every count of its own its reads did not show at the judgment", async () => {
+    const { checkpointStore, time, watchOver, raisedBefore } = await setUpLagging();
+    time.now = 10 * LAG;
+    raisedBefore(RESTORE_COUNT_MARK, 2, 1);
+    const watch = watchOver();
+    await watch.start();
+    time.now += LAG / 4;
+    expect(await watch.declare()).toEqual({ first: true, counted: true });
+    await watch.settled();
+    time.now += LAG / 4;
+    expect(await watch.declare({ again: true })).toEqual({ first: true, counted: true });
+    await watch.settled();
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+    time.now += LAG / 2;
+    expect(await watch.check(at(time.now))).toBeNull();
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
+  });
+
+  it("lets go of no count before the judgment, which counts each value counted twice", async () => {
+    const { checkpointStore, time, watchOver, raisedBefore } = await setUpLagging();
+    time.now = 10 * LAG;
+    raisedBefore(RESTORE_COUNT_MARK, 1, 3 * LAG);
+    raisedBefore(RESTORE_COUNT_MARK, 1, 2 * LAG);
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    const watch = watchOver();
+    await watch.start();
+    time.now += 1;
+    await checkpointStore.set(RESTORES_FOUND, 0);
+    expect(await watch.check(at(time.now))).toEqual({ first: true });
+    time.now += LAG;
+    expect(await watch.check(at(time.now))).toBeNull();
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
+  });
+
   it("takes a value counted again at the very time of the last recount as that recount's", async () => {
     const { checkpointStore, time, watchOver, raisedBefore } = await setUpLagging();
     time.now = 10 * LAG;
@@ -1865,7 +1899,8 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     await watch.check(at(time.now), { active: true });
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(1);
     time.now += 1;
-    await expect(watch.reached()).rejects.toThrow("down");
+    // The stop raises it once more, and the ledger refuses it again.
+    await watch.flush();
     refusing = false;
     time.now += 1;
     await watch.check(at(time.now));
