@@ -1285,8 +1285,9 @@ describe("createRestoreWatch, with the count of restores in the ledger", () => {
 
   it("moves past a mark raised before the latest restore the database counted, counting nothing, and counts one raised since", async () => {
     for (const [raisedAt, found, generation] of [
-      [at(-1), null, 6],
-      [at(0), { first: true }, 6],
+      // At the very time of the count, above what it moved to: raised before it.
+      [at(0), null, 6],
+      [at(1), { first: true }, 6],
     ] as const) {
       const { checkpointStore, ledger, watchOver } = await setUp();
       await checkpointStore.set(RESTORES_FOUND, 1);

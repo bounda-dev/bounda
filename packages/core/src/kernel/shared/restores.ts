@@ -286,9 +286,6 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   let ownCounts: ForgetLedgerMark[] = [];
   // Whether a mark that could not be read was said, until it can be again.
   let unreadableSaid = false;
-  // Whether a restore this instance counted left the generation below a mark it could not read,
-  // to be moved past it, counting nothing, once it can.
-  let lifting = false;
   // On a ledger whose reads lag, a mark raised before this instance started may show only that
   // long after it. The start raises the generation it read, at its time: once the reads show every
   // mark raised before, a value raised before a lower one tells a restore however far the
@@ -745,20 +742,14 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     return restored;
   };
 
-  // Past the mark a restore this instance counted while it could not read it, counting nothing: a
-  // database gone back since is counted past the mark by the same check, from what it read before.
-  const lift = async (mark: number): Promise<void> => {
-    lifting = false;
-    await advance(RESTORE_GENERATION, mark + 1);
-  };
-
-  // A mark above the database raised before the latest restore it counted, which a count made
-  // while the mark could not be read, or before a raise given up for its timeout landed, did not
-  // move past: what that restore left behind, which tells no other. The generation goes past it,
-  // counting nothing, unless the database holds fewer restores than the ledger counted.
+  // A mark above the database raised by the time of the latest restore it counted, which a count
+  // made while the mark could not be read, or before a raise given up for its timeout landed, did
+  // not move past: what that restore left behind, which tells no other, a count's own raise never
+  // being above it. The generation goes past it, counting nothing, unless the database holds fewer
+  // restores than the ledger counted.
   const leftBehind = async (stored: Seen, mark: number): Promise<boolean> => {
     const above = compared(shown).filter(({ value }) => value > stored.generation);
-    if (above.length === 0 || above.some((point) => timeOf(point) >= stored.covered)) return false;
+    if (above.length === 0 || above.some((point) => timeOf(point) > stored.covered)) return false;
     if (!lagging && countLost(stored, await countedSinceCovered(stored))) return false;
     await advance(RESTORE_GENERATION, mark + 1);
     await raise(mark + 1);
@@ -813,12 +804,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         return restored;
       }
     }
-    const lifted = lifting && mark !== null;
-    if (lifted) await lift(mark);
     // Behind the mark, whatever this instance read: a copy from before what an instance, a stop or
     // a count told the ledger of, though another restore was counted since this instance read.
-    if (!lifted && mark !== null && (await leftBehind(stored, mark))) stored = await read();
-    else if (!lifted && mark !== null) {
+    // What this instance read is compared below with the database as it stood before.
+    if (mark !== null && !(await leftBehind(stored, mark))) {
       const behind = await compareWithMark(stored, Math.max(declaring, seen?.restores ?? 0), mark);
       if (behind !== null) {
         witness = null;
@@ -853,10 +842,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         // As the take left them, or another instance's count lifted past the ledger's.
         current = await read();
       } else {
-        // Past what the mark reached too, or the next start would find the database behind it;
-        // one it cannot read leaves the generation where the count puts it until `lift` can.
-        lifting ||= marks !== null && mark === null;
-        // A mark the database is behind was compared above: the database holds it.
+        // A mark the database is behind was compared above, or, unread, is moved past once it
+        // reads, as one raised before this count.
         restored = await count(stored, seen.restores, seen.generation);
         current = seen;
       }
@@ -1055,10 +1042,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
           return;
         }
         if (mark === null && marks !== null) return;
-        if (lifting && mark !== null) {
-          await lift(mark);
-          return;
-        }
+        if (mark !== null && (await leftBehind(stored, mark))) return;
         // Behind a mark this instance never compared: moved, it could pass it, and the next look
         // would find nothing.
         if (mark !== null && stored.generation < mark) return;
