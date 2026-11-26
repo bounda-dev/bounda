@@ -814,15 +814,25 @@ const createWorld = (
   };
   // Where a pass that counted a restore left the database once it handled it: its retention runs
   // after, and forgets anew at the pass's time, where a forgetting the ledger held is committed
-  // again at the time it was first made.
-  const handledBy = (passAt: number): Handled => {
+  // again at the time it was first made, which may be the pass's own. What the database held when
+  // the pass began, another instance's retention among it, is handled as it stands.
+  const handledBy = (passAt: number, found: Snapshot): Handled => {
+    const held = new Set(found.events.map(({ id }) => id));
     const rows = db
       .prepare(
-        `SELECT "id", "position", "type", "timestamp" FROM "bounda_events" ORDER BY "position"`,
+        `SELECT "id", "position", "type", "timestamp", "payload" FROM "bounda_events" ORDER BY "position"`,
       )
-      .all() as unknown as (EventRow & { readonly type: string; readonly timestamp: string })[];
+      .all() as unknown as (EventRow & {
+      readonly type: string;
+      readonly timestamp: string;
+      readonly payload: string;
+    })[];
     const handling = rows.filter(
-      ({ type, timestamp }) => type !== "PersonalDataForgotten" || Date.parse(timestamp) < passAt,
+      ({ id, type, timestamp, payload }) =>
+        type !== "PersonalDataForgotten" ||
+        held.has(id) ||
+        Date.parse(timestamp) < passAt ||
+        (JSON.parse(payload) as { reason?: unknown }).reason !== "retention",
     );
     const last = handling.at(-1);
     return {
@@ -995,7 +1005,7 @@ const createWorld = (
     if (settledAfter) {
       lineage = {
         ...lineage,
-        handled: passProof === null ? headNow() : handledBy(now),
+        handled: passProof === null ? headNow() : handledBy(now, before),
       };
     }
     settledAfter = false;
@@ -2801,6 +2811,27 @@ const COUNTEREXAMPLES: readonly {
         first: { kind: "pass", instance: 0 },
         second: { kind: "write", instance: 0 },
       },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts nothing for a declaration where handling a restore left the database, another instance's retention on the copy before it was found included",
+    kind: "sql",
+    actions: [
+      { kind: "ledger", mode: "down" },
+      { kind: "write", instance: 0 },
+      { kind: "start", instance: 1 },
+      { kind: "backUp", slot: 0 },
+      { kind: "age" },
+      {
+        kind: "together",
+        first: { kind: "redactUncommitted", instance: 1, person: 0 },
+        second: { kind: "forget", instance: 0, person: 0 },
+      },
+      { kind: "ledger", mode: "up" },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 0 },
     ] as Action[],
     counted: 1,
   },
