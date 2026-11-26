@@ -100,6 +100,7 @@ export type {
   PersonalDataRight,
   WithholdingReason,
 } from "./kernel/personal-data/export.ts";
+export { PERSONAL_DATA_EXPORT_VERSION } from "./kernel/personal-data/export.ts";
 export type { PersonalDataExportJsonFunction } from "./kernel/personal-data/export-json.ts";
 export { personalDataExportJson } from "./kernel/personal-data/export-json.ts";
 export { FILE_ENCRYPTION_RETRY_MS } from "./kernel/personal-data/file-encryption.ts";
@@ -127,7 +128,10 @@ export type {
   PersonalDataInventoryArgs,
   PersonalDataInventoryFunction,
 } from "./kernel/personal-data/inventory.ts";
-export { personalDataInventory } from "./kernel/personal-data/inventory.ts";
+export {
+  PERSONAL_DATA_INVENTORY_VERSION,
+  personalDataInventory,
+} from "./kernel/personal-data/inventory.ts";
 export type {
   PrunedTenantForgetLedger,
   PruneTenantForgetLedgerArgs,

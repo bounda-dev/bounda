@@ -1,3 +1,4 @@
+import { recipientTransferOf } from "../../kernel/recipients/transfer.ts";
 import {
   PERSONAL_DATA_FORGOTTEN_REASONS,
   type PersonalDataForgottenReason,
@@ -9,6 +10,13 @@ import {
   type ProcessingRestrictionLiftedPayload,
   type RedactedEvent,
 } from "../../modules/bounda-events.ts";
+import {
+  COUNTRY_CODES,
+  type CountryCode,
+  type RecipientTransfer,
+  TRANSFER_SAFEGUARDS,
+  type TransferSafeguard,
+} from "../../modules/recipient.ts";
 import type { TenantFenceStore } from "./tenant-fence.ts";
 
 /**
@@ -47,7 +55,12 @@ export interface LedgerDisclosure {
   readonly recipient: string;
   readonly kind: string;
   readonly country: string;
-  readonly safeguard: string | null;
+  /**
+   * The transfer out of the European Economic Area the disclosure rested on when it was first
+   * recorded, as `PersonRecipient.transfer` named it then, `null` for a recipient in it: kept as
+   * it was, since the regime of a country and the article of a safeguard are those of that day.
+   */
+  readonly transfer: RecipientTransfer | null;
   readonly category: string;
 }
 
@@ -286,3 +299,57 @@ export interface ByForgetLedgerOrderFunction {
  */
 export const byForgetLedgerOrder: ByForgetLedgerOrderFunction = (a, b) =>
   byCodeUnit(a.forgottenAt, b.forgottenAt) || byCodeUnit(a.eventId, b.eventId);
+
+export interface LedgerDisclosureOfFunction {
+  (stored: unknown): LedgerDisclosure | null;
+}
+
+const isText = (value: unknown): value is string => typeof value === "string";
+
+const isSafeguard = (value: unknown): value is TransferSafeguard =>
+  TRANSFER_SAFEGUARDS.includes(value as TransferSafeguard);
+
+const transferOf = (value: unknown): RecipientTransfer | null | undefined => {
+  if (value === null) return null;
+  if (typeof value !== "object") return undefined;
+  const safeguard: unknown = Reflect.get(value, "safeguard");
+  const article: unknown = Reflect.get(value, "article");
+  const regime: unknown = Reflect.get(value, "regime");
+  return isSafeguard(safeguard) && isText(article) && isText(regime)
+    ? { safeguard, article, regime: regime as RecipientTransfer["regime"] }
+    : undefined;
+};
+
+/**
+ * A disclosure a ledger stored, read back: one as `LedgerDisclosure` has it, its transfer as it
+ * was kept, or one written before disclosures kept their transfer, with the `safeguard` alone,
+ * whose transfer it derives from its country and safeguard as they read now. `null` for anything
+ * else, which a ledger must not read as an entry without a disclosure: that would be a forgetting
+ * of the person as a whole.
+ */
+export const ledgerDisclosureOf: LedgerDisclosureOfFunction = (stored) => {
+  if (typeof stored !== "object" || stored === null) return null;
+  const [port, recipient, kind, country, category]: unknown[] = [
+    "port",
+    "recipient",
+    "kind",
+    "country",
+    "category",
+  ].map((field) => Reflect.get(stored, field));
+  if (!(isText(port) && isText(recipient) && isText(kind) && isText(country) && isText(category))) {
+    return null;
+  }
+  const identity = { port, recipient, kind, country };
+  if (Object.hasOwn(stored, "transfer")) {
+    const transfer = transferOf(Reflect.get(stored, "transfer"));
+    return transfer === undefined ? null : { ...identity, transfer, category };
+  }
+  const safeguard: unknown = Reflect.get(stored, "safeguard") ?? null;
+  if (safeguard === null) return { ...identity, transfer: null, category };
+  if (!isSafeguard(safeguard) || !COUNTRY_CODES.includes(country as CountryCode)) return null;
+  return {
+    ...identity,
+    transfer: recipientTransferOf(country as CountryCode, safeguard),
+    category,
+  };
+};

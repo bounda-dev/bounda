@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
-import type { ForgetLedgerEntry } from "../storage/forget-ledger.ts";
+import type { ForgetLedgerEntry, LedgerDisclosure } from "../storage/forget-ledger.ts";
 import type { SqlDatabase, SqlTransaction } from "./database.ts";
 import { postgresqlDialect, sqliteDialect } from "./dialect.ts";
 import {
@@ -119,12 +119,12 @@ describe("the SQL forget ledger", () => {
         { id: "e-0", aggregateType: "c", aggregateId: "c-11", type: "T", fields: ["email"] },
       ],
     };
-    const disclosure = {
+    const disclosure: LedgerDisclosure = {
       port: "customer.mailer",
       recipient: "Mailchimp",
       kind: "processor",
       country: "US",
-      safeguard: "standard-contractual-clauses",
+      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
       category: "contact",
     };
     await ledger.append([

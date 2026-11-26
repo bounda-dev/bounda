@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { formatInventory, formatInventoryMarkdown } from "./inventory-output.ts";
 
 const inventory: PersonalDataInventory = {
+  version: 1,
   categories: [
     {
       name: "default",
@@ -189,6 +190,7 @@ const inventory: PersonalDataInventory = {
 };
 
 const empty: PersonalDataInventory = {
+  version: 1,
   categories: [
     {
       name: "default",

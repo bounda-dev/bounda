@@ -18,6 +18,7 @@ import {
   forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
+  migrateForgetLedgerTransfers,
 } from "../sql/forget-ledger.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { indexKeysTableStatement } from "../sql/index-key-store.ts";
@@ -433,6 +434,10 @@ export const sqliteForgetLedgerScope: SqliteForgetLedgerScopeFunction = (table) 
         if ((await columnsOf(tx, forgetLedgerMarksTableFor(table))).has("raised_at")) return;
         await tx.run(forgetLedgerMarkTimeStatement(table, sqliteDialect), []);
       },
+    },
+    {
+      version: 13,
+      migrate: (tx) => migrateForgetLedgerTransfers(tx, table, sqliteDialect),
     },
   ],
 });

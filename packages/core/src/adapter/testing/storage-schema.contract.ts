@@ -15,6 +15,7 @@ import type { Adapter, Storage } from "../adapter.ts";
 import { forgetLedgerFenceTableFor, forgetLedgerMarksTableFor } from "../sql/forget-ledger.ts";
 import { quoteIdentifier, storageTableNameFor } from "../sql/identifiers.ts";
 import { schemaMigrationsTableFor, schemaMigrationsTableStatement } from "../sql/migrations.ts";
+import { DOCUMENTED_TABLES, SQLITE_ONLY_TABLES } from "./documented-tables.ts";
 import { earlierRowsFor, expectEarlierRowsTakenIn } from "./earlier-rows.ts";
 import { EARLIER_SCHEMAS, type EarlierVersion, earlierTablesFor } from "./earlier-schemas.ts";
 import { testCommand, testContext, testDeadLetter } from "./fixtures.ts";
@@ -173,6 +174,33 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       );
     });
 
+    it("creates the tables the docs list, with a forget ledger and a tenant key store beside them, and no other", async () => {
+      const target = await create();
+      await opened(target.adapter, async () => undefined);
+      const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        await ledger.read({ limit: 1 });
+      } finally {
+        await ledger.close?.();
+      }
+      const keys = await target.adapter.createTenantKeyStore();
+      try {
+        await keys.get("t-1");
+      } finally {
+        await keys.close?.();
+      }
+      const tables = await target.execute(
+        dialect === "sqlite"
+          ? `SELECT "name" FROM sqlite_master WHERE "type" = 'table' AND substr("name", 1, ${target.prefix.length}) = '${target.prefix}'`
+          : `SELECT "table_name" AS "name" FROM information_schema.tables WHERE "table_schema" = current_schema() AND starts_with("table_name", '${target.prefix}')`,
+      );
+      expect(tables.map(({ name }) => String(name).slice(target.prefix.length)).sort()).toEqual(
+        DOCUMENTED_TABLES.filter(
+          (table) => dialect === "sqlite" || !SQLITE_ONLY_TABLES.includes(table),
+        ).sort(),
+      );
+    });
+
     it("opens a database at the latest version without migrating it again", async () => {
       const target = await create();
       await opened(target.adapter, (storage) => storage.checkpointStore.set("projection:x", 7));
@@ -191,20 +219,20 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       expect(versions).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 0, latest: 5 },
-        { scope: "forget-ledger", version: 0, latest: 12 },
+        { scope: "forget-ledger", version: 0, latest: 13 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await shapeOf(target, dialect)).toEqual([]);
       expect(await target.adapter.migrate(["checkpoints"])).toEqual([
         { scope: "storage", version: 0, latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 5, latest: 5 },
-        { scope: "forget-ledger", version: 0, latest: 12 },
+        { scope: "forget-ledger", version: 0, latest: 13 },
         { scope: "tenant-keys", version: 0, latest: 1 },
       ]);
       expect(await target.adapter.migrate(["storage", "forget-ledger", "tenant-keys"])).toEqual([
         { scope: "storage", version: STORAGE_LATEST[dialect], latest: STORAGE_LATEST[dialect] },
         { scope: "checkpoints", version: 5, latest: 5 },
-        { scope: "forget-ledger", version: 12, latest: 12 },
+        { scope: "forget-ledger", version: 13, latest: 13 },
         { scope: "tenant-keys", version: 1, latest: 1 },
       ]);
       const shape = await shapeOf(target, dialect);
@@ -566,6 +594,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         { scope: "forget-ledger", version: 10 },
         { scope: "forget-ledger", version: 11 },
         { scope: "forget-ledger", version: 12 },
+        { scope: "forget-ledger", version: 13 },
       ]);
     });
 
@@ -751,7 +780,7 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         `INSERT INTO ${marks} ("tenant", "name", "value") VALUES ('t-1', 'restore', 4)`,
       );
       await target.execute(
-        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 12`,
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" >= 12`,
       );
       const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
       try {
@@ -765,6 +794,128 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
         ]);
       } finally {
         await ledger.close?.();
+      }
+    });
+
+    it("keeps from the thirteenth version the transfer each disclosure rested on, one recorded before taking it from its country and safeguard once", async () => {
+      const target = await create();
+      const table = quoteIdentifier(
+        storageTableNameFor({ prefix: target.prefix, table: "forgetLedger" }),
+      );
+      const migrated = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        await migrated.read({ limit: 1 });
+      } finally {
+        await migrated.close?.();
+      }
+      const identity = { port: "customer.mailer", recipient: "Mailchimp", kind: "processor" };
+      const scc = {
+        safeguard: "standard-contractual-clauses",
+        article: "46(2)(c)",
+        regime: "US",
+      } as const;
+      const legacy = JSON.stringify({
+        ...identity,
+        country: "US",
+        safeguard: scc.safeguard,
+        category: "contact",
+      });
+      // Kept with another regime than the lists give now: it stays as it was kept.
+      const kept = {
+        ...identity,
+        country: "US",
+        transfer: { ...scc, regime: "EEA" },
+        category: "a",
+      };
+      const unreadable = JSON.stringify({ ...identity, country: "US", category: 1 });
+      const insert = (rows: readonly (readonly [string, string, string | null])[]) =>
+        target.execute(
+          `INSERT INTO ${table} ("tenant", "event_id", "person", "forgotten_at", "disclosure") VALUES ${rows
+            .map(
+              ([tenant, eventId, disclosure]) =>
+                `('${tenant}', '${eventId}', 'p-1', '2026-01-01T00:00:01.000Z', ${disclosure === null ? "NULL" : `'${disclosure}'`})`,
+            )
+            .join(", ")}`,
+        );
+      await insert([
+        ["t-1", "e-1", legacy],
+        [
+          "t-1",
+          "e-2",
+          JSON.stringify({ ...identity, country: "FR", safeguard: null, category: "b" }),
+        ],
+        ["t-1", "e-3", JSON.stringify(kept)],
+        ["t-1", "e-4", null],
+        ["t-3", "e-1", unreadable],
+        ["t-3", "e-2", "not json"],
+      ]);
+      // More than one page of them, past the first tenant's.
+      for (const half of [0, 1]) {
+        await insert(
+          Array.from({ length: 300 }, (_, index) => [
+            "t-2",
+            `e-${String(half * 300 + index).padStart(3, "0")}`,
+            legacy,
+          ]),
+        );
+      }
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'forget-ledger' AND "version" = 13`,
+      );
+      const ledger = await target.adapter.createForgetLedger({ tenant: "t-1" });
+      try {
+        const entry = (eventId: string) => ({
+          personId: "p-1",
+          eventId,
+          forgottenAt: "2026-01-01T00:00:01.000Z",
+          categories: null,
+          reason: "requested",
+        });
+        expect(await ledger.read({ limit: 10 })).toEqual([
+          {
+            ...entry("e-1"),
+            disclosure: { ...identity, country: "US", transfer: scc, category: "contact" },
+          },
+          {
+            ...entry("e-2"),
+            disclosure: { ...identity, country: "FR", transfer: null, category: "b" },
+          },
+          { ...entry("e-3"), disclosure: kept },
+          entry("e-4"),
+        ]);
+        const rows = await target.execute(
+          `SELECT "tenant", "disclosure" FROM ${table} WHERE "tenant" <> 't-1' ORDER BY "tenant", "event_id"`,
+        );
+        expect(rows).toHaveLength(602);
+        // What it cannot read, as it was.
+        expect(rows.slice(-2).map(({ disclosure }) => disclosure)).toEqual([
+          unreadable,
+          "not json",
+        ]);
+        for (const { disclosure } of rows.slice(0, -2)) {
+          expect(JSON.parse(String(disclosure))).toEqual({
+            ...identity,
+            country: "US",
+            transfer: scc,
+            category: "contact",
+          });
+        }
+        // Written by a version before, as one still running beside it may.
+        await insert([["t-1", "e-5", legacy]]);
+        expect((await ledger.read({ limit: 10 })).at(-1)).toEqual({
+          ...entry("e-5"),
+          disclosure: { ...identity, country: "US", transfer: scc, category: "contact" },
+        });
+      } finally {
+        await ledger.close?.();
+      }
+      const other = await target.adapter.createForgetLedger({ tenant: "t-3" });
+      try {
+        await expect(other.read({ limit: 10 })).rejects.toThrow(
+          "The forget ledger's entry e-1 holds a disclosure it cannot read",
+        );
+      } finally {
+        await other.close?.();
       }
     });
 

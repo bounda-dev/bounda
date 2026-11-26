@@ -165,7 +165,7 @@ const leftAsIs = async (
         held.recipient === disclosure.recipient &&
         held.kind === disclosure.kind &&
         held.country === disclosure.country &&
-        held.safeguard === disclosure.safeguard &&
+        held.safeguard === (disclosure.transfer?.safeguard ?? null) &&
         held.category === disclosure.category,
     )
   ) {

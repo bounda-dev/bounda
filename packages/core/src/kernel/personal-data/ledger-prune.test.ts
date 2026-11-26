@@ -53,7 +53,7 @@ const DISCLOSURE: LedgerDisclosure = {
   recipient: "Acme Mail",
   kind: "processor",
   country: "DE",
-  safeguard: null,
+  transfer: null,
   category: "contact",
 };
 
@@ -516,9 +516,11 @@ describe("pruning a forget ledger with no app running", () => {
   });
 
   it("removes a disclosure the database holds as it was recorded, and keeps one it lacks", async () => {
+    const { transfer: _, ...identity } = DISCLOSURE;
     const stored: StoredDisclosure = {
       person: "p-1",
-      ...DISCLOSURE,
+      ...identity,
+      safeguard: null,
       firstAt: at(3),
       lastAt: at(3),
     };

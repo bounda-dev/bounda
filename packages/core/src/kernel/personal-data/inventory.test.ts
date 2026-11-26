@@ -176,6 +176,12 @@ const config: Config = {
 
 // Built in each test, which a mutation tool's run of that test sees.
 describe("personalDataInventory", () => {
+  it("names the version of its format first, so a reader learns it before anything else", () => {
+    const inventory = personalDataInventory({ registry, config });
+    expect(inventory.version).toBe(1);
+    expect(Object.keys(inventory)[0]).toBe("version");
+  });
+
   it("lists every category with its basis, purposes, sources, the ports that return its data, retention, exemptions from erasure and how many fields it holds", () => {
     const inventory = personalDataInventory({ registry, config });
     const said = {

@@ -90,7 +90,11 @@ export type {
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "./storage/forget-ledger.ts";
-export { byForgetLedgerOrder, forgottenReasonOf } from "./storage/forget-ledger.ts";
+export {
+  byForgetLedgerOrder,
+  forgottenReasonOf,
+  ledgerDisclosureOf,
+} from "./storage/forget-ledger.ts";
 export type { Hold } from "./storage/hold.ts";
 export type {
   DispatchOutcome,

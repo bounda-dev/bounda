@@ -723,6 +723,7 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
 
 ```ts
 {
+  version: 1,
   personId: "c-42",
   exportedAt: "2026-03-01T10:00:00.000Z",
   position: 812,
@@ -821,6 +822,11 @@ the whole export in memory: for a person with a long history, [stream it](#a-lon
   },
 }
 ```
+
+`version` comes first, the version of the export's format, `PERSONAL_DATA_EXPORT_VERSION` from
+`@bounda-dev/core`, so a program that reads exports learns which format it holds before anything
+else: a release that changes what a section holds, or adds one, numbers a new version. An export
+without it was written before Bounda numbered the format.
 
 The export says everything article 15(1) of the GDPR asks besides the data, from what the app
 declares, so nothing has to be written by hand next to it:
@@ -1681,7 +1687,8 @@ recipient by hand and discard the letter.
 ### Restores
 
 With a [forget ledger](#backups), the first disclosure of each category of a person to a recipient
-goes to the ledger before the port is called, so a restore that loses it records it again at the
+goes to the ledger before the port is called, with the recipient's identity and the transfer it
+rests on then, its safeguard, article and regime, so a restore that loses it records it again at the
 next reconciliation, unless a forgetting of that category came after it. Without one, once the
 database is known to have gone back, by `bounda restored` or the restore watch, every recipient is
 presumed to hold the data of every person whose data existed then.
@@ -2041,7 +2048,9 @@ bounda personal-data inventory --markdown > record-of-processing.md
 ```
 
 It reads the registry and `bounda.config.ts`, as `bounda rebuild` loads them, and opens no
-database. The record lists:
+database. As JSON it is what `personalDataInventory` returns, `version` first: the version of its
+format, `PERSONAL_DATA_INVENTORY_VERSION`, which a release that changes what a list holds, or adds
+one, raises, and which a record printed before Bounda numbered the format lacks. The record lists:
 
 - each [category](#categories), with its basis, the [special categories of data and the criminal
   data](#special-categories-and-criminal-data) it holds, with their condition or authority, its
@@ -2721,7 +2730,7 @@ then hands out, in this order:
 
 | Part | What it holds |
 | --- | --- |
-| `header` | `format` (`"bounda.tenant-export"`) and `version` (`4`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`5`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
 | `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
 | `recipient` | each recipient of the tenant's data, the `person` parts' recipients summed: one per port, identity it had then and status, with its `country` and `transfer`, the categories concerned, the earliest and latest disclosure, and how many `persons` list it so; and each recipient the app declares that no person lists under its identity now, `declared`, for none |
 | `event` | every event of the stream up to the header's `position`, as the handlers read it today: upcast, its whole `payload` opened, with its `metadata` and the `person` it names; `categories` names the category of each field marked `personal`, `restricted` the fields the controller may only keep, and `redacted` the fields a [redaction](#correcting-a-persons-data) sealed for good |
@@ -2754,8 +2763,10 @@ is told under what allowed it then. Each person's part says which of them hold t
 [forgetting](#forgetting-a-person) removes the disclosures it forgot, so they count in no
 `recipient` part: its event, among the `event` parts, names the recipients it told. With a [forget
 ledger](#the-forget-ledger), the first disclosure of each category of a person to a recipient is
-also among the `forgetLedgerEntry` parts, with the recipient's country and safeguard then, for as
-long as the ledger keeps it.
+also among the `forgetLedgerEntry` parts, for as long as the ledger keeps it, with the recipient's
+identity and country then and the `transfer` it rested on as the ledger kept it when it was first
+recorded, `null` in the European Economic Area: its `safeguard`, `article` and `regime` of that day,
+never derived again from what the country is now.
 
 What it leaves out is not data of the tenant's: snapshots, the state of aggregates the events it
 holds rebuild; the subscribers' checkpoints, the inbox and the tables' versions, which say how far
@@ -2970,8 +2981,10 @@ export default defineConfig({
 });
 ```
 
-Its `store` takes any adapter pointed at another database, where it creates one table,
-`bounda_forget_ledger`, with the adapter's `tablePrefix`, the first time it is used: a SQLite file
+Its `store` takes any adapter pointed at another database, where it creates its table,
+`bounda_forget_ledger`, and the two of its marks and its fence beside it (see [what an adapter
+creates](/adapters/#what-an-adapter-creates)), with the adapter's `tablePrefix`, the first time it
+is used: a SQLite file
 on another disk or volume for an app on one machine, `postgresql({ url })` on another server, or a
 schema of the same server backed up apart. A plain file of the app's own making would be the same
 thing with less: the SQLite file already is one, written atomically. An adapter that points at the
@@ -3015,7 +3028,10 @@ starts, and keeps its tenant's entries apart from every other's: it keeps every 
 reason and the fingerprints included, which the reconciliation decides by, and `committed: false`
 on an intention until the same entry is appended without it, in the same call or a later one,
 after which it reads committed whatever is appended again, and an intention's `reached`, where the
-database stood when it was written, which it may drop once the entry is committed; its `read` returns
+database stood when it was written, which it may drop once the entry is committed, and a
+disclosure's `transfer` as it was appended, never derived again, which `ledgerDisclosureOf` from
+`@bounda-dev/core/adapter` reads back, with the transfer of one stored before disclosures kept it
+derived from its country and safeguard; its `read` returns
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
 time; its optional `tenants` lists, in code-unit order, every tenant whose entries its store holds,

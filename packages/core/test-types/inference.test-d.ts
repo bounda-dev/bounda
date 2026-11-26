@@ -107,6 +107,7 @@ import type {
   PersonalDataForgottenEvent,
   PersonalDataForgottenPayload,
   PersonalDataForgottenReason,
+  PersonalDataInventory,
   PersonalDataRedactedEvent,
   PersonalDataRedactedPayload,
   PersonalDataRight,
@@ -196,7 +197,9 @@ import {
   isUnreadable,
   MAX_ACCESS_PERSONS,
   MAX_ACTOR_LENGTH,
+  PERSONAL_DATA_EXPORT_VERSION,
   PERSONAL_DATA_FORGOTTEN_REASONS,
+  PERSONAL_DATA_INVENTORY_VERSION,
   personalDataExportJson,
   SPECIAL_CATEGORY_CONDITIONS,
   SPECIAL_CATEGORY_KINDS,
@@ -1177,7 +1180,11 @@ describe("personal data", () => {
     expectTypeOf<BoundaApp["exportPersonalData"]>().toEqualTypeOf<
       BoundaClient["exportPersonalData"]
     >();
+    expectTypeOf(PERSONAL_DATA_EXPORT_VERSION).toEqualTypeOf<1>();
+    expectTypeOf(PERSONAL_DATA_INVENTORY_VERSION).toEqualTypeOf<1>();
+    expectTypeOf<PersonalDataInventory["version"]>().toEqualTypeOf<1>();
     expectTypeOf<PersonalDataExport>().toEqualTypeOf<{
+      readonly version: 1;
       readonly personId: string;
       readonly exportedAt: string;
       readonly position: number;
@@ -1205,6 +1212,7 @@ describe("personal data", () => {
       BoundaClient["streamPersonalData"]
     >();
     expectTypeOf<PersonalDataExportHeader>().toEqualTypeOf<{
+      readonly version: 1;
       readonly personId: string;
       readonly exportedAt: string;
       readonly position: number;

@@ -278,6 +278,33 @@ describe("the forget ledger in keeper objects", () => {
     expect(durableObjectForgetLedger({ storage }).location).toBeUndefined();
   });
 
+  it("holds the tables of a forget ledger and a tenant key store the adapters' page lists, and the directory its tenants", async () => {
+    const tenant = `${fresh()}tables`;
+    await (await durableObjectTenantKeys({ storage }).create({ env })).put(
+      tenant,
+      record("s-1"),
+      null,
+    );
+    await (await durableObjectForgetLedger({ storage }).create({ env, tenant })).read({ limit: 1 });
+    const tables = (name: string) =>
+      runInDurableObject(keeper(name), (_object, state) =>
+        state.storage.sql
+          .exec(`SELECT "name" FROM sqlite_master WHERE "type" = 'table' AND "name" LIKE 'bounda%'`)
+          .toArray()
+          .map(({ name }) => String(name))
+          .sort(),
+      );
+    // As "What an adapter creates" lists them.
+    expect(await tables(`tenant:${tenant}`)).toEqual([
+      "bounda_forget_ledger",
+      "bounda_forget_ledger_fence",
+      "bounda_forget_ledger_marks",
+      "bounda_migrations",
+      "bounda_tenant_keys",
+    ]);
+    expect(await tables("directory")).toContain("bounda_keeper_tenants");
+  });
+
   it("removes each entry once past keepFor on the keeper's own alarm, the tenant's object asleep", async () => {
     const tenant = `${fresh()}kept-for`;
     const own = keeper(`tenant:${tenant}`);

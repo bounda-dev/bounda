@@ -41,7 +41,7 @@ const disclosed: ForgetLedgerEntry = {
     recipient: "Mailchimp",
     kind: "processor",
     country: "US",
-    safeguard: "standard-contractual-clauses",
+    transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
     category: "contact",
   },
 };

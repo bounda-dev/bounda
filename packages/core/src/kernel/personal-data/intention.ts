@@ -10,6 +10,7 @@ import { ForgetLedgerUnavailableError } from "../../contracts/errors.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import type { PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
+import { ledgerDisclosureOfRecorded } from "../recipients/transfer.ts";
 import { disclosureEntryId } from "../shared/idempotency-key.ts";
 import type { ForgetScope } from "./forget.ts";
 import type { BoundedForgetLedger } from "./forget-ledger.ts";
@@ -205,7 +206,7 @@ export const createForgetIntentions: CreateForgetIntentionsFunction = ({
             eventId: disclosureEntryId({ person, ...disclosure }),
             forgottenAt: at,
             reason: "requested",
-            disclosure,
+            disclosure: ledgerDisclosureOfRecorded(disclosure),
             committed: false,
           })),
         "forget ledger did not take the disclosure; a restore that loses it would not tell its recipient",

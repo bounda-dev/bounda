@@ -361,7 +361,9 @@ recipient that received the data is told.
 
 ## Portability (article 20)
 
-The export is a structured, commonly used, machine-readable document, and its `rights` list
+The export is a structured, commonly used, machine-readable document, which names the version of
+its format first (`PERSONAL_DATA_EXPORT_VERSION`), so the controller the person takes it to can
+tell one format from another; its `rights` list
 portability for the categories processed on `consent` or `contract`, or whose special data rests on
 `explicit-consent`, as 20(1)(a) has it. It holds more than article 20 asks, what the app derived
 included; each category's `sources` say which data came from the person. The rights of others,
@@ -480,7 +482,7 @@ the master key, the tenant key store and the forget ledger; where each database 
 `location` declares it, and the regime, safeguard and article of each one kept out of `storage`'s,
 so the record names every transfer to a third country, 30(1)(e);
 and the fields marked `notPersonal`. `--markdown` writes it as a document and
-`--json` as data; it exits `1` while anything keeps it from being complete, a store of personal data that
+`--json` as data, which names the version of its format first (`PERSONAL_DATA_INVENTORY_VERSION`); it exits `1` while anything keeps it from being complete, a store of personal data that
 declares no location among it, so a CI step fails on it. See [The record of processing
 activities](/guides/personal-data/#the-record-of-processing-activities).
 
@@ -566,7 +568,15 @@ their ISO codes, nor on `adequacy` for a country the European Commission has ado
 decision for (`ADEQUATE_COUNTRIES`). The export and `recipientsOf` tell the person where their data
 went, by the legal regime it went to, and on what it rests, with the article, 15(2), and the record
 of processing lists every transfer the same way. A tenant's export sums the recipients of every person in it, once under each identity a
-disclosure was recorded with, for the controller it is handed back to, 28(3)(g).
+disclosure was recorded with, for the controller it is handed back to, 28(3)(g). The [forget
+ledger](/guides/personal-data/#the-forget-ledger) keeps each disclosure with the transfer it rested
+on when it was first recorded, its safeguard, article and regime as they were that day, and a
+tenant's export hands them over so: a transfer is lawful or not when it is made, article 44, so a
+country that later leaves or joins the European Economic Area, or an article renumbered, does not
+change what allowed it, and the accountability of 5(2) rests on what was true then. A disclosure the
+ledger recorded before Bounda kept its transfer takes the one its country and safeguard name as
+Bounda reads them: in a database, once, as the ledger is migrated, and kept from then on; in Workers
+KV, which holds no versions, as it is read.
 
 Every database and store declares where it keeps its data, a country in lower case or an area such
 as the EU (`DataLocation`): `location: "eu"` on

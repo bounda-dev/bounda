@@ -966,7 +966,7 @@ describe("what the reconciliation commits again", () => {
       recipient: "Mailer",
       kind: "processor",
       country: "IE",
-      safeguard: null,
+      transfer: null,
       category: "default",
     };
     const { reconciliation } = await setUp({

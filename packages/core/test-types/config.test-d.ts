@@ -63,7 +63,12 @@ import type {
   RuntimeTextFunction,
   TenantFence,
 } from "@bounda-dev/core/adapter";
-import { checkPlacement, placementOf, runtimeText } from "@bounda-dev/core/adapter";
+import {
+  checkPlacement,
+  ledgerDisclosureOf,
+  placementOf,
+  runtimeText,
+} from "@bounda-dev/core/adapter";
 import {
   type Config,
   DEFAULT_DEAD_LETTER_RETENTION_MS,
@@ -561,9 +566,10 @@ describe("defineConfig", () => {
       readonly recipient: string;
       readonly kind: string;
       readonly country: string;
-      readonly safeguard: string | null;
+      readonly transfer: RecipientTransfer | null;
       readonly category: string;
     }>();
+    expectTypeOf(ledgerDisclosureOf).toEqualTypeOf<(stored: unknown) => LedgerDisclosure | null>();
     expectTypeOf<LedgerRedaction>().toEqualTypeOf<{
       readonly events: readonly RedactedEvent[];
     }>();

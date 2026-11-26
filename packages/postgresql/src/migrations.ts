@@ -16,6 +16,7 @@ import {
   forgetLedgerStatements,
   indexKeysTableStatement,
   type MigrateSchemasArgs,
+  migrateForgetLedgerTransfers,
   migrateSchemas,
   postgresqlDialect,
   quoteIdentifier,
@@ -460,6 +461,10 @@ export const postgresqlForgetLedgerScope: PostgresqlForgetLedgerScopeFunction = 
     {
       version: 12,
       migrate: (tx) => tx.run(forgetLedgerMarkTimeStatement(table, postgresqlDialect), []),
+    },
+    {
+      version: 13,
+      migrate: (tx) => migrateForgetLedgerTransfers(tx, table, postgresqlDialect),
     },
   ],
 });

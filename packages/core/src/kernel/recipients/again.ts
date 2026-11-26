@@ -7,6 +7,7 @@ import {
   type PersonalDataForgottenPayload,
 } from "../../modules/bounda-events.ts";
 import { transactRetrying } from "../personal-data/transact.ts";
+import { disclosureOfLedger } from "./transfer.ts";
 
 export interface DiscloseAgainArgs {
   readonly storage: Pick<Storage, "transact">;
@@ -53,7 +54,7 @@ export const discloseAgain: DiscloseAgainFunction = ({ storage, concurrencyRetri
       });
       if (forgottenSince(events, entry)) return false;
       const added = await transaction.recipients.disclose(
-        [{ person: personId, ...disclosure }],
+        [disclosureOfLedger(personId, disclosure)],
         forgottenAt,
       );
       return added.length > 0;

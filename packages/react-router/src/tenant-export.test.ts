@@ -12,7 +12,7 @@ const header: TenantExportPart = {
   kind: "header",
   header: {
     format: "bounda.tenant-export",
-    version: 4,
+    version: 5,
     tenant: "acme",
     exportId: "x-1",
     exportedAt: "2026-01-01T00:00:00.000Z",

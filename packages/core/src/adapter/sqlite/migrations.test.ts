@@ -254,7 +254,7 @@ describe("the SQLite schema scopes", () => {
           `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
         )
         .get(),
-    ).toEqual({ version: 12 });
+    ).toEqual({ version: 13 });
   });
 
   it("takes the forget ledger's committed column as there already, from a migration that stopped before recording its version", async () => {
@@ -276,7 +276,7 @@ describe("the SQLite schema scopes", () => {
           `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
         )
         .get(),
-    ).toEqual({ version: 12 });
+    ).toEqual({ version: 13 });
   });
 
   it("takes the forget ledger's reached column as there already, from a migration that stopped before recording its version", async () => {
@@ -298,7 +298,7 @@ describe("the SQLite schema scopes", () => {
           `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
         )
         .get(),
-    ).toEqual({ version: 12 });
+    ).toEqual({ version: 13 });
   });
 
   it("takes the forget ledger marks' time column as there already, from a migration that stopped before recording its version", async () => {
@@ -320,6 +320,6 @@ describe("the SQLite schema scopes", () => {
           `SELECT "version" FROM ${schemaMigrationsTableFor("app_")} WHERE "scope" = 'forget-ledger' ORDER BY "version" DESC LIMIT 1`,
         )
         .get(),
-    ).toEqual({ version: 12 });
+    ).toEqual({ version: 13 });
   });
 });

@@ -1670,7 +1670,19 @@ describe("recipients and the forget ledger", () => {
       [
         expect.objectContaining({
           personId: "c-1",
-          disclosure: expect.objectContaining({ port: "customer.mailer", category: "contact" }),
+          // The transfer it rests on now, kept as it is.
+          disclosure: {
+            port: "customer.mailer",
+            recipient: "Mailchimp",
+            kind: "processor",
+            country: "US",
+            transfer: {
+              safeguard: "standard-contractual-clauses",
+              article: "46(2)(c)",
+              regime: "US",
+            },
+            category: "contact",
+          },
         }),
       ],
     ]);
@@ -1693,7 +1705,7 @@ describe("recipients and the forget ledger", () => {
         recipient: "Mailchimp",
         kind: "processor",
         country: "US",
-        safeguard: "standard-contractual-clauses",
+        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
         category: "contact",
       },
     };

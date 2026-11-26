@@ -391,16 +391,17 @@ describe("the intentions of forgetting", () => {
       recipient: "Mailchimp",
       kind: "processor",
       country: "US",
-      safeguard: null,
+      safeguard: "standard-contractual-clauses",
       category: "contact",
     };
+    const inEea = { ...disclosure, person: "c-2", country: "FR", safeguard: null };
     const { intentions } = await setUp({
       ledger: recordingLedger(async (entries) => {
         appended.push(...entries);
       }),
     });
-    await intentions.disclose([disclosure], NOW.toISOString());
-    const { person: _, ...ledgered } = disclosure;
+    await intentions.disclose([disclosure, inEea], NOW.toISOString());
+    const identity = { port: "customer.mailer", recipient: "Mailchimp", kind: "processor" };
     expect(appended).toEqual([
       {
         personId: "c-1",
@@ -408,7 +409,26 @@ describe("the intentions of forgetting", () => {
         eventId: disclosureEntryId(disclosure),
         forgottenAt: NOW.toISOString(),
         reason: "requested",
-        disclosure: ledgered,
+        // What the transfer rests on as it is recorded, kept as it is.
+        disclosure: {
+          ...identity,
+          country: "US",
+          transfer: {
+            safeguard: "standard-contractual-clauses",
+            article: "46(2)(c)",
+            regime: "US",
+          },
+          category: "contact",
+        },
+        committed: false,
+      },
+      {
+        personId: "c-2",
+        categories: null,
+        eventId: disclosureEntryId(inEea),
+        forgottenAt: NOW.toISOString(),
+        reason: "requested",
+        disclosure: { ...identity, country: "FR", transfer: null, category: "contact" },
         committed: false,
       },
     ]);

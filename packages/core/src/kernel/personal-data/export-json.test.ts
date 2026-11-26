@@ -12,6 +12,7 @@ import { personalDataExportJson } from "./export-json.ts";
 const header = (readModels: readonly string[]): PersonalDataExportPart => ({
   kind: "header",
   header: {
+    version: 1,
     personId: "ana",
     exportedAt: "2026-01-01T00:00:00.000Z",
     position: 3,

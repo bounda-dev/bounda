@@ -10,6 +10,7 @@ import {
   type LedgerReached,
   type LedgerRedaction,
   type LedgerRestriction,
+  ledgerDisclosureOf,
   nextFence,
   runtimeText,
   type TenantFence,
@@ -150,25 +151,19 @@ const spilledIn = (value: string | null): SpilledEntry | null => {
   if (categories !== null && !isTextList(categories)) return null;
   if (restriction !== undefined && !isRestriction(restriction)) return null;
   if (redaction !== undefined && !isRedaction(redaction)) return null;
-  if (disclosure !== undefined && !isDisclosure(disclosure)) return null;
+  const read = disclosure === undefined ? undefined : ledgerDisclosureOf(disclosure);
+  if (read === null) return null;
   return {
     categories,
     ...(isTextList(fingerprints) ? { fingerprints } : {}),
     ...(restriction === undefined ? {} : { restriction }),
     ...(redaction === undefined ? {} : { redaction }),
-    ...(disclosure === undefined ? {} : { disclosure }),
+    ...(read === undefined ? {} : { disclosure: read }),
   };
 };
 
 const isRedaction = (value: unknown): value is LedgerRedaction =>
   typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "events"));
-
-const isDisclosure = (value: unknown): value is LedgerDisclosure =>
-  typeof value === "object" &&
-  value !== null &&
-  ["port", "recipient", "kind", "country", "category"].every(
-    (field) => typeof Reflect.get(value, field) === "string",
-  );
 
 const isRestriction = (value: unknown): value is LedgerRestriction =>
   typeof value === "object" &&

@@ -10,7 +10,7 @@ const disclosure: LedgerDisclosure = {
   recipient: "Mailchimp",
   kind: "processor",
   country: "US",
-  safeguard: "standard-contractual-clauses",
+  transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
   category: "contact",
 };
 
@@ -72,11 +72,33 @@ describe("discloseAgain", () => {
       true,
     );
     expect(await storage.recipients.disclosures("c-1")).toEqual([
-      { person: "c-1", ...disclosure, firstAt: at, lastAt: at },
+      {
+        person: "c-1",
+        port: "customer.mailer",
+        recipient: "Mailchimp",
+        kind: "processor",
+        country: "US",
+        safeguard: "standard-contractual-clauses",
+        category: "contact",
+        firstAt: at,
+        lastAt: at,
+      },
     ]);
     expect(await discloseAgain({ storage, concurrencyRetries: 0, entry: entry("c-1", at) })).toBe(
       false,
     );
+  });
+
+  it("records a recipient in the European Economic Area with no safeguard", async () => {
+    const at = "2026-02-01T00:00:00.000Z";
+    const inEea = {
+      ...entry("c-1", at),
+      disclosure: { ...disclosure, country: "FR", transfer: null },
+    };
+    expect(await discloseAgain({ storage, concurrencyRetries: 0, entry: inEea })).toBe(true);
+    expect(await storage.recipients.disclosures("c-1")).toEqual([
+      expect.objectContaining({ country: "FR", safeguard: null }),
+    ]);
   });
 
   it("leaves one a later forgetting of its category told and removed, and no other's", async () => {

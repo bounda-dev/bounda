@@ -344,6 +344,7 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
       expect(parts[0]).toEqual({
         kind: "header",
         header: {
+          version: 1,
           personId: "ana",
           exportedAt: whole.exportedAt,
           position: whole.position,
@@ -372,6 +373,8 @@ export const personalDataExportContract: PersonalDataExportContractFunction = ({
       const text = await textOf(personalDataExportJson(await app.streamPersonalData("ana")));
       expect(text).toBe(JSON.stringify(whole, null, 2));
       expect(JSON.parse(text)).toEqual(whole);
+      // The version first, so a reader learns the format before anything else.
+      expect(text.startsWith('{\n  "version": 1,\n')).toBe(true);
     });
 
     it("holds no more than a page of records at once, whatever the history", async () => {

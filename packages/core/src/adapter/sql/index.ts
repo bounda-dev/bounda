@@ -45,6 +45,7 @@ export {
   forgetLedgerRedactionStatement,
   forgetLedgerRestrictionStatement,
   forgetLedgerStatements,
+  migrateForgetLedgerTransfers,
 } from "./forget-ledger.ts";
 export {
   DEFAULT_TABLE_PREFIX,

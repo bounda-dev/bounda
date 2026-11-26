@@ -34,6 +34,7 @@ describe("bounda personal-data inventory", () => {
     const { code, stdout } = await cli(["personal-data", "inventory", "--json"]);
     expect(code).toBe(EXIT_OK);
     const inventory = JSON.parse(stdout) as PersonalDataInventory;
+    expect(inventory.version).toBe(1);
     expect(inventory.holders.map(({ name }) => name)).toEqual([
       "customer.CustomerRegistered",
       "customers",
