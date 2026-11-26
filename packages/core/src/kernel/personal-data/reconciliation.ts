@@ -159,8 +159,6 @@ export interface ForgetAgainFunction {
   (args: ForgetAgainArgs): Promise<Forgotten | null>;
 }
 
-type DueStores = Pick<StorageTransaction, "eventStore" | "personalKeys" | "persons">;
-
 export interface EntryCoverage {
   readonly scope: ForgetScope;
   readonly ends: EndsKeptFunction;
@@ -169,25 +167,21 @@ export interface EntryCoverage {
 export interface CoverageOfFunction {
   (
     entry: Pick<ForgetAgainEntry, "categories" | "reason">,
-    categories: PersonalCategories | null,
+    categories: PersonalCategories,
   ): EntryCoverage | null;
 }
 
 // What the forgetting an entry records covers, as the app's categories read it, `null` when it
-// covers none of them. Without them, as with no app running, everything it could cover: a category
-// the app no longer has, and a key an earlier forgetting kept, count, which only ever finds more.
+// covers none of them.
 export const coverageOf: CoverageOfFunction = (
   { categories: asked = null, reason },
   categories,
 ) => {
-  const known =
-    categories === null
-      ? asked
-      : (asked?.filter((category) => categories.of(category) !== undefined) ?? null);
+  const known = asked?.filter((category) => categories.of(category) !== undefined) ?? null;
   if (known !== null && known.length === 0) return null;
   return {
     scope: known === null ? { kind: "whole" } : { kind: "categories", categories: known },
-    ends: categories === null ? () => true : endsKeptOf(categories, reason),
+    ends: endsKeptOf(categories, reason),
   };
 };
 
@@ -205,6 +199,41 @@ export const namedKeysOf: NamedKeysOfFunction = ({ scope, ends }, held, fingerpr
   coveredBy(scope, held, ends).filter(
     ({ key }) => fingerprints === undefined || fingerprints.includes(key.fingerprint),
   );
+
+export interface DueKeysOfArgs {
+  readonly entry: ForgetAgainEntry;
+  readonly coverage: EntryCoverage;
+  readonly retentionDue: RetentionDueFunction;
+  readonly clock: Pick<Clock, "now">;
+}
+
+type DueStores = Pick<StorageTransaction, "eventStore" | "personalKeys" | "persons">;
+
+export interface DueKeysOfFunction {
+  (args: DueKeysOfArgs): (stores: DueStores) => Promise<readonly HeldPersonalKey[] | null>;
+}
+
+// The keys in force the entry covers and names, as the stores given hold them, `null` when the
+// forgetting is not due: the stores hold its event, the person holds no such key, or, for one the
+// retention made, the retention would not forget them now.
+export const dueKeysOf: DueKeysOfFunction =
+  ({ entry, coverage, retentionDue, clock }) =>
+  async (stores) => {
+    const { personId, eventId, reason, fingerprints } = entry;
+    if (eventId !== undefined) {
+      const applied = await stores.eventStore.readOne({
+        aggregateType: BOUNDA_AGGREGATE,
+        aggregateId: personId,
+        eventId,
+      });
+      if (applied !== null) return null;
+    }
+    const covered = namedKeysOf(coverage, await stores.personalKeys.list(personId), fingerprints);
+    if (covered.length === 0) return null;
+    if (reason !== "retention") return covered;
+    const keys = coverage.scope.kind === "whole" ? null : covered;
+    return (await retentionDue(stores, personId, clock.now(), keys)) ? covered : null;
+  };
 
 export interface DatabaseStand {
   readonly generation: number;
@@ -265,22 +294,7 @@ export const forgetAgain: ForgetAgainFunction = async ({
   const coverage = coverageOf(entry, categories);
   if (coverage === null) return null;
   const { scope: asScope } = coverage;
-  // The keys in force the entry covers and names, `null` when it is not due.
-  const dueKeys = async (stores: DueStores): Promise<readonly HeldPersonalKey[] | null> => {
-    if (eventId !== undefined) {
-      const applied = await stores.eventStore.readOne({
-        aggregateType: BOUNDA_AGGREGATE,
-        aggregateId: personId,
-        eventId,
-      });
-      if (applied !== null) return null;
-    }
-    const covered = namedKeysOf(coverage, await stores.personalKeys.list(personId), fingerprints);
-    if (covered.length === 0) return null;
-    if (reason !== "retention") return covered;
-    const keys = asScope.kind === "whole" ? null : covered;
-    return (await retentionDue(stores, personId, clock.now(), keys)) ? covered : null;
-  };
+  const dueKeys = dueKeysOf({ entry, coverage, retentionDue, clock });
   // A category's retention destroys the keys it found due, whatever their category's basis.
   const scopeOf = (covered: readonly HeldPersonalKey[]): ForgetScope =>
     reason === "retention" && asScope.kind !== "whole"

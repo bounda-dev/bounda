@@ -3,6 +3,7 @@ import { configForTenant } from "../../config/define-config.ts";
 import type { ProjectConfig } from "../../config/types.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { tenantIdOf } from "../tenant.ts";
+import { type ForgetLedgerSource, storeOf } from "./forget-ledger.ts";
 import { prunable, refused } from "./ledger-prune.ts";
 import { reachTenants, type UnreachedTenant } from "./tenant-reach.ts";
 
@@ -29,12 +30,35 @@ export interface ListForgetLedgerTenantsArgs {
   readonly tenants?: readonly string[];
 }
 
+export interface ForgetLedgerStore {
+  /**
+   * The store, as the configuration of the first tenant reached that names it gives it: what
+   * `pruneTenantForgetLedger` takes as `store`.
+   */
+  readonly store: ForgetLedgerSource;
+  /**
+   * The tenants whose entries it holds, in code-unit order.
+   */
+  readonly tenants: readonly string[];
+  /**
+   * The tenants reached whose configuration names it, in code-unit order: a tenant it holds that
+   * is not here named it before its ledger moved. A definition is one store by object, so one a
+   * function of the tenant makes anew is named by its own tenant alone.
+   */
+  readonly named: readonly string[];
+}
+
 export interface ForgetLedgerTenants {
   /**
    * Every tenant whose entries a forget ledger's store the configuration names holds, in code-unit
    * order.
    */
   readonly tenants: readonly string[];
+  /**
+   * Every store read that holds a tenant's entries, in the order read: a tenant's entries in one
+   * its configuration no longer names, as one it named before the ledger moved, are pruned there.
+   */
+  readonly stores: readonly ForgetLedgerStore[];
   /**
    * The tenants reached whose stores could not be listed: a store only they name may hold tenants
    * `tenants` lacks.
@@ -68,22 +92,38 @@ export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
   const first = tenantIdOf(named);
   const firstConfig = configForTenant({ config, tenant: first });
   const { ledger, source } = await prunable({ config: firstConfig, env, tenant: first });
-  const { inLedgers, unreached } = await reachTenants({
+  const held: { readonly store: ForgetLedgerSource; readonly tenants: readonly string[] }[] = [];
+  const { inLedgers, configs, unreached } = await reachTenants({
     config,
     env,
     first,
     firstConfig,
     firstLedger: { ledger, source },
     tenants: listed,
-    listLedger: async (each) => {
+    listLedger: async (each, store) => {
       // A ledger that expires its entries on its own has nothing to prune.
       if (each.tenants === undefined && each.prune !== undefined) {
         throw refused(
           "The forget ledger cannot list its tenants: give it tenants(), or prune each tenant by name",
         );
       }
-      return (await each.tenants?.()) ?? [];
+      const tenants = (await each.tenants?.()) ?? [];
+      if (tenants.length > 0) held.push({ store, tenants: [...tenants].sort(byCodeUnit) });
+      return tenants;
     },
   });
-  return { tenants: [...inLedgers].sort(byCodeUnit), unreached };
+  // The tenants reached whose configuration names the store.
+  const namedBy = (store: ForgetLedgerSource): readonly string[] =>
+    [...configs]
+      .filter(([, { runtime }]) => {
+        const { forgetLedger } = runtime.personalData;
+        return forgetLedger !== null && storeOf(forgetLedger.store) === storeOf(store);
+      })
+      .map(([tenant]) => tenant)
+      .sort(byCodeUnit);
+  return {
+    tenants: [...inLedgers].sort(byCodeUnit),
+    stores: held.map(({ store, tenants }) => ({ store, tenants, named: namedBy(store) })),
+    unreached,
+  };
 };

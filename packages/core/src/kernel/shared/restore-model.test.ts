@@ -9,6 +9,8 @@ import type {
   PruneForgetLedgerArgs,
   ReadForgetLedgerArgs,
 } from "../../adapter/storage/forget-ledger.ts";
+import { resolveConfig } from "../../config/schema.ts";
+import type { Config } from "../../config/types.ts";
 import { createFixedClock, type FixedClock } from "../../contracts/clock.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { type LogFields, type Logger, silentLogger } from "../../contracts/logger.ts";
@@ -16,14 +18,16 @@ import { createMemoryForgetLedgers } from "../../memory/forget-ledger.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { type BoundaApp, createApp } from "../app.ts";
+import { isSealed } from "../personal-data/crypto.ts";
 import { createEphemeralKeys } from "../personal-data/ephemeral-keys.ts";
 import { defineForgetLedger } from "../personal-data/forget-ledger.ts";
-import { pruneAsApplied } from "../personal-data/ledger-prune.ts";
+import { pruneAsApplied, reconciliationRulesOf } from "../personal-data/ledger-prune.ts";
 import {
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_GRACE_MS,
   FORGET_LEDGER_REREAD_MS,
 } from "../personal-data/reconciliation.ts";
+import { appRetentionDue } from "../personal-data/retention.ts";
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import {
   GENERATION_INTERVAL_MS,
@@ -58,8 +62,13 @@ import {
 // An operator prunes the ledger with no app (`bounda forget-ledger prune`), at any moment, with a
 // `keepFor` of nothing, so only what the database has applied bounds it: what the ledger proves of
 // the database must read the same after a prune as before, and a prune removes only entries the
-// database holds the event of or will not read again, and intentions nothing can apply: the person
-// holds no key they name, and the database stands where they were written or further.
+// database holds the event of or will not read again, and intentions nothing can apply: the
+// database stands where they were written or further, and the person holds no key in force they
+// name, or, for a redaction's, no event the redaction reaches holds a value their keys open, or,
+// for a retention's, the retention would not forget them now, as the retention says. The ledger
+// moves to another store now and then, its entries with it: the store it left keeps them, which
+// no app reads, and the prune removes there only what the database holds or nothing applies,
+// whatever its cursor read, so what that store would prove of the database, read again, stays.
 
 const registry = {
   aggregates: {
@@ -95,6 +104,7 @@ const registry = {
 
 const START = new Date("2026-04-01T00:00:00.000Z");
 const RECONCILE_EVERY_MS = 24 * 60 * 60_000;
+const RETENTION_MS = 24 * 60 * 60_000;
 
 type Instance = 0 | 1;
 const INSTANCES: readonly Instance[] = [0, 1];
@@ -112,6 +122,13 @@ type InstanceAction =
   | { readonly kind: "forgetUncommitted"; readonly instance: Instance; readonly person: number }
   // A forgetting whose commit failed, asked again: the first intention stays, which nothing applies.
   | { readonly kind: "forgetRetried"; readonly instance: Instance; readonly person: number }
+  // A redaction of the person's registration whose commit failed, and one asked again after it.
+  | { readonly kind: "redactUncommitted"; readonly instance: Instance; readonly person: number }
+  | { readonly kind: "redactRetried"; readonly instance: Instance; readonly person: number }
+  // The person active again, which the retention reads.
+  | { readonly kind: "touch"; readonly instance: Instance; readonly person: number }
+  // A pass whose every commit fails, as one whose retention forgets in a database that refuses.
+  | { readonly kind: "retainUncommitted"; readonly instance: Instance }
   | { readonly kind: "pass"; readonly instance: Instance };
 
 // What happens beside the instances, as the operator's prune does.
@@ -121,6 +138,10 @@ type Action =
   | InstanceAction
   | { readonly kind: "prune" }
   | { readonly kind: "tick" }
+  // As long as the retention keeps a person idle.
+  | { readonly kind: "age" }
+  // The ledger moves to another store, its entries with it, and the store it left keeps them.
+  | { readonly kind: "move" }
   | { readonly kind: "backUp"; readonly slot: number }
   | {
       readonly kind: "restore";
@@ -400,6 +421,21 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
   const keys = createEphemeralKeys();
   const ledger = createModelLedger(kind, gate, () => now);
   const definition = defineForgetLedger(() => ledger.ledger);
+  // The store the ledger last moved from, which no app reads.
+  const former = createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT);
+  const config: Config = {
+    storage: adapter,
+    runtime: {
+      personalData: {
+        keyWrapper: keys.keyWrapper,
+        tenantKeys: keys.tenantKeys,
+        retention: "1d",
+        forgetLedger: { store: definition, reconcileEvery: RECONCILE_EVERY_MS },
+      },
+      policies: { retry: { strategy: "none" } },
+    },
+  };
+  const rules = reconciliationRulesOf({ registry, config: resolveConfig(config) });
   const instances: (Live | null)[] = [null, null];
   const backups = new Map<number, Copy>();
   let now = START.getTime();
@@ -488,10 +524,24 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     if (ledger.mode() === "down" || ledger.mode() === "dropping") return false;
     const current = snapshotOf(db);
     if (markProves(view, current.generation)) return true;
-    if (!entries) return false;
+    return entries && (await entriesProve(await ledger.entries()));
+  };
+
+  // What a look that reads these entries proves of the database as it now stands.
+  const entriesProve = async (entries: readonly ForgetLedgerEntry[]): Promise<boolean> => {
+    const current = snapshotOf(db);
     const held = new Set(current.events.map(({ id }) => id));
     const last = current.events.at(-1)?.position ?? 0;
-    for (const entry of await ledger.entries()) {
+    // A redaction is committed again while it would seal a value; a forgetting while the person
+    // holds a key, and, for one the retention made, while the retention would forget them now.
+    const again = async (entry: ForgetLedgerEntry): Promise<boolean> => {
+      if (entry.redaction !== undefined) {
+        return entry.redaction.events.some((target) => seals(entry.personId, target));
+      }
+      if (!current.holding.has(entry.personId)) return false;
+      return entry.reason !== "retention" || (await dueNow(entry.personId));
+    };
+    for (const entry of entries) {
       const reached = entry.reached;
       // A committed entry whose event the database lacks, that a reconciliation commits again or
       // that was written where the database still stands: one a restore counted since lost is
@@ -499,8 +549,8 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
       if (
         entry.committed !== false &&
         !held.has(entry.eventId) &&
-        (current.holding.has(entry.personId) ||
-          (reached !== undefined && reached.generation >= current.generation))
+        ((reached !== undefined && reached.generation >= current.generation) ||
+          (await again(entry)))
       ) {
         return true;
       }
@@ -525,6 +575,22 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
   const headNow = (): Handled => {
     const snapshot = snapshotOf(db);
     return { head: snapshot.events.at(-1) ?? null, restores: snapshot.restores };
+  };
+  // Where a pass that counted a restore left the database once it handled it: its retention runs
+  // after, and what it forgets anew, of which neither the database nor the ledger held anything
+  // when the pass began, is new.
+  const handledBy = (held: ReadonlySet<string>, recorded: ReadonlySet<string>): Handled => {
+    const rows = db
+      .prepare(`SELECT "id", "position", "type" FROM "bounda_events" ORDER BY "position"`)
+      .all() as unknown as (EventRow & { readonly type: string })[];
+    const handling = rows.filter(
+      ({ id, type }) => held.has(id) || recorded.has(id) || type !== "PersonalDataForgotten",
+    );
+    const last = handling.at(-1);
+    return {
+      head: last === undefined ? null : { id: last.id, position: last.position },
+      restores: snapshotOf(db).restores,
+    };
   };
   const standsWhereHandled = (): boolean => {
     const { head, restores } = headNow();
@@ -606,17 +672,7 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     const clock = createFixedClock(new Date(now));
     const app = await createApp<Registry>({
       registry,
-      config: {
-        storage: adapter,
-        runtime: {
-          personalData: {
-            keyWrapper: keys.keyWrapper,
-            tenantKeys: keys.tenantKeys,
-            forgetLedger: { store: definition, reconcileEvery: RECONCILE_EVERY_MS },
-          },
-          policies: { retry: { strategy: "none" } },
-        },
-      },
+      config,
       env: {},
       ids: createSequentialIdGenerator({ prefix }),
       clock,
@@ -634,9 +690,11 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     const live = instances[instance];
     if (live === null || live === undefined) return;
     const proof = await proofFor(instance, "pass");
+    const held = new Set(snapshotOf(db).events.map(({ id }) => id));
+    const recorded = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     await live.app.runUntilIdle();
     looked(proof);
-    if (settledAfter) handled = headNow();
+    if (settledAfter) handled = handledBy(held, recorded);
     settledAfter = false;
     live.memory = memoryOf(null);
   };
@@ -648,68 +706,142 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
       `CREATE TEMP TRIGGER IF NOT EXISTS "model_fail_commit" BEFORE INSERT ON main."bounda_events" BEGIN SELECT RAISE(ABORT, 'the commit failed'); END`,
     );
   };
+  // What a command meets while another action makes the database refuse every commit.
+  const refusedCommit = (error: unknown): void => {
+    if (!(error instanceof Error && error.message.includes("the commit failed"))) throw error;
+  };
   const commitAgain = (): void => {
     db.exec(`DROP TRIGGER IF EXISTS temp."model_fail_commit"`);
   };
 
-  // The operator's prune, with no app, at the model's time.
+  const formerEntries = (): Promise<readonly ForgetLedgerEntry[]> =>
+    former.read({ limit: Number.MAX_SAFE_INTEGER });
+
+  // The operator's prune, with no app, at the model's time: of the ledger, and of the store it
+  // left, which the database does not follow.
   const prune = async (): Promise<void> => {
-    const { prune: removes } = ledger.ledger;
-    if (removes === undefined) return;
     const storage = await adapter.createStorage();
     try {
-      await pruneAsApplied({
-        ledger: { read: ledger.ledger.read, fence: ledger.ledger.fence, prune: removes },
-        forgotten: async () => false,
-        withStorage: (work) => work(storage),
-        keepForMs: 0,
-        now: new Date(now),
-      });
-    } catch {
-      // The ledger is down, or takes the prune only later.
+      for (const [target, followed] of [
+        [ledger.ledger, true],
+        [former, false],
+      ] as const) {
+        const { prune: removes } = target;
+        if (removes === undefined) continue;
+        await pruneAsApplied({
+          ledger: { read: target.read, fence: target.fence, prune: removes },
+          forgotten: async () => false,
+          withStorage: (work) => work(storage),
+          rules: () => rules,
+          keepForMs: 0,
+          now: new Date(now),
+          followed,
+        }).catch(() => {
+          // The ledger is down, or takes the prune only later.
+        });
+      }
     } finally {
       await storage.close();
     }
   };
 
-  // An intention whose commit the database lacks that nothing applies: the person holds no key it
-  // names, kept past a forgetting or not, and the database stands where it was written or further.
-  const inapplicable = (entry: ForgetLedgerEntry): boolean => {
+  // Whether the retention would forget the person now, as it decides: the model has no category.
+  const dueNow = async (personId: string): Promise<boolean> => {
+    const storage = await adapter.createStorage();
+    try {
+      const due = appRetentionDue({
+        categories: rules.categories,
+        batchSize: rules.batchSize,
+        checkpoints: storage.checkpointStore,
+      });
+      return await due(storage, personId, new Date(now), null);
+    } finally {
+      await storage.close();
+    }
+  };
+
+  // Whether a redaction of the target would make a value of the person unreadable: one its
+  // registration holds sealed under a key they hold, in force or kept.
+  const seals = (personId: string, target: { readonly id: string; readonly type: string }) => {
+    const event = db
+      .prepare(`SELECT "payload", "person", "type" FROM "bounda_events" WHERE "id" = ?`)
+      .get(target.id) as { payload: string; person: string | null; type: string } | undefined;
+    if (event === undefined || event.person !== personId || event.type !== target.type) {
+      return false;
+    }
+    const email: unknown = (JSON.parse(event.payload) as { email?: unknown }).email;
+    if (!isSealed(email)) return email !== undefined && email !== null;
+    return (
+      email.$personal.person === personId &&
+      db
+        .prepare(`SELECT 1 FROM "bounda_personal_keys" WHERE "person" = ? AND "fingerprint" = ?`)
+        .get(personId, email.$personal.key) !== undefined
+    );
+  };
+
+  // An intention whose commit the database lacks that nothing applies: the database stands where
+  // it was written or further, and the person holds no key in force it names, or, for a
+  // redaction's, nothing is left for it to seal, or, for a retention's, the retention would not
+  // forget them now, as the retention decides.
+  const inapplicable = async (entry: ForgetLedgerEntry): Promise<boolean> => {
     if (entry.committed !== false) return false;
     const { reached } = entry;
-    const now = snapshotOf(db);
-    const last = now.events.at(-1)?.position ?? 0;
+    const current = snapshotOf(db);
+    const last = current.events.at(-1)?.position ?? 0;
     if (
       reached !== undefined &&
-      (reached.generation > now.generation ||
-        (reached.generation === now.generation && reached.position > last))
+      (reached.generation > current.generation ||
+        (reached.generation === current.generation && reached.position > last))
     ) {
       return false;
     }
+    if (entry.redaction !== undefined) {
+      return !entry.redaction.events.some((target) => seals(entry.personId, target));
+    }
     const keys = (
       db
-        .prepare(`SELECT "fingerprint" FROM "bounda_personal_keys" WHERE "person" = ?`)
+        .prepare(
+          `SELECT "fingerprint" FROM "bounda_personal_keys" WHERE "person" = ? AND "retained_since" IS NULL`,
+        )
         .all(entry.personId) as { fingerprint: string }[]
     ).map(({ fingerprint }) => fingerprint);
-    return !keys.some((fingerprint) => entry.fingerprints?.includes(fingerprint) ?? true);
+    if (!keys.some((fingerprint) => entry.fingerprints?.includes(fingerprint) ?? true)) return true;
+    return entry.reason === "retention" && !(await dueNow(entry.personId));
   };
 
-  // A prune nothing runs beside: it changes nothing a look reads.
+  // A prune nothing runs beside: it changes nothing a look reads, and nothing a look that read the
+  // store the ledger left would.
   const pruneAlone = async (): Promise<void> => {
     const entries = await ledger.entries();
+    const left = await formerEntries();
     const proves = await ledgerProves(true, "all");
+    const leftProves = await entriesProve(left);
     const cursor = rowOf(db, FORGET_LEDGER_CURSOR);
     const held = new Set(snapshotOf(db).events.map(({ id }) => id));
     await prune();
-    const left = new Set((await ledger.entries()).map(({ eventId }) => eventId));
+    const kept = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     for (const entry of entries) {
-      if (left.has(entry.eventId) || held.has(entry.eventId) || inapplicable(entry)) continue;
+      if (kept.has(entry.eventId) || held.has(entry.eventId) || (await inapplicable(entry))) {
+        continue;
+      }
       if (cursor === 0 || Date.parse(entry.forgottenAt) >= cursor - FORGET_LEDGER_REREAD_MS) {
         violations.push(`the prune removed ${entry.eventId}, which the database has yet to apply`);
       }
     }
+    const keptThere = new Set((await formerEntries()).map(({ eventId }) => eventId));
+    for (const entry of left) {
+      if (keptThere.has(entry.eventId) || held.has(entry.eventId) || (await inapplicable(entry))) {
+        continue;
+      }
+      violations.push(
+        `the prune removed ${entry.eventId} from the store the ledger left, which the database lacks`,
+      );
+    }
     if ((await ledgerProves(true, "all")) !== proves) {
       violations.push(`the prune changed what the ledger proves from ${proves}`);
+    }
+    if ((await entriesProve(await formerEntries())) !== leftProves) {
+      violations.push(`the prune changed what the store the ledger left proves from ${leftProves}`);
     }
   };
 
@@ -742,10 +874,9 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
       case "write": {
         if (live === null || live === undefined) return;
         persons += 1;
-        await live.app.commands.registerCustomer?.({
-          customerId: `p${persons}`,
-          email: `p${persons}@example.com`,
-        });
+        await live.app.commands
+          .registerCustomer?.({ customerId: `p${persons}`, email: `p${persons}@example.com` })
+          .catch(refusedCommit);
         live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
         return;
       }
@@ -770,6 +901,65 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
           });
         }
         live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
+        return;
+      }
+      case "redactUncommitted":
+      case "redactRetried": {
+        if (live === null || live === undefined) return;
+        const holding = holdingNow();
+        const person = holding[action.person % Math.max(1, holding.length)];
+        if (person === undefined) return;
+        const registration = db
+          .prepare(
+            `SELECT "id", "aggregate_type", "aggregate_id", "type" FROM "bounda_events" WHERE "person" = ? AND "type" = 'CustomerRegistered' ORDER BY "position" LIMIT 1`,
+          )
+          .get(person) as
+          | { id: string; aggregate_type: string; aggregate_id: string; type: string }
+          | undefined;
+        if (registration === undefined) return;
+        const events = [
+          {
+            id: registration.id,
+            aggregateType: registration.aggregate_type,
+            aggregateId: registration.aggregate_id,
+            type: registration.type,
+            fields: ["email"],
+          },
+        ];
+        failNextCommit();
+        try {
+          await live.app.redact(person, { events } as never);
+        } catch {
+          // The commit failed, or the ledger is down; the intention may be there.
+        } finally {
+          commitAgain();
+        }
+        if (action.kind === "redactRetried") {
+          await live.app.redact(person, { events } as never).catch(() => {
+            // The ledger is down.
+          });
+        }
+        live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
+        return;
+      }
+      case "touch": {
+        if (live === null || live === undefined) return;
+        const holding = holdingNow();
+        const person = holding[action.person % Math.max(1, holding.length)];
+        if (person === undefined) return;
+        await live.app.commands
+          .registerCustomer?.({ customerId: person, email: `${person}@example.com` })
+          .catch(refusedCommit);
+        live.memory = { ...live.memory, witness: memoryOf(live.prefix).witness };
+        return;
+      }
+      case "retainUncommitted": {
+        failNextCommit();
+        try {
+          await pass(action.instance);
+        } finally {
+          commitAgain();
+        }
         return;
       }
     }
@@ -804,6 +994,13 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
     switch (action.kind) {
       case "tick":
         elapse(GENERATION_INTERVAL_MS);
+        return;
+      case "age":
+        elapse(RETENTION_MS);
+        return;
+      case "move":
+        await former.clear();
+        await former.append(await ledger.entries());
         return;
       case "backUp":
         // Nothing to copy before the first start creates the tables.
@@ -974,7 +1171,15 @@ const createWorld = (kind: "sql" | "kv", scheduler?: fc.Scheduler) => {
       marks: ledger.marks(),
     });
 
-  return { run, settle, close, observe, truth: () => goingBacks, entries: ledger.entries };
+  return {
+    run,
+    settle,
+    close,
+    observe,
+    truth: () => goingBacks,
+    entries: ledger.entries,
+    formerEntries,
+  };
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -1008,6 +1213,32 @@ const instanceAction: fc.Arbitrary<InstanceAction> = fc.oneof(
       person,
     })),
   },
+  {
+    weight: 1,
+    arbitrary: fc.record({ instance, person: fc.nat(8) }).map(({ instance: at, person }) => ({
+      kind: "redactUncommitted" as const,
+      instance: at,
+      person,
+    })),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({ instance, person: fc.nat(8) }).map(({ instance: at, person }) => ({
+      kind: "redactRetried" as const,
+      instance: at,
+      person,
+    })),
+  },
+  {
+    weight: 1,
+    arbitrary: fc
+      .record({ instance, person: fc.nat(8) })
+      .map(({ instance: at, person }) => ({ kind: "touch" as const, instance: at, person })),
+  },
+  {
+    weight: 1,
+    arbitrary: instance.map((at) => ({ kind: "retainUncommitted" as const, instance: at })),
+  },
   { weight: 4, arbitrary: instance.map((at) => ({ kind: "pass" as const, instance: at })) },
 );
 
@@ -1022,6 +1253,8 @@ const actionOf = (): fc.Arbitrary<Action> =>
   fc.oneof(
     { weight: 12, arbitrary: instanceAction },
     { weight: 3, arbitrary: fc.constant({ kind: "tick" as const }) },
+    { weight: 1, arbitrary: fc.constant({ kind: "age" as const }) },
+    { weight: 1, arbitrary: fc.constant({ kind: "move" as const }) },
     { weight: 2, arbitrary: fc.constant({ kind: "prune" as const }) },
     {
       weight: 4,
@@ -1067,16 +1300,19 @@ const runModel = async (
 // Each run draws new traces. A failure prints its seed and its shrunk trace: `BOUNDA_MODEL_SEED`
 // runs that seed again, `BOUNDA_MODEL_REPLAY='{"kind":"kv","actions":[…]}'` the trace alone, with
 // `BOUNDA_MODEL_LOG=1` for what the instances logged; pin it in `COUNTEREXAMPLES` once fixed.
-// `BOUNDA_MODEL_RUNS` and `BOUNDA_MODEL_LENGTH` search wider.
+// `BOUNDA_MODEL_RUNS` and `BOUNDA_MODEL_LENGTH` search wider: the traces of a run are a dozen
+// actions long at most, as fast-check sizes them, and as long as `BOUNDA_MODEL_LENGTH` says at most
+// when it is set.
 const RUNS = Number(process.env.BOUNDA_MODEL_RUNS ?? 60);
 const LENGTH = Number(process.env.BOUNDA_MODEL_LENGTH ?? 24);
+const SIZE = process.env.BOUNDA_MODEL_LENGTH === undefined ? {} : { size: "max" as const };
 
 describe("restore counting, against its model", () => {
   for (const kind of ["sql", "kv"] as const) {
     it(`counts every restore the observations prove, once, and nothing else (${kind} ledger)`, async () => {
       await fc.assert(
         fc.asyncProperty(
-          fc.array(actionOf(), { minLength: 1, maxLength: LENGTH }),
+          fc.array(actionOf(), { minLength: 1, maxLength: LENGTH, ...SIZE }),
           fc.scheduler(),
           async (actions, scheduler) => {
             const result = await runModel(kind, actions, scheduler);
@@ -1097,7 +1333,8 @@ describe("restore counting, against its model", () => {
   }
 });
 
-// What the property found, each fixed in the runtime and kept here as it was found.
+// What the property found, each fixed in the runtime, or in the model where it read the runtime
+// wrong, and kept here as it was found.
 const restore = (slot: number, round: readonly [Round, Round]): Action => ({
   kind: "restore",
   slot,
@@ -1108,7 +1345,12 @@ const by = <Kind extends InstanceAction["kind"]>(
   instance: Instance,
   person = 0,
 ): InstanceAction =>
-  (kind === "forget" || kind === "forgetUncommitted" || kind === "forgetRetried"
+  (kind === "forget" ||
+  kind === "forgetUncommitted" ||
+  kind === "forgetRetried" ||
+  kind === "redactUncommitted" ||
+  kind === "redactRetried" ||
+  kind === "touch"
     ? { kind, instance, person }
     : { kind, instance }) as InstanceAction;
 
@@ -1285,6 +1527,61 @@ const COUNTEREXAMPLES: readonly {
     counted: 1,
   },
   {
+    name: "counts no declaration for a committed redaction a copy lost that an earlier intention, applied again, left nothing to seal of",
+    kind: "sql",
+    actions: [
+      { kind: "together", first: { kind: "prune" }, second: by("write", 0) },
+      { kind: "backUp", slot: 1 },
+      by("redactRetried", 0),
+      restore(1, ["pass", "pass"]),
+      { kind: "declare", instance: 0 },
+      restore(0, ["pass", "pass"]),
+    ],
+    counted: 1,
+  },
+  {
+    name: "counts a declaration once the retention forgot anew after a pass handled the restore",
+    kind: "sql",
+    actions: [
+      by("write", 0),
+      { kind: "backUp", slot: 1 },
+      { kind: "together", first: by("redactRetried", 0), second: by("redactRetried", 0) },
+      { kind: "age" },
+      restore(1, ["pass", "pass"]),
+      { kind: "declare", instance: 0 },
+      by("pass", 0),
+    ],
+    counted: 2,
+  },
+  {
+    name: "proves nothing by a retention's forgetting a copy lost whose person the retention would not forget now",
+    kind: "sql",
+    actions: [
+      by("write", 0),
+      { kind: "age" },
+      { kind: "backUp", slot: 1 },
+      restore(1, ["pass", "pass"]),
+      restore(1, ["crash", "pass"]),
+      { kind: "declare", instance: 0 },
+      by("stop", 0),
+    ],
+    counted: 1,
+  },
+  {
+    name: "proves nothing on KV by a retention's forgetting a copy lost, with the ledger taking writes only later",
+    kind: "kv",
+    actions: [
+      by("write", 0),
+      { kind: "ledger", mode: "dropping" },
+      { kind: "age" },
+      { kind: "backUp", slot: 1 },
+      { kind: "together", first: by("pass", 0), second: by("forgetUncommitted", 0) },
+      restore(1, ["crash", "pass"]),
+      { kind: "together", first: by("pass", 0), second: { kind: "prune" } },
+    ],
+    counted: 0,
+  },
+  {
     name: "counts on KV a declaration after one the reads do not show yet past it, in the database's count too",
     kind: "kv",
     actions: [
@@ -1440,6 +1737,95 @@ describe("pruning intentions nothing applies with no app, against the model", ()
   });
 });
 
+describe("pruning, with the app's registry, what only the app decides, against the model", () => {
+  it("keeps a redaction's intention while it would seal a value, and removes it once redacted", async () => {
+    const world = createWorld("sql");
+    try {
+      for (const step of [
+        by("start", 0),
+        by("write", 0),
+        by("redactUncommitted", 0),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([
+        expect.objectContaining({ personId: "p1", committed: false, redaction: expect.anything() }),
+      ]);
+      for (const step of [
+        by("redactRetried", 0),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([0, 0]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("keeps a retention's intention while the retention would forget its person, and removes it once they are active again", async () => {
+    const world = createWorld("sql");
+    try {
+      for (const step of [
+        by("start", 0),
+        by("write", 0),
+        { kind: "age" } as const,
+        by("retainUncommitted", 0),
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([
+        expect.objectContaining({ personId: "p1", committed: false, reason: "retention" }),
+      ]);
+      for (const step of [by("touch", 0), by("pass", 0), { kind: "prune" } as const]) {
+        await world.run(step);
+      }
+      expect(await world.entries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([0, 0]);
+    } finally {
+      await world.close();
+    }
+  });
+
+  it("keeps in the store the ledger left what a copy restored lacks, until the database holds it", async () => {
+    const world = createWorld("sql");
+    try {
+      for (const step of [
+        by("start", 0),
+        by("write", 0),
+        { kind: "backUp", slot: 0 } as const,
+        by("forget", 0),
+        { kind: "move" } as const,
+        by("stop", 0),
+        restore(0, ["pass", "pass"]),
+        { kind: "tick" } as const,
+        { kind: "prune" } as const,
+      ]) {
+        await world.run(step);
+      }
+      expect((await world.formerEntries()).map(({ personId }) => personId)).toEqual(["p1"]);
+      for (const step of [by("start", 0), by("pass", 0), { kind: "prune" } as const]) {
+        await world.run(step);
+      }
+      expect(await world.formerEntries()).toEqual([]);
+      const { violations, counted, expected } = await world.settle();
+      expect(violations).toEqual([]);
+      expect([counted, expected]).toEqual([1, 1]);
+    } finally {
+      await world.close();
+    }
+  });
+});
+
 describe.runIf(process.env.BOUNDA_MODEL_REPLAY !== undefined)("a counterexample replayed", () => {
   it("counts as the model says", async () => {
     const { kind, actions } = JSON.parse(process.env.BOUNDA_MODEL_REPLAY ?? "{}") as {
@@ -1447,6 +1833,7 @@ describe.runIf(process.env.BOUNDA_MODEL_REPLAY !== undefined)("a counterexample 
       actions: Action[];
     };
     const result = await runModel(kind, actions);
+    expect(result.violations, result.trace.join("\n")).toEqual([]);
     expect(result.counted, result.trace.join("\n")).toBe(result.expected);
   });
 });

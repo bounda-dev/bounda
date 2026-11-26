@@ -2,6 +2,7 @@ import type { StorageTransaction } from "../../adapter/adapter.ts";
 import type { EventStore } from "../../adapter/storage/event-store.ts";
 import {
   DEFAULT_PERSONAL_CATEGORY,
+  type PersonalKeyStore,
   type SealedValue,
 } from "../../adapter/storage/personal-key-store.ts";
 import type { Clock } from "../../contracts/clock.ts";
@@ -165,38 +166,144 @@ export const checkReachable: CheckReachableFunction = async ({ eventStore, perso
   }
 };
 
-// The fields of `holder` the target names, and the marks make personal, that hold a value the
-// person's keys still open, sealed under `disposable` in place; what they held goes to `values`. A
-// field the marks do not name is left as it is, whatever a ledger's entry asks.
-const redactFields = async (
-  args: RedactWithinArgs,
+interface ReachedTarget {
+  readonly event: StoredEvent;
+  readonly marks: PersonalMarks;
+  // The payload, or, for a process's lifecycle event, the state it carries.
+  readonly holder: Readonly<Record<string, unknown>>;
+  readonly lifecycle: boolean;
+}
+
+interface ReachTargetArgs {
+  readonly eventStore: Pick<EventStore, "readOne">;
+  readonly aggregates: AggregatesRuntime;
+  readonly processes: Pick<ProcessesRuntime, "byName">;
+  readonly personId: string;
+  readonly target: RedactedEvent;
+  readonly strict: boolean;
+}
+
+// The target's event with what its marks make personal, `null` for one a redaction leaves: one the
+// store does not hold, of another type or person, which `strict` refuses, or that marks nothing.
+const reachTarget = async ({
+  eventStore,
+  aggregates,
+  processes,
+  personId,
+  target,
+  strict,
+}: ReachTargetArgs): Promise<ReachedTarget | null> => {
+  const event = await eventStore.readOne({
+    aggregateType: target.aggregateType,
+    aggregateId: target.aggregateId,
+    eventId: target.id,
+  });
+  const why = unreachable(event, target, personId);
+  if (why !== null && strict) throw refusal(target, why);
+  if (why !== null || event === null) return null;
+  const marks = redactionMarks({
+    aggregates,
+    processes,
+    aggregateType: event.aggregateType,
+    type: event.type,
+  });
+  const lifecycle = processOfStream(event.aggregateType) !== null;
+  const holder = lifecycle ? lifecycleStateOf(event.payload) : event.payload;
+  if (marks === null || !isRecord(holder)) return null;
+  return { event, marks, holder, lifecycle };
+};
+
+type SealableField<K> =
+  | { readonly field: string; readonly clear: unknown; readonly sealed: null }
+  | { readonly field: string; readonly sealed: SealedValue; readonly key: K };
+
+// The fields of the target, made personal by the marks, that hold a value a redaction makes
+// unreadable: in the clear, or sealed for the person under a key `keyOf` finds. A field the marks
+// do not name is left as it is, whatever a ledger's entry asks.
+const sealableFields = async <K>(
+  { marks, holder }: ReachedTarget,
   target: RedactedEvent,
-  marks: PersonalMarks,
-  holder: Readonly<Record<string, unknown>>,
-  disposable: PersonalKey,
-  values: RedactedValue[],
-): Promise<{ readonly holder: Record<string, unknown>; readonly fields: readonly string[] }> => {
-  const { personId, keys } = args;
-  const resealed: Record<string, unknown> = { ...holder };
-  const fields: string[] = [];
+  personId: string,
+  keyOf: (fingerprint: string) => Promise<K | null>,
+): Promise<readonly SealableField<K>[]> => {
+  const found: SealableField<K>[] = [];
   for (const field of target.fields) {
     if (!marks.fields.includes(field)) continue;
     const stored = holder[field];
     if (stored === undefined || stored === null) continue;
-    let redacted: RedactedValue;
-    if (isSealed(stored)) {
-      if (stored.$personal.person !== personId) continue;
-      const key = await keys.opened(personId, stored.$personal.key);
-      if (key === null) continue;
-      redacted = {
-        category: categoryOf(stored),
-        value: await unseal({ key, sealed: stored }),
-        sealed: stored,
-      };
-    } else {
-      redacted = { category: fieldCategory(marks, field), value: stored, sealed: null };
+    if (!isSealed(stored)) {
+      found.push({ field, clear: stored, sealed: null });
+      continue;
     }
-    resealed[field] = await seal({
+    if (stored.$personal.person !== personId) continue;
+    const key = await keyOf(stored.$personal.key);
+    if (key !== null) found.push({ field, sealed: stored, key });
+  }
+  return found;
+};
+
+export interface RedactionSealsArgs {
+  readonly eventStore: Pick<EventStore, "readOne">;
+  // The store as written: a key it finds is one the person's keys open.
+  readonly keys: Pick<PersonalKeyStore, "find">;
+  readonly aggregates: AggregatesRuntime;
+  readonly processes: Pick<ProcessesRuntime, "byName">;
+  readonly personId: string;
+  readonly targets: readonly RedactedEvent[];
+}
+
+export interface RedactionSealsFunction {
+  (args: RedactionSealsArgs): Promise<boolean>;
+}
+
+// Whether `redactWithin` applying the redaction again would make a field unreadable, without
+// opening a key: what decides whether a redaction's intention still applies.
+export const redactionSeals: RedactionSealsFunction = async ({
+  keys,
+  personId,
+  targets,
+  ...rest
+}) => {
+  for (const target of targets) {
+    const reached = await reachTarget({ ...rest, personId, target, strict: false });
+    if (reached === null) continue;
+    const fields = await sealableFields(reached, target, personId, (fingerprint) =>
+      keys.find(personId, fingerprint),
+    );
+    if (fields.length > 0) return true;
+  }
+  return false;
+};
+
+// Seals under `disposable`, in place of the holder, every field `sealableFields` finds; what they
+// held goes to `values`.
+const redactFields = async (
+  args: RedactWithinArgs,
+  target: RedactedEvent,
+  reached: ReachedTarget,
+  disposable: PersonalKey,
+  values: RedactedValue[],
+): Promise<{ readonly holder: Record<string, unknown>; readonly fields: readonly string[] }> => {
+  const { personId, keys } = args;
+  const resealed: Record<string, unknown> = { ...reached.holder };
+  const fields: string[] = [];
+  const sealable = await sealableFields(reached, target, personId, (fingerprint) =>
+    keys.opened(personId, fingerprint),
+  );
+  for (const found of sealable) {
+    const redacted: RedactedValue =
+      found.sealed === null
+        ? {
+            category: fieldCategory(reached.marks, found.field),
+            value: found.clear,
+            sealed: null,
+          }
+        : {
+            category: categoryOf(found.sealed),
+            value: await unseal({ key: found.key, sealed: found.sealed }),
+            sealed: found.sealed,
+          };
+    resealed[found.field] = await seal({
       key: disposable,
       person: personId,
       category: redacted.category,
@@ -204,7 +311,7 @@ const redactFields = async (
       redacted: true,
     });
     values.push(redacted);
-    fields.push(field);
+    fields.push(found.field);
   }
   return { holder: resealed, fields };
 };
@@ -215,25 +322,18 @@ const resealEvent = async (
   disposable: PersonalKey,
   values: RedactedValue[],
 ): Promise<Resealed | null> => {
-  const event = await args.transaction.eventStore.readOne({
-    aggregateType: target.aggregateType,
-    aggregateId: target.aggregateId,
-    eventId: target.id,
-  });
-  const why = unreachable(event, target, args.personId);
-  if (why !== null && args.strict) throw refusal(target, why);
-  if (why !== null || event === null) return null;
-  const marks = redactionMarks({
+  const reached = await reachTarget({
+    eventStore: args.transaction.eventStore,
     aggregates: args.aggregates,
     processes: args.processes,
-    aggregateType: event.aggregateType,
-    type: event.type,
+    personId: args.personId,
+    target,
+    strict: args.strict,
   });
-  const lifecycle = processOfStream(event.aggregateType) !== null;
-  const holder = lifecycle ? lifecycleStateOf(event.payload) : event.payload;
-  if (marks === null || !isRecord(holder)) return null;
-  const done = await redactFields(args, target, marks, holder, disposable, values);
+  if (reached === null) return null;
+  const done = await redactFields(args, target, reached, disposable, values);
   if (done.fields.length === 0) return null;
+  const { event, lifecycle } = reached;
   return {
     event,
     payload: lifecycle ? { ...(event.payload as object), state: done.holder } : done.holder,

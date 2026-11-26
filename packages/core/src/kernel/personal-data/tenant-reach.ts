@@ -6,7 +6,7 @@ import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ProjectConfig, ResolvedConfig } from "../../config/types.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { tenantIdOf } from "../tenant.ts";
-import { type ForgetLedgerSource, openForgetLedger } from "./forget-ledger.ts";
+import { type ForgetLedgerSource, openForgetLedger, storeOf } from "./forget-ledger.ts";
 import { keySourcesOf } from "./key-hierarchy.ts";
 import { openTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
 
@@ -42,7 +42,10 @@ export interface ReachTenantsArgs {
   readonly firstLedger?: OpenedForgetLedger;
   readonly tenants: readonly string[];
   // The tenants a forget ledger's store lists: the caller decides what one that cannot list means.
-  readonly listLedger: (ledger: ForgetLedger) => Promise<readonly string[]>;
+  readonly listLedger: (
+    ledger: ForgetLedger,
+    source: ForgetLedgerSource,
+  ) => Promise<readonly string[]>;
 }
 
 export interface ReachedTenants {
@@ -57,19 +60,6 @@ export interface ReachedTenants {
 export interface ReachTenantsFunction {
   (args: ReachTenantsArgs): Promise<ReachedTenants>;
 }
-
-// One database is one store, whichever tenant's configuration names it: an adapter of the same kind
-// with the same options, as `sharesStorage` reads it, or the same definition. Every memory adapter
-// is a store of its own.
-const storeOf = (source: ForgetLedgerSource | TenantKeySource): unknown => {
-  if (source.kind !== "bounda-adapter" || source.name === "memory") return source;
-  try {
-    return `${source.name}:${JSON.stringify(source.options)}`;
-  } catch {
-    // Options JSON cannot write, such as a client of your own, tell the adapter by itself.
-    return source;
-  }
-};
 
 const firstRead = (read: Set<unknown>, source: ForgetLedgerSource | TenantKeySource): boolean => {
   const store = storeOf(source);
@@ -103,9 +93,9 @@ export const reachTenants: ReachTenantsFunction = async ({
   const inLedgers = new Set<string>();
   const keyStores: ReachedKeyStore[] = [];
 
-  const readLedger = async (ledger: ForgetLedger): Promise<void> => {
+  const readLedger = async ({ ledger, source }: OpenedForgetLedger): Promise<void> => {
     try {
-      for (const each of await listLedger(ledger)) {
+      for (const each of await listLedger(ledger, source)) {
         inLedgers.add(each);
         reach(each);
       }
@@ -141,15 +131,16 @@ export const reachTenants: ReachTenantsFunction = async ({
     await readTenantKeys(resolved);
     const { forgetLedger } = resolved.runtime.personalData;
     if (forgetLedger === null || !firstRead(ledgersRead, forgetLedger.store)) return;
-    await readLedger(
-      await openForgetLedger({
+    await readLedger({
+      ledger: await openForgetLedger({
         source: forgetLedger.store,
         storage: resolved.storage,
         env,
         tenant,
         keepForMs: forgetLedger.keepForMs ?? undefined,
       }),
-    );
+      source: forgetLedger.store,
+    });
   };
 
   if (firstLedger === undefined) {
@@ -162,7 +153,7 @@ export const reachTenants: ReachTenantsFunction = async ({
       await firstLedger.ledger.close?.();
       throw error;
     }
-    await readLedger(firstLedger.ledger);
+    await readLedger(firstLedger);
   }
   for (const tenant of tenants) reach(tenantIdOf(tenant));
 

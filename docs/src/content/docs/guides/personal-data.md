@@ -3176,11 +3176,13 @@ says when it kept one. A forgotten tenant's ledger is pruned past `keepFor` alon
 It runs safely beside the tenant's running instances.
 
 An intention whose commit never happened, a forgetting that failed and was asked again, goes too
-once nothing can apply it, by the checks the reconciliation makes: the database stands where the
-intention was written or further, so it tells no restore, and the person holds no key it covers
-and names, kept past a forgetting or not, or, for a change of restrictions, the database holds a
-later change. Two kinds stay until an app of the tenant reads past them, since only the app can
-tell whether they still apply: a redaction's, and the retention's of keys the person still holds.
+once nothing can apply it, decided as the reconciliation decides it, with the project's registry
+and configuration: the database stands where the intention was written or further, so it tells no
+restore, and the person holds no key it covers and names, as the app's categories read them, or,
+for a forgetting for inactivity, the retention would not forget them now; for a change of
+restrictions, the database holds a later change; for a redaction, no field it names holds a value
+the person's keys still open, as the app's aggregates mark them. So the command loads the registry
+`bounda generate` writes, as every command that reads the app's modules does.
 
 `--tenant` names one tenant. `--all-tenants` prunes every tenant whose entries a ledger's store
 the configuration names holds, each through its own configuration: starting from `--tenant`, or
@@ -3211,8 +3213,20 @@ definition, so define it outside the function, or each tenant's resolution reads
 store is opened as an app opens it, which creates its table where it is missing. A
 tenant whose configuration or stores cannot be read is named on stderr, and the others are
 pruned. `pruneTenantForgetLedger` and `listForgetLedgerTenants` from `@bounda-dev/core`, with
-`projectConfig` and `tenants()` from `loadProject`, do the same in code (see the
+`projectConfig`, `registry` and `tenants()` from `loadProject`, do the same in code (see the
 [CLI](/reference/cli/#bounda-forget-ledger-prune)).
+
+Every store reached is pruned for every tenant it holds, a store the tenant's configuration no
+longer names included, as one it named before its ledger moved. No app of the tenant reads that
+store, and the database's cursor tells how far it read another, so there an entry goes only once
+the database holds what it records, or nothing can apply it, whatever the cursor read: what the
+store would prove of the database, read again, stays. Move a ledger with its entries, so the app
+reads them in the new store. An entry older than `keepFor` the database has not applied, kept in
+the store left behind, that the ledger the configuration names lacks, or holds from before what
+its reconciliation reads again, no app applies: the command says so on stderr and fails until
+it is applied again by hand, as
+[`bounda forget --from`](/reference/cli/#bounda-forgotten-and-bounda-forget---from) does for a
+forgetting, after which the next prune removes it.
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or
 while it was longer, keep theirs. Give them the one `keepFor` sets now, from the project's root,
