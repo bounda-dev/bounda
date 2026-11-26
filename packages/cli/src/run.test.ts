@@ -1268,6 +1268,93 @@ describe("bounda forget-ledger prune", () => {
     expect(none.stdout).toBe("the forget ledgers hold no tenant's entries\n");
   });
 
+  it("prunes a tenant's entries in a store its configuration no longer names, and fails while it keeps there what no app reads", async () => {
+    const tenant = tenantOf("moved");
+    const project = await projectOf(tenant);
+    const app = await createApp({ ...project, logger: silentLogger });
+    await app.commands.join({ memberId: "m-1", name: "Ana" });
+    await app.stop();
+    // Left in the store the tenant's configuration named before its ledger moved: a forgetting its
+    // database lacks, which the ledger it names now does not hold.
+    const left = await ledgerOf(tenantOf("holder"), tenant);
+    await left.append([ledgerEntry("ghost", "e-ghost")]);
+    // Forgotten, so the store is listed, and the holder's own entries go past keepFor.
+    const holder = await ledgerOf(tenantOf("holder"));
+    await holder.fence.set({ state: "forgotten", tenant: "holder", since: old });
+
+    const pruned = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
+    expect(pruned.code).toBe(EXIT_FAILURE);
+    expect(pruned.stdout).toContain(
+      `${tenant}: removed the entries before ${old} from a store its configuration no longer names; kept from then on those older than keepFor its database has not applied\n`,
+    );
+    expect(besidesLogs(pruned.stderr)).toContain(
+      `error: ${tenant}'s database has not applied entries a store its configuration no longer names keeps, which no app of the tenant reads: apply them again by hand, as bounda forget --from does for forgettings\n`,
+    );
+    expect(besidesLogs(pruned.stderr)).toMatch(
+      /1 tenant\(s\) hold entries no app reads: apply them again by hand\n$/,
+    );
+    expect(besidesLogs(pruned.stderr)).not.toContain("not pruned or listed");
+
+    // Copied into the ledger it names, where its reconciliation reads it, an app applies it there.
+    const named = await (await projectOf(tenant)).config.runtime?.personalData?.forgetLedger;
+    if (named?.store.kind !== "bounda-adapter")
+      throw new Error("the fixture's ledgers are adapters");
+    await (await named.store.createForgetLedger({ tenant })).append([
+      ledgerEntry("ghost", "e-ghost"),
+    ]);
+    const kept = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
+    expect(kept.stdout).toContain(
+      `${tenant}: removed the entries before ${old} from a store its configuration no longer names; kept from then on those older than keepFor its database has not applied: an app of the tenant applies them when it starts, from the ledger its configuration names\n`,
+    );
+    expect(besidesLogs(kept.stderr)).not.toContain(tenant);
+
+    // Held by the database, it goes from both.
+    await left.clear();
+    await left.append([{ ...ledgerEntry("ghost", "e-ghost"), committed: false }]);
+    const again = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
+    expect(again.stdout).toMatch(
+      new RegExp(
+        `^${tenant}: removed the entries before \\S+Z from a store its configuration no longer names$`,
+        "m",
+      ),
+    );
+    expect(await left.read({ limit: 10 })).toEqual([]);
+  });
+
+  it("prunes a tenant's ledger as the one its configuration names, though the configuration defines it anew", async () => {
+    const defined = ["--config", "prune-ledger-defined.config.ts"];
+    const tenant = tenantOf("defined");
+    const loaded = await loadProject<typeof fixtureRegistry>({
+      root: fixture,
+      configPath: "prune-ledger-defined.config.ts",
+      tenant,
+      logger: silentLogger,
+    });
+    const store = loaded.config.runtime?.personalData?.forgetLedger?.store;
+    if (store?.kind !== "bounda-forget-ledger") throw new Error("the fixture defines its ledger");
+    const ledger = await store.create({ env: {}, tenant });
+    await ledger.append([ledgerEntry("p-1", "e-1")]);
+    await ledger.fence.set({ state: "forgotten", tenant, since: old });
+    const pruned = await cli(
+      ["forget-ledger", "prune", "--all-tenants", ...defined, "--tenant", tenant],
+      fixture,
+    );
+    expect(besidesLogs(pruned.stderr)).toBe("");
+    expect(pruned.stdout).toMatch(new RegExp(`^${tenant}: removed the entries before \\S+Z$`, "m"));
+  });
+
+  it("prunes with the project's registry, and refuses without one", async () => {
+    const tenant = tenantOf("unregistered");
+    await (await ledgerOf(tenant)).append([ledgerEntry("ghost", "e-ghost")]);
+    const missing = await cli(
+      ["forget-ledger", "prune", ...config, "--tenant", tenant, "--registry", "missing.ts"],
+      fixture,
+    );
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(missing.stderr)).toMatch(/^error: Cannot find the registry/);
+    expect(await (await ledgerOf(tenant)).read({ limit: 10 })).toHaveLength(1);
+  });
+
   it("prunes the tenants of every ledger's store the configuration names, those its tenants export names included", async () => {
     const ledgers = ["--config", "prune-ledgers.config.ts"];
     const [a, b, unlistable] = [tenantOf("a"), tenantOf("b"), tenantOf("unlistable")];
@@ -1299,6 +1386,8 @@ describe("bounda forget-ledger prune", () => {
       expect(pruned.code).toBe(EXIT_FAILURE);
       expect(pruned.stdout).toMatch(new RegExp(`^${a}: removed the entries before \\S+Z$`, "m"));
       expect(pruned.stdout).toMatch(new RegExp(`^${b}: removed the entries before \\S+Z$`, "m"));
+      // Each in its own store alone, which holds no other's entries.
+      expect(pruned.stdout).not.toContain("no longer names");
       expect(besidesLogs(pruned.stderr)).toBe(
         `error: the stores ${unlistable}'s configuration names could not be listed: The forget ledger cannot list its tenants: give it tenants(), or prune each tenant by name\n1 tenant(s) not pruned or listed: run again once what failed is fixed\n`,
       );
@@ -1396,7 +1485,7 @@ describe("bounda forget-ledger prune", () => {
     for (const text of [
       "prune a SQL forget ledger past keepFor with no app of the tenant running, keeping what the tenant's database has not applied yet",
       "--all-tenants",
-      "every tenant whose entries a ledger's store the configuration names holds, each through its own configuration",
+      "every tenant whose entries a ledger's store the configuration names holds, each through its own configuration, in every store that holds them",
       "--tenant <name>",
       "--error-text",
     ]) {
@@ -2078,7 +2167,7 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       const left = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
       expect(left.code).toBe(EXIT_FAILURE);
       expect(besidesLogs(left.stderr)).toMatch(
-        /^error: rewrap-3-\d+ is still under a previous master key: Tenant rewrap-3-\d+'s key is wrapped under the master key \S+, which is neither the key wrapper's key nor one of its previous ones\n1 tenant key\(s\) left under a previous master key: keep the previous master keys until none is\n$/,
+        /^error: rewrap-3-\d+'s key could not be rewrapped: Tenant rewrap-3-\d+'s key is wrapped under the master key \S+, which is neither the key wrapper's key nor one of its previous ones\n1 tenant\(s\) not rewrapped or listed: keep the previous master keys until none is, and run again once what failed is fixed\n$/,
       );
       process.env.REWRAP_PREVIOUS = "REWRAP_A";
       await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
@@ -2100,6 +2189,88 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     }
   });
 
+  it("rewraps the keys in every tenant key store the configuration names, those its tenants export reaches included", async () => {
+    const key = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
+    process.env.REWRAP_A = key();
+    process.env.REWRAP_B = key();
+    const rewrap = ["--config", "rewrap-stores.config.ts"];
+    try {
+      const joinUnder = async (tenant: string) => {
+        const project = await loadProject<typeof fixtureRegistry>({
+          root: fixture,
+          configPath: "rewrap-stores.config.ts",
+          tenant,
+          logger: silentLogger,
+        });
+        const app = await createApp({ ...project, env: process.env, logger: silentLogger });
+        await app.commands.join({ memberId: "m-1", name: "Ana" });
+        await app.stop();
+      };
+      const [shared, own, broken] = [tenantOf("shared"), tenantOf("own"), tenantOf("broken")];
+      for (const tenant of [shared, own]) await joinUnder(tenant);
+      process.env.REWRAP_FROM = "REWRAP_B";
+      process.env.REWRAP_PREVIOUS = "REWRAP_A";
+      // A store of its own, which nothing lists: only the tenants export reaches it.
+      const unnamed = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(besidesLogs(unnamed.stderr)).toBe("");
+      expect(unnamed.stdout).toContain(`rewrapped ${shared}\n`);
+      expect(unnamed.stdout).not.toContain(own);
+
+      process.env.REWRAP_TENANTS = [own, broken].join(",");
+      const named = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(named.code).toBe(EXIT_FAILURE);
+      expect(named.stdout).toBe(`rewrapped ${own}\n`);
+      expect(besidesLogs(named.stderr)).toBe(
+        `error: the stores ${broken}'s configuration names could not be listed: Error\n1 tenant(s) not rewrapped or listed: keep the previous master keys until none is, and run again once what failed is fixed\n`,
+      );
+
+      process.env.REWRAP_TENANTS = own;
+      const again = await cli(["tenant-key", "rewrap-master", ...rewrap], fixture);
+      expect(besidesLogs(again.stderr)).toBe("");
+      expect(again.code).toBe(EXIT_OK);
+      expect(again.stdout).toBe(
+        "0 tenant key(s) rewrapped; none is left under a previous master key: remove them\n",
+      );
+      // The previous master key can go: the tenant with a store of its own opens under the one in
+      // force alone.
+      delete process.env.REWRAP_PREVIOUS;
+      const status = await cli(["status", ...rewrap, "--tenant", own, "--json"], fixture);
+      expect(JSON.parse(status.stdout).tenant).toMatchObject({ master: { pending: 0 } });
+
+      // Started from a tenant the option names: its store of its own is read without the export.
+      delete process.env.REWRAP_TENANTS;
+      process.env.REWRAP_PREVIOUS = "REWRAP_A";
+      process.env.REWRAP_FROM = "REWRAP_A";
+      const started = tenantOf("own-started");
+      await joinUnder(started);
+      process.env.REWRAP_FROM = "REWRAP_B";
+      const fromTenant = await cli(
+        ["tenant-key", "rewrap-master", ...rewrap, "--tenant", started],
+        fixture,
+      );
+      expect(besidesLogs(fromTenant.stderr)).toBe("");
+      expect(fromTenant.stdout).toContain(`rewrapped ${started}\n`);
+
+      // Started from a tenant the option names, whose configuration cannot load.
+      const unloadable = await cli(
+        ["tenant-key", "rewrap-master", ...rewrap, "--tenant", broken],
+        fixture,
+      );
+      expect(unloadable.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(unloadable.stderr)).toBe(`error: ${broken} has no configuration\n`);
+    } finally {
+      for (const name of [
+        "REWRAP_A",
+        "REWRAP_B",
+        "REWRAP_FROM",
+        "REWRAP_PREVIOUS",
+        "REWRAP_TENANTS",
+      ]) {
+        delete process.env[name];
+      }
+    }
+  });
+
   it("says why it rewraps nothing for a project without keys, or one it cannot load", async () => {
     const plain = await cli(["tenant-key", "rewrap-master"], fixture);
     expect(plain.code).toBe(EXIT_FAILURE);
@@ -2112,6 +2283,16 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
     );
     expect(missing.code).toBe(EXIT_FAILURE);
     expect(besidesLogs(missing.stderr)).toMatch(/^error: .*nowhere\.config\.ts/);
+    process.env.BOUNDA_ERROR_TEXT = "loud";
+    try {
+      const loud = await cli(["tenant-key", "rewrap-master"], fixture);
+      expect(loud.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(loud.stderr)).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
   });
 
   it("documents its options in its help", async () => {
@@ -2177,7 +2358,7 @@ describe("bounda forget-tenant and bounda tenant-key", () => {
       ],
       [
         "rewrap-master",
-        "rewrap under the master key in force the key of every tenant the tenant key store holds, their apps running or not: once none is left under a previous master key, remove those",
+        "rewrap under the master key in force the key of every tenant every tenant key store the configuration names holds, each through its own configuration, their apps running or not: once none is left under a previous master key, remove those",
       ],
     ] as const) {
       const help = await cli(["tenant-key", command, "--help"], fixture);

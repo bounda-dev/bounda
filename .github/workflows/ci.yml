@@ -13,6 +13,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Where Vitest keeps its results cache, results.json, for the root config: named by the SHA-1 of
+  # the config's empty name.
+  VITEST_RESULTS_DIRECTORY: node_modules/.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709
+
 jobs:
   check:
     name: Lint, typecheck, build
@@ -31,6 +36,7 @@ jobs:
   # end-to-end test) sets the floor, and more shards than this would only add setup.
   test:
     name: Test (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -54,6 +60,13 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm build
       - run: pnpm generate
+      # Without it, as before main's first run saves one, the shards split the suite by the
+      # mean duration, evenly by count.
+      - if: needs.changes.outputs.vitest_results == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: vitest-results
+          path: ${{ env.VITEST_RESULTS_DIRECTORY }}
       # Coverage is collected here and judged in test-report: a shard alone falls short of the
       # thresholds.
       - run: >-
@@ -68,6 +81,14 @@ jobs:
           path: .vitest/blob/*
           include-hidden-files: true
           if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vitest-results-${{ matrix.shard }}
+          path: ${{ env.VITEST_RESULTS_DIRECTORY }}/results.json
+          if-no-files-found: ignore
           overwrite: true
           retention-days: 1
 
@@ -106,6 +127,34 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
           retention-days: 14
+      # The next run's split: each shard's results hold the durations it measured and, for the
+      # rest, those it was handed, so a file's latest run wins.
+      - if: ${{ !cancelled() }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: vitest-results-*
+          path: vitest-results
+      - id: vitest-results
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          results=(vitest-results/*/results.json)
+          if [ ${#results[@]} -eq 0 ]; then exit 0; fi
+          mkdir -p "$VITEST_RESULTS_DIRECTORY"
+          jq -s 'reduce .[] as $results ({version: .[0].version, projects: {}};
+            reduce ($results.projects | to_entries[]) as $project (.;
+              reduce ("files", "typecheck") as $kind (.;
+                reduce (($project.value[$kind] // {}) | to_entries[]) as $file (.;
+                  if (.projects[$project.key][$kind][$file.key].lastRun // -1) < ($file.value.lastRun // 0)
+                  then .projects[$project.key][$kind][$file.key] = $file.value
+                  else . end))))' "${results[@]}" > "$VITEST_RESULTS_DIRECTORY/results.json"
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+      - if: ${{ !cancelled() && steps.vitest-results.outputs.merged == 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.VITEST_RESULTS_DIRECTORY }}/results.json
+          key: vitest-results-${{ github.run_id }}-${{ github.run_attempt }}
 
   docs:
     name: Docs build
@@ -121,6 +170,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      vitest_results: ${{ steps.vitest-results.outputs.cache-matched-key != '' }}
       packages: ${{ steps.list.outputs.packages }}
       mutated: ${{ steps.list.outputs.mutated }}
       planned: ${{ steps.list.outputs.planned }}
@@ -165,6 +215,23 @@ jobs:
             echo "planned=$(jq -c --argjson max "$max_shards" '[.[] | select($max[.] != null)]' <<<"$mutated")"
             echo "max_shards=$max_shards"
           } >> "$GITHUB_OUTPUT"
+      # The test shards split the suite by each file's duration in the last run (BalancedShards in
+      # vitest.sequencer.ts), each on its own: restored once here and handed to both, the
+      # durations are the same for each, so no file runs twice or never.
+      - id: vitest-results
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.VITEST_RESULTS_DIRECTORY }}/results.json
+          key: vitest-results-${{ github.sha }}
+          restore-keys: vitest-results-
+      - if: steps.vitest-results.outputs.cache-matched-key != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vitest-results
+          path: ${{ env.VITEST_RESULTS_DIRECTORY }}/results.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
 
   # People run Bounda on Windows too, so the packages a project uses there are tested there
   # whenever one changes. Each step runs even if an earlier test step failed, so one run shows

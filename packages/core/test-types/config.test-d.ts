@@ -8,6 +8,7 @@ import type {
   DeadLetterRetentionStanding,
   EeaCountry,
   ExportedTransfer,
+  InventoryRecipient,
   InventoryTransfer,
   IsAdequateFunction,
   IsDataLocationFunction,
@@ -15,6 +16,9 @@ import type {
   PersonalDataExport,
   PersonalDataExportHeader,
   PersonalDataForgottenReason,
+  RecipientKind,
+  RecipientStatus,
+  RecipientTransfer,
   RedactedEvent,
   RegimeOfFunction,
   StoreSafeguard,
@@ -732,6 +736,7 @@ describe("location", () => {
     expectTypeOf<InventoryTransfer>().toEqualTypeOf<{
       readonly safeguard: StoreSafeguard;
       readonly article: string;
+      readonly regime: LegalRegime;
     }>();
     expectTypeOf<ExportedTransfer>().toEqualTypeOf<{
       readonly store: "read-model" | "master-key" | "tenant-keys" | "forget-ledger";
@@ -739,7 +744,25 @@ describe("location", () => {
       readonly location: DataLocation;
       readonly safeguard: StoreSafeguard;
       readonly article: string;
+      readonly regime: LegalRegime;
     }>();
+    // A recipient's transfer says the same of the country it goes to, with any safeguard.
+    expectTypeOf<RecipientTransfer>().toEqualTypeOf<{
+      readonly safeguard: TransferSafeguard;
+      readonly article: string;
+      readonly regime: LegalRegime;
+    }>();
+    expectTypeOf<InventoryRecipient>().toEqualTypeOf<{
+      readonly port: string;
+      readonly name: string;
+      readonly kind: RecipientKind;
+      readonly country: CountryCode;
+      readonly transfer: RecipientTransfer | null;
+      readonly categories: readonly string[];
+    }>();
+    expectTypeOf<
+      NonNullable<RecipientStatus["declared"]>["transfer"]
+    >().toEqualTypeOf<RecipientTransfer | null>();
     expectTypeOf<PersonalDataExport["transfers"]>().toEqualTypeOf<readonly ExportedTransfer[]>();
     expectTypeOf<PersonalDataExportHeader["transfers"]>().toEqualTypeOf<
       readonly ExportedTransfer[]

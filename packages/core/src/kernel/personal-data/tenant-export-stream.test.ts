@@ -323,7 +323,7 @@ describe("streamTenantExport", () => {
       kind: "header",
       header: {
         format: "bounda.tenant-export",
-        version: 3,
+        version: 4,
         tenant: "acme",
         exportId: "x-1",
         exportedAt: "2026-01-01T00:00:00.000Z",
@@ -1028,7 +1028,7 @@ describe("streamTenantExport", () => {
     const kinds = parts.map(({ kind }) => kind);
     expect(kinds.lastIndexOf("person")).toBeLessThan(kinds.indexOf("recipient"));
     expect(kinds.lastIndexOf("recipient")).toBeLessThan(kinds.indexOf("event"));
-    const scc = { safeguard: "standard-contractual-clauses", article: "46(2)(c)" };
+    const scc = { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" };
     const of = (...names: string[]) =>
       names.map((name) => ({
         name,
@@ -1041,7 +1041,7 @@ describe("streamTenantExport", () => {
           name: "HubSpot",
           kind: "processor",
           country: "US",
-          transfer: { safeguard: "binding-corporate-rules", article: "47" },
+          transfer: { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
           status: "presumed",
           categories: of("default"),
           firstDisclosedAt: null,
@@ -1080,7 +1080,7 @@ describe("streamTenantExport", () => {
           name: "Postmark",
           kind: "processor",
           country: "CH",
-          transfer: { safeguard: "adequacy", article: "45" },
+          transfer: { safeguard: "adequacy", article: "45", regime: "CH" },
           status: "declared",
           categories: of("invoices"),
           firstDisclosedAt: null,
@@ -1115,6 +1115,7 @@ describe("streamTenantExport", () => {
         location: "ch",
         safeguard: "adequacy",
         article: "45",
+        regime: "CH",
       },
     ];
     expect((await stream({ transfers })).header.transfers).toEqual(transfers);
@@ -1278,7 +1279,7 @@ describe("recordedTenantExport", () => {
   ): StreamedTenantExport => ({
     header: {
       format: "bounda.tenant-export",
-      version: 3,
+      version: 4,
       tenant: "acme",
       exportId: "x-1",
       exportedAt: "2026-01-01T00:00:00.000Z",

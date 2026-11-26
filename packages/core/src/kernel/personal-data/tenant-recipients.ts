@@ -1,6 +1,7 @@
 import type { LegalBasis, PersonalCategoryName } from "../../modules/personal-data.ts";
-import { type PersonRecipient, TRANSFER_ARTICLES } from "../../modules/recipient.ts";
+import type { PersonRecipient } from "../../modules/recipient.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
+import { recipientTransferOf } from "../recipients/transfer.ts";
 import type { PersonalCategories, PersonalCategory } from "./categories.ts";
 import type { TenantExportRecipient } from "./tenant-export.ts";
 
@@ -93,10 +94,7 @@ export const tallyRecipients: TallyRecipientsFunction = ({ recipients, categorie
           name: declared.recipient,
           kind: declared.kind,
           country: declared.country,
-          transfer:
-            declared.safeguard === null
-              ? null
-              : { safeguard: declared.safeguard, article: TRANSFER_ARTICLES[declared.safeguard] },
+          transfer: recipientTransferOf(declared.country, declared.safeguard),
         };
         if (identities.has(identityOf(recipient))) continue;
         listed.push({

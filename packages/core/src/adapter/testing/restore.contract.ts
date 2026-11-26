@@ -27,6 +27,7 @@ import {
 import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
 import { UNWRAPPED_KEY_TTL_MS } from "../../kernel/personal-data/wrapped-keys.ts";
 import { GENERATION_INTERVAL_MS, RESTORE_GENERATION } from "../../kernel/shared/restores.ts";
+import { createMemoryForgetLedgers } from "../../memory/forget-ledger.ts";
 import { createMemoryTenantKeyStore } from "../../memory/tenant-key-store.ts";
 import type { PersonalDataForgottenEvent } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs, PayloadArgs } from "../../modules/payload.ts";
@@ -40,10 +41,11 @@ import {
 import { expectRedacted } from "../../testing/expect-redacted.ts";
 import { type Adapter, isAdapter } from "../adapter.ts";
 import type { AdapterDefinition } from "../adapter-definition.ts";
-import type {
-  ForgetLedger,
-  ForgetLedgerEntry,
-  ForgetLedgerMark,
+import {
+  byForgetLedgerOrder,
+  type ForgetLedger,
+  type ForgetLedgerEntry,
+  type ForgetLedgerMark,
 } from "../storage/forget-ledger.ts";
 import type { InspectedStore } from "../storage/inspection.ts";
 import type { Table } from "../storage/table.ts";
@@ -571,15 +573,23 @@ const faultyLedger = (source: ForgetLedgerSource) => {
   return { definition, state, opened };
 };
 
-// How long a read of `laggingLedger`'s marks may lag a write, as Workers KV's.
+// How long a read of `laggingLedger` may lag a write, as Workers KV's.
 const LAG_MS = 60_000;
 
 /**
- * A ledger whose marks a read shows only `LAG_MS` after they were raised, as Workers KV's: every
- * value kept with each time it was raised, its entries those of the store's own ledger.
+ * A ledger whose writes a read shows only `LAG_MS` after they landed, as Workers KV's: every value
+ * of a mark kept with each time it was raised, and an entry shown as its intention until its
+ * committed copy shows, the entries kept by the store's own ledger.
  */
 const laggingLedger = (source: ForgetLedgerSource, clock: Clock) => {
   const marks = new Map<string, { readonly mark: ForgetLedgerMark; readonly landed: number }[]>();
+  // When each entry's intention, and its committed copy, first landed; one not here, written
+  // outside the app, shows at once.
+  const landed = new Map<string, number>();
+  const landingOf = (eventId: string, committed: boolean): string =>
+    `${eventId}\u0000${committed ? "committed" : "intended"}`;
+  const shows = (key: string): boolean =>
+    (landed.get(key) ?? Number.NEGATIVE_INFINITY) <= clock.now().getTime() - LAG_MS;
   const byValue = (a: ForgetLedgerMark, b: ForgetLedgerMark): number =>
     b.value - a.value || Date.parse(a.raisedAt) - Date.parse(b.raisedAt);
   return defineForgetLedger(async (args) => {
@@ -593,9 +603,32 @@ const laggingLedger = (source: ForgetLedgerSource, clock: Clock) => {
       marks.set(key, kept);
       return kept;
     };
+    // What a read shows of an entry the store holds: its committed copy, else its intention, or
+    // nothing yet.
+    const shownAs = (entry: ForgetLedgerEntry): ForgetLedgerEntry | null => {
+      if (entry.committed !== false && shows(landingOf(entry.eventId, true))) return entry;
+      const intended = landingOf(entry.eventId, false);
+      if (!landed.has(intended) && entry.committed !== false) return null;
+      return shows(intended) ? { ...entry, committed: false } : null;
+    };
     return {
       ...inner,
       visibilityDelayMs: LAG_MS,
+      append: async (entries) => {
+        await inner.append(entries);
+        for (const { eventId, committed } of entries) {
+          const key = landingOf(eventId, committed !== false);
+          if (!landed.has(key)) landed.set(key, clock.now().getTime());
+        }
+      },
+      read: async ({ after, limit }) =>
+        (await inner.read({ limit: Number.MAX_SAFE_INTEGER }))
+          .flatMap((entry) => {
+            const shown = shownAs(entry);
+            return shown === null ? [] : [shown];
+          })
+          .filter((entry) => after === undefined || byForgetLedgerOrder(entry, after) > 0)
+          .slice(0, limit),
       readMark: async (name) =>
         raised(name)
           .filter(({ landed }) => landed <= clock.now().getTime() - LAG_MS)
@@ -938,10 +971,12 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         },
       };
       const later = new Date(START.getTime() + 2 * 24 * 60 * 60_000);
-      expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+      expect(await pruneTenantForgetLedger({ registry, config, env, now: later })).toEqual({
         tenant: DEFAULT_TENANT,
         before: forgottenAt,
         unapplied: true,
+        named: true,
+        stranded: false,
       });
       expect((await ledger.read({ limit: 10 })).map(({ personId }) => personId)).toContain("ana");
 
@@ -956,10 +991,12 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
       await expectReadable(restored, "bob");
 
       // Beside the running app, now that its database holds every entry.
-      expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+      expect(await pruneTenantForgetLedger({ registry, config, env, now: later })).toEqual({
         tenant: DEFAULT_TENANT,
         before: new Date(later.getTime() - 24 * 60 * 60_000).toISOString(),
         unapplied: false,
+        named: true,
+        stranded: false,
       });
       expect(await ledger.read({ limit: 10 })).toEqual([]);
     };
@@ -1044,10 +1081,12 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
           },
         };
         const later = new Date(START.getTime() + 2 * 24 * 60 * 60_000);
-        expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+        expect(await pruneTenantForgetLedger({ registry, config, env, now: later })).toEqual({
           tenant: DEFAULT_TENANT,
           before: minutes(-4),
           unapplied: true,
+          named: true,
+          stranded: false,
         });
         expect((await ledger.read({ limit: 1 }))[0]?.personId).toBe("ana");
 
@@ -1060,12 +1099,167 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
             reached: { generation: Number.MAX_SAFE_INTEGER, position: 0 },
           },
         ]);
-        expect(await pruneTenantForgetLedger({ config, env, now: later })).toEqual({
+        expect(await pruneTenantForgetLedger({ registry, config, env, now: later })).toEqual({
           tenant: DEFAULT_TENANT,
           before: minutes(-3),
           unapplied: true,
+          named: true,
+          stranded: false,
         });
         expect((await ledger.read({ limit: 1 }))[0]?.forgottenAt).toBe(minutes(-3));
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "prunes, with no app running, a redaction's and a retention's intention as the app's reconciliation decides them",
+      async (context) => {
+        const target = await create();
+        const ledger = await ledgerOf(target.forgetLedger);
+        stops.push(async () => ledger.close?.());
+        if (ledger.prune === undefined)
+          return context.skip("the ledger expires its entries on its own");
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        for (const person of ["ana", "bob"]) await write(first, person);
+        const registered = (await first.app.events.read({ limit: 1_000 })).find(
+          (event) => event.type === "CustomerRegistered" && event.aggregateId === "ana",
+        );
+        if (registered === undefined) throw new Error("ana registered");
+        const redacted = {
+          id: registered.id,
+          aggregateType: "customer",
+          aggregateId: "ana",
+          type: "CustomerRegistered",
+          fields: ["email"],
+        };
+        const minutes = (minute: number): string =>
+          new Date(START.getTime() + minute * 60_000).toISOString();
+        await ledger.append([
+          // bob's forgetting for inactivity whose commit never happened, which this app's
+          // retention, which forgets nobody, would never commit again.
+          {
+            personId: "bob",
+            categories: null,
+            eventId: "019a6b1e-0000-7000-8000-000000000054",
+            forgottenAt: minutes(-6),
+            reason: "retention",
+            committed: false,
+          },
+          // ana's redaction whose commit never happened, which would still seal her email.
+          {
+            personId: "ana",
+            categories: null,
+            eventId: "019a6b1e-0000-7000-8000-000000000055",
+            forgottenAt: minutes(-5),
+            reason: "requested",
+            committed: false,
+            redaction: { events: [redacted] },
+          },
+        ]);
+        const config: Config = {
+          storage: target.storage,
+          runtime: {
+            personalData: {
+              keyWrapper: BEFORE_ROTATION,
+              tenantKeys,
+              forgetLedger: { store: target.forgetLedger, keepFor: "1d" },
+            },
+          },
+        };
+        const later = new Date(START.getTime() + 2 * 24 * 60 * 60_000);
+        expect(await pruneTenantForgetLedger({ registry, config, env, now: later })).toEqual({
+          tenant: DEFAULT_TENANT,
+          before: minutes(-5),
+          unapplied: true,
+          named: true,
+          stranded: false,
+        });
+        expect((await ledger.read({ limit: 1 }))[0]?.personId).toBe("ana");
+
+        // Once redacted, ana's email reads as redacted: nothing is left for the intention to seal.
+        await first.app.redact("ana", { events: [redacted] } as never);
+        await first.app.runUntilIdle();
+        expect(await pruneTenantForgetLedger({ registry, config, env, now: later })).toMatchObject({
+          before: new Date(later.getTime() - 24 * 60 * 60_000).toISOString(),
+          unapplied: false,
+        });
+        expect(await ledger.read({ limit: 10 })).toEqual([]);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "prunes a store the configuration no longer names apart from its cursor, and tells what it keeps there that no app reads",
+      async (context) => {
+        const target = await create();
+        const ledger = await ledgerOf(target.forgetLedger);
+        stops.push(async () => ledger.close?.());
+        if (ledger.prune === undefined)
+          return context.skip("the ledger expires its entries on its own");
+        const clock = createFixedClock(START);
+        const first = await start(target.storage, target.forgetLedger, BEFORE_ROTATION, clock);
+        for (const person of ["ana", "bob"]) await write(first, person);
+        await first.app.forget("ana");
+        await first.app.runUntilIdle();
+        await target.backUp();
+        clock.advance(60_000);
+        await first.app.forget("bob");
+        await first.app.runUntilIdle();
+        await first.app.stop();
+        const storage = await target.restore();
+        const bob = (await ledger.read({ limit: 10 })).find(({ personId }) => personId === "bob");
+        if (bob === undefined) throw new Error("bob's forgetting is in the ledger");
+
+        // The ledger moved to another store, which holds none of the entries the copy lacks.
+        const ledgers = createMemoryForgetLedgers();
+        const moved = defineForgetLedger(({ tenant }) => ledgers.ledgerOf(tenant));
+        const config: Config = {
+          storage,
+          runtime: {
+            personalData: {
+              keyWrapper: BEFORE_ROTATION,
+              tenantKeys,
+              forgetLedger: { store: moved, keepFor: "1d" },
+            },
+          },
+        };
+        const later = new Date(START.getTime() + 2 * 24 * 60 * 60_000);
+        const pruned = () =>
+          pruneTenantForgetLedger({
+            registry,
+            config,
+            env,
+            store: target.forgetLedger,
+            now: later,
+          });
+        expect(await pruned()).toEqual({
+          tenant: DEFAULT_TENANT,
+          before: bob.forgottenAt,
+          unapplied: true,
+          named: false,
+          stranded: true,
+        });
+        expect(new Set((await ledger.read({ limit: 10 })).map(({ personId }) => personId))).toEqual(
+          new Set(["bob"]),
+        );
+
+        // Copied into the ledger it names, the next start applies it, and then it goes there too.
+        await ledgers.ledgerOf(DEFAULT_TENANT).append([bob]);
+        expect(await pruned()).toMatchObject({ unapplied: true, stranded: false });
+        clock.advance(60_000);
+        const restored = await start(storage, moved, BEFORE_ROTATION, clock);
+        await restored.app.runUntilIdle();
+        await expectForgottenIn(restored, "bob");
+        await restored.app.stop();
+        expect(await pruned()).toEqual({
+          tenant: DEFAULT_TENANT,
+          before: new Date(later.getTime() - 24 * 60 * 60_000).toISOString(),
+          unapplied: false,
+          named: false,
+          stranded: false,
+        });
+        expect(await ledger.read({ limit: 10 })).toEqual([]);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
@@ -1827,6 +2021,38 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
         clock.advance(LAG_MS);
         await next.app.runUntilIdle();
         expect((await next.app.status()).restoresFound).toBe(2);
+      },
+      RESTORE_CASE_TIMEOUT_MS,
+    );
+
+    it(
+      "counts, on a ledger whose reads lag, a restore that lost a forgetting its reads did not show yet, though the person was forgotten again before they did",
+      async () => {
+        const target = await create();
+        const clock = createFixedClock(START);
+        const ledger = laggingLedger(target.forgetLedger, clock);
+        const first = await start(target.storage, ledger, BEFORE_ROTATION, clock);
+        await write(first, "ana");
+        clock.advance(LAG_MS);
+        await first.app.runUntilIdle();
+        await target.backUp();
+        // Committed, and lost with the copy; the instance is gone before it looks again.
+        await first.app.forget("ana");
+
+        const storage = await target.restore();
+        clock.advance(1);
+        const restored = await start(storage, ledger, BEFORE_ROTATION, clock);
+        // Forgotten again before the reads show the first forgetting, which then reads as applied
+        // to nobody.
+        await restored.app.forget("ana");
+        await restored.app.stop();
+        clock.advance(LAG_MS);
+        const next = await start(storage, ledger, BEFORE_ROTATION, clock);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(1);
+        clock.advance(LAG_MS);
+        await next.app.runUntilIdle();
+        expect((await next.app.status()).restoresFound).toBe(1);
       },
       RESTORE_CASE_TIMEOUT_MS,
     );
