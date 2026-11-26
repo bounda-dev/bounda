@@ -149,6 +149,13 @@ export default defineConfig({
   Area under a `storage` outside it; never for `"global"`. The decisions for Canada and the United
   States cover some organisations alone, commercial ones under PIPEDA and those certified under the
   EU-US Data Privacy Framework: that the provider is one is yours to keep true.
+- Bounda checks that list against
+  [the Commission's own](https://commission.europa.eu/law/law-topic/data-protection/international-dimension-data-protection/adequacy-decisions_en)
+  every week, and a new decision, a review that changes what one covers or a revocation reaches
+  `ADEQUATE_COUNTRIES` in the next release. Until you upgrade, a newly covered country takes
+  another safeguard. A revoked one leaves the list in that release, and an app that declares
+  `adequacy` for it, on a store or a [recipient](/guides/personal-data/#recipients), no longer
+  type-checks nor starts until it declares another.
 - The record of processing names each transfer, the legal regime it goes to, its safeguard and its
   article, next to everything kept there, as article 30(1)(e) asks, and each person's
   [export](/guides/personal-data/#exporting-a-persons-data) lists it in `transfers`, as article

@@ -16,7 +16,24 @@ runs:
     - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
       with:
         node-version: 24
-        cache: pnpm
+        package-manager-cache: false
         registry-url: ${{ inputs.registry-url }}
+    - id: store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+    # Only main saves the store; pull requests and the merge queue read it. Saved from every ref, as
+    # setup-node's own cache does when the lockfile changes, copies of hundreds of megabytes filled
+    # the repository's cache, and GitHub's eviction took the mutation reports with them.
+    - id: restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-${{ runner.arch }}-
     - shell: bash
       run: pnpm install --frozen-lockfile
+    - if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
