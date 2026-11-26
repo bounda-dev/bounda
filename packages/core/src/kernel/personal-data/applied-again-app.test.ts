@@ -218,12 +218,21 @@ describe("applying a forget ledger's entries again by hand", () => {
     );
     expect(recorded?.reached).not.toEqual({ position: 99, generation: 9 });
 
+    // The disclosure is recorded there too, under the id what tells it apart gives it.
+    expect(
+      (await (await ledgerOf(ledger)).read({ limit: 10 })).filter(
+        ({ personId, disclosure }) => personId === "c-2" && disclosure !== undefined,
+      ),
+    ).toEqual([
+      expect.objectContaining({ disclosure: DISCLOSURE, forgottenAt: LOST.toISOString() }),
+    ]);
+
     // Run again, it applies nothing more.
-    expect((await app.applyAgain(entries)).map(({ outcome }) => outcome)).toEqual([
-      "held",
-      "held",
-      "held",
-      "held",
+    expect(await app.applyAgain(entries)).toEqual([
+      { personId: "c-1", eventId: "e-forget", kind: "forgetting", outcome: "held" },
+      { personId: "c-2", eventId: "e-restrict", kind: "restriction", outcome: "held" },
+      { personId: "c-3", eventId: "e-redact", kind: "redaction", outcome: "held" },
+      { personId: "c-2", eventId: "disclosure-c-2", kind: "disclosure", outcome: "held" },
     ]);
   });
 
@@ -255,7 +264,8 @@ describe("applying a forget ledger's entries again by hand", () => {
   });
 
   it("refuses what nothing applies to the database as it stands, as the reconciliation decides", async () => {
-    const { app, register } = await start(memory(), memory());
+    const ledger = memory();
+    const { app, register } = await start(memory(), ledger);
     await register("c-1", "c-2", "c-3");
     await app.restrict("c-2", { ground: "legal-claims" });
     await app.forget("c-3");
@@ -287,12 +297,22 @@ describe("applying a forget ledger's entries again by hand", () => {
       // c-3 was forgotten since.
       disclosing("c-3"),
     ];
-    expect((await app.applyAgain(entries)).map(({ outcome }) => outcome)).toEqual([
-      "inapplicable",
-      "inapplicable",
-      "inapplicable",
-      "inapplicable",
-    ]);
+    expect(await app.applyAgain(entries)).toEqual(
+      entries.map(({ personId, eventId }, index) => ({
+        personId,
+        eventId,
+        kind: (["forgetting", "restriction", "redaction", "disclosure"] as const)[index],
+        outcome: "inapplicable",
+      })),
+    );
+    // Nothing that does not apply is recorded in the ledger.
+    const recorded = (await (await ledgerOf(ledger)).read({ limit: 100 })).map(
+      ({ eventId, personId, disclosure }) => (disclosure === undefined ? eventId : personId),
+    );
+    expect(recorded).not.toContain("e-nobody");
+    expect(recorded).not.toContain("e-earlier");
+    expect(recorded).not.toContain("e-redact");
+    expect(recorded.filter((each) => each === "c-3")).toEqual([]);
   });
 
   it("rejects an entry without a person's id, or an actor as refuses, before applying any", async () => {

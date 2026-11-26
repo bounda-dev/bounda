@@ -84,12 +84,14 @@ const setUp = async ({
   pageSize = 2,
   visibilityDelayMs,
   logger = silentLogger,
+  forgotten,
 }: {
   readonly entries: readonly ForgetLedgerEntry[];
   readonly persons?: readonly string[];
   readonly pageSize?: number;
   readonly visibilityDelayMs?: number;
   readonly logger?: Logger;
+  readonly forgotten?: (personId: string) => void;
 }) => {
   const storage = await memory().createStorage();
   await keyed(storage, persons);
@@ -109,6 +111,7 @@ const setUp = async ({
     reconcileEveryMs: EVERY,
     keepForMs: null,
     pageSize,
+    ...(forgotten === undefined ? {} : { forgotten }),
   });
   return { storage, reconciliation, reads };
 };
@@ -1082,12 +1085,16 @@ describe("what the reconciliation commits again", () => {
       [true, 1],
       [false, 0],
     ] as const) {
+      const told: string[] = [];
       const { reconciliation } = await setUp({
         entries: [restriction("r-1", committed)],
         persons: ["c-1"],
+        forgotten: (personId) => told.push(personId),
       });
       expect(await reconciliation.reconcile(NOW)).toBe(1);
       expect(reconciliation.undone()).toBe(undone);
+      // A restriction forgets nobody.
+      expect(told).toEqual([]);
     }
   });
 

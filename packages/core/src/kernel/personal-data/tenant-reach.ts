@@ -46,9 +46,9 @@ export interface ReachTenantsArgs {
   // The first tenant's forget ledger, opened as the caller requires it; closed once read.
   readonly firstLedger?: OpenedForgetLedger;
   readonly tenants: readonly string[];
-  // Whether each reached tenant's ledger is opened to tell its store by what the ledger says;
-  // otherwise a definition is one store by object, opened once.
-  readonly physical: boolean;
+  // Whether each reached tenant's ledger is opened to tell its store by what the ledger says, as
+  // by default; otherwise a definition is one store by object, opened once.
+  readonly physical?: boolean;
   // The tenants a forget ledger's store lists, `store` as `physicalStoreOf` tells it: the caller
   // decides what one that cannot list means.
   readonly listLedger: (
@@ -93,7 +93,7 @@ export const reachTenants: ReachTenantsFunction = async ({
   firstConfig,
   firstLedger,
   tenants,
-  physical,
+  physical = true,
   listLedger,
 }) => {
   const reached = new Set<string>([first]);
@@ -104,8 +104,8 @@ export const reachTenants: ReachTenantsFunction = async ({
     queue.push(tenant);
   };
   const ledgersRead = new Set<unknown>();
-  // Of each source read that is one store whoever opens it, the store its ledgers keep their
-  // entries in.
+  // Of each source read, the store its ledgers keep their entries in: what another tenant naming
+  // it reads, when the source is one store whoever opens it.
   const adapterStores = new Map<unknown, unknown>();
   const ledgers = new Map<string, unknown>();
   const keysRead = new Set<unknown>();
@@ -117,7 +117,7 @@ export const reachTenants: ReachTenantsFunction = async ({
   const readLedger = async (tenant: string, { ledger, source }: OpenedForgetLedger) => {
     try {
       const store = physical ? physicalStoreOf(ledger, source) : storeOf(source);
-      if (source.kind === "bounda-adapter" || !physical) adapterStores.set(storeOf(source), store);
+      adapterStores.set(storeOf(source), store);
       ledgers.set(tenant, store);
       if (ledgersRead.has(store)) return;
       ledgersRead.add(store);

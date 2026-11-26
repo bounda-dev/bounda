@@ -578,6 +578,31 @@ describe("pruning a tenant's entries in a store its configuration no longer name
     expect(await pruned(of(ledgers), of(memory()))).toMatchObject({ named: false });
   });
 
+  it("closes the ledger the configuration names once it has opened it, and tells nothing stranded where nothing is older than keepFor", async () => {
+    const ledgers = memory();
+    let closed = 0;
+    const named = defineForgetLedger(async ({ tenant }) => ({
+      ...(await ledgers.createForgetLedger({ tenant })),
+      close: async () => {
+        closed += 1;
+      },
+    }));
+    const left = memory();
+    // Younger than keepFor, of a person nobody holds a key of.
+    await (await left.createForgetLedger({ tenant: DEFAULT_TENANT })).append([
+      entry("bob", "young-bob", new Date(LATER.getTime() - DAY)),
+    ]);
+    expect(
+      await pruneTenantForgetLedger({
+        registry,
+        config: configOf(memory(), named, "30d"),
+        store: left,
+        now: LATER,
+      }),
+    ).toMatchObject({ unapplied: false, named: false, stranded: false });
+    expect(closed).toBe(1);
+  });
+
   it("prunes as named the store the configuration names, given by another definition of the same database", async () => {
     const directory = await mkdtemp(join(tmpdir(), "bounda-prune-"));
     try {
@@ -725,10 +750,39 @@ describe("the entries of a tenant no app applies", () => {
     });
   });
 
+  it("reaches a store through the tenants the stores list, one that cannot list them read all the same, each opened with the tenant's keepFor", async () => {
+    const storage = memory();
+    const before = memory();
+    const app = await start(configOf(storage, before, "30d"));
+    await register(app, "bob");
+    await app.stop();
+    const lost = entry("bob", "lost-bob", START);
+    // Lists none of its tenants.
+    const opened: (number | undefined)[] = [];
+    const unlisted = defineForgetLedger(async ({ tenant, keepForMs }) => {
+      opened.push(keepForMs);
+      const { tenants: _, ...ledger } = await before.createForgetLedger({ tenant });
+      return ledger;
+    });
+    await (await before.createForgetLedger({ tenant: DEFAULT_TENANT })).append([lost]);
+    const now = memory();
+    // The ledger the default tenant names lists holder, whose configuration names the old store.
+    await (await now.createForgetLedger({ tenant: "holder" })).append([entry("x", "x", START)]);
+    const project: ProjectConfig = ({ tenant }) => {
+      if (tenant === "holder") return configOf(memory(), unlisted, "30d");
+      if (tenant !== DEFAULT_TENANT) throw new Error(`no configuration for ${tenant}`);
+      return configOf(storage, now, "30d");
+    };
+    expect(
+      await listStrandedForgetLedgerEntries({ config: project, registry, now: LATER }),
+    ).toEqual({ tenant: DEFAULT_TENANT, entries: [lost], unreached: [] });
+    expect(opened).toEqual([KEEP_FOR_MS, KEEP_FOR_MS]);
+  });
+
   it("refuses a configuration without a forget ledger, and a storage only its host opens", async () => {
     await expect(
       listStrandedForgetLedgerEntries({ config: { storage: memory() }, registry }),
-    ).rejects.toThrow(ConfigurationError);
+    ).rejects.toThrow("Listing stranded entries needs runtime.personalData.forgetLedger");
     const hosted = {
       kind: "bounda-adapter",
       name: "cloudflare",

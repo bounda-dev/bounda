@@ -106,7 +106,6 @@ export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
     firstConfig,
     firstLedger: { ledger, source },
     tenants: listed,
-    physical: true,
     listLedger: async (each, store, physical) => {
       // A ledger that expires its entries on its own has nothing to prune.
       if (each.tenants === undefined && each.prune !== undefined) {

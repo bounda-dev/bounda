@@ -241,11 +241,8 @@ export const strandedEntries: StrandedEntriesFunction = async ({
     const page = await ledger.read({ ...(after === undefined ? {} : { after }), limit: pageSize });
     for (const entry of page) {
       if (until !== undefined && entry.forgottenAt >= until) return found;
-      const forgetting =
-        entry.disclosure === undefined &&
-        entry.restriction === undefined &&
-        entry.redaction === undefined;
-      if (forgetting && entry.reason === "retention") continue;
+      // Only a forgetting is for inactivity.
+      if (entry.reason === "retention") continue;
       if (storage !== null) {
         if (await heldEntry(storage, entry)) continue;
         if (!(await appliesNow(storage, entry, rules(), now))) continue;

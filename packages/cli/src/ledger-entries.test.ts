@@ -1,6 +1,6 @@
 import type { ForgetLedgerEntry } from "@bounda-dev/core/adapter";
 import { describe, expect, it } from "vitest";
-import { formatApplied, parseLedgerEntries } from "./ledger-entries.ts";
+import { formatApplied, formatAppliedCount, parseLedgerEntries } from "./ledger-entries.ts";
 
 const AT = "2026-11-01T00:00:00.000Z";
 
@@ -67,16 +67,18 @@ describe("parseLedgerEntries", () => {
       { ...base, eventId: "e-6", disclosure, committed: false },
       { ...base, eventId: "e-7", disclosure: { ...disclosure, safeguard: "scc" } },
     ];
-    expect(parseLedgerEntries(`\n${lines(...entries)}\n\n`)).toEqual(entries);
+    expect(parseLedgerEntries(`\n${lines(...entries)}\n\n`)).toStrictEqual(entries);
   });
 
   it("leaves out what is not an entry's", () => {
-    expect(parseLedgerEntries(lines({ ...base, extra: "x" }))).toEqual([base]);
+    expect(parseLedgerEntries(lines({ ...base, extra: "x" }))).toStrictEqual([base]);
   });
 
   it("refuses a line that is not a forget ledger's entry, naming it and never what it holds", () => {
     for (const entry of [
       "a person",
+      null,
+      3,
       [],
       { ...base, personId: 3 },
       { ...base, personId: "" },
@@ -88,6 +90,7 @@ describe("parseLedgerEntries", () => {
       { ...base, categories: undefined },
       { ...base, categories: "contact" },
       { ...base, categories: [""] },
+      { ...base, categories: ["contact", ""] },
       { ...base, fingerprints: "k-1" },
       { ...base, fingerprints: [1] },
       { ...base, committed: true },
@@ -110,6 +113,17 @@ describe("parseLedgerEntries", () => {
       { ...base, restriction: { ...restricted, payload: { ...payload, ground: "none" } } },
       { ...base, restriction: { ...restricted, payload: { ...payload, categories: "a" } } },
       { ...base, restriction: { ...restricted, payload: { ...payload, restrictions: {} } } },
+      ...[
+        { ground: "none", categories: null, since: AT },
+        { ground: "legal-claims", categories: "a", since: AT },
+        { ground: "legal-claims", categories: null, since: "soon" },
+      ].map((bad) => ({
+        ...base,
+        restriction: {
+          ...restricted,
+          payload: { ...payload, restrictions: [payload.restrictions[0], bad] },
+        },
+      })),
       {
         ...base,
         restriction: {
@@ -127,6 +141,17 @@ describe("parseLedgerEntries", () => {
       },
       {
         ...base,
+        restriction: {
+          ...announced,
+          payload: { ...announced.payload, grounds: ["legal-claims", "none"] },
+        },
+      },
+      {
+        ...base,
+        restriction: { ...announced, payload: { ...announced.payload, categories: "a" } },
+      },
+      {
+        ...base,
         restriction: { ...announced, payload: { ...announced.payload, liftsAt: "soon" } },
       },
       { ...base, restriction: { ...lifted, payload: { ...lifted.payload, grounds: "a" } } },
@@ -134,6 +159,7 @@ describe("parseLedgerEntries", () => {
       { ...base, redaction: { events: [] } },
       { ...base, redaction: { events: [{ ...redaction.events[0], fields: "a" }] } },
       { ...base, redaction: { events: [{ ...redaction.events[0], id: "" }] } },
+      { ...base, redaction: { events: [redaction.events[0], { ...redaction.events[0], id: "" }] } },
       { ...base, disclosure: { ...disclosure, port: "" } },
       { ...base, disclosure: { ...disclosure, safeguard: 1 } },
       { ...base, disclosure: { ...disclosure, safeguard: undefined } },
@@ -156,5 +182,20 @@ describe("formatApplied", () => {
       "left to the reconciliation, which reads it in the ledger: the restriction e-1 of c-1",
       "refused, nothing of it applies to the database as it stands: the restriction e-1 of c-1",
     ]);
+  });
+});
+
+describe("formatAppliedCount", () => {
+  it("counts what applying a list again did, by outcome", () => {
+    const of = { personId: "c-1", eventId: "e-1", kind: "forgetting" } as const;
+    const outcomes = ["applied", "held", "held", "reconciled", "inapplicable"] as const;
+    expect(
+      formatAppliedCount(
+        outcomes.map((outcome) => ({ ...of, outcome })),
+        6,
+      ),
+    ).toBe(
+      "applied again 1 of 6 listed; 2 held already, 1 left to the reconciliation, 1 refused as applying nothing",
+    );
   });
 });

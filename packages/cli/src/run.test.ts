@@ -1381,6 +1381,68 @@ describe("bounda forget-ledger prune", () => {
     expect(await left.read({ limit: 10 })).toEqual([]);
   });
 
+  it("lists no stranded entry for an error text it does not know or a registry it cannot find, and names a tenant it cannot reach, which it prunes nowhere twice", async () => {
+    const tenant = tenantOf("moved");
+    const tenantArgs = [...config, "--tenant", tenant];
+    try {
+      process.env.BOUNDA_ERROR_TEXT = "loud";
+      const refused = await cli(["forget-ledger", "stranded", ...tenantArgs], fixture);
+      expect(refused.code).toBe(EXIT_FAILURE);
+      expect(refused.stderr).toBe(
+        'error: BOUNDA_ERROR_TEXT must be "omit" or "include", not "loud"\n',
+      );
+    } finally {
+      delete process.env.BOUNDA_ERROR_TEXT;
+    }
+    const missing = await cli(
+      ["forget-ledger", "stranded", ...tenantArgs, "--registry", "missing.ts"],
+      fixture,
+    );
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(missing.stderr)).toMatch(/^error: Cannot find the registry/);
+
+    // Held in the store the default tenant names and in the one the moved tenant names.
+    const unloadable = tenantOf("unloadable");
+    const held = [await ledgerOf("default", unloadable), await ledgerOf(tenant, unloadable)];
+    for (const ledger of held) await ledger.append([ledgerEntry("p-9", "e-unloadable")]);
+    await (await ledgerOf("default", tenant)).append([ledgerEntry("p-8", "e-moved")]);
+    try {
+      const listed = await cli(["forget-ledger", "stranded", ...tenantArgs], fixture);
+      expect(listed.code).toBe(EXIT_FAILURE);
+      expect(besidesLogs(listed.stderr)).toContain(
+        `error: the stores ${unloadable}'s configuration names could not be listed, and may hold more: Error\n`,
+      );
+      const pruned = await cli(["forget-ledger", "prune", "--all-tenants", ...config], fixture);
+      expect(
+        besidesLogs(pruned.stderr)
+          .split("\n")
+          .filter(
+            (row) =>
+              row === `error: ${unloadable} could not be pruned: ${unloadable} has no database`,
+          ),
+      ).toHaveLength(1);
+    } finally {
+      for (const ledger of held) await ledger.clear();
+      await (await ledgerOf("default", tenant)).clear();
+    }
+  });
+
+  it("describes the commands that list and apply stranded entries", async () => {
+    const help = await cli(["forget-ledger", "--help"], fixture);
+    // Wrapped as the terminal is wide.
+    const text = help.stdout.replace(/\s+/g, " ");
+    expect(text).toContain(
+      "print, one JSON line each, the entries of the tenant that no app applies, for bounda forget-ledger apply --from",
+    );
+    expect(text).toContain(
+      "apply again each entry listed, a forgetting, a change of restrictions, a redaction or a disclosure, as the reconciliation applies it",
+    );
+    const apply = await cli(["forget-ledger", "apply", "--help"], fixture);
+    expect(apply.stdout.replace(/\s+/g, " ")).toContain(
+      "--from <file> what bounda forget-ledger stranded printed",
+    );
+  });
+
   it("refuses a file that holds a line that is not a forget ledger's entry, applying nothing", async () => {
     const directory = await mkdtemp(join(tmpdir(), "bounda-stranded-"));
     try {

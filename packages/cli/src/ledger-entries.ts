@@ -20,9 +20,6 @@ export interface ParseLedgerEntriesFunction {
 const fieldOf = (value: unknown, name: string): unknown =>
   typeof value === "object" && value !== null ? Reflect.get(value, name) : undefined;
 
-const isObject = (value: unknown): value is object =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const isName = (value: unknown): value is string => typeof value === "string" && value !== "";
 
 const isNames = (value: unknown): value is readonly string[] =>
@@ -50,7 +47,7 @@ const isRestrictions = (value: unknown): boolean =>
 const isRestriction = (value: unknown, personId: string): value is LedgerRestriction => {
   const type = fieldOf(value, "type");
   const payload = fieldOf(value, "payload");
-  if (!isObject(payload) || fieldOf(payload, "personId") !== personId) return false;
+  if (fieldOf(payload, "personId") !== personId) return false;
   const categories = isCategories(fieldOf(payload, "categories"));
   if (type === PROCESSING_RESTRICTED_EVENT) {
     return (
@@ -116,7 +113,6 @@ const entryOf = (line: string, number: number): ForgetLedgerEntry => {
   const committed = fieldOf(parsed, "committed");
   const reached = fieldOf(parsed, "reached");
   if (
-    !isObject(parsed) ||
     !isName(personId) ||
     !isName(eventId) ||
     !isTime(forgottenAt) ||
@@ -191,3 +187,16 @@ const OUTCOMES: Readonly<Record<AppliedAgain["outcome"], string>> = {
  */
 export const formatApplied: FormatAppliedFunction = ({ kind, eventId, personId, outcome }) =>
   `${OUTCOMES[outcome]}: the ${kind} ${eventId} of ${personId}`;
+
+export interface FormatAppliedCountFunction {
+  (applied: readonly AppliedAgain[], listed: number): string;
+}
+
+/**
+ * What applying a list again did, counted by outcome.
+ */
+export const formatAppliedCount: FormatAppliedCountFunction = (applied, listed) => {
+  const count = (outcome: AppliedAgain["outcome"]): number =>
+    applied.filter((each) => each.outcome === outcome).length;
+  return `applied again ${count("applied")} of ${listed} listed; ${count("held")} held already, ${count("reconciled")} left to the reconciliation, ${count("inapplicable")} refused as applying nothing`;
+};

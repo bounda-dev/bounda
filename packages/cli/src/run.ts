@@ -56,7 +56,7 @@ import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
 import { formatInventory, formatInventoryMarkdown } from "./inventory-output.ts";
-import { formatApplied, parseLedgerEntries } from "./ledger-entries.ts";
+import { formatApplied, formatAppliedCount, parseLedgerEntries } from "./ledger-entries.ts";
 import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
 import {
@@ -1423,12 +1423,7 @@ const runApplyLedger = async (
       options.actor === undefined ? {} : { actor: options.actor },
     );
     for (const each of applied) line(stdout, formatApplied(each));
-    const count = (outcome: string): number =>
-      applied.filter((each) => each.outcome === outcome).length;
-    line(
-      stdout,
-      `applied again ${count("applied")} of ${entries.length} listed; ${count("held")} held already, ${count("reconciled")} left to the reconciliation, ${count("inapplicable")} refused as applying nothing`,
-    );
+    line(stdout, formatAppliedCount(applied, entries.length));
     return EXIT_OK;
   });
 };

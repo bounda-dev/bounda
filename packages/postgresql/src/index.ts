@@ -118,7 +118,7 @@ export const postgresql: PostgresqlFunction = (options) => {
   const versionsOn = (db: PostgresqlDatabase) =>
     readPostgresqlSchemaVersions({ db, prefix: tablePrefix, scopes: Object.values(scopes) });
 
-  return {
+  const adapter: PostgresqlAdapter = {
     kind: "bounda-adapter",
     name: "postgresql",
     options,
@@ -340,10 +340,11 @@ export const postgresql: PostgresqlFunction = (options) => {
             scopes: [scopes["forget-ledger"]],
           }),
         close: release,
-        adapter: { name: "postgresql", options },
+        adapter,
       });
     },
   };
+  return adapter;
 };
 
 export type { PostgresqlOptions } from "./options.ts";

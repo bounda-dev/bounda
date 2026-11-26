@@ -876,6 +876,10 @@ describe("entries no app of the tenant applies", () => {
     expect(await stranded({ ledger, named: null, readFrom: at(-1) })).toEqual(["e-1", "e-1b"]);
     expect(await stranded({ ledger, named: null, readFrom: at(4) })).toEqual(["e-1"]);
     expect(await stranded({ ledger, named: null, readFrom: at(4), until: at(5) })).toEqual([]);
+    // Read again from before what is asked: what the reconciliation reads is not stranded.
+    expect(await stranded({ ledger, named: null, readFrom: at(4), until: at(-1) })).toEqual([
+      "e-1",
+    ]);
     expect(await stranded({ ledger, named: null, readFrom: at(-1), limit: 1 })).toEqual(["e-1"]);
     // What the database holds is applied.
     expect(
@@ -886,6 +890,24 @@ describe("entries no app of the tenant applies", () => {
         storage: database({ keys: [key("f-1")], held: ["e-1"] }),
       }),
     ).toEqual(["e-1b"]);
+  });
+
+  it("lists no disclosure the database holds", async () => {
+    const disclosed = entry("1", 5, { disclosure: DISCLOSURE, committed: false });
+    const ledger = await ledgerWith([disclosed]);
+    expect(
+      await stranded({
+        ledger,
+        named: await ledgerWith([]),
+        readFrom: at(6),
+        storage: database({
+          disclosures: [{ person: "p-1", ...DISCLOSURE, firstAt: at(5), lastAt: at(5) }],
+        }),
+      }),
+    ).toEqual([]);
+    expect(await stranded({ ledger, named: await ledgerWith([]), readFrom: at(6) })).toEqual([
+      "e-1",
+    ]);
   });
 
   it("lists, in another store, those the ledger the configuration names lacks, or holds only before where its reconciliation reads", async () => {

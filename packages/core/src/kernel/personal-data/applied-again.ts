@@ -76,23 +76,25 @@ export const applyEntriesAgain: ApplyEntriesAgainFunction = async ({
   const { storage } = applying;
   const done: AppliedAgain[] = [];
   for (const entry of entries) {
-    const outcome = async (): Promise<AppliedAgain["outcome"]> => {
-      if (await heldEntry(storage, entry)) return "held";
-      if (ledger !== null) {
-        const readFrom = readFromOf(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR));
-        if (entry.forgottenAt >= readFrom && (await holds(ledger, entry))) return "reconciled";
+    const of = { personId: entry.personId, eventId: entry.eventId, kind: kindOf(entry) };
+    if (await heldEntry(storage, entry)) {
+      done.push({ ...of, outcome: "held" });
+      continue;
+    }
+    if (ledger !== null) {
+      const readFrom = readFromOf(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR));
+      if (entry.forgottenAt >= readFrom && (await holds(ledger, entry))) {
+        done.push({ ...of, outcome: "reconciled" });
+        continue;
       }
-      const applied = await applyEntryAgain({ ...applying, entry, record: true, actor });
-      if (applied === "forgetting") forgotten(entry.personId);
-      if (applied !== null) return "applied";
-      return (await heldEntry(storage, entry)) ? "held" : "inapplicable";
-    };
-    done.push({
-      personId: entry.personId,
-      eventId: entry.eventId,
-      kind: kindOf(entry),
-      outcome: await outcome(),
-    });
+    }
+    const applied = await applyEntryAgain({ ...applying, entry, record: true, actor });
+    if (applied === "forgetting") forgotten(entry.personId);
+    done.push(
+      applied === null
+        ? { ...of, outcome: "inapplicable" }
+        : { ...of, kind: applied, outcome: "applied" },
+    );
   }
   return done;
 };
