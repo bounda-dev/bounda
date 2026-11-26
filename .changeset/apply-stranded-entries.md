@@ -1,0 +1,9 @@
+---
+"@bounda-dev/core": minor
+"@bounda-dev/cli": minor
+"@bounda-dev/postgresql": minor
+---
+
+`bounda forget-ledger stranded` lists, one JSON line each, a tenant's forget ledger entries that no app applies: those its database lacks, that something would still apply, as the reconciliation decides it, and that no reconciliation reads, in a store its configuration no longer names or in the one it names from before where it reads. `bounda forget-ledger apply --from <file>` applies each again, a forgetting, a change of restrictions, a redaction or a disclosure, in the order given, as the reconciliation applies it, under its own id and time, recorded first in the ledger the configuration names, with `--actor` named in each event: held already, left to the reconciliation where it reads it, or refused when nothing of it applies, so the same list applies twice safely. In code, `listStrandedForgetLedgerEntries` and `app.applyAgain(entries, { actor })`, resolving to an `AppliedAgain` per entry. `bounda forget --from` refuses a line that records a change of restrictions, a redaction or a disclosure, which it would have forgotten the person by.
+
+`bounda forget-ledger prune --all-tenants` visits each store once, pruning there every tenant it holds: a `ForgetLedger` may give a `storeId`, the same for every ledger over one store, which the memory, SQLite and PostgreSQL ledgers give, so a configuration that defines its ledger anew for each tenant over one database is one store, not one per tenant; one definition that opens a store per tenant is read for each. `listForgetLedgerTenants` and `pruneTenantForgetLedger` tell stores apart, and `named`, by it. A prune's `stranded` now names only an entry something would still apply: a committed entry the database lacks that nothing applies stays for the restore it tells, without failing the command. An intention whose change of restrictions the database already holds is pruned too.

@@ -212,6 +212,15 @@ export interface ForgetLedger {
    */
   tenants?(): Promise<readonly string[]>;
   /**
+   * What tells the store the ledger keeps its entries in, compared with `===`: ledgers with one
+   * `storeId` share a store, whichever tenant each was opened for, and
+   * `bounda forget-ledger prune --all-tenants` visits each store once by it. An adapter's ledger
+   * gives one. A ledger of your own that a configuration defines anew for every tenant gives one too,
+   * such as the name of its database, never a secret; without it, each definition is a store of its
+   * own.
+   */
+  readonly storeId?: unknown;
+  /**
    * The values raised under `name` for this ledger's store, highest first, each with when it was
    * raised; none for a mark never raised. What the runtime keeps of the database outside it: a
    * copy restored while the app was stopped holds less than the ledger says the database reached.

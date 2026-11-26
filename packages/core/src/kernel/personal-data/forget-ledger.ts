@@ -109,18 +109,45 @@ export interface StoreOfFunction {
   (source: ForgetLedgerSource | TenantKeySource): unknown;
 }
 
-// One database is one store, whichever tenant's configuration names it: an adapter of the same kind
-// with the same options, as `sharesStorage` reads it, or the same definition. Every memory adapter
-// is a store of its own.
-export const storeOf: StoreOfFunction = (source) => {
-  if (source.kind !== "bounda-adapter" || source.name === "memory") return source;
+// One token per kind and options, so what tells a store apart never carries its options, which may
+// hold a password, onto a ledger anyone may log.
+const tokens = new Map<string, object>();
+
+export interface AdapterStoreOfFunction {
+  (adapter: { readonly name: string; readonly options: unknown }): object | undefined;
+}
+
+// The store of an adapter of that kind with those options, as `sharesStorage` reads it; none for a
+// memory adapter, a store of its own whatever its options, or for options JSON cannot write, such
+// as a client of your own, which only the adapter itself tells.
+export const adapterStoreOf: AdapterStoreOfFunction = ({ name, options }) => {
+  if (name === "memory") return undefined;
+  let key: string;
   try {
-    return `${source.name}:${JSON.stringify(source.options)}`;
+    key = `${name}:${JSON.stringify(options)}`;
   } catch {
-    // Options JSON cannot write, such as a client of your own, tell the adapter by itself.
-    return source;
+    return undefined;
   }
+  const known = tokens.get(key);
+  if (known !== undefined) return known;
+  const token = Object.freeze({});
+  tokens.set(key, token);
+  return token;
 };
+
+// One database is one store, whichever tenant's configuration names it: an adapter of the same kind
+// with the same options, or the same definition.
+export const storeOf: StoreOfFunction = (source) =>
+  (source.kind === "bounda-adapter" ? adapterStoreOf(source) : undefined) ?? source;
+
+export interface PhysicalStoreOfFunction {
+  (ledger: Pick<ForgetLedger, "storeId">, source: ForgetLedgerSource): unknown;
+}
+
+// The store a ledger opened from `source` keeps its entries in: what the ledger says, which tells
+// apart, or together, definitions made anew for every tenant, else what `storeOf` reads.
+export const physicalStoreOf: PhysicalStoreOfFunction = (ledger, source) =>
+  ledger.storeId ?? storeOf(source);
 
 /**
  * Refuses a ledger adapter that points at the storage's own database.
@@ -198,6 +225,7 @@ export const boundForgetLedger: BoundForgetLedgerFunction = ({ ledger, timeoutMs
     ...(ledger.visibilityDelayMs === undefined
       ? {}
       : { visibilityDelayMs: ledger.visibilityDelayMs }),
+    ...(ledger.storeId === undefined ? {} : { storeId: ledger.storeId }),
     ...(prune === undefined
       ? {}
       : { prune: (args) => bound("prune", () => prune.call(ledger, args)) }),

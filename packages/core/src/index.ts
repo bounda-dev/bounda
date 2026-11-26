@@ -71,6 +71,7 @@ export type {
 export { HOST_REJECTED, hostLogOf } from "./kernel/host-log.ts";
 export type { MigrateTablesArgs, MigrateTablesFunction } from "./kernel/migrate.ts";
 export { migrateTables } from "./kernel/migrate.ts";
+export type { AppliedAgain, ApplyAgainOptions } from "./kernel/personal-data/applied-again.ts";
 export type {
   WithEncryptedFilesArgs,
   WithEncryptedFilesFunction,
@@ -160,6 +161,7 @@ export {
   tenantsUnderPreviousMaster,
 } from "./kernel/personal-data/master-rotation.ts";
 export type {
+  AppliedEntryKind,
   ForgetAgainEntry,
   ForgetLedgerReconciliationStatus,
 } from "./kernel/personal-data/reconciliation.ts";
@@ -172,6 +174,12 @@ export type {
   RetentionStatus,
 } from "./kernel/personal-data/retention.ts";
 export type { KeyRotationStatus } from "./kernel/personal-data/rotation.ts";
+export type {
+  ListStrandedForgetLedgerEntriesArgs,
+  ListStrandedForgetLedgerEntriesFunction,
+  StrandedForgetLedgerEntries,
+} from "./kernel/personal-data/stranded.ts";
+export { listStrandedForgetLedgerEntries } from "./kernel/personal-data/stranded.ts";
 export type {
   TenantExportCategory,
   TenantExportCounts,

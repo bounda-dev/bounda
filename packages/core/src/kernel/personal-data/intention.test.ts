@@ -246,7 +246,7 @@ describe("the intentions of forgetting", () => {
                 recipient: "Mailchimp",
                 kind: "processor",
                 country: "US",
-                safeguard: null,
+                transfer: null,
                 category: "contact",
               },
             ],
@@ -338,7 +338,7 @@ describe("the intentions of forgetting", () => {
           recipient: "Mailchimp",
           kind: "processor",
           country: "US",
-          safeguard: null,
+          transfer: null,
           category: "contact",
         },
       ],
@@ -391,10 +391,11 @@ describe("the intentions of forgetting", () => {
       recipient: "Mailchimp",
       kind: "processor",
       country: "US",
-      safeguard: "standard-contractual-clauses",
+      // Kept as given, whatever the lists say now.
+      transfer: { safeguard: "adequacy" as const, article: "45", regime: "EEA" as const },
       category: "contact",
     };
-    const inEea = { ...disclosure, person: "c-2", country: "FR", safeguard: null };
+    const inEea = { ...disclosure, person: "c-2", country: "FR", transfer: null };
     const { intentions } = await setUp({
       ledger: recordingLedger(async (entries) => {
         appended.push(...entries);
@@ -409,15 +410,10 @@ describe("the intentions of forgetting", () => {
         eventId: disclosureEntryId(disclosure),
         forgottenAt: NOW.toISOString(),
         reason: "requested",
-        // What the transfer rests on as it is recorded, kept as it is.
         disclosure: {
           ...identity,
           country: "US",
-          transfer: {
-            safeguard: "standard-contractual-clauses",
-            article: "46(2)(c)",
-            regime: "US",
-          },
+          transfer: disclosure.transfer,
           category: "contact",
         },
         committed: false,

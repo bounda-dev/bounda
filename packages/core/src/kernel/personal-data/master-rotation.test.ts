@@ -353,6 +353,32 @@ describe("rewrapTenantKeys across every store a configuration that is a function
     });
   });
 
+  it("opens a forget ledger's definition once, as the first tenant that names it opens it", async () => {
+    const first = await masterOf("FIRST");
+    const shared = createMemoryTenantKeyStore();
+    await tenantsIn(shared, first, ["acme"]);
+    const ledger = memory();
+    const opened: string[] = [];
+    // Opens for the default tenant alone, as one whose environment lacks what it needs elsewhere.
+    const definition = defineForgetLedger(({ tenant }) => {
+      opened.push(tenant);
+      if (tenant !== DEFAULT_TENANT) throw new Error(`no ledger for ${tenant}`);
+      return ledger.createForgetLedger({ tenant });
+    });
+    const config: ProjectConfig = () =>
+      configWith({
+        keyWrapper: second,
+        tenantKeys: keysIn(shared),
+        forgetLedger: { store: definition },
+      });
+    expect(await rewrapTenantKeys({ config, env })).toEqual({
+      rewrapped: ["acme"],
+      left: [],
+      unreached: [],
+    });
+    expect(opened).toEqual([DEFAULT_TENANT]);
+  });
+
   it("reads a database that holds both a forget ledger and tenant keys as both", async () => {
     const both = join(mkdtempSync(join(tmpdir(), "bounda-master-rotation-")), "both.db");
     const bothAdapter = () => createNodeSqliteAdapter(both).adapter;

@@ -11,9 +11,9 @@ import type { Clock } from "../../contracts/clock.ts";
 import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
-import { discloseAgain } from "../recipients/again.ts";
+import { discloseAgain, disclosureHeld, forgottenSince } from "../recipients/again.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
-import { startedBy } from "../shared/causation.ts";
+import { actedBy, startedBy } from "../shared/causation.ts";
 import { RESTORE_COVERED, RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
@@ -32,7 +32,8 @@ import {
   type ForgetIntentions,
 } from "./intention.ts";
 import { type Redactions, redactIntended } from "./redact.ts";
-import { restrictAgain } from "./restriction.ts";
+import { redactionSeals } from "./redaction.ts";
+import { restrictAgain, restrictionDue } from "./restriction.ts";
 import { checkPersonId, transactRetrying } from "./transact.ts";
 
 /**
@@ -348,6 +349,147 @@ export const forgetAgain: ForgetAgainFunction = async ({
   }
 };
 
+export type AppliedEntryKind = "forgetting" | "restriction" | "redaction" | "disclosure";
+
+export interface ApplyEntryAgainArgs {
+  readonly storage: ForgetAgainArgs["storage"] & Pick<Storage, "recipients">;
+  readonly intentions: ForgetIntentions;
+  readonly ids: IdGenerator;
+  readonly clock: Clock;
+  readonly logger: Logger;
+  readonly concurrencyRetries: number;
+  readonly categories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
+  readonly batchSize: number;
+  readonly retentionDue: RetentionDueFunction;
+  // What a redaction is committed again with; without it, a redaction's entry applies nothing.
+  readonly redactions: Redactions | undefined;
+  readonly entry: ForgetLedgerEntry;
+  // Whether the entry is written to the ledger first, once it is found due, as it is when it comes
+  // from elsewhere than the ledger.
+  readonly record: boolean;
+  readonly actor?: string | undefined;
+}
+
+export interface ApplyEntryAgainFunction {
+  (args: ApplyEntryAgainArgs): Promise<AppliedEntryKind | null>;
+}
+
+// Applies the entry again when the database lacks it and it is due, as each kind decides it in the
+// transaction that applies it, logs what it applied, and resolves to its kind; `null` when it
+// applied nothing. What the reconciliation applies and what is applied again by hand.
+export const applyEntryAgain: ApplyEntryAgainFunction = async ({
+  storage,
+  intentions,
+  ids,
+  clock,
+  logger,
+  concurrencyRetries,
+  categories,
+  recipients,
+  batchSize,
+  retentionDue,
+  redactions,
+  entry,
+  record,
+  actor,
+}) => {
+  const { personId, eventId, forgottenAt } = entry;
+  if (entry.redaction !== undefined) {
+    if (redactions === undefined) return null;
+    const targets = entry.redaction.events;
+    if (
+      record &&
+      !(await redactionSeals({
+        eventStore: redactions.storage.eventStore,
+        keys: redactions.storage.personalKeys,
+        aggregates: redactions.aggregates,
+        processes: redactions.processes,
+        personId,
+        targets,
+      }))
+    ) {
+      return null;
+    }
+    const redacted = await redactIntended({
+      redactions,
+      personId,
+      targets,
+      identity: { id: eventId, timestamp: forgottenAt },
+      context: startedBy(ids.next(), actor),
+      strict: false,
+      record,
+    });
+    if (redacted === null || "held" in redacted) return null;
+    logger.info("redaction committed again from the forget ledger", { personId, eventId });
+    return "redaction";
+  }
+  if (entry.disclosure !== undefined) {
+    const { disclosure } = entry;
+    if (record) {
+      const [{ events }, held] = await Promise.all([
+        storage.eventStore.load({ aggregateType: BOUNDA_AGGREGATE, aggregateId: personId }),
+        storage.recipients.disclosures(personId),
+      ]);
+      if (forgottenSince(events, { forgottenAt, disclosure }) || disclosureHeld(held, disclosure)) {
+        return null;
+      }
+      await intentions.disclose([{ person: personId, ...disclosure }], forgottenAt);
+    }
+    if (!(await discloseAgain({ storage, concurrencyRetries, entry: { ...entry, disclosure } }))) {
+      return null;
+    }
+    logger.info("disclosure recorded again from the forget ledger", {
+      personId,
+      port: disclosure.port,
+      ...actedBy(actor),
+    });
+    return "disclosure";
+  }
+  if (entry.restriction !== undefined) {
+    const restricting = { ...entry, restriction: entry.restriction };
+    if (record) {
+      if (!(await restrictionDue(storage, restricting))) return null;
+      // Where the database stands now, not where it stood when the entry was first written.
+      const { reached: _, ...recorded } = entry;
+      await intentions.record(recorded);
+    }
+    const restricted = await restrictAgain({
+      storage,
+      ids,
+      clock,
+      concurrencyRetries,
+      entry: restricting,
+      actor,
+    });
+    if (restricted === null) return null;
+    logger.info("restriction committed again from the forget ledger", {
+      personId,
+      eventId,
+      eventType: restricted.type,
+      ...actedBy(actor),
+    });
+    return "restriction";
+  }
+  const again = await forgetAgain({
+    storage,
+    intentions,
+    ids,
+    clock,
+    concurrencyRetries,
+    categories,
+    recipients,
+    batchSize,
+    entry,
+    retentionDue,
+    record,
+    actor,
+  });
+  if (again === null) return null;
+  logForgotten(logger, again);
+  return "forgetting";
+};
+
 export interface ReconciliationFailed {
   readonly failed: unknown;
 }
@@ -433,7 +575,7 @@ export interface CreateForgetLedgerReconciliationArgs {
   /**
    * The store as written.
    */
-  readonly storage: ForgetAgainArgs["storage"] & Pick<Storage, "checkpointStore">;
+  readonly storage: ApplyEntryAgainArgs["storage"] & Pick<Storage, "checkpointStore">;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -513,74 +655,25 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   };
 
   // Commits the entry again when the database lacks it and it is due, as each kind says, and
-  // resolves whether it did.
+  // resolves whether it did; a disclosure recorded again counts no forgetting.
   const appliedAgain = async (entry: ForgetLedgerEntry): Promise<boolean> => {
-    if (entry.redaction !== undefined) {
-      if (redactions === undefined) return false;
-      const redacted = await redactIntended({
-        redactions,
-        personId: entry.personId,
-        targets: entry.redaction.events,
-        identity: { id: entry.eventId, timestamp: entry.forgottenAt },
-        context: startedBy(ids.next(), undefined),
-        strict: false,
-        record: false,
-      });
-      if (redacted === null || "held" in redacted) return false;
-      logger.info("redaction committed again from the forget ledger", {
-        personId: entry.personId,
-        eventId: entry.eventId,
-      });
-      return true;
-    }
-    if (entry.disclosure !== undefined) {
-      if (
-        await discloseAgain({
-          storage,
-          concurrencyRetries,
-          entry: { ...entry, disclosure: entry.disclosure },
-        })
-      ) {
-        logger.info("disclosure recorded again from the forget ledger", {
-          personId: entry.personId,
-          port: entry.disclosure.port,
-        });
-      }
-      return false;
-    }
-    if (entry.restriction !== undefined) {
-      const restricted = await restrictAgain({
-        storage,
-        ids,
-        clock,
-        concurrencyRetries,
-        entry: { ...entry, restriction: entry.restriction },
-      });
-      if (restricted === null) return false;
-      logger.info("restriction committed again from the forget ledger", {
-        personId: entry.personId,
-        eventId: entry.eventId,
-        eventType: restricted.type,
-      });
-      return true;
-    }
-    const again = await forgetAgain({
+    const kind = await applyEntryAgain({
       storage,
       intentions,
       ids,
       clock,
+      logger,
       concurrencyRetries,
       categories,
       recipients,
       batchSize,
-      entry,
       retentionDue,
+      redactions,
+      entry,
       record: false,
     });
-    if (again === null) return false;
-    logForgotten(logger, again);
-    onForgotten?.(entry.personId);
-    return true;
+    if (kind === "forgetting") onForgotten?.(entry.personId);
+    return kind !== null && kind !== "disclosure";
   };
 
   // A committed entry whose event the database lacks, though nothing is left to commit again. On a

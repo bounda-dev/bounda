@@ -1,3 +1,4 @@
+import { adapterStoreOf } from "../../kernel/personal-data/forget-ledger.ts";
 import { DEFAULT_TENANT } from "../../kernel/personal-data/tenant-keys.ts";
 import {
   byCodeUnit,
@@ -221,6 +222,11 @@ export interface CreateSqlForgetLedgerArgs {
    */
   readonly ensureSchema: () => Promise<void>;
   readonly close: () => Promise<void>;
+  /**
+   * The adapter the ledger belongs to: its kind and options tell the ledger's `storeId`, the one
+   * an adapter of that kind with those options gives.
+   */
+  readonly adapter?: { readonly name: string; readonly options: unknown };
 }
 
 export interface CreateSqlForgetLedgerFunction {
@@ -423,8 +429,10 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
   lockKey,
   ensureSchema,
   close,
+  adapter,
 }) => {
   const p = dialect.placeholder;
+  const storeId = adapter === undefined ? undefined : adapterStoreOf(adapter);
   const marks = forgetLedgerMarksTableFor(table);
   const fence = createSqlTenantFence({
     table: forgetLedgerFenceTableFor(table),
@@ -443,6 +451,7 @@ export const createSqlForgetLedger: CreateSqlForgetLedgerFunction = ({
     return ready;
   };
   return {
+    ...(storeId === undefined ? {} : { storeId }),
     append: async (entries) => {
       await prepared();
       const appended = onePerEvent(entries);

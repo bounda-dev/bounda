@@ -696,6 +696,8 @@ export interface RestrictAgainArgs {
   readonly clock: Clock;
   readonly concurrencyRetries: number;
   readonly entry: ForgetLedgerEntry & { readonly restriction: LedgerRestriction };
+  // Who commits it again, by hand; `undefined` for the reconciliation.
+  readonly actor?: string | undefined;
 }
 
 export interface RestrictAgainFunction {
@@ -731,11 +733,32 @@ export const restrictionSettled: RestrictionSettledFunction = (events, entry) =>
       RESTRICTION_TYPES.has(event.type) && (event.id === entry.eventId || isLater(event, entry)),
   );
 
+export interface RestrictionDueFunction {
+  (
+    stores: Pick<StorageTransaction, "eventStore" | "persons">,
+    entry: ForgetLedgerEntry & { readonly restriction: LedgerRestriction },
+  ): Promise<boolean>;
+}
+
+// Whether committing the entry again changes anything, read on the stores given: no change of the
+// person's restrictions from it on is held, and, for a restriction or a lift, the rows held are not
+// already what it left.
+export const restrictionDue: RestrictionDueFunction = async (stores, entry) => {
+  const { personId, restriction } = entry;
+  const { events } = await stores.eventStore.load({
+    aggregateType: BOUNDA_AGGREGATE,
+    aggregateId: personId,
+  });
+  if (restrictionSettled(events, entry)) return false;
+  if (restriction.type === PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT) return true;
+  const held = processingRestrictionsOf(await stores.persons.restrictions(personId));
+  return !sameAs(held, restriction.payload.restrictions);
+};
+
 /**
  * Commits again a change of restrictions the ledger holds and the store does not, with its id and
- * time, and resolves to the event it appended: due while no later change of the person's
- * restrictions is in the store, and, for a restriction or a lift, while the rows the store holds
- * are not already what it left. An intention whose commit never happened is committed the same
+ * time, and resolves to the event it appended: due as `restrictionDue` says, decided in the
+ * transaction that commits it. An intention whose commit never happened is committed the same
  * way, since it is what was asked. Resolves `null` for one not due.
  */
 export const restrictAgain: RestrictAgainFunction = ({
@@ -744,21 +767,14 @@ export const restrictAgain: RestrictAgainFunction = ({
   clock,
   concurrencyRetries,
   entry,
+  actor,
 }) => {
   const { personId, eventId, forgottenAt, restriction } = entry;
   return transactRetrying({
     storage,
     concurrencyRetries,
     work: async (transaction) => {
-      const { events } = await transaction.eventStore.load({
-        aggregateType: BOUNDA_AGGREGATE,
-        aggregateId: personId,
-      });
-      if (restrictionSettled(events, entry)) return null;
-      if (restriction.type !== PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT) {
-        const held = processingRestrictionsOf(await transaction.persons.restrictions(personId));
-        if (sameAs(held, restriction.payload.restrictions)) return null;
-      }
+      if (!(await restrictionDue(transaction, entry))) return null;
       const event = await appendSystemEvent({
         eventStore: transaction.eventStore,
         ids,
@@ -768,7 +784,7 @@ export const restrictAgain: RestrictAgainFunction = ({
         type: restriction.type,
         payload: await addressed(transaction, restriction),
         person: personId,
-        context: startedBy(ids.next(), undefined),
+        context: startedBy(ids.next(), actor),
         identity: { id: eventId, timestamp: forgottenAt },
       });
       if (restriction.type === PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT) {

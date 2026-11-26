@@ -1,5 +1,6 @@
 import type { Storage } from "../../adapter/adapter.ts";
 import type { ForgetLedgerEntry, LedgerDisclosure } from "../../adapter/storage/forget-ledger.ts";
+import type { Disclosure } from "../../adapter/storage/recipient-store.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
 import {
   BOUNDA_AGGREGATE,
@@ -36,6 +37,22 @@ export const forgottenSince: ForgottenSinceFunction = (events, { forgottenAt, di
     const { categories, expired } = event.payload as PersonalDataForgottenPayload;
     return ([...categories, ...expired] as readonly string[]).includes(disclosure.category);
   });
+
+export interface DisclosureHeldFunction {
+  (held: readonly Disclosure[], disclosure: LedgerDisclosure): boolean;
+}
+
+// Whether the store holds the disclosure, as it was recorded.
+export const disclosureHeld: DisclosureHeldFunction = (held, disclosure) =>
+  held.some(
+    (each) =>
+      each.port === disclosure.port &&
+      each.recipient === disclosure.recipient &&
+      each.kind === disclosure.kind &&
+      each.country === disclosure.country &&
+      each.safeguard === (disclosure.transfer?.safeguard ?? null) &&
+      each.category === disclosure.category,
+  );
 
 /**
  * Records again a disclosure the ledger holds and the store lost, at the time it was first
