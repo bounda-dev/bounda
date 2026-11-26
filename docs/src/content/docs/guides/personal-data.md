@@ -3078,7 +3078,10 @@ database stood when it was written, which it may drop once the entry is committe
 entries in the order of their time, then of their event's id, and `byForgetLedgerOrder` from
 `@bounda-dev/core/adapter` sorts them so; its optional `prune` removes the entries older than a
 time; its optional `tenants` lists, in code-unit order, every tenant whose entries its store holds,
-which [`bounda forget-ledger prune --all-tenants`](#keeping-the-ledger-short) reads; its `readMark` and `raiseMark` keep marks, numbers that only go up, each value with the time
+which [`bounda forget-ledger prune --all-tenants`](#keeping-the-ledger-short) reads; its optional
+`storeId`, compared with `===`, is the same for every ledger opened over one store, whichever tenant,
+such as the name of its database, never a secret, which tells the prune that definitions made anew
+for each tenant share that store; its `readMark` and `raiseMark` keep marks, numbers that only go up, each value with the time
 the runtime raised it at, which the runtime uses to tell a copy [restored while the app was
 stopped](#restores): one whose reads show every write keeps the highest value with the time it was
 first raised, and one whose reads lag, with `visibilityDelayMs`, keeps every value with each time
@@ -3267,11 +3270,14 @@ export default defineConfig(({ tenant }) => ({
 }));
 ```
 
-Two adapters of one kind with the same options are one store; a store of your own is one per
-definition, so define it outside the function, or each tenant's resolution reads it again. Each
-store is opened as an app opens it, which creates its table where it is missing. A
-tenant whose configuration or stores cannot be read is named on stderr, and the others are
-pruned. `pruneTenantForgetLedger` and `listForgetLedgerTenants` from `@bounda-dev/core`, with
+Two adapters of one kind with the same options are one store, and so are ledgers that give one
+`storeId`, as an adapter's ledger does, whichever definition opens them: a configuration that
+defines its ledger anew for each tenant, over an adapter or a database it names, is one store,
+visited once, every tenant it holds pruned in that visit. A ledger of your own without `storeId` is
+a store per definition, so define it outside the function, or give it a `storeId`, or each
+tenant's resolution makes another store of it, pruned for every tenant it holds. Each store is
+opened as an app opens it, which creates its table where it is missing. A tenant whose
+configuration or stores cannot be read is named on stderr, and the others are pruned. `pruneTenantForgetLedger` and `listForgetLedgerTenants` from `@bounda-dev/core`, with
 `projectConfig`, `registry` and `tenants()` from `loadProject`, do the same in code (see the
 [CLI](/reference/cli/#bounda-forget-ledger-prune)).
 
@@ -3281,11 +3287,37 @@ store, and the database's cursor tells how far it read another, so there an entr
 the database holds what it records, or nothing can apply it, whatever the cursor read: what the
 store would prove of the database, read again, stays. Move a ledger with its entries, so the app
 reads them in the new store. An entry older than `keepFor` the database has not applied, kept in
-the store left behind, that the ledger the configuration names lacks, or holds from before what
-its reconciliation reads again, no app applies: the command says so on stderr and fails until
-it is applied again by hand, as
-[`bounda forget --from`](/reference/cli/#bounda-forgotten-and-bounda-forget---from) does for a
-forgetting, after which the next prune removes it.
+the store left behind, that something would still apply, as the reconciliation decides it, and that
+the ledger the configuration names lacks, or holds from before what its reconciliation reads
+again, no app applies: the command says so on stderr and fails until it is applied again by hand,
+after which the next prune removes it. A committed entry the database lacks that nothing applies
+any more, a later change of the person's restrictions held, say, stays there for the restore it
+tells, and the command says nothing of it.
+
+To apply them again, list the tenant's entries no app applies, and apply the list:
+
+```bash
+bounda forget-ledger stranded --tenant acme > stranded.jsonl
+bounda forget-ledger apply --tenant acme --from stranded.jsonl --actor ops-ana
+```
+
+`bounda forget-ledger stranded` reads every store reached, as `--all-tenants` reaches them, for
+the tenant's entries, and prints, one line of JSON each, those its database lacks, that something
+would still apply, and that no reconciliation reads: in a store its configuration no longer names,
+unless the ledger it names holds them where its reconciliation reads; or in that ledger, from
+before there. A forgetting for inactivity is left to the retention, which decides it again on its
+own. `bounda forget-ledger apply` applies each line again, a forgetting, a change of restrictions,
+a redaction or a disclosure, in the order given, as the reconciliation would: decided by the same
+checks in the transaction that applies it, under its own id and time, recorded in the ledger the
+configuration names first. One command takes every kind because the order matters: a change of
+restrictions is applied only while no later change is held, and a store left behind holds them
+interleaved with the rest. An entry the database holds is `held`, so the list applies twice
+safely; one the ledger the configuration names holds where its reconciliation reads is left to
+it, since what the reconciliation applies of an entry the database lost tells it a restore; one
+nothing applies any more is refused. `--actor` names who does it in each event appended and its
+log line. A copy taken between an entry's time and when it was applied again lacks it, and its
+cursor read past it: after restoring one, apply the same list again. `listStrandedForgetLedgerEntries`
+and `app.applyAgain(entries, { actor })` do the same in code.
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or
 while it was longer, keep theirs. Give them the one `keepFor` sets now, from the project's root,

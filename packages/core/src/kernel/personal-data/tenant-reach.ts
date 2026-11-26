@@ -6,7 +6,12 @@ import { resolveConfig } from "../../config/schema.ts";
 import type { Config, ProjectConfig, ResolvedConfig } from "../../config/types.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { tenantIdOf } from "../tenant.ts";
-import { type ForgetLedgerSource, openForgetLedger, storeOf } from "./forget-ledger.ts";
+import {
+  type ForgetLedgerSource,
+  openForgetLedger,
+  physicalStoreOf,
+  storeOf,
+} from "./forget-ledger.ts";
 import { keySourcesOf } from "./key-hierarchy.ts";
 import { openTenantKeyStore, type TenantKeySource } from "./tenant-key-source.ts";
 
@@ -43,10 +48,15 @@ export interface ReachTenantsArgs {
   // The first tenant's forget ledger, opened as the caller requires it; closed once read.
   readonly firstLedger?: OpenedForgetLedger;
   readonly tenants: readonly string[];
-  // The tenants a forget ledger's store lists: the caller decides what one that cannot list means.
+  // Whether each reached tenant's ledger is opened to tell its store by what the ledger says, as
+  // by default; otherwise a definition is one store by object, opened once.
+  readonly physical?: boolean;
+  // The tenants a forget ledger's store lists, `store` as `physicalStoreOf` tells it: the caller
+  // decides what one that cannot list means.
   readonly listLedger: (
     ledger: ForgetLedger,
     source: ForgetLedgerSource,
+    store: unknown,
   ) => Promise<readonly string[]>;
 }
 
@@ -54,6 +64,9 @@ export interface ReachedTenants {
   // Every tenant reached whose configuration resolved, though its stores could not be read.
   readonly configs: ReadonlyMap<string, ResolvedConfig>;
   readonly inLedgers: ReadonlySet<string>;
+  // The store, as `physicalStoreOf` tells it, of the forget ledger each reached tenant's
+  // configuration names.
+  readonly ledgers: ReadonlyMap<string, unknown>;
   // In the order read: the first tenant's first.
   readonly keyStores: readonly ReachedKeyStore[];
   readonly unreached: readonly UnreachedTenant[];
@@ -80,9 +93,11 @@ const firstRead = (read: Set<unknown>, source: ForgetLedgerSource | TenantKeySou
   return true;
 };
 
-// Each store is read once, by identity, and a database that holds a forget ledger and tenant keys
-// is read as both, since each lists other tenants. What fails for the first tenant rejects; any
-// other tenant's failure is in `unreached`.
+// Each store is read once, by what it is: an adapter's, which is one store whichever tenant opens
+// it, before it is opened, and a definition's, which may open another for every tenant, once it is,
+// by what its ledger says. A database that holds a forget ledger and tenant keys is read as both,
+// since each lists other tenants. What fails for the first tenant rejects; any other tenant's
+// failure is in `unreached`.
 export const reachTenants: ReachTenantsFunction = async ({
   config,
   env,
@@ -90,6 +105,7 @@ export const reachTenants: ReachTenantsFunction = async ({
   firstConfig,
   firstLedger,
   tenants,
+  physical = true,
   listLedger,
 }) => {
   const reached = new Set<string>([first]);
@@ -100,14 +116,24 @@ export const reachTenants: ReachTenantsFunction = async ({
     queue.push(tenant);
   };
   const ledgersRead = new Set<unknown>();
+  // Of each source read, the store its ledgers keep their entries in: what another tenant naming
+  // it reads, when the source is one store whoever opens it.
+  const adapterStores = new Map<unknown, unknown>();
+  const ledgers = new Map<string, unknown>();
   const keysRead = new Set<unknown>();
   const configs = new Map<string, ResolvedConfig>();
   const inLedgers = new Set<string>();
   const keyStores: ReachedKeyStore[] = [];
 
-  const readLedger = async ({ ledger, source }: OpenedForgetLedger): Promise<void> => {
+  // Lists the ledger's store, unless read already, and closes the ledger.
+  const readLedger = async (tenant: string, { ledger, source }: OpenedForgetLedger) => {
     try {
-      for (const each of await listLedger(ledger, source)) {
+      const store = physical ? physicalStoreOf(ledger, source) : storeOf(source);
+      adapterStores.set(storeOf(source), store);
+      ledgers.set(tenant, store);
+      if (ledgersRead.has(store)) return;
+      ledgersRead.add(store);
+      for (const each of await listLedger(ledger, source, store)) {
         inLedgers.add(each);
         reach(each);
       }
@@ -136,35 +162,43 @@ export const reachTenants: ReachTenantsFunction = async ({
     }
     keyStores.push({ source, storage, namedBy, tenants: listed });
   };
-  const visit = async (tenant: string, tenantConfig: Config): Promise<void> => {
+  const visit = async (tenant: string, tenantConfig: Config, ledgerRead = false) => {
     const resolved = resolveConfig(tenantConfig);
     configs.set(tenant, resolved);
     await readTenantKeys(tenant, resolved);
     const { forgetLedger } = resolved.runtime.personalData;
-    if (forgetLedger === null || !firstRead(ledgersRead, forgetLedger.store)) return;
-    await readLedger({
+    if (forgetLedger === null || ledgerRead) return;
+    const { store: source } = forgetLedger;
+    const known =
+      source.kind === "bounda-adapter" || !physical
+        ? adapterStores.get(storeOf(source))
+        : undefined;
+    if (known !== undefined) {
+      ledgers.set(tenant, known);
+      return;
+    }
+    await readLedger(tenant, {
       ledger: await openForgetLedger({
-        source: forgetLedger.store,
+        source,
         storage: resolved.storage,
         env,
         tenant,
         keepForMs: forgetLedger.keepForMs ?? undefined,
       }),
-      source: forgetLedger.store,
+      source,
     });
   };
 
   if (firstLedger === undefined) {
     await visit(first, firstConfig);
   } else {
-    ledgersRead.add(storeOf(firstLedger.source));
     try {
-      await visit(first, firstConfig);
+      await visit(first, firstConfig, true);
     } catch (error) {
       await firstLedger.ledger.close?.();
       throw error;
     }
-    await readLedger(firstLedger);
+    await readLedger(first, firstLedger);
   }
   for (const tenant of tenants) reach(tenantIdOf(tenant));
 
@@ -177,5 +211,5 @@ export const reachTenants: ReachTenantsFunction = async ({
       unreached.push({ tenant, error });
     }
   }
-  return { configs, inLedgers, keyStores, unreached };
+  return { configs, inLedgers, ledgers, keyStores, unreached };
 };

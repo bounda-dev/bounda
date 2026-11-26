@@ -111,6 +111,14 @@ const entryOf = (line: string, number: number): ForgetAgainEntry => {
   } catch {
     throw new Error(`line ${number} is neither a person's id nor JSON`);
   }
+  // Forgotten as a forgetting, a change of restrictions would forget the person.
+  if (
+    ["restriction", "redaction", "disclosure"].some((name) => fieldOf(parsed, name) !== undefined)
+  ) {
+    throw new Error(
+      `line ${number} records a change of restrictions, a redaction or a disclosure, not a forgetting: apply it with bounda forget-ledger apply`,
+    );
+  }
   const personId = fieldOf(parsed, "personId");
   const eventId = fieldOf(parsed, "eventId");
   const forgottenAt = fieldOf(parsed, "forgottenAt");

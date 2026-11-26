@@ -351,6 +351,8 @@ export const rewrapTenantKeys: RewrapTenantKeysFunction = async ({
     first,
     firstConfig,
     tenants,
+    // Only the tenants it lists matter here, as each definition's first ledger lists them.
+    physical: false,
     // A ledger that cannot list its tenants only adds none to reach.
     listLedger: async (ledger) => (await ledger.tenants?.()) ?? [],
   });

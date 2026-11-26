@@ -116,6 +116,28 @@ describe("bounda binary end to end", () => {
     });
   }, 60_000);
 
+  it("lists no stranded entry of a Cloudflare project, whose storage only its object opens", async () => {
+    await expect(
+      run(
+        process.execPath,
+        [
+          join(repoRoot, "packages/cli/src/cli.ts"),
+          "forget-ledger",
+          "stranded",
+          "--config",
+          "bounda.keeper.config.ts",
+        ],
+        {
+          cwd: join(repoRoot, "packages/cli/src/fixtures/cloudflare-project"),
+          env: { ...process.env, NODE_NO_WARNINGS: "1" },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining("The storage is opened only by its host"),
+    });
+  }, 60_000);
+
   it("says where a Cloudflare project's tenant keys are rewrapped, since a terminal reaches no keeper or KV namespace", async () => {
     const rewrap = (config: string) =>
       run(

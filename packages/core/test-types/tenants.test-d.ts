@@ -1,6 +1,10 @@
 import {
+  type AppliedAgain,
+  type AppliedEntryKind,
+  type ApplyAgainOptions,
   type AppProject,
   type AppStatus,
+  type BoundaApp,
   type BoundaClient,
   type BoundaError,
   type CreateAppArgs,
@@ -18,6 +22,7 @@ import {
   type ListTenantsUnderPreviousMasterArgs,
   type Logger,
   listForgetLedgerTenants,
+  listStrandedForgetLedgerEntries,
   listTenantsUnderPreviousMaster,
   migrateTables,
   type NamedTenantKeys,
@@ -35,6 +40,7 @@ import {
   removeStaleTenantKeys,
   rewrapTenantKeys,
   type StaleTenantKey,
+  type StrandedForgetLedgerEntries,
   TENANT_CHECK_INTERVAL_MS,
   TENANT_FORGOTTEN_EVENT,
   TenantForgottenError,
@@ -76,6 +82,7 @@ import {
   type DataLocationOptions,
   type FenceErrorFunction,
   type ForgetLedger,
+  type ForgetLedgerEntry,
   fenceError,
   isFenceError,
   nextFence,
@@ -473,6 +480,48 @@ describe("pruning a forget ledger with no app running", () => {
     expectTypeOf<ForgetLedger["tenants"]>().toEqualTypeOf<
       (() => Promise<readonly string[]>) | undefined
     >();
+    // Any value a ledger tells its store by, compared with ===.
+    expectTypeOf<ForgetLedger["storeId"]>().toEqualTypeOf<unknown>();
+  });
+
+  it("lists a tenant's entries no app applies, and the app applies them again", () => {
+    expectTypeOf(listStrandedForgetLedgerEntries).parameter(0).toEqualTypeOf<{
+      readonly config: ProjectConfig;
+      readonly registry: Registry;
+      readonly env?: AppEnv;
+      readonly tenant?: string;
+      readonly tenants?: readonly string[];
+      readonly now?: Date;
+    }>();
+    expectTypeOf(listStrandedForgetLedgerEntries).returns.toEqualTypeOf<
+      Promise<StrandedForgetLedgerEntries>
+    >();
+    expectTypeOf<StrandedForgetLedgerEntries>().toEqualTypeOf<{
+      readonly tenant: string;
+      readonly entries: readonly ForgetLedgerEntry[];
+      readonly unreached: readonly UnreachedTenant[];
+    }>();
+    expectTypeOf<BoundaApp["applyAgain"]>()
+      .parameter(0)
+      .toEqualTypeOf<readonly ForgetLedgerEntry[]>();
+    expectTypeOf<BoundaApp["applyAgain"]>()
+      .parameter(1)
+      .toEqualTypeOf<ApplyAgainOptions | undefined>();
+    expectTypeOf<BoundaApp["applyAgain"]>().returns.toEqualTypeOf<
+      Promise<readonly AppliedAgain[]>
+    >();
+    expectTypeOf<ApplyAgainOptions>().toEqualTypeOf<{ readonly actor?: string }>();
+    expectTypeOf<AppliedAgain>().toEqualTypeOf<{
+      readonly personId: string;
+      readonly eventId: string;
+      readonly kind: AppliedEntryKind;
+      readonly outcome: "applied" | "held" | "reconciled" | "inapplicable";
+    }>();
+    expectTypeOf<AppliedEntryKind>().toEqualTypeOf<
+      "forgetting" | "restriction" | "redaction" | "disclosure"
+    >();
+    // What a client cannot do: only the app applies entries again.
+    expectTypeOf<BoundaClient>().not.toHaveProperty("applyAgain");
   });
 });
 

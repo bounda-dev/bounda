@@ -1,4 +1,7 @@
 /// <reference types="node" />
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { ConfigurationError, RebuildSupersededError } from "../../contracts/errors.ts";
@@ -54,6 +57,7 @@ import {
 } from "../testing/index.ts";
 import { createSqliteEventStore } from "./event-store.ts";
 import { createSqliteAdapter } from "./index.ts";
+import { createNodeSqliteAdapter } from "./node-sqlite.ts";
 import { storageTablesFor } from "./schema.ts";
 
 const { events: table, personalKeys, restrictions } = storageTablesFor("bounda_");
@@ -231,6 +235,31 @@ describe("the SQLite stores on node:sqlite", () => {
       };
     },
     dialect: "sqlite",
+  });
+});
+
+describe("the store a SQLite forget ledger tells", () => {
+  it("is one for every adapter of one file, whichever tenant, and another for another file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bounda-store-id-"));
+    const adapters = [
+      createNodeSqliteAdapter(join(directory, "a.db")),
+      createNodeSqliteAdapter(join(directory, "a.db")),
+      createNodeSqliteAdapter(join(directory, "b.db")),
+    ];
+    try {
+      const [first, second, other] = await Promise.all(
+        adapters.map(
+          async ({ adapter }, index) =>
+            (await adapter.createForgetLedger({ tenant: `t-${index}` })).storeId,
+        ),
+      );
+      expect(first).toBeDefined();
+      expect(second).toBe(first);
+      expect(other).not.toBe(first);
+    } finally {
+      for (const { db } of adapters) db.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

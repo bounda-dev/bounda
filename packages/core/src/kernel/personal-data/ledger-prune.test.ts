@@ -4,6 +4,7 @@ import type {
   LedgerDisclosure,
   LedgerRestriction,
 } from "../../adapter/storage/forget-ledger.ts";
+import type { StoredRestriction } from "../../adapter/storage/person-store.ts";
 import type { HeldPersonalKey } from "../../adapter/storage/personal-key-store.ts";
 import type { StoredDisclosure } from "../../adapter/storage/recipient-store.ts";
 import type { TenantFence } from "../../adapter/storage/tenant-fence.ts";
@@ -12,6 +13,7 @@ import { createMemoryForgetLedgers } from "../../memory/forget-ledger.ts";
 import {
   BOUNDA_AGGREGATE,
   PROCESSING_RESTRICTED_EVENT,
+  PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT,
   PROCESSING_RESTRICTION_LIFTED_EVENT,
 } from "../../modules/bounda-events.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
@@ -19,10 +21,10 @@ import { RESTORE_GENERATION } from "../shared/restores.ts";
 import { buildPersonalCategories } from "./categories.ts";
 import {
   type AppliedStorage,
-  keptElsewhere,
   type PruneAsAppliedArgs,
   pruneAsApplied,
   type ReconciliationRules,
+  strandedEntries,
 } from "./ledger-prune.ts";
 import { FORGET_LEDGER_CURSOR, FORGET_LEDGER_REREAD_MS } from "./reconciliation.ts";
 
@@ -112,6 +114,8 @@ interface DatabaseArgs {
   readonly stored?: readonly StoredEvent[];
   // When `p-1` was last active as the retention recorded it, and whether it is restricted.
   readonly person?: { readonly lastActiveAt: string; readonly restrictedSince?: string };
+  // The rows of `p-1`'s restrictions.
+  readonly restrictions?: readonly StoredRestriction[];
 }
 
 interface Stream {
@@ -130,6 +134,7 @@ const database = ({
   position = 0,
   stored = [],
   person,
+  restrictions = [],
 }: DatabaseArgs = {}): AppliedStorage =>
   ({
     checkpointStore: {
@@ -171,6 +176,7 @@ const database = ({
               forgottenAt: null,
             }
           : null,
+      restrictions: async (asked: string) => (asked === "p-1" ? restrictions : []),
     },
     recipients: {
       disclosures: async (person: string) => disclosures.filter((held) => held.person === person),
@@ -715,6 +721,28 @@ describe("pruning intentions nothing applies, with no app running", () => {
     }
   });
 
+  it("removes a change of restrictions' intention when the restrictions held are already what it left", async () => {
+    const since = at(4);
+    const left = [{ ground: "accuracy-contested", categories: null, since }];
+    const restriction = (type: string) =>
+      ({ type, payload: { restrictions: left } }) as unknown as LedgerRestriction;
+    const row: StoredRestriction = { ground: "accuracy-contested", category: null, since };
+    for (const [type, rows, expected] of [
+      [PROCESSING_RESTRICTED_EVENT, [], KEPT],
+      [PROCESSING_RESTRICTED_EVENT, [row], REMOVED],
+      [PROCESSING_RESTRICTION_LIFTED_EVENT, [row], REMOVED],
+      // An announced lift changes no row: it is due until a later change is held.
+      [PROCESSING_RESTRICTION_LIFT_ANNOUNCED_EVENT, [row], KEPT],
+    ] as const) {
+      expect(
+        await pruneIntention(
+          { restriction: restriction(type), fingerprints: undefined },
+          { restrictions: rows },
+        ),
+      ).toEqual(expected);
+    }
+  });
+
   it("removes a redaction's intention once it would make no field unreadable, as the app's aggregates mark them", async () => {
     const sealed = (person: string, fingerprint: string) => ({
       $personal: { person, key: fingerprint, iv: "iv", data: "data" },
@@ -764,6 +792,11 @@ describe("pruning intentions nothing applies, with no app running", () => {
   });
 });
 
+// A database without Bounda's tables decides nothing with the app's rules.
+const NO_TABLES = (): ReconciliationRules => {
+  throw new Error("no rules are read for a database without tables");
+};
+
 describe("entries kept in a ledger the database does not follow", () => {
   const first = entry("1", 5);
   const second = entry("2", 3);
@@ -773,7 +806,7 @@ describe("entries kept in a ledger the database does not follow", () => {
   const atCutoff = entry("5", 0);
   const kept: readonly ForgetLedgerEntry[] = [first, second, third, atCutoff, young];
 
-  it("are in the ledger the configuration names when it holds each one older than keepFor, from where the prune stopped, where the reconciliation reads it", async () => {
+  it("are read by no app when the ledger the configuration names lacks one older than keepFor, from where the prune stopped, or holds it before where the reconciliation reads", async () => {
     const cases: readonly (readonly [
       readonly ForgetLedgerEntry[],
       string,
@@ -800,16 +833,98 @@ describe("entries kept in a ledger the database does not follow", () => {
       [[first, young], at(5), at(6), 100, false],
     ];
     for (const [named, before, readFrom, pageSize, expected] of cases) {
-      expect(
-        await keptElsewhere({
-          kept: await ledgerWith(kept),
-          named: await ledgerWith(named),
-          before,
-          cutoff: CUTOFF,
-          readFrom,
-          pageSize,
-        }),
-      ).toBe(expected);
+      const stranded = await strandedEntries({
+        storage: null,
+        rules: NO_TABLES,
+        now: NOW,
+        ledger: await ledgerWith(kept),
+        named: await ledgerWith(named),
+        readFrom,
+        after: { forgottenAt: before, eventId: "" },
+        until: CUTOFF,
+        limit: 1,
+        pageSize,
+      });
+      expect(stranded.length === 0).toBe(expected);
     }
+  });
+});
+
+describe("entries no app of the tenant applies", () => {
+  const applies = entry("1", 5, { fingerprints: ["f-1"] });
+  const later = entry("1", 3, { eventId: "e-1b", fingerprints: ["f-1"] });
+  const nobody = entry("2", 4);
+  const retained = entry("1", 4, { eventId: "e-1c", reason: "retention" });
+  const storage = database({ keys: [key("f-1")] });
+
+  const stranded = async (
+    args: Partial<Parameters<typeof strandedEntries>[0]> &
+      Pick<Parameters<typeof strandedEntries>[0], "ledger" | "named" | "readFrom">,
+  ) =>
+    (
+      await strandedEntries({
+        storage,
+        rules: () => RULES,
+        now: NOW,
+        limit: Number.POSITIVE_INFINITY,
+        ...args,
+      })
+    ).map(({ eventId }) => eventId);
+
+  it("lists, in the ledger the configuration names, those before where its reconciliation reads that something still applies", async () => {
+    const ledger = await ledgerWith([applies, nobody, retained, later]);
+    expect(await stranded({ ledger, named: null, readFrom: at(-1) })).toEqual(["e-1", "e-1b"]);
+    expect(await stranded({ ledger, named: null, readFrom: at(4) })).toEqual(["e-1"]);
+    expect(await stranded({ ledger, named: null, readFrom: at(4), until: at(5) })).toEqual([]);
+    // Read again from before what is asked: what the reconciliation reads is not stranded.
+    expect(await stranded({ ledger, named: null, readFrom: at(4), until: at(-1) })).toEqual([
+      "e-1",
+    ]);
+    expect(await stranded({ ledger, named: null, readFrom: at(-1), limit: 1 })).toEqual(["e-1"]);
+    // What the database holds is applied.
+    expect(
+      await stranded({
+        ledger,
+        named: null,
+        readFrom: at(-1),
+        storage: database({ keys: [key("f-1")], held: ["e-1"] }),
+      }),
+    ).toEqual(["e-1b"]);
+  });
+
+  it("lists no disclosure the database holds", async () => {
+    const disclosed = entry("1", 5, { disclosure: DISCLOSURE, committed: false });
+    const ledger = await ledgerWith([disclosed]);
+    expect(
+      await stranded({
+        ledger,
+        named: await ledgerWith([]),
+        readFrom: at(6),
+        storage: database({
+          disclosures: [{ person: "p-1", ...DISCLOSURE, firstAt: at(5), lastAt: at(5) }],
+        }),
+      }),
+    ).toEqual([]);
+    expect(await stranded({ ledger, named: await ledgerWith([]), readFrom: at(6) })).toEqual([
+      "e-1",
+    ]);
+  });
+
+  it("lists, in another store, those the ledger the configuration names lacks, or holds only before where its reconciliation reads", async () => {
+    const ledger = await ledgerWith([applies, nobody, retained, later]);
+    expect(await stranded({ ledger, named: await ledgerWith([later]), readFrom: at(6) })).toEqual([
+      "e-1",
+    ]);
+    expect(
+      await stranded({ ledger, named: await ledgerWith([applies, later]), readFrom: at(4) }),
+    ).toEqual(["e-1"]);
+    expect(
+      await stranded({
+        ledger,
+        named: await ledgerWith([later]),
+        readFrom: at(6),
+        after: { forgottenAt: at(4), eventId: "" },
+      }),
+    ).toEqual([]);
   });
 });
