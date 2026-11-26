@@ -1,6 +1,8 @@
 import type {
   DeclaredRecipient,
   Disclosure,
+  ForgottenRecipient,
+  ForgottenRecipientStatus,
   RecipientStore,
   StoredDisclosure,
 } from "../storage/recipient-store.ts";
@@ -10,10 +12,11 @@ import type { SqlExecutor } from "./sql-table.ts";
 export interface CreateSqlRecipientStoreArgs {
   readonly db: SqlExecutor;
   /**
-   * Both already quoted.
+   * All three already quoted.
    */
   readonly disclosures: string;
   readonly recipients: string;
+  readonly forgotten: string;
   readonly dialect: Pick<SqlDialect, "placeholder">;
 }
 
@@ -43,6 +46,22 @@ const declaredRecipient = (row: Readonly<Record<string, unknown>>): DeclaredReci
   declaredAt: String(row.declared_at),
 });
 
+const FORGOTTEN_COLUMNS = `"port", "recipient", "kind", "country", "safeguard", "status", "category", "persons"`;
+
+const FORGOTTEN_KEY = `"port", "recipient", "kind", "country", "safeguard", "status", "category"`;
+
+// A count's safeguard and category are part of its key, which holds no null: `''` stands for none.
+const forgottenRecipient = (row: Readonly<Record<string, unknown>>): ForgottenRecipient => ({
+  port: String(row.port),
+  recipient: String(row.recipient),
+  kind: String(row.kind),
+  country: String(row.country),
+  safeguard: row.safeguard === "" ? null : String(row.safeguard),
+  status: String(row.status) as ForgottenRecipientStatus,
+  category: row.category === "" ? null : String(row.category),
+  persons: Number(row.persons),
+});
+
 // Within the hundred parameters a Durable Object's SQLite binds to one statement.
 const PERSONS_PER_STATEMENT = 90;
 
@@ -55,6 +74,7 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
   db,
   disclosures,
   recipients,
+  forgotten,
   dialect,
 }) => {
   const p = dialect.placeholder;
@@ -160,6 +180,11 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
         [to, from],
       );
       await db.run(`DELETE FROM ${recipients} WHERE "port" = ${p(1)}`, [from]);
+      await db.run(
+        `INSERT INTO ${forgotten} (${FORGOTTEN_COLUMNS}) SELECT ${p(1)}, "recipient", "kind", "country", "safeguard", "status", "category", "persons" FROM ${forgotten} WHERE "port" = ${p(2)} ON CONFLICT (${FORGOTTEN_KEY}) DO UPDATE SET "persons" = ${forgotten}."persons" + excluded."persons"`,
+        [to, from],
+      );
+      await db.run(`DELETE FROM ${forgotten} WHERE "port" = ${p(1)}`, [from]);
     },
     caughtUp: async (port, position) => {
       await db.run(
@@ -174,6 +199,25 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
           [],
         )
       ).map((row) => ({ port: String(row.port), persons: Number(row.persons) })),
+    countForgotten: async (counts) => {
+      for (const counted of counts) {
+        await db.run(
+          `INSERT INTO ${forgotten} (${FORGOTTEN_COLUMNS}) VALUES (${p(1)}, ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}) ON CONFLICT (${FORGOTTEN_KEY}) DO UPDATE SET "persons" = ${forgotten}."persons" + excluded."persons"`,
+          [
+            counted.port,
+            counted.recipient,
+            counted.kind,
+            counted.country,
+            counted.safeguard ?? "",
+            counted.status,
+            counted.category ?? "",
+            counted.persons,
+          ],
+        );
+      }
+    },
+    forgottenCounts: async () =>
+      (await db.all(`SELECT ${FORGOTTEN_COLUMNS} FROM ${forgotten}`, [])).map(forgottenRecipient),
     received: async () => {
       const received = new Map<string, string[]>();
       for (const row of await db.all(
@@ -196,6 +240,26 @@ export const createSqlRecipientStore: CreateSqlRecipientStoreFunction = ({
       ).map((row) => String(row.person)),
   };
 };
+
+export interface ForgottenRecipientsTableStatementFunction {
+  (table: string): string;
+}
+
+// The counts of forgotten persons by recipient, which migration 12 of SQLite's storage tables and
+// 13 of PostgreSQL's add.
+export const forgottenRecipientsTableStatement: ForgottenRecipientsTableStatementFunction = (
+  table,
+) => `CREATE TABLE IF NOT EXISTS ${table} (
+    "port" TEXT NOT NULL,
+    "recipient" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "country" TEXT NOT NULL,
+    "safeguard" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "persons" BIGINT NOT NULL,
+    PRIMARY KEY ("port", "recipient", "kind", "country", "safeguard", "status", "category")
+  )`;
 
 export interface RecipientTablesStatementsFunction {
   (tables: { readonly disclosures: string; readonly recipients: string }): readonly string[];

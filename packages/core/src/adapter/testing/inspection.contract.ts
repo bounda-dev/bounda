@@ -144,6 +144,44 @@ export const inspectionContract: InspectionContractFunction = ({ create }) => {
       await storage.close();
     });
 
+    it("reads the counts of forgotten persons by recipient, a safeguard or category of none as empty", async () => {
+      const adapter = await create();
+      const storage = await adapter.createStorage();
+      const counted = {
+        port: "customer.mailer",
+        recipient: "Mailchimp",
+        kind: "processor",
+        country: "US",
+        safeguard: null,
+        status: "disclosed",
+        category: null,
+        persons: 1,
+      } as const;
+      await storage.recipients.countForgotten([
+        counted,
+        { ...counted, safeguard: "standard-contractual-clauses", category: "contact", persons: 2 },
+      ]);
+      const table = tableOf(await adapter.inspect(), "bounda_forgotten_recipients");
+      expect(table.store).toBe("forgottenRecipients");
+      expect([...table.key].sort()).toEqual(
+        ["category", "country", "kind", "port", "recipient", "safeguard", "status"].sort(),
+      );
+      expect(
+        [...table.rows]
+          .sort((a, b) => String(a.category).localeCompare(String(b.category)))
+          .map((row) => ({ ...row, persons: Number(row.persons) })),
+      ).toEqual([
+        { ...counted, safeguard: "", category: "" },
+        {
+          ...counted,
+          safeguard: "standard-contractual-clauses",
+          category: "contact",
+          persons: 2,
+        },
+      ]);
+      await storage.close();
+    });
+
     it("reads a read model's rows, and those of its rebuild", async () => {
       const adapter = await create();
       const model = await adapter.createReadModel<ContractRow>({

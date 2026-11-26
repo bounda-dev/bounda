@@ -156,6 +156,8 @@ export { DEFAULT_PERSONAL_CATEGORY } from "./storage/personal-key-store.ts";
 export type {
   DeclaredRecipient,
   Disclosure,
+  ForgottenRecipient,
+  ForgottenRecipientStatus,
   PersonsOfArgs,
   RecipientPort,
   RecipientStore,

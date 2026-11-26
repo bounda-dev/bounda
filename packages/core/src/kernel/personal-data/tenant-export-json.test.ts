@@ -293,20 +293,25 @@ describe("readTenantExport", () => {
     // One written before a freeze cut it, which its header does not say.
     const earlier = { kind: "header", header: { ...header.header, version: 1 } };
     await expect(read(bytes(linesOf(earlier, end())))).rejects.toThrow(
-      "The tenant export is in format bounda.tenant-export version 1, not bounda.tenant-export version 5",
+      "The tenant export is in format bounda.tenant-export version 1, not bounda.tenant-export version 6",
     );
     // One whose transfers do not name the legal regime they go to.
     const unnamed = { kind: "header", header: { ...header.header, version: 3 } };
     await expect(read(bytes(linesOf(unnamed, end())))).rejects.toThrow(
-      "The tenant export is in format bounda.tenant-export version 3, not bounda.tenant-export version 5",
+      "The tenant export is in format bounda.tenant-export version 3, not bounda.tenant-export version 6",
+    );
+    // One that does not count the recipients of persons forgotten before it.
+    const uncounted = { kind: "header", header: { ...header.header, version: 4 } };
+    await expect(read(bytes(linesOf(uncounted, end())))).rejects.toThrow(
+      "The tenant export is in format bounda.tenant-export version 4, not bounda.tenant-export version 6",
     );
     // One whose forget ledger's disclosures do not name the transfer they rested on.
-    const untransferred = { kind: "header", header: { ...header.header, version: 4 } };
+    const untransferred = { kind: "header", header: { ...header.header, version: 5 } };
     await expect(read(bytes(linesOf(untransferred, end())))).rejects.toThrow(
-      "The tenant export is in format bounda.tenant-export version 4, not bounda.tenant-export version 5",
+      "The tenant export is in format bounda.tenant-export version 5, not bounda.tenant-export version 6",
     );
     const foreign = { kind: "header", header: { ...header.header, format: "other" } };
-    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 5");
+    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 6");
   });
 
   it("hands each part out as it reads it, before it knows the rest", async () => {

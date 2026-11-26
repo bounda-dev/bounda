@@ -7,7 +7,11 @@ import type { ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
 import type { DispatchOutcome } from "../../adapter/storage/idempotency-store.ts";
 import type { CausationContext, EventMetadata } from "../../contracts/metadata.ts";
 import type { TenantExportAccess } from "../../modules/audit.ts";
-import type { ProcessingRestriction } from "../../modules/personal-data.ts";
+import type {
+  LegalBasis,
+  PersonalCategoryName,
+  ProcessingRestriction,
+} from "../../modules/personal-data.ts";
 import type { PersonRecipient } from "../../modules/recipient.ts";
 import type {
   ExportedCategories,
@@ -26,7 +30,7 @@ export const TENANT_EXPORT_FORMAT: "bounda.tenant-export" = "bounda.tenant-expor
  * The version of the format a tenant export is written in. A version that changes what a part
  * holds, or adds a kind of part, is a new one.
  */
-export const TENANT_EXPORT_VERSION: 5 = 5;
+export const TENANT_EXPORT_VERSION: 6 = 6;
 
 /**
  * A category of the app as `app/personal-data.ts` declares it, as `ExportedCategory` tells a
@@ -131,6 +135,33 @@ export interface TenantExportRecipient extends PersonRecipient {
    * How many of the tenant's persons list it so.
    */
   readonly persons: number;
+}
+
+/**
+ * A recipient the tenant's forgotten persons were listed with, as `recipient` parts list one, under
+ * the identity it had then and one status, `disclosed` or `presumed`: how many persons forgettings
+ * took off it, and for which categories. A count, never whom, and no time: the earliest or latest
+ * disclosure of a forgotten person is that person's own, which the forgetting erased. One the app
+ * no longer declares under that port comes with `declared` `false`.
+ */
+export interface TenantExportForgottenRecipient
+  extends Omit<PersonRecipient, "status" | "categories" | "firstDisclosedAt" | "lastDisclosedAt"> {
+  readonly status: "disclosed" | "presumed";
+  /**
+   * How many persons it was listed with until a forgetting, and was not after: each of them had
+   * all their data that it was listed with forgotten.
+   */
+  readonly persons: number;
+  /**
+   * Each category a forgetting took a person off it for, with its basis, `null` for the default
+   * category or one the app no longer has, and how many persons: a person forgotten in part is
+   * counted under the categories forgotten, and under `persons` once nothing of theirs is left.
+   */
+  readonly categories: readonly {
+    readonly name: PersonalCategoryName;
+    readonly basis: LegalBasis | null;
+    readonly persons: number;
+  }[];
 }
 
 /**
@@ -298,7 +329,7 @@ export type TenantExportCounts = Omit<TenantExportAccess["detail"], "exportId">;
 
 /**
  * One piece of a tenant export, in this order: the header, every person, every recipient of their
- * data, every event up to the header's `position`, every scheduled command, dead letter, subscriber
+ * data, every recipient of forgotten persons' data, every event up to the header's `position`, every scheduled command, dead letter, subscriber
  * failure and remembered answer, the rows of each read model, the header's `readModels` in turn,
  * every entry of `runtime.personalData.forgetLedger`, and last `end`, with how many parts of each
  * kind came: an export without its `end` is not whole.
@@ -307,6 +338,10 @@ export type TenantExportPart =
   | { readonly kind: "header"; readonly header: TenantExportHeader }
   | { readonly kind: "person"; readonly person: TenantExportedPerson }
   | { readonly kind: "recipient"; readonly recipient: TenantExportRecipient }
+  | {
+      readonly kind: "forgottenRecipient";
+      readonly forgottenRecipient: TenantExportForgottenRecipient;
+    }
   | { readonly kind: "event"; readonly event: TenantExportedEvent }
   | { readonly kind: "scheduledCommand"; readonly scheduledCommand: TenantExportedScheduledCommand }
   | { readonly kind: "deadLetter"; readonly deadLetter: TenantExportedDeadLetter }
@@ -327,6 +362,7 @@ export type TenantExportRecord = Exclude<
 export const NO_TENANT_EXPORT_RECORDS: TenantExportCounts = {
   persons: 0,
   recipients: 0,
+  forgottenRecipients: 0,
   events: 0,
   scheduledCommands: 0,
   deadLetters: 0,
@@ -339,6 +375,7 @@ export const NO_TENANT_EXPORT_RECORDS: TenantExportCounts = {
 const COUNTED: Readonly<Record<TenantExportRecord["kind"], keyof TenantExportCounts>> = {
   person: "persons",
   recipient: "recipients",
+  forgottenRecipient: "forgottenRecipients",
   event: "events",
   scheduledCommand: "scheduledCommands",
   deadLetter: "deadLetters",

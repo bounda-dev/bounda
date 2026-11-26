@@ -19,6 +19,7 @@ export const DOCUMENTED_TABLES: readonly string[] = [
   "restricted_positions",
   "disclosures",
   "recipients",
+  "forgotten_recipients",
   "snapshots",
   "person_rows",
   "subscriber_failures",

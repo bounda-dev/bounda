@@ -31,7 +31,10 @@ import {
   schemaMigrationsTableFor,
 } from "../sql/migrations.ts";
 import { supersededKeysTableStatements } from "../sql/personal-key-store.ts";
-import { recipientTablesStatements } from "../sql/recipient-store.ts";
+import {
+  forgottenRecipientsTableStatement,
+  recipientTablesStatements,
+} from "../sql/recipient-store.ts";
 import type { SqlExecutor } from "../sql/sql-table.ts";
 import { tenancyTableStatement } from "../sql/tenancy-store.ts";
 import { tenantFenceTableStatement } from "../sql/tenant-fence.ts";
@@ -212,6 +215,7 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
       tables.indexKeys,
       tables.disclosures,
       tables.recipients,
+      tables.forgottenRecipients,
       tables.tenancy,
       tables.supersededKeys,
     ],
@@ -219,6 +223,7 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
       ...latestStorageTablesStatements(tables),
       indexKeysTableStatement(tables.indexKeys),
       ...recipientTablesStatements(tables),
+      forgottenRecipientsTableStatement(tables.forgottenRecipients),
       tenancyTableStatement(tables.tenancy),
       ...supersededKeysTableStatements(tables.supersededKeys),
     ],
@@ -297,6 +302,10 @@ export const sqliteStorageScope: SqliteStorageScopeFunction = (tables) => ({
         }
         for (const statement of deadLetterReadsStatements(tables)) await tx.run(statement, []);
       },
+    },
+    {
+      version: 12,
+      migrate: (tx) => tx.run(forgottenRecipientsTableStatement(tables.forgottenRecipients), []),
     },
   ],
 });

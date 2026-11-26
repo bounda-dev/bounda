@@ -182,6 +182,7 @@ export type {
   TenantExportedRow,
   TenantExportedScheduledCommand,
   TenantExportedSubscriberFailure,
+  TenantExportForgottenRecipient,
   TenantExportHeader,
   TenantExportPart,
   TenantExportReached,

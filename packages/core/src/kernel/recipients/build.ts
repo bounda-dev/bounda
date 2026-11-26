@@ -55,6 +55,9 @@ export interface RecipientsRuntime {
   readonly byOwner: Readonly<Record<string, Readonly<Record<string, RecipientRuntime>>>>;
 }
 
+// The recipients of an app that declares none.
+export const NO_RECIPIENTS: RecipientsRuntime = { all: [], byPort: {}, byOwner: {} };
+
 export interface BuildRecipientsArgs {
   readonly registry: Registry;
   readonly categories: PersonalCategories;

@@ -45,7 +45,7 @@ import {
   type TenantExportPart,
   type TenantExportRecord,
 } from "./tenant-export.ts";
-import { tallyRecipients } from "./tenant-recipients.ts";
+import { forgottenRecipients, tallyRecipients } from "./tenant-recipients.ts";
 
 /**
  * Thrown by a tenant export, once it has read everything, when the stream moved past the head its
@@ -676,6 +676,11 @@ export const streamTenantExport: StreamTenantExportFunction = async ({
     yield* personPages();
     // Once every person is listed, so it sums what their parts said.
     yield tally.recipients().map((recipient) => ({ kind: "recipient", recipient }));
+    yield forgottenRecipients({
+      recipients,
+      categories,
+      counted: await storage.recipients.forgottenCounts(),
+    }).map((forgottenRecipient) => ({ kind: "forgottenRecipient", forgottenRecipient }));
     yield* eventPages();
     yield* scheduledPages();
     yield* letterPages();

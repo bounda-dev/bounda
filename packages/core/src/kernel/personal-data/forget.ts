@@ -20,6 +20,9 @@ import type {
 } from "../../modules/personal-data.ts";
 import { scheduledCommandId } from "../command/pipeline.ts";
 import { addressed } from "../recipients/addressing.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
+import { forgottenFrom } from "../recipients/forgotten.ts";
+import { recipientsOf } from "../recipients/listing.ts";
 import { actedBy, startedBy } from "../shared/causation.ts";
 import { appendSystemEvent } from "../system-events.ts";
 import { lastActivity } from "./activity.ts";
@@ -54,6 +57,7 @@ export interface ForgetWithinArgs {
   readonly intention: ForgetIntention;
   readonly context: CausationContext;
   readonly categories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly scope: ForgetScope;
   /**
    * How many events a read of the person's last activity takes at once.
@@ -157,6 +161,8 @@ export interface ForgetWithinFunction {
  */
 export const forgetWithin: ForgetWithinFunction = async (args) => {
   const { transaction, ids, clock, personId, intention, context, categories, scope } = args;
+  const listed = () =>
+    recipientsOf({ storage: transaction, recipients: args.recipients, categories, personId });
   const { checked = false } = args;
   const { fingerprints } = intention;
   if (fingerprints !== undefined && !checked) {
@@ -189,6 +195,9 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
     });
     return activity;
   };
+  // What the recipients were listed with goes with the data, counted by recipient: who it was
+  // is kept by the event alone.
+  const before = await listed();
   // The key goes first: a snapshot written beside the transaction then either waits for it and
   // is forgotten with the rest, or finds no key in force and is never written. The scheduled
   // commands go before the dead letters: a worker giving one up writes its letter and settles its
@@ -273,6 +282,11 @@ export const forgetWithin: ForgetWithinFunction = async (args) => {
     person: personId,
     identity: { id: intention.eventId, timestamp: intention.forgottenAt },
   });
+  // Only a recipient that received data, or may have, is counted.
+  if (before.some(({ status }) => status !== "declared")) {
+    const counted = forgottenFrom({ before, after: await listed() });
+    if (counted.length > 0) await transaction.recipients.countForgotten(counted);
+  }
   return { destroyed, payload, event };
 };
 
@@ -283,6 +297,7 @@ export interface ForgetIntendedArgs {
   readonly clock: Clock;
   readonly concurrencyRetries: number;
   readonly categories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly batchSize: number;
   readonly personId: string;
   readonly scope: ForgetScope;
@@ -306,6 +321,7 @@ export const forgetIntended: ForgetIntendedFunction = async ({
   clock,
   concurrencyRetries,
   categories,
+  recipients,
   batchSize,
   personId,
   scope,
@@ -334,6 +350,7 @@ export const forgetIntended: ForgetIntendedFunction = async ({
               intention,
               context,
               categories,
+              recipients,
               scope,
               batchSize,
             }),
@@ -392,6 +409,7 @@ export interface ForgetPersonalDataArgs {
   readonly logger: Logger;
   readonly concurrencyRetries: number;
   readonly categories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly batchSize: number;
   readonly personId: string;
   readonly options?: ForgetOptions | undefined;
@@ -456,6 +474,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
   logger,
   concurrencyRetries,
   categories,
+  recipients,
   batchSize,
   personId,
   options,
@@ -472,6 +491,7 @@ export const forgetPersonalData: ForgetPersonalDataFunction = async ({
     clock,
     concurrencyRetries,
     categories,
+    recipients,
     batchSize,
     personId,
     scope,
