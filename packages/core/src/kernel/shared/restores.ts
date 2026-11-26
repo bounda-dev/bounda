@@ -223,13 +223,9 @@ const dropped = (points: readonly ForgetLedgerMark[]): boolean => {
   return false;
 };
 
-// The values raised from `from`, included, to `to`, left out.
-const between = (
-  points: readonly ForgetLedgerMark[],
-  from: number,
-  to: number,
-): readonly ForgetLedgerMark[] =>
-  points.filter((point) => timeOf(point) >= from && timeOf(point) < to);
+// The values raised from `from` on.
+const since = (points: readonly ForgetLedgerMark[], from: number): readonly ForgetLedgerMark[] =>
+  points.filter((point) => timeOf(point) >= from);
 
 /**
  * A generation that went back, a count of restores that changed, or the newest event this
@@ -284,7 +280,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // mark raised before, a value raised before a lower one tells a restore however far the
   // generation moved since, and until then only the marks raised since are compared.
   const delayMs = marks?.visibilityDelayMs ?? 0;
-  const lagging = marks !== null && delayMs > 0;
+  const lagging = delayMs > 0;
   let startedAt: number | null = null;
   let judged = !lagging;
   // The generation the start read, until the ledger takes it: the generation stays where it is
@@ -318,7 +314,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // Lets go of what no later look compares; a ledger that keeps the highest value alone has
   // nothing to let go.
   const pruneBefore = async (names: readonly string[], at: number): Promise<void> => {
-    const prune = marks?.pruneMarks;
+    const prune = (marks as NonNullable<typeof marks>).pruneMarks;
     if (prune === undefined) return;
     try {
       for (const name of names) await prune.call(marks, name, iso(at));
@@ -330,9 +326,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // Until the marks raised before this instance started are judged, a ledger whose reads lag
   // compares only the ones raised since with the database.
   const comparable = (points: readonly ForgetLedgerMark[]): number =>
-    judged || startedAt === null
-      ? highestOf(points)
-      : highestOf(between(points, startedAt, Number.POSITIVE_INFINITY));
+    highestOf(judged ? points : since(points, startedAt as number));
 
   const read = async (): Promise<Seen> => {
     const [generation, restores] = await Promise.all([
@@ -506,9 +500,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   };
 
   const raiseReading = async (): Promise<void> => {
-    if (reading === null) return;
     try {
-      await raiseAt(RESTORE_MARK, reading.generation, startedAt as number);
+      await raiseAt(RESTORE_MARK, (reading as Seen).generation, startedAt as number);
       reading = null;
     } catch (error) {
       logger.error("the forget ledger's mark could not be raised", { error });
@@ -516,43 +509,38 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   };
 
   // Of the marks raised since the latest restore counted, what tells a restore nobody counted: a
-  // value raised before this instance started above the generation the database holds, or one
-  // raised before a lower one. Resolves the highest, which the count moves the generation past.
-  const unexplained = async (
-    stored: Seen,
-    points: readonly ForgetLedgerMark[],
-  ): Promise<number | null> => {
-    const since = between(points, await checkpoints.get(RESTORE_COVERED), Number.POSITIVE_INFINITY);
-    // One instance at a time writes a ledger whose reads lag: what was raised at the time it
-    // started was raised before.
-    const before = highestOf(between(since, 0, (startedAt as number) + 1));
-    return before > stored.generation || dropped(since) ? highestOf(since) : null;
+  // value above the generation the database holds, or one raised before a lower one. Resolves the
+  // highest, which the count moves the generation past.
+  const unexplained = async (stored: Seen): Promise<number | null> => {
+    const raised = since(shown, await checkpoints.get(RESTORE_COVERED));
+    return highestOf(raised) > stored.generation || dropped(raised) ? highestOf(raised) : null;
+  };
+
+  // Counts what the marks tell, past every restore this instance knows of, and raises the
+  // generation the count moved to.
+  const countTold = async (stored: Seen, evidence: number): Promise<Restored> => {
+    const past = Math.max(stored.restores, seen?.restores ?? 0, declaring);
+    const restored = await count(stored, past, evidence);
+    await raise((seen as Seen).generation);
+    return restored;
   };
 
   // Counted as found at start, from what the reads show already.
   const atOnce = async (stored: Seen): Promise<Restored | null> => {
-    const evidence = await unexplained(stored, shown);
-    if (evidence === null) return null;
-    const restored = await count(stored, Math.max(stored.restores, declaring), evidence);
-    await raise(seen?.generation ?? evidence + 1);
-    return restored;
+    const evidence = await unexplained(stored);
+    return evidence === null ? null : countTold(stored, evidence);
   };
 
   // Once the reads show every mark raised before this instance started, they are compared with the
   // database, the start's reading among them; then the generation goes past every one, counting
   // nothing more.
   const judge = async (stored: Seen): Promise<Restored | null> => {
-    const evidence = await unexplained(stored, between(shown, 0, (startedAt as number) + 1));
-    if (evidence !== null) {
-      const past = Math.max(stored.restores, seen?.restores ?? 0, declaring);
-      const restored = await count(stored, past, evidence);
-      await raise(seen?.generation ?? evidence + 1);
-      return restored;
-    }
-    const before = highestOf(between(shown, 0, (startedAt as number) + 1));
-    if (stored.generation < before) {
-      await advance(RESTORE_GENERATION, before + 1);
-      await raise(before + 1);
+    const evidence = await unexplained(stored);
+    if (evidence !== null) return countTold(stored, evidence);
+    const highest = highestOf(shown);
+    if (stored.generation < highest) {
+      await advance(RESTORE_GENERATION, highest + 1);
+      await raise(highest + 1);
     }
     judged = true;
     await recount();
@@ -584,8 +572,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     if (again === 0) return;
     const target = highestOf(counts) + again;
     await advance(RESTORES_FOUND, target);
-    if (seen !== null) seen = { ...seen, restores: Math.max(seen.restores, target) };
-    countMark = Math.max(countMark, target);
+    seen = { ...(seen as Seen), restores: await checkpoints.get(RESTORES_FOUND) };
     const at = clock.now().getTime();
     await raiseCount(target, at);
     try {
@@ -678,10 +665,9 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     } else if (judged && lagging && mark !== null) {
       // A value raised before a lower one since: the database went back and the look that read it
       // counted nothing.
-      const evidence = await unexplained(stored, shown);
+      const evidence = await unexplained(stored);
       if (evidence !== null) {
-        const restored = await count(stored, Math.max(declaring, seen?.restores ?? 0), evidence);
-        await raise(seen?.generation ?? evidence + 1);
+        const restored = await countTold(stored, evidence);
         witness = null;
         await watchHead(last);
         return restored;
