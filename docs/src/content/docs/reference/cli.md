@@ -1075,8 +1075,9 @@ such a copy, apply the same list again.
 | `--tenant <name>` | both | The tenant, as [which tenant](#which-tenant) says |
 | `--root`, `--config`, `--registry`, `--error-text` | both | As for `bounda rebuild` |
 
-Both refuse a configuration without `runtime.personalData.forgetLedger` and a storage only its host
-opens, as a Durable Object's. Exit codes: `0` done, `1` bad arguments, `2` the project could not be
+`stranded` refuses a configuration without `runtime.personalData.forgetLedger`, and both a storage
+only its host opens, as a Durable Object's; without a ledger, `apply` applies each entry with
+nothing to record it in, as `bounda forget --from` does. Exit codes: `0` done, `1` bad arguments, `2` the project could not be
 loaded, the listing or the apply failed, a tenant's stores could not be listed, so a store only it
 names may hold more, or the file could not be read or has a line that is not a forget ledger's
 entry, in which case nothing is applied.

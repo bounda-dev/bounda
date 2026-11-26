@@ -81,8 +81,9 @@ export interface ListForgetLedgerTenantsFunction {
  * makes one anew for every tenant included; a ledger of your own without it is one store per
  * definition. A database that holds both a forget ledger and tenant keys is read as both. A
  * configuration that gives each tenant both stores of its own names its tenants in `tenants`.
- * Rejects as `pruneTenantForgetLedger` does when the starting tenant has nothing to prune, with `ConfigurationError` when its ledger cannot list its tenants, and when its stores
- * cannot be read; any other tenant whose stores cannot be read is in `unreached`.
+ * Rejects as `pruneTenantForgetLedger` does when the starting tenant has nothing to prune, with
+ * `ConfigurationError` when its ledger cannot list its tenants, and when its stores cannot be read;
+ * any other tenant whose stores cannot be read is in `unreached`.
  */
 export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
   config,
@@ -105,6 +106,7 @@ export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
     firstConfig,
     firstLedger: { ledger, source },
     tenants: listed,
+    physical: true,
     listLedger: async (each, store, physical) => {
       // A ledger that expires its entries on its own has nothing to prune.
       if (each.tenants === undefined && each.prune !== undefined) {

@@ -112,6 +112,7 @@ export const listStrandedForgetLedgerEntries: ListStrandedForgetLedgerEntriesFun
     first: tenant,
     firstConfig: tenantConfig,
     tenants,
+    physical: true,
     listLedger: async (ledger, source, store) => {
       reached.push({ source, store });
       // A store that cannot list its tenants is read for this tenant's entries all the same.

@@ -46,6 +46,9 @@ export interface ReachTenantsArgs {
   // The first tenant's forget ledger, opened as the caller requires it; closed once read.
   readonly firstLedger?: OpenedForgetLedger;
   readonly tenants: readonly string[];
+  // Whether each reached tenant's ledger is opened to tell its store by what the ledger says;
+  // otherwise a definition is one store by object, opened once.
+  readonly physical: boolean;
   // The tenants a forget ledger's store lists, `store` as `physicalStoreOf` tells it: the caller
   // decides what one that cannot list means.
   readonly listLedger: (
@@ -90,6 +93,7 @@ export const reachTenants: ReachTenantsFunction = async ({
   firstConfig,
   firstLedger,
   tenants,
+  physical,
   listLedger,
 }) => {
   const reached = new Set<string>([first]);
@@ -100,7 +104,8 @@ export const reachTenants: ReachTenantsFunction = async ({
     queue.push(tenant);
   };
   const ledgersRead = new Set<unknown>();
-  // Of each adapter read, the store its ledgers keep their entries in.
+  // Of each source read that is one store whoever opens it, the store its ledgers keep their
+  // entries in.
   const adapterStores = new Map<unknown, unknown>();
   const ledgers = new Map<string, unknown>();
   const keysRead = new Set<unknown>();
@@ -111,8 +116,8 @@ export const reachTenants: ReachTenantsFunction = async ({
   // Lists the ledger's store, unless read already, and closes the ledger.
   const readLedger = async (tenant: string, { ledger, source }: OpenedForgetLedger) => {
     try {
-      const store = physicalStoreOf(ledger, source);
-      if (source.kind === "bounda-adapter") adapterStores.set(storeOf(source), store);
+      const store = physical ? physicalStoreOf(ledger, source) : storeOf(source);
+      if (source.kind === "bounda-adapter" || !physical) adapterStores.set(storeOf(source), store);
       ledgers.set(tenant, store);
       if (ledgersRead.has(store)) return;
       ledgersRead.add(store);
@@ -153,7 +158,10 @@ export const reachTenants: ReachTenantsFunction = async ({
     const { forgetLedger } = resolved.runtime.personalData;
     if (forgetLedger === null || ledgerRead) return;
     const { store: source } = forgetLedger;
-    const known = source.kind === "bounda-adapter" ? adapterStores.get(storeOf(source)) : undefined;
+    const known =
+      source.kind === "bounda-adapter" || !physical
+        ? adapterStores.get(storeOf(source))
+        : undefined;
     if (known !== undefined) {
       ledgers.set(tenant, known);
       return;
