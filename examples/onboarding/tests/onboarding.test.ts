@@ -174,7 +174,7 @@ describe("onboarding", () => {
       {
         name: "Postmark",
         status: "disclosed",
-        transfer: { safeguard: "standard-contractual-clauses" },
+        transfer: { safeguard: "standard-contractual-clauses", regime: "US" },
       },
     ]);
 

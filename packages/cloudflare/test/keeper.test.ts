@@ -636,12 +636,16 @@ describe("cloudflare() with a jurisdiction", () => {
       name: "tenant-keys",
       where: "tenant-keys",
       location: "us",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
       keptFor: null,
     });
     expect(records.find(({ name }) => name === "forget-ledger")).toMatchObject({
       location: "global",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+      transfer: {
+        safeguard: "standard-contractual-clauses",
+        article: "46(2)(c)",
+        regime: "anywhere",
+      },
     });
     expect(
       kvTenantKeys({ binding: "TENANT_KEYS", location: "global", safeguard: "certification" }),

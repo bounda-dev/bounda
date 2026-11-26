@@ -52,7 +52,7 @@ const registry = {
 const MASTER = Buffer.from(new Uint8Array(32).fill(7)).toString("base64");
 
 describe("a person's export", () => {
-  it("tells of every store kept out of the storage's location and its safeguard (article 15(2))", async () => {
+  it("tells of every store kept out of the storage's location, its regime and its safeguard (article 15(2))", async () => {
     const tenantKeys = createMemoryTenantKeyStore();
     const app = await createApp({
       registry,
@@ -78,7 +78,7 @@ describe("a person's export", () => {
             forgetLedger: {
               store: defineForgetLedger(
                 ({ tenant }) => createMemoryForgetLedgers().ledgerOf(tenant),
-                { location: "us", safeguard: "binding-corporate-rules" },
+                { location: "fedramp", safeguard: "binding-corporate-rules" },
               ),
             },
           },
@@ -92,6 +92,7 @@ describe("a person's export", () => {
         location: "ch",
         safeguard: "adequacy",
         article: "45",
+        regime: "CH",
       },
       {
         store: "master-key",
@@ -99,6 +100,7 @@ describe("a person's export", () => {
         location: "us",
         safeguard: "standard-contractual-clauses",
         article: "46(2)(c)",
+        regime: "US",
       },
       {
         store: "tenant-keys",
@@ -106,13 +108,16 @@ describe("a person's export", () => {
         location: "ch",
         safeguard: "adequacy",
         article: "45",
+        regime: "CH",
       },
       {
         store: "forget-ledger",
         readModel: null,
-        location: "us",
+        // A location names where; the regime, which law it is kept under.
+        location: "fedramp",
         safeguard: "binding-corporate-rules",
         article: "47",
+        regime: "US",
       },
     ];
     expect((await app.exportPersonalData("ana")).transfers).toEqual(transfers);

@@ -1,7 +1,8 @@
 import type { ResolvedConfig } from "../../config/types.ts";
-import type { DataLocation } from "../../modules/data-location.ts";
+import { type DataLocation, regimeOf } from "../../modules/data-location.ts";
 import { type StoreSafeguard, TRANSFER_ARTICLES } from "../../modules/recipient.ts";
 import type { ExportedTransfer } from "./export.ts";
+import type { InventoryTransfer } from "./inventory.ts";
 
 export interface StoreTransfersArgs {
   readonly config: ResolvedConfig;
@@ -12,6 +13,16 @@ export interface StoreTransfersArgs {
 export interface StoreTransfersFunction {
   (args: StoreTransfersArgs): readonly ExportedTransfer[];
 }
+
+export interface StoreTransferFunction {
+  (location: DataLocation, safeguard: StoreSafeguard): InventoryTransfer;
+}
+
+export const storeTransfer: StoreTransferFunction = (location, safeguard) => ({
+  safeguard,
+  article: TRANSFER_ARTICLES[safeguard],
+  regime: regimeOf(location),
+});
 
 interface Placed {
   readonly location?: DataLocation | undefined;
@@ -26,7 +37,7 @@ const transfer = (
   // `resolveConfig` lets a store declare a safeguard only beside a location out of `storage`'s.
   location === undefined || safeguard === undefined
     ? []
-    : [{ store, readModel, location, safeguard, article: TRANSFER_ARTICLES[safeguard] }];
+    : [{ store, readModel, location, ...storeTransfer(location, safeguard) }];
 
 export const storeTransfers: StoreTransfersFunction = ({ config, personal }) => {
   const { keyWrapper, tenantKeys, forgetLedger } = config.runtime.personalData;

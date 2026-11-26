@@ -14,6 +14,7 @@ import {
   SPECIAL_CATEGORY_CONDITIONS,
   type SpecialCategoryData,
 } from "@bounda-dev/core";
+import { formatTransfer } from "./transfer-output.ts";
 
 export interface FormatInventoryFunction {
   (inventory: PersonalDataInventory): string;
@@ -141,14 +142,14 @@ const sourcesOf = ({ sources }: InventoryCategory): string =>
 const decisionOf = (decision: InventoryAutomatedDecision): string =>
   `${decision.profiling ? "profiling, " : ""}on ${decision.ground}, from ${decision.categories.join(", ")}`;
 
-// The database, the jurisdiction it keeps its data in when it declares one, and the safeguard
-// that allows keeping it there when that is out of storage's.
+// The database, the jurisdiction it keeps its data in when it declares one, and the transfer
+// when that is out of storage's.
 const placed = (
   database: string,
   location: string | null,
   transfer: InventoryTransfer | null,
 ): string =>
-  `${location === null ? database : `${database}, in ${location}`}${transfer === null ? "" : `, transferred under ${transfer.safeguard} (article ${transfer.article})`}`;
+  `${location === null ? database : `${database}, in ${location}`}${transfer === null ? "" : `, ${formatTransfer(transfer)}`}`;
 
 // A condition with its point of article 9(2), from (a) to (j) in the order the article gives them.
 const conditionOf = ({ condition }: SpecialCategoryData): string =>
@@ -245,7 +246,7 @@ export const formatInventory: FormatInventoryFunction = (inventory) => {
   if (inventory.recipients.length === 0) lines.push("  none declared");
   for (const recipient of inventory.recipients) {
     lines.push(
-      `  ${recipient.port}  ${recipient.name}, ${recipient.kind} in ${recipient.country}${recipient.safeguard === null ? "" : ` under ${recipient.safeguard}`}: ${recipient.categories.join(", ")}`,
+      `  ${recipient.port}  ${recipient.name}, ${recipient.kind} in ${recipient.country}${recipient.transfer === null ? "" : `, ${formatTransfer(recipient.transfer)}`}: ${recipient.categories.join(", ")}`,
     );
   }
   lines.push("", "Kept by the runtime");
@@ -381,13 +382,13 @@ export const formatInventoryMarkdown: FormatInventoryFunction = (inventory) => {
   } else {
     lines.push(
       ...table(
-        ["Port", "Recipient", "Kind", "Country", "Transfer safeguard", "Categories"],
+        ["Port", "Recipient", "Kind", "Country", "Transfer", "Categories"],
         inventory.recipients.map((recipient) => [
           `\`${recipient.port}\``,
           recipient.name,
           recipient.kind,
           recipient.country,
-          recipient.safeguard ?? "inside the EEA",
+          recipient.transfer === null ? "inside the EEA" : formatTransfer(recipient.transfer),
           recipient.categories.join(", "),
         ]),
       ),
