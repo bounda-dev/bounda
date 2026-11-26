@@ -463,8 +463,19 @@ const createModelLedger = (
     // Workers KV expires its keys on its own: only the SQL ledger is pruned.
     ...(kind === "sql"
       ? {
+          // What a prune removes landed no longer: a write that lands it again lands it then.
           prune: (args: PruneForgetLedgerArgs) =>
-            write(() => inner.prune?.(args) ?? Promise.resolve()),
+            write(async () => {
+              await inner.prune?.(args);
+              const kept = new Set(
+                (await inner.read({ limit: Number.MAX_SAFE_INTEGER })).map(
+                  ({ eventId }) => eventId,
+                ),
+              );
+              for (const eventId of [...committedAt.keys()]) {
+                if (!kept.has(eventId)) committedAt.delete(eventId);
+              }
+            }),
         }
       : {}),
   };
@@ -536,6 +547,8 @@ interface Live {
   // On KV, whether the marks raised and the entries written before it started proved more than its
   // reads showed then: what it counts once they show every one.
   owed: boolean;
+  // The events it committed, whose copies it appends to the ledger again before each look.
+  readonly commits: Set<string>;
   // When it last read the ledger through for a start or a restore it found: what had landed by
   // then is applied once its reads show it.
   anchor: number;
@@ -659,9 +672,9 @@ const createWorld = (
   // The newest event an instance committed is what it watches from then on, unless it watches a
   // newer one; one that committed nothing watches what it read.
   const committedBy = (live: Live): void => {
-    const own = snapshotOf(db)
-      .events.filter(({ id }) => id.startsWith(live.prefix))
-      .at(-1);
+    const owns = snapshotOf(db).events.filter(({ id }) => id.startsWith(live.prefix));
+    for (const { id } of owns) live.commits.add(id);
+    const own = owns.at(-1);
     const { witness } = live.memory;
     if (own !== undefined && (witness === null || own.position > witness.position)) {
       live.memory = { ...live.memory, witness: own };
@@ -897,6 +910,7 @@ const createWorld = (
       prefix,
       startedAt,
       owed,
+      commits: new Set(),
       anchor: startedAt,
       memory: memoryOf(),
     };
@@ -919,6 +933,11 @@ const createWorld = (
     const before = snapshotOf(db);
     const coveredBefore = lineage.covered;
     const cursorBefore = rowOf(db, FORGET_LEDGER_CURSOR);
+    const committedBefore = new Set(
+      (await ledger.entries(true))
+        .filter(({ committed }) => committed !== false)
+        .map(({ eventId }) => eventId),
+    );
     const held = new Set(before.events.map(({ id }) => id));
     const recorded = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     await live.app.runUntilIdle();
@@ -929,7 +948,18 @@ const createWorld = (
       rowOf(db, FORGET_LEDGER_LAST_RUN) >= now &&
       (await entriesProve(
         readFromCursor(
-          (await ledger.entries(true)).filter(({ forgottenAt }) => Date.parse(forgottenAt) < now),
+          (
+            await ledger.entries(true)
+          )
+            .filter(({ forgottenAt }) => Date.parse(forgottenAt) < now)
+            // Committed by this pass's reconciliation, it read the intention.
+            .map((entry) =>
+              entry.committed === false ||
+              committedBefore.has(entry.eventId) ||
+              live.commits.has(entry.eventId)
+                ? entry
+                : { ...entry, committed: false as const },
+            ),
           cursorBefore,
         ),
         before,
@@ -2548,6 +2578,58 @@ const COUNTEREXAMPLES: readonly {
       },
       { kind: "restore", slot: 0, round: ["crash", "pass"] },
       { kind: "move" },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts nothing on KV for a copy taken before a recount, which holds the count it corrected",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 1 },
+      { kind: "declare", instance: 0 },
+      { kind: "restore", slot: 1, round: ["crash", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      { kind: "declare", instance: 0 },
+      { kind: "start", instance: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "forgetUncommitted", instance: 0, person: 0 },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "proves nothing by a redaction's entry its own reconciliation committed, read as the intention it was",
+    kind: "sql",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "declare", instance: 1 },
+      { kind: "backUp", slot: 0 },
+      {
+        kind: "together",
+        first: { kind: "redactUncommitted", instance: 0, person: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "applies, once the ledger takes it again, a forgetting a prune let go of before a restore lost it",
+    kind: "sql",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "ledger", mode: "dropping" },
+      { kind: "backUp", slot: 0 },
+      {
+        kind: "together",
+        first: { kind: "forget", instance: 0, person: 0 },
+        second: { kind: "redactRetried", instance: 0, person: 0 },
+      },
+      { kind: "ledger", mode: "up" },
+      { kind: "pass", instance: 0 },
+      { kind: "prune" },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "prune" },
     ] as Action[],
     counted: 1,
   },

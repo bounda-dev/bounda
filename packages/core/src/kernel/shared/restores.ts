@@ -643,6 +643,21 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // A restore counted while the reads did not show one counted a moment before took the same
   // value: each value counted again since the last recount is a restore more, which the database's
   // count goes past. Every count raised before it shows by now, or is this instance's own.
+  // A recount counts no restore: the database stands where handling the last one left it.
+  const recountTo = async (target: number): Promise<void> => {
+    const before = await checkpoints.get(RESTORES_FOUND);
+    if (target <= before) return;
+    await advance(RESTORES_FOUND, target);
+    // Its own move: changed under it, the count would tell another instance's.
+    if (seen !== null) seen = { ...seen, restores: await checkpoints.get(RESTORES_FOUND) };
+    const last = await events.lastPosition();
+    await checkpoints.compareAndSet(
+      RESTORE_HANDLED,
+      await handledMark(before, last),
+      await handledMark(await checkpoints.get(RESTORES_FOUND), last),
+    );
+  };
+
   const recount = async (): Promise<void> => {
     const ledger = marks as NonNullable<typeof marks>;
     const [counted, recounted] = await Promise.all([
@@ -672,19 +687,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     ).length;
     // A copy taken before the last recount holds the count it corrected, which it moves to again.
     const target = again === 0 ? highestOf(recounted) : highestOf(counts) + again;
-    const before = await checkpoints.get(RESTORES_FOUND);
-    if (target > before) {
-      await advance(RESTORES_FOUND, target);
-      const restores = await checkpoints.get(RESTORES_FOUND);
-      seen = { ...(seen as Seen), restores };
-      // A recount counts no restore: the database stands where handling the last one left it.
-      const last = await events.lastPosition();
-      await checkpoints.compareAndSet(
-        RESTORE_HANDLED,
-        await handledMark(before, last),
-        await handledMark(restores, last),
-      );
-    }
+    await recountTo(target);
     if (again === 0) return;
     // Told a recount first: a count raised without it would read as a restore a copy lacks.
     const at = clock.now().getTime();
@@ -822,6 +825,18 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         await watchHead(last);
         return behind;
       }
+    }
+    // On a ledger whose reads lag, fewer restores than it read, counted at the time it read: the
+    // same count, before a recount corrected it, which a copy taken before that brings back.
+    if (
+      lagging &&
+      seen !== null &&
+      stored.covered > 0 &&
+      stored.covered === seen.covered &&
+      stored.restores < seen.restores
+    ) {
+      await recountTo(seen.restores);
+      stored = await read();
     }
     let restored: Restored | null = null;
     let current = stored;

@@ -2116,6 +2116,24 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     expect(await watch.check(at(time.now))).toEqual({ first: true });
   });
 
+  it("moves a copy taken before a recount to the count it read, counting nothing, and still counts one counted earlier", async () => {
+    for (const [covered, found, restores] of [
+      [100, null, 2],
+      [50, { first: true }, 3],
+    ] as const) {
+      const { checkpointStore, time, watchOver } = await setUpLagging();
+      time.now = 10 * LAG;
+      await checkpointStore.set(RESTORES_FOUND, 2);
+      await checkpointStore.set(RESTORE_COVERED, 100);
+      const watch = watchOver();
+      await watch.start();
+      await checkpointStore.set(RESTORES_FOUND, 1);
+      await checkpointStore.set(RESTORE_COVERED, covered);
+      expect(await watch.check(at(time.now))).toEqual(found);
+      expect(await checkpointStore.get(RESTORES_FOUND)).toBe(restores);
+    }
+  });
+
   it("tells the ledger a recount before it raises its count, and leaves the database where handling the last restore left it", async () => {
     for (const failing of [false, true]) {
       const {
