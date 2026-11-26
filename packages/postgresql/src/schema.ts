@@ -26,6 +26,7 @@ export interface StorageTables {
   readonly subscriberFailures: string;
   readonly disclosures: string;
   readonly recipients: string;
+  readonly forgottenRecipients: string;
   // In a database of its own, apart from the other storage tables.
   readonly forgetLedger: string;
   // The first key of the advisory lock that puts a tenant's ledger writes behind its fence.
@@ -100,6 +101,9 @@ export const storageTablesFor: StorageTablesForFunction = ({ prefix, schema }) =
     ),
     disclosures: quoteIdentifier(storageTableNameFor({ prefix, table: "disclosures" })),
     recipients: quoteIdentifier(storageTableNameFor({ prefix, table: "recipients" })),
+    forgottenRecipients: quoteIdentifier(
+      storageTableNameFor({ prefix, table: "forgottenRecipients" }),
+    ),
     forgetLedger: quoteIdentifier(forgetLedger),
     forgetLedgerLockKey: `bounda:${schema}.${forgetLedger}`,
     appendLockKey: `bounda:${schema}.${events}`,

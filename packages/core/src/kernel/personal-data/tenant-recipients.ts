@@ -1,9 +1,15 @@
+import type { ForgottenRecipient } from "../../adapter/storage/recipient-store.ts";
 import type { LegalBasis, PersonalCategoryName } from "../../modules/personal-data.ts";
-import type { PersonRecipient } from "../../modules/recipient.ts";
+import type {
+  CountryCode,
+  PersonRecipient,
+  RecipientKind,
+  TransferSafeguard,
+} from "../../modules/recipient.ts";
 import type { RecipientsRuntime } from "../recipients/build.ts";
 import { recipientTransferOf } from "../recipients/transfer.ts";
 import type { PersonalCategories, PersonalCategory } from "./categories.ts";
-import type { TenantExportRecipient } from "./tenant-export.ts";
+import type { TenantExportForgottenRecipient, TenantExportRecipient } from "./tenant-export.ts";
 
 // The recipients the `person` parts list, summed as each page of them is built: it holds one entry
 // per identity and status, however many persons there are.
@@ -120,4 +126,70 @@ export const tallyRecipients: TallyRecipientsFunction = ({ recipients, categorie
       );
     },
   };
+};
+
+export interface ForgottenRecipientsArgs {
+  readonly recipients: Pick<RecipientsRuntime, "byPort">;
+  readonly categories: Pick<PersonalCategories, "of">;
+  // As `RecipientStore.forgottenCounts` resolves them.
+  readonly counted: readonly ForgottenRecipient[];
+}
+
+export interface ForgottenRecipientsFunction {
+  (args: ForgottenRecipientsArgs): readonly TenantExportForgottenRecipient[];
+}
+
+interface Summed {
+  readonly recipient: Omit<TenantExportForgottenRecipient, "persons" | "categories">;
+  persons: number;
+  readonly categories: Map<string, number>;
+}
+
+/**
+ * The counts the store holds of forgotten persons, one entry per identity and status, under the
+ * port each key is now, in the order of the `recipient` parts.
+ */
+export const forgottenRecipients: ForgottenRecipientsFunction = ({
+  recipients,
+  categories,
+  counted,
+}) => {
+  const summed = new Map<string, Summed>();
+  for (const row of counted) {
+    const port = recipients.byPort[row.port]?.port ?? row.port;
+    const recipient: Summed["recipient"] = {
+      port,
+      name: row.recipient,
+      kind: row.kind as RecipientKind,
+      country: row.country as CountryCode,
+      transfer: recipientTransferOf(
+        row.country as CountryCode,
+        row.safeguard as TransferSafeguard | null,
+      ),
+      status: row.status,
+      declared: recipients.byPort[port] !== undefined,
+    };
+    const key = JSON.stringify([identityOf(recipient), row.status]);
+    const held = summed.get(key) ?? { recipient, persons: 0, categories: new Map() };
+    summed.set(key, held);
+    if (row.category === null) held.persons += row.persons;
+    else held.categories.set(row.category, (held.categories.get(row.category) ?? 0) + row.persons);
+  }
+  return [...summed.values()]
+    .map(({ recipient, persons, categories: named }) => ({
+      ...recipient,
+      persons,
+      categories: [...named.keys()].sort(byText).map((name) => ({
+        name: name as PersonalCategoryName,
+        basis: categories.of(name)?.basis ?? null,
+        persons: named.get(name) as number,
+      })),
+    }))
+    .sort(
+      (a, b) =>
+        byText(a.port, b.port) ||
+        STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+        byText(a.name, b.name) ||
+        byText(identityOf(a), identityOf(b)),
+    );
 };

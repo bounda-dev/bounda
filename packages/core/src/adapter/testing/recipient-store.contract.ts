@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Storage } from "../adapter.ts";
-import type { Disclosure } from "../storage/recipient-store.ts";
+import type { Disclosure, ForgottenRecipient } from "../storage/recipient-store.ts";
 
 export interface RecipientStoreContractArgs {
   readonly create: () => Promise<Pick<Storage, "recipients" | "transact">>;
@@ -23,6 +23,35 @@ const disclosure = (overrides: Partial<Disclosure> = {}): Disclosure => ({
   ...overrides,
 });
 
+const counted = (overrides: Partial<ForgottenRecipient> = {}): ForgottenRecipient => ({
+  port: "customer.mailer",
+  recipient: "Mailchimp",
+  kind: "processor",
+  country: "US",
+  safeguard: "standard-contractual-clauses",
+  status: "disclosed",
+  category: null,
+  persons: 1,
+  ...overrides,
+});
+
+const byCount = (a: ForgottenRecipient, b: ForgottenRecipient): number => {
+  const key = (row: ForgottenRecipient) =>
+    JSON.stringify([
+      row.port,
+      row.recipient,
+      row.kind,
+      row.country,
+      row.safeguard ?? "",
+      row.status,
+      row.category ?? "",
+    ]);
+  return key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0;
+};
+
+const forgottenOf = async (storage: Pick<Storage, "recipients">) =>
+  [...(await storage.recipients.forgottenCounts())].sort(byCount);
+
 /**
  * The behaviour every recipient store must exhibit. Call it inside a `describe` of the adapter's
  * test file with a factory that returns a fresh, empty storage.
@@ -39,6 +68,47 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       expect(await storage.recipients.disclosures("c-1")).toEqual([]);
       expect(await storage.recipients.declared()).toEqual([]);
       expect(await storage.recipients.summary()).toEqual([]);
+      expect(await storage.recipients.forgottenCounts()).toEqual([]);
+    });
+
+    it("sums the forgotten persons of each identity, status and category, a safeguard or category of none apart from any", async () => {
+      const rows = [
+        counted(),
+        counted({ category: "contact" }),
+        counted({ category: "contact", persons: 2 }),
+        counted({ status: "presumed" }),
+        counted({ safeguard: null, country: "FR" }),
+        counted({ safeguard: null }),
+        counted({ safeguard: "adequacy" }),
+        counted({ kind: "joint-controller" }),
+        counted({ recipient: "Brevo" }),
+        counted({ port: "order.mailer", category: "invoices", persons: 4 }),
+      ];
+      await storage.recipients.countForgotten(rows);
+      await storage.recipients.countForgotten([counted({ persons: 3 })]);
+      await storage.recipients.countForgotten([]);
+      expect(await forgottenOf(storage)).toEqual(
+        [
+          counted({ persons: 4 }),
+          counted({ category: "contact", persons: 3 }),
+          counted({ status: "presumed" }),
+          counted({ safeguard: null, country: "FR" }),
+          counted({ safeguard: null }),
+          counted({ safeguard: "adequacy" }),
+          counted({ kind: "joint-controller" }),
+          counted({ recipient: "Brevo" }),
+          counted({ port: "order.mailer", category: "invoices", persons: 4 }),
+        ].sort(byCount),
+      );
+    });
+
+    it("keeps the forgotten persons apart from the disclosures, which a forgetting does not touch", async () => {
+      await storage.recipients.disclose([disclosure()], at(1));
+      await storage.recipients.countForgotten([counted()]);
+      await storage.recipients.forget("c-1", null);
+      expect(await storage.recipients.forgottenCounts()).toEqual([counted()]);
+      expect(await storage.recipients.summary()).toEqual([]);
+      expect(await storage.recipients.received()).toEqual(new Map());
     });
 
     it("records a disclosure once, answering it as new the first time only", async () => {
@@ -280,6 +350,28 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
       expect(await storage.recipients.disclosures("c-1")).toHaveLength(4);
     });
 
+    it("moves the forgotten persons a port held under its former key, summing those held under both", async () => {
+      await storage.recipients.countForgotten([
+        counted({ port: "customer.newsletter", persons: 2 }),
+        counted({ port: "customer.newsletter", category: "contact" }),
+        counted({ port: "customer.newsletter", safeguard: null, category: "profile" }),
+        counted(),
+        counted({ category: "contact", persons: 5 }),
+        counted({ port: "customer.crm" }),
+      ]);
+      await storage.recipients.rename("customer.newsletter", "customer.mailer");
+      expect(await forgottenOf(storage)).toEqual(
+        [
+          counted({ port: "customer.crm" }),
+          counted({ persons: 3 }),
+          counted({ category: "contact", persons: 6 }),
+          counted({ safeguard: null, category: "profile" }),
+        ].sort(byCount),
+      );
+      await storage.recipients.rename("customer.gone", "customer.mailer");
+      expect(await storage.recipients.forgottenCounts()).toHaveLength(4);
+    });
+
     it("moves how far a port was caught up forward, never back", async () => {
       await storage.recipients.declare(
         [{ port: "customer.crm", categories: ["contact"] }],
@@ -309,18 +401,23 @@ export const recipientStoreContract: RecipientStoreContractFunction = ({ create 
             2,
             at(1),
           );
+          await transaction.recipients.countForgotten([counted()]);
           throw new Error("rolled back");
         }),
       ).rejects.toThrow("rolled back");
       expect(await storage.recipients.disclosures("c-1")).toEqual([]);
       expect(await storage.recipients.declared()).toEqual([]);
+      expect(await storage.recipients.forgottenCounts()).toEqual([]);
       await storage.transact(async (transaction) => {
         expect(await transaction.recipients.disclose([disclosure()], at(1))).toEqual([
           disclosure(),
         ]);
         await transaction.recipients.forget("c-2", null);
+        await transaction.recipients.countForgotten([counted()]);
+        expect(await transaction.recipients.forgottenCounts()).toEqual([counted()]);
       });
       expect(await storage.recipients.disclosures("c-1")).toHaveLength(1);
+      expect(await storage.recipients.forgottenCounts()).toEqual([counted()]);
     });
   });
 };

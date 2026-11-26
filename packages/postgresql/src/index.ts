@@ -183,6 +183,7 @@ export const postgresql: PostgresqlFunction = (options) => {
             db: database,
             disclosures: tables.disclosures,
             recipients: tables.recipients,
+            forgotten: tables.forgottenRecipients,
           }),
           snapshotStore: createPostgresqlSnapshotStore({
             db: database,

@@ -592,6 +592,7 @@ describe("createSqliteAdapter", () => {
       "app_dead_letters",
       "app_disclosures",
       "app_events",
+      "app_forgotten_recipients",
       "app_idempotency_keys",
       "app_inbox",
       "app_index_keys",

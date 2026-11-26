@@ -60,16 +60,17 @@ const LATEST = [
   { scope: "storage", version: 9 },
   { scope: "storage", version: 10 },
   { scope: "storage", version: 11 },
+  { scope: "storage", version: 12 },
 ];
 
 // PostgreSQL's storage takes one more: the indexes that compare text by bytes, as SQLite's does.
 const STORAGE_LATEST: Readonly<Record<StorageSchemaContractArgs["dialect"], number>> = {
-  sqlite: 11,
-  postgresql: 12,
+  sqlite: 12,
+  postgresql: 13,
 };
 
 const latestOf = (dialect: StorageSchemaContractArgs["dialect"]) =>
-  dialect === "sqlite" ? LATEST : [...LATEST, { scope: "storage", version: 12 }];
+  dialect === "sqlite" ? LATEST : [...LATEST, { scope: "storage", version: 13 }];
 
 // A fence raised under the forget ledger's empty name or DEFAULT_TENANT, `day` its since in 2026-01.
 interface LegacyFence {
@@ -410,6 +411,23 @@ export const storageSchemaContract: StorageSchemaContractFunction = ({
       await opened(target.adapter, async (storage) => {
         expect(await storage.checkpointStore.get("projection:x")).toBe(3);
         expect(await storage.personalKeys.countSuperseded()).toBe(0);
+      });
+      expect(await shapeOf(target, dialect)).toEqual(shape);
+    });
+
+    it("adds, at its last migration, the table of the forgotten persons each recipient was listed with, keeping everything else", async () => {
+      const target = await create();
+      await opened(target.adapter, (storage) => storage.checkpointStore.set("projection:x", 3));
+      const shape = await shapeOf(target, dialect);
+      await target.execute(
+        `DROP TABLE "${storageTableNameFor({ prefix: target.prefix, table: "forgottenRecipients" })}"`,
+      );
+      await target.execute(
+        `DELETE FROM ${schemaMigrationsTableFor(target.prefix)} WHERE "scope" = 'storage' AND "version" = ${STORAGE_LATEST[dialect]}`,
+      );
+      await opened(target.adapter, async (storage) => {
+        expect(await storage.checkpointStore.get("projection:x")).toBe(3);
+        expect(await storage.recipients.forgottenCounts()).toEqual([]);
       });
       expect(await shapeOf(target, dialect)).toEqual(shape);
     });
