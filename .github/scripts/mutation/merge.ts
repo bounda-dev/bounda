@@ -1,3 +1,4 @@
+import type { SourceFile } from "./files.ts";
 import type { FileResult, MutantResult, Report, TestDefinition, TestFile } from "./report.ts";
 
 export interface ShardReport {
@@ -12,7 +13,7 @@ export interface MergeReportsArgs {
   // The report the shards started from: it gives the files of a shard that left no report.
   readonly previous: Report | undefined;
   // The files the package mutates now; any other is gone.
-  readonly keep: readonly string[];
+  readonly keep: readonly SourceFile[];
 }
 
 export interface MergeReportsFunction {
@@ -80,11 +81,14 @@ export const mergeReports: MergeReportsFunction = ({ shards, previous, keep }) =
   };
 
   const files: Record<string, FileResult> = {};
-  for (const path of keep) {
-    // A shard that mutated the file and left no result for it found no mutant there.
-    const report = shards.find(({ files: owned }) => owned.has(path))?.report ?? previous;
+  for (const { path, source } of keep) {
+    const shard = shards.find(({ files: owned }) => owned.has(path));
+    const report = shard?.report ?? previous;
     const result = report?.files[path];
     if (report !== undefined && result !== undefined) files[path] = renumber(report, result);
+    // Stryker leaves out a file it found no mutant in. Kept with none, the next plan knows the
+    // file costs nothing instead of taking it for a new one.
+    else if (shard !== undefined) files[path] = { language: "typescript", source, mutants: [] };
   }
   return { ...first, files, testFiles };
 };
