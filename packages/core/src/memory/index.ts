@@ -465,7 +465,11 @@ export const memory: MemoryFunction = (options = {}) => {
         pause: async () => {},
       };
     },
-    createForgetLedger: async ({ tenant }) => forgetLedgers.ledgerOf(tenant),
+    // Every tenant's ledger is in this adapter's store, whichever definition opens it.
+    createForgetLedger: async ({ tenant }) => ({
+      ...forgetLedgers.ledgerOf(tenant),
+      storeId: forgetLedgers,
+    }),
     createTenantKeyStore: async () => tenantKeys,
     ephemeralKeys: ephemeral,
     inspect: async () => [

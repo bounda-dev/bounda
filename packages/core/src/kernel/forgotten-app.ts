@@ -336,6 +336,7 @@ export const forgottenApp = <R extends Registry>({
     rebuildReadModel: reject,
     pendingRebuilds: async () => [],
     forgetAgain: reject,
+    applyAgain: reject,
     restored: reject,
   };
 };

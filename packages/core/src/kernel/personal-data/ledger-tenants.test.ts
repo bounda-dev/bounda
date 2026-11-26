@@ -88,7 +88,7 @@ describe("the tenants of a forget ledger's store", () => {
     ]);
   });
 
-  it("names, of each store, the tenants whose configuration names it: one definition made anew for each tenant is its tenant's alone", async () => {
+  it("names, of each store, the tenants whose configuration names it: definitions made anew for each tenant are one store when their ledgers give one storeId", async () => {
     const shared = await ledgerHolding("a", "b");
     // A function of the tenant, which defines the store anew whenever it is called.
     const config: ProjectConfig = () =>
@@ -97,9 +97,43 @@ describe("the tenants of a forget ledger's store", () => {
       );
     const { stores } = await listForgetLedgerTenants({ config });
     expect(stores.map(({ tenants, named }) => ({ tenants, named }))).toEqual([
+      { tenants: ["a", "b"], named: ["a", "b", DEFAULT_TENANT] },
+    ]);
+
+    // A ledger of your own that gives none is one store per definition.
+    const unnamed: ProjectConfig = () =>
+      configOf(
+        defineForgetLedger(async ({ tenant: asked }) => {
+          const { storeId: _, ...own } = await shared.createForgetLedger({ tenant: asked });
+          return own;
+        }),
+      );
+    const apart = await listForgetLedgerTenants({ config: unnamed });
+    expect(apart.stores.map(({ tenants, named }) => ({ tenants, named }))).toEqual([
       { tenants: ["a", "b"], named: [DEFAULT_TENANT] },
       { tenants: ["a", "b"], named: ["a"] },
       { tenants: ["a", "b"], named: ["b"] },
+    ]);
+  });
+
+  it("reads apart the stores one definition opens for each tenant, as their ledgers tell", async () => {
+    const files = new Map<string, Awaited<ReturnType<typeof ledgerHolding>>>([
+      [DEFAULT_TENANT, await ledgerHolding(DEFAULT_TENANT, "a")],
+      ["a", await ledgerHolding("a", "b")],
+      ["b", await ledgerHolding("b")],
+    ]);
+    // One definition, a store of each tenant's own inside it.
+    const definition = defineForgetLedger(({ tenant: asked }) =>
+      (files.get(asked) ?? memory()).createForgetLedger({ tenant: asked }),
+    );
+    const { tenants, stores } = await listForgetLedgerTenants({
+      config: () => configOf(definition),
+    });
+    expect(tenants).toEqual(["a", "b", DEFAULT_TENANT]);
+    expect(stores.map(({ tenants: held, named }) => ({ held, named }))).toEqual([
+      { held: ["a", DEFAULT_TENANT], named: [DEFAULT_TENANT] },
+      { held: ["a", "b"], named: ["a"] },
+      { held: ["b"], named: ["b"] },
     ]);
   });
 
@@ -233,10 +267,25 @@ describe("the tenants of every forget ledger's store the configuration names", (
       return shared;
     });
     const config: ProjectConfig = () => configOf(definition);
+    let listed = 0;
+    const counted = {
+      ...shared,
+      tenants: async () => {
+        listed += 1;
+        return shared.tenants?.() ?? [];
+      },
+    };
+    const counting = defineForgetLedger(() => {
+      opened += 1;
+      return counted;
+    });
     expect((await listForgetLedgerTenants({ config, tenants: ["b", "c"] })).tenants).toEqual([
       "acme",
     ]);
-    expect(opened).toBe(1);
+    // Opened for each tenant reached, to tell which store it is.
+    expect(opened).toBe(4);
+    await listForgetLedgerTenants({ config: () => configOf(counting), tenants: ["b", "c"] });
+    expect(listed).toBe(1);
 
     // Two adapters of one kind with the same options are one database.
     const seen: string[] = [];
@@ -363,7 +412,7 @@ describe("the tenants of every forget ledger's store the configuration names", (
     });
   });
 
-  it("reads a store several reached tenants name once, with the tenant's keepFor", async () => {
+  it("opens the store a definition gives each reached tenant, with the tenant's keepFor", async () => {
     const opened: { readonly tenant: string; readonly keepForMs: number | undefined }[] = [];
     const shared = defineForgetLedger(async ({ tenant, keepForMs }) => {
       opened.push({ tenant, keepForMs });
@@ -372,7 +421,11 @@ describe("the tenants of every forget ledger's store the configuration names", (
     const config: ProjectConfig = ({ tenant }) =>
       tenant === DEFAULT_TENANT ? configOf(memory()) : configOf(shared);
     await listForgetLedgerTenants({ config, tenants: ["b", "c"] });
-    expect(opened).toEqual([{ tenant: "b", keepForMs: 30 * 24 * 60 * 60_000 }]);
+    const keepForMs = 30 * 24 * 60 * 60_000;
+    expect(opened).toEqual([
+      { tenant: "b", keepForMs },
+      { tenant: "c", keepForMs },
+    ]);
   });
 
   it("reads two databases of one kind apart, and a storage without a tenant key store", async () => {

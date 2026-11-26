@@ -14,15 +14,15 @@ import type { AppEnv } from "../../register/index.ts";
 import { buildAggregates } from "../aggregate/build-aggregates.ts";
 import type { AggregatesRuntime } from "../aggregate/runtime.ts";
 import { buildProcesses, type ProcessesRuntime } from "../process/build-processes.ts";
-import { forgottenSince } from "../recipients/again.ts";
+import { disclosureHeld, forgottenSince } from "../recipients/again.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { tenantIdOf } from "../tenant.ts";
 import { buildPersonalCategories, type PersonalCategories } from "./categories.ts";
 import { withEncryptedFiles } from "./encrypted-files.ts";
 import {
   type ForgetLedgerSource,
-  type OpenForgetLedgerArgs,
   openForgetLedger,
+  physicalStoreOf,
   storeOf,
 } from "./forget-ledger.ts";
 import { keySourcesOf } from "./key-hierarchy.ts";
@@ -37,7 +37,7 @@ import {
   standsShortOf,
 } from "./reconciliation.ts";
 import { redactionSeals } from "./redaction.ts";
-import { restrictionSettled } from "./restriction.ts";
+import { restrictionDue } from "./restriction.ts";
 import { appRetentionDue } from "./retention.ts";
 import { openTenantKeyStore } from "./tenant-key-source.ts";
 
@@ -95,6 +95,9 @@ export interface PruneAsAppliedArgs {
   // names: its cursor then says what it will not read again. No reconciliation reads another, so
   // an entry there goes only once the database holds what it records or nothing can apply it.
   readonly followed: boolean;
+  // Not followed, the ledger the configuration names, opened only to tell whether an entry kept
+  // is stranded.
+  readonly named?: <T>(work: (ledger: Pick<ForgetLedger, "read">) => Promise<T>) => Promise<T>;
   readonly pageSize?: number;
 }
 
@@ -108,11 +111,75 @@ export interface PruneAsAppliedFunction {
   (args: PruneAsAppliedArgs): Promise<PrunedAsApplied>;
 }
 
+export interface HeldEntryFunction {
+  (
+    storage: Pick<AppliedStorage, "eventStore" | "recipients">,
+    entry: ForgetLedgerEntry,
+  ): Promise<boolean>;
+}
+
+// Whether the database holds what the entry records: its event, or, for a disclosure, which has
+// none, the disclosure.
+export const heldEntry: HeldEntryFunction = async (storage, entry) => {
+  const { personId, disclosure } = entry;
+  if (disclosure !== undefined) {
+    return disclosureHeld(await storage.recipients.disclosures(personId), disclosure);
+  }
+  const held = await storage.eventStore.readOne({
+    aggregateType: BOUNDA_AGGREGATE,
+    aggregateId: personId,
+    eventId: entry.eventId,
+  });
+  return held !== null;
+};
+
+export interface AppliesNowFunction {
+  (
+    storage: AppliedStorage,
+    entry: ForgetLedgerEntry,
+    rules: ReconciliationRules,
+    now: Date,
+  ): Promise<boolean>;
+}
+
+// Whether a reconciliation reading the entry now would apply anything of it, decided by the checks
+// each kind's is applied again with, whether or not the database holds it.
+export const appliesNow: AppliesNowFunction = async (storage, entry, rules, now) => {
+  const { personId, disclosure, redaction, restriction } = entry;
+  if (disclosure !== undefined) {
+    const { events } = await storage.eventStore.load({
+      aggregateType: BOUNDA_AGGREGATE,
+      aggregateId: personId,
+    });
+    return !forgottenSince(events, { forgottenAt: entry.forgottenAt, disclosure });
+  }
+  if (redaction !== undefined) {
+    return redactionSeals({
+      eventStore: storage.eventStore,
+      keys: storage.personalKeys,
+      aggregates: rules.aggregates,
+      processes: rules.processes,
+      personId,
+      targets: redaction.events,
+    });
+  }
+  if (restriction !== undefined) return restrictionDue(storage, { ...entry, restriction });
+  const coverage = coverageOf(entry, rules.categories);
+  if (coverage === null) return false;
+  const retentionDue = appRetentionDue({
+    categories: rules.categories,
+    batchSize: rules.batchSize,
+    checkpoints: storage.checkpointStore,
+  });
+  const due = dueKeysOf({ entry, coverage, retentionDue, clock: { now: () => now } });
+  return (await due(storage)) !== null;
+};
+
 // Whether the next reconciliation of the database leaves the entry as it is, and no restore count
-// reads it: the database holds its event, or for a disclosure, which has none, holds it or the
-// forgetting since that removed it. An intention whose commit the database lacks may never have
-// happened: it is left as is when the reconciliation would apply nothing of it, decided by its own
-// checks, and the database stands where it was written or further.
+// reads it: the database holds what it records, or, for a disclosure, the forgetting since that
+// removed it. An intention whose commit the database lacks may never have happened: it is left as
+// is when the reconciliation would apply nothing of it, and the database stands where it was
+// written or further.
 const leftAsIs = async (
   storage: AppliedStorage,
   entry: ForgetLedgerEntry,
@@ -120,62 +187,78 @@ const leftAsIs = async (
   rules: ReconciliationRules,
   now: Date,
 ): Promise<boolean> => {
-  const { personId, disclosure } = entry;
-  if (disclosure === undefined) {
-    const held = await storage.eventStore.readOne({
-      aggregateType: BOUNDA_AGGREGATE,
-      aggregateId: personId,
-      eventId: entry.eventId,
-    });
-    if (held !== null) return true;
+  if (await heldEntry(storage, entry)) return true;
+  if (entry.disclosure === undefined) {
     if (entry.committed !== false) return false;
     if (entry.reached !== undefined && standsShortOf(await stand(), entry.reached)) return false;
-    if (entry.redaction !== undefined) {
-      return !(await redactionSeals({
-        eventStore: storage.eventStore,
-        keys: storage.personalKeys,
-        aggregates: rules.aggregates,
-        processes: rules.processes,
-        personId,
-        targets: entry.redaction.events,
-      }));
-    }
-    if (entry.restriction !== undefined) {
-      const { events } = await storage.eventStore.load({
-        aggregateType: BOUNDA_AGGREGATE,
-        aggregateId: personId,
-      });
-      return restrictionSettled(events, entry);
-    }
-    const coverage = coverageOf(entry, rules.categories);
-    if (coverage === null) return true;
-    const retentionDue = appRetentionDue({
-      categories: rules.categories,
-      batchSize: rules.batchSize,
-      checkpoints: storage.checkpointStore,
-    });
-    const due = dueKeysOf({ entry, coverage, retentionDue, clock: { now: () => now } });
-    return (await due(storage)) === null;
   }
-  const stored = await storage.recipients.disclosures(personId);
-  if (
-    stored.some(
-      (held) =>
-        held.port === disclosure.port &&
-        held.recipient === disclosure.recipient &&
-        held.kind === disclosure.kind &&
-        held.country === disclosure.country &&
-        held.safeguard === disclosure.safeguard &&
-        held.category === disclosure.category,
-    )
-  ) {
-    return true;
+  return !(await appliesNow(storage, entry, rules, now));
+};
+
+export interface StrandedEntriesArgs {
+  // `null` for a database without Bounda's tables, which has applied none.
+  readonly storage: AppliedStorage | null;
+  // Asked once a database holds Bounda's tables.
+  readonly rules: () => ReconciliationRules;
+  readonly now: Date;
+  // The ledger walked, past `after` and before `until`.
+  readonly ledger: Pick<ForgetLedger, "read">;
+  // The ledger the configuration names, which the database's reconciliation reads from `readFrom`
+  // on; `null` when `ledger` is that one.
+  readonly named: Pick<ForgetLedger, "read"> | null;
+  readonly readFrom: string;
+  readonly after?: ForgetLedgerPosition | undefined;
+  readonly until?: string | undefined;
+  readonly limit: number;
+  readonly pageSize?: number;
+}
+
+export interface StrandedEntriesFunction {
+  (args: StrandedEntriesArgs): Promise<readonly ForgetLedgerEntry[]>;
+}
+
+// The entries, up to `limit`, that the database lacks, that something would still apply, and that
+// no app of the tenant reads: in the ledger the configuration names, those before where its
+// reconciliation reads; in another, those it lacks or holds only before there. A forgetting for
+// inactivity is the retention's, which decides it again on its own. A database without Bounda's
+// tables lacks every one, and an app applies there what it applies once it creates them.
+export const strandedEntries: StrandedEntriesFunction = async ({
+  storage,
+  rules,
+  now,
+  ledger,
+  named,
+  readFrom,
+  after: from,
+  until: asked,
+  limit,
+  pageSize = FORGET_LEDGER_PAGE,
+}) => {
+  const until = named === null && (asked === undefined || readFrom < asked) ? readFrom : asked;
+  const found: ForgetLedgerEntry[] = [];
+  let after = from;
+  for (;;) {
+    const page = await ledger.read({ ...(after === undefined ? {} : { after }), limit: pageSize });
+    for (const entry of page) {
+      if (until !== undefined && entry.forgottenAt >= until) return found;
+      const forgetting =
+        entry.disclosure === undefined &&
+        entry.restriction === undefined &&
+        entry.redaction === undefined;
+      if (forgetting && entry.reason === "retention") continue;
+      if (storage !== null) {
+        if (await heldEntry(storage, entry)) continue;
+        if (!(await appliesNow(storage, entry, rules(), now))) continue;
+      }
+      if (named !== null && entry.forgottenAt >= readFrom) {
+        if (await holds(named, entry, pageSize)) continue;
+      }
+      found.push(entry);
+      if (found.length >= limit) return found;
+    }
+    if (page.length < pageSize) return found;
+    after = page.at(-1) ?? after;
   }
-  const { events } = await storage.eventStore.load({
-    aggregateType: BOUNDA_AGGREGATE,
-    aggregateId: personId,
-  });
-  return forgottenSince(events, { forgottenAt: entry.forgottenAt, disclosure });
 };
 
 // Where a prune stops short of `keepFor`: at the oldest entry the database has yet to apply, and
@@ -190,15 +273,22 @@ interface AppliedBefore {
   readonly oldest: string | null;
   readonly cutoff: string;
   readonly unapplied: Unapplied | null;
+  readonly stranded: boolean;
 }
 
-// Before 1970 for a database whose reconciliation read nothing yet.
-const readFromOf = (cursor: number): string =>
+export interface ReadFromOfFunction {
+  (cursor: number): string;
+}
+
+// From when a reconciliation of a database whose cursor is `cursor` reads the ledger: before 1970
+// for one that read nothing yet.
+export const readFromOf: ReadFromOfFunction = (cursor) =>
   new Date(cursor - FORGET_LEDGER_REREAD_MS).toISOString();
 
 // How far the ledger can be pruned: the entries older than `keepFor` the database can no longer
 // need, those its reconciliation will not read again and those it applied. A copy restored brought
-// its own cursor back, so what it lacks stays until a start applies it.
+// its own cursor back, so what it lacks stays until a start applies it. In a ledger the database
+// does not follow, whether an entry kept is stranded is told in the same look, before anything goes.
 const appliedBefore = async ({
   ledger,
   forgotten,
@@ -207,47 +297,89 @@ const appliedBefore = async ({
   keepForMs,
   now,
   followed,
+  named,
   pageSize = FORGET_LEDGER_PAGE,
 }: PruneAsAppliedArgs): Promise<AppliedBefore> => {
   const cutoff = new Date(now.getTime() - keepForMs).toISOString();
   const [oldest] = await ledger.read({ limit: 1 });
   if (oldest === undefined || oldest.forgottenAt >= cutoff) {
-    return { oldest: null, cutoff, unapplied: null };
+    return { oldest: null, cutoff, unapplied: null, stranded: false };
   }
+  const nothing = { unapplied: null, stranded: false };
   // A forgotten tenant's database may be gone already, or open under keys destroyed with it.
-  const unapplied =
+  const found =
     (await ledger.fence.read()).state === "forgotten" || (await forgotten())
-      ? null
-      : await withStorage(async (storage): Promise<Unapplied | null> => {
-          if (storage === null) return { before: oldest.forgottenAt, readFrom: readFromOf(0) };
-          if ((await storage.fence.read()).state === "forgotten") return null;
-          const readFrom = readFromOf(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR));
-          const applied = rules();
-          let after: ForgetLedgerPosition | undefined = followed
-            ? { forgottenAt: readFrom, eventId: "" }
-            : undefined;
-          for (;;) {
-            const page = await ledger.read({
-              ...(after === undefined ? {} : { after }),
-              limit: pageSize,
-            });
-            // Read after the page, as the reconciliation reads it.
-            let read: Promise<DatabaseStand> | undefined;
-            const stand = () => {
-              read ??= standOf(storage);
-              return read;
-            };
-            for (const entry of page) {
-              if (entry.forgottenAt >= cutoff) return null;
-              if (!(await leftAsIs(storage, entry, stand, applied, now))) {
-                return { before: entry.forgottenAt, readFrom };
-              }
-            }
-            if (page.length < pageSize) return null;
-            after = page.at(-1) ?? after;
+      ? nothing
+      : await withStorage(async (storage) => {
+          if (storage !== null && (await storage.fence.read()).state === "forgotten") {
+            return nothing;
           }
+          const unapplied =
+            storage === null
+              ? { before: oldest.forgottenAt, readFrom: readFromOf(0) }
+              : await oldestUnapplied(storage, { ledger, rules, now, followed, cutoff, pageSize });
+          if (unapplied === null || followed || named === undefined) {
+            return { unapplied, stranded: false };
+          }
+          const stranded = await named(
+            async (own) =>
+              (
+                await strandedEntries({
+                  storage,
+                  rules,
+                  now,
+                  ledger,
+                  named: own,
+                  readFrom: unapplied.readFrom,
+                  after: { forgottenAt: unapplied.before, eventId: "" },
+                  until: cutoff,
+                  limit: 1,
+                  pageSize,
+                })
+              ).length > 0,
+          );
+          return { unapplied, stranded };
         });
-  return { oldest: oldest.forgottenAt, cutoff, unapplied };
+  return { oldest: oldest.forgottenAt, cutoff, ...found };
+};
+
+interface OldestUnappliedArgs {
+  readonly ledger: Pick<ForgetLedger, "read">;
+  readonly rules: () => ReconciliationRules;
+  readonly now: Date;
+  readonly followed: boolean;
+  readonly cutoff: string;
+  readonly pageSize: number;
+}
+
+// The oldest entry before `cutoff` the database has yet to apply, read from where its
+// reconciliation reads when it follows the ledger, else from the oldest.
+const oldestUnapplied = async (
+  storage: AppliedStorage,
+  { ledger, rules, now, followed, cutoff, pageSize }: OldestUnappliedArgs,
+): Promise<Unapplied | null> => {
+  const readFrom = readFromOf(await storage.checkpointStore.get(FORGET_LEDGER_CURSOR));
+  const applied = rules();
+  let after: ForgetLedgerPosition | undefined = followed
+    ? { forgottenAt: readFrom, eventId: "" }
+    : undefined;
+  for (;;) {
+    const page = await ledger.read({ ...(after === undefined ? {} : { after }), limit: pageSize });
+    // Read after the page, as the reconciliation reads it.
+    let read: Promise<DatabaseStand> | undefined;
+    const stand = () => {
+      read ??= standOf(storage);
+      return read;
+    };
+    for (const entry of page) {
+      if (entry.forgottenAt >= cutoff) return null;
+      if (!(await leftAsIs(storage, entry, stand, applied, now))) {
+        return { before: entry.forgottenAt, readFrom };
+      }
+    }
+    if (page.length < pageSize) return null;
+    after = page.at(-1) ?? after;
+  }
 };
 
 const removeApplied = async (
@@ -263,48 +395,20 @@ const removeApplied = async (
 export const pruneAsApplied: PruneAsAppliedFunction = async (args) =>
   removeApplied(args.ledger, await appliedBefore(args));
 
-export interface KeptElsewhereArgs {
-  readonly kept: Pick<ForgetLedger, "read">;
-  readonly named: Pick<ForgetLedger, "read">;
-  readonly before: string;
-  readonly cutoff: string;
-  // From when the database's reconciliation reads `named`.
-  readonly readFrom: string;
-  readonly pageSize?: number;
+export interface HoldsFunction {
+  (
+    ledger: Pick<ForgetLedger, "read">,
+    entry: ForgetLedgerEntry,
+    pageSize?: number,
+  ): Promise<boolean>;
 }
-
-export interface KeptElsewhereFunction {
-  (args: KeptElsewhereArgs): Promise<boolean>;
-}
-
-// Whether every entry `kept` holds from `before` until `cutoff` is in `named` too, the ledger the
-// tenant's configuration names, where its reconciliation reads it: from `readFrom` on.
-export const keptElsewhere: KeptElsewhereFunction = async ({
-  kept,
-  named,
-  before,
-  cutoff,
-  readFrom,
-  pageSize = FORGET_LEDGER_PAGE,
-}) => {
-  let after: ForgetLedgerPosition = { forgottenAt: before, eventId: "" };
-  for (;;) {
-    const page = await kept.read({ after, limit: pageSize });
-    for (const entry of page) {
-      if (entry.forgottenAt >= cutoff) return true;
-      if (entry.forgottenAt < readFrom || !(await holds(named, entry, pageSize))) return false;
-    }
-    if (page.length < pageSize) return true;
-    after = page.at(-1) ?? after;
-  }
-};
 
 // Whether the ledger holds an entry at the time and of the id of `entry`.
-const holds = async (
-  ledger: Pick<ForgetLedger, "read">,
-  { forgottenAt, eventId }: ForgetLedgerEntry,
-  pageSize: number,
-): Promise<boolean> => {
+export const holds: HoldsFunction = async (
+  ledger,
+  { forgottenAt, eventId },
+  pageSize = FORGET_LEDGER_PAGE,
+) => {
   let after: ForgetLedgerPosition = { forgottenAt, eventId: "" };
   for (;;) {
     const page = await ledger.read({ after, limit: pageSize });
@@ -369,9 +473,11 @@ export interface PrunedTenantForgetLedger {
    */
   readonly named: boolean;
   /**
-   * Whether, in a store the configuration does not name, `unapplied` kept an entry no app of the
-   * tenant reads: the ledger the configuration names lacks it, or holds it from before what the
-   * database's reconciliation reads again. It stays unapplied until applied again by hand.
+   * Whether, in a store the configuration does not name, `unapplied` kept an entry something
+   * would still apply that no app of the tenant reads: the ledger the configuration names lacks
+   * it, or holds it from before what the database's reconciliation reads again. It stays unapplied
+   * until applied again by hand, as `listStrandedForgetLedgerEntries` lists it and `applyAgain`
+   * applies it.
    */
   readonly stranded: boolean;
 }
@@ -455,8 +561,9 @@ export const prunable: PrunableFunction = async ({ config, env, tenant, store })
  * it prunes past `keepFor` alone, without opening its database. Rejects with `ConfigurationError`
  * without a forget ledger or `keepFor`, for a store that expires its entries on its own, for a
  * storage only its host opens, and for a registry the app refuses at its start, once it opens the
- * database. Given a `store`, it rejects, pruning nothing, when it keeps an entry and the ledger the
- * configuration names cannot be read.
+ * database. Given another `store` than the one the configuration names, as their ledgers'
+ * `storeId` tells them apart, it rejects, pruning nothing, when the ledger the configuration names
+ * cannot be opened, or read once it keeps an entry.
  */
 export const pruneTenantForgetLedger: PruneTenantForgetLedgerFunction = async ({
   config,
@@ -470,24 +577,36 @@ export const pruneTenantForgetLedger: PruneTenantForgetLedgerFunction = async ({
   const opened = await prunable({ config, env, tenant, store });
   const { ledger, prune, keepForMs, resolved } = opened;
   const { storage } = resolved;
+  // The ledger the configuration names, when another is pruned: opened once, when first needed.
+  let named: Promise<ForgetLedger> | undefined;
+  const namedLedger = (): Promise<ForgetLedger> => {
+    named ??= openForgetLedger({ source: opened.named, storage, env, tenant, keepForMs });
+    return named;
+  };
   try {
     if (!isAdapter(storage)) {
       throw refused(
         "The storage is opened only by its host, as a Durable Object's is: its app prunes the forget ledger",
       );
     }
-    const followed = storeOf(opened.source) === storeOf(opened.named);
+    // The same store, though given by another definition, as their ledgers tell.
+    const followed =
+      storeOf(opened.source) === storeOf(opened.named) ||
+      physicalStoreOf(ledger, opened.source) === physicalStoreOf(await namedLedger(), opened.named);
     let rules: ReconciliationRules | undefined;
     const pruning = {
       read: ledger.read.bind(ledger),
       fence: ledger.fence,
       prune: prune.bind(ledger),
     };
+    // Told before anything goes, so a ledger the configuration names that cannot be read prunes
+    // nothing.
     const applied = await appliedBefore({
       ledger: pruning,
       keepForMs,
       now,
       followed,
+      named: async (work) => work(await namedLedger()),
       rules: () => {
         rules ??= reconciliationRulesOf({ registry, config: resolved });
         return rules;
@@ -505,50 +624,54 @@ export const pruneTenantForgetLedger: PruneTenantForgetLedgerFunction = async ({
           await keys.close?.();
         }
       },
-      withStorage: (work) =>
-        withEncryptedFiles({
-          config,
-          env,
-          tenant,
-          work: async (keyed) => {
-            const adapter = resolveConfig(keyed).storage as Adapter;
-            const versions = await adapter.schemaVersions();
-            // A database without Bounda's tables has applied nothing, and stays without them.
-            if (versions.some(({ scope, version }) => scope === "storage" && version === 0)) {
-              return work(null);
-            }
-            const created = await adapter.createStorage();
-            try {
-              return await work(created);
-            } finally {
-              await created.close();
-            }
-          },
-        }),
+      withStorage: (work) => withTenantStorage({ config, env, tenant, work }),
     });
-    // Told before anything goes, so a ledger the configuration names that cannot be read prunes
-    // nothing.
-    const { cutoff, unapplied } = applied;
-    const stranded =
-      !followed &&
-      unapplied !== null &&
-      !(await withLedger({ source: opened.named, storage, env, tenant, keepForMs }, (own) =>
-        keptElsewhere({ kept: ledger, named: own, cutoff, ...unapplied }),
-      ));
-    return { tenant, ...(await removeApplied(pruning, applied)), named: followed, stranded };
+    return {
+      tenant,
+      ...(await removeApplied(pruning, applied)),
+      named: followed,
+      stranded: applied.stranded,
+    };
   } finally {
-    await ledger.close?.();
+    try {
+      await ledger.close?.();
+    } finally {
+      const own = await named?.catch(() => undefined);
+      await own?.close?.();
+    }
   }
 };
 
-const withLedger = async <T>(
-  args: OpenForgetLedgerArgs,
-  work: (ledger: ForgetLedger) => Promise<T>,
-): Promise<T> => {
-  const ledger = await openForgetLedger(args);
-  try {
-    return await work(ledger);
-  } finally {
-    await ledger.close?.();
-  }
-};
+export interface WithTenantStorageArgs<T> {
+  readonly config: Config;
+  readonly env: AppEnv;
+  readonly tenant: string;
+  // `null` for a database that holds no table yet.
+  readonly work: (storage: AppliedStorage | null) => Promise<T>;
+}
+
+export interface WithTenantStorageFunction {
+  <T>(args: WithTenantStorageArgs<T>): Promise<T>;
+}
+
+// The tenant's database, opened as `migrateTables` opens it, through the tenant's keys, and closed
+// after `work`; a database without Bounda's tables has applied nothing, and stays without them.
+export const withTenantStorage: WithTenantStorageFunction = ({ config, env, tenant, work }) =>
+  withEncryptedFiles({
+    config,
+    env,
+    tenant,
+    work: async (keyed) => {
+      const adapter = resolveConfig(keyed).storage as Adapter;
+      const versions = await adapter.schemaVersions();
+      if (versions.some(({ scope, version }) => scope === "storage" && version === 0)) {
+        return work(null);
+      }
+      const created = await adapter.createStorage();
+      try {
+        return await work(created);
+      } finally {
+        await created.close();
+      }
+    },
+  });

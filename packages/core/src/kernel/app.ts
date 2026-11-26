@@ -2,6 +2,7 @@ import type { ObservableResult } from "@opentelemetry/api";
 import { type Adapter, isAdapter, type Storage } from "../adapter/adapter.ts";
 import type { CheckpointStore } from "../adapter/storage/checkpoint-store.ts";
 import type { DeadLetterKind } from "../adapter/storage/dead-letter-store.ts";
+import type { ForgetLedgerEntry } from "../adapter/storage/forget-ledger.ts";
 import type { DeclaredRecipient } from "../adapter/storage/recipient-store.ts";
 import { fenceError } from "../adapter/storage/tenant-fence.ts";
 import type { PendingRecipientDeclaration } from "../adapter/storage/tenant-key-store.ts";
@@ -69,6 +70,11 @@ import { createGlobalStream, type GlobalStream } from "./events/global-stream.ts
 import { createForgottenRunner, type ForgottenRunner, forgottenApp } from "./forgotten-app.ts";
 import { createHostLog, recordedRejections } from "./host-log.ts";
 import { checked, createAccessLog, recorded } from "./personal-data/access.ts";
+import {
+  type AppliedAgain,
+  type ApplyAgainOptions,
+  applyEntriesAgain,
+} from "./personal-data/applied-again.ts";
 import { createPersonalDataBackfill } from "./personal-data/backfill.ts";
 import { openDatabaseKey } from "./personal-data/blind-index.ts";
 import { buildPersonalCategories, checkMarkedCategories } from "./personal-data/categories.ts";
@@ -584,6 +590,21 @@ export interface BoundaApp<R extends Registry = AppRegistry> extends BoundaClien
     entries: readonly ForgetAgainEntry[],
     options?: ForgetAgainOptions,
   ): Promise<readonly string[]>;
+  /**
+   * Applies again each forget ledger entry, of every kind, in the order given, as the
+   * reconciliation applies it, decided by the same checks in the transaction that applies it: a
+   * forgetting, a change of restrictions, a redaction, or a disclosure, each under its own id and
+   * time. What `bounda forget-ledger apply` runs, for entries no app of the tenant reads, as those
+   * `bounda forget-ledger stranded` lists. Each is recorded in
+   * `runtime.personalData.forgetLedger` first, once found due. One that ledger holds where the
+   * reconciliation reads it is left to the reconciliation. Safe to run again: what the database
+   * holds is `held`. Resolves to what each one did. Rejects with `ValidationError` an entry
+   * without a person's id, or an `actor` that `as` would refuse, before applying any.
+   */
+  applyAgain(
+    entries: readonly ForgetLedgerEntry[],
+    options?: ApplyAgainOptions,
+  ): Promise<readonly AppliedAgain[]>;
   /**
    * Says the database was restored from a copy: what `bounda restored` runs after restoring while
    * the app was stopped, without a forget ledger that tells it. Counts the restore, so every
@@ -2803,6 +2824,28 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         }
         return forgotten;
       },
+      applyAgain: async (
+        entries: readonly ForgetLedgerEntry[],
+        { actor }: ApplyAgainOptions = {},
+      ): Promise<readonly AppliedAgain[]> => {
+        if (actor !== undefined) checkActor(actor);
+        return applyEntriesAgain({
+          storage: written,
+          ledger: forgetLedger?.store ?? null,
+          intentions,
+          ids,
+          clock,
+          logger,
+          concurrencyRetries,
+          categories: personalCategories,
+          batchSize: config.runtime.dispatcher.batchSize,
+          retentionDue,
+          redactions,
+          entries,
+          actor,
+          forgotten: wrapping.drop,
+        });
+      },
       restored: async ({ again = false } = {}): Promise<RestoreDeclaration> => {
         const declared = await restores.declare({ again });
         // Counted nothing: the restore it would declare was handled already.
@@ -2890,6 +2933,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
       },
       rebuildReadModel: (name, options) => operations.rebuildReadModel(name, options),
       forgetAgain: (entries, options) => operations.forgetAgain(entries, options),
+      applyAgain: (entries, options) => operations.applyAgain(entries, options),
       restored: (options) => operations.restored(options),
       pendingRebuilds: async () => {
         if (entering !== null) return [];

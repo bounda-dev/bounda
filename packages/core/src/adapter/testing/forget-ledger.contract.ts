@@ -367,6 +367,12 @@ export const forgetLedgerContract: ForgetLedgerContractFunction = ({ create }) =
       );
     });
 
+    it("tells its store by one storeId, whichever tenant a ledger over it is opened for", async (context) => {
+      if (ledger.storeId === undefined) context.skip("the ledger does not tell its store");
+      const others = await Promise.all(["tenant-a", "tenant-b"].map(ledgerFor));
+      expect(others.map(({ storeId }) => storeId)).toEqual([ledger.storeId, ledger.storeId]);
+    });
+
     it("keeps each tenant's entries apart", async () => {
       const other = await ledgerFor("tenant-b");
       const third = await ledgerFor("tenant-c");

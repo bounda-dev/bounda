@@ -339,6 +339,7 @@ export const postgresql: PostgresqlFunction = (options) => {
             scopes: [scopes["forget-ledger"]],
           }),
         close: release,
+        adapter: { name: "postgresql", options },
       });
     },
   };

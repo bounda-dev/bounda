@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { ForgetLedger, ForgetLedgerEntry } from "../../adapter/storage/forget-ledger.ts";
-import type { Config } from "../../config/types.ts";
+import type { Config, ProjectConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import type { DurationInput } from "../../contracts/duration.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
@@ -19,6 +19,7 @@ import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts"
 import { pruneTenantForgetLedger } from "./ledger-prune.ts";
 import { listForgetLedgerTenants } from "./ledger-tenants.ts";
 import { masterKey } from "./master-key.ts";
+import { listStrandedForgetLedgerEntries } from "./stranded.ts";
 import { defineTenantKeyStore } from "./tenant-key-source.ts";
 import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
@@ -497,19 +498,30 @@ describe("pruning a tenant's entries in a store its configuration no longer name
     };
   };
 
-  it("keeps what its database lacks, though its cursor read past it, and says no app reads it there", async () => {
+  it("keeps what its database lacks, though its cursor read past it, and says no app reads it there once something would apply it", async () => {
     const { before, config, left } = await moved();
-    // Lost by a copy restored once the ledger moved, older than what the database reads again.
+    // Lost by a copy restored once the ledger moved, older than what the database reads again: cy
+    // holds no key, so nothing applies it, and the store keeps it for what it proves.
     const lost = entry("cy", "lost-cy", new Date(START.getTime() - DAY));
     await left.append([lost]);
-    expect(await pruneTenantForgetLedger({ registry, config, store: before, now: LATER })).toEqual({
+    const kept = {
       tenant: DEFAULT_TENANT,
       before: lost.forgottenAt,
       unapplied: true,
       named: false,
-      stranded: true,
+    };
+    expect(await pruneTenantForgetLedger({ registry, config, store: before, now: LATER })).toEqual({
+      ...kept,
+      stranded: false,
     });
     expect(await entriesOf(left)).toEqual(["cy", "ana"]);
+    // bob still holds his key: his forgetting, lost the same way, is applied by no app.
+    await left.append([entry("bob", "lost-bob", new Date(START.getTime() - DAY / 2))]);
+    expect(await pruneTenantForgetLedger({ registry, config, store: before, now: LATER })).toEqual({
+      ...kept,
+      stranded: true,
+    });
+    expect(await entriesOf(left)).toEqual(["cy", "bob", "ana"]);
     // Where the database reads it, the same store prunes it as read past.
     expect(
       await pruneTenantForgetLedger({
@@ -548,6 +560,22 @@ describe("pruning a tenant's entries in a store its configuration no longer name
       stranded: false,
     });
     expect(await entriesOf(left)).toEqual([]);
+  });
+
+  it("prunes as named a store given by a definition whose ledgers tell the one the configuration names, and apart one whose ledgers tell another", async () => {
+    const ledgers = memory();
+    const of = (adapter: Adapter) =>
+      defineForgetLedger(({ tenant }) => adapter.createForgetLedger({ tenant }));
+    const pruned = (named: ForgetLedgerSource, store: ForgetLedgerSource) =>
+      pruneTenantForgetLedger({
+        registry,
+        config: configOf(memory(), named, "30d"),
+        store,
+        now: LATER,
+      });
+    expect(await pruned(ledgers, of(ledgers))).toMatchObject({ named: true });
+    expect(await pruned(of(ledgers), of(ledgers))).toMatchObject({ named: true });
+    expect(await pruned(of(ledgers), of(memory()))).toMatchObject({ named: false });
   });
 
   it("prunes as named the store the configuration names, given by another definition of the same database", async () => {
@@ -616,5 +644,98 @@ describe("pruning beside a storage only its host opens", () => {
       /opened only by its host/,
     );
     expect(closed).toEqual(["ledger"]);
+  });
+});
+
+describe("the entries of a tenant no app applies", () => {
+  const withReason = (
+    base: ForgetLedgerEntry,
+    reason: ForgetLedgerEntry["reason"],
+  ): ForgetLedgerEntry => ({ ...base, reason });
+
+  it("lists, each once, those in a store its configuration no longer names, and in the one it names from before where it reads", async () => {
+    const storage = memory();
+    const before = memory();
+    const older = memory();
+    const now = memory();
+    const app = await start(configOf(storage, before, "30d"));
+    await register(app, "ana", "bob", "cy");
+    await app.forget("ana");
+    await app.runUntilIdle();
+    await app.stop();
+    // Its start reads ana's forgetting, which moves the database's cursor to it.
+    await (await start(configOf(storage, before, "30d"))).stop();
+    const lostBob = entry("bob", "lost-bob", new Date(START.getTime() + 60_000));
+    const lostCy = entry("cy", "lost-cy", new Date(START.getTime() - DAY));
+    const left = await before.createForgetLedger({ tenant: DEFAULT_TENANT });
+    await left.append([
+      lostBob,
+      // Nobody holds a key it names, and the retention decides its own again.
+      entry("zed", "lost-zed", START),
+      withReason(entry("cy", "retained-cy", START), "retention"),
+    ]);
+    await (await older.createForgetLedger({ tenant: DEFAULT_TENANT })).append([lostBob]);
+    // Before what the database's reconciliation reads again in the ledger it names.
+    await (await now.createForgetLedger({ tenant: DEFAULT_TENANT })).append([lostCy]);
+    const project: ProjectConfig = ({ tenant }) =>
+      tenant === "holder"
+        ? configOf(memory(), before)
+        : tenant === "elder"
+          ? configOf(memory(), older)
+          : configOf(storage, now, "30d");
+    expect(
+      await listStrandedForgetLedgerEntries({
+        config: project,
+        registry,
+        tenants: ["holder", "elder"],
+        now: LATER,
+      }),
+    ).toEqual({ tenant: DEFAULT_TENANT, entries: [lostCy, lostBob], unreached: [] });
+    // Not reached, a store no configuration names holds nothing that is listed.
+    expect(
+      (await listStrandedForgetLedgerEntries({ config: project, registry, now: LATER })).entries,
+    ).toEqual([lostCy]);
+  });
+
+  it("lists every entry a database without Bounda's tables lacks that the ledger it names does not hold, and names a tenant it could not reach", async () => {
+    const left = memory();
+    const lost = entry("bob", "lost-bob", START);
+    await (await left.createForgetLedger({ tenant: "acme" })).append([
+      lost,
+      withReason(entry("cy", "retained-cy", START), "retention"),
+    ]);
+    const broken = new Error("no configuration for broken");
+    const project: ProjectConfig = ({ tenant }) => {
+      if (tenant === "broken") throw broken;
+      return tenant === "holder"
+        ? configOf(memory(), left)
+        : configOf(createNodeSqliteAdapter(":memory:").adapter, memory());
+    };
+    expect(
+      await listStrandedForgetLedgerEntries({
+        config: project,
+        registry,
+        tenant: "acme",
+        tenants: ["holder", "broken"],
+      }),
+    ).toEqual({
+      tenant: "acme",
+      entries: [lost],
+      unreached: [{ tenant: "broken", error: broken }],
+    });
+  });
+
+  it("refuses a configuration without a forget ledger, and a storage only its host opens", async () => {
+    await expect(
+      listStrandedForgetLedgerEntries({ config: { storage: memory() }, registry }),
+    ).rejects.toThrow(ConfigurationError);
+    const hosted = {
+      kind: "bounda-adapter",
+      name: "cloudflare",
+      options: {},
+    } as unknown as Adapter;
+    await expect(
+      listStrandedForgetLedgerEntries({ config: configOf(hosted, memory()), registry }),
+    ).rejects.toThrow(/opened only by its host/);
   });
 });

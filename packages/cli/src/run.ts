@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   checkActor,
+  DEFAULT_TENANT,
   type DeadLetterKind,
   type DeadLetterStatus,
   errorFields,
@@ -10,6 +11,7 @@ import {
   type ListDeadLettersArgs,
   type Logger,
   listForgetLedgerTenants,
+  listStrandedForgetLedgerEntries,
   MAX_ACTOR_LENGTH,
   migrateTables,
   type PrunedTenantForgetLedger,
@@ -54,6 +56,7 @@ import { generateProject } from "./generate/generate.ts";
 import { ConventionError } from "./generate/problems.ts";
 import { watchFromFirstRun } from "./generate/watch.ts";
 import { formatInventory, formatInventoryMarkdown } from "./inventory-output.ts";
+import { formatApplied, parseLedgerEntries } from "./ledger-entries.ts";
 import { parseRedactionList } from "./redaction-list.ts";
 import { formatConventionError, formatReport, formatWarnings } from "./reporter.ts";
 import {
@@ -1276,19 +1279,28 @@ const runPruneLedger = async (
       line(stdout, "the forget ledgers hold no tenant's entries");
       return EXIT_OK;
     }
-    for (const each of tenants) {
-      let own: Awaited<ReturnType<typeof projectFor>>;
-      try {
-        own = await projectFor(each);
-      } catch (error) {
-        left.add(each);
-        line(
-          stderr,
-          `error: ${each} could not be pruned: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        continue;
+    // Each tenant's project loaded once, `null` for one that could not be.
+    const projects = new Map<string, Awaited<ReturnType<typeof projectFor>> | null>();
+    const projectOf = async (each: string) => {
+      if (!projects.has(each)) {
+        try {
+          projects.set(each, await projectFor(each));
+        } catch (error) {
+          projects.set(each, null);
+          left.add(each);
+          line(
+            stderr,
+            `error: ${each} could not be pruned: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
-      for (const { store, named } of stores.filter(({ tenants: held }) => held.includes(each))) {
+      return projects.get(each) ?? null;
+    };
+    // Each store once, and every tenant it holds pruned in that visit.
+    for (const { store, tenants: held, named } of stores) {
+      for (const each of held) {
+        const own = await projectOf(each);
+        if (own === null) continue;
         try {
           const pruned = await pruneTenantForgetLedger({
             config: own.config,
@@ -1303,7 +1315,7 @@ const runPruneLedger = async (
             stranded.add(each);
             line(
               stderr,
-              `error: ${each}'s database has not applied entries a store its configuration no longer names keeps, which no app of the tenant reads: apply them again by hand, as bounda forget --from does for forgettings`,
+              `error: ${each}'s database has not applied entries that no app of the tenant reads: list them with bounda forget-ledger stranded --tenant ${each}, and apply them again with bounda forget-ledger apply`,
             );
           }
         } catch (error) {
@@ -1323,13 +1335,102 @@ const runPruneLedger = async (
     if (stranded.size > 0) {
       line(
         stderr,
-        `${stranded.size} tenant(s) hold entries no app reads: apply them again by hand`,
+        `${stranded.size} tenant(s) hold entries no app reads: apply them again with bounda forget-ledger apply`,
       );
     }
     return EXIT_FAILURE;
   } catch (error) {
     return failed(stderr, error, errorText);
   }
+};
+
+// The tenant's entries no app applies, one JSON line each on standard output, the count on
+// standard error, so standard output is the list alone.
+const runStranded = async (
+  options: ProjectOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  standInWorkersRuntime();
+  let project: Awaited<ReturnType<typeof loadProject>>;
+  let listed: readonly string[];
+  try {
+    project = await loadProject({
+      root: rootOf(options, cwd),
+      configPath: options.config,
+      registryPath: options.registry,
+      logger: logTo(stderr),
+      ...(options.tenant === undefined ? {} : { tenant: options.tenant }),
+    });
+    resolveErrorText({ env: process.env });
+    listed = await project.tenants();
+  } catch (error) {
+    line(stderr, `error: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  const errorText = resolveErrorText(errorTextArgs(options, project.config));
+  try {
+    const { tenant, entries, unreached } = await listStrandedForgetLedgerEntries({
+      config: project.projectConfig,
+      registry: project.registry,
+      env: process.env,
+      // Reaching what `forget-ledger prune --all-tenants` reaches from the default tenant, where
+      // the stores other tenants' configurations name are.
+      tenants: [DEFAULT_TENANT, ...listed],
+      ...(project.tenant === undefined ? {} : { tenant: project.tenant }),
+    });
+    for (const entry of entries) line(stdout, JSON.stringify(entry));
+    line(
+      stderr,
+      `${entries.length} entr${entries.length === 1 ? "y" : "ies"} of ${tenant} no app applies`,
+    );
+    for (const { tenant: each, error } of unreached) {
+      const { errorName, errorMessage } = errorFields({ error, errorText });
+      line(
+        stderr,
+        `error: the stores ${each}'s configuration names could not be listed, and may hold more: ${errorMessage ?? errorName}`,
+      );
+    }
+    return unreached.length === 0 ? EXIT_OK : EXIT_FAILURE;
+  } catch (error) {
+    return failed(stderr, error, errorText);
+  }
+};
+
+interface ApplyLedgerOptions extends ActingOptions {
+  readonly from: string;
+}
+
+const runApplyLedger = async (
+  options: ApplyLedgerOptions,
+  cwd: string,
+  stdout: Output,
+  stderr: Output,
+): Promise<number> => {
+  const { from } = options;
+  let entries: ReturnType<typeof parseLedgerEntries>;
+  try {
+    entries = parseLedgerEntries(await readFile(resolve(cwd, from), "utf8"));
+  } catch (error) {
+    // Its own file, read and parsed here: what fails names the path or the line, never a value.
+    line(stderr, `error: ${from}: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILURE;
+  }
+  return withApp(options, cwd, stderr, async (app) => {
+    const applied = await app.applyAgain(
+      entries,
+      options.actor === undefined ? {} : { actor: options.actor },
+    );
+    for (const each of applied) line(stdout, formatApplied(each));
+    const count = (outcome: string): number =>
+      applied.filter((each) => each.outcome === outcome).length;
+    line(
+      stdout,
+      `applied again ${count("applied")} of ${entries.length} listed; ${count("held")} held already, ${count("reconciled")} left to the reconciliation, ${count("inapplicable")} refused as applying nothing`,
+    );
+    return EXIT_OK;
+  });
 };
 
 // Records, so a kind or status added to core fails to compile here until the CLI accepts it.
@@ -1648,6 +1749,25 @@ export const runCli: RunCliFunction = async ({
       ),
   ).action(async (options: PruneLedgerOptions) => {
     exitCode = await runPruneLedger(options, cwd, stdout, stderr);
+  });
+  projectOptions(
+    forgetLedger
+      .command("stranded")
+      .description(
+        "print, one JSON line each, the entries of the tenant that no app applies, for bounda forget-ledger apply --from",
+      ),
+  ).action(async (options: ProjectOptions) => {
+    exitCode = await runStranded(options, cwd, stdout, stderr);
+  });
+  actingOptions(
+    forgetLedger
+      .command("apply")
+      .description(
+        "apply again each entry listed, a forgetting, a change of restrictions, a redaction or a disclosure, as the reconciliation applies it",
+      )
+      .requiredOption("--from <file>", "what bounda forget-ledger stranded printed"),
+  ).action(async (options: ApplyLedgerOptions) => {
+    exitCode = await runApplyLedger(options, cwd, stdout, stderr);
   });
 
   actingOptions(

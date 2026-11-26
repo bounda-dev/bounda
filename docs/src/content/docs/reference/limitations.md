@@ -34,11 +34,19 @@ get today. Each item says why, so nobody discovers it the hard way:
   `freezeTenant`. Restore with `bounda restore`.
 - **Ledger entries no app reads.** A ledger moved without its entries leaves them in the store it
   left, which no app of the tenant reads: `bounda forget-ledger prune --all-tenants` prunes them
-  there, and names a tenant whose database has not applied one, but only a forgetting has a command
-  that applies it again, [`bounda forget --from`](/reference/cli/#bounda-forgotten-and-bounda-forget---from).
-  A store no configuration names any more is not reached at all: clear it once no backup older than
-  the move is restorable. Move a ledger with its entries. See
+  there and names a tenant whose database has not applied one that something still applies,
+  [`bounda forget-ledger stranded`](/reference/cli/#bounda-forget-ledger-stranded-and-bounda-forget-ledger-apply)
+  lists them and `bounda forget-ledger apply` applies them again, but by hand. A copy taken between
+  an entry's time and when it was applied again lacks it and has read past it: after restoring
+  one, apply the same list again. A committed entry the database lacks that nothing applies any
+  more stays in the store left behind, for the restore it tells. A store no configuration names
+  any more is not reached at all: clear it once no backup older than the move is restorable. Move
+  a ledger with its entries. See
   [Keeping the ledger short](/guides/personal-data/#keeping-the-ledger-short).
+- **A ledger of your own defined anew for each tenant.** Without `storeId`, each definition is a
+  store of its own, so `bounda forget-ledger prune --all-tenants` prunes it once per tenant it
+  holds and per tenant whose configuration defines it. Give it a `storeId`, or define it outside
+  the function.
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each
   its own database, schema or Durable Object. See [Tenants](/guides/personal-data/#tenants).

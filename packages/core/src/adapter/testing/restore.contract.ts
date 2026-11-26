@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Config, RuntimeRole } from "../../config/types.ts";
+import type { Config, ProjectConfig, RuntimeRole } from "../../config/types.ts";
 import { type Clock, createFixedClock } from "../../contracts/clock.ts";
 import {
   ForgetLedgerUnreconciledError,
@@ -20,6 +20,7 @@ import { pruneTenantForgetLedger } from "../../kernel/personal-data/ledger-prune
 import { masterKey } from "../../kernel/personal-data/master-key.ts";
 import { FORGET_LEDGER_GRACE_MS } from "../../kernel/personal-data/reconciliation.ts";
 import { RESEAL_SWITCH_MS } from "../../kernel/personal-data/reseal.ts";
+import { listStrandedForgetLedgerEntries } from "../../kernel/personal-data/stranded.ts";
 import {
   defineTenantKeyStore,
   type TenantKeySource,
@@ -1190,7 +1191,7 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
     );
 
     it(
-      "prunes a store the configuration no longer names apart from its cursor, and tells what it keeps there that no app reads",
+      "prunes a store the configuration no longer names apart from its cursor, tells what it keeps there that no app reads, and applies it again by hand",
       async (context) => {
         const target = await create();
         const ledger = await ledgerOf(target.forgetLedger);
@@ -1244,14 +1245,60 @@ export const restoreContract: RestoreContractFunction = ({ create, hot }) => {
           new Set(["bob"]),
         );
 
-        // Copied into the ledger it names, the next start applies it, and then it goes there too.
-        await ledgers.ledgerOf(DEFAULT_TENANT).append([bob]);
-        expect(await pruned()).toMatchObject({ unapplied: true, stranded: false });
+        // Listed as no app applies it, through a tenant whose configuration still names the store.
+        const project: ProjectConfig = ({ tenant }) =>
+          tenant === "holder"
+            ? {
+                ...config,
+                runtime: {
+                  personalData: {
+                    ...config.runtime?.personalData,
+                    forgetLedger: { store: target.forgetLedger, keepFor: "1d" },
+                  },
+                },
+              }
+            : config;
+        const listed = await listStrandedForgetLedgerEntries({
+          config: project,
+          registry,
+          env,
+          tenants: ["holder"],
+          now: later,
+        });
+        expect(listed.entries).toEqual([bob]);
+
+        // Applied again by hand, it is forgotten, and recorded in the ledger the configuration
+        // names; then it goes from the store left behind.
         clock.advance(60_000);
         const restored = await start(storage, moved, BEFORE_ROTATION, clock);
         await restored.app.runUntilIdle();
+        expect(await forgettings(restored.app, "bob")).toEqual([]);
+        expect(await restored.app.applyAgain(listed.entries, { actor: "ops" })).toEqual([
+          { personId: "bob", eventId: bob.eventId, kind: "forgetting", outcome: "applied" },
+        ]);
+        await restored.app.runUntilIdle();
         await expectForgottenIn(restored, "bob");
+        expect(await forgettings(restored.app, "bob")).toEqual([bob.eventId]);
+        expect(
+          (await ledgers.ledgerOf(DEFAULT_TENANT).read({ limit: 10 })).map(
+            ({ eventId }) => eventId,
+          ),
+        ).toContain(bob.eventId);
+        expect(
+          (await restored.app.applyAgain(listed.entries)).map(({ outcome }) => outcome),
+        ).toEqual(["held"]);
         await restored.app.stop();
+        expect(
+          (
+            await listStrandedForgetLedgerEntries({
+              config: project,
+              registry,
+              env,
+              tenants: ["holder"],
+              now: later,
+            })
+          ).entries,
+        ).toEqual([]);
         expect(await pruned()).toEqual({
           tenant: DEFAULT_TENANT,
           before: new Date(later.getTime() - 24 * 60 * 60_000).toISOString(),
