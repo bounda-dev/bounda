@@ -79,24 +79,17 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const listed = (values: readonly string[]): string =>
   values.map((value) => JSON.stringify(value)).join(", ");
 
-const checked = (
-  port: string,
-  module: RecipientModule,
-  categories: PersonalCategories,
-): Omit<RecipientRuntime, "port" | "owner" | "name" | "implementation"> => {
+export interface CheckRecipientTransferFunction {
+  (port: string, recipient: Readonly<Record<string, unknown>>): void;
+}
+
+// Where the recipient is and what its transfer rests on, as the app checks it at boot and the
+// record of processing before it names the transfer.
+export const checkRecipientTransfer: CheckRecipientTransferFunction = (port, recipient) => {
   const fail = (message: string): never => {
     throw new ConfigurationError(`Port ${port}: ${message}`);
   };
-  const declared: unknown = module.recipient;
-  if (!isRecord(declared)) fail("recipient must be an object: { name, kind, country, categories }");
-  const recipient = declared as Readonly<Record<string, unknown>>;
-  const { name, kind, country, safeguard, adequacyScope, formerly } = recipient;
-  if (typeof name !== "string" || name.trim() === "") {
-    fail("recipient.name must name who receives the data");
-  }
-  if (!RECIPIENT_KINDS.includes(kind as RecipientKind)) {
-    fail(`recipient.kind ${JSON.stringify(kind)} is none of ${listed(RECIPIENT_KINDS)}`);
-  }
+  const { country, safeguard, adequacyScope } = recipient;
   if (!COUNTRIES.has(country)) {
     fail(`recipient.country ${JSON.stringify(country)} is not an ISO 3166-1 alpha-2 code`);
   }
@@ -127,6 +120,28 @@ const checked = (
         : `recipient.adequacyScope ${JSON.stringify(adequacyScope)} names part of a partial adequacy decision, so it goes beside safeguard: "adequacy" alone: remove it`,
     );
   }
+};
+
+const checked = (
+  port: string,
+  module: RecipientModule,
+  categories: PersonalCategories,
+): Omit<RecipientRuntime, "port" | "owner" | "name" | "implementation"> => {
+  const fail = (message: string): never => {
+    throw new ConfigurationError(`Port ${port}: ${message}`);
+  };
+  const declared: unknown = module.recipient;
+  if (!isRecord(declared)) fail("recipient must be an object: { name, kind, country, categories }");
+  const recipient = declared as Readonly<Record<string, unknown>>;
+  const { name, kind, country, safeguard, formerly } = recipient;
+  if (typeof name !== "string" || name.trim() === "") {
+    fail("recipient.name must name who receives the data");
+  }
+  if (!RECIPIENT_KINDS.includes(kind as RecipientKind)) {
+    fail(`recipient.kind ${JSON.stringify(kind)} is none of ${listed(RECIPIENT_KINDS)}`);
+  }
+  checkRecipientTransfer(port, recipient);
+  const inEea = EEA.has(country as string);
   const named = recipient.categories;
   if (!Array.isArray(named) || named.length === 0) {
     fail("recipient.categories must list the categories of personal data the port sends it");

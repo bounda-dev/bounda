@@ -24,6 +24,7 @@ import { type FieldsRecord, fieldBuilder } from "../../modules/view.ts";
 import { schemaArgs } from "../aggregate/build-aggregates.ts";
 import { buildPortReturns, portsByCategory } from "../ports/returns.ts";
 import { processStateArgs } from "../process/deadlines.ts";
+import { checkRecipientTransfer } from "../recipients/build.ts";
 import { recipientTransferOf } from "../recipients/transfer.ts";
 import { buildPersonalCategories, formatRetention } from "./categories.ts";
 import {
@@ -489,6 +490,11 @@ const recipientsOf = (registry: Registry): InventoryRecipient[] =>
     ([owner, entry]) =>
       Object.entries(entry.recipients ?? {}).map(([port, module]) => {
         const { recipient } = module;
+        // A record drawn without the app still names no transfer the app would refuse.
+        checkRecipientTransfer(
+          `${owner}.${port}`,
+          recipient as unknown as Readonly<Record<string, unknown>>,
+        );
         return {
           port: `${owner}.${port}`,
           name: recipient.name.trim(),
@@ -658,6 +664,12 @@ const unlocated = (
     }));
 };
 
+/**
+ * The record of processing activities (article 30) the app's registry and configuration hold: what
+ * personal data is kept where, by whom it is received and on what each transfer rests, and what the
+ * runtime keeps about persons. Throws `ConfigurationError` where the app would refuse to start: a
+ * store kept where it may not be, or a recipient whose transfer no declared safeguard allows.
+ */
 export const personalDataInventory: PersonalDataInventoryFunction = ({ registry, config }) => {
   const resolved = resolveConfig(config);
   const categories = buildPersonalCategories({

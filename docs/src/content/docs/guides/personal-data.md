@@ -1630,7 +1630,8 @@ export const recipient = {
 ```
 
 The types refuse `adequacy` there without it, another country's scope, and an `adequacyScope`
-anywhere else, and so does the app when it starts, naming the decision and what to verify. The
+anywhere else, and so do the app when it starts and the record of processing, naming the decision
+and what to verify. The
 [record of processing](#the-record-of-processing-activities), `recipientsOf` and the exports then
 name the decision next to the transfer, with its condition, which stays yours to keep true: why is
 in [partial adequacy decisions](/reference/configuration/#partial-adequacy-decisions).

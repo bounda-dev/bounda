@@ -568,7 +568,7 @@ alone, as article 45(1) allows, `adequacy` holds only for the recipients in its 
 covers those subject to PIPEDA, the United States' organisations on the Data Privacy Framework
 List (`PARTIAL_ADEQUACY`), and outside them the transfer needs a safeguard of article 46. A
 recipient there declares the decision's `adequacyScope` beside `adequacy`, stating that it is in
-scope, and the types and the app refuse `adequacy` there without it. The export and `recipientsOf`
+scope, and the types, the app and the record of processing refuse `adequacy` there without it. The export and `recipientsOf`
 tell the person where their data went, by the legal regime it went to, and on what it rests, with
 the article and any partial decision, 15(2), and the record of processing lists every transfer the
 same way, naming what the controller verifies of the recipient on a partial decision. A tenant's export sums the recipients of every person in it, once under each identity a

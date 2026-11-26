@@ -631,7 +631,7 @@ describe("runtimeText", () => {
 
 describe("location", () => {
   it("lets every adapter declare the jurisdiction it keeps its data in, which the record states", () => {
-    type Partial<Location, Scope> =
+    type PartialBranch<Location, Scope> =
       | {
           readonly location: Location;
           readonly safeguard: "adequacy";
@@ -653,10 +653,10 @@ describe("location", () => {
           readonly safeguard: StoreSafeguard;
           readonly adequacyScope?: never;
         }
-      | Partial<"ca", "pipeda">
-      | Partial<"us", "data-privacy-framework">
-      | Partial<"fedramp", "data-privacy-framework">
-      | Partial<"fedramp-high", "data-privacy-framework">
+      | PartialBranch<"ca", "pipeda">
+      | PartialBranch<"us", "data-privacy-framework">
+      | PartialBranch<"fedramp", "data-privacy-framework">
+      | PartialBranch<"fedramp-high", "data-privacy-framework">
       | {
           readonly location: Exclude<DataLocation, AdequateLocation>;
           readonly safeguard: Exclude<StoreSafeguard, "adequacy">;

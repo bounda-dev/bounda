@@ -238,6 +238,18 @@ describe("checkLocations", () => {
     );
   });
 
+  it("refuses an adequacyScope on the storage, which declares no safeguard", () => {
+    const scoped = {
+      ...memory({ location: "us" }),
+      adequacyScope: "data-privacy-framework",
+    } as unknown as ReturnType<typeof memory>;
+    expect(() => resolveConfig({ storage: scoped })).toThrow(
+      new ConfigurationError(
+        "storage declares a safeguard, and storage is where the app keeps its data, not a transfer out of it: a safeguard belongs to a store kept in another location than storage's",
+      ),
+    );
+  });
+
   it("refuses a safeguard under a storage that declares no location", () => {
     expect(() =>
       resolveConfig({
@@ -397,6 +409,22 @@ describe("checkLocations", () => {
       placed({ location: "ca", safeguard: "adequacy", adequacyScope: "pipeda" }),
     );
     expect(config.runtime.personalData.tenantKeys?.adequacyScope).toBe("pipeda");
+    const keptByMasterKey = resolveConfig({
+      storage: memory({ location: "eu" }),
+      runtime: {
+        personalData: {
+          keyWrapper: masterKey({
+            from: "BOUNDA_MASTER_KEY",
+            location: "us",
+            safeguard: "adequacy",
+            adequacyScope: "data-privacy-framework",
+          }),
+        },
+      },
+    });
+    expect(keptByMasterKey.runtime.personalData.keyWrapper?.adequacyScope).toBe(
+      "data-privacy-framework",
+    );
     expect(() =>
       resolveConfig(placed({ location: "ch", safeguard: "adequacy", adequacyScope: "pipeda" })),
     ).toThrow(

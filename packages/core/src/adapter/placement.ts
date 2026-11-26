@@ -182,7 +182,10 @@ export interface CheckStorageLocationFunction {
 export const checkStorageLocation: CheckStorageLocationFunction = (storage) => {
   const where = locationOf("storage", storage);
   if (where === "global") throw globalStorage();
-  if (Reflect.get(storage, "safeguard") !== undefined) {
+  if (
+    Reflect.get(storage, "safeguard") !== undefined ||
+    Reflect.get(storage, "adequacyScope") !== undefined
+  ) {
     throw new ConfigurationError(
       "storage declares a safeguard, and storage is where the app keeps its data, not a transfer out of it: a safeguard belongs to a store kept in another location than storage's",
     );
