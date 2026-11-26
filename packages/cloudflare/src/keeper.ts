@@ -48,7 +48,9 @@ export interface BoundaKeeperMethods {
     record: TenantKeyRecord,
     expected: number | null,
   ): Promise<RpcOutcome<boolean>>;
+  removeTenantKeys(tenant: string, expected: number): Promise<RpcOutcome<boolean>>;
   registerTenant(tenant: string): Promise<RpcOutcome<null>>;
+  unregisterTenant(tenant: string): Promise<RpcOutcome<null>>;
   listTenants(args: ListTenantKeysArgs): Promise<RpcOutcome<TenantKeysPage>>;
   appendLedger(tenant: string, entries: readonly ForgetLedgerEntry[]): Promise<RpcOutcome<null>>;
   readLedger(
@@ -208,6 +210,18 @@ export const createBoundaKeeper: CreateBoundaKeeperFunction = ({ config }) => {
       expected: number | null,
     ): Promise<RpcOutcome<boolean>> {
       return settle(async () => (await this.#tenantKeys(tenant)).put(tenant, record, expected));
+    }
+
+    removeTenantKeys(tenant: string, expected: number): Promise<RpcOutcome<boolean>> {
+      return settle(async () => (await this.#tenantKeys(tenant)).remove(tenant, expected));
+    }
+
+    unregisterTenant(tenant: string): Promise<RpcOutcome<null>> {
+      return settle(async () => {
+        this.#directoryTable();
+        this.ctx.storage.sql.exec(`DELETE FROM ${DIRECTORY_TABLE} WHERE "tenant" = ?`, tenant);
+        return null;
+      });
     }
 
     registerTenant(tenant: string): Promise<RpcOutcome<null>> {

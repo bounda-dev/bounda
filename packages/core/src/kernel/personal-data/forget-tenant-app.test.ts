@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Adapter } from "../../adapter/adapter.ts";
 import { createNodeSqliteAdapter } from "../../adapter/sqlite/node-sqlite.ts";
 import type { Table } from "../../adapter/storage/table.ts";
+import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
 import { testDeadLetter } from "../../adapter/testing/fixtures.ts";
+import { configForTenant } from "../../config/define-config.ts";
+import type { ProjectConfig } from "../../config/types.ts";
 import { createFixedClock } from "../../contracts/clock.ts";
 import { TenantForgottenError, ValidationError } from "../../contracts/errors.ts";
 import { memory } from "../../memory/index.ts";
@@ -181,6 +184,7 @@ describe("forgetTenant", () => {
       tenant: "default",
       forgottenAt: expect.any(String),
       eventId: expect.any(String),
+      keyCopies: null,
     });
     await expectTenantForgotten(app);
     await expect(register(app, "c-3")).rejects.toThrow(TenantForgottenError);
@@ -723,6 +727,144 @@ describe("forgetTenant", () => {
       ]),
     );
     expect((error as { found: readonly unknown[] }).found.length).toBeGreaterThan(0);
+  });
+});
+
+describe("forgetTenant in an app given the project", () => {
+  it("removes every copy of the tenant's key a move left in a store its configuration no longer names, and tries those left again", async () => {
+    const [old, current] = [createMemoryTenantKeyStore(), createMemoryTenantKeyStore()];
+    let failing = true;
+    // The store the tenant moved from, which refuses the first removal.
+    const leaving: TenantKeyStore = {
+      ...old,
+      remove: async (tenant, expected) => {
+        if (failing) throw new Error("store unavailable");
+        return old.remove(tenant, expected);
+      },
+    };
+    const env = { BOUNDA_MASTER_KEY: randomKey() };
+    const keyWrapper = masterKey({ from: "BOUNDA_MASTER_KEY" });
+    const [oldKeys, currentKeys] = [
+      defineTenantKeyStore(() => leaving),
+      defineTenantKeyStore(() => current),
+    ];
+    const adapter = memory();
+    const project: ProjectConfig = ({ tenant }) => ({
+      storage: tenant === DEFAULT_TENANT ? adapter : memory(),
+      runtime: {
+        personalData: { keyWrapper, tenantKeys: tenant === "globex" ? oldKeys : currentKeys },
+      },
+    });
+    const { logger, entries } = createRecordingLogger();
+    const start = async (): Promise<BoundaApp> => {
+      const app = await createApp({
+        registry,
+        config: configForTenant({ config: project, tenant: DEFAULT_TENANT }),
+        env,
+        logger,
+        clock: createFixedClock(),
+        project: { config: project, tenants: async () => ["globex"] },
+      });
+      stops.push(() => app.stop());
+      return app;
+    };
+    const copyKey = async (): Promise<void> => {
+      const held = await current.get(DEFAULT_TENANT);
+      if (held === null) throw new Error("no record");
+      const { revision: _, ...record } = held;
+      await old.put(DEFAULT_TENANT, record, null);
+    };
+    const app = await start();
+    await register(app, "c-1");
+    await app.runUntilIdle();
+    await copyKey();
+    const kid = (await current.get(DEFAULT_TENANT))?.keys[0]?.kid;
+
+    const first = await app.forgetTenant(DEFAULT_TENANT, { despiteLegalObligations: true });
+    expect(first.keyCopies?.removed).toEqual([]);
+    expect(
+      first.keyCopies?.refused.map(({ tenant, namedBy, error }) => [
+        tenant,
+        namedBy,
+        String(error),
+      ]),
+    ).toEqual([[DEFAULT_TENANT, "globex", "Error: store unavailable"]]);
+    expect(entries).toContainEqual({
+      level: "error",
+      message: "copies of the forgotten tenant's key left",
+      fields: { tenant: DEFAULT_TENANT, refused: 1, unreached: 0 },
+    });
+    expect((await old.get(DEFAULT_TENANT))?.keys.map(({ kid: each }) => each)).toEqual([kid]);
+
+    failing = false;
+    const again = await app.forgetTenant(DEFAULT_TENANT);
+    expect(again).toEqual({
+      ...first,
+      keyCopies: {
+        removed: [
+          {
+            tenant: DEFAULT_TENANT,
+            namedBy: "globex",
+            named: "forgotten",
+            lost: { versions: [kid], files: [] },
+          },
+        ],
+        refused: [],
+        unreached: [],
+      },
+    });
+    expect(await old.get(DEFAULT_TENANT)).toBeNull();
+    expect((await current.get(DEFAULT_TENANT))?.forgotten?.eventId).toBe(first.eventId);
+    await app.stop();
+
+    // A copy put back by hand meets an app started on the forgotten tenant.
+    const held = await current.get(DEFAULT_TENANT);
+    if (held === null) throw new Error("no record");
+    const { revision: _, ...tombstone } = held;
+    await old.put(DEFAULT_TENANT, { ...tombstone, keys: [] }, null);
+    const restarted = await start();
+    const third = await restarted.forgetTenant(DEFAULT_TENANT);
+    expect(third.keyCopies?.removed.map(({ named }) => named)).toEqual(["forgotten"]);
+    expect(await old.get(DEFAULT_TENANT)).toBeNull();
+  });
+
+  it("names the tenant unreached when the project's stores cannot be listed, the tenant forgotten all the same", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const config = {
+      storage: memory(),
+      runtime: {
+        personalData: {
+          keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+          tenantKeys: defineTenantKeyStore(createMemoryTenantKeyStore),
+        },
+      },
+    };
+    const app = await createApp({
+      registry,
+      config,
+      env: { BOUNDA_MASTER_KEY: randomKey() },
+      logger,
+      project: {
+        config: () => {
+          throw new Error("no configuration");
+        },
+      },
+    });
+    stops.push(() => app.stop());
+    const { keyCopies } = await app.forgetTenant(DEFAULT_TENANT, {
+      despiteLegalObligations: true,
+    });
+    expect(keyCopies).toEqual({
+      removed: [],
+      refused: [],
+      unreached: [{ tenant: DEFAULT_TENANT, error: new Error("no configuration") }],
+    });
+    expect(entries).toContainEqual({
+      level: "error",
+      message: "copies of the forgotten tenant's key left",
+      fields: { tenant: DEFAULT_TENANT, refused: 0, unreached: 1 },
+    });
+    await expect(register(app, "c-1")).rejects.toThrow(TenantForgottenError);
   });
 });
 

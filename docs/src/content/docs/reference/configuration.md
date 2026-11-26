@@ -29,8 +29,11 @@ for code of your own. See [tenants](/guides/personal-data/#tenants). Such a proj
 export `tenants`, a list of the tenants it serves or a function that resolves to one, which
 commands that go through every tenant reach beside those its stores list, as
 [`bounda forget-ledger prune --all-tenants`](/guides/personal-data/#keeping-the-ledger-short)
-and [`bounda tenant-key rewrap-master`](/guides/personal-data/#rotating-the-master-key) do;
-`loadProject` hands it as `tenants()`.
+[`bounda tenant-key rewrap-master`](/guides/personal-data/#rotating-the-master-key),
+[`status` and `remove-stale`](/guides/personal-data/#moving-a-tenants-key-to-another-store) do, and
+so does `forgetTenant` in an app `boot()` creates, which removes the copies of the tenant's key
+those stores hold; `loadProject` hands it as `tenants()`, and `boot({ config, tenants })` takes it
+with a configuration given directly.
 
 **Durations** are a number of milliseconds or a string: a number followed by `ms`, `s`, `m`, `h`
 or `d` (`"250ms"`, `"1.5s"`, `"7d"`). A duration read from the environment is a `string`, which the
@@ -255,7 +258,8 @@ a stopped one left: see [delivery guarantees](/concepts/delivery-guarantees/#the
   [location](#data-location), does a store that declares none, or another without a
   [safeguard](#stores-in-another-jurisdiction): `defineTenantKeyStore(create, { location,
   safeguard })` declares one's. `forgetTenant` destroys the key
-  there. See
+  there, and the copies a move left in stores the configuration no longer names (see
+  [moving a tenant's key](/guides/personal-data/#moving-a-tenants-key-to-another-store)). See
   [the tenant key store](/guides/personal-data/#the-tenant-key-store).
 - **`personalData.forgetLedger`**, none by default. Where every forgetting is recorded outside the
   database, before it commits, by person's id, event id, time, reason and the fingerprints of the

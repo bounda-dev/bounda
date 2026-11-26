@@ -23,6 +23,11 @@ export const createMemoryTenantKeyStore: CreateMemoryTenantKeyStoreFunction = ()
       records.set(tenant, { ...record, revision: (expected ?? 0) + 1 });
       return true;
     },
+    remove: async (tenant, expected) => {
+      if (records.get(tenant)?.revision !== expected) return false;
+      records.delete(tenant);
+      return true;
+    },
     list: async ({ cursor, limit }) => {
       const tenants = [...records.keys()]
         .filter((tenant) => cursor === null || tenant > cursor)

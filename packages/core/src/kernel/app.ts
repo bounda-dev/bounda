@@ -133,6 +133,11 @@ import {
 } from "./personal-data/tenant-export.ts";
 import { recordedTenantExport, streamTenantExport } from "./personal-data/tenant-export-stream.ts";
 import { guardClient } from "./personal-data/tenant-guard.ts";
+import {
+  type AppProject,
+  type RemovedStaleTenantKeys,
+  removeKeyCopiesOf,
+} from "./personal-data/tenant-key-stores.ts";
 import type { TenantKeys } from "./personal-data/tenant-keys.ts";
 import { checkPersonId, isPersonId } from "./personal-data/transact.ts";
 import { storeTransfers } from "./personal-data/transfers.ts";
@@ -398,7 +403,10 @@ export interface BoundaClient<R extends Registry = AppRegistry> {
    * times and the fields no schema marks. From then on the app serves nothing: every call rejects
    * with `TenantForgottenError`, here at once and on another instance within
    * `TENANT_CHECK_INTERVAL_MS`, and only the notices to the recipients of the tenant's data go out.
-   * Calling it again resolves to the same forgetting. Rejects with `ValidationError`, forgetting
+   * In an app given `project`, as `boot` creates it, every copy of the tenant's key left in a
+   * tenant key store its configuration no longer names is removed too, as `removeStaleTenantKeys`
+   * does, and `keyCopies` says what was left. Calling it again resolves to the same forgetting,
+   * and tries the copies left again. Rejects with `ValidationError`, forgetting
    * nothing, when `tenant` is not the app's, or while a person holds a key of a category whose
    * basis is `legal-obligation`, unless `despiteLegalObligations`; with `ConfigurationError` in an
    * app without keys.
@@ -746,6 +754,12 @@ export type CreateAppArgs<R extends Registry> = {
    * out, the app records nothing.
    */
   readonly witness?: Witness | undefined;
+  /**
+   * What `bounda.config.ts` exports as a whole, and its `tenants` export, as `boot` passes them:
+   * `forgetTenant` then reaches every tenant key store the configuration can name, and removes
+   * the copies of the tenant's key left in those its configuration no longer names.
+   */
+  readonly project?: AppProject | undefined;
 } & EnvSection<R>;
 
 export interface CreateAppFunction {
@@ -766,8 +780,9 @@ export const createApp: CreateAppFunction = <R extends Registry>({
   env = {},
   tenant,
   witness,
+  project,
 }: CreateAppArgs<R>): Promise<BoundaApp<R>> =>
-  assembleApp<R>({ registry, config, logger, ids, clock, env, tenant, witness });
+  assembleApp<R>({ registry, config, logger, ids, clock, env, tenant, witness, project });
 
 export interface AssembleAppArgs<R extends Registry> {
   readonly registry: R;
@@ -777,6 +792,7 @@ export interface AssembleAppArgs<R extends Registry> {
   readonly clock: Clock;
   readonly env: AppEnv;
   readonly tenant?: string | undefined;
+  readonly project?: AppProject | undefined;
   /**
    * Given by `createTestApp`: the ports come from the test instead of `config.ports`.
    */
@@ -850,6 +866,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
   onHostRejection,
   witness,
   searchErrorText = true,
+  project,
 }: AssembleAppArgs<R>): Promise<BoundaApp<R>> => {
   const tenantId = tenantIdOf(tenant);
   // Attached first, so every store call, log entry and span of the app reaches it.
@@ -1326,6 +1343,20 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         errorText,
       });
     };
+    // Every copy of the forgotten tenant's key the project's stores hold, which its forgetting, in
+    // the named store, left behind.
+    const removeKeyCopies = async (): Promise<RemovedStaleTenantKeys | null> => {
+      if (project === undefined) return null;
+      const keyCopies = await removeKeyCopiesOf({ project, env, tenant: tenantId });
+      if (keyCopies.refused.length + keyCopies.unreached.length > 0) {
+        logger.error("copies of the forgotten tenant's key left", {
+          tenant: tenantId,
+          refused: keyCopies.refused.length,
+          unreached: keyCopies.unreached.length,
+        });
+      }
+      return keyCopies;
+    };
     const forgottenAtStart = hierarchy?.tenantKeys.forgotten() ?? null;
     if (hierarchy !== null && forgottenAtStart !== null) {
       await settleForgotten(forgottenAtStart);
@@ -1341,6 +1372,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
           forgotten: forgottenError,
           forgetting: forgottenAtStart,
           tenant: tenantId,
+          removeKeyCopies,
           recordRejection,
           close: async () => {
             await copies?.retry();
@@ -2218,7 +2250,12 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
         logger.warn("tenant forgotten", { tenant: tenantId, eventId: forgetting.eventId });
       }
       await enterForgotten(keys, { settled: true });
-      return { tenant: tenantId, forgottenAt: forgetting.at, eventId: forgetting.eventId };
+      return {
+        tenant: tenantId,
+        forgottenAt: forgetting.at,
+        eventId: forgetting.eventId,
+        keyCopies: await removeKeyCopies(),
+      };
     };
     const fencedStores: FencedStores = {
       tenant: tenantId,

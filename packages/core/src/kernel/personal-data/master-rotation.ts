@@ -29,12 +29,12 @@ const PUT_ATTEMPTS = 5;
 
 // The master keys a version of the tenant's key, or, once forgotten, a key of its files kept until
 // its recipients are told, is wrapped under.
-const wrappingMasters = (record: VersionedTenantKeyRecord): readonly string[] =>
+export const wrappingMasters = (record: VersionedTenantKeyRecord): readonly string[] =>
   (record.forgotten === null ? record.keys : (record.forgotten.files ?? [])).map(
     ({ wrappedBy }) => wrappedBy,
   );
 
-const underPrevious = (
+export const underPrevious = (
   record: VersionedTenantKeyRecord,
   master: Pick<CryptoKeyWrapper, "kid">,
 ): boolean => wrappingMasters(record).some((wrappedBy) => wrappedBy !== master.kid);
@@ -269,7 +269,7 @@ const ONE_WRITER =
   "The tenant key store is written by each tenant's own writer alone, as KV is: rewrap each tenant there, as createWorker's scheduled does on Cloudflare";
 
 // The master key in force for each key wrapper definition, built once.
-const mastersIn = (env: AppEnv) => {
+export const mastersIn = (env: AppEnv) => {
   const built = new Map<KeyWrapperDefinition, Promise<CryptoKeyWrapper>>();
   return (definition: KeyWrapperDefinition): Promise<CryptoKeyWrapper> => {
     const known = built.get(definition);

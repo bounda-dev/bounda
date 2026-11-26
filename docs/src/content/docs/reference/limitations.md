@@ -39,6 +39,14 @@ get today. Each item says why, so nobody discovers it the hard way:
   A store no configuration names any more is not reached at all: clear it once no backup older than
   the move is restorable. Move a ledger with its entries. See
   [Keeping the ledger short](/guides/personal-data/#keeping-the-ledger-short).
+- **Copies of a tenant's key no configuration reaches.** `bounda tenant-key status` and
+  `remove-stale`, and a forgetting in an app that knows the whole project, reach the tenant key
+  stores the configuration names for the tenants they reach: a store no configuration names any
+  more is not read at all, nor is a KV store or keeper outside a Worker, and a forgetting in a
+  Durable Object, or in an app from `createApp` without `project`, reaches only the store its
+  configuration names. A copy left there holds the tenant's key under the master key until the
+  store is cleared by hand. Copy the record and then remove the old one when moving a tenant; see
+  [Moving a tenant's key to another store](/guides/personal-data/#moving-a-tenants-key-to-another-store).
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each
   its own database, schema or Durable Object. See [Tenants](/guides/personal-data/#tenants).

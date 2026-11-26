@@ -20,6 +20,7 @@ import type { GlobalStream } from "./events/global-stream.ts";
 import { type RecordHostRejection, recordedRejections } from "./host-log.ts";
 import type { RecordAccess } from "./personal-data/access.ts";
 import { createTenantNoticeSubscriber, rejecting } from "./personal-data/forgotten-tenant.ts";
+import type { RemovedStaleTenantKeys } from "./personal-data/tenant-key-stores.ts";
 import type { TenantKeys } from "./personal-data/tenant-keys.ts";
 import type { RecipientDelivery, RecipientNotices } from "./recipients/notices.ts";
 import type { PendingRetries } from "./shared/pending-retries.ts";
@@ -237,6 +238,8 @@ export interface ForgottenAppArgs {
   readonly forgotten: () => TenantForgottenError;
   readonly forgetting: TenantForgetting;
   readonly tenant: string;
+  // What `forgetTenant` tries again: the copies of the tenant's key its forgetting left.
+  readonly removeKeyCopies: () => Promise<RemovedStaleTenantKeys | null>;
   readonly recordRejection: RecordHostRejection;
   /**
    * Closes everything the start opened.
@@ -256,6 +259,7 @@ export const forgottenApp = <R extends Registry>({
   forgotten,
   forgetting,
   tenant,
+  removeKeyCopies,
   recordRejection,
   close,
 }: ForgottenAppArgs): BoundaApp<R> => {
@@ -292,7 +296,12 @@ export const forgottenApp = <R extends Registry>({
               ]),
             );
           }
-          return { tenant, forgottenAt: forgetting.at, eventId: forgetting.eventId };
+          return {
+            tenant,
+            forgottenAt: forgetting.at,
+            eventId: forgetting.eventId,
+            keyCopies: await removeKeyCopies(),
+          };
         },
         exportTenant: reject,
         freezeTenant: reject,

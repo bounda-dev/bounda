@@ -1,30 +1,40 @@
 import {
+  type AppProject,
   type AppStatus,
   type BoundaClient,
   type BoundaError,
+  type CreateAppArgs,
   type DataLocation,
   DEFAULT_TENANT,
   type EncryptedFileStatus,
+  type FailedTenantKey,
   FILE_ENCRYPTION_RETRY_MS,
   type ForgetLedgerStore,
   type ForgetLedgerTenants,
   type ForgetTenantOptions,
   type FrozenTenantStatus,
+  inspectTenantKeys,
   type ListForgetLedgerTenantsArgs,
   type ListTenantsUnderPreviousMasterArgs,
   type Logger,
   listForgetLedgerTenants,
   listTenantsUnderPreviousMaster,
   migrateTables,
+  type NamedTenantKeys,
   type NotifiedRecipient,
   type PersonalCategoryName,
   type PrunedTenantForgetLedger,
   pruneTenantForgetLedger,
+  type RefusedStaleTenantKey,
   type Registry,
+  type RemovedStaleTenantKeys,
+  type RemoveStaleTenantKeysArgs,
   type RewrappedTenantKeys,
   type RewrapTenantKeysArgs,
   type RotateTenantKeyOptions,
+  removeStaleTenantKeys,
   rewrapTenantKeys,
+  type StaleTenantKey,
   TENANT_CHECK_INTERVAL_MS,
   TENANT_FORGOTTEN_EVENT,
   TenantForgottenError,
@@ -34,6 +44,8 @@ import {
   TenantFrozenError,
   type TenantFrozenResult,
   type TenantKeyStatus,
+  type TenantKeyStoresArgs,
+  type TenantKeysInspection,
   type TenantKeyVersions,
   type UnreachedTenant,
   type UnreadableStatus,
@@ -89,7 +101,7 @@ import {
   type TenantKeySource,
   type TenantKeyStoreDefinition,
 } from "@bounda-dev/core/config";
-import type { LoadedProject } from "@bounda-dev/core/node";
+import type { BootArgs, LoadedProject } from "@bounda-dev/core/node";
 import type { AppEnv } from "@bounda-dev/core/register";
 import {
   createTestKeys,
@@ -116,6 +128,7 @@ describe("the tenant's client calls", () => {
       readonly tenant: string;
       readonly forgottenAt: string;
       readonly eventId: string;
+      readonly keyCopies: RemovedStaleTenantKeys | null;
     }>();
     expectTypeOf<BoundaClient["rotateTenantKey"]>().toEqualTypeOf<
       (options?: RotateTenantKeyOptions) => Promise<TenantKeyVersions>
@@ -270,6 +283,11 @@ describe("the tenant in the configuration", () => {
           expectTypeOf(expected).toEqualTypeOf<number | null>();
           return true;
         },
+        remove: async (tenant, expected) => {
+          expectTypeOf(tenant).toEqualTypeOf<string>();
+          expectTypeOf(expected).toEqualTypeOf<number>();
+          return true;
+        },
         list: async (args) => {
           expectTypeOf(args).toEqualTypeOf<ListTenantKeysArgs>();
           return { tenants: [], cursor: null };
@@ -304,6 +322,9 @@ describe("the tenant key store", () => {
   it("keeps one record per tenant, written over the revision read", () => {
     expectTypeOf<TenantKeyStore["get"]>().toEqualTypeOf<
       (tenant: string) => Promise<VersionedTenantKeyRecord | null>
+    >();
+    expectTypeOf<TenantKeyStore["remove"]>().toEqualTypeOf<
+      (tenant: string, expected: number) => Promise<boolean>
     >();
     expectTypeOf<VersionedTenantKeyRecord>().toExtend<TenantKeyRecord>();
     expectTypeOf<VersionedTenantKeyRecord["revision"]>().toEqualTypeOf<number>();
@@ -486,6 +507,70 @@ describe("rotating the master key across tenants", () => {
       readonly cursor: string | null;
       readonly limit: number;
     }>();
+  });
+});
+
+describe("the copies of tenants' keys across tenant key stores", () => {
+  it("reads every store the configuration names, and removes the copies a move left", () => {
+    expectTypeOf(inspectTenantKeys).parameter(0).toEqualTypeOf<TenantKeyStoresArgs>();
+    expectTypeOf<TenantKeyStoresArgs>().toEqualTypeOf<{
+      readonly config: ProjectConfig;
+      readonly env: Readonly<Record<string, string | undefined>>;
+      readonly tenant?: string;
+      readonly tenants?: readonly string[];
+    }>();
+    expectTypeOf(inspectTenantKeys).returns.toEqualTypeOf<Promise<TenantKeysInspection>>();
+    expectTypeOf<TenantKeysInspection>().toEqualTypeOf<{
+      readonly stores: number;
+      readonly underPreviousMaster: readonly string[];
+      readonly stale: readonly StaleTenantKey[];
+      readonly failed: readonly FailedTenantKey[];
+      readonly unreached: readonly UnreachedTenant[];
+    }>();
+    expectTypeOf<StaleTenantKey>().toEqualTypeOf<{
+      readonly tenant: string;
+      readonly namedBy: string;
+      readonly named: NamedTenantKeys;
+      readonly lost: { readonly versions: readonly string[]; readonly files: readonly string[] };
+    }>();
+    expectTypeOf<NamedTenantKeys>().toEqualTypeOf<"forgotten" | "holds" | "differs" | "lacks">();
+    expectTypeOf<FailedTenantKey>().toEqualTypeOf<{
+      readonly tenant: string;
+      readonly error: unknown;
+    }>();
+    expectTypeOf(removeStaleTenantKeys).parameter(0).toEqualTypeOf<RemoveStaleTenantKeysArgs>();
+    expectTypeOf<RemoveStaleTenantKeysArgs>().toExtend<TenantKeyStoresArgs>();
+    expectTypeOf<RemoveStaleTenantKeysArgs["only"]>().toEqualTypeOf<
+      readonly string[] | undefined
+    >();
+    expectTypeOf<RemoveStaleTenantKeysArgs["despiteLostKeys"]>().toEqualTypeOf<
+      boolean | undefined
+    >();
+    expectTypeOf(removeStaleTenantKeys).returns.toEqualTypeOf<Promise<RemovedStaleTenantKeys>>();
+    expectTypeOf<RemovedStaleTenantKeys>().toEqualTypeOf<{
+      readonly removed: readonly StaleTenantKey[];
+      readonly refused: readonly RefusedStaleTenantKey[];
+      readonly unreached: readonly UnreachedTenant[];
+    }>();
+    expectTypeOf<RefusedStaleTenantKey>().toEqualTypeOf<{
+      readonly tenant: string;
+      readonly namedBy: string;
+      readonly error: unknown;
+    }>();
+  });
+
+  it("hands an app the whole project, so forgetting its tenant reaches every store", () => {
+    expectTypeOf<AppProject>().toEqualTypeOf<{
+      readonly config: ProjectConfig;
+      readonly tenants?: ProjectTenants;
+    }>();
+    expectTypeOf<CreateAppArgs<Registry>["project"]>().toEqualTypeOf<AppProject | undefined>();
+    expectTypeOf<BootArgs["tenants"]>().toEqualTypeOf<ProjectTenants | undefined>();
+    // What loadProject hands over is the project an app takes.
+    expectTypeOf<{
+      readonly config: LoadedProject["projectConfig"];
+      readonly tenants: LoadedProject["tenants"];
+    }>().toExtend<AppProject>();
   });
 });
 

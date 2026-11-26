@@ -7,8 +7,11 @@ import { createFixedClock } from "../contracts/clock.ts";
 import { ConfigurationError } from "../contracts/errors.ts";
 import { createSequentialIdGenerator } from "../contracts/ids.ts";
 import { silentLogger } from "../contracts/logger.ts";
+import { masterKey } from "../kernel/personal-data/master-key.ts";
+import { defineTenantKeyStore } from "../kernel/personal-data/tenant-key-source.ts";
 import { createRecordingLogger } from "../kernel/test-support.ts";
 import { memory } from "../memory/index.ts";
+import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
 import type { CreateArgs } from "../modules/port.ts";
 import type { Registry } from "../modules/registry.ts";
 import { expectForgotten, type NotForgottenError } from "../testing/expect-forgotten.ts";
@@ -86,6 +89,15 @@ describe("loadProject", () => {
       tenants: expect.any(Function),
     });
     expect(await project.tenants()).toEqual([]);
+    const listed = await loadProject({
+      root,
+      loadEnv: false,
+      registry,
+      config,
+      tenants: async () => ["acme"],
+      logger: silentLogger,
+    });
+    expect(await listed.tenants()).toEqual(["acme"]);
   });
 
   it("hands the configuration as exported, and the tenants its tenants export names", async () => {
@@ -118,6 +130,15 @@ describe("loadProject", () => {
       );
     }
     await expect((await load([""])).tenants()).rejects.toBeInstanceOf(ConfigurationError);
+    const given = await loadProject({
+      root,
+      loadEnv: false,
+      registry,
+      tenants: ["umbrella"],
+      importConfig: async () => ({ default: config, tenants: ["acme"] }),
+      logger: silentLogger,
+    });
+    expect(await given.tenants()).toEqual(["umbrella"]);
   });
 });
 
@@ -375,6 +396,52 @@ describe("boot", () => {
     expect(process.env.BOUNDA_TEST_MARKER).toBeUndefined();
     expect(app.role).toBe("all");
     await app.stop();
+  });
+
+  it("hands the whole project to the app, so forgetting its tenant reaches every tenant key store it names", async () => {
+    const [old, current] = [createMemoryTenantKeyStore(), createMemoryTenantKeyStore()];
+    const [oldKeys, currentKeys] = [
+      defineTenantKeyStore(() => old),
+      defineTenantKeyStore(() => current),
+    ];
+    const keyWrapper = masterKey({ from: "BOUNDA_BOOT_MASTER_KEY" });
+    process.env.BOUNDA_BOOT_MASTER_KEY = Buffer.from(
+      crypto.getRandomValues(new Uint8Array(32)),
+    ).toString("base64");
+    const storage = memory();
+    try {
+      const app = await boot({
+        root,
+        loadEnv: false,
+        signals: false,
+        logger: silentLogger,
+        registry,
+        tenant: "acme",
+        tenants: ["globex"],
+        config: ({ tenant }) => ({
+          storage: tenant === "acme" ? storage : memory(),
+          runtime: {
+            personalData: { keyWrapper, tenantKeys: tenant === "globex" ? oldKeys : currentKeys },
+          },
+        }),
+      });
+      try {
+        await app.status();
+        const held = await current.get("acme");
+        if (held === null) throw new Error("no record");
+        const { revision: _, ...record } = held;
+        await old.put("acme", record, null);
+        const { keyCopies } = await app.forgetTenant("acme");
+        expect(keyCopies?.removed.map(({ tenant, namedBy }) => [tenant, namedBy])).toEqual([
+          ["acme", "globex"],
+        ]);
+        expect(await old.get("acme")).toBeNull();
+      } finally {
+        await app.stop();
+      }
+    } finally {
+      delete process.env.BOUNDA_BOOT_MASTER_KEY;
+    }
   });
 
   it("imports the configuration through importConfig instead of configPath", async () => {

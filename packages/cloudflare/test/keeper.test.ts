@@ -66,6 +66,7 @@ const keeper = (name: string) => env.KEEPER.get(env.KEEPER.idFromName(name));
 const apart = (store: TenantKeyStore, prefix: string): TenantKeyStore => ({
   get: (tenant) => store.get(`${prefix}${tenant}`),
   put: (tenant, held, expected) => store.put(`${prefix}${tenant}`, held, expected),
+  remove: (tenant, expected) => store.remove(`${prefix}${tenant}`, expected),
   list: async ({ cursor, limit }) => {
     const page = await store.list({ cursor: `${prefix}${cursor ?? ""}`, limit });
     const tenants = page.tenants
