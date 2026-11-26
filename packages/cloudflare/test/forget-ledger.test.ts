@@ -1100,6 +1100,8 @@ describe("the KV forget ledger's writes of one entry", () => {
     for (let value = 1; value <= 1_100; value += 1) {
       await ledger.raiseMark("restore:generation", { value, raisedAt: secondAt(value) });
     }
+    // Read over more than one page of keys.
+    expect(await ledger.readMark("restore:generation")).toHaveLength(1_101);
     await ledger.pruneMarks?.("restore:generation", secondAt(1_001));
     expect(await ledger.readMark("restore:generation")).toHaveLength(601);
     await ledger.pruneMarks?.("restore:generation", secondAt(1_001));
