@@ -519,6 +519,8 @@ describe("a keeper object", () => {
       },
     };
     expect(await other.registerTenant(tenant)).toEqual(directoryOnly);
+    expect(await other.unregisterTenant(tenant)).toEqual(directoryOnly);
+    expect(await other.removeTenantKeys(tenant, 1)).toEqual(mismatched);
     expect(await other.listTenants({ cursor: null, limit: 1 })).toEqual(directoryOnly);
     expect(await unnamed.listTenants({ cursor: null, limit: 1 })).toEqual(directoryOnly);
   });
