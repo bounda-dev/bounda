@@ -827,11 +827,19 @@ const createWorld = (
   const pass = async (instance: Instance): Promise<void> => {
     const live = instances[instance];
     if (live === null || live === undefined) return;
-    const proof = await proofFor(instance, "pass");
+    const passProof = await proofFor(instance, "pass");
+    // A pass whose reconciliation reads the ledger through at last, the start's having failed, is
+    // a look that reads the entries, as the start's would have.
+    const reading =
+      kind === "kv" &&
+      passProof === null &&
+      (await live.app.getLag()).forgetLedger?.reconciled === false &&
+      (await ledgerProves("shown", "none"));
     const held = new Set(snapshotOf(db).events.map(({ id }) => id));
     const recorded = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     await live.app.runUntilIdle();
-    looked(proof);
+    const readThrough = reading && (await live.app.getLag()).forgetLedger?.reconciled === true;
+    looked(passProof ?? (readThrough ? "the entries its reconciliation read at last" : null));
     if (settledAfter) handled = handledBy(held, recorded);
     settledAfter = false;
     live.memory = memoryOf(null);
@@ -1025,7 +1033,8 @@ const createWorld = (
   const instanceAction = async (action: InstanceAction): Promise<void> => {
     const live = instances[action.instance];
     // What an instance writes in between makes a restore after it another going back.
-    if (live != null || action.kind === "start") unlooked = null;
+    // A crash writes nothing.
+    if ((live != null && action.kind !== "crash") || action.kind === "start") unlooked = null;
     switch (action.kind) {
       case "start":
         return startInstance(action.instance);
@@ -1803,6 +1812,40 @@ const COUNTEREXAMPLES: readonly {
       by("forgetRetried", 0),
       restore(0, ["pass", "pass"]),
     ],
+    counted: 1,
+  },
+  {
+    name: "counts once on KV a copy restored back over the copy a crash left unlooked at, whose lost forgetting the first restore counted",
+    kind: "kv",
+    actions: [
+      { kind: "write", instance: 0 },
+      { kind: "backUp", slot: 1 },
+      { kind: "forget", instance: 0, person: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "backUp", slot: 0 },
+      { kind: "restore", slot: 1, round: ["crash", "pass"] },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "backUp", slot: 0 },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts on KV a restore that lost a committed forgetting, once a start that could not read the ledger reads it on a pass",
+    kind: "kv",
+    actions: [
+      { kind: "ledger", mode: "dropping" },
+      { kind: "backUp", slot: 0 },
+      { kind: "write", instance: 0 },
+      { kind: "forget", instance: 0, person: 0 },
+      { kind: "release" },
+      { kind: "restore", slot: 0, round: ["stop", "pass"] },
+      {
+        kind: "together",
+        first: { kind: "forget", instance: 0, person: 0 },
+        second: { kind: "start", instance: 0 },
+      },
+      { kind: "age" },
+    ] as Action[],
     counted: 1,
   },
 ];
