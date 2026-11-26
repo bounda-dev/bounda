@@ -81,7 +81,7 @@ export interface StreamPersonalDataArgs {
    */
   readonly recipients: RecipientsRuntime;
   /**
-   * The stores kept out of `storage`'s jurisdiction under a safeguard, which every export lists.
+   * The stores kept out of `storage`'s legal regime under a safeguard, which every export lists.
    */
   readonly transfers: readonly ExportedTransfer[];
   readonly personId: string;

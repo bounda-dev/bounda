@@ -1,6 +1,7 @@
 import type { DeadLetterKind } from "../../adapter/storage/dead-letter-store.ts";
 import type { DispatchOutcome } from "../../adapter/storage/idempotency-store.ts";
 import type { ExportAccess } from "../../modules/audit.ts";
+import type { DataLocation } from "../../modules/data-location.ts";
 import type {
   AutomatedDecision,
   CriminalOffenceData,
@@ -139,7 +140,7 @@ export type PersonalDataRight =
   | "complaint";
 
 /**
- * A store the app keeps in another jurisdiction than `storage` under a safeguard, as article 15(2)
+ * A store the app keeps under another legal regime than `storage`'s under a safeguard, as article 15(2)
  * asks the person be told of: `read-model`, the rows of the read model `readModel`, which holds
  * personal data; `master-key`, the key every tenant's key is wrapped under; `tenant-keys`, the
  * tenant's key, which every key of the person is wrapped under; `forget-ledger`, the record of
@@ -151,7 +152,7 @@ export interface ExportedTransfer {
    * `null` unless `store` is `read-model`.
    */
   readonly readModel: string | null;
-  readonly location: string;
+  readonly location: DataLocation;
   readonly safeguard: StoreSafeguard;
   /**
    * The article of the GDPR the safeguard rests on.
@@ -359,8 +360,8 @@ export interface PersonalDataExport {
    */
   readonly recipients: readonly PersonRecipient[];
   /**
-   * The stores the app keeps out of the jurisdiction `storage` declares, with the safeguard that
-   * allows it, as article 15(2) asks; none when every store is kept where `storage` is.
+   * The stores the app keeps under another legal regime than `storage`'s, with the safeguard that
+   * allows it, as article 15(2) asks; none when every store is kept under `storage`'s.
    */
   readonly transfers: readonly ExportedTransfer[];
   /**

@@ -7,6 +7,7 @@ import { DEFAULT_TENANT } from "../kernel/personal-data/tenant-keys.ts";
 import { createMemoryForgetLedgers } from "../memory/forget-ledger.ts";
 import { memory } from "../memory/index.ts";
 import { createMemoryTenantKeyStore } from "../memory/tenant-key-store.ts";
+import type { DataLocation } from "../modules/data-location.ts";
 import { resolveConfig } from "./schema.ts";
 import type { Config } from "./types.ts";
 
@@ -16,13 +17,27 @@ const ledger = () => createMemoryForgetLedgers().ledgerOf(DEFAULT_TENANT);
 const SAFEGUARDS =
   '"adequacy" (article 45), "standard-contractual-clauses" (article 46(2)(c)), "binding-corporate-rules" (article 47), "code-of-conduct" (article 46(2)(e)), "certification" (article 46(2)(f))';
 
-const abroad = (path: string, location: string, fix: string) =>
-  `${path} keeps its data in "${location}", and storage keeps the app's in "eu": keeping it there is a transfer, which a safeguard must allow, so declare its safeguard beside its location, one of ${SAFEGUARDS}, or keep it where the storage is and ${fix}`;
+const abroad = (path: string, location: string, fix: string, regime = "in the country US") =>
+  `${path} keeps its data in "${location}", ${regime}, and storage keeps the app's in "eu", in the European Economic Area: keeping it there is a transfer, which a safeguard must allow, so declare its safeguard beside its location, one of ${SAFEGUARDS}, or keep it where the storage is and ${fix}`;
+
+const KNOWN =
+  'a country by its ISO 3166-1 alpha-2 code in lower case, such as "de", or one of "eu", "eea", "fedramp", "fedramp-high", "global"';
 
 const kept = (
   personalData: NonNullable<NonNullable<Config["runtime"]>["personalData"]>,
   storage = memory({ location: "eu" }),
-): Config => ({ storage, runtime: { personalData: { keyWrapper, ...personalData } } });
+): Config => ({
+  storage,
+  runtime: {
+    personalData: {
+      keyWrapper:
+        storage.location === undefined
+          ? keyWrapper
+          : masterKey({ from: "BOUNDA_MASTER_KEY", location: storage.location }),
+      ...personalData,
+    },
+  },
+});
 
 describe("checkLocations", () => {
   it("lets every store declare a location of its own while the storage declares none", () => {
@@ -99,7 +114,7 @@ describe("checkLocations", () => {
   });
 
   it("refuses a key wrapper kept elsewhere, since the master key opens every tenant's key", () => {
-    const wrapper = (location?: string) =>
+    const wrapper = (location?: DataLocation) =>
       defineKeyWrapper(
         () => {
           throw new Error("never built");
@@ -122,14 +137,23 @@ describe("checkLocations", () => {
     expect(() => resolveConfig(kept({ keyWrapper: wrapper() }, memory()))).not.toThrow();
   });
 
-  it("refuses a location that names no jurisdiction, wherever it is declared", () => {
-    for (const location of ["", "  ", 42, null]) {
+  it("refuses a location Bounda does not know, wherever it is declared", () => {
+    for (const location of [
+      "",
+      "  ",
+      "uk",
+      "europe",
+      "jurisdiction eu",
+      "fedramp-moderate",
+      42,
+      null,
+    ]) {
       const declared = { ...memory(), location } as unknown as ReturnType<typeof memory>;
       expect(() => resolveConfig({ storage: declared })).toThrow(
-        `storage declares where it keeps its data with a jurisdiction such as "eu", not ${JSON.stringify(location)}`,
+        `storage declares where it keeps its data as ${JSON.stringify(location)}, which is no location Bounda knows: ${KNOWN}`,
       );
       expect(() => resolveConfig({ storage: memory(), readModels: { search: declared } })).toThrow(
-        `readModels.search declares where it keeps its data with a jurisdiction such as "eu", not ${JSON.stringify(location)}`,
+        `readModels.search declares where it keeps its data as ${JSON.stringify(location)}, which is no location Bounda knows: ${KNOWN}`,
       );
       expect(() =>
         resolveConfig(
@@ -139,10 +163,10 @@ describe("checkLocations", () => {
           ),
         ),
       ).toThrow(
-        `runtime.personalData.keyWrapper declares where it keeps its data with a jurisdiction such as "eu", not ${JSON.stringify(location)}`,
+        `runtime.personalData.keyWrapper declares where it keeps its data as ${JSON.stringify(location)}, which is no location Bounda knows: ${KNOWN}`,
       );
       expect(() => resolveConfig(kept({ tenantKeys: declared }, memory()))).toThrow(
-        `runtime.personalData.tenantKeys declares where it keeps its data with a jurisdiction such as "eu", not ${JSON.stringify(location)}`,
+        `runtime.personalData.tenantKeys declares where it keeps its data as ${JSON.stringify(location)}, which is no location Bounda knows: ${KNOWN}`,
       );
     }
   });
@@ -179,11 +203,21 @@ describe("checkLocations", () => {
     }
   });
 
-  it("refuses a safeguard on a store kept where the storage is, which is no transfer", () => {
+  it("refuses a safeguard on a store kept under the storage's legal regime, which is no transfer", () => {
     expect(() =>
       resolveConfig(kept({ tenantKeys: memory({ location: "eu", safeguard: "adequacy" }) })),
     ).toThrow(
-      'runtime.personalData.tenantKeys keeps its data in "eu", where storage keeps the app\'s, under a safeguard, and keeping it there is no transfer: remove its safeguard',
+      'runtime.personalData.tenantKeys keeps its data in "eu" under a safeguard, and storage keeps the app\'s in "eu", both in the European Economic Area, so keeping it there is no transfer: remove its safeguard',
+    );
+    expect(() =>
+      resolveConfig(
+        kept(
+          { tenantKeys: memory({ location: "fedramp", safeguard: "adequacy" }) },
+          memory({ location: "us" }),
+        ),
+      ),
+    ).toThrow(
+      'runtime.personalData.tenantKeys keeps its data in "fedramp" under a safeguard, and storage keeps the app\'s in "us", both in the country US, so keeping it there is no transfer: remove its safeguard',
     );
   });
 
@@ -228,5 +262,106 @@ describe("checkLocations", () => {
         `runtime.personalData.forgetLedger.store declares the safeguard ${JSON.stringify(safeguard)}, which is none of ${SAFEGUARDS}`,
       );
     }
+  });
+
+  it("tells the case a location is written in from a location it does not know", () => {
+    for (const location of ["DE", "EU", "Fedramp"]) {
+      expect(() => resolveConfig(kept({ tenantKeys: { ...memory(), location } as never }))).toThrow(
+        `runtime.personalData.tenantKeys declares where it keeps its data as "${location}", which is no location Bounda knows: write it "${location.toLowerCase()}": ${KNOWN}`,
+      );
+    }
+  });
+
+  it("accepts a store kept elsewhere under the storage's legal regime without a safeguard", () => {
+    const at = (storage: DataLocation, location: DataLocation) =>
+      resolveConfig(kept({ tenantKeys: memory({ location }) }, memory({ location: storage })));
+    for (const [storage, location] of [
+      ["eu", "de"],
+      ["eu", "eea"],
+      ["eu", "no"],
+      ["eu", "re"],
+      ["eu", "ax"],
+      ["de", "fr"],
+      ["eea", "is"],
+      ["us", "fedramp"],
+      ["us", "fedramp-high"],
+      ["fedramp", "fedramp-high"],
+      ["ch", "ch"],
+    ] as const) {
+      expect(() => at(storage, location), `${location} under ${storage}`).not.toThrow();
+    }
+  });
+
+  it("refuses a store kept under another legal regime without a safeguard, by what each is", () => {
+    expect(() => resolveConfig(kept({ tenantKeys: memory({ location: "fedramp" }) }))).toThrow(
+      abroad("runtime.personalData.tenantKeys", "fedramp", 'give its memory() location: "eu"'),
+    );
+    expect(() => resolveConfig(kept({ tenantKeys: memory({ location: "gb" }) }))).toThrow(
+      abroad(
+        "runtime.personalData.tenantKeys",
+        "gb",
+        'give its memory() location: "eu"',
+        "in the country GB",
+      ),
+    );
+    expect(() => resolveConfig(kept({ tenantKeys: memory({ location: "gf" }) }))).not.toThrow();
+    expect(() => resolveConfig(kept({ tenantKeys: memory({ location: "bl" }) }))).toThrow(
+      abroad(
+        "runtime.personalData.tenantKeys",
+        "bl",
+        'give its memory() location: "eu"',
+        "in the country BL",
+      ),
+    );
+    expect(() => resolveConfig(kept({ tenantKeys: memory({ location: "global" }) }))).toThrow(
+      abroad(
+        "runtime.personalData.tenantKeys",
+        "global",
+        'give its memory() location: "eu"',
+        "anywhere in the world",
+      ),
+    );
+    expect(() =>
+      resolveConfig(kept({ tenantKeys: memory({ location: "eu" }) }, memory({ location: "ch" }))),
+    ).toThrow(
+      'runtime.personalData.tenantKeys keeps its data in "eu", in the European Economic Area, and storage keeps the app\'s in "ch", in the country CH: keeping it there is a transfer',
+    );
+  });
+
+  it("refuses adequacy for a store kept where no adequacy decision covers", () => {
+    const BUT_ADEQUACY =
+      '"standard-contractual-clauses" (article 46(2)(c)), "binding-corporate-rules" (article 47), "code-of-conduct" (article 46(2)(e)), "certification" (article 46(2)(f))';
+    const adequate = (location: string) =>
+      kept({ tenantKeys: { ...memory(), location, safeguard: "adequacy" } as never });
+    expect(() => resolveConfig(adequate("in"))).toThrow(
+      `runtime.personalData.tenantKeys keeps its data in "in" under the safeguard "adequacy", and no adequacy decision of the European Commission covers data kept in the country IN: declare one of ${BUT_ADEQUACY}`,
+    );
+    expect(() => resolveConfig(adequate("global"))).toThrow(
+      `runtime.personalData.tenantKeys keeps its data in "global" under the safeguard "adequacy", and no adequacy decision of the European Commission covers data kept anywhere in the world: declare one of ${BUT_ADEQUACY}`,
+    );
+    for (const location of ["ch", "gb", "jp", "br", "us", "fedramp", "fedramp-high"]) {
+      expect(() => resolveConfig(adequate(location)), location).not.toThrow();
+    }
+    expect(() =>
+      resolveConfig(
+        kept(
+          { tenantKeys: memory({ location: "de", safeguard: "adequacy" }) },
+          memory({ location: "ch" }),
+        ),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      resolveConfig(
+        kept({
+          tenantKeys: memory({ location: "global", safeguard: "standard-contractual-clauses" }),
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('refuses a storage in "global", which keeps the app\'s data in no jurisdiction', () => {
+    expect(() => resolveConfig({ storage: memory({ location: "global" }) })).toThrow(
+      'storage declares the location "global", and storage is where the app keeps its data, which "global" places in no jurisdiction: declare where it keeps it, or no location',
+    );
   });
 });

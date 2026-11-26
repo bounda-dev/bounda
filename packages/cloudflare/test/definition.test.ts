@@ -31,13 +31,13 @@ describe("cloudflare", () => {
     });
   });
 
-  it("refuses a jurisdiction that is not a name", () => {
-    for (const jurisdiction of ["", 7, null]) {
+  it("refuses a jurisdiction that is none of Cloudflare's", () => {
+    for (const jurisdiction of ["", 7, null, "de", "EU", "global"]) {
       const define = () =>
         cloudflare({ jurisdiction: jurisdiction as unknown as DurableObjectJurisdiction });
       expect(define).toThrow(ConfigurationError);
       expect(define).toThrow(
-        `cloudflare({ jurisdiction }) names a Durable Object jurisdiction, such as "eu", not ${JSON.stringify(jurisdiction)}`,
+        `cloudflare({ jurisdiction }) names a Durable Object jurisdiction, one of "eu", "us", "fedramp", "fedramp-high", not ${JSON.stringify(jurisdiction)}`,
       );
     }
   });
