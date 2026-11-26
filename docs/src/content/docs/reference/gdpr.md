@@ -151,8 +151,8 @@ and the recipients with `recipientsOf`. Left to the app:
 **Articles 13 and 14, the information to give.** The privacy notice is the controller's. What the
 app declares is most of what it has to say, and is in one place: the purposes and basis of each
 category, with the condition of its special data or the authority of its criminal data, its
-retention, its sources (14(2)(f)), the recipients with their country and the safeguard of a
-transfer, and the automated decisions with their logic. `bounda personal-data inventory --json`
+retention, its sources (14(2)(f)), the recipients with their country and the safeguard, article
+and legal regime of a transfer, and the automated decisions with their logic. `bounda personal-data inventory --json`
 prints all of it, for a notice to be written from or checked against. The identity and contact
 details of the controller and of its data protection officer, the legitimate interests pursued, and
 whether giving the data is a requirement of a contract or of the law are not in the code, and the

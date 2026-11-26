@@ -2599,8 +2599,8 @@ export default defineConfig({
   covers, and a `derogation`, which article 49 allows for occasional transfers alone, never for a
   store that keeps data as long as the app runs.
 - The [record of processing](#the-record-of-processing-activities) names each transfer next to the
-  store by the legal regime it goes to, `in fedramp, transferred to US under binding-corporate-rules
-  (article 47)`, and every person's
+  store by the legal regime it goes to, `in ch, transferred to CH under adequacy (article 45)`, and
+  every person's
   [export](#exporting-a-persons-data) lists it in `transfers`, as does the tenant's when it is
   [handed back](#handing-a-tenant-back).
 - On Cloudflare the keeper takes a `jurisdiction` and a `safeguard` of its own: see [keepers in
