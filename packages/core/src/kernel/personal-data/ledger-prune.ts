@@ -5,7 +5,7 @@ import type {
   ForgetLedgerPosition,
 } from "../../adapter/storage/forget-ledger.ts";
 import { resolveConfig } from "../../config/schema.ts";
-import type { Config } from "../../config/types.ts";
+import type { Config, ResolvedConfig } from "../../config/types.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import { BOUNDA_AGGREGATE } from "../../modules/bounda-events.ts";
 import type { AppEnv } from "../../register/index.ts";
@@ -13,18 +13,24 @@ import { forgottenSince } from "../recipients/again.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { tenantIdOf } from "../tenant.ts";
 import { withEncryptedFiles } from "./encrypted-files.ts";
-import { openForgetLedger } from "./forget-ledger.ts";
+import { type ForgetLedgerSource, openForgetLedger } from "./forget-ledger.ts";
 import { keySourcesOf } from "./key-hierarchy.ts";
 import {
+  coverageOf,
+  type DatabaseStand,
   FORGET_LEDGER_CURSOR,
   FORGET_LEDGER_PAGE,
   FORGET_LEDGER_REREAD_MS,
+  namedKeysOf,
+  standOf,
+  standsShortOf,
 } from "./reconciliation.ts";
+import { restrictionSettled } from "./restriction.ts";
 import { openTenantKeyStore } from "./tenant-key-source.ts";
 
 export type AppliedStorage = Pick<
   Storage,
-  "checkpointStore" | "eventStore" | "recipients" | "fence"
+  "checkpointStore" | "eventStore" | "recipients" | "fence" | "personalKeys"
 >;
 
 export interface PruneAsAppliedArgs {
@@ -50,8 +56,14 @@ export interface PruneAsAppliedFunction {
 
 // Whether the next reconciliation of the database leaves the entry as it is, and no restore count
 // reads it: the database holds its event, or for a disclosure, which has none, holds it or the
-// forgetting since that removed it.
-const appliedIn = async (storage: AppliedStorage, entry: ForgetLedgerEntry): Promise<boolean> => {
+// forgetting since that removed it. An intention whose commit the database lacks may never have
+// happened: it is left as is when nothing can apply it, as the reconciliation decides, and the
+// database stands where it was written or further.
+const leftAsIs = async (
+  storage: AppliedStorage,
+  entry: ForgetLedgerEntry,
+  stand: () => Promise<DatabaseStand>,
+): Promise<boolean> => {
   const { personId, disclosure } = entry;
   if (disclosure === undefined) {
     const held = await storage.eventStore.readOne({
@@ -59,7 +71,23 @@ const appliedIn = async (storage: AppliedStorage, entry: ForgetLedgerEntry): Pro
       aggregateId: personId,
       eventId: entry.eventId,
     });
-    return held !== null;
+    if (held !== null) return true;
+    if (entry.committed !== false) return false;
+    if (entry.reached !== undefined && standsShortOf(await stand(), entry.reached)) return false;
+    // Whether a redaction still seals anything is the app's aggregates' to say.
+    if (entry.redaction !== undefined) return false;
+    if (entry.restriction !== undefined) {
+      const { events } = await storage.eventStore.load({
+        aggregateType: BOUNDA_AGGREGATE,
+        aggregateId: personId,
+      });
+      return restrictionSettled(events, entry);
+    }
+    // Without the app's categories, every key the forgetting could cover keeps it.
+    const coverage = coverageOf(entry, null);
+    if (coverage === null) return true;
+    const keys = await storage.personalKeys.list(personId);
+    return namedKeysOf(coverage, keys, entry.fingerprints).length === 0;
   }
   const stored = await storage.recipients.disclosures(personId);
   if (
@@ -113,9 +141,15 @@ export const pruneAsApplied: PruneAsAppliedFunction = async ({
           };
           for (;;) {
             const page = await ledger.read({ after, limit: pageSize });
+            // Read after the page, as the reconciliation reads it.
+            let read: Promise<DatabaseStand> | undefined;
+            const stand = () => {
+              read ??= standOf(storage);
+              return read;
+            };
             for (const entry of page) {
               if (entry.forgottenAt >= cutoff) return cutoff;
-              if (!(await appliedIn(storage, entry))) return entry.forgottenAt;
+              if (!(await leftAsIs(storage, entry, stand))) return entry.forgottenAt;
             }
             if (page.length < pageSize) return cutoff;
             after = page.at(-1) ?? after;
@@ -164,32 +198,33 @@ export interface PruneTenantForgetLedgerFunction {
   (args: PruneTenantForgetLedgerArgs): Promise<PrunedTenantForgetLedger>;
 }
 
-export interface ListForgetLedgerTenantsArgs {
-  /**
-   * The project's configuration, whose forget ledger's store to list, as `loadProject` resolves
-   * it for a tenant.
-   */
+export interface RefusedFunction {
+  (message: string): ConfigurationError;
+}
+
+export const refused: RefusedFunction = (message) => runtimeText(new ConfigurationError(message));
+
+export interface PrunableArgs {
   readonly config: Config;
-  /**
-   * The environment the forget ledger reads, such as `process.env`. Defaults to none.
-   */
-  readonly env?: AppEnv;
-  /**
-   * The tenant the configuration was resolved for. Defaults to `DEFAULT_TENANT`.
-   */
-  readonly tenant?: string;
+  readonly env: AppEnv;
+  readonly tenant: string;
 }
 
-export interface ListForgetLedgerTenantsFunction {
-  (args: ListForgetLedgerTenantsArgs): Promise<readonly string[]>;
+export interface Prunable {
+  readonly ledger: ForgetLedger;
+  readonly prune: NonNullable<ForgetLedger["prune"]>;
+  readonly keepForMs: number;
+  readonly resolved: ResolvedConfig;
+  readonly source: ForgetLedgerSource;
 }
 
-const refused = (message: string): ConfigurationError =>
-  runtimeText(new ConfigurationError(message));
+export interface PrunableFunction {
+  (args: PrunableArgs): Promise<Prunable>;
+}
 
 // The ledger the configuration names for the tenant, with its `keepFor`, refused when there is
 // nothing for an operator to prune.
-const prunable = async ({ config, env, tenant }: Required<ListForgetLedgerTenantsArgs>) => {
+export const prunable: PrunableFunction = async ({ config, env, tenant }) => {
   const resolved = resolveConfig(config);
   const ledgerConfig = resolved.runtime.personalData.forgetLedger;
   if (ledgerConfig === null) {
@@ -215,15 +250,16 @@ const prunable = async ({ config, env, tenant }: Required<ListForgetLedgerTenant
       "The forget ledger expires its entries on its own, as Workers KV and a Durable Object's do: there is nothing to prune; for KV keys written before keepFor was set, run bounda forget-ledger expire",
     );
   }
-  return { ledger, prune, keepForMs, resolved };
+  return { ledger, prune, keepForMs, resolved, source: ledgerConfig.store };
 };
 
 /**
  * Prunes a tenant's forget ledger past `keepFor` with no app of the tenant running: what
  * `bounda forget-ledger prune` runs, for a tenant whose app does not run to prune it in its
  * periodic reconciliation. It removes only what the tenant's database no longer needs: an entry
- * older than `keepFor` stays until the database has applied it, so a copy restored while the app
- * was stopped is forgotten again at the next start. Safe beside running instances of the tenant.
+ * older than `keepFor` stays until the database has applied it, or, for an intention whose commit
+ * never happened, until nothing can apply it, so a copy restored while the app was stopped is
+ * forgotten again at the next start. Safe beside running instances of the tenant.
  * It opens the tenant's database as `migrateTables` does, through the tenant's keys, only when an
  * entry older than `keepFor` is there; a tenant its ledger or its tenant key store knows forgotten
  * it prunes past `keepFor` alone, without opening its database. Rejects with `ConfigurationError` without a forget ledger or `keepFor`, for a
@@ -283,30 +319,6 @@ export const pruneTenantForgetLedger: PruneTenantForgetLedgerFunction = async ({
         }),
     });
     return { tenant, ...pruned };
-  } finally {
-    await ledger.close?.();
-  }
-};
-
-/**
- * Every tenant whose entries the store of the configuration's forget ledger holds, in code-unit
- * order: the tenants `bounda forget-ledger prune --all-tenants` prunes, each through its own
- * configuration. Rejects as `pruneTenantForgetLedger` does when there is nothing to prune, and
- * with `ConfigurationError` for a ledger of your own without `tenants`.
- */
-export const listForgetLedgerTenants: ListForgetLedgerTenantsFunction = async ({
-  config,
-  env = {},
-  tenant,
-}) => {
-  const { ledger } = await prunable({ config, env, tenant: tenantIdOf(tenant) });
-  try {
-    if (ledger.tenants === undefined) {
-      throw refused(
-        "The forget ledger cannot list its tenants: give it tenants(), or prune each tenant by name",
-      );
-    }
-    return await ledger.tenants();
   } finally {
     await ledger.close?.();
   }

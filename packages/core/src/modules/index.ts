@@ -68,6 +68,16 @@ export type {
   RejectionCodeOf,
 } from "./command.ts";
 export type {
+  AdequateLocation,
+  DataArea,
+  DataLocation,
+  IsAdequateFunction,
+  IsDataLocationFunction,
+  LegalRegime,
+  RegimeOfFunction,
+} from "./data-location.ts";
+export { DATA_AREAS, isAdequate, isDataLocation, regimeOf } from "./data-location.ts";
+export type {
   EventBeginArgs,
   EventBuilders,
   EventEvolveArgs,
@@ -199,6 +209,7 @@ export type {
   RepositoryDataOf,
 } from "./query.ts";
 export type {
+  AdequateCountry,
   CountryCode,
   EeaCountry,
   NotifiedRecipient,
@@ -219,6 +230,7 @@ export type {
   TransferSafeguard,
 } from "./recipient.ts";
 export {
+  ADEQUATE_COUNTRIES,
   COUNTRY_CODES,
   EEA_COUNTRIES,
   RECIPIENT_HANDLERS,

@@ -1,5 +1,17 @@
 import { ConfigurationError } from "@bounda-dev/core";
 
+// The jurisdictions Durable Objects take: each a `DataLocation`, which core maps to its legal regime.
+const JURISDICTIONS: readonly DurableObjectJurisdiction[] = ["eu", "us", "fedramp", "fedramp-high"];
+
+export const JURISDICTIONS_LISTED = JURISDICTIONS.map((known) => JSON.stringify(known)).join(", ");
+
+export interface IsJurisdictionFunction {
+  (value: unknown): value is DurableObjectJurisdiction;
+}
+
+export const isJurisdiction: IsJurisdictionFunction = (value): value is DurableObjectJurisdiction =>
+  JURISDICTIONS.some((known) => known === value);
+
 // What workerd throws from `jurisdiction()` where it runs locally, under `wrangler dev`, `vite dev`
 // and the tests: it keeps every object on the machine, in no jurisdiction.
 const UNSUPPORTED = /Jurisdiction restrictions are not implemented/;

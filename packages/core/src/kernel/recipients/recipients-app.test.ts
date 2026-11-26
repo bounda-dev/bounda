@@ -2052,6 +2052,17 @@ describe("recipient declarations", () => {
       module({ ...BREVO, safeguard: "adequacy" }),
       "Port customer.mailer: recipient.country FR is in the European Economic Area, so it takes no safeguard",
     );
+    await failing(
+      module({ ...BREVO, country: "RE", safeguard: "standard-contractual-clauses" }),
+      "Port customer.mailer: recipient.country RE is in the European Economic Area, so it takes no safeguard",
+    );
+  });
+
+  it("refuses adequacy for a country the European Commission has adopted no decision for", async () => {
+    await failing(
+      module({ ...MAILCHIMP, country: "IN", safeguard: "adequacy" }),
+      'Port customer.mailer: recipient.country IN has no adequacy decision of the European Commission, so the transfer rests on another safeguard: one of "standard-contractual-clauses", "binding-corporate-rules", "code-of-conduct", "certification", "derogation"',
+    );
   });
 
   it("refuses a recipient without one of its handlers, or with a malformed former key", async () => {

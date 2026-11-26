@@ -1,12 +1,22 @@
 import type {
+  AdequateCountry,
+  AdequateLocation,
   AppStatus,
+  CountryCode,
+  DataArea,
+  DataLocation,
   DeadLetterRetentionStanding,
+  EeaCountry,
   ExportedTransfer,
   InventoryTransfer,
+  IsAdequateFunction,
+  IsDataLocationFunction,
+  LegalRegime,
   PersonalDataExport,
   PersonalDataExportHeader,
   PersonalDataForgottenReason,
   RedactedEvent,
+  RegimeOfFunction,
   StoreSafeguard,
   SubscriberFailureRetentionStanding,
   TransferSafeguard,
@@ -14,12 +24,16 @@ import type {
 } from "@bounda-dev/core";
 import {
   ConfigurationError,
+  DATA_AREAS,
   type DurationInput,
   ERROR_TEXT_VARIABLE,
   type ErrorFields,
   errorFields,
   type InventoryFindingKind,
   type InventoryRecordName,
+  isAdequate,
+  isDataLocation,
+  regimeOf,
   resolveErrorText,
   STORE_SAFEGUARDS,
   type SubscriberFailing,
@@ -29,6 +43,8 @@ import {
 import type {
   Adapter,
   AdapterDefinition,
+  CheckPlacementArgs,
+  CheckPlacementFunction,
   DataLocationOptions,
   ForgetLedger,
   ForgetLedgerEntry,
@@ -43,7 +59,7 @@ import type {
   RuntimeTextFunction,
   TenantFence,
 } from "@bounda-dev/core/adapter";
-import { placementOf, runtimeText } from "@bounda-dev/core/adapter";
+import { checkPlacement, placementOf, runtimeText } from "@bounda-dev/core/adapter";
 import {
   type Config,
   DEFAULT_DEAD_LETTER_RETENTION_MS,
@@ -415,7 +431,7 @@ describe("defineConfig", () => {
       }
     >();
     expectTypeOf(masterKey({ from: "BOUNDA_MASTER_KEY", location: "eu" }).location).toEqualTypeOf<
-      string | undefined
+      DataLocation | undefined
     >();
     expectTypeOf<Parameters<typeof defineKeyWrapper>[1]>().toEqualTypeOf<
       DataLocationOptions | undefined
@@ -494,7 +510,7 @@ describe("defineConfig", () => {
     expectTypeOf(own).toEqualTypeOf<ForgetLedgerDefinition>();
     expectTypeOf(
       defineForgetLedger(() => ({}) as ForgetLedger, { location: "eu" }).location,
-    ).toEqualTypeOf<string | undefined>();
+    ).toEqualTypeOf<DataLocation | undefined>();
     // @ts-expect-error a location is a jurisdiction's name, such as "eu"
     defineForgetLedger(() => ({}) as ForgetLedger, { location: ["eu"] });
     defineConfig({
@@ -604,14 +620,22 @@ describe("runtimeText", () => {
 describe("location", () => {
   it("lets every adapter declare the jurisdiction it keeps its data in, which the record states", () => {
     expectTypeOf<DataLocationOptions>().toEqualTypeOf<
-      | { readonly location?: string; readonly safeguard?: never }
-      | { readonly location: string; readonly safeguard: StoreSafeguard }
+      | { readonly location?: DataLocation; readonly safeguard?: never }
+      | { readonly location: AdequateLocation; readonly safeguard: StoreSafeguard }
+      | {
+          readonly location: Exclude<DataLocation, AdequateLocation>;
+          readonly safeguard: Exclude<StoreSafeguard, "adequacy">;
+        }
     >();
-    expectTypeOf<AdapterDefinition["location"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<AdapterDefinition["location"]>().toEqualTypeOf<DataLocation | undefined>();
     expectTypeOf<MemoryOptions>().toEqualTypeOf<DataLocationOptions>();
-    expectTypeOf(memory({ location: "eu" }).location).toEqualTypeOf<string | undefined>();
+    expectTypeOf(memory({ location: "eu" }).location).toEqualTypeOf<DataLocation | undefined>();
     // @ts-expect-error a location is a jurisdiction's name, such as "eu"
     memory({ location: ["eu"] });
+    // @ts-expect-error a country is written in lower case
+    memory({ location: "DE" });
+    // @ts-expect-error a location Bounda does not know, refused rather than guessed
+    memory({ location: "uk" });
     defineConfig({
       storage: memory({ location: "eu" }),
       ports,
@@ -626,6 +650,38 @@ describe("location", () => {
     expectTypeOf<"tenant-keys">().toExtend<InventoryRecordName>();
     expectTypeOf<"master-key">().toExtend<InventoryRecordName>();
     expectTypeOf<"no-location">().toExtend<InventoryFindingKind>();
+  });
+
+  it("names every location by its country or area, and tells the legal regime it is under", () => {
+    expectTypeOf<DataLocation>().toEqualTypeOf<Lowercase<CountryCode> | DataArea>();
+    expectTypeOf<DataArea>().toEqualTypeOf<"eu" | "eea" | "fedramp" | "fedramp-high" | "global">();
+    expectTypeOf(DATA_AREAS).toEqualTypeOf<readonly DataArea[]>();
+    expectTypeOf<LegalRegime>().toEqualTypeOf<
+      "EEA" | Exclude<CountryCode, EeaCountry> | "anywhere"
+    >();
+    expectTypeOf(regimeOf).toEqualTypeOf<RegimeOfFunction>();
+    expectTypeOf(regimeOf).parameter(0).toEqualTypeOf<DataLocation>();
+    expectTypeOf(regimeOf).returns.toEqualTypeOf<LegalRegime>();
+    expectTypeOf(isAdequate).toEqualTypeOf<IsAdequateFunction>();
+    expectTypeOf(isDataLocation).toEqualTypeOf<IsDataLocationFunction>();
+    expectTypeOf<AdequateCountry>().toExtend<CountryCode>();
+    expectTypeOf<"US" | "CH" | "GB" | "BR">().toExtend<AdequateCountry>();
+    expectTypeOf<"eu" | "de" | "us" | "fedramp" | "ch">().toExtend<AdequateLocation>();
+    expectTypeOf<"global">().not.toExtend<AdequateLocation>();
+    expectTypeOf<"in">().not.toExtend<AdequateLocation>();
+    expectTypeOf(checkPlacement).toEqualTypeOf<CheckPlacementFunction>();
+    expectTypeOf(checkPlacement).parameter(0).toEqualTypeOf<CheckPlacementArgs>();
+    expectTypeOf<CheckPlacementArgs["where"]>().toEqualTypeOf<DataLocation | undefined>();
+  });
+
+  it("takes adequacy only where an adequacy decision covers the location", () => {
+    memory({ location: "fedramp", safeguard: "adequacy" });
+    memory({ location: "in", safeguard: "standard-contractual-clauses" });
+    memory({ location: "global", safeguard: "certification" });
+    // @ts-expect-error no adequacy decision covers India
+    memory({ location: "in", safeguard: "adequacy" });
+    // @ts-expect-error nor anywhere in the world
+    memory({ location: "global", safeguard: "adequacy" });
   });
 
   it("lets a store be kept in another location than storage's under a safeguard of articles 45 to 47", () => {
@@ -680,7 +736,7 @@ describe("location", () => {
     expectTypeOf<ExportedTransfer>().toEqualTypeOf<{
       readonly store: "read-model" | "master-key" | "tenant-keys" | "forget-ledger";
       readonly readModel: string | null;
-      readonly location: string;
+      readonly location: DataLocation;
       readonly safeguard: StoreSafeguard;
       readonly article: string;
     }>();

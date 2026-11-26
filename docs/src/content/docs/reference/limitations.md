@@ -32,6 +32,16 @@ get today. Each item says why, so nobody discovers it the hard way:
   lands before then lands. An app without `runtime.personalData.tenantKeys` and without personal
   data keeps no such record, so a copy taken before a freeze takes writes again until the next
   `freezeTenant`. Restore with `bounda restore`.
+- **Pruning with no app what only the app decides.** `bounda forget-ledger prune` removes an
+  intention whose commit never happened once nothing can apply it, but two kinds need the app to
+  tell: a redaction's, which only the app's aggregates say still seals something, and a
+  retention's whose person still holds the keys it names, which only the app's retention says is
+  due. They stay until an app of the tenant reads past them, as it does at its next start. See
+  [Keeping the ledger short](/guides/personal-data/#keeping-the-ledger-short).
+- **Ledger entries in a store the configuration no longer names.** A tenant is pruned in the
+  ledger its configuration names now. Entries it left in a store its configuration named before,
+  when the ledger moved, are listed by `--all-tenants` but not pruned there: move them with the
+  ledger, or clear them once no backup older than the move is restorable.
 - **Several tenants in one database.** A tenant is a database with its own key: tenants that share
   tables, told apart by a column, cannot be forgotten one at a time by destroying a key. Give each
   its own database, schema or Durable Object. See [Tenants](/guides/personal-data/#tenants).

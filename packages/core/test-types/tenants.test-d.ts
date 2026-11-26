@@ -2,11 +2,14 @@ import {
   type AppStatus,
   type BoundaClient,
   type BoundaError,
+  type DataLocation,
   DEFAULT_TENANT,
   type EncryptedFileStatus,
   FILE_ENCRYPTION_RETRY_MS,
+  type ForgetLedgerTenants,
   type ForgetTenantOptions,
   type FrozenTenantStatus,
+  type ListForgetLedgerTenantsArgs,
   type Logger,
   listForgetLedgerTenants,
   listTenantsUnderPreviousMaster,
@@ -28,6 +31,7 @@ import {
   type TenantFrozenResult,
   type TenantKeyStatus,
   type TenantKeyVersions,
+  type UnreachedTenant,
   type UnreadableStatus,
   withEncryptedFiles,
 } from "@bounda-dev/core";
@@ -74,11 +78,13 @@ import {
   defineTenantKeyStore,
   masterKey,
   type ProjectConfig,
+  type ProjectTenants,
   type StoreDefinitionOptions,
   type TenantConfigArgs,
   type TenantKeySource,
   type TenantKeyStoreDefinition,
 } from "@bounda-dev/core/config";
+import type { LoadedProject } from "@bounda-dev/core/node";
 import type { AppEnv } from "@bounda-dev/core/register";
 import {
   createTestKeys,
@@ -271,7 +277,7 @@ describe("the tenant in the configuration", () => {
       location: "eu",
     });
     expectTypeOf(located).toEqualTypeOf<TenantKeyStoreDefinition>();
-    expectTypeOf(located.location).toEqualTypeOf<string | undefined>();
+    expectTypeOf(located.location).toEqualTypeOf<DataLocation | undefined>();
     expectTypeOf<Parameters<typeof defineTenantKeyStore>[1]>().toEqualTypeOf<
       StoreDefinitionOptions | undefined
     >();
@@ -402,11 +408,30 @@ describe("pruning a forget ledger with no app running", () => {
       readonly unapplied: boolean;
     }>();
     expectTypeOf(listForgetLedgerTenants).parameter(0).toEqualTypeOf<{
-      readonly config: Config;
+      readonly config: ProjectConfig;
       readonly env?: AppEnv;
       readonly tenant?: string;
+      readonly tenants?: readonly string[];
     }>();
-    expectTypeOf(listForgetLedgerTenants).returns.toEqualTypeOf<Promise<readonly string[]>>();
+    expectTypeOf(listForgetLedgerTenants).returns.toEqualTypeOf<Promise<ForgetLedgerTenants>>();
+    expectTypeOf<ForgetLedgerTenants>().toEqualTypeOf<{
+      readonly tenants: readonly string[];
+      readonly unreached: readonly UnreachedTenant[];
+    }>();
+    expectTypeOf<UnreachedTenant>().toEqualTypeOf<{
+      readonly tenant: string;
+      readonly error: unknown;
+    }>();
+    // A configuration resolved for one tenant is a project's configuration too.
+    expectTypeOf<Config>().toExtend<ListForgetLedgerTenantsArgs["config"]>();
+    expectTypeOf<ProjectTenants>().toEqualTypeOf<
+      readonly string[] | (() => readonly string[] | Promise<readonly string[]>)
+    >();
+    expectTypeOf(["acme"] as const).toExtend<ProjectTenants>();
+    expectTypeOf(async () => ["acme"]).toExtend<ProjectTenants>();
+    expectTypeOf<readonly number[]>().not.toExtend<ProjectTenants>();
+    expectTypeOf<LoadedProject["projectConfig"]>().toEqualTypeOf<ProjectConfig>();
+    expectTypeOf<LoadedProject["tenants"]>().toEqualTypeOf<() => Promise<readonly string[]>>();
     expectTypeOf<ForgetLedger["tenants"]>().toEqualTypeOf<
       (() => Promise<readonly string[]>) | undefined
     >();

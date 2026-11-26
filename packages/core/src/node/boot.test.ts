@@ -79,7 +79,45 @@ describe("loadProject", () => {
       logger: silentLogger,
     });
     expect(process.env.BOUNDA_TEST_MARKER).toBeUndefined();
-    expect(project).toEqual({ config, registry });
+    expect(project).toEqual({
+      config,
+      projectConfig: config,
+      registry,
+      tenants: expect.any(Function),
+    });
+    expect(await project.tenants()).toEqual([]);
+  });
+
+  it("hands the configuration as exported, and the tenants its tenants export names", async () => {
+    const config = ({ tenant }: { readonly tenant: string }) => ({
+      storage: memory(),
+      runtime: { role: tenant === "acme" ? ("all" as const) : ("worker" as const) },
+    });
+    const load = (tenants?: unknown) =>
+      loadProject({
+        root,
+        loadEnv: false,
+        registry,
+        tenant: "acme",
+        importConfig: async () =>
+          tenants === undefined ? { default: config } : { default: config, tenants },
+        logger: silentLogger,
+      });
+    const project = await load(["acme", "globex"]);
+    expect(project.projectConfig).toBe(config);
+    expect(project.config.runtime?.role).toBe("all");
+    expect(await project.tenants()).toEqual(["acme", "globex"]);
+    expect(await (await load(async () => ["initech"])).tenants()).toEqual(["initech"]);
+    expect(await (await load(() => [])).tenants()).toEqual([]);
+    expect(await (await load()).tenants()).toEqual([]);
+    for (const tenants of ["acme", [42], async () => "acme", () => [null], {}]) {
+      await expect((await load(tenants)).tenants()).rejects.toThrow(
+        new ConfigurationError(
+          "The imported configuration module must export tenants as a list of tenant names, or a function that resolves to one",
+        ),
+      );
+    }
+    await expect((await load([""])).tenants()).rejects.toBeInstanceOf(ConfigurationError);
   });
 });
 

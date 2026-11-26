@@ -56,6 +56,7 @@ export type {
   PortsSection,
   ProcessesConfig,
   ProjectConfig,
+  ProjectTenants,
   ResolvedConfig,
   ResolvedForgetLedgerConfig,
   ResolvedSnapshotConfig,

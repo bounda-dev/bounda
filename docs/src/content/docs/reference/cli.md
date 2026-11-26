@@ -959,8 +959,11 @@ bounda forget-ledger prune --all-tenants
 ```
 
 For each tenant, it removes the entries older than `keepFor` that the tenant's database no longer
-needs: those its reconciliation has read past, and those whose forgetting, change of restrictions,
-redaction or disclosure the database holds. It stops at the oldest entry older than `keepFor` the
+needs: those its reconciliation has read past, those whose forgetting, change of restrictions,
+redaction or disclosure the database holds, and intentions whose commit never happened that
+nothing can apply, by the checks the reconciliation makes: the database stands where the intention
+was written or further, and the person holds no key it covers and names, or, for a change of
+restrictions, the database holds a later one. It stops at the oldest entry older than `keepFor` the
 database has yet to apply, as one a copy restored while the app was stopped lacks, and keeps it and
 every later one, so that copy is forgotten again at its next start; run it again after. A forgotten
 tenant's ledger is pruned past `keepFor` alone, as its app does. It opens the tenant's database as
@@ -975,7 +978,7 @@ globex: removed the entries before 2026-09-14T08:12:40.511Z; kept from then on t
 
 | Option | Meaning |
 | --- | --- |
-| `--all-tenants` | Every tenant whose entries the ledger's store holds, each through its own configuration; the store is the one the configuration names for `--tenant`, or for `default` |
+| `--all-tenants` | Every tenant whose entries a ledger's store the configuration names holds, each through its own configuration: from `--tenant`, or `default`, the tenants each reached tenant's ledger and tenant key store list, and those the `tenants` export of `bounda.config.ts` names, until none is new |
 | `--tenant <name>` | The tenant to prune, as [which tenant](#which-tenant) says |
 | `--root <dir>`, `--config <file>` | As every command that loads the project takes them |
 | `--error-text` | Print the message of the error it fails on, as [error text](#error-text) says |
@@ -984,8 +987,10 @@ It refuses a configuration without `runtime.personalData.forgetLedger` or its `k
 that expires its entries on its own, as Workers KV and the keeper do (for KV keys written before
 `keepFor` was set, run [`bounda forget-ledger expire`](#bounda-forget-ledger-expire)), a storage
 only its host opens, as a Durable Object's, and, for `--all-tenants`, a ledger of your own without
-`tenants`. Exit codes: `0` done, `1` bad arguments, `2` refused, or a tenant could not be pruned:
-each such tenant is named on standard error, the others pruned all the same.
+`tenants` and a `tenants` export that is not a list of tenant names. With `--all-tenants`, a tenant
+whose configuration or stores cannot be read is named on standard error, as a tenant that could
+not be pruned is, and the others are pruned all the same. Exit codes: `0` done, `1` bad
+arguments, `2` refused, or a tenant could not be listed or pruned.
 
 ## Programmatic use
 
@@ -1020,6 +1025,7 @@ and `app.retireTenantKeys()`, each on an app booted with `boot({ tenant })`, and
 `rewrapTenantKeys({ config, env })` for `rewrap-master`. `bounda forget-ledger prune` is
 `pruneTenantForgetLedger({ config, env, tenant })` from `@bounda-dev/core`, on the configuration
 `loadProject` resolves for the tenant, and `--all-tenants` runs it for each tenant
-`listForgetLedgerTenants({ config, env })` lists. The
+`listForgetLedgerTenants({ config: projectConfig, env, tenants: await tenants() })` lists, with
+`projectConfig` and `tenants` from `loadProject`. The
 commands boot the app with `createConsoleLogger({ stream: process.stderr })` from
 `@bounda-dev/core/node`, which writes every level to the stream it is given.

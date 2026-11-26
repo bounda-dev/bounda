@@ -1596,8 +1596,10 @@ with purposes of its own (article 4(10)); its `country`, as an ISO 3166-1 alpha-
 [categories](#categories) of personal data the port sends it. A country outside the European
 Economic Area takes the `safeguard` its transfer rests on: `adequacy` (article 45),
 `standard-contractual-clauses` (article 46(2)(c)), `binding-corporate-rules` (article 47),
-`code-of-conduct`, `certification` (article 46(2)(e) and (f)) or `derogation` (article 49); one
-inside takes none. A port of a read model may declare one too, for what its queries hand it.
+`code-of-conduct`, `certification` (article 46(2)(e) and (f)) or `derogation` (article 49), and
+`adequacy` only for a country of `ADEQUATE_COUNTRIES`, those with an adequacy decision; one inside,
+the Åland Islands (`AX`) and the outermost regions of France (`GF`, `GP`, `MF`, `MQ`, `RE`, `YT`)
+included, takes none. A port of a read model may declare one too, for what its queries hand it.
 
 Five of the six handlers tell the recipient of one event of the person's stream `bounda:<personId>`:
 a [forgetting](#forgetting-a-person), a [restriction](#restricting-processing), the announcement of
@@ -2556,9 +2558,11 @@ which the caller or the reaction's retry sees; the person's data is not touched.
 
 ### Stores in another jurisdiction
 
-Every store is kept where `storage` declares the app's data is, unless a safeguard of chapter V of
-the GDPR allows keeping it elsewhere: the keys in a country with an adequacy decision and the data
-in the EU, say. The store declares its `location` and its `safeguard`, with the vocabulary a
+Every store is kept under the legal regime of where `storage` declares the app's data is, unless a
+safeguard of chapter V of the GDPR allows keeping it under another: the keys in a country with an
+adequacy decision and the data in the EU, say. A store in `"de"` under a `storage` in `"eu"` needs
+none, since both are in the European Economic Area; see how
+[locations are compared](/reference/configuration/#data-location). The store declares its `location` and its `safeguard`, with the vocabulary a
 [recipient](#recipients) uses, one of articles 45 to 47:
 
 ```ts
@@ -2580,11 +2584,12 @@ export default defineConfig({
 });
 ```
 
-- A store kept elsewhere without a safeguard is refused when the app starts, with a
-  `ConfigurationError` that names it, its location and the safeguards it may declare. So is a
-  safeguard where `storage` is, which is no transfer, a safeguard on `storage` itself or under a
-  `storage` that declares no location, and a `derogation`, which article 49 allows for occasional
-  transfers alone, never for a store that keeps data as long as the app runs.
+- A store kept under another regime without a safeguard is refused when the app starts, with a
+  `ConfigurationError` that names it, its location and regime and the safeguards it may declare.
+  So is a safeguard under `storage`'s regime, which is no transfer, a safeguard on `storage` itself
+  or under a `storage` that declares no location, `adequacy` for a location no adequacy decision
+  covers, and a `derogation`, which article 49 allows for occasional transfers alone, never for a
+  store that keeps data as long as the app runs.
 - The [record of processing](#the-record-of-processing-activities) names each transfer next to the
   store, `in ch, transferred under adequacy (article 45)`, and every person's
   [export](#exporting-a-persons-data) lists it in `transfers`.
@@ -3136,10 +3141,45 @@ the database's reconciliation has read past it, or the database holds what it re
 database has yet to apply stays, as one a copy restored while the app was stopped lacks, so that
 copy is still forgotten again at its next start, after which the next prune removes it; the command
 says when it kept one. A forgotten tenant's ledger is pruned past `keepFor` alone, as its app does.
-It runs safely beside the tenant's running instances. `--tenant`
-names one tenant, and with `--all-tenants`, whose configuration names the ledger's store; each
-tenant listed is pruned through its own configuration. `pruneTenantForgetLedger` and
-`listForgetLedgerTenants` from `@bounda-dev/core` do the same in code (see the
+It runs safely beside the tenant's running instances.
+
+An intention whose commit never happened, a forgetting that failed and was asked again, goes too
+once nothing can apply it, by the checks the reconciliation makes: the database stands where the
+intention was written or further, so it tells no restore, and the person holds no key it covers
+and names, kept past a forgetting or not, or, for a change of restrictions, the database holds a
+later change. Two kinds stay until an app of the tenant reads past them, since only the app can
+tell whether they still apply: a redaction's, and the retention's of keys the person still holds.
+
+`--tenant` names one tenant. `--all-tenants` prunes every tenant whose entries a ledger's store
+the configuration names holds, each through its own configuration: starting from `--tenant`, or
+the default tenant, it lists that tenant's ledger and its tenant key store, then does the same
+for every tenant they name, until none is new, reading each store once. A configuration that is
+a function of the tenant and gives each tenant a ledger of its own is covered that way, through
+the tenant key store they share. One that gives each tenant both stores of its own, so that no
+store lists the others, names its tenants in a `tenants` export of `bounda.config.ts`, a list or a
+function that resolves to one:
+
+```ts
+export const tenants = () => (process.env.TENANTS ?? "").split(",").filter(Boolean);
+
+export default defineConfig(({ tenant }) => ({
+  storage: postgresql({ url: process.env.DATABASE_URL, schema: tenant }),
+  runtime: {
+    personalData: {
+      keyWrapper: masterKey({ from: "BOUNDA_MASTER_KEY" }),
+      tenantKeys: sqlite({ path: `./keys/${tenant}.db` }),
+      forgetLedger: { store: sqlite({ path: `./ledger/${tenant}.db` }), keepFor: "35d" },
+    },
+  },
+}));
+```
+
+Two adapters of one kind with the same options are one store; a store of your own is one per
+definition, so define it outside the function, or each tenant's resolution reads it again. Each
+store is opened as an app opens it, which creates its table where it is missing. A
+tenant whose configuration or stores cannot be read is named on stderr, and the others are
+pruned. `pruneTenantForgetLedger` and `listForgetLedgerTenants` from `@bounda-dev/core`, with
+`projectConfig` and `tenants()` from `loadProject`, do the same in code (see the
 [CLI](/reference/cli/#bounda-forget-ledger-prune)).
 
 A KV key gets its expiration when it is written, so the keys written before `keepFor` was set, or

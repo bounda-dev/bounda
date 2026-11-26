@@ -25,7 +25,11 @@ A project that serves several tenants, each its own database, exports a function
 instead: `defineConfig(({ tenant }) => ({ storage: postgresql({ url, schema: tenant }) }))`.
 `boot()`, the CLI and the React Router host call it with the tenant they serve, `BOUNDA_TENANT` or
 `--tenant` naming it, `default` without either; `configForTenant({ config, tenant })` does the same
-for code of your own. See [tenants](/guides/personal-data/#tenants).
+for code of your own. See [tenants](/guides/personal-data/#tenants). Such a project may also
+export `tenants`, a list of the tenants it serves or a function that resolves to one, which
+commands that go through every tenant reach beside those its stores list, as
+[`bounda forget-ledger prune --all-tenants`](/guides/personal-data/#keeping-the-ledger-short)
+does; `loadProject` hands it as `tenants()`.
 
 **Durations** are a number of milliseconds or a string: a number followed by `ms`, `s`, `m`, `h`
 or `d` (`"250ms"`, `"1.5s"`, `"7d"`). A duration read from the environment is a `string`, which the
@@ -38,8 +42,8 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
   `"STORE"` by default. See [adapters](/adapters/).
 - **`readModels`**, default `{}`. A different adapter for some read models, by read model name: `{
   orderSummary: postgresql({ url: READ_URL }) }`. The rest stay in `storage`. Under a `storage` that
-  declares a [location](#data-location), each must declare the same, or another with a
-  [safeguard](#stores-in-another-jurisdiction).
+  declares a [location](#data-location), each must declare one under the same legal regime, or
+  another with a [safeguard](#stores-in-another-jurisdiction).
 - **`ports`**, default `{}`. The implementation each port uses, by module and port: `{ order: {
   notifier: "smtp" } }`. A port with one implementation may be left out; one with several must be
   named. The names are typed from the project. See [ports](/guides/project-layout/#ports-portts).
@@ -47,8 +51,8 @@ types refuse; wrap it with `asDuration(process.env.X ?? "1m")`, which checks it.
 
 ## Data location
 
-Every adapter takes **`location`**, none by default: the jurisdiction its database keeps the data
-in, such as `"eu"`, written the same way for every store of the app. `cloudflare()` takes its
+Every adapter takes **`location`**, none by default: where its database keeps the data, such as
+`"eu"`. `cloudflare()` takes its
 [`jurisdiction`](/adapters/cloudflare/#data-location) instead, and `defineTenantKeyStore` and
 `defineForgetLedger` take a `location` as their second argument, and so does `defineKeyWrapper`;
 `masterKey` takes it beside `from`.
@@ -68,19 +72,33 @@ export default defineConfig({
 });
 ```
 
+- A location is a country by its ISO 3166-1 alpha-2 code in lower case, such as `"de"`, `"ch"` or
+  `"us"`, or an area: `"eu"` (the European Union), `"eea"` (the European Economic Area),
+  `"fedramp"` and `"fedramp-high"` (the Durable Object jurisdictions of FedRAMP data centres in the
+  United States), and `"global"` (anywhere in the world, as Workers KV keeps what it holds). The
+  type is `DataLocation`. The app refuses to start on any other value, `"DE"`, `"EU"` and `"uk"`
+  included, rather than guess where it is: a wrong guess would hide a transfer.
+- Locations are compared by the legal regime each is under for chapter V of the GDPR, which
+  `regimeOf` answers: the European Economic Area for `"eu"`, `"eea"` and the country of every
+  member state, including the parts ISO codes apart where the GDPR applies, the Åland Islands
+  (`"ax"`) and the outermost regions of France (`"gf"`, `"gp"`, `"mf"`, `"mq"`, `"re"`, `"yt"`); the
+  United States for `"us"`, `"fedramp"` and `"fedramp-high"`; each other country its own; and none
+  for `"global"`. Keeping data in `"de"` under a `storage` in `"eu"`, or in `"fedramp"` under one in
+  `"us"`, is no transfer; in `"ch"` under one in `"eu"` it is.
 - The location `storage` declares is the app's. The app refuses to start, with `ConfigurationError`,
   and [`bounda personal-data inventory`](/reference/cli/#bounda-personal-data-inventory) to draw the
   record, on a read model in `readModels`, `personalData.keyWrapper`, `personalData.tenantKeys` or
-  `personalData.forgetLedger.store` that declares none, or another without a
+  `personalData.forgetLedger.store` that declares none, or one under another regime without a
   [safeguard](#stores-in-another-jurisdiction): each carries the persons' data, or the key that
   opens it, wherever it is kept, and encryption protects data from a transfer only while its keys
-  stay behind.
+  stay behind. A `storage` in `"global"` is refused too: it places the app's data in no
+  jurisdiction to judge the rest against.
 - A `storage` that declares none holds nothing else to one, and each store says its own.
 - The record of processing states each one's location next to everything kept there, the master
   key's included, and lists every store of personal data, and the key wrapper, that declares none
   as a finding, which makes the command exit `1`.
-- A location is a non-empty name, compared as written: `"eu"` and `"EU"` are two. Bounda cannot see
-  where a server, a file or a process is, so it is taken at its word; on Cloudflare an object
+- Bounda cannot see where a server, a file or a process is, so a location is taken at its word; on
+  Cloudflare an object
   checks its own jurisdiction, but not where a Worker's secrets are kept. A local file,
   `memory()` and `masterKey` declare where the host runs, and the app's processes run where its
   storage is.
@@ -89,8 +107,8 @@ export default defineConfig({
 
 ### Stores in another jurisdiction
 
-A store may be kept in another location than `storage`'s when a safeguard of chapter V of the GDPR
-allows the transfer: every adapter, `masterKey`, `defineKeyWrapper`, `defineTenantKeyStore` and
+A store may be kept under another legal regime than `storage`'s when a safeguard of chapter V of the
+GDPR allows the transfer: every adapter, `masterKey`, `defineKeyWrapper`, `defineTenantKeyStore` and
 `defineForgetLedger` take **`safeguard`** beside `location`, one of `"adequacy"` (article 45),
 `"standard-contractual-clauses"` (46(2)(c)), `"binding-corporate-rules"` (47), `"code-of-conduct"`
 (46(2)(e)) or `"certification"` (46(2)(f)), as [recipients](/guides/personal-data/#recipients)
@@ -113,19 +131,26 @@ export default defineConfig({
 });
 ```
 
-- The types take a `safeguard` only beside a `location`. The app refuses to start, with
-  `ConfigurationError`, on a store kept elsewhere without a safeguard, on a safeguard where
-  `storage` is, which is no transfer, on a safeguard on `storage` itself or under a `storage` that
-  declares no location, which leaves nothing to tell a transfer by, and on a `derogation`: article
-  49 allows one for occasional transfers alone, never for data kept somewhere as long as the app
-  runs.
+- The types take a `safeguard` only beside a `location`, and `"adequacy"` only beside a location an
+  adequacy decision covers (`AdequateLocation`). The app refuses to start, with
+  `ConfigurationError`, on a store kept under another regime without a safeguard, on a safeguard
+  under `storage`'s regime, which is no transfer, on a safeguard on `storage` itself or under a
+  `storage` that declares no location, which leaves nothing to tell a transfer by, and on a
+  `derogation`: article 49 allows one for occasional transfers alone, never for data kept somewhere
+  as long as the app runs.
+- `"adequacy"` is taken for a country of `ADEQUATE_COUNTRIES`, those the European Commission has
+  adopted an adequacy decision for (Andorra, Argentina, Brazil, Canada, the Faroe Islands, Guernsey,
+  Israel, the Isle of Man, Japan, Jersey, New Zealand, the Republic of Korea, Switzerland, the
+  United Kingdom, the United States and Uruguay, as of November 2026), and for the European Economic
+  Area under a `storage` outside it; never for `"global"`. The decisions for Canada and the United
+  States cover some organisations alone, commercial ones under PIPEDA and those certified under the
+  EU-US Data Privacy Framework: that the provider is one is yours to keep true.
 - The record of processing names each transfer, its safeguard and its article, next to everything
   kept there, as article 30(1)(e) asks, and each person's
   [export](/guides/personal-data/#exporting-a-persons-data) lists it in `transfers`, as article
   15(2) asks.
-- Locations are compared as written, so two names are two jurisdictions even where both are in
-  one country. The safeguard itself, the clauses signed and the transfer impact assessment are
-  yours: Bounda states what you declare. On Cloudflare, the keeper takes a
+- The safeguard itself, the clauses signed and the transfer impact assessment are yours: Bounda
+  states what you declare. On Cloudflare, the keeper takes a
   [`jurisdiction`](/adapters/cloudflare/#data-location) of its own.
 
 ## `runtime`

@@ -1,5 +1,6 @@
 import { ConfigurationError } from "../../contracts/errors.ts";
 import {
+  ADEQUATE_COUNTRIES,
   COUNTRY_CODES,
   type CountryCode,
   EEA_COUNTRIES,
@@ -66,6 +67,7 @@ export interface BuildRecipientsFunction {
 
 const COUNTRIES: ReadonlySet<unknown> = new Set(COUNTRY_CODES);
 const EEA: ReadonlySet<string> = new Set(EEA_COUNTRIES);
+const ADEQUATE: ReadonlySet<string> = new Set(ADEQUATE_COUNTRIES);
 const PORT_KEY = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -102,6 +104,11 @@ const checked = (
   if (!inEea && !TRANSFER_SAFEGUARDS.includes(safeguard as TransferSafeguard)) {
     fail(
       `recipient.country ${country} is outside the European Economic Area, so recipient.safeguard names what the transfer rests on: one of ${listed(TRANSFER_SAFEGUARDS)}`,
+    );
+  }
+  if (safeguard === "adequacy" && !ADEQUATE.has(country as string)) {
+    fail(
+      `recipient.country ${country} has no adequacy decision of the European Commission, so the transfer rests on another safeguard: one of ${listed(TRANSFER_SAFEGUARDS.filter((known) => known !== "adequacy"))}`,
     );
   }
   const named = recipient.categories;

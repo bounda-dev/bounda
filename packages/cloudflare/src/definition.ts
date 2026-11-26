@@ -1,6 +1,7 @@
-import { ConfigurationError, STORE_SAFEGUARDS, TRANSFER_ARTICLES } from "@bounda-dev/core";
-import type { AdapterDefinition } from "@bounda-dev/core/adapter";
+import { ConfigurationError } from "@bounda-dev/core";
+import { type AdapterDefinition, checkPlacement } from "@bounda-dev/core/adapter";
 import type { Config } from "@bounda-dev/core/config";
+import { isJurisdiction, JURISDICTIONS_LISTED } from "./jurisdiction.ts";
 import { isKeptInKv } from "./kv-placement.ts";
 
 /**
@@ -18,17 +19,17 @@ export interface CloudflareOptions {
    */
   readonly binding?: string;
   /**
-   * The jurisdiction every tenant's Durable Object is created in and never leaves, such as `"eu"`
-   * to keep the data in the European Union. `createWorker`, the React Router hosts and
-   * `tenantStub` reach the objects through it, and an object reached through any other refuses to
-   * start. Choose it before the first object exists: an object never moves, and a tenant reached
-   * in a new jurisdiction is a new, empty object. Left out, each object is placed near the request
-   * that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
+   * The jurisdiction every tenant's Durable Object is created in and never leaves: `"eu"` to keep
+   * the data in the European Union, `"us"`, `"fedramp"` or `"fedramp-high"` in the United States.
+   * `createWorker`, the React Router hosts and `tenantStub` reach the objects through it, and an
+   * object reached through any other refuses to start. Choose it before the first object exists:
+   * an object never moves, and a tenant reached in a new jurisdiction is a new, empty object. Left
+   * out, each object is placed near the request that created it. Ignored where workerd runs locally (`wrangler dev`, `vite dev`, the tests),
    * which has no jurisdictions. It is the app's `location`: every read model, the tenant key
-   * store, the forget ledger and the key wrapper must be kept in it too, as
-   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are, or in another under a
+   * store, the forget ledger and the key wrapper must be kept under its legal regime too, as
+   * `durableObjectTenantKeys` and `durableObjectForgetLedger` are, or under another with a
    * `safeguard`; a read model on another adapter, and `masterKey` or `defineKeyWrapper`, declare
-   * it as their `location`.
+   * it, or another location under the same regime, as their `location`.
    */
   readonly jurisdiction?: DurableObjectJurisdiction;
 }
@@ -50,18 +51,18 @@ export interface CloudflareFunction {
 /**
  * Storage in the SQLite of the Durable Object the app runs in: events, ledgers and read models,
  * all in one object, whose `location` is the `jurisdiction`. Throws `ConfigurationError` for a
- * `jurisdiction` that is not a name; a configuration that puts it beside another storage, a read
- * model on it in another jurisdiction than `storage`, or, with a `jurisdiction`, a read model,
- * tenant key store, forget ledger or key wrapper whose `location` is not that jurisdiction, as a
- * Workers KV one's never is, and that declares no `safeguard` for the one it names, is refused
- * wherever it is resolved, the record of processing included.
+ * `jurisdiction` that is none of Cloudflare's; a configuration that puts it beside another
+ * storage, a read model on it in another jurisdiction than `storage`, or, with a `jurisdiction`,
+ * a read model, tenant key store, forget ledger or key wrapper kept under another legal regime, as
+ * a Workers KV one always is, without a `safeguard` that allows it, is refused wherever it is
+ * resolved, the record of processing included.
  */
 export const cloudflare: CloudflareFunction = ({ binding = "STORE", ...options } = {}) => {
   // A Worker's code is not always type-checked.
   const jurisdiction: unknown = options.jurisdiction;
-  if (jurisdiction !== undefined && (typeof jurisdiction !== "string" || jurisdiction === "")) {
+  if (jurisdiction !== undefined && !isJurisdiction(jurisdiction)) {
     throw new ConfigurationError(
-      `cloudflare({ jurisdiction }) names a Durable Object jurisdiction, such as "eu", not ${JSON.stringify(jurisdiction)}`,
+      `cloudflare({ jurisdiction }) names a Durable Object jurisdiction, one of ${JURISDICTIONS_LISTED}, not ${JSON.stringify(jurisdiction)}`,
     );
   }
   return {
@@ -111,23 +112,21 @@ export const cloudflareStorageOf: CloudflareStorageOfFunction = (config) => {
       );
     }
   }
-  if (jurisdiction !== undefined) {
-    const personalData: unknown = (config as Partial<Config>).runtime?.personalData;
-    checkKeptIn({
-      where: jurisdiction,
-      path: "runtime.personalData.tenantKeys",
-      source: valueAt(personalData, "tenantKeys"),
-      keeper: "durableObjectTenantKeys",
-      define: "defineTenantKeyStore",
-    });
-    checkKeptIn({
-      where: jurisdiction,
-      path: "runtime.personalData.forgetLedger.store",
-      source: valueAt(valueAt(personalData, "forgetLedger"), "store"),
-      keeper: "durableObjectForgetLedger",
-      define: "defineForgetLedger",
-    });
-  }
+  const personalData: unknown = (config as Partial<Config>).runtime?.personalData;
+  checkKeptIn({
+    where: jurisdiction,
+    path: "runtime.personalData.tenantKeys",
+    source: valueAt(personalData, "tenantKeys"),
+    keeper: "durableObjectTenantKeys",
+    define: "defineTenantKeyStore",
+  });
+  checkKeptIn({
+    where: jurisdiction,
+    path: "runtime.personalData.forgetLedger.store",
+    source: valueAt(valueAt(personalData, "forgetLedger"), "store"),
+    keeper: "durableObjectForgetLedger",
+    define: "defineForgetLedger",
+  });
   return storage;
 };
 
@@ -135,34 +134,26 @@ const valueAt = (holder: unknown, key: string): unknown =>
   typeof holder === "object" && holder !== null ? Reflect.get(holder, key) : undefined;
 
 interface CheckKeptInArgs {
-  readonly where: string;
+  readonly where: DurableObjectJurisdiction | undefined;
   readonly path: string;
   readonly source: unknown;
   readonly keeper: string;
   readonly define: string;
 }
 
-// The tenant key store and the forget ledger hold wrapped keys and the ids of persons: kept
-// anywhere but the jurisdiction the tenants' objects are in, they would be transferred out of it,
-// which only a safeguard allows, as `checkLocations` checks. Workers KV names no jurisdiction.
+// The tenant key store and the forget ledger hold wrapped keys and the ids of persons: kept under
+// another legal regime than the tenants' objects, they would be transferred out of it, which only a
+// safeguard allows. Checked here as well as by `checkLocations`, since the Worker and the keeper
+// start without resolving the configuration.
 const checkKeptIn = ({ where, path, source, keeper, define }: CheckKeptInArgs): void => {
   if (source === undefined) return;
-  const location = valueAt(source, "location");
-  if (location === where && isKeptInKv(source)) {
-    throw new ConfigurationError(
-      `${path} is kept in Workers KV, which holds what it keeps to no jurisdiction, never to jurisdiction ${JSON.stringify(where)} alone, where cloudflare() keeps the tenants' objects: use ${keeper}({ storage }), which keeps it there, or declare where KV may keep it, another location, with the safeguard that allows that`,
-    );
-  }
-  if (location === where) return;
-  const safeguard = valueAt(source, "safeguard");
-  if (typeof location === "string" && safeguard !== undefined) {
-    // Checked here too, as the Worker and the keeper start without resolving the configuration.
-    if (STORE_SAFEGUARDS.some((known) => known === safeguard)) return;
-    throw new ConfigurationError(
-      `${path} keeps what it holds in ${JSON.stringify(location)} under the safeguard ${JSON.stringify(safeguard)}, which is none of the safeguards of articles 45 to 47 that allow keeping a store abroad: ${STORE_SAFEGUARDS.map((known) => `"${known}" (article ${TRANSFER_ARTICLES[known]})`).join(", ")}`,
-    );
-  }
-  throw new ConfigurationError(
-    `${path} keeps what it holds ${typeof location === "string" ? `in ${JSON.stringify(location)}` : "where it names no jurisdiction, as Workers KV does"}, and cloudflare() keeps the tenants' objects in jurisdiction ${JSON.stringify(where)}: use ${keeper}({ storage }), which keeps it in the same jurisdiction, ${keeper}({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through ${define}(create, { location: ${JSON.stringify(where)} })`,
-  );
+  checkPlacement({
+    path,
+    holder: Object(source),
+    where,
+    fix: (home) =>
+      isKeptInKv(source)
+        ? `use ${keeper}({ storage }), which keeps it in jurisdiction ${JSON.stringify(home)}, or, as Workers KV holds what it keeps to no jurisdiction, declare location: "global" with the safeguard that allows that`
+        : `use ${keeper}({ storage }), which keeps it in the same jurisdiction, ${keeper}({ storage, jurisdiction, safeguard }) to keep it in another under a safeguard, or a store of your own that names where it keeps it, through ${define}(create, { location: ${JSON.stringify(home)} })`,
+  });
 };

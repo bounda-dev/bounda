@@ -8,6 +8,7 @@ import {
   ProcessingRestrictedError,
   ValidationError,
 } from "../../contracts/errors.ts";
+import type { StoredEvent } from "../../contracts/event.ts";
 import { createSequentialIdGenerator } from "../../contracts/ids.ts";
 import { memory } from "../../memory/index.ts";
 import type { RestrictOptions, UnrestrictOptions } from "../../modules/personal-data.ts";
@@ -25,6 +26,7 @@ import {
   liftRestrictionKey,
   processingRestrictionsOf,
   restrictAgain,
+  restrictionSettled,
   restrictProcessing,
   unrestrictProcessing,
 } from "./restriction.ts";
@@ -87,6 +89,27 @@ const setup = async (storage?: Storage, known = categories) => {
 };
 
 const events = (storage: Storage) => storage.eventStore.readAll({ afterPosition: 0, limit: 50 });
+
+describe("restrictionSettled", () => {
+  const AT = "2026-05-01T10:00:00.000Z";
+  const change = (type: string, id: string, timestamp: string) =>
+    ({ type, id, timestamp }) as unknown as StoredEvent;
+  const entry = { eventId: "e-5", forgottenAt: AT };
+
+  it("holds a change of restrictions that is the entry's own, or one after it in the ledger's order", () => {
+    for (const [events, settled] of [
+      [[change("ProcessingRestrictionLiftAnnounced", "e-5", AT)], true],
+      [[change("ProcessingRestricted", "e-6", AT)], true],
+      [[change("ProcessingRestricted", "e-1", "2026-05-01T10:00:00.001Z")], true],
+      [[change("ProcessingRestricted", "e-4", AT)], false],
+      [[change("ProcessingRestrictionLifted", "e-9", "2026-05-01T09:59:59.999Z")], false],
+      [[change("PersonalDataForgotten", "e-9", "2026-05-02T00:00:00.000Z")], false],
+      [[], false],
+    ] as const) {
+      expect(restrictionSettled(events, entry)).toBe(settled);
+    }
+  });
+});
 
 describe("processingRestrictionsOf", () => {
   it("says one restriction per ground, in the order of article 18(1), since its oldest row", () => {
