@@ -296,6 +296,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   let unraisedAt = 0;
   // The marks the last read showed.
   let shown: readonly ForgetLedgerMark[] = [];
+  // Before when the start compared every mark raised with the database, which its reading, once
+  // the ledger takes it, holds at least: what is pruned then.
+  let comparedBefore: number | null = null;
+  // When each mark was last pruned: at most once a delay, so a raise costs one write.
+  const prunedAt = new Map<string, number>();
 
   const eventAt = async (position: number): Promise<WatchedEvent | null> => {
     if (position === 0) return null;
@@ -323,10 +328,21 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     const prune = (marks as NonNullable<typeof marks>).pruneMarks;
     if (prune === undefined) return;
     try {
-      for (const name of names) await prune.call(marks, name, iso(at));
+      for (const name of names) {
+        await prune.call(marks, name, iso(at));
+        prunedAt.set(name, clock.now().getTime());
+      }
     } catch (error) {
       logger.error("the forget ledger's marks could not be pruned", { error });
     }
+  };
+
+  // Once judged, at most once a delay: what a read lists stays within the values raised in the
+  // last few delays, however often they are raised.
+  const pruneDue = async (name: string, at: number): Promise<void> => {
+    if (!lagging || !judged) return;
+    if (clock.now().getTime() - (prunedAt.get(name) ?? Number.NEGATIVE_INFINITY) < delayMs) return;
+    await pruneBefore([name], at - delayMs);
   };
 
   // Until the marks raised before this instance started are judged, a ledger whose reads lag
@@ -358,7 +374,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       logger.error("the forget ledger's count of restores could not be raised", { error });
       return;
     }
-    if (lagging && judged) await pruneBefore([RESTORE_COUNT_MARK], at - delayMs);
+    await pruneDue(RESTORE_COUNT_MARK, at);
   };
 
   // A restore counted, by this instance or another, tells every mark raised before it: what a
@@ -504,7 +520,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     }
     // Once judged, a value raised supersedes every lower one raised before it; of those older than
     // a read may lag, the highest stays, which a start reads at once.
-    if (lagging && judged) await pruneBefore([RESTORE_MARK], at - delayMs);
+    await pruneDue(RESTORE_MARK, at);
   };
 
   const raiseReading = async (): Promise<void> => {
@@ -513,7 +529,13 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       reading = null;
     } catch (error) {
       logger.error("the forget ledger's mark could not be raised", { error });
+      return;
     }
+    // Every value raised a delay before the start showed to it, and told no restore, or one it
+    // counted: none is above the reading, which a value raised after it lower than one of them is
+    // below too. However short-lived each instance, the marks stay within the last delays.
+    if (comparedBefore !== null) await pruneBefore([RESTORE_MARK], comparedBefore);
+    comparedBefore = null;
   };
 
   // Of the marks raised since the latest restore counted, what tells a restore nobody counted: a
@@ -771,6 +793,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
         // what the start read is raised at its time, whatever the start counted.
         if (lagging) {
           reading = stored;
+          if (mark !== null) comparedBefore = startedAt - delayMs;
           await raiseReading();
         } else if (mark !== null) await raise(stored.generation);
         return restored;
@@ -788,6 +811,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
           foundAtStart > 0 &&
           (await checkpoints.compareAndSet(RESTORE_UNCLAIMED, foundAtStart, 0))
         ) {
+          await cover();
           await countedInPlace(foundAtStart);
         }
         await checkpoints.compareAndSet(RESTORE_DECLARING, declaring, 0);

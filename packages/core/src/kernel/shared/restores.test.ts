@@ -1700,9 +1700,13 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     expect(errors()).toEqual([]);
     const failing = watchWith({ pruneMarks: () => Promise.reject(new Error("down")) });
     await failing.start();
+    expect(errors()).toEqual(["the forget ledger's marks could not be pruned: Error"]);
     time.now += LAG;
     expect(await failing.check(at(time.now))).toBeNull();
-    expect(errors()).toEqual(["the forget ledger's marks could not be pruned: Error"]);
+    expect(errors()).toEqual([
+      "the forget ledger's marks could not be pruned: Error",
+      "the forget ledger's marks could not be pruned: Error",
+    ]);
   });
 
   it("raises again, at the time first asked, a generation and a count the ledger did not take", async () => {
@@ -1970,15 +1974,73 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     ]);
   });
 
-  it("lets go, once judged, of the values raised before it started but the highest, and of each value it raises past", async () => {
+  it("tells, once it takes a restore counted in place that its start found, every mark raised before as that restore's", async () => {
+    const { checkpointStore, time, watchOver } = await setUpLagging();
+    time.now = 10 * LAG;
+    await restoredInPlace(checkpointStore, 1);
+    const watch = watchOver();
+    expect(await watch.start()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORE_COVERED)).toBe(0);
+    time.now += 1;
+    await watch.settled();
+    expect(await checkpointStore.get(RESTORE_COVERED)).toBe(at(time.now).getTime());
+  });
+
+  it("lets go at start of the values raised a delay before only once the ledger took its reading, and of none it could not compare", async () => {
+    const { checkpointStore, ledger, time, watchWith, raisedBefore, valuesOf } =
+      await setUpLagging();
+    time.now = 10 * LAG;
+    await checkpointStore.set(RESTORE_GENERATION, 1);
+    raisedBefore(RESTORE_MARK, 0, 3 * LAG);
+    raisedBefore(RESTORE_MARK, 1, 2 * LAG);
+    let refusing = true;
+    const refused = watchWith({
+      raiseMark: async (name, mark) => {
+        if (refusing) throw new Error("down");
+        return ledger.raiseMark(name, mark);
+      },
+    });
+    expect(await refused.start()).toBeNull();
+    expect(valuesOf(RESTORE_MARK)).toEqual([0, 1]);
+    refusing = false;
+    time.now += GENERATION_INTERVAL_MS;
+    expect(await refused.check(at(time.now))).toBeNull();
+    // Taken at last, the reading holds at least every value raised a delay before the start.
+    expect(valuesOf(RESTORE_MARK)).toEqual([1, 1]);
+  });
+
+  it("lets go of nothing at start when it could not read the marks, though the ledger took its reading after", async () => {
+    const { checkpointStore, ledger, time, watchWith, raisedBefore, valuesOf } =
+      await setUpLagging();
+    time.now = 10 * LAG;
+    await checkpointStore.set(RESTORE_GENERATION, 1);
+    raisedBefore(RESTORE_MARK, 0, 3 * LAG);
+    raisedBefore(RESTORE_MARK, 1, 2 * LAG);
+    let unreadable = true;
+    const blind = watchWith({
+      readMark: async (name) => {
+        if (unreadable) throw new Error("down");
+        return ledger.readMark(name);
+      },
+    });
+    expect(await blind.start()).toBeNull();
+    unreadable = false;
+    time.now += GENERATION_INTERVAL_MS;
+    await blind.check(at(time.now));
+    expect(valuesOf(RESTORE_MARK)).toEqual([0, 1, 1]);
+  });
+
+  it("lets go at start of the values raised a delay before, once judged of those raised before it started, and then once a delay of those older, but the highest", async () => {
     const { stream, time, watchOver, raisedBefore, valuesOf } = await setUpLagging();
     time.now = 10 * LAG;
     raisedBefore(RESTORE_MARK, 2, 3 * LAG);
     raisedBefore(RESTORE_MARK, 1, 2 * LAG);
     raisedBefore(RESTORE_COUNT_MARK, 1, 2 * LAG);
+    raisedBefore(RESTORE_MARK, 0, LAG / 2);
     const watch = watchOver();
     expect(await watch.start()).toEqual({ first: true });
-    expect(valuesOf(RESTORE_MARK)).toEqual([2, 1, 3, 0]);
+    // Of the values raised a delay before it started, which its reads showed, the highest stays.
+    expect(valuesOf(RESTORE_MARK)).toEqual([2, 0, 3, 0]);
     time.now += LAG;
     expect(await watch.check(at(time.now))).toBeNull();
     // Of the values raised before it started, the highest stays.
@@ -1987,7 +2049,12 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     stream.head += 1;
     time.now += GENERATION_INTERVAL_MS;
     await watch.check(at(time.now), { active: true });
+    // Within a delay of the last prune, a raise lets nothing go: it costs one write.
+    expect(valuesOf(RESTORE_MARK)).toEqual([2, 3, 0, 4]);
+    stream.head += 1;
+    time.now += LAG;
+    await watch.check(at(time.now), { active: true });
     // Of those older than a read may lag, the highest stays.
-    expect(valuesOf(RESTORE_MARK)).toEqual([3, 4]);
+    expect(valuesOf(RESTORE_MARK)).toEqual([3, 4, 5]);
   });
 });

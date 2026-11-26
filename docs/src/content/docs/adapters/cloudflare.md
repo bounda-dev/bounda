@@ -264,8 +264,8 @@ any object at once. See [backups](/guides/personal-data/#backups).
 `kvForgetLedger({ binding })` keeps it in a KV namespace instead, for an app whose `cloudflare()`
 names no jurisdiction. An object whose `env` lacks the binding fails to start with a
 `ConfigurationError`. Each object keeps its entries under its tenant, its name or, for one reached
-through an id without a name, the id, and reads the ledger once more a minute after it starts, since KV may take that long to
-list a key. With `keepFor` each key expires in KV by itself; `bounda forget-ledger expire` gives
+through an id without a name, the id, and reads the ledger once more a minute after it starts,
+or after it finds a restore, since KV may take that long to list a key. With `keepFor` each key expires in KV by itself; `bounda forget-ledger expire` gives
 the keys written before `keepFor` was set theirs. An entry lives in its key's metadata, which KV
 caps at 1024 bytes; the categories and keys of a forgetting with too many to fit there, some
 thirty, go to the key's value, which a read fetches for the entries it hands out alone, and
@@ -279,8 +279,11 @@ time it was raised at, so a mark never goes down whatever the raise read, and th
 value raised before the object started, which a listing may show a minute late, from one raised
 since: a restore of the object's storage is counted at its start when the listing shows the marks
 that tell it, and otherwise a minute later, never twice (see
-[restores](/guides/personal-data/#restores)). Once it compared them, the object removes the values
-raised more than a minute before its latest but the highest of them. A
+[restores](/guides/personal-data/#restores)). Each start removes the values raised more than a
+minute before it but the highest of them, once it compared them, and an object that compared every
+mark does so once a minute: a listing of a mark reads the values of the last few minutes, a key
+for each move of the generation and each start, however long the object runs and however often it
+restarts. A
 forgotten tenant's object deletes its keys once its recipients are told and a minute has passed
 since the forgetting, waking for it, so every key written before is listed; KV deletes one key a
 call, so each wake deletes a batch within the operations one invocation may make, and a larger
