@@ -12,7 +12,7 @@ import type { IdGenerator } from "../../contracts/ids.ts";
 import type { Logger } from "../../contracts/logger.ts";
 import { BOUNDA_AGGREGATE, type PersonalDataForgottenReason } from "../../modules/bounda-events.ts";
 import { discloseAgain, disclosureHeld, forgottenSince } from "../recipients/again.ts";
-import { startedBy } from "../shared/causation.ts";
+import { actedBy, startedBy } from "../shared/causation.ts";
 import { RESTORE_COVERED, RESTORE_GENERATION, RESTORES_FOUND } from "../shared/restores.ts";
 import type { PersonalCategories } from "./categories.ts";
 import {
@@ -436,6 +436,7 @@ export const applyEntryAgain: ApplyEntryAgainFunction = async ({
     logger.info("disclosure recorded again from the forget ledger", {
       personId,
       port: disclosure.port,
+      ...actedBy(actor),
     });
     return "disclosure";
   }
@@ -443,7 +444,9 @@ export const applyEntryAgain: ApplyEntryAgainFunction = async ({
     const restricting = { ...entry, restriction: entry.restriction };
     if (record) {
       if (!(await restrictionDue(storage, restricting))) return null;
-      await intentions.record(entry);
+      // Where the database stands now, not where it stood when the entry was first written.
+      const { reached: _, ...recorded } = entry;
+      await intentions.record(recorded);
     }
     const restricted = await restrictAgain({
       storage,
@@ -458,6 +461,7 @@ export const applyEntryAgain: ApplyEntryAgainFunction = async ({
       personId,
       eventId,
       eventType: restricted.type,
+      ...actedBy(actor),
     });
     return "restriction";
   }

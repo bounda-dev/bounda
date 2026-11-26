@@ -165,9 +165,14 @@ describe("applying a forget ledger's entries again by hand", () => {
         ],
       },
     };
-    const entries = [
+    const entries: readonly ForgetLedgerEntry[] = [
       forgetting("c-1", "e-forget"),
-      restricting("c-2", "e-restrict"),
+      // Written as an intention where another database stood.
+      {
+        ...restricting("c-2", "e-restrict"),
+        committed: false,
+        reached: { position: 99, generation: 9 },
+      },
       redacting,
       disclosing("c-2"),
     ];
@@ -207,6 +212,11 @@ describe("applying a forget ledger's entries again by hand", () => {
         })),
       ),
     );
+
+    const recorded = (await (await ledgerOf(ledger)).read({ limit: 10 })).find(
+      ({ eventId }) => eventId === "e-restrict",
+    );
+    expect(recorded?.reached).not.toEqual({ position: 99, generation: 9 });
 
     // Run again, it applies nothing more.
     expect((await app.applyAgain(entries)).map(({ outcome }) => outcome)).toEqual([
