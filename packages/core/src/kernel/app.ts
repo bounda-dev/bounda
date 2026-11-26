@@ -2461,6 +2461,7 @@ export const assembleApp: AssembleAppFunction = async <R extends Registry>({
               categories: personalCategories,
               recipients,
               ports: returningPorts,
+              transfers,
               tenant: tenantId,
               exportId,
               ledger: forgetLedger?.store ?? null,

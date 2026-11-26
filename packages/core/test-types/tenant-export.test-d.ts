@@ -8,6 +8,7 @@ import {
   type ExportedCategories,
   type ExportedCategory,
   type ExportedRestricted,
+  type ExportedTransfer,
   type ExportOutcome,
   type PersonalDataAccess,
   type PersonRecipient,
@@ -31,6 +32,7 @@ import {
   type TenantExportJsonLinesFunction,
   type TenantExportPart,
   type TenantExportReached,
+  type TenantExportRecipient,
   tenantExportJsonLines,
 } from "@bounda-dev/core";
 import type {
@@ -59,10 +61,10 @@ describe("the tenant export", () => {
 
   it("names its format and version as literals a reader checks", () => {
     expectTypeOf(TENANT_EXPORT_FORMAT).toEqualTypeOf<"bounda.tenant-export">();
-    expectTypeOf(TENANT_EXPORT_VERSION).toEqualTypeOf<2>();
+    expectTypeOf(TENANT_EXPORT_VERSION).toEqualTypeOf<3>();
     expectTypeOf<TenantExportHeader>().toEqualTypeOf<{
       readonly format: "bounda.tenant-export";
-      readonly version: 2;
+      readonly version: 3;
       readonly tenant: string;
       readonly exportId: string;
       readonly exportedAt: string;
@@ -70,6 +72,7 @@ describe("the tenant export", () => {
       readonly frozenAt: string;
       readonly reached: TenantExportReached;
       readonly categories: Readonly<Record<string, TenantExportCategory>>;
+      readonly transfers: readonly ExportedTransfer[];
       readonly readModels: readonly string[];
     }>();
     expectTypeOf<TenantExportReached>().toEqualTypeOf<{
@@ -86,6 +89,7 @@ describe("the tenant export", () => {
     expectTypeOf<TenantExportPart["kind"]>().toEqualTypeOf<
       | "header"
       | "person"
+      | "recipient"
       | "event"
       | "scheduledCommand"
       | "deadLetter"
@@ -101,6 +105,9 @@ describe("the tenant export", () => {
     expectTypeOf<
       Extract<TenantExportPart, { kind: "person" }>["person"]
     >().toEqualTypeOf<TenantExportedPerson>();
+    expectTypeOf<
+      Extract<TenantExportPart, { kind: "recipient" }>["recipient"]
+    >().toEqualTypeOf<TenantExportRecipient>();
     expectTypeOf<
       Extract<TenantExportPart, { kind: "event" }>["event"]
     >().toEqualTypeOf<TenantExportedEvent>();
@@ -140,6 +147,11 @@ describe("the tenant export", () => {
       readonly restrictions: readonly ProcessingRestriction[];
       readonly recipients: readonly PersonRecipient[];
     }>();
+    expectTypeOf<Omit<TenantExportRecipient, "persons">>().toEqualTypeOf<
+      Omit<PersonRecipient, never>
+    >();
+    expectTypeOf<TenantExportRecipient>().toExtend<PersonRecipient>();
+    expectTypeOf<TenantExportRecipient["persons"]>().toEqualTypeOf<number>();
     expectTypeOf<TenantExportedEvent>().toEqualTypeOf<{
       readonly id: string;
       readonly type: string;
@@ -200,6 +212,7 @@ describe("the tenant export", () => {
   it("counts what it handed out, as the access log records it", () => {
     expectTypeOf<TenantExportCounts>().toEqualTypeOf<{
       readonly persons: number;
+      readonly recipients: number;
       readonly events: number;
       readonly scheduledCommands: number;
       readonly deadLetters: number;
@@ -213,6 +226,7 @@ describe("the tenant export", () => {
     expectTypeOf<TenantExportAccess["detail"]>().toEqualTypeOf<{
       readonly exportId: string;
       readonly persons: number;
+      readonly recipients: number;
       readonly events: number;
       readonly scheduledCommands: number;
       readonly deadLetters: number;

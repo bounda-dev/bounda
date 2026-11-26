@@ -19,7 +19,25 @@ const header: TenantExportPart = {
     frozenAt: "2026-01-01T00:00:00.000Z",
     reached: { readModels: { a: 1, b: 1 }, forgetLedger: null },
     categories: {},
+    transfers: [],
     readModels: ["a", "b"],
+  },
+};
+
+const recipient: TenantExportPart = {
+  kind: "recipient",
+  recipient: {
+    port: "customer.crm",
+    name: "CRM",
+    kind: "processor",
+    country: "US",
+    transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)" },
+    status: "disclosed",
+    categories: [{ name: "contact", basis: "contract" }],
+    firstDisclosedAt: "2026-01-01T00:00:00.000Z",
+    lastDisclosedAt: "2026-01-01T00:00:00.000Z",
+    declared: true,
+    persons: 1,
   },
 };
 
@@ -119,7 +137,13 @@ describe("tenantExportJsonLines", () => {
 
 describe("readTenantExport", () => {
   it("reads a whole export, across chunks that split lines and characters", async () => {
-    const text = linesOf(header, person, row("a"), end({ persons: 1, readModelRows: 1 }));
+    const text = linesOf(
+      header,
+      person,
+      recipient,
+      row("a"),
+      end({ persons: 1, recipients: 1, readModelRows: 1 }),
+    );
     const encoded = encoder.encode(text.replace("ana", "añá"));
     const chunks: Uint8Array[] = [];
     for (let at = 0; at < encoded.length; at += 1) chunks.push(encoded.slice(at, at + 1));
@@ -128,7 +152,7 @@ describe("readTenantExport", () => {
         yield* chunks;
       })(),
     );
-    expect(parts.map(({ kind }) => kind)).toEqual(["header", "person", "row", "end"]);
+    expect(parts.map(({ kind }) => kind)).toEqual(["header", "person", "recipient", "row", "end"]);
     expect(parts[1]).toMatchObject({ person: { personId: "añá" } });
   });
 
@@ -165,6 +189,11 @@ describe("readTenantExport", () => {
       "a person whose data is null",
       [linesOf(header, { kind: "person", person: null })],
       "The person part on line 2 of the tenant export holds no data",
+    ],
+    [
+      "a recipient under another name",
+      [linesOf(header, person, { kind: "recipient", person: recipient.recipient })],
+      "The recipient part on line 3 of the tenant export holds no data",
     ],
     [
       "a row without its read model",
@@ -209,6 +238,11 @@ describe("readTenantExport", () => {
       "Line 3 of the tenant export is a person out of order",
     ],
     [
+      "a person after the recipients",
+      [linesOf(header, recipient, person)],
+      "Line 3 of the tenant export is a person out of order",
+    ],
+    [
       "a row of a read model the header does not name",
       [linesOf(header, row("c"))],
       "Line 2 of the tenant export is a row of c out of order",
@@ -226,6 +260,11 @@ describe("readTenantExport", () => {
     [
       "an end that counts a part of another kind",
       [linesOf(header, person, end({ events: 1 }))],
+      "end counts other parts than it holds",
+    ],
+    [
+      "an end that counts a recipient as a person",
+      [linesOf(header, recipient, end({ persons: 1 }))],
       "end counts other parts than it holds",
     ],
     [
@@ -254,10 +293,10 @@ describe("readTenantExport", () => {
     // One written before a freeze cut it, which its header does not say.
     const earlier = { kind: "header", header: { ...header.header, version: 1 } };
     await expect(read(bytes(linesOf(earlier, end())))).rejects.toThrow(
-      "The tenant export is in format bounda.tenant-export version 1, not bounda.tenant-export version 2",
+      "The tenant export is in format bounda.tenant-export version 1, not bounda.tenant-export version 3",
     );
     const foreign = { kind: "header", header: { ...header.header, format: "other" } };
-    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 2");
+    await expect(read(bytes(linesOf(foreign, end())))).rejects.toThrow("in format other version 3");
   });
 
   it("hands each part out as it reads it, before it knows the rest", async () => {

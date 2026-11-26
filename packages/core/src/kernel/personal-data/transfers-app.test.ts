@@ -10,6 +10,7 @@ import { orderAggregateEntry } from "../test-support.ts";
 import { defineForgetLedger } from "./forget-ledger.ts";
 import { masterKey } from "./master-key.ts";
 import { defineTenantKeyStore } from "./tenant-key-source.ts";
+import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
 const project = ({
   event,
@@ -116,6 +117,12 @@ describe("a person's export", () => {
     ];
     expect((await app.exportPersonalData("ana")).transfers).toEqual(transfers);
     for await (const part of await app.streamPersonalData("ana")) {
+      expect(part.kind === "header" ? part.header.transfers : null).toEqual(transfers);
+      break;
+    }
+    // The tenant's export names the same, in its header, for the controller it is handed back to.
+    await app.freezeTenant(DEFAULT_TENANT);
+    for await (const part of await app.exportTenant(DEFAULT_TENANT)) {
       expect(part.kind === "header" ? part.header.transfers : null).toEqual(transfers);
       break;
     }

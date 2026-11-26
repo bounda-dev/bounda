@@ -451,8 +451,11 @@ adapter, not who hosts them.
 An app that is itself a processor for its customers, one [tenant](/guides/personal-data/#tenants)
 each, deletes or returns a customer's data at the end of the service, as 28(3)(g) asks and as the
 customer chooses: [`exportTenant`](/guides/personal-data/#handing-a-tenant-back) returns it, every
-person, event, scheduled command, dead letter, subscriber failure, remembered answer, read-model
-row and forget ledger entry, every value opened and nothing held back, as JSON Lines that
+person, recipient of their data, event, scheduled command, dead letter, subscriber failure,
+remembered answer, read-model row and forget ledger entry, every value opened and nothing held
+back, with the stores kept in another jurisdiction and, for each recipient, its country and the
+safeguard of a transfer, so the controller knows where the data went and on what each transfer
+rested, as JSON Lines that
 `readTenantExport` checks are whole, of a tenant [frozen](/guides/personal-data/#freezing-a-tenant)
 in every store, so what it returns is one consistent cut that no write changed while it was read; [`forgetTenant`](/guides/personal-data/#forgetting-a-tenant)
 then deletes it, in every copy of what was sealed. The export is recorded in the access log. The
@@ -560,9 +563,10 @@ Economic Area its `safeguard`: `adequacy` (article 45), `standard-contractual-cl
 `derogation` (49). The app does not start on a transfer without one, on a safeguard for a country
 inside the area, which counts the Åland Islands and the outermost regions of France apart from
 their ISO codes, nor on `adequacy` for a country the European Commission has adopted no adequacy
-decision for (`ADEQUATE_COUNTRIES`). The export and
-`recipientsOf` tell the person where their data went and on what it rests, 15(2), and the record of
-processing lists every transfer.
+decision for (`ADEQUATE_COUNTRIES`). The export and `recipientsOf` tell the person where their data
+went and on what it rests, with the article, 15(2), and the record of processing lists every
+transfer. A tenant's export sums the recipients of every person in it, once under each identity a
+disclosure was recorded with, for the controller it is handed back to, 28(3)(g).
 
 Every database and store declares where it keeps its data, a country in lower case or an area such
 as the EU (`DataLocation`): `location: "eu"` on
@@ -582,7 +586,8 @@ other country its own, the Durable Object jurisdictions `"us"`, `"fedramp"` and 
 the United States, and `"global"`, where Workers KV keeps what it holds, none; a location Bounda
 does not know is refused rather than guessed. The record of processing states each one's location and the safeguard of each
 transfer, 30(1)(e), and lists every store of personal data, and the key wrapper, that declares no
-location as a finding; each person's export lists the transfers in `transfers`, 15(2).
+location as a finding; each person's export lists the transfers in `transfers`, 15(2), and so does
+the header of a tenant's export, 28(3)(g).
 `create-bounda` writes `"eu"` in every project. See [Data
 location](/reference/configuration/#data-location).
 

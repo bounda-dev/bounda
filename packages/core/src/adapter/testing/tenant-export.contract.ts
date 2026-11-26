@@ -32,6 +32,10 @@ export interface TenantExportContractFunction {
   (args: TenantExportContractArgs): void;
 }
 
+// The tenant this case builds holds every kind of record, read back whole: on a Durable Object, where
+// each store call crosses into the object, a loaded CI runner has taken it to Vitest's default.
+const WHOLE_TENANT_TIMEOUT_MS = 15_000;
+
 interface NoteRow {
   readonly noteId: string;
   readonly memberId: string;
@@ -286,7 +290,9 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       return { redacted: redacted?.id };
     };
 
-    it("hands back every record of the tenant, every value opened, and ends whole", async () => {
+    it("hands back every record of the tenant, every value opened, and ends whole", {
+      timeout: WHOLE_TENANT_TIMEOUT_MS,
+    }, async () => {
       const opened = await open();
       const { app } = opened;
       const { redacted } = await history(opened);
@@ -294,7 +300,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       const header = parts[0]?.kind === "header" ? parts[0].header : undefined;
       expect(header).toEqual({
         format: "bounda.tenant-export",
-        version: 2,
+        version: 3,
         tenant: DEFAULT_TENANT,
         exportId: expect.any(String),
         exportedAt: "2026-03-01T00:00:00.000Z",
@@ -302,6 +308,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
         frozenAt: "2026-03-01T00:00:00.000Z",
         reached: { readModels: { notes: expect.any(Number) }, forgetLedger: expect.any(Number) },
         categories: { default: expect.objectContaining({ basis: null, purposes: [] }) },
+        transfers: [],
         readModels: ["notes"],
       });
       const position = header?.position ?? -1;
@@ -403,6 +410,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
         kind: "end",
         counts: {
           persons: persons.length,
+          recipients: 0,
           events: events.length,
           scheduledCommands: 1,
           deadLetters: 1,
@@ -564,6 +572,7 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
           detail: {
             exportId: header?.exportId,
             persons: 0,
+            recipients: 0,
             events: 0,
             scheduledCommands: 0,
             deadLetters: 0,

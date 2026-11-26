@@ -9,7 +9,12 @@ import type { CausationContext, EventMetadata } from "../../contracts/metadata.t
 import type { TenantExportAccess } from "../../modules/audit.ts";
 import type { ProcessingRestriction } from "../../modules/personal-data.ts";
 import type { PersonRecipient } from "../../modules/recipient.ts";
-import type { ExportedCategories, ExportedCategory, ExportedRestricted } from "./export.ts";
+import type {
+  ExportedCategories,
+  ExportedCategory,
+  ExportedRestricted,
+  ExportedTransfer,
+} from "./export.ts";
 
 /**
  * What the first line of a tenant export names its format: a reader checks it, and `version`,
@@ -21,7 +26,7 @@ export const TENANT_EXPORT_FORMAT: "bounda.tenant-export" = "bounda.tenant-expor
  * The version of the format a tenant export is written in. A version that changes what a part
  * holds, or adds a kind of part, is a new one.
  */
-export const TENANT_EXPORT_VERSION: 2 = 2;
+export const TENANT_EXPORT_VERSION: 3 = 3;
 
 /**
  * A category of the app as `app/personal-data.ts` declares it, as `ExportedCategory` tells a
@@ -46,8 +51,8 @@ export interface TenantExportReached {
 
 /**
  * What a tenant export hands out before any record: its format, the tenant, when it was taken, the
- * head of the stream its events reach, every category of the app, and every read model, in the
- * order their rows come.
+ * head of the stream its events reach, every category of the app, the stores kept in another
+ * jurisdiction, and every read model, in the order their rows come.
  */
 export interface TenantExportHeader {
   readonly format: typeof TENANT_EXPORT_FORMAT;
@@ -78,6 +83,12 @@ export interface TenantExportHeader {
    */
   readonly reached: TenantExportReached;
   readonly categories: Readonly<Record<string, TenantExportCategory>>;
+  /**
+   * The stores the app keeps out of the jurisdiction `storage` declares, with the safeguard that
+   * allows it, as a person's export lists them; none when every store is kept where `storage` is.
+   * Where each recipient is, and the safeguard of a transfer to it, `recipient` parts say.
+   */
+  readonly transfers: readonly ExportedTransfer[];
   readonly readModels: readonly string[];
 }
 
@@ -106,6 +117,20 @@ export interface TenantExportedPerson {
   >;
   readonly restrictions: readonly ProcessingRestriction[];
   readonly recipients: readonly PersonRecipient[];
+}
+
+/**
+ * A recipient of the tenant's data, as the `person` parts list it, summed over every person: one
+ * per port, identity it had then (its name, kind, country and the safeguard of a transfer) and
+ * status, with every category concerned, the earliest and the latest disclosure, and how many
+ * persons it is listed so for. A recipient the app declares that no person is listed for, under
+ * its identity now, comes as `declared`, with every category its declaration names, for none.
+ */
+export interface TenantExportRecipient extends PersonRecipient {
+  /**
+   * How many of the tenant's persons list it so.
+   */
+  readonly persons: number;
 }
 
 /**
@@ -272,15 +297,16 @@ export interface TenantExportedRow {
 export type TenantExportCounts = Omit<TenantExportAccess["detail"], "exportId">;
 
 /**
- * One piece of a tenant export, in this order: the header, every person, every event up to the
- * header's `position`, every scheduled command, dead letter, subscriber failure and remembered
- * answer, the rows of each read model, the header's `readModels` in turn, every entry of
- * `runtime.personalData.forgetLedger`, and last `end`, with how many parts of each kind came: an
- * export without its `end` is not whole.
+ * One piece of a tenant export, in this order: the header, every person, every recipient of their
+ * data, every event up to the header's `position`, every scheduled command, dead letter, subscriber
+ * failure and remembered answer, the rows of each read model, the header's `readModels` in turn,
+ * every entry of `runtime.personalData.forgetLedger`, and last `end`, with how many parts of each
+ * kind came: an export without its `end` is not whole.
  */
 export type TenantExportPart =
   | { readonly kind: "header"; readonly header: TenantExportHeader }
   | { readonly kind: "person"; readonly person: TenantExportedPerson }
+  | { readonly kind: "recipient"; readonly recipient: TenantExportRecipient }
   | { readonly kind: "event"; readonly event: TenantExportedEvent }
   | { readonly kind: "scheduledCommand"; readonly scheduledCommand: TenantExportedScheduledCommand }
   | { readonly kind: "deadLetter"; readonly deadLetter: TenantExportedDeadLetter }
@@ -300,6 +326,7 @@ export type TenantExportRecord = Exclude<
 
 export const NO_TENANT_EXPORT_RECORDS: TenantExportCounts = {
   persons: 0,
+  recipients: 0,
   events: 0,
   scheduledCommands: 0,
   deadLetters: 0,
@@ -311,6 +338,7 @@ export const NO_TENANT_EXPORT_RECORDS: TenantExportCounts = {
 
 const COUNTED: Readonly<Record<TenantExportRecord["kind"], keyof TenantExportCounts>> = {
   person: "persons",
+  recipient: "recipients",
   event: "events",
   scheduledCommand: "scheduledCommands",
   deadLetter: "deadLetters",

@@ -138,6 +138,7 @@ export interface TenantExportAccess extends AccessRecord<ExportOutcome> {
      */
     readonly exportId: string;
     readonly persons: number;
+    readonly recipients: number;
     readonly events: number;
     readonly scheduledCommands: number;
     readonly deadLetters: number;
