@@ -613,6 +613,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
       checkpointStore.get(RESTORE_COVERED),
     ]);
     startStand ??= await standOf(storage);
+    const started = startStand;
     let after: ForgetLedgerPosition | undefined =
       cursor === 0
         ? undefined
@@ -646,7 +647,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
         ...(after === undefined ? {} : { after }),
         limit: pageSize,
       });
-      const ahead = await behind(page, covered);
+      const ahead = await behind(page, covered, started);
       if (ahead !== null) {
         wentBack = true;
         reachedPast = Math.max(reachedPast, ahead);
@@ -682,6 +683,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
   const behind = async (
     page: readonly ForgetLedgerEntry[],
     covered: number,
+    started: DatabaseStand,
   ): Promise<number | null> => {
     const told = page.filter(
       (entry): entry is ForgetLedgerEntry & { readonly reached: LedgerReached } =>
@@ -692,9 +694,7 @@ export const createForgetLedgerReconciliation: CreateForgetLedgerReconciliationF
     const ahead = told.filter(
       ({ reached, forgottenAt }) =>
         standsShortOf(stand, reached) ||
-        (startStand !== null &&
-          Date.parse(forgottenAt) < startedAt &&
-          standsShortOf(startStand, reached)),
+        (Date.parse(forgottenAt) < startedAt && standsShortOf(started, reached)),
     );
     return ahead.length === 0 ? null : Math.max(...ahead.map(({ reached }) => reached.generation));
   };

@@ -1346,16 +1346,18 @@ describe("createRestoreWatch, with the count of restores in the ledger", () => {
     expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(6);
   });
 
-  it("counts a copy holding fewer restores than it read, though the latest of those it holds was counted later", async () => {
-    const { checkpointStore, watchOver } = await setUp();
-    await checkpointStore.set(RESTORES_FOUND, 2);
-    await checkpointStore.set(RESTORE_COVERED, 100);
-    const watch = watchOver();
-    await watch.start();
-    await checkpointStore.set(RESTORES_FOUND, 1);
-    await checkpointStore.set(RESTORE_COVERED, 200);
-    expect(await watch.check(at(0))).toEqual({ first: true });
-    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
+  it("counts a copy holding fewer restores than it read, though the latest of those it holds was counted later, or at the same time on a ledger whose reads do not lag", async () => {
+    for (const covered of [200, 100]) {
+      const { checkpointStore, watchOver } = await setUp();
+      await checkpointStore.set(RESTORES_FOUND, 2);
+      await checkpointStore.set(RESTORE_COVERED, 100);
+      const watch = watchOver();
+      await watch.start();
+      await checkpointStore.set(RESTORES_FOUND, 1);
+      await checkpointStore.set(RESTORE_COVERED, covered);
+      expect(await watch.check(at(0))).toEqual({ first: true });
+      expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
+    }
   });
 
   it("keeps the time the instance that counted first counted at, not that of one that joined it", async () => {
@@ -2117,10 +2119,11 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     expect(await watch.check(at(time.now))).toEqual({ first: true });
   });
 
-  it("moves a copy taken before a recount to the count it read, counting nothing, and still counts one counted earlier", async () => {
+  it("moves a copy taken before a recount to the count it read, counting nothing, and still counts one counted earlier or later", async () => {
     for (const [covered, found, restores] of [
       [100, null, 2],
       [50, { first: true }, 3],
+      [200, { first: true }, 3],
     ] as const) {
       const { checkpointStore, time, watchOver } = await setUpLagging();
       time.now = 10 * LAG;
