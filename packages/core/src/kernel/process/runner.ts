@@ -10,6 +10,7 @@ import type { RecordAccess } from "../personal-data/access.ts";
 import type { PersonalCategories } from "../personal-data/categories.ts";
 import type { ForgetIntentions } from "../personal-data/intention.ts";
 import type { PortReturns } from "../ports/returns.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
 import type { Disclosures } from "../recipients/gate.ts";
 import { deliverInOrder } from "../shared/in-order.ts";
 import type { PendingRetries } from "../shared/pending-retries.ts";
@@ -38,6 +39,7 @@ export interface CreateProcessRunnerArgs {
   readonly config: ResolvedConfig;
   readonly tracer: TracerFunction;
   readonly personalCategories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly pendingRetries: PendingRetries;
@@ -58,6 +60,7 @@ export interface CreateProcessRunnerFunction {
  */
 export const createProcessRunner: CreateProcessRunnerFunction = ({
   personalCategories,
+  recipients,
   processes,
   aggregates,
   pipeline,
@@ -87,6 +90,7 @@ export const createProcessRunner: CreateProcessRunnerFunction = ({
     config,
     tracer,
     personalCategories,
+    recipients,
     ids,
     clock,
     logger,

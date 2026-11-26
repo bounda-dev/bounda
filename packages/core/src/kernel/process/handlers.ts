@@ -21,6 +21,7 @@ import { readReturned } from "../personal-data/returned.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import { bindPorts } from "../ports/bind.ts";
 import type { PortReturns } from "../ports/returns.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
 import { type Disclosures, openedOf } from "../recipients/gate.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
@@ -99,6 +100,7 @@ export interface CreateProcessHandlersArgs {
   readonly config: ResolvedConfig;
   readonly tracer: TracerFunction;
   readonly personalCategories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -119,6 +121,7 @@ export interface CreateProcessHandlersFunction {
 
 export const createProcessHandlers: CreateProcessHandlersFunction = ({
   personalCategories,
+  recipients,
   aggregates,
   pipeline,
   config,
@@ -185,6 +188,7 @@ export const createProcessHandlers: CreateProcessHandlersFunction = ({
       ids,
       clock,
       personalCategories,
+      recipients,
       batchSize: config.runtime.dispatcher.batchSize,
       intentions,
       maxChainDepth: config.forAggregate(process.aggregate).policies.maxChainDepth,

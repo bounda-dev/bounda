@@ -12,6 +12,7 @@ import { memory } from "../../memory/index.ts";
 import { createKeptPersonStore } from "../../memory/person-store.ts";
 import { createKeptPersonalKeyStore } from "../../memory/personal-key-store.ts";
 import type { PersonalDataModule } from "../../modules/personal-data.ts";
+import { NO_RECIPIENTS } from "../recipients/build.ts";
 import { LEASE_MS } from "../shared/lease.ts";
 import { tracer } from "../telemetry.ts";
 import { createRecordingLogger, withoutLedger } from "../test-support.ts";
@@ -199,6 +200,7 @@ const setUp = async (storage?: Storage, { retentionMs = 30 * DAY, module }: SetU
   const categories = categoriesOf(retentionMs, module);
   const sweepOver = (storage: Storage) =>
     createRetentionSweep({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: withoutLedger({ ids, clock }),
       categories,
@@ -335,6 +337,7 @@ describe("createRetentionSweep", () => {
     advance(31);
     await touch("c-1");
     await forgetPersonalData({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: withoutLedger({ ids, clock }),
       ids,
@@ -380,6 +383,7 @@ describe("createRetentionSweep", () => {
     const { sweep, record, touch, forgottenFor, advance, clock, storage, ids, logger, categories } =
       await setUp();
     const other = createRetentionSweep({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: withoutLedger({ ids, clock }),
       categories,
@@ -948,6 +952,7 @@ describe("createRetentionSweep", () => {
     const told: string[] = [];
     const toldIds = createSequentialIdGenerator();
     const sweep = createRetentionSweep({
+      recipients: NO_RECIPIENTS,
       storage: {
         ...live,
         persons: {
@@ -993,6 +998,7 @@ describe("createRetentionSweep", () => {
     await record();
     const longerIds = createSequentialIdGenerator();
     const longer = createRetentionSweep({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: withoutLedger({ ids: longerIds, clock }),
       categories: categoriesOf(60 * DAY),
@@ -1130,6 +1136,7 @@ describe("createRetentionSweep", () => {
     await record();
     advance(10);
     await forgetPersonalData({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: withoutLedger({ ids, clock }),
       ids,
@@ -1195,6 +1202,7 @@ describe("createRetentionSweep", () => {
     await kept.record();
     for (const person of ["c-1", "c-2"]) {
       await forgetPersonalData({
+        recipients: NO_RECIPIENTS,
         storage: live,
         intentions: withoutLedger({ ids: kept.ids, clock: kept.clock }),
         ids: kept.ids,
@@ -1329,6 +1337,7 @@ describe("the retention and the forget ledger", () => {
     const { record, touch, advance, clock, storage, ids, logger } = await setUp();
     const { intentions, recorded } = recordingIntentions(ids, clock);
     const sweep = createRetentionSweep({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions,
       categories: categoriesOf(30 * DAY),
@@ -1488,6 +1497,7 @@ describe("the retention and the forget ledger", () => {
     };
     const { intentions, recorded } = recordingIntentions(ids, clock);
     const sweep = createRetentionSweep({
+      recipients: NO_RECIPIENTS,
       storage: raced,
       intentions,
       categories: categoriesOf(30 * DAY),
@@ -1603,6 +1613,7 @@ describe("the retention and the forget ledger", () => {
     await touch("c-1");
     await record();
     await forgetPersonalData({
+      recipients: NO_RECIPIENTS,
       storage,
       intentions: withoutLedger({ ids, clock }),
       ids,
@@ -1647,6 +1658,7 @@ describe("the retention and the forget ledger", () => {
     };
     const told: string[] = [];
     const sweep = createRetentionSweep({
+      recipients: NO_RECIPIENTS,
       storage: raced,
       intentions,
       categories,

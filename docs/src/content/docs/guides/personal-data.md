@@ -1379,7 +1379,7 @@ person's data in the clear records it, once per call, and an export once more as
 | Operation | `persons` | `detail` |
 | --- | --- | --- |
 | `exportPersonalData` and `streamPersonalData`, as each starts and as it ends | the person, and with `includeWithheld`, after them, everyone else whose data the values it opened in spite of [article 15(4)](#someone-elses-data) may quote | `{ exportId, redactions, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, recipients, withheld, includeWithheld }`: the export's id, the same in both records, how many of each it handed out by then, before it failed or was cancelled for one that did, how many of those held a value back under article 15(4), or opened it with `includeWithheld`, and whether it was asked for with it |
-| `exportTenant`, as it starts and as it ends | the first persons it handed out, `MAX_ACCESS_PERSONS` at most, none at its start, and `personCount` all of them so far | `{ exportId, persons, recipients, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, forgetLedgerEntries }`: the export's id, the same in both records and in its header, and how many parts of each kind it handed out by then |
+| `exportTenant`, as it starts and as it ends | the first persons it handed out, `MAX_ACCESS_PERSONS` at most, none at its start, and `personCount` all of them so far | `{ exportId, persons, recipients, forgottenRecipients, events, scheduledCommands, deadLetters, subscriberFailures, answers, readModelRows, forgetLedgerEntries }`: the export's id, the same in both records and in its header, and how many parts of each kind it handed out by then |
 | `recipientsOf` | the person | `{ recipients }`, how many; `null` when it failed |
 | `disclosure`, a call to a [recipient's](#recipients) port | those whose data of the recipient's categories the work read | `{ recipient, handler, categories }`: the port, the command, policy, process or query, and the categories recorded as disclosed |
 | `recipientNotice` | the person the event is about | `{ recipient, event, eventId, categories, superseded }`: whom it told of what, ids and categories alone |
@@ -1655,7 +1655,9 @@ person's events, with the timeout, retries and back-off of the policies of the p
 `app.deadLetters.retry` tells again and `discard` closes once the recipient was told by hand. A
 recipient whose notice waits for a retry is handed none of its later ones meanwhile. Each notice
 handed out is recorded in the [access log](#who-opened-what), as `recipientNotice`. A forgetting
-removes the disclosures it forgot: its event keeps whom it told.
+removes the disclosures it forgot: its event keeps whom it told, and, in the same transaction, a
+count by recipient keeps how many persons it took off each and of what, with no one named, which
+the [tenant's export](#handing-a-tenant-back) hands back.
 
 A notice of a restriction, a lift or a redaction that a later forgetting of the person as a whole
 told the same recipient is superseded: it is not handed over, since it would only bring back what
@@ -2721,9 +2723,10 @@ then hands out, in this order:
 
 | Part | What it holds |
 | --- | --- |
-| `header` | `format` (`"bounda.tenant-export"`) and `version` (`4`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
+| `header` | `format` (`"bounda.tenant-export"`) and `version` (`5`), the tenant, the export's `exportId`, `exportedAt`, the `position` of the stream's head when it began, `frozenAt`, `reached`, how far in the stream each read model's rows and the forget ledger's copy of it got, `forgetLedger` `null` without one, every category of the app as `app/personal-data.ts` declares it, with the `ports` whose `returnsPersonalData` says they return its data, the `transfers`, the stores kept in another jurisdiction as a person's export lists them, and every read model, in the order their rows come |
 | `person` | each person who holds a key, in force or kept, or whom the runtime keeps a record of, a restriction or, under a [retention](#retention), their activity, once, by id: `lastActiveAt`, `forgottenAt`, the categories they hold data of with `keptUntil` and `restrictedUntil`, their `restrictions`, and the [recipients](#recipients) of their data, as their own export lists them |
 | `recipient` | each recipient of the tenant's data, the `person` parts' recipients summed: one per port, identity it had then and status, with its `country` and `transfer`, the categories concerned, the earliest and latest disclosure, and how many `persons` list it so; and each recipient the app declares that no person lists under its identity now, `declared`, for none |
+| `forgottenRecipient` | each recipient that persons since [forgotten](#forgetting-a-person) were listed with, one per port, identity it had then, with its `country` and `transfer`, and status, `disclosed` or `presumed`: how many `persons` forgettings took off it whole, and each category taken off it with its `basis` and how many `persons`; never whom, nor when |
 | `event` | every event of the stream up to the header's `position`, as the handlers read it today: upcast, its whole `payload` opened, with its `metadata` and the `person` it names; `categories` names the category of each field marked `personal`, `restricted` the fields the controller may only keep, and `redacted` the fields a [redaction](#correcting-a-persons-data) sealed for good |
 | `scheduledCommand` | every command waiting to run, its payload opened, with the `persons` it names |
 | `deadLetter` | every [dead letter](/guides/dead-letters/), whatever its status, its error's text and payload opened |
@@ -2752,7 +2755,15 @@ Economic Area, the `transfer`: its `safeguard`, `article` and `regime`. A recipi
 its safeguard, comes once under each identity its disclosures were recorded with, so each transfer
 is told under what allowed it then. Each person's part says which of them hold their data. A
 [forgetting](#forgetting-a-person) removes the disclosures it forgot, so they count in no
-`recipient` part: its event, among the `event` parts, names the recipients it told. With a [forget
+`recipient` part: its event, among the `event` parts, names the ports it told, and the
+`forgottenRecipient` parts count, under the same identities, how many forgotten persons' data went
+to each and of which categories, so the controller's record of where its data went stays whole once
+the persons are gone. A person forgotten in part counts under the categories forgotten, and under
+`persons` once nothing a recipient was listed with of theirs is left; one forgotten again with
+nothing left counts no more. A port no longer declared counts what was recorded as disclosed to it,
+not what it was only presumed to hold, which has no identity left. The counts hold no person and no
+time: the earliest or latest disclosure of a forgotten person is that person's own, which the
+forgetting erased (see [the GDPR reference](/reference/gdpr/#erasure-article-17)). With a [forget
 ledger](#the-forget-ledger), the first disclosure of each category of a person to a recipient is
 also among the `forgetLedgerEntry` parts, with the recipient's country and safeguard then, for as
 long as the ledger keeps it.

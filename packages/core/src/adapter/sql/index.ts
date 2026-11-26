@@ -105,7 +105,11 @@ export type {
   CreateSqlRecipientStoreFunction,
   RecipientTablesStatementsFunction,
 } from "./recipient-store.ts";
-export { createSqlRecipientStore, recipientTablesStatements } from "./recipient-store.ts";
+export {
+  createSqlRecipientStore,
+  forgottenRecipientsTableStatement,
+  recipientTablesStatements,
+} from "./recipient-store.ts";
 export type {
   CreateSqlRestrictedPersonsStoreArgs,
   CreateSqlRestrictedPersonsStoreFunction,

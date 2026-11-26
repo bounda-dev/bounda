@@ -2,6 +2,8 @@ import {
   type DeclaredRecipient,
   type Disclosure,
   disclosureKey,
+  type ForgottenRecipient,
+  forgottenKey,
   type RecipientStore,
   type StoredDisclosure,
 } from "../adapter/storage/recipient-store.ts";
@@ -14,6 +16,7 @@ export interface KeptRecipientStore {
   snapshot(): () => void;
   disclosureRows(): readonly Readonly<Record<string, unknown>>[];
   recipientRows(): readonly Readonly<Record<string, unknown>>[];
+  forgottenRows(): readonly Readonly<Record<string, unknown>>[];
 }
 
 export interface CreateKeptRecipientStoreFunction {
@@ -28,6 +31,15 @@ const byDisclosure = (a: StoredDisclosure, b: StoredDisclosure): number =>
 export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => {
   let disclosures = new Map<string, StoredDisclosure>();
   let recipients = new Map<string, DeclaredRecipient>();
+  let forgotten = new Map<string, ForgottenRecipient>();
+  const count = (counted: ForgottenRecipient): void => {
+    const key = forgottenKey(counted);
+    const held = forgotten.get(key);
+    forgotten.set(
+      key,
+      held === undefined ? counted : { ...held, persons: held.persons + counted.persons },
+    );
+  };
   const declared = async (): Promise<readonly DeclaredRecipient[]> =>
     [...recipients.values()].sort((a, b) => byText(a.port, b.port));
   return {
@@ -101,6 +113,11 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
                 },
           );
         }
+        for (const [key, row] of [...forgotten]) {
+          if (row.port !== from) continue;
+          forgotten.delete(key);
+          count({ ...row, port: to });
+        }
         const former = recipients.get(from);
         if (former === undefined) return;
         recipients.delete(from);
@@ -142,6 +159,10 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
             .map(([port, categories]) => [port, [...categories].sort(byText)]),
         );
       },
+      countForgotten: async (counts) => {
+        for (const counted of counts) count(counted);
+      },
+      forgottenCounts: async () => [...forgotten.values()],
       personsOf: async ({ port, after, limit }) =>
         [
           ...new Set(
@@ -154,10 +175,15 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
           .slice(0, limit),
     },
     snapshot: () => {
-      const kept = { disclosures: new Map(disclosures), recipients: new Map(recipients) };
+      const kept = {
+        disclosures: new Map(disclosures),
+        recipients: new Map(recipients),
+        forgotten: new Map(forgotten),
+      };
       return () => {
         disclosures = kept.disclosures;
         recipients = kept.recipients;
+        forgotten = kept.forgotten;
       };
     },
     disclosureRows: () =>
@@ -179,6 +205,17 @@ export const createKeptRecipientStore: CreateKeptRecipientStoreFunction = () => 
         presumed_through: row.presumedThrough,
         caught_up_through: row.caughtUpThrough,
         declared_at: row.declaredAt,
+      })),
+    forgottenRows: () =>
+      [...forgotten.values()].map((row) => ({
+        port: row.port,
+        recipient: row.recipient,
+        kind: row.kind,
+        country: row.country,
+        safeguard: row.safeguard ?? "",
+        status: row.status,
+        category: row.category ?? "",
+        persons: row.persons,
       })),
   };
 };

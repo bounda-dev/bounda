@@ -275,6 +275,11 @@ export const memory: MemoryFunction = (options = {}) => {
           }),
           storageTable({ table: "recipients", key: ["port"], rows: recipients.recipientRows() }),
           storageTable({
+            table: "forgottenRecipients",
+            key: ["port", "recipient", "kind", "country", "safeguard", "status", "category"],
+            rows: recipients.forgottenRows(),
+          }),
+          storageTable({
             table: "persons",
             key: ["person"],
             rows: entriesRows(persons.entries).map(({ restrictions: _, ...row }) => row),

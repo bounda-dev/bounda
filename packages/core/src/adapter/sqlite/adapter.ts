@@ -247,6 +247,7 @@ export const createSqliteAdapter: CreateSqliteAdapterFunction = <
             db: database,
             disclosures: tables.disclosures,
             recipients: tables.recipients,
+            forgotten: tables.forgottenRecipients,
             dialect: sqliteDialect,
           }),
           snapshotStore: createSqliteSnapshotStore({
