@@ -1860,6 +1860,16 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     expect(valuesOf(RESTORE_COUNT_MARK)).toEqual([1]);
   });
 
+  it("raises at the time it finishes a declaration left pending with no time of its own", async () => {
+    const { checkpointStore, time, watchOver, marksOf } = await setUpLagging();
+    time.now = 10 * LAG;
+    await checkpointStore.set(RESTORE_DECLARING, 1);
+    expect(await watchOver().start()).toEqual({ first: true });
+    expect(marksOf(RESTORE_COUNT_MARK)).toEqual([
+      { value: 1, raisedAt: at(time.now).toISOString() },
+    ]);
+  });
+
   it("takes a value counted again at the very time of the last recount as that recount's", async () => {
     const { checkpointStore, time, watchOver, raisedBefore } = await setUpLagging();
     time.now = 10 * LAG;
