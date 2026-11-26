@@ -32,6 +32,10 @@ export interface TenantExportContractFunction {
   (args: TenantExportContractArgs): void;
 }
 
+// The tenant this case builds holds every kind of record, read back whole: on a Durable Object, where
+// each store call crosses into the object, a loaded CI runner has taken it to Vitest's default.
+const WHOLE_TENANT_TIMEOUT_MS = 15_000;
+
 interface NoteRow {
   readonly noteId: string;
   readonly memberId: string;
@@ -286,7 +290,9 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
       return { redacted: redacted?.id };
     };
 
-    it("hands back every record of the tenant, every value opened, and ends whole", async () => {
+    it("hands back every record of the tenant, every value opened, and ends whole", {
+      timeout: WHOLE_TENANT_TIMEOUT_MS,
+    }, async () => {
       const opened = await open();
       const { app } = opened;
       const { redacted } = await history(opened);
