@@ -1385,6 +1385,27 @@ describe.skipIf(testDatabase === null)("postgresql adapter", () => {
   });
 });
 
+describe("the store a PostgreSQL forget ledger tells", () => {
+  it("is one for every adapter with the same options, whichever tenant, and another for others", async () => {
+    const url = "postgres://u:p@h:5432/db";
+    const opened = await Promise.all([
+      postgresql({ url }).createForgetLedger({ tenant: "acme" }),
+      postgresql({ url }).createForgetLedger({ tenant: "globex" }),
+      postgresql({ url, schema: "other" }).createForgetLedger({ tenant: "acme" }),
+    ]);
+    try {
+      const [first, second, other] = opened.map(({ storeId }) => storeId);
+      expect(first).toBeDefined();
+      expect(second).toBe(first);
+      expect(other).not.toBe(first);
+      // It never carries the options, which may hold a password.
+      expect(JSON.stringify(first)).not.toContain("p@h");
+    } finally {
+      for (const ledger of opened) await ledger.close?.();
+    }
+  });
+});
+
 describe("resolvePostgresqlOptions", () => {
   it("fills defaults and drops undefined parts", () => {
     expect(resolvePostgresqlOptions({ url: "postgres://u:p@h:5432/db" })).toEqual({
