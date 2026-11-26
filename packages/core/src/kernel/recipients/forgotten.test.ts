@@ -8,7 +8,12 @@ const listed = (recipient: Partial<PersonRecipient> = {}): PersonRecipient => ({
   name: "Mailchimp",
   kind: "processor",
   country: "US",
-  transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+  transfer: {
+    safeguard: "standard-contractual-clauses",
+    article: "46(2)(c)",
+    regime: "US",
+    partialAdequacy: null,
+  },
   status: "disclosed",
   categories: [
     { name: "contact", basis: "consent" },
@@ -85,7 +90,12 @@ describe("forgottenFrom", () => {
     const inEurope = listed({ name: "Brevo", country: "FR", transfer: null });
     const presumed = listed({ status: "presumed", firstDisclosedAt: null, lastDisclosedAt: null });
     const elsewhere = listed({
-      transfer: { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+      transfer: {
+        safeguard: "binding-corporate-rules",
+        article: "47",
+        regime: "US",
+        partialAdequacy: null,
+      },
     });
     expect(
       forgottenFrom({
@@ -107,7 +117,12 @@ describe("forgottenFrom", () => {
 
   it("counts a recipient whose transfer rested on another safeguard, though one on the first is left", () => {
     const elsewhere = listed({
-      transfer: { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+      transfer: {
+        safeguard: "binding-corporate-rules",
+        article: "47",
+        regime: "US",
+        partialAdequacy: null,
+      },
     });
     const inEurope = listed({ country: "FR", transfer: null });
     expect(forgottenFrom({ before: [listed(), elsewhere, inEurope], after: [listed()] })).toEqual([

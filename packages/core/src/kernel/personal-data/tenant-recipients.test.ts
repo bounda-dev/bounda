@@ -209,7 +209,12 @@ describe("forgottenRecipients", () => {
     name: "Postmark",
     kind: "processor",
     country: "US",
-    transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+    transfer: {
+      safeguard: "standard-contractual-clauses",
+      article: "46(2)(c)",
+      regime: "US",
+      partialAdequacy: null,
+    },
     status: "disclosed",
     declared: true,
   } as const;
@@ -318,7 +323,12 @@ describe("forgottenRecipients", () => {
     expect(
       listed.find(({ transfer }) => transfer?.safeguard === "binding-corporate-rules"),
     ).toMatchObject({
-      transfer: { safeguard: "binding-corporate-rules", article: "47", regime: "US" },
+      transfer: {
+        safeguard: "binding-corporate-rules",
+        article: "47",
+        regime: "US",
+        partialAdequacy: null,
+      },
     });
   });
 });

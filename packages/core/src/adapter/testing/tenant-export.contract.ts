@@ -793,7 +793,12 @@ export const tenantExportContract: TenantExportContractFunction = ({ create }) =
         name: "Mailchimp",
         kind: "processor",
         country: "US",
-        transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+        transfer: {
+          safeguard: "standard-contractual-clauses",
+          article: "46(2)(c)",
+          regime: "US",
+          partialAdequacy: null,
+        },
         status: "disclosed",
         declared: true,
       };
