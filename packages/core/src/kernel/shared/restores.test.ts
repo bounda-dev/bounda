@@ -1465,6 +1465,18 @@ describe("createRestoreWatch, with the count of restores in the ledger", () => {
     ]);
   });
 
+  it("declares nothing more where handling the last restore left the database, below a mark raised before that restore was counted", async () => {
+    const { checkpointStore, ledger, stream, watchOver } = await setUp();
+    const watch = watchOver();
+    await watch.start();
+    await watch.declare();
+    stream.head = 1;
+    await watch.settled();
+    await ledger.raiseMark(RESTORE_MARK, { value: 9, raisedAt: at(-1).toISOString() });
+    expect(await watch.declare()).toEqual({ first: true, counted: false });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(1);
+  });
+
   it("logs nothing about a count of restores without a ledger", async () => {
     const { checkpointStore, entries, watchOver } = await setUp({ marks: false });
     const watch = watchOver();

@@ -688,7 +688,9 @@ describe("pruning intentions nothing applies, with no app running", () => {
       [1, 50, KEPT],
       [2, 10, REMOVED],
       [2, 11, REMOVED],
-      [3, 0, REMOVED],
+      // Holding fewer events than then, however far the generation moved.
+      [3, 0, KEPT],
+      [3, 10, REMOVED],
     ] as const) {
       expect(await pruneIntention({ reached }, { generation, position })).toEqual(expected);
     }

@@ -3333,9 +3333,9 @@ copy brings back as it held it. An intention whose
 commit never came is applied again and is no restore: a process that stopped, or a transaction
 that failed, between the intention and the commit leaves no count behind. An intention keeps where
 the database stood when it was written, its newest event and its restore generation, after
-raising the ledger's mark to that generation: a database at a lower generation, or at the same
-one with an older newest event, went back since, a restore whether the intention committed or
-not, unless the intention was written by the time the latest restore was counted, which it tells
+raising the ledger's mark to that generation: a database at a lower generation, or holding fewer
+events, which are only ever appended, went back since, a restore whether the intention committed
+or not, unless the intention was written by the time the latest restore was counted, which it tells
 already. A commit the ledger does not take as it returns, or while a call to it hangs, is
 appended again before every look for a restore and at stop, and a mark it did not take is raised
 again on the next look, so a ledger down for a while tells a copy taken before as soon as it is

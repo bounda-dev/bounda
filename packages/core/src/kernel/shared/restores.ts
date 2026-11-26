@@ -356,8 +356,9 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
 
   // Until the marks raised before this instance started are judged, a ledger whose reads lag
   // compares only the ones raised since with the database.
-  const comparable = (points: readonly ForgetLedgerMark[]): number =>
-    highestOf(judged ? points : since(points, startedAt as number));
+  const compared = (points: readonly ForgetLedgerMark[]): readonly ForgetLedgerMark[] =>
+    judged ? points : since(points, startedAt as number);
+  const comparable = (points: readonly ForgetLedgerMark[]): number => highestOf(compared(points));
 
   const read = async (): Promise<Seen> => {
     const [generation, restores, covered] = await Promise.all([
@@ -472,8 +473,12 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
 
   // Not behind the mark: a database that went back to a copy holds a generation lower than the
   // mark, which only ever follows the generation up.
+  // Of those raised since the latest restore it counted: one raised before is what that restore
+  // left behind.
   const current = async (stored: Seen): Promise<boolean> =>
-    marks === null || stored.generation >= comparable(await marks.readMark(RESTORE_MARK));
+    marks === null ||
+    stored.generation >=
+      highestOf(since(compared(await marks.readMark(RESTORE_MARK)), stored.covered));
 
   // The database exactly where handling the last restore left it: a copy of it taken later holds
   // more, and one taken before holds less or stands behind the mark.
@@ -749,8 +754,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // move past: what that restore left behind, which tells no other. The generation goes past it,
   // counting nothing, unless the database holds fewer restores than the ledger counted.
   const leftBehind = async (stored: Seen, mark: number): Promise<boolean> => {
-    const compared = judged ? shown : since(shown, startedAt as number);
-    const above = compared.filter(({ value }) => value > stored.generation);
+    const above = compared(shown).filter(({ value }) => value > stored.generation);
     if (above.length === 0 || above.some((point) => timeOf(point) >= stored.covered)) return false;
     if (!lagging && countLost(stored, await countedSinceCovered(stored))) return false;
     await advance(RESTORE_GENERATION, mark + 1);

@@ -247,10 +247,11 @@ export interface StandsShortOfFunction {
   (stand: DatabaseStand, reached: LedgerReached): boolean;
 }
 
-// Whether the database stands short of where an entry says it reached: it went back since.
+// Whether the database stands short of where an entry says it reached: it went back since. Events
+// are only ever appended, so one holding fewer than it held then went back too, however far the
+// generation moved since.
 export const standsShortOf: StandsShortOfFunction = (stand, reached) =>
-  stand.generation < reached.generation ||
-  (stand.generation === reached.generation && stand.position < reached.position);
+  stand.generation < reached.generation || stand.position < reached.position;
 
 /**
  * Commits the forgetting again, of the categories the entry asked for, when the store does not

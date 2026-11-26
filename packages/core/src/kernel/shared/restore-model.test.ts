@@ -737,14 +737,15 @@ const createWorld = (
 
   // What a reconciliation reads of the ledger: from a while before the time of the last entry the
   // database applied, its cursor, which a copy brings back as it held it.
-  const readFromCursor = (entries: readonly ForgetLedgerEntry[]): readonly ForgetLedgerEntry[] => {
-    const cursor = rowOf(db, FORGET_LEDGER_CURSOR);
-    return cursor === 0
+  const readFromCursor = (
+    entries: readonly ForgetLedgerEntry[],
+    cursor = rowOf(db, FORGET_LEDGER_CURSOR),
+  ): readonly ForgetLedgerEntry[] =>
+    cursor === 0
       ? entries
       : entries.filter(
           ({ forgottenAt }) => Date.parse(forgottenAt) >= cursor - FORGET_LEDGER_REREAD_MS,
         );
-  };
 
   // What a look that reads these entries proves of the database as it now stands: of those
   // written after the latest restore counted, a committed one whose event the database lacks, or
@@ -752,17 +753,21 @@ const createWorld = (
   // that restore lost, or one before, as a read that shows it only after the count tells: the
   // database holding it since, and losing it again, leaves nothing a look reads but what tells that
   // going back otherwise.
-  const entriesProve = async (entries: readonly ForgetLedgerEntry[]): Promise<boolean> => {
-    const current = snapshotOf(db);
+  // Events are only ever appended: a database holding fewer than when an entry was written went
+  // back since, however far its generation moved.
+  const entriesProve = async (
+    entries: readonly ForgetLedgerEntry[],
+    current: Snapshot = snapshotOf(db),
+    covered = lineage.covered,
+  ): Promise<boolean> => {
     const held = new Set(current.events.map(({ id }) => id));
     const last = current.events.at(-1)?.position ?? 0;
     return entries.some(({ forgottenAt, committed, eventId, reached }) => {
-      if (Date.parse(forgottenAt) <= lineage.covered) return false;
+      if (Date.parse(forgottenAt) <= covered) return false;
       if (committed !== false && !held.has(eventId)) return true;
       return (
         reached !== undefined &&
-        (reached.generation > current.generation ||
-          (reached.generation === current.generation && reached.position > last))
+        (reached.generation > current.generation || reached.position > last)
       );
     });
   };
@@ -907,15 +912,29 @@ const createWorld = (
     if (live === null || live === undefined) return;
     const passProof = await proofFor(instance, "pass");
     // A pass whose reconciliation reads the ledger through, after a restore it found, on a round,
-    // or at last after the start's failed, is a look that reads the entries, as a start's is.
-    const reading = passProof === null && (await ledgerProves("shown", "none"));
-    const held = new Set(snapshotOf(db).events.map(({ id }) => id));
+    // or at last after the start's failed, is a look that reads the entries, as a start's is:
+    // those written before the pass, the commits it appends again first among them, against the
+    // database as the pass found it.
+    const readableBefore = readable();
+    const before = snapshotOf(db);
+    const coveredBefore = lineage.covered;
+    const cursorBefore = rowOf(db, FORGET_LEDGER_CURSOR);
+    const held = new Set(before.events.map(({ id }) => id));
     const recorded = new Set((await ledger.entries()).map(({ eventId }) => eventId));
     await live.app.runUntilIdle();
     const readThrough =
-      reading &&
+      passProof === null &&
+      readableBefore &&
       (await live.app.getLag()).forgetLedger?.reconciled === true &&
-      rowOf(db, FORGET_LEDGER_LAST_RUN) >= now;
+      rowOf(db, FORGET_LEDGER_LAST_RUN) >= now &&
+      (await entriesProve(
+        readFromCursor(
+          (await ledger.entries(true)).filter(({ forgottenAt }) => Date.parse(forgottenAt) < now),
+          cursorBefore,
+        ),
+        before,
+        coveredBefore,
+      ));
     looked(passProof ?? (readThrough ? "the entries its reconciliation read" : null));
     // A restore the pass found it handles before its retention runs; one the entries its round
     // of reconciliation read tell, after.
@@ -1064,8 +1083,7 @@ const createWorld = (
     const last = current.events.at(-1)?.position ?? 0;
     if (
       reached !== undefined &&
-      (reached.generation > current.generation ||
-        (reached.generation === current.generation && reached.position > last))
+      (reached.generation > current.generation || reached.position > last)
     ) {
       return false;
     }
@@ -2474,6 +2492,62 @@ const COUNTEREXAMPLES: readonly {
       { kind: "age" },
       { kind: "retainUncommitted", instance: 0 },
       { kind: "declare", instance: 0 },
+    ] as Action[],
+    counted: 1,
+  },
+  {
+    name: "counts nothing on KV for a declaration where handling the last restore left the database, below a mark raised before that restore was counted",
+    kind: "kv",
+    actions: [
+      { kind: "backUp", slot: 1 },
+      { kind: "write", instance: 0 },
+      { kind: "pass", instance: 0 },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "restore", slot: 1, round: ["pass", "pass"] },
+      { kind: "declare", instance: 0 },
+      { kind: "age" },
+    ] as Action[],
+    lags: [2],
+    counted: 2,
+  },
+  {
+    name: "counts a restore by a forgetting the pass's own commit, appended again, lets its reconciliation read",
+    kind: "sql",
+    actions: [
+      { kind: "ledger", mode: "commitsDown" },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "write", instance: 0 },
+      },
+      { kind: "declare", instance: 1 },
+      { kind: "backUp", slot: 0 },
+      {
+        kind: "together",
+        first: { kind: "start", instance: 0 },
+        second: { kind: "forget", instance: 0, person: 0 },
+      },
+      { kind: "ledger", mode: "up" },
+      { kind: "restore", slot: 0, round: ["pass", "pass"] },
+      { kind: "redactUncommitted", instance: 0, person: 0 },
+    ] as Action[],
+    counted: 2,
+  },
+  {
+    name: "counts a restore by an intention written where the database held more events, though the generation moved since",
+    kind: "sql",
+    actions: [
+      { kind: "together", first: { kind: "start", instance: 1 }, second: { kind: "prune" } },
+      { kind: "age" },
+      { kind: "write", instance: 0 },
+      { kind: "backUp", slot: 0 },
+      {
+        kind: "together",
+        first: { kind: "write", instance: 0 },
+        second: { kind: "redactUncommitted", instance: 0, person: 0 },
+      },
+      { kind: "restore", slot: 0, round: ["crash", "pass"] },
+      { kind: "move" },
     ] as Action[],
     counted: 1,
   },

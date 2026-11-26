@@ -990,10 +990,10 @@ describe("what the reconciliation commits again", () => {
     await threeEvents(storage);
     expect(await reconciliation.reconcile(NOW)).toBe(1);
     expect(reconciliation.undone()).toBe(1);
-    // Declared, the restore moves the generation past the mark: the entries read again tell
-    // nothing more.
+    // Declared, the restore is counted after both were written: read again, they tell nothing more.
     reconciliation.declared(1);
     await storage.checkpointStore.set(RESTORE_GENERATION, 1);
+    await storage.checkpointStore.set(RESTORE_COVERED, Date.parse(at(1)));
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(reconciliation.undone()).toBe(0);
   });
@@ -1011,8 +1011,22 @@ describe("what the reconciliation commits again", () => {
     const { reconciliation, storage } = await setUp({ entries });
     await threeEvents(storage);
     await storage.checkpointStore.set(RESTORE_GENERATION, moved);
+    // A restore counted moves the generation, and keeps the time it was counted at.
+    if (moved > 0) await storage.checkpointStore.set(RESTORE_COVERED, Date.parse(at(0)));
     await reconciliation.reconcile(NOW);
     expect(reconciliation.undone()).toBe(undone);
+  });
+
+  it("tells a database holding fewer events than where an entry was written after the latest restore counted as gone back, however far its generation moved", async () => {
+    const entries: ForgetLedgerEntry[] = [
+      { ...entry("c-1", "e-1", at(1)), committed: false, reached: { position: 9, generation: 0 } },
+    ];
+    const { reconciliation, storage } = await setUp({ entries });
+    await threeEvents(storage);
+    await storage.checkpointStore.set(RESTORE_GENERATION, 4);
+    await storage.checkpointStore.set(RESTORE_COVERED, Date.parse(at(0)));
+    await reconciliation.reconcile(NOW);
+    expect(reconciliation.undone()).toBe(1);
   });
 
   it("keeps the highest generation of the entries that told a restore, until it is declared or found", async () => {
