@@ -327,8 +327,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     }
   };
 
-  // Until the marks raised before this instance started are judged, those of a ledger whose reads
-  // lag are compared with what it read at start, and only the ones raised since with the database.
+  // Until the marks raised before this instance started are judged, a ledger whose reads lag
+  // compares only the ones raised since with the database.
   const comparable = (points: readonly ForgetLedgerMark[]): number =>
     judged || startedAt === null
       ? highestOf(points)
@@ -538,9 +538,9 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     return restored;
   };
 
-  // Once the reads show every mark raised before this instance started, the database, which has
-  // not moved since but for a restore counted, is compared with them; then the generation goes
-  // past every one, counting nothing more, and moves again from there.
+  // Once the reads show every mark raised before this instance started, they are compared with the
+  // database, the start's reading among them; then the generation goes past every one, counting
+  // nothing more.
   const judge = async (stored: Seen): Promise<Restored | null> => {
     const evidence = await unexplained(stored, between(shown, 0, (startedAt as number) + 1));
     if (evidence !== null) {
@@ -549,7 +549,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       await raise(seen?.generation ?? evidence + 1);
       return restored;
     }
-    const before = highestOf(between(shown, 0, startedAt as number));
+    const before = highestOf(between(shown, 0, (startedAt as number) + 1));
     if (stored.generation < before) {
       await advance(RESTORE_GENERATION, before + 1);
       await raise(before + 1);
@@ -656,8 +656,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     const joined = joinedActive;
     joinedActive = false;
     const mark = await markNow();
-    const [read0, last, gone] = await Promise.all([read(), events.lastPosition(), witnessGone()]);
-    let stored = read0;
+    const [initial, last, gone] = await Promise.all([read(), events.lastPosition(), witnessGone()]);
+    let stored = initial;
     pending ||= active || joined || (head !== null && last !== head);
     head = last;
     // What the database reached stays what it reached: raised late, the mark still tells a copy
