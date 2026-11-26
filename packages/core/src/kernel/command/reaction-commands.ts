@@ -21,6 +21,7 @@ import {
 } from "../personal-data/forget.ts";
 import type { ForgetIntention, ForgetIntentions } from "../personal-data/intention.ts";
 import { checkPersonId } from "../personal-data/transact.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import { errorDetails } from "../shared/retry.ts";
 import type { UnitStores } from "../unit-of-work/unit-of-work.ts";
@@ -112,6 +113,7 @@ export interface CreateReactionCommandsArgs {
    */
   readonly maxChainDepth: number;
   readonly personalCategories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   /**
    * How many events a `forget` reads at once.
    */
@@ -146,6 +148,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
   intentions,
   maxChainDepth,
   personalCategories,
+  recipients,
   batchSize,
   restricted,
 }) => {
@@ -268,6 +271,7 @@ export const createReactionCommands: CreateReactionCommandsFunction = ({
             intention: named,
             context: { ...context, depth },
             categories: personalCategories,
+            recipients,
             scope,
             batchSize,
           });

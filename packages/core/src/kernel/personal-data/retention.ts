@@ -23,6 +23,7 @@ import {
   type PersonalDataForgottenPayload,
 } from "../../modules/bounda-events.ts";
 import type { Subscriber } from "../dispatch/delivery.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
 import { createLease } from "../shared/lease.ts";
 import { isActivity } from "./activity.ts";
 import { formatRetention, type PersonalCategories, type PersonalCategory } from "./categories.ts";
@@ -235,6 +236,7 @@ export interface CreateRetentionSweepArgs {
   readonly storage: Storage;
   readonly intentions: ForgetIntentions;
   readonly categories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -306,6 +308,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
   storage,
   intentions,
   categories,
+  recipients,
   ids,
   clock,
   logger,
@@ -347,6 +350,7 @@ export const createRetentionSweep: CreateRetentionSweepFunction = ({
           intention,
           context: { correlationId, causationId: correlationId, depth: 0 },
           categories,
+          recipients,
           scope,
           batchSize,
         });

@@ -16,6 +16,7 @@ import { readReturned } from "../personal-data/returned.ts";
 import type { PersonalKeys } from "../personal-data/wrapped-keys.ts";
 import { bindPorts } from "../ports/bind.ts";
 import type { PortReturns } from "../ports/returns.ts";
+import type { RecipientsRuntime } from "../recipients/build.ts";
 import { type Disclosures, openedOf } from "../recipients/gate.ts";
 import { actedBy, causedBy } from "../shared/causation.ts";
 import { deriveIdempotencyKey } from "../shared/idempotency-key.ts";
@@ -60,6 +61,7 @@ export interface CreatePolicyExecutorArgs {
   readonly config: ResolvedConfig;
   readonly tracer: TracerFunction;
   readonly personalCategories: PersonalCategories;
+  readonly recipients: RecipientsRuntime;
   readonly ids: IdGenerator;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -80,6 +82,7 @@ export interface CreatePolicyExecutorFunction {
 
 export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
   personalCategories,
+  recipients,
   aggregates,
   pipeline,
   config,
@@ -127,6 +130,7 @@ export const createPolicyExecutor: CreatePolicyExecutorFunction = ({
       ids,
       clock,
       personalCategories,
+      recipients,
       batchSize: config.runtime.dispatcher.batchSize,
       intentions,
       maxChainDepth: config.forAggregate(policy.aggregate).policies.maxChainDepth,

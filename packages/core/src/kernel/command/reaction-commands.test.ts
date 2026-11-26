@@ -8,6 +8,7 @@ import type { Registry } from "../../modules/registry.ts";
 import { buildPersonalCategories } from "../personal-data/categories.ts";
 import { boundForgetLedger } from "../personal-data/forget-ledger.ts";
 import { createForgetIntentions } from "../personal-data/intention.ts";
+import { NO_RECIPIENTS } from "../recipients/build.ts";
 import { createReactionCommandIds } from "../shared/idempotency-key.ts";
 import {
   createKernelHarness,
@@ -36,6 +37,7 @@ const setUp = async (registry: Registry = orderRegistry) => {
   const { logger, entries } = createRecordingLogger();
   const ids = createSequentialIdGenerator();
   const reaction = createReactionCommands({
+    recipients: NO_RECIPIENTS,
     aggregates: harness.aggregates,
     pipeline: harness.pipeline,
     context,
@@ -65,6 +67,7 @@ const withLedger = async (categories = personalCategories) => {
   const ids = createSequentialIdGenerator();
   const { logger, entries } = createRecordingLogger();
   const reaction = createReactionCommands({
+    recipients: NO_RECIPIENTS,
     aggregates: harness.aggregates,
     pipeline: harness.pipeline,
     context,
@@ -588,6 +591,7 @@ describe("createReactionCommands", () => {
     const harness = await setUp();
     const deepIds = createSequentialIdGenerator();
     const deep = createReactionCommands({
+      recipients: NO_RECIPIENTS,
       aggregates: harness.aggregates,
       pipeline: harness.pipeline,
       context: { ...context, depth: 5 },

@@ -59,8 +59,32 @@ export interface RecipientSummary {
 }
 
 /**
- * Which personal data went to which recipient, and which recipients the app declared. Rows hold
- * ids, names and times alone, never a value.
+ * How a forgotten person's data stood with a recipient: recorded as disclosed to it, or presumed
+ * to have gone to it before it was declared.
+ */
+export type ForgottenRecipientStatus = "disclosed" | "presumed";
+
+/**
+ * How many persons forgettings took off a recipient's list under one identity it had, its port,
+ * name, kind, country and safeguard, and one status: those whose data of `category` it was listed
+ * with, or, with `category` `null`, those it was listed with no more. A count, never whom, and no
+ * time.
+ */
+export interface ForgottenRecipient {
+  readonly port: string;
+  readonly recipient: string;
+  readonly kind: string;
+  readonly country: string;
+  readonly safeguard: string | null;
+  readonly status: ForgottenRecipientStatus;
+  readonly category: string | null;
+  readonly persons: number;
+}
+
+/**
+ * Which personal data went to which recipient, which recipients the app declared, and how many
+ * forgotten persons each was listed with. Rows hold ids, names, times and counts alone, never a
+ * value.
  *
  * `disclose` records disclosures at `at`: a new one with both times at it, a known one with its
  * last moved forward, never back; it resolves to those it had not recorded before. `forget` removes
@@ -69,8 +93,11 @@ export interface RecipientSummary {
  * it has, and resolves to every port declared; `presumeThrough` moves every port's `presumedThrough` up to
  * `position`, never down, for a database whose disclosures since may have been lost. `rename` moves
  * what the store holds under the port `from` to the port `to`, a disclosure held under both kept
- * once, from the first time to the last, and a declaration held under both presumed through the
- * later position. `caughtUp` moves a port's `caughtUpThrough` up to `position`, never down.
+ * once, from the first time to the last, a declaration held under both presumed through the
+ * later position, and counts held under both summed. `caughtUp` moves a port's `caughtUpThrough`
+ * up to `position`, never down. `countForgotten` adds each count's `persons` to what the store
+ * holds for its identity, status and category, from none; `forgottenCounts` resolves to every count
+ * held, in no order.
  */
 export interface RecipientStore {
   disclose(disclosures: readonly Disclosure[], at: string): Promise<readonly Disclosure[]>;
@@ -92,6 +119,8 @@ export interface RecipientStore {
   rename(from: string, to: string): Promise<void>;
   caughtUp(port: string, position: number): Promise<void>;
   summary(): Promise<readonly RecipientSummary[]>;
+  countForgotten(counts: readonly ForgottenRecipient[]): Promise<void>;
+  forgottenCounts(): Promise<readonly ForgottenRecipient[]>;
   /**
    * Every category disclosed to each port, of any person, by port.
    */
@@ -122,3 +151,17 @@ export interface DisclosureKeyFunction {
  */
 export const disclosureKey: DisclosureKeyFunction = ({ person, port, recipient, category }) =>
   JSON.stringify([person, port, recipient, category]);
+
+export interface ForgottenKeyFunction {
+  (counted: ForgottenRecipient): string;
+}
+
+export const forgottenKey: ForgottenKeyFunction = ({
+  port,
+  recipient,
+  kind,
+  country,
+  safeguard,
+  status,
+  category,
+}) => JSON.stringify([port, recipient, kind, country, safeguard, status, category]);
