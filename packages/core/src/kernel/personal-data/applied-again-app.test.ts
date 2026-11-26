@@ -14,6 +14,7 @@ import { PROCESSING_RESTRICTED_EVENT } from "../../modules/bounda-events.ts";
 import type { CommandPayloadArgs, EventPayloadArgs } from "../../modules/payload.ts";
 import type { Registry } from "../../modules/registry.ts";
 import { createApp } from "../app.ts";
+import { defineForgetLedger, type ForgetLedgerSource } from "./forget-ledger.ts";
 import { FORGET_LEDGER_GRACE_MS } from "./reconciliation.ts";
 import { DEFAULT_TENANT } from "./tenant-keys.ts";
 
@@ -60,7 +61,11 @@ afterEach(async () => {
 
 let starts = 0;
 
-const start = async (storage: Adapter, ledger: Adapter | null, logger: Logger = silentLogger) => {
+const start = async (
+  storage: Adapter,
+  ledger: ForgetLedgerSource | null,
+  logger: Logger = silentLogger,
+) => {
   starts += 1;
   const app = await createApp({
     registry,
@@ -234,6 +239,43 @@ describe("applying a forget ledger's entries again by hand", () => {
       { personId: "c-3", eventId: "e-redact", kind: "redaction", outcome: "held" },
       { personId: "c-2", eventId: "disclosure-c-2", kind: "disclosure", outcome: "held" },
     ]);
+  });
+
+  it("records each in the ledger before it applies it, as a ledger that refuses every committed copy shows", async () => {
+    const storage = memory();
+    const kept = memory();
+    // Takes intentions alone, as a ledger that went down between an intention and its commit.
+    const intentionsOnly = defineForgetLedger(async ({ tenant }) => {
+      const ledger = await kept.createForgetLedger({ tenant });
+      return {
+        ...ledger,
+        append: async (entries) => {
+          if (entries.some(({ committed }) => committed !== false)) {
+            throw new Error("the ledger takes no committed copy now");
+          }
+          await ledger.append(entries);
+        },
+      };
+    });
+    const { app, register } = await start(storage, intentionsOnly);
+    await register("c-1", "c-2");
+    const entries = [forgetting("c-1", "e-forget"), restricting("c-2", "e-restrict")];
+    expect((await app.applyAgain(entries)).map(({ outcome }) => outcome)).toEqual([
+      "applied",
+      "applied",
+    ]);
+    await app.runUntilIdle();
+    expect(
+      (await (await ledgerOf(kept)).read({ limit: 10 })).map(({ eventId, committed }) => ({
+        eventId,
+        committed,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        { eventId: "e-forget", committed: false },
+        { eventId: "e-restrict", committed: false },
+      ]),
+    );
   });
 
   it("applies them without a forget ledger too", async () => {

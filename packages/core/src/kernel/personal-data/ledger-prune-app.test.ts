@@ -699,7 +699,8 @@ describe("the entries of a tenant no app applies", () => {
       entry("zed", "lost-zed", START),
       withReason(entry("cy", "retained-cy", START), "retention"),
     ]);
-    await (await older.createForgetLedger({ tenant: DEFAULT_TENANT })).append([lostBob]);
+    // Each once, the one the ledger the configuration names holds too.
+    await (await older.createForgetLedger({ tenant: DEFAULT_TENANT })).append([lostBob, lostCy]);
     // Before what the database's reconciliation reads again in the ledger it names.
     await (await now.createForgetLedger({ tenant: DEFAULT_TENANT })).append([lostCy]);
     const project: ProjectConfig = ({ tenant }) =>
@@ -759,15 +760,23 @@ describe("the entries of a tenant no app applies", () => {
     const lost = entry("bob", "lost-bob", START);
     // Lists none of its tenants.
     const opened: (number | undefined)[] = [];
+    let closed = 0;
+    const close = async () => {
+      closed += 1;
+    };
     const unlisted = defineForgetLedger(async ({ tenant, keepForMs }) => {
       opened.push(keepForMs);
       const { tenants: _, ...ledger } = await before.createForgetLedger({ tenant });
-      return ledger;
+      return { ...ledger, close };
     });
     await (await before.createForgetLedger({ tenant: DEFAULT_TENANT })).append([lost]);
-    const now = memory();
+    const shared = memory();
+    const now = defineForgetLedger(async ({ tenant }) => ({
+      ...(await shared.createForgetLedger({ tenant })),
+      close,
+    }));
     // The ledger the default tenant names lists holder, whose configuration names the old store.
-    await (await now.createForgetLedger({ tenant: "holder" })).append([entry("x", "x", START)]);
+    await (await shared.createForgetLedger({ tenant: "holder" })).append([entry("x", "x", START)]);
     const project: ProjectConfig = ({ tenant }) => {
       if (tenant === "holder") return configOf(memory(), unlisted, "30d");
       if (tenant !== DEFAULT_TENANT) throw new Error(`no configuration for ${tenant}`);
@@ -777,6 +786,8 @@ describe("the entries of a tenant no app applies", () => {
       await listStrandedForgetLedgerEntries({ config: project, registry, now: LATER }),
     ).toEqual({ tenant: DEFAULT_TENANT, entries: [lost], unreached: [] });
     expect(opened).toEqual([KEEP_FOR_MS, KEEP_FOR_MS]);
+    // Every ledger it opened, closed: two to reach the stores, two to read them.
+    expect(closed).toBe(4);
   });
 
   it("refuses a configuration without a forget ledger, and a storage only its host opens", async () => {

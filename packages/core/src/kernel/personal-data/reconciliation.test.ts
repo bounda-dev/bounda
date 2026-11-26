@@ -981,12 +981,31 @@ describe("what the reconciliation commits again", () => {
       safeguard: null,
       category: "default",
     };
-    const { reconciliation } = await setUp({
+    const told: unknown[] = [];
+    const logger: Logger = {
+      ...silentLogger,
+      info: (message, fields) => told.push([message, fields]),
+    };
+    const { reconciliation, storage } = await setUp({
       entries: [{ ...entry("c-1", "d-1", at(0)), committed: false, disclosure }],
       persons: ["c-1"],
+      logger,
     });
     expect(await reconciliation.reconcile(NOW)).toBe(0);
     expect(reconciliation.undone()).toBe(0);
+    expect(await storage.recipients.disclosures("c-1")).toEqual([
+      expect.objectContaining({ ...disclosure, person: "c-1" }),
+    ]);
+    expect(told).toEqual([
+      [
+        "disclosure recorded again from the forget ledger",
+        { personId: "c-1", port: "customer.mailer" },
+      ],
+    ]);
+    // Held now, it is recorded, and told, no more.
+    told.length = 0;
+    await reconciliation.reconcile(NOW);
+    expect(told).toEqual([]);
   });
 
   it("counts one restore undone from entries written where the database had gone further, whatever they are", async () => {

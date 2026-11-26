@@ -1427,6 +1427,14 @@ describe("bounda forget-ledger prune", () => {
     }
   });
 
+  it("refuses to list stranded entries without a forget ledger", async () => {
+    const refused = await cli(["forget-ledger", "stranded"], fixture);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(besidesLogs(refused.stderr)).toBe(
+      "error: Listing stranded entries needs runtime.personalData.forgetLedger\n",
+    );
+  });
+
   it("describes the commands that list and apply stranded entries", async () => {
     const help = await cli(["forget-ledger", "--help"], fixture);
     // Wrapped as the terminal is wide.
