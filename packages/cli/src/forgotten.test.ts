@@ -184,4 +184,12 @@ describe("parseForgetList", () => {
     }
     expect(() => parseForgetList("{not json")).toThrow("line 1 is neither a person's id nor JSON");
   });
+
+  it("refuses an entry that records a change of restrictions, a redaction or a disclosure, which forgetting would forget the person by", () => {
+    for (const kind of ["restriction", "redaction", "disclosure"]) {
+      expect(() => parseForgetList(`c-0\n{"personId":"c-1","eventId":"e-1","${kind}":{}}`)).toThrow(
+        "line 2 records a change of restrictions, a redaction or a disclosure, not a forgetting: apply it with bounda forget-ledger apply",
+      );
+    }
+  });
 });
