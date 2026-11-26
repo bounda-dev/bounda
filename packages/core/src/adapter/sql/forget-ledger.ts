@@ -4,6 +4,7 @@ import {
   type ForgetLedger,
   type ForgetLedgerEntry,
   forgottenReasonOf,
+  type LedgerDisclosure,
   type LedgerReached,
   type LedgerRedaction,
   type LedgerRestriction,
@@ -318,9 +319,9 @@ export const forgetLedgerReachedStatement: ForgetLedgerReachedStatementFunction 
 ) =>
   `ALTER TABLE ${table} ADD COLUMN ${name === "postgresql" ? "IF NOT EXISTS " : ""}"reached" TEXT`;
 
-const parsedOrNull = (text: string): unknown => {
+const readableDisclosure = (text: string): LedgerDisclosure | null => {
   try {
-    return JSON.parse(text);
+    return ledgerDisclosureOf(JSON.parse(text));
   } catch {
     return null;
   }
@@ -346,13 +347,13 @@ export const migrateForgetLedgerTransfers: MigrateForgetLedgerTransfersFunction 
 ) => {
   let rows: readonly Record<string, unknown>[] = [];
   do {
-    const last = rows.at(-1);
+    const last = rows[rows.length - 1];
     rows = await tx.all(
       `SELECT "tenant", "event_id", "disclosure" FROM ${table} WHERE "disclosure" IS NOT NULL${last === undefined ? "" : ` AND ("tenant", "event_id") > (${p(1)}, ${p(2)})`} ORDER BY "tenant", "event_id" LIMIT ${TRANSFERS_PAGE}`,
       last === undefined ? [] : [last.tenant, last.event_id],
     );
     for (const row of rows) {
-      const disclosure = ledgerDisclosureOf(parsedOrNull(String(row.disclosure)));
+      const disclosure = readableDisclosure(String(row.disclosure));
       if (disclosure === null) continue;
       await tx.run(
         `UPDATE ${table} SET "disclosure" = ${p(1)} WHERE "tenant" = ${p(2)} AND "event_id" = ${p(3)}`,
@@ -390,7 +391,7 @@ const entryOf = (row: Record<string, unknown>): ForgetLedgerEntry => {
   const restriction = JSON.parse(String(row.restriction ?? null)) as LedgerRestriction | null;
   const redaction = JSON.parse(String(row.redaction ?? null)) as LedgerRedaction | null;
   const stored: unknown = JSON.parse(String(row.disclosure ?? null));
-  const disclosure = stored === null ? null : ledgerDisclosureOf(stored);
+  const disclosure = ledgerDisclosureOf(stored);
   if (stored !== null && disclosure === null) {
     throw new Error(
       `The forget ledger's entry ${String(row.event_id)} holds a disclosure it cannot read`,
