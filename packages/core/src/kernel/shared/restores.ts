@@ -430,8 +430,8 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // Whether this instance takes the restore counted in place, whose count the database holds.
   const take = async (stored: Seen): Promise<boolean> => {
     const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
+    // A count moved it since this instance read, so it is never 0 here.
     const taken =
-      unclaimed > 0 &&
       unclaimed === stored.restores &&
       (await checkpoints.compareAndSet(RESTORE_UNCLAIMED, unclaimed, 0));
     handling ||= taken;
@@ -574,7 +574,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   const unexplained = async (stored: Seen): Promise<number | null> => {
     const raised = since(shown, stored.covered);
     if (highestOf(raised) > stored.generation || dropped(raised)) return highestOf(raised);
-    return (await countLost(stored, await countedSinceCovered(stored))) ? highestOf(raised) : null;
+    return countLost(stored, await countedSinceCovered(stored)) ? highestOf(raised) : null;
   };
 
   // The highest count of restores the ledger shows raised since the latest restore the database
@@ -594,14 +594,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     );
   };
 
-  // Fewer restores than the ledger counted: a copy from before that count, unless the count the
-  // database holds is one an adapter made where it put the copy back, which the instance that takes
-  // it moves past the ledger's.
-  const countLost = async (stored: Seen, counted: number): Promise<boolean> => {
-    if (stored.restores >= counted) return false;
-    const unclaimed = await checkpoints.get(RESTORE_UNCLAIMED);
-    return unclaimed === 0 || unclaimed !== stored.restores;
-  };
+  // Fewer restores than the ledger counted: a copy from before that count. One an adapter counted
+  // where it put the copy back, from the copy's own count, is that very restore: counting it so, or
+  // taking it, moves the count past the ledger's once.
+  const countLost = (stored: Seen, counted: number): boolean => stored.restores < counted;
 
   // Counts what the marks tell, past every restore this instance knows of, and raises the
   // generation the count moved to.
@@ -678,14 +674,11 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
       seen = { ...(seen as Seen), restores };
       // A recount counts no restore: the database stands where handling the last one left it.
       const last = await events.lastPosition();
-      const handled = await handledMark(before, last);
-      if ((await checkpoints.get(RESTORE_HANDLED)) === handled) {
-        await checkpoints.compareAndSet(
-          RESTORE_HANDLED,
-          handled,
-          await handledMark(restores, last),
-        );
-      }
+      await checkpoints.compareAndSet(
+        RESTORE_HANDLED,
+        await handledMark(before, last),
+        await handledMark(restores, last),
+      );
     }
     if (again === 0) return;
     // Told a recount first: a count raised without it would read as a restore a copy lacks.
@@ -735,7 +728,7 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
     // restore, or a count that took a number already counted, left behind.
     if (
       stored.generation >= mark &&
-      (lagging || !(await countLost(stored, await countedSinceCovered(stored))))
+      (lagging || !countLost(stored, await countedSinceCovered(stored)))
     ) {
       return null;
     }
@@ -756,11 +749,10 @@ export const createRestoreWatch: CreateRestoreWatchFunction = ({
   // move past: what that restore left behind, which tells no other. The generation goes past it,
   // counting nothing, unless the database holds fewer restores than the ledger counted.
   const leftBehind = async (stored: Seen, mark: number): Promise<boolean> => {
-    if (stored.generation >= mark || stored.covered === 0) return false;
     const compared = judged ? shown : since(shown, startedAt as number);
     const above = compared.filter(({ value }) => value > stored.generation);
     if (above.length === 0 || above.some((point) => timeOf(point) >= stored.covered)) return false;
-    if (!lagging && (await countLost(stored, await countedSinceCovered(stored)))) return false;
+    if (!lagging && countLost(stored, await countedSinceCovered(stored))) return false;
     await advance(RESTORE_GENERATION, mark + 1);
     await raise(mark + 1);
     return true;

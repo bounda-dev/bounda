@@ -3,6 +3,7 @@ import type { CheckpointStore } from "../../adapter/storage/checkpoint-store.ts"
 import type { ForgetLedger, ForgetLedgerMark } from "../../adapter/storage/forget-ledger.ts";
 import { fenceError } from "../../adapter/storage/tenant-fence.ts";
 import type { StoredEvent } from "../../contracts/event.ts";
+import { silentLogger } from "../../contracts/logger.ts";
 import { memory } from "../../memory/index.ts";
 import { DEFAULT_TENANT } from "../personal-data/tenant-keys.ts";
 import { createRecordingLogger } from "../test-support.ts";
@@ -1296,10 +1297,99 @@ describe("createRestoreWatch, with the count of restores in the ledger", () => {
       await ledger.raiseMark(RESTORE_COUNT_MARK, { value: 1, raisedAt: at(0).toISOString() });
       expect(await watchOver().start()).toEqual(found);
       expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(generation);
+      expect(await highestOf(ledger, RESTORE_MARK)).toBe(6);
       const watch = watchOver();
       await watch.start();
       expect(await watch.check(at(1))).toBeNull();
     }
+  });
+
+  it("moves past no mark the database holds already, nor one raised before the latest restore it counted when the ledger counted past it", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    await checkpointStore.set(RESTORE_COVERED, at(0).getTime());
+    await checkpointStore.set(RESTORE_GENERATION, 5);
+    await ledger.raiseMark(RESTORE_MARK, { value: 5, raisedAt: at(-1).toISOString() });
+    const watch = watchOver();
+    expect(await watch.start()).toBeNull();
+    expect(await watch.check(at(0))).toBeNull();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(5);
+    // Below a mark raised before, though the ledger counted a restore since that the copy lacks.
+    await checkpointStore.set(RESTORE_GENERATION, 2);
+    await ledger.raiseMark(RESTORE_COUNT_MARK, { value: 3, raisedAt: at(0).toISOString() });
+    expect(await watch.check(at(1))).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(4);
+  });
+
+  it("moves past nothing while the mark cannot be read, whatever the last read showed", async () => {
+    const state = { down: false };
+    const { checkpointStore, ledger, watchOver } = await setUp({
+      ledger: (store) => ({
+        readMark: async (name) => {
+          if (state.down) throw new Error("down");
+          return store.readMark(name);
+        },
+        raiseMark: (name, mark) => store.raiseMark(name, mark),
+      }),
+    });
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    await checkpointStore.set(RESTORE_COVERED, at(0).getTime());
+    await checkpointStore.set(RESTORE_GENERATION, 5);
+    await ledger.raiseMark(RESTORE_MARK, { value: 5, raisedAt: at(-1).toISOString() });
+    const watch = watchOver();
+    await watch.start();
+    state.down = true;
+    await checkpointStore.set(RESTORE_GENERATION, 6);
+    await ledger.raiseMark(RESTORE_MARK, { value: 9, raisedAt: at(-1).toISOString() });
+    expect(await watch.check(at(1))).toBeNull();
+    expect(await checkpointStore.get(RESTORE_GENERATION)).toBe(6);
+  });
+
+  it("counts a copy holding fewer restores than it read, though the latest of those it holds was counted later", async () => {
+    const { checkpointStore, watchOver } = await setUp();
+    await checkpointStore.set(RESTORES_FOUND, 2);
+    await checkpointStore.set(RESTORE_COVERED, 100);
+    const watch = watchOver();
+    await watch.start();
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    await checkpointStore.set(RESTORE_COVERED, 200);
+    expect(await watch.check(at(0))).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(3);
+  });
+
+  it("keeps the time the instance that counted first counted at, not that of one that joined it", async () => {
+    const { checkpointStore, ledger } = await setUp();
+    const stream = { head: 0 };
+    const watchAt = (ms: number) =>
+      createRestoreWatch({
+        checkpoints: checkpointStore,
+        events: { lastPosition: async () => stream.head, readAll: async () => [] },
+        marks: ledger,
+        clock: { now: () => at(ms), after: never },
+        logger: silentLogger,
+      });
+    const one = watchAt(1);
+    const other = watchAt(5);
+    await one.start();
+    await other.start();
+    await one.check(at(0), { active: true });
+    await other.check(at(0));
+    await checkpointStore.set(RESTORE_GENERATION, 0);
+    const [first, second] = await Promise.all([one.check(at(1)), other.check(at(1))]);
+    const counter = first?.first === true ? 1 : 5;
+    expect([first?.first, second?.first].sort()).toEqual([false, true]);
+    expect(await checkpointStore.get(RESTORE_COVERED)).toBe(at(counter).getTime());
+  });
+
+  it("raises past the generation it saw at stop when the database went back below it, its newest event still there", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    const watch = watchOver();
+    await watch.start();
+    await checkpointStore.set(RESTORE_GENERATION, 3);
+    await watch.check(at(0));
+    await checkpointStore.set(RESTORE_GENERATION, 1);
+    await watch.flush();
+    expect(await highestOf(ledger, RESTORE_MARK)).toBe(4);
   });
 
   it("counts no database by a count the ledger raised before the latest restore it counted", async () => {
@@ -1316,6 +1406,63 @@ describe("createRestoreWatch, with the count of restores in the ledger", () => {
       expect(await watchOver().start()).toEqual(found);
       expect(await checkpointStore.get(RESTORES_FOUND)).toBe(restores);
     }
+  });
+
+  it("moves a count made in place past a ledger's count raised before the latest restore the copy counted, and takes it as its own", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    await restoredInPlace(checkpointStore, 2);
+    await checkpointStore.set(RESTORE_COVERED, at(0).getTime());
+    await ledger.raiseMark(RESTORE_COUNT_MARK, { value: 3, raisedAt: at(-1).toISOString() });
+    const watch = watchOver();
+    expect(await watch.start()).toEqual({ first: true });
+    await watch.settled();
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(4);
+    expect(await highestOf(ledger, RESTORE_COUNT_MARK)).toBe(4);
+    expect(await watch.check(at(1))).toBeNull();
+  });
+
+  it("counts at start a copy below a mark raised before the latest restore it counted when the ledger counted a restore since that it lacks", async () => {
+    const { checkpointStore, ledger, watchOver } = await setUp();
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    await checkpointStore.set(RESTORE_COVERED, at(0).getTime());
+    await checkpointStore.set(RESTORE_GENERATION, 2);
+    await ledger.raiseMark(RESTORE_MARK, { value: 5, raisedAt: at(-1).toISOString() });
+    await ledger.raiseMark(RESTORE_COUNT_MARK, { value: 3, raisedAt: at(0).toISOString() });
+    expect(await watchOver().start()).toEqual({ first: true });
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(4);
+  });
+
+  it("compares nothing with what the last read showed while the ledger cannot be read, raising nothing", async () => {
+    const state = { down: false };
+    const { checkpointStore, ledger, entries, watchOver } = await setUp({
+      ledger: (store) => ({
+        readMark: async (name) => {
+          if (state.down) throw new Error("down");
+          return store.readMark(name);
+        },
+        raiseMark: async (name, mark) => {
+          if (state.down) throw new Error("down");
+          await store.raiseMark(name, mark);
+        },
+      }),
+    });
+    await checkpointStore.set(RESTORES_FOUND, 3);
+    await checkpointStore.set(RESTORE_COVERED, at(0).getTime());
+    await checkpointStore.set(RESTORE_GENERATION, 5);
+    await ledger.raiseMark(RESTORE_MARK, { value: 5, raisedAt: at(-1).toISOString() });
+    await ledger.raiseMark(RESTORE_COUNT_MARK, { value: 3, raisedAt: at(0).toISOString() });
+    const watch = watchOver();
+    await watch.start();
+    entries.splice(0);
+    state.down = true;
+    // A copy behind what the last read showed, of the mark and of the count.
+    await checkpointStore.set(RESTORE_GENERATION, 2);
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    expect(await watch.check(at(1))).toEqual({ first: true });
+    expect(entries.map(({ message }) => message)).toEqual([
+      "the forget ledger's mark could not be read",
+      "the forget ledger's count of restores could not be raised",
+    ]);
   });
 
   it("logs nothing about a count of restores without a ledger", async () => {
@@ -1907,6 +2054,54 @@ describe("createRestoreWatch, on a ledger whose reads lag", () => {
     time.now += LAG;
     expect(await watch.check(at(time.now))).toBeNull();
     expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("moves the count back to the last recount's, not to a count raised since by a line the database left", async () => {
+    const { checkpointStore, time, watchOver, raisedBefore } = await setUpLagging();
+    time.now = 10 * LAG;
+    raisedBefore(RESTORE_COUNT_MARK, 1, 4 * LAG);
+    raisedBefore(RESTORE_COUNT_MARK, 1, 3 * LAG);
+    raisedBefore(RESTORE_COUNT_MARK, 2, 2 * LAG);
+    raisedBefore(RESTORE_RECOUNTED_MARK, 2, 2 * LAG);
+    raisedBefore(RESTORE_COUNT_MARK, 5, 1.5 * LAG);
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    await checkpointStore.set(RESTORE_COVERED, at(time.now - LAG).getTime());
+    const watch = watchOver();
+    expect(await watch.start()).toBeNull();
+    time.now += LAG;
+    expect(await watch.check(at(time.now))).toBeNull();
+    expect(await checkpointStore.get(RESTORES_FOUND)).toBe(2);
+  });
+
+  it("tells a recount from a count of the same value or time, both a restore its copy lacks", async () => {
+    for (const [value, ago] of [
+      [3, 1.5 * LAG],
+      [5, 2 * LAG],
+    ] as const) {
+      const { checkpointStore, time, watchOver, raisedBefore } = await setUpLagging();
+      time.now = 10 * LAG;
+      await checkpointStore.set(RESTORES_FOUND, 1);
+      await checkpointStore.set(RESTORE_COVERED, at(time.now - 3 * LAG).getTime());
+      raisedBefore(RESTORE_COUNT_MARK, 3, 2 * LAG);
+      raisedBefore(RESTORE_RECOUNTED_MARK, 3, 2 * LAG);
+      raisedBefore(RESTORE_COUNT_MARK, value, ago);
+      expect(await watchOver().start()).toEqual({ first: true });
+    }
+  });
+
+  it("counts, before the judgment, a copy below a mark raised since the latest restore counted, beside one raised before it", async () => {
+    const { checkpointStore, time, watchOver, raisedBefore } = await setUpLagging();
+    time.now = 10 * LAG;
+    await checkpointStore.set(RESTORES_FOUND, 1);
+    await checkpointStore.set(RESTORE_GENERATION, 2);
+    const watch = watchOver();
+    expect(await watch.start()).toBeNull();
+    time.now += 5;
+    time.shown = true;
+    await checkpointStore.set(RESTORE_COVERED, at(time.now - 3).getTime());
+    raisedBefore(RESTORE_MARK, 5, 4);
+    raisedBefore(RESTORE_MARK, 6, 1);
+    expect(await watch.check(at(time.now))).toEqual({ first: true });
   });
 
   it("tells the ledger a recount before it raises its count, and leaves the database where handling the last restore left it", async () => {
