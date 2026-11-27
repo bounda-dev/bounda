@@ -1,7 +1,0 @@
----
-"@bounda-dev/core": minor
-"@bounda-dev/cli": minor
-"create-bounda": minor
----
-
-A person's export tells everything article 15(1) of the GDPR asks, from what the app declares, with nothing to write by hand beside it. Each category in `app/personal-data.ts` names its `purposes`, at least one, in words for the person (15(1)(a)), and its `sources`, at least one: `"data-subject"`, `"derived"`, or a named `third-party` or `public` source (15(1)(g)). The module exports `automatedDecisions` (`satisfies PersonalData.AutomatedDecisions`, `{}` for none): each decision the app makes about a person by automated means alone names its categories, its `logic`, `significance` and `consequences`, whether it profiles, and its ground under article 22(2) (15(1)(h)). `.bounda/types.ts` fails to compile, and the app refuses to start, while any of it is missing or names a category the file does not declare. The export's `categories` gain `purposes`, `sources`, whether the person `held` data in each, and `keptUntil`, when retention forgets it for them unless they are active again (15(1)(d)); it gains `rights`, each right with its article and the categories its basis lets it reach (15(1)(e) and (f), and portability, withdrawal of consent and human intervention), and `automatedDecisions`, those on a category the person holds data of. `bounda personal-data inventory` and `personalDataInventory` list the purposes, sources and automated decisions too. Projects from `create-bounda` declare them.

@@ -1,6 +1,0 @@
----
-"@bounda-dev/core": minor
-"@bounda-dev/cli": minor
----
-
-A tenant's export tells where its data went and on what each transfer rests, for the controller it is handed back to (article 28(3)(g)). Its header gains `transfers`, the stores kept out of the jurisdiction `storage` declares, as a person's export lists them (`ExportedTransfer`). A new `recipient` part, between the persons and the events, sums the recipients every `person` part lists (`TenantExportRecipient`): one per port, identity it had then and status, with its country, the safeguard of a transfer out of the European Economic Area, the categories concerned, the earliest and latest disclosure and how many persons list it so, and every recipient the app declares that no person lists under its identity now, for none. It is built as the persons are read, so the export still streams whatever the tenant holds. The format is now version `3`; `readTenantExport` reads that version alone. The end part, the access log's `exportTenant` detail and `bounda export-tenant` count `recipients`. A recipient's `transfer`, in a person's export, `recipientsOf` and the tenant's export, now names the `article` its safeguard rests on, as a store's does.
