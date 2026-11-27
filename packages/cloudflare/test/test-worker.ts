@@ -225,6 +225,7 @@ export const UnboundSplitKeeper = createBoundaKeeper({
           binding: "UNBOUND_SPLIT_KEEPER",
           jurisdiction: "us",
           safeguard: "adequacy",
+          adequacyScope: "data-privacy-framework",
         }),
         forgetLedger: {
           store: durableObjectForgetLedger({ storage: unboundEu, binding: "UNBOUND_SPLIT_KEEPER" }),

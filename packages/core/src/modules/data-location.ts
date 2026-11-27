@@ -1,10 +1,14 @@
 import {
   ADEQUATE_COUNTRIES,
+  type AdequacyScope,
   type AdequateCountry,
   COUNTRY_CODES,
   type CountryCode,
   EEA_COUNTRIES,
   type EeaCountry,
+  PARTIAL_ADEQUACY,
+  type PartialAdequacy,
+  type PartiallyAdequateCountry,
 } from "./recipient.ts";
 
 /**
@@ -44,13 +48,46 @@ export type AdequateLocation =
   | Lowercase<AdequateCountry | EeaCountry>
   | Exclude<DataArea, "global">;
 
-const AREA_REGIMES: Readonly<Record<DataArea, LegalRegime>> = {
+interface AreaRegimes {
+  readonly eu: "EEA";
+  readonly eea: "EEA";
+  readonly fedramp: "US";
+  readonly "fedramp-high": "US";
+  readonly global: "anywhere";
+}
+
+const AREA_REGIMES: AreaRegimes = {
   eu: "EEA",
   eea: "EEA",
   fedramp: "US",
   "fedramp-high": "US",
   global: "anywhere",
 };
+
+// `regimeOf`, for the types.
+type RegimeOf<Location extends DataLocation> = Location extends DataArea
+  ? AreaRegimes[Location]
+  : Uppercase<Location> extends EeaCountry
+    ? "EEA"
+    : Uppercase<Location>;
+
+/**
+ * The locations under the legal regime of a country of `PARTIAL_ADEQUACY`, such as `"us"` and
+ * `"fedramp"`: a store kept in one rests on `adequacy` only beside its `adequacyScope`.
+ */
+export type PartiallyAdequateLocation = {
+  [Location in DataLocation]: RegimeOf<Location> extends PartiallyAdequateCountry
+    ? Location
+    : never;
+}[DataLocation];
+
+/**
+ * The `adequacyScope` a store kept in `Location`, one of `PartiallyAdequateLocation`, declares to
+ * rest on the adequacy decision of its regime.
+ */
+export type AdequacyScopeOf<Location extends PartiallyAdequateLocation> = AdequacyScope<
+  Extract<RegimeOf<Location>, PartiallyAdequateCountry>
+>;
 
 const COUNTRIES: ReadonlyMap<string, CountryCode> = new Map(
   COUNTRY_CODES.map((country) => [country.toLowerCase(), country]),
@@ -98,3 +135,16 @@ export interface IsAdequateFunction {
  * Area, or a country of `ADEQUATE_COUNTRIES`; never `"anywhere"`.
  */
 export const isAdequate: IsAdequateFunction = (regime) => regime === "EEA" || ADEQUATE.has(regime);
+
+export interface PartialAdequacyOfFunction {
+  (regime: LegalRegime): PartialAdequacy | null;
+}
+
+const PARTIAL: ReadonlyMap<string, PartialAdequacy> = new Map(Object.entries(PARTIAL_ADEQUACY));
+
+/**
+ * The adequacy decision of `PARTIAL_ADEQUACY` that covers some recipients alone under a regime,
+ * whose `condition` a transfer resting on `adequacy` there must meet; `null` under any other
+ * regime, adequate as a whole or not.
+ */
+export const partialAdequacyOf: PartialAdequacyOfFunction = (regime) => PARTIAL.get(regime) ?? null;

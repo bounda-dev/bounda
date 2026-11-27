@@ -1,7 +1,9 @@
-// Fetches the Commission's page, trying again after a network or a server error, which may pass;
-// any other answer is final.
+// Fetches the Commission's page, or an answer of EUR-Lex, trying again after a network or a server
+// error, which may pass; any other answer is final.
 export interface FetchPageArgs {
   readonly url: string;
+  // The media type asked for, `text/html` when left out.
+  readonly accept?: string;
   readonly fetch: (url: string, init: RequestInit) => Promise<Response>;
   readonly wait: (milliseconds: number) => Promise<void>;
   readonly attempts: number;
@@ -18,14 +20,21 @@ export class PageFetchError extends Error {
 
 const RETRY_DELAY_MS = 30_000;
 
-export const fetchPage: FetchPageFunction = async ({ url, fetch, wait, attempts, timeoutMs }) => {
+export const fetchPage: FetchPageFunction = async ({
+  url,
+  accept = "text/html",
+  fetch,
+  wait,
+  attempts,
+  timeoutMs,
+}) => {
   let failure = "";
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (attempt > 1) await wait(RETRY_DELAY_MS * (attempt - 1));
     let status: number;
     try {
       const response = await fetch(url, {
-        headers: { accept: "text/html" },
+        headers: { accept },
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (response.ok) return await response.text();

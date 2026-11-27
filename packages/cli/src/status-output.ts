@@ -275,7 +275,7 @@ export const formatRecipients: FormatRecipientsFunction = (recipients) =>
         ...recipients.flatMap(({ port, declared, persons, catchingUp, failedNotices }) => [
           declared === null
             ? `  ${port}  no longer declared, ${plural(persons, "person")} disclosed to it`
-            : `  ${port}  ${declared.name}, ${declared.kind}, ${declared.country}${declared.transfer === null ? "" : `, ${formatTransfer(declared.transfer)}`}: ${declared.categories.join(", ")}; ${plural(persons, "person")} disclosed to it`,
+            : `  ${port}  ${declared.name}, ${declared.kind}, ${declared.country}${declared.transfer === null ? "" : `, ${formatTransfer(declared.transfer, "recipient")}`}: ${declared.categories.join(", ")}; ${plural(persons, "person")} disclosed to it`,
           ...(catchingUp ? ["    being told what was recorded before it was declared"] : []),
           ...(failedNotices === 0
             ? []

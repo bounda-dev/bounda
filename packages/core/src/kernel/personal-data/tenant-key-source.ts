@@ -7,7 +7,7 @@ import {
 import type { TenantKeyStore } from "../../adapter/storage/tenant-key-store.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { DataLocation } from "../../modules/data-location.ts";
-import type { StoreSafeguard } from "../../modules/recipient.ts";
+import type { AdequacyScope, StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { sharesStorage } from "./forget-ledger.ts";
 
@@ -36,6 +36,11 @@ export interface TenantKeyStoreDefinition {
    * does.
    */
   readonly safeguard?: StoreSafeguard;
+  /**
+   * The part of a partial adequacy decision (`PARTIAL_ADEQUACY`) the provider keeping them falls in,
+   * as an adapter's `adequacyScope` does.
+   */
+  readonly adequacyScope?: AdequacyScope;
 }
 
 /**

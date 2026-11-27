@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ConfigurationError } from "../contracts/errors.ts";
 import { defineForgetLedger } from "../kernel/personal-data/forget-ledger.ts";
 import { defineKeyWrapper } from "../kernel/personal-data/key-wrapper.ts";
 import { masterKey } from "../kernel/personal-data/master-key.ts";
@@ -207,25 +208,45 @@ describe("checkLocations", () => {
     expect(() =>
       resolveConfig(kept({ tenantKeys: memory({ location: "eu", safeguard: "adequacy" }) })),
     ).toThrow(
-      'runtime.personalData.tenantKeys keeps its data in "eu" under a safeguard, and storage keeps the app\'s in "eu", both in the European Economic Area, so keeping it there is no transfer: remove its safeguard',
+      new ConfigurationError(
+        'runtime.personalData.tenantKeys keeps its data in "eu" under a safeguard, and storage keeps the app\'s in "eu", both in the European Economic Area, so keeping it there is no transfer: remove its safeguard',
+      ),
     );
     expect(() =>
       resolveConfig(
         kept(
-          { tenantKeys: memory({ location: "fedramp", safeguard: "adequacy" }) },
+          {
+            tenantKeys: memory({
+              location: "fedramp",
+              safeguard: "adequacy",
+              adequacyScope: "data-privacy-framework",
+            }),
+          },
           memory({ location: "us" }),
         ),
       ),
     ).toThrow(
-      'runtime.personalData.tenantKeys keeps its data in "fedramp" under a safeguard, and storage keeps the app\'s in "us", both in the country US, so keeping it there is no transfer: remove its safeguard',
+      'runtime.personalData.tenantKeys keeps its data in "fedramp" under a safeguard, and storage keeps the app\'s in "us", both in the country US, so keeping it there is no transfer: remove its safeguard and its adequacyScope',
     );
   });
 
   it("refuses a safeguard on the storage, which is where the app keeps its data", () => {
     expect(() =>
-      resolveConfig({ storage: memory({ location: "us", safeguard: "adequacy" }) }),
+      resolveConfig({ storage: memory({ location: "us", safeguard: "certification" }) }),
     ).toThrow(
       "storage declares a safeguard, and storage is where the app keeps its data, not a transfer out of it: a safeguard belongs to a store kept in another location than storage's",
+    );
+  });
+
+  it("refuses an adequacyScope on the storage, which declares no safeguard", () => {
+    const scoped = {
+      ...memory({ location: "us" }),
+      adequacyScope: "data-privacy-framework",
+    } as unknown as ReturnType<typeof memory>;
+    expect(() => resolveConfig({ storage: scoped })).toThrow(
+      new ConfigurationError(
+        "storage declares a safeguard, and storage is where the app keeps its data, not a transfer out of it: a safeguard belongs to a store kept in another location than storage's",
+      ),
     );
   });
 
@@ -233,7 +254,7 @@ describe("checkLocations", () => {
     expect(() =>
       resolveConfig({
         storage: memory(),
-        readModels: { search: memory({ location: "us", safeguard: "adequacy" }) },
+        readModels: { search: memory({ location: "us", safeguard: "certification" }) },
       }),
     ).toThrow(
       'readModels.search keeps its data in "us" under a safeguard, and storage declares no location, so nothing tells whether that is a transfer: declare where storage keeps the app\'s data',
@@ -339,7 +360,7 @@ describe("checkLocations", () => {
     expect(() => resolveConfig(adequate("global"))).toThrow(
       `runtime.personalData.tenantKeys keeps its data in "global" under the safeguard "adequacy", and no adequacy decision of the European Commission covers data kept anywhere in the world: declare one of ${BUT_ADEQUACY}`,
     );
-    for (const location of ["ch", "gb", "jp", "br", "us", "fedramp", "fedramp-high"]) {
+    for (const location of ["ch", "gb", "jp", "br"]) {
       expect(() => resolveConfig(adequate(location)), location).not.toThrow();
     }
     expect(() =>
@@ -357,6 +378,79 @@ describe("checkLocations", () => {
         }),
       ),
     ).not.toThrow();
+  });
+
+  it("holds adequacy where a decision covers some providers alone to the decision's adequacyScope", () => {
+    const BUT_ADEQUACY =
+      '"standard-contractual-clauses" (article 46(2)(c)), "binding-corporate-rules" (article 47), "code-of-conduct" (article 46(2)(e)), "certification" (article 46(2)(f))';
+    const placed = (placement: object) =>
+      kept({ tenantKeys: { ...memory(), ...placement } as never });
+    const US =
+      'the adequacy decision for data kept in the country US, Commission Implementing Decision (EU) 2023/1795, is for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: once you verified the provider keeping it is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other, declare adequacyScope: "data-privacy-framework" beside the safeguard, or declare one of';
+    for (const location of ["us", "fedramp", "fedramp-high"]) {
+      expect(() => resolveConfig(placed({ location, safeguard: "adequacy" }))).toThrow(
+        `runtime.personalData.tenantKeys keeps its data in "${location}" under the safeguard "adequacy", and ${US} ${BUT_ADEQUACY}`,
+      );
+      expect(() =>
+        resolveConfig(
+          placed({ location, safeguard: "adequacy", adequacyScope: "data-privacy-framework" }),
+        ),
+      ).not.toThrow();
+    }
+    expect(() =>
+      resolveConfig(placed({ location: "us", safeguard: "adequacy", adequacyScope: "pipeda" })),
+    ).toThrow(
+      `runtime.personalData.tenantKeys keeps its data in "us" under the safeguard "adequacy" with the adequacyScope "pipeda", and ${US} ${BUT_ADEQUACY}`,
+    );
+    expect(() => resolveConfig(placed({ location: "ca", safeguard: "adequacy" }))).toThrow(
+      `runtime.personalData.tenantKeys keeps its data in "ca" under the safeguard "adequacy", and the adequacy decision for data kept in the country CA, Commission Decision 2002/2/EC, is for recipients subject to the Personal Information Protection and Electronic Documents Act (PIPEDA) alone: once you verified the provider keeping it is subject to PIPEDA for the data, as a private-sector organisation is for personal information it collects, uses or discloses in the course of commercial activities, declare adequacyScope: "pipeda" beside the safeguard, or declare one of ${BUT_ADEQUACY}`,
+    );
+    const config = resolveConfig(
+      placed({ location: "ca", safeguard: "adequacy", adequacyScope: "pipeda" }),
+    );
+    expect(config.runtime.personalData.tenantKeys?.adequacyScope).toBe("pipeda");
+    const keptByMasterKey = resolveConfig({
+      storage: memory({ location: "eu" }),
+      runtime: {
+        personalData: {
+          keyWrapper: masterKey({
+            from: "BOUNDA_MASTER_KEY",
+            location: "us",
+            safeguard: "adequacy",
+            adequacyScope: "data-privacy-framework",
+          }),
+        },
+      },
+    });
+    expect(keptByMasterKey.runtime.personalData.keyWrapper?.adequacyScope).toBe(
+      "data-privacy-framework",
+    );
+    expect(() =>
+      resolveConfig(placed({ location: "ch", safeguard: "adequacy", adequacyScope: "pipeda" })),
+    ).toThrow(
+      'runtime.personalData.tenantKeys keeps its data in "ch" under the safeguard "adequacy" with the adequacyScope "pipeda", and the adequacy decision for data kept in the country CH covers every recipient there: remove its adequacyScope',
+    );
+    for (const safeguard of [undefined, "standard-contractual-clauses"]) {
+      expect(() =>
+        resolveConfig(
+          placed({ location: "us", safeguard, adequacyScope: "data-privacy-framework" }),
+        ),
+      ).toThrow(
+        'runtime.personalData.tenantKeys declares the adequacyScope "data-privacy-framework" without the safeguard "adequacy": an adequacyScope says which part of a partial adequacy decision allows keeping the data, so declare it beside safeguard: "adequacy", or remove it',
+      );
+    }
+    expect(() =>
+      resolveConfig(
+        placed({ location: "us", safeguard: "adequacy", adequacyScope: "Data-Privacy-Framework" }),
+      ),
+    ).toThrow(
+      'runtime.personalData.tenantKeys declares the adequacyScope "Data-Privacy-Framework", which is none of "pipeda" (CA, Commission Decision 2002/2/EC), "data-privacy-framework" (US, Commission Implementing Decision (EU) 2023/1795)',
+    );
+    expect(() =>
+      resolveConfig(
+        placed({ location: "us", safeguard: "certification", adequacyScope: "nothing" }),
+      ),
+    ).toThrow('declares the adequacyScope "nothing", which is none of');
   });
 
   it('refuses a storage in "global", which keeps the app\'s data in no jurisdiction', () => {

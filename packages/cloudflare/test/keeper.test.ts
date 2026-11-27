@@ -147,13 +147,22 @@ describe("a keeper store in another jurisdiction than storage's", () => {
       binding: "EU_KEEPER",
       jurisdiction: "us",
       safeguard: "adequacy",
+      adequacyScope: "data-privacy-framework",
     });
-    expect([keys.location, keys.safeguard]).toEqual(["us", "adequacy"]);
+    expect([keys.location, keys.safeguard, keys.adequacyScope]).toEqual([
+      "us",
+      "adequacy",
+      "data-privacy-framework",
+    ]);
     const ledger = durableObjectForgetLedger({ storage, jurisdiction: "eu" });
     expect(ledger.location).toBe("eu");
     expect(ledger).not.toHaveProperty("safeguard");
     expect(durableObjectTenantKeys({ storage })).not.toHaveProperty("location");
     expect(durableObjectTenantKeys({ storage })).not.toHaveProperty("safeguard");
+    expect(durableObjectTenantKeys({ storage })).not.toHaveProperty("adequacyScope");
+    expect(
+      durableObjectTenantKeys({ storage, jurisdiction: "us", safeguard: "certification" }),
+    ).not.toHaveProperty("adequacyScope");
     const tenant = `${fresh()}abroad`;
     const store = await keys.create({ env });
     expect(await store.put(tenant, record("s-1"), null)).toBe(true);
@@ -165,6 +174,7 @@ describe("a keeper store in another jurisdiction than storage's", () => {
       storage: eu,
       jurisdiction: "us",
       safeguard: "adequacy",
+      adequacyScope: "data-privacy-framework",
     });
     expect(
       keeperJurisdictions(
@@ -219,11 +229,15 @@ describe("a keeper store in another jurisdiction than storage's", () => {
         `durableObjectTenantKeys() names a Durable Object jurisdiction, one of "eu", "us", "fedramp", "fedramp-high", not ${JSON.stringify(jurisdiction)}`,
       );
     }
-    expect(() =>
-      durableObjectForgetLedger({ storage: eu, safeguard: "adequacy" } as never),
-    ).toThrow(
-      "durableObjectForgetLedger() declares a safeguard and no jurisdiction: a safeguard allows keeping the keepers in another jurisdiction than storage's, so name it beside the safeguard",
-    );
+    for (const declared of [
+      { safeguard: "adequacy" },
+      { adequacyScope: "data-privacy-framework" },
+      { safeguard: "adequacy", adequacyScope: "data-privacy-framework" },
+    ]) {
+      expect(() => durableObjectForgetLedger({ storage: eu, ...declared } as never)).toThrow(
+        "durableObjectForgetLedger() declares a safeguard and no jurisdiction: a safeguard allows keeping the keepers in another jurisdiction than storage's, so name it beside the safeguard",
+      );
+    }
   });
 
   it("answers each store's calls only in that store's jurisdiction", async () => {
@@ -636,7 +650,12 @@ describe("cloudflare() with a jurisdiction", () => {
       name: "tenant-keys",
       where: "tenant-keys",
       location: "us",
-      transfer: { safeguard: "standard-contractual-clauses", article: "46(2)(c)", regime: "US" },
+      transfer: {
+        safeguard: "standard-contractual-clauses",
+        article: "46(2)(c)",
+        regime: "US",
+        partialAdequacy: null,
+      },
       keptFor: null,
     });
     expect(records.find(({ name }) => name === "forget-ledger")).toMatchObject({
@@ -645,6 +664,7 @@ describe("cloudflare() with a jurisdiction", () => {
         safeguard: "standard-contractual-clauses",
         article: "46(2)(c)",
         regime: "anywhere",
+        partialAdequacy: null,
       },
     });
     expect(
@@ -816,13 +836,47 @@ describe("cloudflare() with a jurisdiction", () => {
                 storage: us,
                 jurisdiction: "fedramp",
                 safeguard: "adequacy",
+                adequacyScope: "data-privacy-framework",
               }),
             },
           },
         },
       }),
     ).toBe(
-      'runtime.personalData.forgetLedger.store keeps its data in "fedramp" under a safeguard, and storage keeps the app\'s in "us", both in the country US, so keeping it there is no transfer: remove its safeguard',
+      'runtime.personalData.forgetLedger.store keeps its data in "fedramp" under a safeguard, and storage keeps the app\'s in "us", both in the country US, so keeping it there is no transfer: remove its safeguard and its adequacyScope',
+    );
+  });
+
+  it("holds a keeper in the United States on adequacy to the Data Privacy Framework's adequacyScope", () => {
+    const keptIn = (jurisdiction: string, placement: object) =>
+      refusal({
+        storage: eu,
+        runtime: {
+          personalData: {
+            keyWrapper,
+            tenantKeys: durableObjectTenantKeys({
+              storage: eu,
+              jurisdiction,
+              ...placement,
+            } as never),
+          },
+        },
+      });
+    for (const jurisdiction of ["us", "fedramp", "fedramp-high"]) {
+      expect(keptIn(jurisdiction, { safeguard: "adequacy" })).toBe(
+        `runtime.personalData.tenantKeys keeps its data in "${jurisdiction}" under the safeguard "adequacy", and the adequacy decision for data kept in the country US, Commission Implementing Decision (EU) 2023/1795, is for organisations in the United States included in the Data Privacy Framework List of the US Department of Commerce alone: once you verified the provider keeping it is on the Data Privacy Framework List, with an active certification that covers the data transferred, human resources data or other, declare adequacyScope: "data-privacy-framework" beside the safeguard, or declare one of "standard-contractual-clauses" (article 46(2)(c)), "binding-corporate-rules" (article 47), "code-of-conduct" (article 46(2)(e)), "certification" (article 46(2)(f))`,
+      );
+      expect(
+        keptIn(jurisdiction, {
+          safeguard: "adequacy",
+          adequacyScope: "data-privacy-framework",
+        }),
+      ).toBe("resolved");
+    }
+    expect(
+      keptIn("us", { safeguard: "certification", adequacyScope: "data-privacy-framework" }),
+    ).toBe(
+      'runtime.personalData.tenantKeys declares the adequacyScope "data-privacy-framework" without the safeguard "adequacy": an adequacyScope says which part of a partial adequacy decision allows keeping the data, so declare it beside safeguard: "adequacy", or remove it',
     );
   });
 
@@ -838,6 +892,14 @@ describe("cloudflare() with a jurisdiction", () => {
       );
       expect(() => kvTenantKeys({ binding: "TENANT_KEYS", ...declared } as never)).toThrow(
         'runtime.personalData.tenantKeys is kept in Workers KV, which keeps and caches what it holds anywhere in the world, in no jurisdiction: declare location: "global" together with the safeguard that allows that, both or neither',
+      );
+    }
+    for (const declared of [
+      { adequacyScope: "data-privacy-framework" },
+      { location: "global", safeguard: "adequacy", adequacyScope: "data-privacy-framework" },
+    ]) {
+      expect(() => kvTenantKeys({ binding: "TENANT_KEYS", ...declared } as never)).toThrow(
+        "runtime.personalData.tenantKeys is kept in Workers KV, which keeps and caches what it holds anywhere in the world, where no adequacy decision covers it: it takes no adequacyScope",
       );
     }
     // Workers KV keeps what it holds anywhere, which no adequacy decision covers.

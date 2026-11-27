@@ -1,4 +1,9 @@
-import type { StoreSafeguard } from "@bounda-dev/core";
+import type {
+  AdequacyScope,
+  AdequacyScopeOf,
+  PartiallyAdequateLocation,
+  StoreSafeguard,
+} from "@bounda-dev/core";
 import { ConfigurationError } from "@bounda-dev/core";
 import { type ForgetLedger, runtimeText, type TenantKeyStore } from "@bounda-dev/core/adapter";
 import {
@@ -35,20 +40,47 @@ export type DurableObjectKeeperOptions = {
    */
   readonly binding?: string;
 } & (
-  | { readonly jurisdiction?: never; readonly safeguard?: never }
+  | {
+      readonly jurisdiction?: never;
+      readonly safeguard?: never;
+      readonly adequacyScope?: never;
+    }
   | {
       /**
        * The jurisdiction the keepers are created in and never leave, when not `storage`'s: the
        * store's `location`. Choose it before the first keeper exists, as for `cloudflare()`.
        */
-      readonly jurisdiction: DurableObjectJurisdiction;
+      readonly jurisdiction: Exclude<DurableObjectJurisdiction, PartiallyAdequateLocation>;
       /**
        * What allows keeping the store in `jurisdiction`, another than `storage`'s, under articles 45
        * to 47 of the GDPR, which the record of processing and each person's export tell of.
        */
       readonly safeguard?: StoreSafeguard;
+      readonly adequacyScope?: never;
     }
+  | PartialAdequacyKeeper
 );
+
+// A jurisdiction in the United States rests on `adequacy` only for a provider on the Data Privacy
+// Framework List.
+type PartialAdequacyKeeper =
+  | {
+      readonly jurisdiction: Extract<DurableObjectJurisdiction, PartiallyAdequateLocation>;
+      readonly safeguard: "adequacy";
+      /**
+       * The part of the jurisdiction's adequacy decision Cloudflare falls in,
+       * `"data-privacy-framework"`: declaring it says you verified Cloudflare is on the Data
+       * Privacy Framework List, as `PARTIAL_ADEQUACY` gives the condition.
+       */
+      readonly adequacyScope: AdequacyScopeOf<
+        Extract<DurableObjectJurisdiction, PartiallyAdequateLocation>
+      >;
+    }
+  | {
+      readonly jurisdiction: Extract<DurableObjectJurisdiction, PartiallyAdequateLocation>;
+      readonly safeguard?: Exclude<StoreSafeguard, "adequacy">;
+      readonly adequacyScope?: never;
+    };
 
 export interface DurableObjectTenantKeysFunction {
   (options: DurableObjectKeeperOptions): TenantKeyStoreDefinition;
@@ -76,6 +108,7 @@ interface KeeperPlace {
 // A Worker's code is not always type-checked.
 const placeOf = (options: DurableObjectKeeperOptions, what: string): KeeperPlace => {
   const { storage, safeguard } = options;
+  const adequacyScope: AdequacyScope | undefined = options.adequacyScope;
   const own: unknown = options.jurisdiction;
   if (!isCloudflareDefinition(storage)) {
     throw runtimeText(
@@ -91,7 +124,7 @@ const placeOf = (options: DurableObjectKeeperOptions, what: string): KeeperPlace
       ),
     );
   }
-  if (own === undefined && safeguard !== undefined) {
+  if (own === undefined && (safeguard !== undefined || adequacyScope !== undefined)) {
     throw runtimeText(
       new ConfigurationError(
         `${what} declares a safeguard and no jurisdiction: a safeguard allows keeping the keepers in another jurisdiction than storage's, so name it beside the safeguard`,
@@ -101,12 +134,15 @@ const placeOf = (options: DurableObjectKeeperOptions, what: string): KeeperPlace
   const jurisdiction = own ?? storage.options.jurisdiction;
   return {
     jurisdiction,
+    // `checkKeptIn` judges the safeguard and its scope, which an unchecked Worker may hold anyhow.
     placement:
       jurisdiction === undefined
         ? {}
-        : safeguard === undefined
-          ? { location: jurisdiction }
-          : { location: jurisdiction, safeguard },
+        : ({
+            location: jurisdiction,
+            ...(safeguard === undefined ? {} : { safeguard }),
+            ...(adequacyScope === undefined ? {} : { adequacyScope }),
+          } as StoreDefinitionOptions),
   };
 };
 

@@ -5,7 +5,7 @@ import {
 } from "../../adapter/adapter-definition.ts";
 import { ConfigurationError } from "../../contracts/errors.ts";
 import type { DataLocation } from "../../modules/data-location.ts";
-import type { StoreSafeguard } from "../../modules/recipient.ts";
+import type { AdequacyScope, StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import { runtimeText } from "../shared/runtime-text.ts";
 import { importRawKey, type KeyKind, withRawKey } from "./crypto.ts";
@@ -77,6 +77,11 @@ export interface KeyWrapperDefinition {
    * `defineKeyWrapper` declares it.
    */
   readonly safeguard?: StoreSafeguard;
+  /**
+   * The part of a partial adequacy decision (`PARTIAL_ADEQUACY`) the provider keeping it falls in,
+   * as an adapter's `adequacyScope` does.
+   */
+  readonly adequacyScope?: AdequacyScope;
 }
 
 export interface CryptoUnwrapArgs extends UnwrapArgs {

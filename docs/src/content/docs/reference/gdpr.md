@@ -597,11 +597,18 @@ Economic Area its `safeguard`: `adequacy` (article 45), `standard-contractual-cl
 `derogation` (49). The app does not start on a transfer without one, on a safeguard for a country
 inside the area, which counts the Åland Islands and the outermost regions of France apart from
 their ISO codes, nor on `adequacy` for a country the European Commission has adopted no adequacy
-decision for (`ADEQUATE_COUNTRIES`). The export and `recipientsOf` tell the person where their data
-went, by the legal regime it went to, and on what it rests, with the article, 15(2), and the record
-of processing lists every transfer the same way. A tenant's export sums the recipients of every
-person in it, once under each identity a disclosure was recorded with, and counts under the same
-identities those of persons forgotten before, for the controller it is handed back to, 28(3)(g).
+decision for (`ADEQUATE_COUNTRIES`). Where a decision covers "one or more specified sectors"
+alone, as article 45(1) allows, `adequacy` holds only for the recipients in its scope: Canada's
+covers those subject to PIPEDA, the United States' organisations on the Data Privacy Framework
+List (`PARTIAL_ADEQUACY`), and outside them the transfer needs a safeguard of article 46. A
+recipient there declares the decision's `adequacyScope` beside `adequacy`, stating that it is in
+scope, and the types, the app and the record of processing refuse `adequacy` there without it. The
+export and `recipientsOf` tell the person where their data went, by the legal regime it went to,
+and on what it rests, with the article and any partial decision, 15(2), and the record of
+processing lists every transfer the same way, naming what the controller verifies of the recipient
+on a partial decision. A tenant's export sums the recipients of every person in it, once under each
+identity a disclosure was recorded with, and counts under the same identities those of persons
+forgotten before, for the controller it is handed back to, 28(3)(g).
 
 Every database and store declares where it keeps its data, a country in lower case or an area such
 as the EU (`DataLocation`): `location: "eu"` on
@@ -615,16 +622,26 @@ protects data from a transfer only while its keys stay where the data is (EDPB r
 01/2020). A store kept elsewhere declares its safeguard as a recipient does, one of articles 45 to
 47; a `derogation` of article 49 covers occasional transfers alone (EDPB guidelines 2/2018), never a
 store that keeps data for as long as the app runs, and is refused, as is a safeguard on a store kept
-under `storage`'s legal regime, and `adequacy` where no adequacy decision covers. Locations are
+under `storage`'s legal regime, `adequacy` where no adequacy decision covers, and `adequacy` in
+Canada or the United States without the `adequacyScope` that states the provider is in the
+decision's scope. Locations are
 compared by that regime (`regimeOf`): every location in the European Economic Area is one, each
 other country its own, the Durable Object jurisdictions `"us"`, `"fedramp"` and `"fedramp-high"`
 the United States, and `"global"`, where Workers KV keeps what it holds, none; a location Bounda
 does not know is refused rather than guessed. The record of processing states each one's location and, of each
 transfer, the regime it goes to, its safeguard and its article, 30(1)(e), and lists every store of personal data, and the key wrapper, that declares no
 location as a finding; each person's export lists the transfers in `transfers`, each with its
-location and regime, 15(2), and so does the header of a tenant's export, 28(3)(g).
+location, regime and any partial decision, 15(2), and so does the header of a tenant's export,
+28(3)(g).
 `create-bounda` writes `"eu"` in every project. See [Data
-location](/reference/configuration/#data-location).
+location](/reference/configuration/#data-location) and [partial adequacy
+decisions](/reference/configuration/#partial-adequacy-decisions).
+
+Bounda holds `ADEQUATE_COUNTRIES` to the Commission's list of adequacy decisions every week, and
+each decision to EUR-Lex's record of it, read from the Publications Office's CELLAR: a decision
+repealed, annulled by the Court of Justice or expired fails the check even before the Commission's
+page says so, as does an act in force that reads as a decision Bounda does not know, and a change
+reaches `ADEQUATE_COUNTRIES` in the next release.
 
 On Cloudflare, `cloudflare({ jurisdiction: "eu" })` keeps every tenant's Durable Object, its
 events, read models and keys, in the EU, and the keeper objects that hold each tenant's key and
@@ -642,7 +659,9 @@ taken at its word, and the processes of a Node app must run where its storage is
 the access log `app/audit.ts` are where the app puts them; on Cloudflare, an object checks its
 own jurisdiction, but Bounda cannot see where a Worker's secrets are kept, so the master key's
 location is the controller's to keep true. So is being within the scope of the adequacy decisions
-for Canada and the United States, which cover some organisations alone. On Cloudflare, the
+for Canada and the United States, which an `adequacyScope` states and Bounda cannot verify: the
+record of processing names the condition beside each such transfer for the controller to review,
+and a Data Privacy Framework certification lapses unless it is renewed every year. On Cloudflare, the
 jurisdiction holds the objects, not the Worker that serves each request near it.
 
 ## Remedies (articles 77 to 82)

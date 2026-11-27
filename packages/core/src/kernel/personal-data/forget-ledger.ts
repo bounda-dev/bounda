@@ -4,7 +4,7 @@ import type { ForgetLedger } from "../../adapter/storage/forget-ledger.ts";
 import type { Clock } from "../../contracts/clock.ts";
 import { ConfigurationError, ForgetLedgerTimeoutError } from "../../contracts/errors.ts";
 import type { DataLocation } from "../../modules/data-location.ts";
-import type { StoreSafeguard } from "../../modules/recipient.ts";
+import type { AdequacyScope, StoreSafeguard } from "../../modules/recipient.ts";
 import type { AppEnv } from "../../register/index.ts";
 import type { StoreDefinitionOptions, TenantKeySource } from "./tenant-key-source.ts";
 
@@ -43,6 +43,11 @@ export interface ForgetLedgerDefinition {
    * does.
    */
   readonly safeguard?: StoreSafeguard;
+  /**
+   * The part of a partial adequacy decision (`PARTIAL_ADEQUACY`) the provider keeping them falls in,
+   * as an adapter's `adequacyScope` does.
+   */
+  readonly adequacyScope?: AdequacyScope;
 }
 
 /**
